@@ -1,0 +1,14 @@
+#Pull AD Users of a specific department and city
+Get-ADUser -Filter * -Properties Department,City | Where {$PSItem.Department -eq ‘IT’ -and $PSItem.City -eq ‘London’} | Select-Object -Property Name,Department,City| Sort Name
+
+
+#Pull AD Users and export to HTML or CSV or XML
+Get-ADUser -Filter * -Properties Department,City,Office | 
+Where {$PSItem.Department -eq 'IT' -and $PSItem.City -eq 'London'} | 
+Sort Name | 
+Select-Object -Property Name,Department,City,Office |
+ConvertTo-Html –Property Name,Department,City -PreContent Users | 
+
+#Out-File E:\UserReport.html
+#Export-Clixml E:\UserReport.xml
+#Export-Csv E:\UserReport.csv
