@@ -12,3 +12,6 @@ ConvertTo-Html –Property Name,Department,City -PreContent Users |
 #Out-File E:\UserReport.html
 #Export-Clixml E:\UserReport.xml
 #Export-Csv E:\UserReport.csv
+
+#returns list of all domain and local accounts.
+Get-CimInstance -Class Win32_UserAccount | Format-Table -Property *
