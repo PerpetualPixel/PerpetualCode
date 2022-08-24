@@ -1,0 +1,2 @@
+Get-CimInstance -Class Win32_BIOS  #Obtain BIOS info
+Get-CimInstance -Classname Win32_NetworkAdapterConfiguration #obtain Net adapter Index
