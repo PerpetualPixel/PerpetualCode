@@ -1,4 +1,4 @@
-#Command to get list of Active Directory users that will expire in next 30 days in a specific OU
+#Command to get list of Active Directory users that will expire in next 30 days in a specific OU (change OU b/w the <>)
 Search-ADAccount -AccountExpiring -SearchBase "<DC=Adatum,DC=com>" -UsersOnly -TimeSpan 30.00:00:00 | select-object UserPrincipalName,Enabled,AccountExpirationDate,LastLogonDate,DistinguishedName | Export-Csv -Path c:\expiringaccounts.csv -NoTypeInformation
 
 #Pull AD Users of a specific department and city
