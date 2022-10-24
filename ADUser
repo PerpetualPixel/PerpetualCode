@@ -21,3 +21,16 @@ ConvertTo-Html –Property Name,Department,City -PreContent Users |
 
 #returns list of all domain and local accounts.
 Get-CimInstance -Class Win32_UserAccount | Format-Table -Property *
+
+#To disable Active Directory user accounts that have not been used to sign in for at least 90 days, enter the following command and press Enter:
+Get-ADUser -Filter {LastLogonTimeStamp -lt $days -and enabled -eq $true} -Properties LastLogonTimeStamp | Disable-ADAccount
+
+#To list Active Directory-enabled user accounts with a non-expiring password, at the Windows PowerShell command prompt, enter the following command and press Enter:
+Get-ADUser -Filter {Enabled -eq $true -and PasswordNeverExpires -eq $true}
+
+#To enable password expiration for all user accounts in the result set, at the Windows PowerShell command prompt, enter the following command and press Enter:
+Get-ADUser -Filter {Enabled -eq $true -and PasswordNeverExpires -eq $true} | Set-ADUser -PasswordNeverExpires $false
+
+#To identify Active Directory user accounts that have not been used to sign in for at least 90 days, at the Windows PowerShell command prompt, enter the following command and press Enter:
+$days = (Get-Date).AddDays(-90)
+Get-ADUser -Filter {LastLogonTimeStamp -lt $days -and enabled -eq $true} -Properties LastLogonTimeStamp
