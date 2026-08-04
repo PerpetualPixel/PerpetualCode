@@ -1,0 +1,11 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" width="64" height="64">
+  <rect width="64" height="64" fill="#0b0d10"/>
+  <g fill="#4ade80">
+    <!-- A pixel-art check: the "pick". -->
+    <rect x="12" y="30" width="8" height="8"/>
+    <rect x="20" y="38" width="8" height="8"/>
+    <rect x="28" y="30" width="8" height="8"/>
+    <rect x="36" y="22" width="8" height="8"/>
+    <rect x="44" y="14" width="8" height="8"/>
+  </g>
+</svg>
