@@ -2,30 +2,50 @@
  * Team-sport context, proxied from ESPN.
  *
  * The odds feed carries prices only, so the records, form, head-to-head and
- * injury lines on a pick card come from here. ESPN's site API is free and
- * unauthenticated but undocumented — it is not covered by an SLA and could
- * change shape without notice, which is why every field below is read
- * defensively and a missing section degrades to a shorter card rather than an
- * error.
+ * injury lines on a pick card come from here.
+ *
+ * Deliberately NOT using site.api.espn.com: it 403s every request from a
+ * Cloudflare Worker specifically (confirmed live — identical requests succeed
+ * from a normal machine), evidently blocking Cloudflare's shared egress IP
+ * ranges. cdn.espn.com is the same underlying ESPN data — a scoreboard at
+ * /core/{league}/scoreboard and a game detail at /core/{league}/game, both
+ * with ?xhr=1 — reachable from Workers and carrying the identical sections
+ * (lastFiveGames, injuries, seasonseries, predictor) under different wrapper
+ * keys (content.sbData.events, gamepackageJSON).
+ *
+ * This is still an unofficial, undocumented ESPN surface — not covered by any
+ * SLA and free to change shape without notice — so every field below is read
+ * defensively and a missing section degrades to a shorter card, never an error.
  *
  * Tennis is deliberately absent: ESPN's tennis athletes carry no ids and its
- * tennis summary endpoint returns 400, so there is nothing to proxy. That sport
- * is served by the static archive built in scripts/build-tennis-data.mjs.
+ * tennis endpoints reject requests outright, so there is nothing to proxy.
+ * That sport is served by the static archive built in
+ * scripts/build-tennis-data.mjs.
  */
 
-const ESPN = 'https://site.api.espn.com/apis/site/v2/sports';
+const ESPN_CDN = 'https://cdn.espn.com/core';
 
-/** The Odds API sport_key -> ESPN league path. */
+/**
+ * The Odds API sport_key -> cdn.espn.com's league slug. This is a different,
+ * shorter path than the old site.api.espn.com convention (`mlb`, not
+ * `baseball/mlb`) — verified live against each sport's current scoreboard.
+ *
+ * NHL is deliberately absent: cdn.espn.com 404s that path outright, including
+ * with an explicit in-season date, while every other sport here returns 200 —
+ * this isn't the August off-season, ESPN just doesn't build that page on this
+ * host. Fixing it would mean a third ESPN surface; not worth it for a league
+ * outside what this app targets. An NHL bet still gets its price bullet, just
+ * no research bullets, same as any fixture that can't be matched.
+ */
 const LEAGUE_PATHS = {
-  baseball_mlb: 'baseball/mlb',
-  americanfootball_nfl: 'football/nfl',
-  americanfootball_ncaaf: 'football/college-football',
-  basketball_nba: 'basketball/nba',
-  basketball_wnba: 'basketball/wnba',
-  basketball_ncaab: 'basketball/mens-college-basketball',
-  icehockey_nhl: 'hockey/nhl',
-  soccer_epl: 'soccer/eng.1',
-  soccer_usa_mls: 'soccer/usa.1',
+  baseball_mlb: 'mlb',
+  americanfootball_nfl: 'nfl',
+  americanfootball_ncaaf: 'college-football',
+  basketball_nba: 'nba',
+  basketball_wnba: 'wnba',
+  basketball_ncaab: 'mens-college-basketball',
+  soccer_epl: 'eng.1',
+  soccer_usa_mls: 'usa.1',
 };
 
 export const hasContext = (sportKey) => Boolean(LEAGUE_PATHS[sportKey]);
@@ -43,7 +63,14 @@ function fold(value) {
     .trim();
 }
 
-/** Cache-through JSON fetch, keyed on the upstream URL. */
+/**
+ * Cache-through JSON fetch, keyed on the upstream URL.
+ *
+ * A browser User-Agent is not defeating any protection here — cdn.espn.com
+ * serves this to anonymous requests either way — but Workers' default fetch
+ * sends none at all, and leaving it off is one more way this looks like
+ * automated traffic to whatever is watching.
+ */
 async function cachedJson(url, ttl, ctx) {
   const cacheKey = new Request(`https://pixel-pick.cache/espn/${encodeURIComponent(url)}`);
   const cache = caches.default;
@@ -51,7 +78,12 @@ async function cachedJson(url, ttl, ctx) {
   const hit = await cache.match(cacheKey);
   if (hit) return hit.json();
 
-  const response = await fetch(url, { headers: { Accept: 'application/json' } });
+  const response = await fetch(url, {
+    headers: {
+      Accept: 'application/json',
+      'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
+    },
+  });
   if (!response.ok) return null;
 
   const body = await response.text();
@@ -176,16 +208,27 @@ export async function fetchContext({ sportKey, home, away }, ctx) {
   const league = LEAGUE_PATHS[sportKey];
   if (!league || !home || !away) return null;
 
-  const scoreboard = await cachedJson(`${ESPN}/${league}/scoreboard`, SCOREBOARD_TTL, ctx);
+  const scoreboardPage = await cachedJson(
+    `${ESPN_CDN}/${league}/scoreboard?xhr=1`, SCOREBOARD_TTL, ctx,
+  );
+  // The scoreboard events live several levels deep in the page's own JSON —
+  // this endpoint is a webpage's data blob, not a purpose-built API response.
+  const scoreboard = scoreboardPage?.content?.sbData ?? null;
   const found = findEvent(scoreboard, home, away);
   if (!found) return null;
 
-  const summary = await cachedJson(
-    `${ESPN}/${league}/summary?event=${found.event.id}`, SUMMARY_TTL, ctx,
+  // Soccer has no /game detail page on this host at all — confirmed 404 even
+  // against a live in-season MLS match, not just an off-calendar friendly.
+  // Rather than lose the pick's research entirely, fall through to
+  // scoreboard-only data: still a real record, just without form, H2H or
+  // injuries. sideOf() below reads every summary field defensively for
+  // exactly this reason.
+  const gamePage = await cachedJson(
+    `${ESPN_CDN}/${league}/game?xhr=1&gameId=${found.event.id}`, SUMMARY_TTL, ctx,
   );
-  if (!summary) return null;
+  const summary = gamePage?.gamepackageJSON ?? null;
 
-  const projection = summary.predictor
+  const projection = summary?.predictor
     ? {
         home: summary.predictor.homeTeam?.gameProjection ?? null,
         away: summary.predictor.awayTeam?.gameProjection ?? null,
@@ -197,7 +240,7 @@ export async function fetchContext({ sportKey, home, away }, ctx) {
     espnEventId: found.event.id,
     home: sideOf(summary, found.homeSide, true),
     away: sideOf(summary, found.awaySide, false),
-    seriesSummary: summary.seasonseries?.[0]?.summary ?? null,
+    seriesSummary: summary?.seasonseries?.[0]?.summary ?? null,
     projection,
   };
 }

@@ -144,10 +144,23 @@ odds feed. Returns `{ context: null }` when the fixture can't be matched with
 confidence, which is a normal answer: the card then shows fewer bullets rather
 than another team's statistics.
 
-ESPN's site API is undocumented and unsupported. It's read defensively
-throughout and a missing section only shortens a card, but it carries no SLA —
-worth swapping for a licensed provider before charging for this.
+Reads `cdn.espn.com/core/*`, not `site.api.espn.com`. The latter — ESPN's
+better-documented site API — **403s every request from a Cloudflare Worker's
+egress IPs**, confirmed live: identical requests succeed from any normal
+machine. `cdn.espn.com` carries the same underlying sections
+(`lastFiveGames`, `injuries`, `seasonseries`, `predictor`) under a webpage's
+own JSON wrapper instead of a clean API response, which is why `context.js`
+unwraps `content.sbData` and `gamepackageJSON` rather than reading a flat
+object. Soccer is a partial exception: its `/game` detail page 404s on this
+host entirely (confirmed against a live in-season MLS match, not just an
+off-calendar friendly), so soccer fixtures fall back to scoreboard-only data —
+season record, no form/H2H/injuries. NHL is dropped from `LEAGUE_PATHS`
+outright for the same reason, no scoreboard page at all on this host.
 
-Tennis is deliberately absent here: ESPN's tennis athletes have no ids and its
-tennis summary endpoint 400s. That sport is served by a static archive built
-with `scripts/build-tennis-data.mjs`.
+This is still an unofficial, undocumented ESPN surface, not covered by any
+SLA — every field is read defensively and a missing section only shortens a
+card, but it's worth swapping for a licensed provider before charging for this.
+
+Tennis is served separately, by a static archive built with
+`scripts/build-tennis-data.mjs` — ESPN has no usable tennis data on any host,
+its tennis athletes carry no ids at all.

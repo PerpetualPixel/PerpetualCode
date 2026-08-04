@@ -449,8 +449,6 @@ export default {
       return new Response(res.body, { status: res.status, headers: { ...cors, ...Object.fromEntries(res.headers) } });
     }
 
-    // Team-sport context. Free to serve — it reads ESPN, not the odds feed —
-    // so it needs no quota check and spends no credits.
     if (pathname === '/context') {
       if (request.method !== 'GET') {
         return json({ error: 'Method not allowed' }, { status: 405, headers: cors });
