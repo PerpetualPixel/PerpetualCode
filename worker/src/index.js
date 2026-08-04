@@ -63,7 +63,9 @@ function json(body, { status = 200, headers = {} } = {}) {
 /** Fetch one sport, served from the edge cache when possible. */
 async function fetchSport(sport, env, ctx) {
   const url = new URL(`${UPSTREAM}/sports/${sport}/odds`);
-  url.searchParams.set('apiKey', env.ODDS_API_KEY);
+  // Trimmed: a newline picked up when pasting into `wrangler secret put` is
+  // invisible in the dashboard but makes the upstream reject the key as invalid.
+  url.searchParams.set('apiKey', (env.ODDS_API_KEY ?? '').trim());
   url.searchParams.set('regions', REGIONS);
   url.searchParams.set('markets', MARKETS);
   url.searchParams.set('oddsFormat', 'american');

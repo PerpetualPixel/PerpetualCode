@@ -7,7 +7,7 @@
 export const CONFIG = {
   // Your deployed Cloudflare Worker, e.g.
   // 'https://pixel-pick-odds.your-subdomain.workers.dev'
-  WORKER_URL: '',
+  WORKER_URL: 'https://pixel-pick-odds.mgbouldering.workers.dev',
 
   // Leagues to pull. Each one costs API credits, so keep this short.
   // 'upcoming' is the cheapest option: next games across all sports, one call.
