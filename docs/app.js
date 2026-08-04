@@ -19,7 +19,7 @@ import {
   confidenceColor,
   bookOffers,
 } from './engine.js';
-import { buildInsights, isTennis } from './insights.js';
+import { buildInsights, isTennis, isMma } from './insights.js';
 
 const HISTORY_KEY = 'pixelpick.history.v2';
 const LEAGUES_KEY = 'pixelpick.leagues.v2';
@@ -372,9 +372,37 @@ function eventContext(leg) {
   return state.context.get(leg.eventId);
 }
 
+/**
+ * Sherdog-derived fighter research for one MMA matchup, via the worker. Free —
+ * no odds credits — and cached by fighter pair, same pattern as eventContext.
+ */
+function mmaContextFor(leg) {
+  const key = `mma:${leg.eventId}`;
+  if (!state.context.has(key)) {
+    if (!CONFIG.WORKER_URL) {
+      state.context.set(key, Promise.resolve(null));
+    } else {
+      const url = new URL('/mma-context', CONFIG.WORKER_URL);
+      url.searchParams.set('a', leg.home);
+      url.searchParams.set('b', leg.away);
+      state.context.set(
+        key,
+        fetch(url, { headers: { Accept: 'application/json' } })
+          .then((r) => (r.ok ? r.json() : null))
+          .then((d) => d?.context ?? null)
+          .catch(() => null),
+      );
+    }
+  }
+  return state.context.get(key);
+}
+
 async function insightsFor(leg) {
   if (isTennis(leg.sportKey)) {
     return buildInsights(leg, { tennisData: await tennisArchive(leg.sportKey) });
+  }
+  if (isMma(leg.sportKey)) {
+    return buildInsights(leg, { mmaContext: await mmaContextFor(leg) });
   }
   return buildInsights(leg, { context: await eventContext(leg) });
 }

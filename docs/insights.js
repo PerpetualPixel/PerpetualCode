@@ -386,23 +386,145 @@ export function teamInsights(context, subject, { marketKey = 'h2h' } = {}) {
 }
 
 /* ------------------------------------------------------------------ */
+/* MMA (UFC / PFL / Dana White's Contender Series)                     */
+/* ------------------------------------------------------------------ */
+
+/**
+ * The Odds API bundles every MMA promotion under one key with no tag saying
+ * which — the promotion only ever surfaces indirectly, in an event name
+ * scraped off a fighter's own Sherdog page (e.g. "UFC Fight Night 284").
+ * There is nothing to disambiguate UFC from PFL from Contender Series at the
+ * odds-feed layer; a fighter's record is fighter-specific regardless of which
+ * card they're on.
+ */
+
+const MONTHS = 'Jan Feb Mar Apr May Jun Jul Aug Sep Oct Nov Dec'.split(' ');
+
+/** Sherdog dates read "Mon / DD / YYYY" — parsed rather than displayed as-is
+ * so a layoff can be measured, but the original string is what's ever shown. */
+function parseSherdogDate(text) {
+  const m = String(text ?? '').match(/([A-Za-z]{3})\s*\/\s*(\d{1,2})\s*\/\s*(\d{4})/);
+  if (!m) return null;
+  const month = MONTHS.indexOf(m[1]);
+  if (month < 0) return null;
+  return Date.UTC(+m[3], month, +m[2]);
+}
+
+/** Wins broken down by how they ended — a finish rate is a real signal in a
+ * sport where "decision machine" and "finisher" are genuinely different bets. */
+function finishSummary(fighter) {
+  const wins = fighter.history.filter((f) => f.result === 'win');
+  if (!wins.length) return null;
+  const tally = { knockout: 0, submission: 0, decision: 0, other: 0 };
+  for (const w of wins) if (w.category) tally[w.category]++;
+  const finishes = tally.knockout + tally.submission;
+  return { wins: wins.length, finishes, ...tally };
+}
+
+/** Losses broken down the same way — how a fighter has been finished before
+ * is a durability signal, and hiding it because it's unflattering would be
+ * exactly the kind of one-sided card this app is built not to produce. */
+function vulnerabilitySummary(fighter) {
+  const losses = fighter.history.filter((f) => f.result === 'loss');
+  if (!losses.length) return null;
+  const koLosses = losses.filter((f) => f.category === 'knockout').length;
+  const subLosses = losses.filter((f) => f.category === 'submission').length;
+  return { losses: losses.length, koLosses, subLosses };
+}
+
+function recordLine(fighter) {
+  const r = fighter.record;
+  if (!r) return `${fighter.name}'s pro record isn't on file.`;
+  const total = r.wins + r.losses + r.draws;
+  const finish = finishSummary(fighter);
+  const finishClause = finish
+    ? ` ${finish.finishes} of ${finish.wins} wins by finish (${finish.knockout} KO/TKO, ${finish.submission} submission).`
+    : '';
+  return `${fighter.name} is ${r.wins}-${r.losses}${r.draws ? `-${r.draws}` : ''} pro (${total} fights).${finishClause}`;
+}
+
+function formLine(fighter, RECENT = 5) {
+  const recent = fighter.history.slice(0, RECENT); // Sherdog lists newest first
+  if (!recent.length) return null;
+  const sequence = recent
+    .map((f) => ({ win: 'W', loss: 'L', draw: 'D', nc: 'NC' })[f.result] ?? '?')
+    .join('-');
+  const wins = recent.filter((f) => f.result === 'win').length;
+  return `Last ${recent.length}: ${sequence} (${wins} win${wins === 1 ? '' : 's'}).`;
+}
+
+/**
+ * Bullets for one MMA matchup. `context` is the { a, b } bundle from the
+ * worker's /mma-context — each side resolved independently, either of which
+ * may be null when Sherdog has no confident match (a brand-new prospect is a
+ * real "nothing on file" case, not a bug).
+ */
+export function mmaInsights(context, subjectName) {
+  if (!context) return [];
+
+  const subjectFold = fold(subjectName);
+  const candidates = [context.a, context.b].filter(Boolean);
+  const me = candidates.find((f) => fold(f.name) === subjectFold)
+    ?? candidates.find((f) => containsWords(subjectFold, fold(f.name)) || containsWords(fold(f.name), subjectFold));
+  if (!me) return [];
+
+  const opponent = [context.a, context.b].find((f) => f && f !== me) ?? null;
+  const bullets = [recordLine(me)];
+
+  const form = formLine(me);
+  if (form) bullets.push(opponent ? `${form} ${opponent.name}: ${formLine(opponent) ?? 'no history on file.'}` : form);
+
+  const vuln = vulnerabilitySummary(me);
+  if (vuln && (vuln.koLosses || vuln.subLosses)) {
+    const parts = [];
+    if (vuln.koLosses) parts.push(`${plural(vuln.koLosses, 'loss')} by KO/TKO`);
+    if (vuln.subLosses) parts.push(`${plural(vuln.subLosses, 'loss')} by submission`);
+    bullets.push(`Of ${me.name}'s ${vuln.losses} career ${vuln.losses === 1 ? 'loss' : 'losses'}, ${parts.join(' and ')}.`);
+  }
+
+  const last = me.history[0];
+  const lastDate = last ? parseSherdogDate(last.date) : null;
+  if (lastDate != null) {
+    const days = Math.round((Date.now() - lastDate) / 86400000);
+    // A year-plus out of the cage is unusual in MMA and usually means injury,
+    // suspension, or a title-shot wait — worth surfacing before the fight, not
+    // treating this fighter's dated form as current.
+    if (days > 365) {
+      bullets.push(
+        `${me.name}'s last fight was ${last.date} (${Math.round(days / 30)} months ago) — ` +
+        `the record above predates that layoff.`,
+      );
+    }
+  }
+
+  return bullets;
+}
+
+/* ------------------------------------------------------------------ */
 /* Entry point                                                         */
 /* ------------------------------------------------------------------ */
 
 export const isTennis = (sportKey) => String(sportKey ?? '').startsWith('tennis_');
+export const isMma = (sportKey) => sportKey === 'mma_mixed_martial_arts';
 
 /**
  * Non-price bullets for one leg. Callers concatenate these after engine.js's
  * single price bullet. Returns [] when nothing could be sourced, which the UI
  * renders as a shorter card rather than filler.
  */
-export function buildInsights(leg, { tennisData = null, context = null, now = Date.now() } = {}) {
+export function buildInsights(leg, { tennisData = null, context = null, mmaContext = null, now = Date.now() } = {}) {
   if (isTennis(leg.sportKey)) {
     if (!tennisData) return [];
     // Tennis "teams" are the two players; the bet names one of them.
     const subject = leg.selection.replace(/ to win$/i, '').trim();
     const opponent = fold(subject) === fold(leg.home) ? leg.away : leg.home;
     return tennisInsights(tennisData, subject, opponent, { now });
+  }
+
+  if (isMma(leg.sportKey)) {
+    if (!mmaContext) return [];
+    const subject = leg.selection.replace(/ to win$/i, '').trim();
+    return mmaInsights(mmaContext, subject);
   }
 
   const subject = leg.marketKey === 'totals'

@@ -4,8 +4,10 @@ import {
   matchPlayer,
   tennisInsights,
   teamInsights,
+  mmaInsights,
   buildInsights,
   isTennis,
+  isMma,
 } from '../docs/insights.js';
 
 const NOW = Date.parse('2026-08-04T12:00:00Z');
@@ -217,6 +219,110 @@ test('no context means no bullets, never filler', () => {
 });
 
 /* ---------------------------------------------------------------- */
+/* MMA (UFC / PFL / Contender Series)                                 */
+/* ---------------------------------------------------------------- */
+
+// Shape matches worker/src/mma.js's fetchMmaContext output exactly, so a
+// change to one that silently breaks the other shows up here.
+const fighter = (name, record, history) => ({ name, record, profileUrl: '#', history });
+
+const MMA_CONTEXT = {
+  a: fighter(
+    'Amanda Lemos',
+    { wins: 15, losses: 6, draws: 1 },
+    [
+      // Newest first — matches how Sherdog itself orders the table.
+      { result: 'loss', opponent: 'Gillian Robertson', event: 'UFC Fight Night 269', date: 'Mar / 14 / 2026', method: 'Decision (Unanimous)', category: 'decision' },
+      { result: 'loss', opponent: 'Tatiana Suarez', event: 'UFC Fight Night 259', date: 'Sep / 13 / 2025', method: 'Decision (Unanimous)', category: 'decision' },
+      { result: 'win', opponent: 'Iasmin Lucindo', event: 'UFC 313', date: 'Mar / 08 / 2025', method: 'Decision (Unanimous)', category: 'decision' },
+      { result: 'loss', opponent: 'Virna Jandiroba', event: 'UFC on ESPN 60', date: 'Dec / 07 / 2024', method: 'Submission (Rear-Naked Choke)', category: 'submission' },
+      { result: 'win', opponent: 'Mackenzie Dern', event: 'UFC 295', date: 'Nov / 11 / 2023', method: 'KO (Punch)', category: 'knockout' },
+      { result: 'win', opponent: 'Marina Rodriguez', event: 'UFC Fight Night 214', date: 'Nov / 05 / 2022', method: 'TKO (Punches)', category: 'knockout' },
+    ],
+  ),
+  b: fighter(
+    'Alexia Thainara',
+    { wins: 14, losses: 1, draws: 0 },
+    [
+      { result: 'win', opponent: 'Someone A', event: 'Card A', date: 'Jun / 01 / 2026', method: 'Submission (Armbar)', category: 'submission' },
+      { result: 'win', opponent: 'Someone B', event: 'Card B', date: 'Feb / 01 / 2026', method: 'Submission (Guillotine)', category: 'submission' },
+      { result: 'win', opponent: 'Someone C', event: 'Card C', date: 'Oct / 01 / 2025', method: 'Decision (Unanimous)', category: 'decision' },
+      { result: 'win', opponent: 'Someone D', event: 'Card D', date: 'Jun / 01 / 2025', method: 'Submission (Rear-Naked Choke)', category: 'submission' },
+      { result: 'win', opponent: 'Someone E', event: 'Card E', date: 'Feb / 01 / 2025', method: 'Submission (Triangle Choke)', category: 'submission' },
+    ],
+  ),
+};
+
+test('the record line states total, not just wins, and the finish breakdown', () => {
+  const text = mmaInsights(MMA_CONTEXT, 'Amanda Lemos').join(' ');
+  assert.match(text, /15-6-1 pro \(22 fights\)/);
+  // 2 KO/TKO wins + 0 submission wins = 2 of 3 wins by finish (one win, the
+  // Lucindo decision, is not a finish).
+  assert.match(text, /2 of 3 wins by finish \(2 KO\/TKO, 0 submission\)/);
+});
+
+test('a draw only appears in the record when there is one', () => {
+  const withDraw = mmaInsights(MMA_CONTEXT, 'Amanda Lemos').join(' ');
+  assert.match(withDraw, /15-6-1/);
+  const noDraw = mmaInsights(MMA_CONTEXT, 'Alexia Thainara').join(' ');
+  assert.match(noDraw, /14-1 pro/);
+  assert.ok(!/14-1-0/.test(noDraw), 'a 0-draw record should not print a trailing -0');
+});
+
+test('recent form is newest-first and compares both fighters', () => {
+  const text = mmaInsights(MMA_CONTEXT, 'Amanda Lemos').join(' ');
+  // Lemos: loss, loss, win, loss, win -> L-L-W-L-W
+  assert.match(text, /Last 5: L-L-W-L-W \(2 wins\)/);
+  assert.match(text, /Alexia Thainara: Last 5: W-W-W-W-W \(5 wins\)/);
+});
+
+test('losses are broken down by finish type — durability is not hidden', () => {
+  const text = mmaInsights(MMA_CONTEXT, 'Amanda Lemos').join(' ');
+  // The count is read from the parsed history, not the header record — the
+  // fixture's history has 3 losses (the header's 6 includes older fights this
+  // mock doesn't bother listing), 1 of them by submission, 0 by KO/TKO.
+  assert.match(text, /Of Amanda Lemos's 3 career losses, 1 loss by submission/);
+});
+
+test('a long layoff is disclosed, not silently folded into current form', () => {
+  const stale = {
+    a: fighter('Old Timer', { wins: 10, losses: 2, draws: 0 }, [
+      { result: 'win', opponent: 'X', event: 'Y', date: 'Jan / 01 / 2023', method: 'Decision (Unanimous)', category: 'decision' },
+    ]),
+    b: null,
+  };
+  const text = mmaInsights(stale, 'Old Timer').join(' ');
+  assert.match(text, /last fight was Jan \/ 01 \/ 2023/);
+  assert.match(text, /predates that layoff/);
+});
+
+test('no layoff notice for a fighter who fought recently', () => {
+  const text = mmaInsights(MMA_CONTEXT, 'Alexia Thainara').join(' ');
+  assert.ok(!/predates that layoff/.test(text));
+});
+
+test('a fighter with no record on file still gets a named, honest bullet', () => {
+  const noRecord = {
+    a: { name: 'Brand New Prospect', profileUrl: '#', record: null, history: [] },
+    b: null,
+  };
+  const text = mmaInsights(noRecord, 'Brand New Prospect').join(' ');
+  assert.match(text, /Brand New Prospect's pro record isn't on file/);
+});
+
+test('an unresolved subject produces no bullets, never the wrong fighter\'s stats', () => {
+  assert.deepEqual(mmaInsights(MMA_CONTEXT, 'Someone Else Entirely'), []);
+  assert.deepEqual(mmaInsights(null, 'Amanda Lemos'), []);
+});
+
+test('one side missing from Sherdog does not block bullets for the side that resolved', () => {
+  const oneSided = { a: MMA_CONTEXT.a, b: null };
+  const text = mmaInsights(oneSided, 'Amanda Lemos').join(' ');
+  assert.match(text, /15-6-1/);
+  assert.ok(!/undefined/.test(text));
+});
+
+/* ---------------------------------------------------------------- */
 /* Dispatch                                                           */
 /* ---------------------------------------------------------------- */
 
@@ -238,6 +344,17 @@ test('tennis is routed to the archive and team sports to the context bundle', ()
     home: 'Baltimore Orioles', away: 'Los Angeles Angels',
   };
   assert.ok(buildInsights(mlbLeg, { context: CONTEXT }).length > 0);
+
+  assert.equal(isMma('mma_mixed_martial_arts'), true);
+  assert.equal(isMma('baseball_mlb'), false);
+
+  const mmaLeg = {
+    sportKey: 'mma_mixed_martial_arts', marketKey: 'h2h',
+    selection: 'Amanda Lemos to win', home: 'Amanda Lemos', away: 'Alexia Thainara',
+  };
+  assert.ok(buildInsights(mmaLeg, { mmaContext: MMA_CONTEXT }).length > 0);
+  // No Sherdog data reachable — nothing invented in its place.
+  assert.deepEqual(buildInsights(mmaLeg, { mmaContext: null }), []);
 });
 
 test('a total has no side to profile, so it gets no team bullets', () => {

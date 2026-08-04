@@ -11,6 +11,7 @@ import {
 } from './auth.js';
 import { QuotaManager } from './quota.js';
 import { fetchContext, hasContext } from './context.js';
+import { fetchMmaContext } from './mma.js';
 
 const UPSTREAM = 'https://api.the-odds-api.com/v4';
 
@@ -475,6 +476,31 @@ export default {
         );
       } catch (error) {
         // Context is a bonus, never a blocker: a card without it is still a card.
+        return json({ context: null, reason: String(error).slice(0, 120) }, { headers: cors });
+      }
+    }
+
+    // MMA fighter research (UFC/PFL/DWCS — the Odds API bundles all of them
+    // under one key, with no way to tell them apart at that layer). Free —
+    // it reads Sherdog, not the odds feed.
+    if (pathname === '/mma-context') {
+      if (request.method !== 'GET') {
+        return json({ error: 'Method not allowed' }, { status: 405, headers: cors });
+      }
+      const { searchParams } = new URL(request.url);
+      try {
+        const context = await fetchMmaContext(
+          {
+            fighterA: searchParams.get('a') ?? '',
+            fighterB: searchParams.get('b') ?? '',
+          },
+          ctx,
+        );
+        return json(
+          { context },
+          { headers: { ...cors, 'Cache-Control': 'public, max-age=3600' } },
+        );
+      } catch (error) {
         return json({ context: null, reason: String(error).slice(0, 120) }, { headers: cors });
       }
     }

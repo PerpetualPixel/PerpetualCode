@@ -164,3 +164,36 @@ card, but it's worth swapping for a licensed provider before charging for this.
 Tennis is served separately, by a static archive built with
 `scripts/build-tennis-data.mjs` — ESPN has no usable tennis data on any host,
 its tennis athletes carry no ids at all.
+
+```
+GET /mma-context?a=Amanda+Lemos&b=Alexia+Thainara
+```
+
+Pro record, finish-rate breakdown (KO/TKO vs. submission vs. decision),
+loss-by-method, recent form, and a layoff disclosure for one MMA matchup,
+scraped from Sherdog. **Free** — no odds credits. Returns
+`{ context: { a, b } }` with either side `null` when that fighter has no
+confident Sherdog match — normal for a brand-new prospect, not an error.
+
+ESPN has no MMA pages at all on `cdn.espn.com` — confirmed 404 on every path
+tried — so this isn't the same host-swap fix as the other sports; ESPN is a
+dead end for MMA entirely. The Odds API doesn't help either: UFC, PFL, and
+Dana White's Contender Series all arrive under one bundled key
+(`mma_mixed_martial_arts`) with no tag saying which promotion a fight belongs
+to — the promotion only ever surfaces indirectly, in an event name inside a
+fighter's own Sherdog fight history (`"Dana White's Contender Series - Season
+3, Episode 2"` shows up there for fighters who came up through it).
+
+Sherdog's `robots.txt` explicitly allows crawling (`Allow: /`), and it was
+confirmed reachable from a live Cloudflare Worker before `worker/src/mma.js`
+was built against it — the ESPN block above is exactly why that check came
+first this time instead of after deploying. This is HTML scraping, not an
+API — meaningfully more fragile than every other source in this app. A
+Sherdog redesign can silently break a selector. Every extractor in `mma.js` is
+written field-by-field rather than as one large pattern spanning a whole row,
+specifically because one earlier version broke this way: a title-fight row
+wraps its event name in an extra `<span itemprop="award">` that a normal row
+doesn't have, and a single regex spanning the full row silently mis-aligned
+several rows after the first one it couldn't match. Splitting into row chunks
+first, then reading each field independently, means one odd row loses a field
+or two and nothing else.
