@@ -1,6 +1,7 @@
 name = "pixel-pick-odds"
 main = "src/index.js"
 compatibility_date = "2025-09-01"
+compatibility_flags = ["nodejs_compat"]
 
 [vars]
 # Origins allowed to call this proxy. Replace with your GitHub Pages origin.
@@ -31,9 +32,9 @@ database_id = ""
 [[durable_objects.bindings]]
 name = "QUOTA_MANAGER"
 class_name = "QuotaManager"
-environment = "production"
 
-# Database migrations
+# Durable Object class migration — required the first time a DO class is
+# introduced, separate from the D1 SQL migrations below.
 [[migrations]]
-tag = "v1"
-paths = ["src/migrations"]
+tag = "v1-do"
+new_sqlite_classes = ["QuotaManager"]
