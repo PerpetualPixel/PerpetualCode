@@ -10,8 +10,10 @@ import {
   getTOTPQRCode,
 } from './auth.js';
 import { QuotaManager } from './quota.js';
+import { fetchContext, hasContext } from './context.js';
 
 const UPSTREAM = 'https://api.the-odds-api.com/v4';
+
 const ALLOWED_SPORTS = new Set([
   'upcoming',
   'americanfootball_nfl',
@@ -26,10 +28,27 @@ const ALLOWED_SPORTS = new Set([
   'soccer_usa_mls',
 ]);
 
+// Tennis is keyed per tournament (tennis_atp_canadian_open, and a different key
+// next week), so an exact allowlist would go stale every few days. Prefixes let
+// the tour through without opening the door to arbitrary sport keys.
+const ALLOWED_SPORT_PREFIXES = ['tennis_atp_', 'tennis_wta_'];
+
+function isAllowedSport(key) {
+  return (
+    ALLOWED_SPORTS.has(key) ||
+    ALLOWED_SPORT_PREFIXES.some((prefix) => key.startsWith(prefix))
+  );
+}
+
 const MARKETS = 'h2h,spreads,totals';
 const REGIONS = 'us';
-const MAX_SPORTS_PER_REQUEST = 4;
-const DEFAULT_CACHE_SECONDS = 300;
+// Each sport is a separate billed call: 3 markets x 1 region = 3 credits apiece.
+// Three is the ceiling the app's league picker enforces, repeated here because
+// the browser is not where a spend limit belongs.
+const MAX_SPORTS_PER_REQUEST = 3;
+const DEFAULT_CACHE_SECONDS = 900;
+// The sports catalogue is free to fetch and changes on the order of days.
+const SPORTS_LIST_CACHE_SECONDS = 3600;
 const FREE_TIER_DAILY_LIMIT = 3;
 
 function corsHeaders(request, env) {
@@ -244,8 +263,16 @@ async function handleMe(request, env) {
   }
 }
 
+/** Sign-in is only enforced once REQUIRE_AUTH is switched on in wrangler.toml. */
+const authRequired = (env) => String(env.REQUIRE_AUTH ?? '') === 'true';
+
 async function handleOdds(request, env, ctx) {
   const cors = corsHeaders(request, env);
+
+  if (!authRequired(env)) {
+    return respondWithOdds(request, env, ctx, cors, null);
+  }
+
   const auth = request.headers.get('Authorization') || '';
   const token = auth.replace('Bearer ', '');
   const payload = verifyJWT(token, jwtSecret());
@@ -281,11 +308,16 @@ async function handleOdds(request, env, ctx) {
     }),
   );
 
-  const { pathname, searchParams } = new URL(request.url);
+  return respondWithOdds(request, env, ctx, cors, quotaStatus);
+}
+
+/** The actual odds fan-out, shared by the authed and open paths. */
+async function respondWithOdds(request, env, ctx, cors, quotaStatus) {
+  const { searchParams } = new URL(request.url);
   const requested = (searchParams.get('sports') ?? 'upcoming')
     .split(',')
     .map((s) => s.trim())
-    .filter((s) => ALLOWED_SPORTS.has(s));
+    .filter(isAllowedSport);
 
   if (!requested.length) {
     return json(
@@ -324,8 +356,9 @@ async function handleOdds(request, env, ctx) {
       quota,
       errors,
       fetchedAt: new Date().toISOString(),
-      remaining: quotaStatus.remaining - 1,
-      used: quotaStatus.used + 1,
+      ...(quotaStatus
+        ? { remaining: quotaStatus.remaining - 1, used: quotaStatus.used + 1 }
+        : {}),
     },
     {
       headers: {
@@ -334,6 +367,54 @@ async function handleOdds(request, env, ctx) {
       },
     },
   );
+}
+
+/**
+ * The catalogue of leagues the app may request. The Odds API bills nothing for
+ * this endpoint, so the picker can be populated on page load without touching
+ * the credit budget — and it stays correct as tournaments come and go.
+ */
+async function handleSports(env, ctx, cors) {
+  const cacheKey = new Request('https://pixel-pick.cache/sports');
+  const cache = caches.default;
+
+  const cached = await cache.match(cacheKey);
+  if (cached) {
+    return json({ sports: await cached.json(), cached: true }, { headers: cors });
+  }
+
+  const url = new URL(`${UPSTREAM}/sports`);
+  url.searchParams.set('apiKey', (env.ODDS_API_KEY ?? '').trim());
+
+  const upstream = await fetch(url.toString());
+  if (!upstream.ok) {
+    return json(
+      { error: 'Could not load the sports catalogue', status: upstream.status },
+      { status: 502, headers: cors },
+    );
+  }
+
+  const sports = (await upstream.json())
+    .filter((s) => s.active && !s.has_outrights && isAllowedSport(s.key))
+    .map(({ key, title, group }) => ({ key, title, group }));
+
+  // 'upcoming' is synthetic — it isn't in the catalogue but it is requestable,
+  // and it's the cheapest way to see what starts next across everything.
+  sports.unshift({ key: 'upcoming', title: 'Next up (all sports)', group: 'Any' });
+
+  ctx.waitUntil(
+    cache.put(
+      cacheKey,
+      new Response(JSON.stringify(sports), {
+        headers: {
+          'Content-Type': 'application/json',
+          'Cache-Control': `max-age=${SPORTS_LIST_CACHE_SECONDS}`,
+        },
+      }),
+    ),
+  );
+
+  return json({ sports, cached: false }, { headers: cors });
 }
 
 export { QuotaManager };
@@ -368,10 +449,39 @@ export default {
       return new Response(res.body, { status: res.status, headers: { ...cors, ...Object.fromEntries(res.headers) } });
     }
 
-    if (pathname === '/odds') {
-      if (request.method === 'OPTIONS') {
-        return new Response(null, { status: 204, headers: cors });
+    // Team-sport context. Free to serve — it reads ESPN, not the odds feed —
+    // so it needs no quota check and spends no credits.
+    if (pathname === '/context') {
+      if (request.method !== 'GET') {
+        return json({ error: 'Method not allowed' }, { status: 405, headers: cors });
       }
+      const { searchParams } = new URL(request.url);
+      const sportKey = searchParams.get('sport') ?? '';
+
+      if (!hasContext(sportKey)) {
+        return json({ context: null, reason: 'unsupported sport' }, { headers: cors });
+      }
+
+      try {
+        const context = await fetchContext(
+          {
+            sportKey,
+            home: searchParams.get('home') ?? '',
+            away: searchParams.get('away') ?? '',
+          },
+          ctx,
+        );
+        return json(
+          { context },
+          { headers: { ...cors, 'Cache-Control': 'public, max-age=900' } },
+        );
+      } catch (error) {
+        // Context is a bonus, never a blocker: a card without it is still a card.
+        return json({ context: null, reason: String(error).slice(0, 120) }, { headers: cors });
+      }
+    }
+
+    if (pathname === '/odds' || pathname === '/sports') {
       if (request.method !== 'GET') {
         return json({ error: 'Method not allowed' }, { status: 405, headers: cors });
       }
@@ -381,11 +491,13 @@ export default {
           { status: 500, headers: cors },
         );
       }
-      return handleOdds(request, env, ctx);
+      return pathname === '/sports'
+        ? handleSports(env, ctx, cors)
+        : handleOdds(request, env, ctx);
     }
 
     return json(
-      { error: 'Not found. Try POST /api/auth/signup or GET /odds (with auth)' },
+      { error: 'Not found. Try GET /sports or GET /odds?sports=upcoming' },
       { status: 404, headers: cors },
     );
   },

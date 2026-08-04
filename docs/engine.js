@@ -24,24 +24,66 @@ export const RULES = {
   PAIR_TARGET_AMERICAN: 100,
   // Below this many books pricing the exact same number, consensus is noise.
   MIN_BOOKS: 3,
+  // Nothing below this grade is shown at all. The board is meant to be the best
+  // available, not a ranked list of everything — a 40 is not a pick, it's a coin
+  // flip with extra steps.
+  MIN_SCORE: 50,
 };
 
 const MARKET_LABELS = { h2h: 'Moneyline', spreads: 'Spread', totals: 'Total' };
 
-/** Action Network league slugs, keyed by The Odds API sport_key. */
-const ACTION_NETWORK_SLUGS = {
-  americanfootball_nfl: 'nfl',
-  americanfootball_ncaaf: 'ncaaf',
-  basketball_nba: 'nba',
-  basketball_ncaab: 'ncaab',
-  basketball_wnba: 'wnba',
-  baseball_mlb: 'mlb',
-  icehockey_nhl: 'nhl',
-  mma_mixed_martial_arts: 'mma',
-  soccer_epl: 'soccer',
-  soccer_uefa_champs_league: 'soccer',
-  soccer_usa_mls: 'soccer',
+/* ------------------------------------------------------------------ */
+/* Sportsbooks                                                         */
+/* ------------------------------------------------------------------ */
+
+/**
+ * Books we can surface a button for. `keys` are the bookmaker keys The Odds API
+ * actually returns — some books are keyed by their legacy owner (Caesars still
+ * comes back as `williamhill_us`), so the mapping is explicit rather than
+ * assumed.
+ */
+export const SPORTSBOOKS = {
+  fanduel:    { name: 'FanDuel',    color: '#1493ff', url: 'https://sportsbook.fanduel.com/',    keys: ['fanduel'] },
+  draftkings: { name: 'DraftKings', color: '#53d337', url: 'https://sportsbook.draftkings.com/', keys: ['draftkings'] },
+  betmgm:     { name: 'BetMGM',     color: '#d4af37', url: 'https://sports.betmgm.com/',          keys: ['betmgm'] },
+  bet365:     { name: 'bet365',     color: '#1f9e77', url: 'https://www.bet365.com/',             keys: ['bet365'] },
+  fanatics:   { name: 'Fanatics',   color: '#e0454f', url: 'https://sportsbook.fanatics.com/',    keys: ['fanatics'] },
+  hardrock:   { name: 'Hard Rock',  color: '#9b6ef3', url: 'https://app.hardrock.bet/',           keys: ['hardrockbet', 'hardrock'] },
+  kalshi:     { name: 'Kalshi',     color: '#00d09c', url: 'https://kalshi.com/',                 keys: ['kalshi'] },
+  caesars:    { name: 'Caesars',    color: '#c8aa6e', url: 'https://sportsbook.caesars.com/',     keys: ['williamhill_us', 'caesars'] },
+  betrivers:  { name: 'BetRivers',  color: '#2b7fd4', url: 'https://betrivers.com/',              keys: ['betrivers'] },
+  espnbet:    { name: 'ESPN BET',   color: '#ff2e4d', url: 'https://espnbet.com/',                keys: ['espnbet'] },
 };
+
+/** Pre-selected on first run; the user can change this in the UI. */
+export const DEFAULT_BOOKS = [
+  'fanduel', 'draftkings', 'betmgm', 'bet365', 'kalshi', 'hardrock', 'fanatics',
+];
+
+const BOOK_BY_API_KEY = new Map();
+for (const [id, meta] of Object.entries(SPORTSBOOKS)) {
+  for (const key of meta.keys) BOOK_BY_API_KEY.set(key, id);
+}
+
+/** Map a raw Odds API bookmaker key to a registry id, or null if we don't list it. */
+export function bookIdFor(apiKey) {
+  return BOOK_BY_API_KEY.get(String(apiKey ?? '').toLowerCase()) ?? null;
+}
+
+/**
+ * Best quote per registry book for one candidate. A book missing from the
+ * result isn't pricing this exact line, which is what greys its button out.
+ */
+export function bookOffers(candidate) {
+  const byBook = new Map();
+  for (const quote of candidate?.quotes ?? []) {
+    const id = bookIdFor(quote.bookKey);
+    if (!id) continue;
+    const existing = byBook.get(id);
+    if (!existing || quote.decimal > existing.decimal) byBook.set(id, quote);
+  }
+  return byBook;
+}
 
 /* ------------------------------------------------------------------ */
 /* Odds conversion                                                     */
@@ -181,6 +223,10 @@ export function buildCandidates(events, { now = Date.now() } = {}) {
             fairProb: fair[i],
             vig,
             updatedMs: Number.isFinite(updatedMs) ? updatedMs : now,
+            // Deep link straight to the bet slip. Only present on The Odds API's
+            // paid tiers (includeLinks); null on free, where we fall back to the
+            // book's front door.
+            link: outcome.link ?? market.link ?? book.link ?? null,
           });
         });
       }
@@ -212,7 +258,6 @@ export function buildCandidates(events, { now = Date.now() } = {}) {
         eventId: event.id,
         sportKey: event.sport_key,
         sportTitle: event.sport_title,
-        league: ACTION_NETWORK_SLUGS[event.sport_key] ?? null,
         commenceMs,
         home: event.home_team,
         away: event.away_team,
@@ -224,6 +269,18 @@ export function buildCandidates(events, { now = Date.now() } = {}) {
         book: best.book,
         updatedMs: best.updatedMs,
         bookCount: quotes.length,
+        // Every book on this exact line, best price first — this is what the
+        // per-book buttons render from.
+        quotes: [...quotes]
+          .sort((a, b) => b.decimal - a.decimal)
+          .map((q) => ({
+            book: q.book,
+            bookKey: q.bookKey,
+            american: q.american,
+            decimal: q.decimal,
+            updatedMs: q.updatedMs,
+            link: q.link,
+          })),
         consensusProb,
         fairAmerican: decimalToAmerican(1 / consensusProb),
         ev,
@@ -273,33 +330,27 @@ export function scoreCandidate(c, { now = Date.now() } = {}) {
   return { score, parts };
 }
 
-/** Human-readable "why this is sharp", built from the numbers we actually used. */
+/**
+ * The price bullet — one line covering value against the market.
+ *
+ * Deliberately singular. Everything else on the card comes from insights.js,
+ * which reads actual form, head-to-head and injury data; four bullets of odds
+ * arithmetic was three bullets of restating the same edge.
+ */
 export function explain(c) {
   const evPct = (c.ev * 100).toFixed(1);
-  const lines = [];
 
-  // Below half a point of EV there is no edge worth claiming out loud.
-  lines.push(
+  const value =
     c.ev >= 0.005
-      ? `The market's own no-vig consensus makes this a ${(c.consensusProb * 100).toFixed(1)}% shot — fair value ${formatAmerican(c.fairAmerican)}. You're getting ${formatAmerican(c.american)}, worth about ${evPct}% per dollar.`
-      : `Consensus fair value is ${formatAmerican(c.fairAmerican)} and the best price is ${formatAmerican(c.american)}, so this is priced close to fair (${evPct}% per dollar). It's here on market quality, not on a pricing mistake.`,
-  );
+      ? `The market's own no-vig consensus makes this a ${(c.consensusProb * 100).toFixed(1)}% shot — fair value ${formatAmerican(c.fairAmerican)}. You're getting ${formatAmerican(c.american)} at ${c.book}, worth about ${evPct}% per dollar.`
+      : `Consensus fair value is ${formatAmerican(c.fairAmerican)} and the best price is ${formatAmerican(c.american)} at ${c.book} — priced close to fair (${evPct}% per dollar), so it's here on market quality rather than a pricing mistake.`;
 
-  lines.push(
-    `${c.bookCount} books are on this exact number and ${c.book} is the outlier — line shopping alone is worth ${(c.shopGain * 100).toFixed(1)} points of win probability over the field average.`,
-  );
-
-  lines.push(
+  const context =
     c.disagreement < 0.015
-      ? `The rest of the market is tightly clustered (±${(c.disagreement * 100).toFixed(1)}%), which is what makes one book hanging a better price meaningful rather than noisy.`
-      : `Books disagree by ±${(c.disagreement * 100).toFixed(1)}% here, so the edge is real but softer — this is a smaller-stake spot.`,
-  );
+      ? `${c.bookCount} books are on this exact number and the rest are tightly clustered (±${(c.disagreement * 100).toFixed(1)}%), which is what makes one book hanging a better price meaningful rather than noisy.`
+      : `${c.bookCount} books are on this number but they disagree by ±${(c.disagreement * 100).toFixed(1)}%, so the edge is real but softer — a smaller-stake spot.`;
 
-  lines.push(
-    `Typical vig on this market is ${(c.medianVig * 100).toFixed(1)}%; taking the best number is how you beat the hold over a season.`,
-  );
-
-  return lines;
+  return [`${value} ${context}`];
 }
 
 /* ------------------------------------------------------------------ */
@@ -310,10 +361,62 @@ const inBand = (a) => a >= RULES.MIN_AMERICAN && a <= RULES.MAX_AMERICAN;
 const canStandAlone = (a) => a >= RULES.SINGLE_FLOOR && a <= RULES.MAX_AMERICAN;
 const needsPartner = (a) => a >= RULES.MIN_AMERICAN && a < RULES.SINGLE_FLOOR;
 
-export function actionNetworkUrl(candidate) {
-  return candidate.league
-    ? `https://www.actionnetwork.com/${candidate.league}/odds`
-    : 'https://www.actionnetwork.com/odds';
+/* ------------------------------------------------------------------ */
+/* Confidence colour                                                   */
+/* ------------------------------------------------------------------ */
+
+function hslToRgb(h, s, l) {
+  const c = (1 - Math.abs(2 * l - 1)) * s;
+  const hp = ((h % 360) + 360) % 360 / 60;
+  const x = c * (1 - Math.abs((hp % 2) - 1));
+  const m = l - c / 2;
+
+  let rgb;
+  if (hp < 1) rgb = [c, x, 0];
+  else if (hp < 2) rgb = [x, c, 0];
+  else if (hp < 3) rgb = [0, c, x];
+  else if (hp < 4) rgb = [0, x, c];
+  else if (hp < 5) rgb = [x, 0, c];
+  else rgb = [c, 0, x];
+
+  return rgb.map((v) => Math.round((v + m) * 255));
+}
+
+/**
+ * Confidence colour for a grade, amber at the MIN_SCORE floor through to green
+ * at 100. Interpolated around the hue wheel rather than straight through RGB —
+ * a linear RGB blend from amber to green passes through a muddy olive, whereas
+ * amber -> yellow -> lime -> green reads as one continuous ramp. Nothing here
+ * goes red: anything that bad never reaches the board.
+ */
+export function confidenceColor(score) {
+  const t = clamp01((score - RULES.MIN_SCORE) / (100 - RULES.MIN_SCORE));
+  const [r, g, b] = hslToRgb(
+    43 + (142 - 43) * t,   // amber hue -> green hue
+    (96 + (69 - 96) * t) / 100,
+    (56 + (58 - 56) * t) / 100,
+  );
+  return `rgb(${r}, ${g}, ${b})`;
+}
+
+/* ------------------------------------------------------------------ */
+/* Contradictions                                                      */
+/* ------------------------------------------------------------------ */
+
+/**
+ * Two legs contradict when they're the same market on the same game — one side
+ * winning requires the other to lose, so showing both is the board arguing with
+ * itself. Different markets on the same game are fine: a team can lose outright
+ * and still cover, and a total is independent of who wins.
+ */
+export function contradicts(a, b) {
+  return a.eventId === b.eventId && a.marketKey === b.marketKey;
+}
+
+/** Share of the qualifying pool this grade beats, 0–100. */
+function percentileOf(score, scores) {
+  if (!scores.length) return 0;
+  return (scores.filter((s) => s <= score).length / scores.length) * 100;
 }
 
 /**
@@ -337,9 +440,15 @@ function weightedPick(pool, rng) {
  * closest to +100. Partners must come from a different game — two legs of the
  * same event are correlated, and a parlay price assumes they are not.
  */
-function findPartner(anchor, pool) {
+function findPartner(anchor, pool, usedLegs = []) {
   const eligible = pool.filter(
-    (c) => c.eventId !== anchor.eventId && inBand(c.american),
+    (c) =>
+      c.eventId !== anchor.eventId &&
+      inBand(c.american) &&
+      // A partner must not argue with anything already on the board. Without
+      // this, pick #1 can take one side of a game and pick #2 can quietly pull
+      // the other side in as its partner leg.
+      !usedLegs.some((leg) => contradicts(leg, c)),
   );
   if (!eligible.length) return null;
 
@@ -360,7 +469,7 @@ function findPartner(anchor, pool) {
  * Build one displayed pick from an anchor candidate: either a straight bet, or
  * a two-leg combo when the anchor's price requires a partner.
  */
-function buildPick(anchor, pool) {
+function buildPick(anchor, pool, usedLegs = []) {
   if (canStandAlone(anchor.american)) {
     return {
       type: 'single',
@@ -370,7 +479,7 @@ function buildPick(anchor, pool) {
     };
   }
 
-  const paired = findPartner(anchor, pool);
+  const paired = findPartner(anchor, pool, usedLegs);
   if (!paired) return null; // No legal way to show this one — drop it.
 
   return {
@@ -386,18 +495,25 @@ function buildPick(anchor, pool) {
 /**
  * Generate a slate of 1–2 picks.
  *
- * @param candidates scored candidates from buildCandidates + scoreCandidate
+ * @param candidates    scored candidates from buildCandidates + scoreCandidate
  * @param opts.exclude  candidate ids already shown this session
  * @param opts.rng      injectable randomness, for tests
+ * @param opts.minScore grade floor; defaults to RULES.MIN_SCORE
  */
-export function generateSlate(candidates, { exclude = new Set(), rng = Math.random } = {}) {
-  const pool = candidates.filter((c) => inBand(c.american));
+export function generateSlate(
+  candidates,
+  { exclude = new Set(), rng = Math.random, minScore = RULES.MIN_SCORE } = {},
+) {
+  const pool = candidates.filter((c) => inBand(c.american) && c.score >= minScore);
   const fresh = pool.filter((c) => !exclude.has(c.id));
   // Once everything has been shown, recycle rather than dead-end.
   const source = fresh.length >= 2 ? fresh : pool;
 
   const picks = [];
-  const usedEvents = new Set();
+  // Every leg already committed to this slate, so nothing that follows can
+  // contradict one. Tracking legs rather than events lets a game appear twice
+  // across different markets while still blocking both sides of one market.
+  const usedLegs = [];
   const target = source.length > 3 && rng() > 0.4 ? 2 : 1;
 
   const working = [...source].sort((a, b) => b.score - a.score);
@@ -405,13 +521,14 @@ export function generateSlate(candidates, { exclude = new Set(), rng = Math.rand
   while (picks.length < target && working.length) {
     const idx = weightedPick(working.slice(0, 25), rng);
     const [anchor] = working.splice(idx, 1);
-    // Don't show two picks on the same game — that's one opinion, not two.
-    if (usedEvents.has(anchor.eventId)) continue;
+    // Anchors arrive in weighted-score order, so the survivor of a clash is the
+    // better-graded one and the loser is simply never reached.
+    if (usedLegs.some((leg) => contradicts(leg, anchor))) continue;
 
-    const pick = buildPick(anchor, working);
+    const pick = buildPick(anchor, working, usedLegs);
     if (!pick) continue;
 
-    pick.legs.forEach((leg) => usedEvents.add(leg.eventId));
+    usedLegs.push(...pick.legs);
     // A partner used in a combo shouldn't reappear as its own pick.
     pick.legs.slice(1).forEach((leg) => {
       const i = working.findIndex((c) => c.id === leg.id);
@@ -419,6 +536,11 @@ export function generateSlate(candidates, { exclude = new Set(), rng = Math.rand
     });
     picks.push(pick);
   }
+
+  // Grade each pick against the board it came from, so "78" means something
+  // relative to tonight rather than in the abstract.
+  const scores = pool.map((c) => c.score);
+  for (const pick of picks) pick.percentile = percentileOf(pick.score, scores);
 
   return { picks, poolSize: pool.length, generatedAt: Date.now() };
 }

@@ -17,6 +17,10 @@
 
 * { box-sizing: border-box; }
 
+/* Any author `display` rule beats the UA stylesheet's [hidden] { display: none },
+   so elements toggled via the hidden attribute need this to actually disappear. */
+[hidden] { display: none !important; }
+
 html { -webkit-text-size-adjust: 100%; }
 
 body {
@@ -53,6 +57,8 @@ body {
   letter-spacing: 0.16em;
 }
 .wordmark span { color: var(--accent); }
+
+.topbar-actions { display: flex; align-items: center; gap: 8px; }
 
 .icon-btn {
   display: inline-flex;
@@ -104,6 +110,142 @@ body {
 }
 .status.demo { color: var(--warn); }
 .status.error { color: #f87171; }
+
+/* ---------------------------------------------------------------- */
+/* Filters                                                           */
+/* ---------------------------------------------------------------- */
+
+.filters { margin-bottom: 14px; }
+
+.filter-tabs { display: flex; gap: 8px; }
+
+.filter-tab {
+  flex: 1;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 7px;
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  color: var(--muted);
+  font-family: var(--mono);
+  font-size: 0.7rem;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  padding: 10px 12px;
+  min-height: 42px;
+  cursor: pointer;
+}
+.filter-tab:hover { color: var(--text); border-color: #36414d; }
+.filter-tab[aria-expanded="true"] {
+  color: var(--text);
+  border-color: var(--accent);
+  background: var(--surface-2);
+}
+
+.filter-count {
+  color: var(--accent);
+  font-weight: 700;
+  /* Keeps the tab from jittering as the count changes width. */
+  font-variant-numeric: tabular-nums;
+}
+
+.filter-panel {
+  margin-top: 8px;
+  padding: 14px;
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+}
+.filter-panel[hidden] { display: none; }
+
+.check-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(148px, 1fr));
+  gap: 2px 10px;
+  margin-top: 4px;
+}
+
+.check {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  padding: 7px 0;
+  cursor: pointer;
+  font-size: 0.85rem;
+  /* Full-row target so a thumb doesn't have to find the box itself. */
+  min-height: 38px;
+}
+.check input {
+  flex: 0 0 auto;
+  width: 17px;
+  height: 17px;
+  accent-color: var(--accent);
+  cursor: pointer;
+}
+.check span { min-width: 0; overflow-wrap: anywhere; }
+.check .check-tally {
+  margin-left: auto;
+  font-family: var(--mono);
+  font-size: 0.66rem;
+  color: var(--muted);
+  padding-left: 8px;
+}
+
+.check input:disabled { cursor: not-allowed; }
+.check:has(input:disabled) { opacity: 0.38; cursor: not-allowed; }
+
+.check-all {
+  border-bottom: 1px solid var(--line);
+  margin-bottom: 4px;
+  font-family: var(--mono);
+  font-size: 0.7rem;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--muted);
+}
+
+.filter-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  padding-bottom: 8px;
+  margin-bottom: 4px;
+  border-bottom: 1px solid var(--line);
+}
+
+.filter-cost {
+  font-family: var(--mono);
+  font-size: 0.68rem;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--muted);
+}
+.filter-cost strong { color: var(--accent); font-weight: 700; }
+/* At the cap the spend is as high as it goes — say so rather than just blocking. */
+.filter-cost.is-max strong { color: var(--warn); }
+
+.link-btn {
+  background: none;
+  border: none;
+  padding: 4px 0;
+  color: var(--muted);
+  font-family: var(--mono);
+  font-size: 0.66rem;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  cursor: pointer;
+}
+.link-btn:hover { color: var(--accent); text-decoration: underline; }
+
+.filter-hint {
+  margin: 10px 0 0;
+  font-size: 0.72rem;
+  line-height: 1.5;
+  color: var(--muted);
+}
 
 /* The one button. */
 .generate {
@@ -275,6 +417,9 @@ body {
 .why ul { margin: 0; padding-left: 16px; }
 .why li { font-size: 0.84rem; color: #cbd5df; margin-bottom: 6px; }
 .why li:last-child { margin-bottom: 0; }
+/* Replaced by real bullets once the form/injury lookups land, or removed
+   outright when the sport has no research behind it. */
+.why li.why-pending { color: var(--muted); font-style: italic; }
 
 .pair-note {
   padding: 10px 14px;
@@ -285,31 +430,102 @@ body {
   color: var(--warn);
 }
 
-.pick-foot { padding: 12px 14px; }
+/* ---------------------------------------------------------------- */
+/* Confidence meter                                                  */
+/* ---------------------------------------------------------------- */
 
-.action-link {
+/* --conf is set inline per pick: amber at 50, green at 100. */
+.confidence { padding: 12px 14px 0; }
+
+.conf-track {
+  height: 6px;
+  border-radius: 999px;
+  background: var(--surface-2);
+  overflow: hidden;
+}
+.conf-fill {
   display: block;
-  text-align: center;
-  padding: 12px;
+  height: 100%;
+  border-radius: 999px;
+  background: var(--conf, var(--accent));
+  transition: width 260ms ease;
+}
+@media (prefers-reduced-motion: reduce) {
+  .conf-fill { transition: none; }
+}
+
+.conf-label {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 10px;
+  margin-top: 6px;
+  font-family: var(--mono);
+  font-size: 0.64rem;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--muted);
+}
+.conf-score { color: var(--conf, var(--accent)); font-weight: 700; }
+
+/* ---------------------------------------------------------------- */
+/* Sportsbook buttons                                                */
+/* ---------------------------------------------------------------- */
+
+.books {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(104px, 1fr));
+  gap: 7px;
+}
+
+.book-btn {
+  /* --book is the brand colour, set inline from the registry. */
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 1px;
+  padding: 8px 6px;
+  min-height: 46px;
   border: 1px solid var(--line);
+  border-left: 3px solid var(--book, var(--accent));
   border-radius: var(--radius);
   background: var(--surface-2);
   color: var(--text);
   text-decoration: none;
   font-family: var(--mono);
-  font-size: 0.75rem;
-  letter-spacing: 0.06em;
-  text-transform: uppercase;
-  min-height: 44px;
+  font-size: 0.66rem;
+  letter-spacing: 0.04em;
+  text-align: center;
 }
-.action-link:hover { border-color: var(--accent); color: var(--accent); }
-.action-link small {
-  display: block;
-  text-transform: none;
-  letter-spacing: 0;
+.book-btn:hover { border-color: #36414d; border-left-color: var(--book, var(--accent)); }
+.book-btn .book-price {
+  font-size: 0.8rem;
+  font-weight: 700;
+  color: var(--book, var(--accent));
+  font-variant-numeric: tabular-nums;
+}
+.book-btn .book-best {
+  font-size: 0.55rem;
+  letter-spacing: 0.1em;
+  color: var(--accent);
+}
+
+/* Book isn't pricing this exact line — visible, but not actionable. */
+.book-btn.is-off {
+  opacity: 0.34;
+  cursor: not-allowed;
+  border-left-color: var(--line);
   color: var(--muted);
-  font-size: 0.68rem;
-  margin-top: 2px;
+}
+.book-btn.is-off .book-price { color: var(--muted); font-weight: 400; }
+.book-btn.is-off:hover { border-color: var(--line); border-left-color: var(--line); }
+
+.books-empty {
+  font-size: 0.75rem;
+  color: var(--muted);
+  text-align: center;
+  padding: 10px 0;
 }
 
 .empty {
@@ -388,11 +604,35 @@ body {
   color: var(--muted);
 }
 
-.history-item {
-  border-left: 2px solid var(--line);
-  padding: 6px 0 6px 10px;
-  margin-bottom: 8px;
+.history-note {
+  margin: 12px 16px 0;
+  font-size: 0.72rem;
+  line-height: 1.5;
+  color: var(--muted);
 }
+
+/* Whole entry is a button so tapping it reopens the pick on the main view. */
+.history-entry {
+  display: block;
+  width: 100%;
+  text-align: left;
+  background: none;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  padding: 0;
+  margin-bottom: 8px;
+  cursor: pointer;
+  color: inherit;
+  font: inherit;
+}
+.history-entry:hover { border-color: #36414d; }
+.history-entry:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+
+.history-item {
+  border-left: 2px solid var(--conf, var(--line));
+  padding: 8px 10px;
+}
+.history-item + .history-item { border-top: 1px dashed var(--line); }
 .history-item .h-sel { font-size: 0.85rem; }
 .history-item .h-meta {
   font-family: var(--mono);
@@ -400,6 +640,55 @@ body {
   color: var(--muted);
 }
 .history-item .h-price { color: var(--accent); }
+
+/* Where the line sits now versus where it sat when the pick was made. */
+.h-now {
+  font-family: var(--mono);
+  font-size: 0.66rem;
+  margin-top: 3px;
+  color: var(--muted);
+}
+.h-now .h-moved-up { color: var(--accent); }
+.h-now .h-moved-down { color: #f87171; }
+.h-now .h-gone { color: var(--warn); }
+
+.history-foot {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 7px 10px;
+  border-top: 1px solid var(--line);
+  background: var(--surface-2);
+  font-family: var(--mono);
+  font-size: 0.62rem;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--muted);
+}
+.history-foot .h-reopen { color: var(--accent); }
+
+.history-books {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 5px;
+  padding: 8px 10px;
+  border-top: 1px dashed var(--line);
+}
+
+.h-book {
+  border-left: 2px solid var(--book, var(--line));
+  border-radius: 2px;
+  background: var(--surface-2);
+  color: var(--text);
+  text-decoration: none;
+  font-family: var(--mono);
+  font-size: 0.62rem;
+  padding: 4px 7px;
+  white-space: nowrap;
+}
+.h-book:hover { color: var(--accent); }
+.h-book.is-off { opacity: 0.32; color: var(--muted); border-left-color: var(--line); }
 
 .clear-btn {
   margin: 12px 16px 20px;

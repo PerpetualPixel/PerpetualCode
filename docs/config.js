@@ -9,11 +9,24 @@ export const CONFIG = {
   // 'https://pixel-pick-odds.your-subdomain.workers.dev'
   WORKER_URL: 'https://pixel-pick-odds.mgbouldering.workers.dev',
 
-  // Leagues to pull. Each one costs API credits, so keep this short.
-  // 'upcoming' is the cheapest option: next games across all sports, one call.
+  // Gate the app behind sign-in. Leave false until the D1 database is created
+  // and migrations are applied — the auth endpoints 500 without it, which would
+  // lock you out of your own app.
+  REQUIRE_AUTH: false,
+
+  // Leagues pulled on first run, before the user picks their own. 'upcoming' is
+  // the cheapest option: the next games across all sports in a single call.
   SPORTS: ['upcoming'],
 
+  // Hard ceiling on leagues per refresh. Each league is its own billed call
+  // (3 markets x 1 region = 3 credits), so this is a spend limit, not a UI
+  // preference. The worker enforces the same number independently.
+  MAX_LEAGUES: 3,
+  CREDITS_PER_LEAGUE: 3,
+
   // Re-fetch odds at most this often. Taps in between re-sample the cached
-  // pool, which is why generating picks repeatedly is free.
-  REFRESH_MS: 5 * 60 * 1000,
+  // pool, which is why generating picks repeatedly is free. Keep this at or
+  // above the worker's CACHE_SECONDS so the client never asks for a board the
+  // edge would only have to re-fetch anyway.
+  REFRESH_MS: 15 * 60 * 1000,
 };

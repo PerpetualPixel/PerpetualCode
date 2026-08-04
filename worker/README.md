@@ -110,7 +110,7 @@ If you ever do leave the app open and refreshing, raise `CACHE_SECONDS` in
 `wrangler.toml` — `900` (15 min) triples your runway and barely changes the
 picks, since lines don't move much inside a quarter hour.
 
-## Endpoint
+## Endpoints
 
 ```
 GET /odds?sports=upcoming
@@ -118,4 +118,36 @@ GET /odds?sports=americanfootball_nfl,basketball_nba
 ```
 
 Returns `{ events, sports, cached, quota, errors, fetchedAt }`. Sports are
-allowlisted in `src/index.js`; anything else is rejected with a 400.
+allowlisted in `src/index.js`; anything else is rejected with a 400. Tennis is
+allowed by prefix (`tennis_atp_`, `tennis_wta_`) because its keys are
+per-tournament and an exact list would go stale every few days.
+
+**Costs 3 credits per league, per cache miss.** Capped at 3 leagues a request —
+the browser enforces the same limit, but a spend ceiling doesn't belong only in
+a place the user can edit.
+
+```
+GET /sports
+```
+
+The requestable league catalogue. **Free** — The Odds API doesn't bill its
+`/sports` endpoint — so the app populates its league picker on load without
+touching the budget. Cached an hour.
+
+```
+GET /context?sport=baseball_mlb&home=Baltimore+Orioles&away=Los+Angeles+Angels
+```
+
+Season and venue records, last five results, head-to-head, ATS and the injury
+report for one fixture, normalised from ESPN. **Free** — it never touches the
+odds feed. Returns `{ context: null }` when the fixture can't be matched with
+confidence, which is a normal answer: the card then shows fewer bullets rather
+than another team's statistics.
+
+ESPN's site API is undocumented and unsupported. It's read defensively
+throughout and a missing section only shortens a card, but it carries no SLA —
+worth swapping for a licensed provider before charging for this.
+
+Tennis is deliberately absent here: ESPN's tennis athletes have no ids and its
+tennis summary endpoint 400s. That sport is served by a static archive built
+with `scripts/build-tennis-data.mjs`.

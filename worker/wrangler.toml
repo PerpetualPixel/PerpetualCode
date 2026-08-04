@@ -7,9 +7,16 @@ compatibility_date = "2025-09-01"
 # No trailing slash. Add http://localhost:8080 while developing locally.
 ALLOWED_ORIGINS = "https://miguelsgarcia4.github.io"
 
-# How long the edge caches odds. Higher = fewer API credits burned.
-# 300s means tapping Generate Picks all day costs the same as tapping it once.
-CACHE_SECONDS = "300"
+# How long the edge caches odds. Higher = fewer API credits burned, and this is
+# the single biggest lever on the monthly bill: credits are spent per cache MISS,
+# not per tap, so a shared app burns them on cache turnover rather than usage.
+# 900s (15 min) costs roughly a third of 300s and barely moves the picks.
+CACHE_SECONDS = "900"
+
+# Require a signed-in account for /odds. Leave "false" until the D1 database is
+# created and migrations are applied — the frontend's CONFIG.REQUIRE_AUTH must
+# be flipped to match, or the app will 401 against its own proxy.
+REQUIRE_AUTH = "false"
 
 # ODDS_API_KEY is NOT set here — it is a secret:
 #   wrangler secret put ODDS_API_KEY
