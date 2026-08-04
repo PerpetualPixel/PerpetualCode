@@ -64,18 +64,25 @@ Cost is **markets × regions per upstream call**. This Worker requests 3 markets
 (`h2h,spreads,totals`) in 1 region (`us`), so **3 credits per sport, per cache
 miss**.
 
-With `CACHE_SECONDS = 300`, the worst case is 12 misses/hour → 36 credits/hour of
-active use. On a 500-credit plan that's roughly **14 hours of live use per
-month**, which is plenty for checking a slate a few times a day.
+The app never fetches on page load — only the first tap of *Generate Picks*
+pays. Subsequent taps within the cache window are free, so one sitting costs 3
+credits no matter how many picks you generate.
 
-To stretch it further, raise `CACHE_SECONDS` in `wrangler.toml` — `900` (15 min)
-triples your runway and barely changes the picks, since lines don't move much
-inside a quarter hour.
+On the free 500-credit plan with the default `SPORTS: ['upcoming']`:
 
-Keep `CONFIG.SPORTS` short. `'upcoming'` is the cheapest option: one call
-covering the next games across every sport. Each extra league you list is
-another 3 credits per refresh. The Worker refuses more than 4 sports per
-request so a bad query string can't drain the month in one go.
+| | Credits per sitting | Sittings per month |
+|---|---|---|
+| `['upcoming']` (default) | 3 | **166** (~5/day) |
+| 4 leagues listed | 12 | 41 (~1.4/day) |
+
+The expensive move is listing leagues, not tapping the button. `'upcoming'` is
+one call covering the next games across every sport, and it's almost always
+what you want. The Worker refuses more than 4 sports per request so a bad query
+string can't drain the month in one go.
+
+If you ever do leave the app open and refreshing, raise `CACHE_SECONDS` in
+`wrangler.toml` — `900` (15 min) triples your runway and barely changes the
+picks, since lines don't move much inside a quarter hour.
 
 ## Endpoint
 

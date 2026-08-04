@@ -348,15 +348,16 @@ document.addEventListener('keydown', (e) => {
 /* Boot                                                              */
 /* ---------------------------------------------------------------- */
 
-(async function init() {
+(function init() {
   renderHistory();
-  try {
-    await loadOdds();
-    updatePoolLine();
-    el.generate.disabled = false;
-  } catch (error) {
-    setStatus(error.message, 'error');
-    // Still let them tap — the retry path lives in generate().
-    el.generate.disabled = false;
-  }
+  // Deliberately no fetch on load. Odds cost API credits, and opening the app
+  // isn't the same as asking for a pick — the first tap pays for the board.
+  setStatus(
+    CONFIG.WORKER_URL
+      ? 'Ready — tap to pull the board'
+      : 'Demo data — set WORKER_URL in config.js for live odds',
+    CONFIG.WORKER_URL ? '' : 'demo',
+  );
+  el.poolLine.textContent = 'Tap to load live odds';
+  el.generate.disabled = false;
 })();
