@@ -1,0 +1,95 @@
+# Pixel Pick odds proxy
+
+A Cloudflare Worker that sits between the app and The Odds API.
+
+**Why this exists:** GitHub Pages serves static files. Anything the browser can
+read, anyone can read — so an API key in `config.js` would be public the moment
+you push. The Worker holds the key server-side as an encrypted secret. The
+browser only ever talks to the Worker.
+
+It also caches aggressively, which is what makes a free-tier key survive real
+use: tapping *Generate Picks* fifty times costs the same as tapping it once.
+
+## Setup
+
+Free Cloudflare account required. No credit card, no paid plan.
+
+**1. Get an odds API key** — sign up at [the-odds-api.com](https://the-odds-api.com/).
+The free tier is 500 credits/month.
+
+**2. Install Wrangler and log in:**
+
+```bash
+npm install -g wrangler
+wrangler login
+```
+
+**3. Set your GitHub Pages origin** in `wrangler.toml`. No trailing slash:
+
+```toml
+ALLOWED_ORIGINS = "https://miguelsgarcia4.github.io"
+```
+
+Only origins listed here may call the proxy, so a stranger who finds the URL
+can't spend your credits.
+
+**4. Store the key as a secret — not in any file:**
+
+```bash
+cd worker
+wrangler secret put ODDS_API_KEY
+# paste the key when prompted
+```
+
+**5. Deploy:**
+
+```bash
+wrangler deploy
+```
+
+Wrangler prints a URL like `https://pixel-pick-odds.your-name.workers.dev`.
+Put that in `docs/config.js` as `WORKER_URL`.
+
+**6. Verify:**
+
+```bash
+curl "https://pixel-pick-odds.your-name.workers.dev/odds?sports=upcoming"
+```
+
+You should get JSON with an `events` array and a `quota` block.
+
+## Budgeting your credits
+
+Cost is **markets × regions per upstream call**. This Worker requests 3 markets
+(`h2h,spreads,totals`) in 1 region (`us`), so **3 credits per sport, per cache
+miss**.
+
+The app never fetches on page load — only the first tap of *Generate Picks*
+pays. Subsequent taps within the cache window are free, so one sitting costs 3
+credits no matter how many picks you generate.
+
+On the free 500-credit plan with the default `SPORTS: ['upcoming']`:
+
+| | Credits per sitting | Sittings per month |
+|---|---|---|
+| `['upcoming']` (default) | 3 | **166** (~5/day) |
+| 4 leagues listed | 12 | 41 (~1.4/day) |
+
+The expensive move is listing leagues, not tapping the button. `'upcoming'` is
+one call covering the next games across every sport, and it's almost always
+what you want. The Worker refuses more than 4 sports per request so a bad query
+string can't drain the month in one go.
+
+If you ever do leave the app open and refreshing, raise `CACHE_SECONDS` in
+`wrangler.toml` — `900` (15 min) triples your runway and barely changes the
+picks, since lines don't move much inside a quarter hour.
+
+## Endpoint
+
+```
+GET /odds?sports=upcoming
+GET /odds?sports=americanfootball_nfl,basketball_nba
+```
+
+Returns `{ events, sports, cached, quota, errors, fetchedAt }`. Sports are
+allowlisted in `src/index.js`; anything else is rejected with a 400.
