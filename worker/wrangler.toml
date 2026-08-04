@@ -13,3 +13,20 @@ CACHE_SECONDS = "300"
 
 # ODDS_API_KEY is NOT set here — it is a secret:
 #   wrangler secret put ODDS_API_KEY
+
+# D1 database binding (run: wrangler d1 create pixel-pick)
+[[d1_databases]]
+binding = "DB"
+database_name = "pixel-pick"
+database_id = ""
+
+# Durable Objects for quota enforcement
+[[durable_objects.bindings]]
+name = "QUOTA_MANAGER"
+class_name = "QuotaManager"
+environment = "production"
+
+# Database migrations
+[[migrations]]
+tag = "v1"
+paths = ["src/migrations"]

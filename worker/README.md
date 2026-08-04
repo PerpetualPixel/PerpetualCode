@@ -41,7 +41,33 @@ wrangler secret put ODDS_API_KEY
 # paste the key when prompted
 ```
 
-**5. Deploy:**
+**5. Create the D1 database (for user auth):**
+
+```bash
+cd worker
+wrangler d1 create pixel-pick
+```
+
+Wrangler will print something like:
+```
+✅ Successfully created DB 'pixel-pick'!
+
+[[d1_databases]]
+binding = "DB"
+database_name = "pixel-pick"
+database_id = "12345678-abcd-efgh-ijkl-mnopqrstuvwx"
+```
+
+Copy the `database_id` and paste it into `wrangler.toml`, replacing the empty string.
+
+**6. Run migrations to create tables:**
+
+```bash
+wrangler d1 migrations apply pixel-pick --local
+wrangler d1 migrations apply pixel-pick --remote
+```
+
+**7. Deploy:**
 
 ```bash
 wrangler deploy

@@ -18,9 +18,13 @@
 
 <header class="topbar">
   <h1 class="wordmark">PIXEL<span>PICK</span></h1>
-  <button id="historyToggle" class="icon-btn" aria-expanded="false" aria-controls="historyPanel">
-    History<span id="historyCount" class="badge" hidden>0</span>
-  </button>
+  <div style="display: flex; gap: 10px; align-items: center;">
+    <div id="quotaInfo" style="font-size: 12px; color: var(--text-secondary);"></div>
+    <button id="historyToggle" class="icon-btn" aria-expanded="false" aria-controls="historyPanel">
+      History<span id="historyCount" class="badge" hidden>0</span>
+    </button>
+    <button id="logoutBtn" class="icon-btn" aria-label="Sign out">Sign Out</button>
+  </div>
 </header>
 
 <main id="main">

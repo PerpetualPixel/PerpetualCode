@@ -31,6 +31,8 @@ const el = {
   historyList: document.getElementById('historyList'),
   historyCount: document.getElementById('historyCount'),
   scrim: document.getElementById('scrim'),
+  logoutBtn: document.getElementById('logoutBtn'),
+  quotaInfo: document.getElementById('quotaInfo'),
 };
 
 const state = {
@@ -40,7 +42,42 @@ const state = {
   quota: null,
   seen: new Set(),
   history: loadHistory(),
+  remaining: 0,
+  used: 0,
 };
+
+/* ---------------------------------------------------------------- */
+/* Auth                                                              */
+/* ---------------------------------------------------------------- */
+
+function getToken() {
+  return localStorage.getItem('pixelpick_token');
+}
+
+function clearAuth() {
+  localStorage.removeItem('pixelpick_token');
+  localStorage.removeItem('pixelpick_user_id');
+  window.location.href = '/PerpetualCode/auth.html';
+}
+
+function checkAuth() {
+  const token = getToken();
+  if (!token) {
+    window.location.href = '/PerpetualCode/auth.html';
+    return false;
+  }
+  return true;
+}
+
+function updateQuotaDisplay() {
+  const remaining = state.remaining;
+  const used = state.used;
+  const total = 3;
+  el.quotaInfo.textContent = `${remaining}/${total} taps left`;
+  el.quotaInfo.title = `Used ${used} of 3 daily picks`;
+}
+
+el.logoutBtn?.addEventListener('click', clearAuth);
 
 /* ---------------------------------------------------------------- */
 /* Formatting                                                        */
@@ -88,7 +125,24 @@ async function loadOdds({ force = false } = {}) {
   const url = new URL('/odds', CONFIG.WORKER_URL);
   url.searchParams.set('sports', CONFIG.SPORTS.join(','));
 
-  const response = await fetch(url, { headers: { Accept: 'application/json' } });
+  const token = getToken();
+  const response = await fetch(url, {
+    headers: {
+      Accept: 'application/json',
+      Authorization: `Bearer ${token}`,
+    },
+  });
+
+  if (response.status === 401) {
+    clearAuth();
+    return;
+  }
+
+  if (response.status === 429) {
+    const detail = await response.json().catch(() => ({}));
+    throw new Error('Daily quota exceeded. Try again tomorrow.');
+  }
+
   if (!response.ok) {
     const detail = await response.json().catch(() => ({}));
     throw new Error(detail.error ?? `Odds proxy returned ${response.status}`);
@@ -98,7 +152,10 @@ async function loadOdds({ force = false } = {}) {
   state.candidates = analyze(data.events);
   state.isDemo = false;
   state.quota = data.quota;
+  state.remaining = data.remaining || 0;
+  state.used = data.used || 0;
   state.fetchedAt = Date.now();
+  updateQuotaDisplay();
 
   const bits = [`${data.events.length} games priced`];
   if (data.cached) bits.push('cached');
@@ -206,7 +263,6 @@ function loadHistory() {
     const raw = JSON.parse(localStorage.getItem(HISTORY_KEY) ?? '[]');
     return Array.isArray(raw) ? raw : [];
   } catch {
-    // Corrupt or unavailable storage shouldn't take the app down.
     return [];
   }
 }
@@ -321,7 +377,6 @@ function updatePoolLine(poolSize) {
   el.poolLine.textContent = `${count} qualifying bet${count === 1 ? '' : 's'} available`;
 }
 
-// One delegated listener covers every "?" button, including re-rendered ones.
 el.picks.addEventListener('click', (event) => {
   const button = event.target.closest('.why-btn');
   if (!button) return;
@@ -349,9 +404,9 @@ document.addEventListener('keydown', (e) => {
 /* ---------------------------------------------------------------- */
 
 (function init() {
+  if (!checkAuth()) return;
+
   renderHistory();
-  // Deliberately no fetch on load. Odds cost API credits, and opening the app
-  // isn't the same as asking for a pick — the first tap pays for the board.
   setStatus(
     CONFIG.WORKER_URL
       ? 'Ready — tap to pull the board'
@@ -360,4 +415,5 @@ document.addEventListener('keydown', (e) => {
   );
   el.poolLine.textContent = 'Tap to load live odds';
   el.generate.disabled = false;
+  updateQuotaDisplay();
 })();
