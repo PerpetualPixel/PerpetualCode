@@ -14,6 +14,7 @@ import { fetchContext, hasContext } from './context.js';
 import { fetchWeather, hasVenue } from './weather.js';
 import { fetchMmaContext } from './mma.js';
 import { currentPhase, runPotdPhase, getPotd, getPotdBySport } from './potd.js';
+import { getOrGenerateAnalysis } from './analysis.js';
 
 const UPSTREAM = 'https://api.the-odds-api.com/v4';
 
@@ -609,6 +610,36 @@ export default {
     // MMA fighter research (UFC/PFL/DWCS — the Odds API bundles all of them
     // under one key, with no way to tell them apart at that layer). Free —
     // it reads Sherdog, not the odds feed.
+    // AI-written matchup analysis, one per game per ET calendar day — see
+    // analysis.js for the full design. Free to the client (reads/writes KV,
+    // never touches the odds feed); the real cost is the model call itself,
+    // which only happens on that game's first request of the day.
+    if (pathname === '/analysis') {
+      if (request.method !== 'GET') {
+        return json({ error: 'Method not allowed' }, { status: 405, headers: cors });
+      }
+      const { searchParams } = new URL(request.url);
+      const candidate = {
+        eventId: searchParams.get('eventId') ?? '',
+        sportKey: searchParams.get('sportKey') ?? '',
+        sportTitle: searchParams.get('sportTitle') ?? '',
+        home: searchParams.get('home') ?? '',
+        away: searchParams.get('away') ?? '',
+      };
+      if (!candidate.eventId || !candidate.sportKey || !candidate.home || !candidate.away) {
+        return json({ analysis: null, reason: 'missing eventId/sportKey/home/away' }, { headers: cors });
+      }
+      try {
+        const analysis = await getOrGenerateAnalysis(candidate, env, ctx);
+        return json(
+          { analysis },
+          { headers: { ...cors, 'Cache-Control': 'public, max-age=3600' } },
+        );
+      } catch (error) {
+        return json({ analysis: null, reason: String(error).slice(0, 120) }, { headers: cors });
+      }
+    }
+
     if (pathname === '/mma-context') {
       if (request.method !== 'GET') {
         return json({ error: 'Method not allowed' }, { status: 405, headers: cors });

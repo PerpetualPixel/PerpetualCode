@@ -586,6 +586,39 @@ function mmaContextFor(leg) {
   return state.context.get(key);
 }
 
+/**
+ * The AI-written matchup analysis for one game, via the worker — one per
+ * game per ET calendar day, cached there, shared across every market/leg on
+ * that event (see worker/src/analysis.js). Null whenever the feature isn't
+ * available for any reason (no ANTHROPIC_API_KEY configured, no research
+ * context for this event, or the model call itself failed) — the caller
+ * falls back to the existing quantitative price case in that case, never
+ * shows a broken section.
+ */
+function matchupAnalysisFor(leg) {
+  const key = `analysis:${leg.eventId}`;
+  if (!state.context.has(key)) {
+    if (!CONFIG.WORKER_URL) {
+      state.context.set(key, Promise.resolve(null));
+    } else {
+      const url = new URL('/analysis', CONFIG.WORKER_URL);
+      url.searchParams.set('eventId', leg.eventId);
+      url.searchParams.set('sportKey', leg.sportKey);
+      url.searchParams.set('sportTitle', leg.sportTitle ?? leg.sportKey);
+      url.searchParams.set('home', leg.home);
+      url.searchParams.set('away', leg.away);
+      state.context.set(
+        key,
+        fetch(url, { headers: { Accept: 'application/json' } })
+          .then((r) => (r.ok ? r.json() : null))
+          .then((d) => d?.analysis ?? null)
+          .catch(() => null),
+      );
+    }
+  }
+  return state.context.get(key);
+}
+
 // buildInsights() returns bullets tagged { tier, text } for callers that want
 // to group them (Play of the Day's tiered write-up); the compact card just
 // wants the flat text list it's always shown, tier stripped.
@@ -1551,34 +1584,16 @@ async function openStatsDrawer(leg, opposite = null, { fullscreen = false } = {}
   el.statsDrawerBody.innerHTML = renderStatsSkeleton();
   setStatsDrawerOpen(true);
 
-  const priceCase = explainExtensive(leg);
   const stake = singleStakeLine(leg);
-  const priceHtml = `
-    <div class="stats-section">
-      <h3>The Market &amp; Price Case</h3>
-      <ul>${priceCase.map((t) => `<li>${esc(t)}</li>`).join('')}</ul>
-      ${stake ? `<div class="stake-line">${esc(stake)}</div>` : ''}
-    </div>`;
-
-  // The other side of the same market, argued on its own terms — the board
-  // highlights one side, but a market cutting both ways is exactly why a bet
-  // has a price at all, and the case against the algorithm's lean deserves
-  // the same treatment as the case for it.
   const devilStake = opposite ? singleStakeLine(opposite) : null;
-  const devilHtml = opposite
-    ? `
-      <div class="stats-section devil-advocate">
-        <h3>Devil's Advocate — ${esc(opposite.selection)}</h3>
-        <ul>${explainExtensive(opposite).map((t) => `<li>${esc(t)}</li>`).join('')}</ul>
-        ${devilStake ? `<div class="stake-line">${esc(devilStake)}</div>` : ''}
-      </div>`
-    : '';
 
   let bullets = [];
   let weather = null;
   let mmaBreakdownHtml = '';
   let tennisBreakdownHtml = '';
+  let analysisText = null;
   try {
+    const analysisPromise = matchupAnalysisFor(leg);
     if (isTennis(leg.sportKey)) {
       const tennisData = await tennisArchive(leg.sportKey);
       bullets = buildInsights(leg, { tennisData });
@@ -1593,9 +1608,43 @@ async function openStatsDrawer(leg, opposite = null, { fullscreen = false } = {}
       weather = w;
       bullets = buildInsights(leg, { context, weather });
     }
+    analysisText = await analysisPromise;
   } catch {
     /* Research is a bonus; the price case and book table still stand alone. */
   }
+
+  // The AI-written matchup analysis replaces the quantitative price case
+  // entirely when it's available (see worker/src/analysis.js) — falls back
+  // to the existing no-vig/EV read whenever it isn't, so the drawer always
+  // has a real "why" either way.
+  const priceHtml = analysisText
+    ? `
+      <div class="stats-section">
+        <h3>Matchup Analysis <span class="stats-source">AI-written, once daily</span></h3>
+        <p class="analysis-text">${esc(analysisText)}</p>
+        ${stake ? `<div class="stake-line">${esc(stake)}</div>` : ''}
+      </div>`
+    : `
+      <div class="stats-section">
+        <h3>The Market &amp; Price Case</h3>
+        <ul>${explainExtensive(leg).map((t) => `<li>${esc(t)}</li>`).join('')}</ul>
+        ${stake ? `<div class="stake-line">${esc(stake)}</div>` : ''}
+      </div>`;
+
+  // The other side of the same market, argued on its own terms — the board
+  // highlights one side, but a market cutting both ways is exactly why a bet
+  // has a price at all, and the case against the algorithm's lean deserves
+  // the same treatment as the case for it. Still the quantitative version —
+  // the AI analysis is scoped to the game overall, not a specific side, per
+  // the same design that lets one analysis serve every market on the event.
+  const devilHtml = opposite
+    ? `
+      <div class="stats-section devil-advocate">
+        <h3>Devil's Advocate — ${esc(opposite.selection)}</h3>
+        <ul>${explainExtensive(opposite).map((t) => `<li>${esc(t)}</li>`).join('')}</ul>
+        ${devilStake ? `<div class="stake-line">${esc(devilStake)}</div>` : ''}
+      </div>`
+    : '';
 
   // The drawer may have been closed (or reopened for a different leg) while
   // these fetches were in flight — never paint a stale result over whatever

@@ -22,6 +22,12 @@ REQUIRE_AUTH = "false"
 # ODDS_API_KEY is NOT set here — it is a secret:
 #   wrangler secret put ODDS_API_KEY
 
+# ANTHROPIC_API_KEY is likewise a secret, and optional: without it, /analysis
+# (the daily AI-written matchup breakdown — see src/analysis.js) returns null
+# and the app falls back to the existing quantitative price case. Set it the
+# same way once you have a key:
+#   wrangler secret put ANTHROPIC_API_KEY
+
 # D1 database binding (run: wrangler d1 create pixel-pick)
 [[d1_databases]]
 binding = "DB"
