@@ -1567,6 +1567,17 @@ input[type="range"]:focus-visible {
   border-bottom: 1px solid var(--line);
 }
 
+.slate-event-label {
+  flex: 1 1 auto;
+  font-family: var(--sans);
+  font-size: 0.8rem;
+  font-weight: 500;
+  color: var(--accent);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 .more-info-btn {
   flex: none;
   background: var(--surface);

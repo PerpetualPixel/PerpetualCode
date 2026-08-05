@@ -13,6 +13,7 @@ import { QuotaManager } from './quota.js';
 import { fetchContext, hasContext } from './context.js';
 import { fetchWeather, hasVenue } from './weather.js';
 import { fetchMmaContext } from './mma.js';
+import { getUfcEventDetails } from './ufc-events.js';
 import { currentPhase, runPotdPhase, getPotd, getPotdBySport } from './potd.js';
 import { getOrGenerateAnalysis } from './analysis.js';
 
@@ -79,6 +80,15 @@ function json(body, { status = 200, headers = {} } = {}) {
   });
 }
 
+function enrichMmaEvents(events) {
+  if (!events || !Array.isArray(events)) return events;
+
+  return events.map((event) => {
+    const eventDetails = getUfcEventDetails(event.home_team, event.away_team);
+    return eventDetails ? { ...event, ufc_event: eventDetails } : event;
+  });
+}
+
 async function fetchSport(sport, env, ctx) {
   const url = new URL(`${UPSTREAM}/sports/${sport}/odds`);
   url.searchParams.set('apiKey', (env.ODDS_API_KEY ?? '').trim());
@@ -95,7 +105,11 @@ async function fetchSport(sport, env, ctx) {
 
   const cached = await cache.match(cacheKey);
   if (cached) {
-    return { events: await cached.json(), cached: true, quota: null };
+    let events = await cached.json();
+    if (sport === 'mma_mixed_martial_arts') {
+      events = enrichMmaEvents(events);
+    }
+    return { events, cached: true, quota: null };
   }
 
   const upstream = await fetch(url.toString());
@@ -104,12 +118,16 @@ async function fetchSport(sport, env, ctx) {
     return { error: { sport, status: upstream.status, detail: detail.slice(0, 300) } };
   }
 
-  const events = await upstream.json();
+  let events = await upstream.json();
   const quota = {
     remaining: upstream.headers.get('x-requests-remaining'),
     used: upstream.headers.get('x-requests-used'),
     lastCost: upstream.headers.get('x-requests-last'),
   };
+
+  if (sport === 'mma_mixed_martial_arts') {
+    events = enrichMmaEvents(events);
+  }
 
   ctx.waitUntil(
     cache.put(
