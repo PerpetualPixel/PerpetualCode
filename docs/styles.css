@@ -91,6 +91,113 @@ body {
 }
 
 /* ---------------------------------------------------------------- */
+/* Top-level tabs — Board vs. Play of the Day                        */
+/* ---------------------------------------------------------------- */
+
+.top-tabs {
+  display: flex;
+  gap: 8px;
+  max-width: 620px;
+  margin: 0 auto;
+  padding: 0 20px 14px;
+}
+
+.top-tab {
+  flex: 1;
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  color: var(--muted);
+  font-family: var(--mono);
+  font-size: 0.75rem;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  padding: 12px;
+  min-height: 42px;
+  cursor: pointer;
+}
+.top-tab:hover { color: var(--text); border-color: #36414d; }
+.top-tab.is-active {
+  color: #04140a;
+  background: var(--accent);
+  border-color: var(--accent);
+  font-weight: 700;
+}
+
+/* ---------------------------------------------------------------- */
+/* Play of the Day                                                    */
+/* ---------------------------------------------------------------- */
+
+.potd { margin-top: 22px; }
+
+.potd-card {
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  padding: 18px;
+}
+
+.potd-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 12px;
+}
+
+.potd-stale {
+  margin: 0 0 12px;
+  padding: 8px 10px;
+  border-radius: var(--radius-sm, 8px);
+  background: var(--surface-2);
+  border: 1px solid var(--line);
+  color: var(--warn);
+  font-size: 0.72rem;
+}
+
+.potd-headline {
+  margin: 0 0 6px;
+  font-size: 1.15rem;
+  line-height: 1.35;
+}
+
+.potd-matchup {
+  margin: 0 0 14px;
+  font-family: var(--mono);
+  font-size: 0.75rem;
+  color: var(--muted);
+}
+
+.potd-section {
+  margin-top: 18px;
+  padding-top: 14px;
+  border-top: 1px solid var(--line);
+}
+
+.potd-section h3 {
+  margin: 0 0 8px;
+  font-family: var(--mono);
+  font-size: 0.72rem;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--muted);
+}
+
+.potd-section ul {
+  margin: 0;
+  padding-left: 18px;
+  line-height: 1.6;
+}
+
+.potd-meta {
+  margin: 18px 0 0;
+  padding-top: 14px;
+  border-top: 1px solid var(--line);
+  font-family: var(--mono);
+  font-size: 0.7rem;
+  color: var(--muted);
+}
+
+/* ---------------------------------------------------------------- */
 /* Main                                                              */
 /* ---------------------------------------------------------------- */
 

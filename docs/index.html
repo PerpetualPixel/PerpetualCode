@@ -26,7 +26,17 @@
   </div>
 </header>
 
+<nav class="top-tabs" role="tablist" aria-label="Sections">
+  <button id="tabBoard" class="top-tab is-active" role="tab" aria-selected="true" aria-controls="boardView">
+    Board
+  </button>
+  <button id="tabPotd" class="top-tab" role="tab" aria-selected="false" aria-controls="potdView">
+    Play of the Day
+  </button>
+</nav>
+
 <main id="main">
+<section id="boardView" role="tabpanel" aria-labelledby="tabBoard">
   <div id="status" class="status" role="status" aria-live="polite">Loading the board…</div>
 
   <!-- Filters: which leagues to pull picks from, which books to price them at. -->
@@ -118,6 +128,11 @@
     21+. For entertainment only — nothing here is financial advice.
     <a href="https://www.1800gambler.net/" target="_blank" rel="noopener">1-800-GAMBLER</a>
   </p>
+</section>
+
+<section id="potdView" role="tabpanel" aria-labelledby="tabPotd" hidden>
+  <div id="potdBody" class="potd"></div>
+</section>
 </main>
 
 <div id="scrim" class="scrim" hidden></div>

@@ -12,6 +12,7 @@ import {
 import { QuotaManager } from './quota.js';
 import { fetchContext, hasContext } from './context.js';
 import { fetchMmaContext } from './mma.js';
+import { currentPhase, runPotdPhase, getPotd } from './potd.js';
 
 const UPSTREAM = 'https://api.the-odds-api.com/v4';
 
@@ -469,6 +470,29 @@ async function handleSports(env, ctx, cors) {
 export { QuotaManager };
 
 export default {
+  /**
+   * Fires hourly (see wrangler.toml's [triggers]) — most ticks are a no-op.
+   * currentPhase checks the actual ET wall-clock hour, so this self-corrects
+   * across DST without a UTC cron needing hand-maintenance twice a year.
+   */
+  async scheduled(event, env, ctx) {
+    const phase = currentPhase(event.scheduledTime ?? Date.now());
+    if (!phase) return;
+
+    ctx.waitUntil(
+      runPotdPhase(phase, {
+        env,
+        ctx,
+        now: event.scheduledTime ?? Date.now(),
+        fetchBoard: async () => {
+          const { events, error } = await fetchSport('upcoming', env, ctx);
+          if (error) throw new Error(`PoTD board fetch failed: ${JSON.stringify(error)}`);
+          return events;
+        },
+      }),
+    );
+  },
+
   async fetch(request, env, ctx) {
     const cors = corsHeaders(request, env);
 
@@ -550,6 +574,23 @@ export default {
         );
       } catch (error) {
         return json({ context: null, reason: String(error).slice(0, 120) }, { headers: cors });
+      }
+    }
+
+    // Today's Play of the Day — written by the scheduled() cron, read-only
+    // here. Free: reads KV, never touches the odds feed on this path.
+    if (pathname === '/potd') {
+      if (request.method !== 'GET') {
+        return json({ error: 'Method not allowed' }, { status: 405, headers: cors });
+      }
+      try {
+        const potd = await getPotd(env);
+        return json(
+          { potd },
+          { headers: { ...cors, 'Cache-Control': 'public, max-age=300' } },
+        );
+      } catch (error) {
+        return json({ potd: null, reason: String(error).slice(0, 120) }, { headers: cors });
       }
     }
 

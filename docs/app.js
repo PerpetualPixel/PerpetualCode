@@ -66,6 +66,11 @@ const el = {
   oddsMaxLabel: document.getElementById('oddsMaxLabel'),
   confidenceSlider: document.getElementById('confidenceSlider'),
   confidenceLabel: document.getElementById('confidenceLabel'),
+  tabBoard: document.getElementById('tabBoard'),
+  tabPotd: document.getElementById('tabPotd'),
+  boardView: document.getElementById('boardView'),
+  potdView: document.getElementById('potdView'),
+  potdBody: document.getElementById('potdBody'),
 };
 
 const state = {
@@ -1131,6 +1136,113 @@ document.addEventListener('keydown', (e) => {
   if (!el.historyPanel.hidden) setHistoryOpen(false);
   closeOtherPanels(null);
 });
+
+/* ---------------------------------------------------------------- */
+/* Play of the Day                                                   */
+/* ---------------------------------------------------------------- */
+
+const potdDateTimeFmt = new Intl.DateTimeFormat(undefined, {
+  weekday: 'short', month: 'short', day: 'numeric',
+  hour: 'numeric', minute: '2-digit',
+});
+
+/**
+ * A PoTD-specific confidence bar rather than reusing renderConfidence — that
+ * one's "Beats N% of the board" claim is relative to whatever pool a regular
+ * Generate tap pulled, which has no meaning for a single daily editorial
+ * pick with no board of its own to compare against.
+ */
+function renderPotdConfidence(score) {
+  const color = confidenceColor(score, RULES.MIN_SCORE);
+  return `
+    <div class="confidence" style="--conf:${color}">
+      <div class="conf-track">
+        <span class="conf-fill" style="width:${Math.round(score)}%"></span>
+      </div>
+      <div class="conf-label">
+        <span>Confidence <span class="conf-score">${Math.round(score)}</span>/100</span>
+      </div>
+    </div>`;
+}
+
+function renderPotdSection(section) {
+  return `
+    <div class="potd-section">
+      <h3>${esc(section.title)}</h3>
+      <ul>${section.bullets.map((b) => `<li>${esc(b)}</li>`).join('')}</ul>
+    </div>`;
+}
+
+function renderPotd(potd) {
+  if (!potd) {
+    el.potdBody.innerHTML = `<p class="empty">
+      Nothing posted yet today. Play of the Day goes up once daily — around
+      8am ET most days, or the evening before when the pick's own game starts
+      too early for that (an early tennis match, say). Check back soon.</p>`;
+    return;
+  }
+
+  const { writeup, pick, generatedAt, stale } = potd;
+  const staleNote = stale
+    ? `<p class="potd-stale">Today's pick hasn't posted yet — showing yesterday's.</p>`
+    : '';
+
+  el.potdBody.innerHTML = `
+    <article class="potd-card">
+      <div class="potd-head">
+        <span class="chip"><strong>${esc(writeup.sportTitle)}</strong> · ${esc(writeup.marketLabel)}</span>
+        <span class="price">${esc(writeup.price)}</span>
+      </div>
+      ${staleNote}
+      <h2 class="potd-headline">${esc(writeup.headline)}</h2>
+      <p class="potd-matchup">
+        ${esc(writeup.matchup)} · ${esc(potdDateTimeFmt.format(new Date(writeup.commenceMs)))}
+      </p>
+      ${renderPotdConfidence(writeup.score)}
+      ${writeup.sections.map(renderPotdSection).join('')}
+      <p class="potd-meta">
+        Best price at ${esc(writeup.book)} · posted ${esc(potdDateTimeFmt.format(new Date(generatedAt)))}
+      </p>
+    </article>`;
+}
+
+let potdLoaded = false;
+async function loadPotd({ force = false } = {}) {
+  if (potdLoaded && !force) return;
+  potdLoaded = true;
+
+  if (!CONFIG.WORKER_URL) {
+    el.potdBody.innerHTML = `<p class="empty">
+      Play of the Day needs the odds worker — set WORKER_URL in config.js.</p>`;
+    return;
+  }
+
+  el.potdBody.innerHTML = `<p class="empty">Loading…</p>`;
+  try {
+    const response = await fetch(new URL('/potd', CONFIG.WORKER_URL), {
+      headers: { Accept: 'application/json' },
+    });
+    const data = await response.json();
+    renderPotd(data.potd ?? null);
+  } catch {
+    potdLoaded = false; // a network hiccup shouldn't permanently give up
+    el.potdBody.innerHTML = `<p class="empty">Couldn't reach the odds feed.</p>`;
+  }
+}
+
+function setActiveTab(tab) {
+  const onBoard = tab === 'board';
+  el.boardView.hidden = !onBoard;
+  el.potdView.hidden = onBoard;
+  el.tabBoard.classList.toggle('is-active', onBoard);
+  el.tabPotd.classList.toggle('is-active', !onBoard);
+  el.tabBoard.setAttribute('aria-selected', String(onBoard));
+  el.tabPotd.setAttribute('aria-selected', String(!onBoard));
+  if (!onBoard) loadPotd();
+}
+
+el.tabBoard.addEventListener('click', () => setActiveTab('board'));
+el.tabPotd.addEventListener('click', () => setActiveTab('potd'));
 
 /* ---------------------------------------------------------------- */
 /* Boot                                                              */

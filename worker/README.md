@@ -67,7 +67,18 @@ wrangler d1 migrations apply pixel-pick --local
 wrangler d1 migrations apply pixel-pick --remote
 ```
 
-**7. Deploy:**
+**7. Create the KV namespace (for Play of the Day):**
+
+```bash
+cd worker
+wrangler kv namespace create POTD_KV
+```
+
+Wrangler prints an `id` — paste it into the `[[kv_namespaces]]` block in
+`wrangler.toml`, replacing the placeholder. This is a one-time setup step;
+after this, `/potd` and the hourly cron just work.
+
+**8. Deploy:**
 
 ```bash
 wrangler deploy
@@ -109,6 +120,14 @@ string can't drain the month in one go.
 If you ever do leave the app open and refreshing, raise `CACHE_SECONDS` in
 `wrangler.toml` — `900` (15 min) triples your runway and barely changes the
 picks, since lines don't move much inside a quarter hour.
+
+**Play of the Day adds up to 6 credits/day on its own**, independent of any
+user tapping anything: the hourly cron's two active ticks (8am and 7pm ET)
+each pull `'upcoming'` (3 credits) *if* that league's cache happens to be
+cold — which it often won't be, since it's the same shared cache real user
+taps populate. Worst case (nobody's used the app in the last 15 minutes when
+a cron tick fires) is 6 credits/day, ~180/month — a real bite out of the
+500-credit budget, worth knowing about rather than discovering later.
 
 ## Endpoints
 
@@ -197,3 +216,44 @@ doesn't have, and a single regex spanning the full row silently mis-aligned
 several rows after the first one it couldn't match. Splitting into row chunks
 first, then reading each field independently, means one odd row loses a field
 or two and nothing else.
+
+```
+GET /tennis-alt-spread?sport=tennis_atp_canadian_open&eventId=...
+```
+
+A wider ladder of game-margin spread points for one tennis match than the
+featured board carries. **Not a sets-won market** — a first version of this
+shipped mislabeled as "Set Spread" on the strength of one match's ladder
+(-2.5..2.5) looking plausible as sets; a second match's ladder ran to ±9.5,
+impossible as a sets margin in any tennis format, which proved
+`alternate_spreads` is the same game-margin axis as the featured `spreads`
+market, just denser (confirmed against The Odds API's own docs: "all
+available point spread outcomes"). There is no sets-won market in this feed.
+
+Costs a real odds credit per match (1 market × 1 region), unlike every other
+endpoint here — it's the per-event odds endpoint, not the featured board. The
+app calls this for only a bounded, score-ranked slice of the tennis matches
+already on its board (`CONFIG.TENNIS_ALT_SPREAD_LIMIT`, default 6), never the
+whole tour, and caches each event for an hour on top of that.
+
+```
+GET /potd
+```
+
+Today's Play of the Day — one editorially-selected pick with a full
+price-case-plus-research write-up, the same for every user that day. **Free**
+— reads Workers KV, never touches the odds feed on this path. Returns
+`{ potd: null }` before either cron run has fired that day, or
+`{ potd: { ...yesterday's record, stale: true } }` as a labelled fallback
+rather than nothing.
+
+Generation happens in `scheduled()` (see `worker/src/potd.js`), not here —
+this route only reads what that already wrote. Cloudflare Cron Triggers are
+UTC-only and the target times are ET wall-clock (8am, or 7pm the evening
+before for a match too early for the morning slot), which shift by an hour
+across DST — the cron fires hourly and the handler checks the actual current
+ET hour itself via `Intl.DateTimeFormat`, so the schedule stays correct across
+DST without two hand-maintained UTC crons. Once a date's pick is written nothing
+overwrites it that day, including an early-match pick claimed the evening
+before — that idempotency check is what makes "consistent all day" actually
+true rather than just usually true.

@@ -38,3 +38,20 @@ class_name = "QuotaManager"
 [[migrations]]
 tag = "v1-do"
 new_sqlite_classes = ["QuotaManager"]
+
+# Play of the Day storage — one blob per ET calendar date, written by the cron
+# handler below, read by GET /potd. KV rather than D1: this is a "one record
+# per day" shape with no querying needed, and D1 isn't provisioned yet anyway
+# (see the binding above — database_id is still blank).
+[[kv_namespaces]]
+binding = "POTD_KV"
+id = "15a94259af1c4d4cb4bc19076d0be2d9"
+
+# Runs hourly rather than at the two exact target times, because Cron Triggers
+# are UTC-only and the target times are ET wall-clock (8am / 7pm), which shift
+# by an hour across DST — an hourly tick lets the handler itself check current
+# ET time via Intl and only do real work in the matching hour, so the schedule
+# stays correct across DST without needing two separate UTC crons maintained
+# by hand twice a year.
+[triggers]
+crons = ["0 * * * *"]

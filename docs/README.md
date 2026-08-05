@@ -1,7 +1,8 @@
 # Pixel Pick
 
 One button. It reads the live US betting market, finds bets priced better than
-the market's own consensus, and shows you one or two of them.
+the market's own consensus, and shows you up to 8 of them to build your own
+parlays or straights from.
 
 - **`index.html` / `styles.css` / `app.js`** — the interface.
 - **`engine.js`** — all the betting logic. Pure functions, no DOM, no network.
@@ -102,6 +103,22 @@ closing line — there's no historical-odds time-series feed here to read a
 guaranteed one from, so it depends on the app having been open again before
 that game started to catch a later price. An aggregate CLV appears at the top
 of the History panel once at least one leg has closed.
+
+## Play of the Day
+
+A separate tab: one editorially-selected pick, the same for every visitor
+that day, with a full write-up (the price case plus every research bullet
+this app can source for it) rather than the compact card version. Generated
+server-side by the worker's hourly cron (`worker/src/potd.js`) — the app just
+reads whatever's currently stored via `GET /potd`.
+
+Posts around 8am ET most days. When the best pick's own game starts too early
+for that (an early tennis match, say, at 6am ET), the evening before (~7pm
+ET) posts it instead, so there's still a full day's notice rather than
+posting after the game already started. Once a day's pick is written it
+doesn't change again that day, regardless of what the market does afterward
+— it's an editorial call made at a point in time, not a live-repriced
+candidate like the ones on the main board.
 
 ## The price rules
 
