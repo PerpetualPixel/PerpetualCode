@@ -16,6 +16,7 @@ import {
   topPicks,
   buildParlay,
   explain,
+  explainExtensive,
   formatAmerican,
   confidenceColor,
   bookOffers,
@@ -23,7 +24,7 @@ import {
   americanToDecimal,
   suggestedParlayStake,
 } from './engine.js';
-import { buildInsights, insightTexts, isTennis, isMma } from './insights.js';
+import { buildInsights, insightTexts, insightsByTier, isTennis, isMma } from './insights.js';
 
 const HISTORY_KEY = 'pixelpick.history.v2';
 const LEAGUES_KEY = 'pixelpick.leagues.v2';
@@ -64,6 +65,10 @@ const el = {
   guideToggle: document.getElementById('guideToggle'),
   guidePanel: document.getElementById('guidePanel'),
   guideClose: document.getElementById('guideClose'),
+  statsDrawer: document.getElementById('statsDrawer'),
+  statsDrawerTitle: document.getElementById('statsDrawerTitle'),
+  statsDrawerClose: document.getElementById('statsDrawerClose'),
+  statsDrawerBody: document.getElementById('statsDrawerBody'),
   leagueToggle: document.getElementById('leagueToggle'),
   leaguePanel: document.getElementById('leaguePanel'),
   leagueList: document.getElementById('leagueList'),
@@ -709,6 +714,7 @@ function renderLeg(leg, index, isCombo) {
                 aria-label="Why this pick is sharp">?</button>
         <span class="grade">fair ${esc(formatAmerican(leg.fairAmerican))} ·
           ${leg.bookCount} books</span>
+        <button class="stats-btn" data-more-stats="${slot}" type="button">More Stats</button>
       </div>
 
       <div class="why" id="${whyId}" hidden>
@@ -1056,6 +1062,155 @@ function setBankrollOpen(open) {
 function setGuideOpen(open) {
   setAsideOpen(el.guidePanel, el.guideToggle, open, { focusEl: el.guideClose });
 }
+
+/* ---------------------------------------------------------------- */
+/* More Stats drawer                                                 */
+/* ---------------------------------------------------------------- */
+
+// setAsideOpen expects one fixed toggle button to sync aria-expanded with;
+// the stats drawer is opened from a different button on every leg rendered,
+// so there's no single element that relationship applies to. A no-op stand-in
+// keeps this drawer in the same "one aside open at a time, shared scrim"
+// system as History/Bankroll/Guide without touching any real button's ARIA
+// state incorrectly.
+const statsDrawerToggleStub = { setAttribute() {} };
+
+function setStatsDrawerOpen(open) {
+  setAsideOpen(el.statsDrawer, statsDrawerToggleStub, open, { focusEl: el.statsDrawerClose });
+}
+
+function renderStatsSkeleton() {
+  return `<div class="stats-skeleton">${
+    Array.from({ length: 6 }, () => '<div class="stats-skeleton-row"></div>').join('')
+  }</div>`;
+}
+
+/** Every book's price on this exact line, sorted best to worst, with the
+ * implied probability that price carries — the same quotes already backing
+ * the book buttons on the compact card, just as a full table instead of a
+ * greyed-out/highlighted row of pills. */
+function renderPriceTable(leg) {
+  if (!leg.quotes?.length) return '';
+  const sorted = [...leg.quotes].sort((a, b) => b.decimal - a.decimal);
+  const rows = sorted.map((q, i) => `
+    <tr class="${i === 0 ? 'is-best' : ''}">
+      <td>${esc(q.book)}</td>
+      <td>${esc(formatAmerican(q.american))}</td>
+      <td>${(impliedProb(q.american) * 100).toFixed(1)}%</td>
+    </tr>`).join('');
+
+  return `
+    <div class="stats-section">
+      <h3>Every Book on This Line</h3>
+      <div class="stats-table-scroll">
+        <table class="stats-table">
+          <thead><tr><th>Book</th><th>Price</th><th>Implied</th></tr></thead>
+          <tbody>${rows}</tbody>
+        </table>
+      </div>
+    </div>`;
+}
+
+/** Small stat pills for whatever weather fields are actually present — never
+ * a fabricated placeholder for the fields that aren't (see weatherFor()). */
+function renderWeatherPills(weather) {
+  if (!weather) return '';
+  const pills = [];
+  if (weather.temperatureF != null) pills.push(`${weather.temperatureF}°F`);
+  if (weather.shortForecast) pills.push(weather.shortForecast);
+  if (weather.windSpeed) {
+    pills.push(`Wind ${weather.windSpeed}${weather.windDirection ? ` ${weather.windDirection}` : ''}`);
+  }
+  if (weather.precipChance != null) pills.push(`${weather.precipChance}% precip`);
+  if (!pills.length && weather.roof !== 'retractable') return '';
+
+  const chips = pills.map((p) => `<span class="stat-pill">${esc(p)}</span>`).join('');
+  const roofPill = weather.roof === 'retractable'
+    ? `<span class="stat-pill is-warn">Retractable roof — status unknown</span>`
+    : '';
+  return `<div class="stats-pills">${chips}${roofPill}</div>`;
+}
+
+/** The tiered research bullets (same tags Play of the Day groups by),
+ * presented as separate labelled sections instead of one flat list. */
+function renderStatsResearch(bullets) {
+  const personnel = insightsByTier(bullets, 'personnel');
+  const supporting = insightsByTier(bullets, 'supporting');
+  const environmental = [
+    ...insightsByTier(bullets, 'environmental'),
+    ...insightsByTier(bullets, 'situational'),
+  ];
+
+  const section = (title, items) => (items.length ? `
+    <div class="stats-section">
+      <h3>${esc(title)}</h3>
+      <ul>${items.map((t) => `<li>${esc(t)}</li>`).join('')}</ul>
+    </div>` : '');
+
+  return [
+    section('Primary Personnel & Direct Matchup', personnel),
+    section('Supporting Cast & Availability', supporting),
+    section('Environmental & Situational Notes', environmental),
+  ].join('');
+}
+
+/**
+ * Open the More Stats drawer for one leg: show a skeleton immediately, then
+ * fill in the full breakdown once research resolves. Reuses the exact same
+ * cached fetches (tennisArchive/mmaContextFor/eventContext/weatherFor) the
+ * compact card's "why" panel already triggers — opening this for a leg
+ * whose "why" panel is already open costs no extra network call.
+ */
+async function openStatsDrawer(leg) {
+  el.statsDrawerTitle.textContent = leg.selection;
+  el.statsDrawerBody.innerHTML = renderStatsSkeleton();
+  setStatsDrawerOpen(true);
+
+  const priceCase = explainExtensive(leg);
+  const priceHtml = `
+    <div class="stats-section">
+      <h3>The Market &amp; Price Case</h3>
+      <ul>${priceCase.map((t) => `<li>${esc(t)}</li>`).join('')}</ul>
+    </div>`;
+
+  let bullets = [];
+  let weather = null;
+  try {
+    if (isTennis(leg.sportKey)) {
+      bullets = buildInsights(leg, { tennisData: await tennisArchive(leg.sportKey) });
+    } else if (isMma(leg.sportKey)) {
+      bullets = buildInsights(leg, { mmaContext: await mmaContextFor(leg) });
+    } else {
+      const [context, w] = await Promise.all([eventContext(leg), weatherFor(leg)]);
+      weather = w;
+      bullets = buildInsights(leg, { context, weather });
+    }
+  } catch {
+    /* Research is a bonus; the price case and book table still stand alone. */
+  }
+
+  // The drawer may have been closed (or reopened for a different leg) while
+  // these fetches were in flight — never paint a stale result over whatever
+  // the user is looking at now.
+  if (el.statsDrawer.hidden || el.statsDrawerTitle.textContent !== leg.selection) return;
+
+  el.statsDrawerBody.innerHTML =
+    `<p class="stats-meta"><strong>${esc(leg.away)} @ ${esc(leg.home)}</strong> · ${esc(leg.marketLabel)} · ` +
+    `${esc(dateFmt.format(new Date(leg.commenceMs)))}</p>` +
+    renderWeatherPills(weather) +
+    priceHtml +
+    renderStatsResearch(bullets) +
+    renderPriceTable(leg);
+}
+
+document.body.addEventListener('click', (event) => {
+  const button = event.target.closest('[data-more-stats]');
+  if (!button) return;
+  const leg = renderedLegs[Number(button.dataset.moreStats)];
+  if (leg) openStatsDrawer(leg);
+});
+
+el.statsDrawerClose.addEventListener('click', () => setStatsDrawerOpen(false));
 
 function persistBankroll() {
   saveJSON(BANKROLL_KEY, state.bankroll);

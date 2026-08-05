@@ -104,6 +104,37 @@ guaranteed one from, so it depends on the app having been open again before
 that game started to catch a later price. An aggregate CLV appears at the top
 of the History panel once at least one leg has closed.
 
+## More Stats
+
+Every leg, on every surface (Board, Parlay Builder, and their history
+entries), has a "More Stats" button next to its "?" — a side drawer with the
+full breakdown instead of the compact card's single price bullet and
+tier-flattened bullet list:
+
+- The full Market & Price Case (`explainExtensive()`, the same expanded
+  price reasoning Play of the Day carries — no-vig fair value, book
+  agreement, line-shopping gain, and freshness relative to kickoff, each its
+  own sentence instead of one compact paragraph).
+- Research grouped into the same named sections Play of the Day uses
+  (Primary Personnel & Direct Matchup / Supporting Cast & Availability /
+  Environmental & Situational Notes) — same tagged bullets, same
+  `insightsByTier()`, just also available from the compact card now instead
+  of only from the daily pick.
+- Weather as stat pills (temperature, conditions, wind, precipitation
+  chance) when the leg is an NFL/MLB fixture with one, instead of buried in
+  a sentence.
+- Every book's price and implied probability on this exact line, as a
+  sortable table — the same `quotes[]` already backing the book buttons,
+  just shown in full rather than as a row of pills.
+
+Opens instantly with a skeleton, fills in once the (already-cached) research
+fetch resolves — reopening a leg whose "why" panel is already expanded costs
+no extra network call, since both read from the same `state.context` cache
+keyed by event/venue. A section is omitted entirely when it has nothing
+real behind it (an individual sport's "Supporting Cast," a domed venue's
+weather) — same rule as the compact card and Play of the Day: a gap in the
+data is a shorter drawer, never an invented placeholder.
+
 ## Parlay Builder
 
 A third tab, separate from both the automatic top-8 and Play of the Day: pick
