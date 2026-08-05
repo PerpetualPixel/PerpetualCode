@@ -120,6 +120,54 @@ async function fetchSport(sport, env, ctx) {
   return { events, cached: false, quota };
 }
 
+/**
+ * A tennis event's alternate_spreads market — a wider ladder of game-margin
+ * handicaps than the featured 'spreads' market carries, not a sets-won
+ * market. (There isn't one: The Odds API's own docs describe
+ * alternate_spreads as "all available point spread outcomes" — the same
+ * game-margin axis, just denser — and a live match's ladder ran to ±9.5,
+ * which is impossible as a sets margin in any tennis format, best-of-3 or
+ * best-of-5.)
+ *
+ * The Odds API doesn't carry this on the featured board endpoint at all
+ * (confirmed by direct probe: /odds only ever returns h2h, spreads, totals
+ * for tennis). It only shows up on the per-event endpoint, which is billed
+ * per event (1 credit/market/region here) rather than per league — which is
+ * why this is its own route, called lazily and only for a bounded few
+ * matches already on the board, not folded into fetchSport's per-league pull.
+ */
+async function fetchTennisAltSpread(sportKey, eventId, env, ctx) {
+  const ttl = 3600; // an alternate-spread price doesn't need per-tap freshness
+  const cacheKey = new Request(
+    `https://pixel-pick.cache/altspread/${sportKey}/${eventId}`,
+  );
+  const cache = caches.default;
+
+  const cached = await cache.match(cacheKey);
+  if (cached) return { event: await cached.json(), cached: true };
+
+  const url = new URL(`${UPSTREAM}/sports/${sportKey}/events/${eventId}/odds`);
+  url.searchParams.set('apiKey', (env.ODDS_API_KEY ?? '').trim());
+  url.searchParams.set('regions', REGIONS);
+  url.searchParams.set('markets', 'alternate_spreads');
+  url.searchParams.set('oddsFormat', 'american');
+  url.searchParams.set('dateFormat', 'iso');
+
+  const upstream = await fetch(url.toString());
+  if (!upstream.ok) return { event: null, cached: false };
+
+  const event = await upstream.json();
+  ctx.waitUntil(
+    cache.put(
+      cacheKey,
+      new Response(JSON.stringify(event), {
+        headers: { 'Content-Type': 'application/json', 'Cache-Control': `max-age=${ttl}` },
+      }),
+    ),
+  );
+  return { event, cached: false };
+}
+
 function jwtSecret() {
   // In production, use a secret from env.SECRET
   return 'pixel-pick-dev-secret-change-in-production';
@@ -502,6 +550,33 @@ export default {
         );
       } catch (error) {
         return json({ context: null, reason: String(error).slice(0, 120) }, { headers: cors });
+      }
+    }
+
+    // Tennis alternate-spread ladder for one match already on the board.
+    // Costs a real odds credit (unlike /context and /mma-context) — app.js
+    // calls this for only a small, score-ranked slice of the tennis matches
+    // it already has, never the whole tour.
+    if (pathname === '/tennis-alt-spread') {
+      if (request.method !== 'GET') {
+        return json({ error: 'Method not allowed' }, { status: 405, headers: cors });
+      }
+      const { searchParams } = new URL(request.url);
+      const sportKey = searchParams.get('sport') ?? '';
+      const eventId = searchParams.get('eventId') ?? '';
+
+      if (!isAllowedSport(sportKey) || !/^tennis_/.test(sportKey) || !eventId) {
+        return json({ event: null, reason: 'invalid sport or eventId' }, { headers: cors });
+      }
+
+      try {
+        const { event } = await fetchTennisAltSpread(sportKey, eventId, env, ctx);
+        return json(
+          { event },
+          { headers: { ...cors, 'Cache-Control': 'public, max-age=3600' } },
+        );
+      } catch (error) {
+        return json({ event: null, reason: String(error).slice(0, 120) }, { headers: cors });
       }
     }
 

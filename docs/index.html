@@ -38,6 +38,9 @@
       <button id="bookToggle" class="filter-tab" aria-expanded="false" aria-controls="bookPanel">
         Sportsbooks <span id="bookSummary" class="filter-count">7</span>
       </button>
+      <button id="rangeToggle" class="filter-tab" aria-expanded="false" aria-controls="rangePanel">
+        Odds &amp; Confidence <span id="rangeSummary" class="filter-count">−250/+150 · ≥50</span>
+      </button>
     </div>
 
     <div id="leaguePanel" class="filter-panel" hidden>
@@ -61,6 +64,44 @@
       <p class="filter-hint">
         Every pick shows a button per book you use. Books that aren't pricing
         that exact line are shown greyed out.
+      </p>
+    </div>
+
+    <div id="rangePanel" class="filter-panel" hidden>
+      <div class="filter-head">
+        <span class="filter-cost">Applies on the next Generate tap</span>
+        <button type="button" id="rangeReset" class="link-btn">Reset</button>
+      </div>
+
+      <div class="slider-row">
+        <div class="slider-label">
+          <span>Favorite limit</span>
+          <span id="oddsMinLabel" class="slider-value">−250</span>
+        </div>
+        <input type="range" id="oddsMinSlider" min="-1000" max="-100" step="5" value="-250">
+      </div>
+
+      <div class="slider-row">
+        <div class="slider-label">
+          <span>Underdog limit</span>
+          <span id="oddsMaxLabel" class="slider-value">+150</span>
+        </div>
+        <input type="range" id="oddsMaxSlider" min="100" max="500" step="5" value="150">
+      </div>
+
+      <div class="slider-row">
+        <div class="slider-label">
+          <span>Confidence floor</span>
+          <span id="confidenceLabel" class="slider-value">≥ 50</span>
+        </div>
+        <input type="range" id="confidenceSlider" min="0" max="100" step="1" value="50">
+      </div>
+
+      <p class="filter-hint">
+        Only bets priced inside this range, at or above this confidence, are
+        eligible for the board. Widen either one if a thin sport (MMA on a
+        quiet night, say) isn't clearing — that's the range doing its job, not
+        a bug. Nothing below −1000 or above +500 is ever considered.
       </p>
     </div>
   </section>

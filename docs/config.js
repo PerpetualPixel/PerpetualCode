@@ -29,4 +29,29 @@ export const CONFIG = {
   // above the worker's CACHE_SECONDS so the client never asks for a board the
   // edge would only have to re-fetch anyway.
   REFRESH_MS: 15 * 60 * 1000,
+
+  // How many straight bets Generate hands back, ranked purely by grade across
+  // every sport currently selected. The point is a pool to build your own
+  // parlays or straights from, not a pre-built slate — so this is a flat list,
+  // never an auto-paired combo.
+  TOP_PICKS_COUNT: 8,
+
+  // Default odds range and confidence floor, and the outer bounds the sliders
+  // allow widening to. -1000/+500 is deliberately generous: the sliders exist
+  // specifically so a thin board (MMA on a quiet night) can be widened into
+  // rather than come back empty.
+  ODDS_MIN_DEFAULT: -250,
+  ODDS_MAX_DEFAULT: 150,
+  ODDS_FLOOR: -1000,
+  ODDS_CEIL: 500,
+  MIN_SCORE_DEFAULT: 50,
+
+  // Tennis's wider alternate-spread ladder (more game-handicap points than
+  // the featured board carries — NOT a sets-won market; The Odds API has no
+  // such thing for tennis) lives on a per-event odds endpoint that bills a
+  // real credit per match, unlike the featured board pull. This caps how many
+  // of the tennis matches already on the board get that extra lookup — the
+  // best-scoring ones first — so a tennis-heavy tap can't silently burn the
+  // whole monthly budget in one Generate.
+  TENNIS_ALT_SPREAD_LIMIT: 6,
 };

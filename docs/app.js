@@ -13,7 +13,7 @@ import {
   SPORTSBOOKS,
   DEFAULT_BOOKS,
   analyze,
-  generateSlate,
+  topPicks,
   explain,
   formatAmerican,
   confidenceColor,
@@ -24,6 +24,7 @@ import { buildInsights, isTennis, isMma } from './insights.js';
 const HISTORY_KEY = 'pixelpick.history.v2';
 const LEAGUES_KEY = 'pixelpick.leagues.v2';
 const BOOKS_KEY = 'pixelpick.books.v1';
+const FILTERS_KEY = 'pixelpick.range.v1';
 // Entries carry full leg data now so history can be re-priced and reopened,
 // which makes each one heavier than the old summary rows.
 const HISTORY_LIMIT = 40;
@@ -53,6 +54,16 @@ const el = {
   bookAll: document.getElementById('bookAll'),
   bookList: document.getElementById('bookList'),
   bookSummary: document.getElementById('bookSummary'),
+  rangeToggle: document.getElementById('rangeToggle'),
+  rangePanel: document.getElementById('rangePanel'),
+  rangeSummary: document.getElementById('rangeSummary'),
+  rangeReset: document.getElementById('rangeReset'),
+  oddsMinSlider: document.getElementById('oddsMinSlider'),
+  oddsMinLabel: document.getElementById('oddsMinLabel'),
+  oddsMaxSlider: document.getElementById('oddsMaxSlider'),
+  oddsMaxLabel: document.getElementById('oddsMaxLabel'),
+  confidenceSlider: document.getElementById('confidenceSlider'),
+  confidenceLabel: document.getElementById('confidenceLabel'),
 };
 
 const state = {
@@ -71,6 +82,15 @@ const state = {
   // they never touch the odds credit budget.
   tennis: new Map(),   // 'atp' | 'wta' -> parsed archive
   context: new Map(),  // eventId -> normalised ESPN bundle, or null when unmatched
+  tennisAltSpreads: new Map(), // eventId -> raw alternate-spread event, or null when unfetched/unmatched
+  // Odds range and confidence floor for the top-picks board. A view filter,
+  // not a spend decision — unlike leagues/books this never changes what's
+  // fetched, only which already-fetched candidates qualify.
+  ...loadJSON(FILTERS_KEY, {
+    oddsMin: CONFIG.ODDS_MIN_DEFAULT,
+    oddsMax: CONFIG.ODDS_MAX_DEFAULT,
+    minScore: CONFIG.MIN_SCORE_DEFAULT,
+  }),
 };
 
 /* ---------------------------------------------------------------- */
@@ -148,10 +168,13 @@ function esc(value) {
 /* Filters                                                           */
 /* ---------------------------------------------------------------- */
 
+// Reads the live slider state rather than RULES' fixed defaults — RULES still
+// supplies the initial values (see FILTERS_KEY above) but the user can widen
+// or narrow both from here on.
 const qualifies = (c) =>
-  c.american >= RULES.MIN_AMERICAN &&
-  c.american <= RULES.MAX_AMERICAN &&
-  c.score >= RULES.MIN_SCORE;
+  c.american >= state.oddsMin &&
+  c.american <= state.oddsMax &&
+  c.score >= state.minScore;
 
 /**
  * The league catalogue, from the worker's /sports proxy. The Odds API bills
@@ -260,6 +283,20 @@ function renderBookFilter() {
   el.bookSummary.textContent = String(state.books.size);
   el.bookAll.checked = state.books.size === ids.length;
   el.bookAll.indeterminate = state.books.size > 0 && state.books.size < ids.length;
+}
+
+/** Sync the range/confidence sliders and their labels to state. */
+function renderRangeFilter() {
+  el.oddsMinSlider.value = String(state.oddsMin);
+  el.oddsMaxSlider.value = String(state.oddsMax);
+  el.confidenceSlider.value = String(state.minScore);
+
+  el.oddsMinLabel.textContent = formatAmerican(state.oddsMin);
+  el.oddsMaxLabel.textContent = formatAmerican(state.oddsMax);
+  el.confidenceLabel.textContent = `≥ ${Math.round(state.minScore)}`;
+
+  el.rangeSummary.textContent =
+    `${formatAmerican(state.oddsMin)}/${formatAmerican(state.oddsMax)} · ≥${Math.round(state.minScore)}`;
 }
 
 function setPanelOpen(button, panel, open) {
@@ -437,7 +474,7 @@ async function hydrateInsights() {
 }
 
 function renderConfidence(pick) {
-  const color = confidenceColor(pick.score);
+  const color = confidenceColor(pick.score, state.minScore);
   const beats = Math.round(pick.percentile ?? 0);
 
   return `
@@ -573,9 +610,11 @@ function renderSlate(slate) {
   renderedLegs.length = 0;
 
   if (!slate.picks.length) {
-    el.picks.innerHTML = `<p class="empty">Nothing on the board clears the
-      ${RULES.MIN_SCORE} confidence floor inside the −250 to +150 band right now.
-      Widen your leagues, or come back when more games are priced.</p>`;
+    el.picks.innerHTML = `<p class="empty">Nothing clears ${Math.round(state.minScore)}
+      confidence inside ${esc(formatAmerican(state.oddsMin))} to
+      ${esc(formatAmerican(state.oddsMax))} right now. Widen the range under
+      <strong>Odds &amp; Confidence</strong>, add a league, or come back when
+      more games are priced.</p>`;
     return;
   }
   el.picks.innerHTML = slate.picks.map(renderPick).join('');
@@ -675,7 +714,7 @@ function renderHistory() {
     .map((entry, entryIndex) => {
       const groups = entry.picks
         .map((pick, pickIndex) => {
-          const color = confidenceColor(pick.score ?? RULES.MIN_SCORE);
+          const color = confidenceColor(pick.score ?? state.minScore, state.minScore);
 
           const legs = pick.legs
             .map((leg) => {
@@ -750,12 +789,83 @@ function setHistoryOpen(open) {
 /* Events                                                            */
 /* ---------------------------------------------------------------- */
 
+/**
+ * Lazily add tennis alternate-spread candidates to the pool — a wider ladder
+ * of game-handicap points than the featured board carries, NOT a sets-won
+ * market (The Odds API doesn't have one for tennis; see the worker's
+ * fetchTennisAltSpread for how that was confirmed).
+ *
+ * The Odds API doesn't carry this market on the featured board pull at all —
+ * confirmed by direct probe, it only exists on a per-event endpoint billed a
+ * real credit per match. Fetching it for every tennis match on the tour would
+ * be dozens of credits per Generate tap; instead this ranks the tennis
+ * matches already on the board by their best existing score and only fetches
+ * the top CONFIG.TENNIS_ALT_SPREAD_LIMIT of them — the ones already
+ * interesting enough that a better-priced alternate line on the same match is
+ * worth the credit.
+ *
+ * Cached client-side by eventId so repeat taps within a session, and repeat
+ * appearances of the same match across taps, never re-fetch — the worker
+ * itself caches each event for an hour on top of that.
+ */
+async function enrichTennisAltSpreads() {
+  if (!CONFIG.WORKER_URL) return; // demo mode has no live event ids to query
+
+  const bestScoreByEvent = new Map(); // eventId -> { sportKey, score }
+  for (const c of state.candidates) {
+    if (!isTennis(c.sportKey)) continue;
+    const prev = bestScoreByEvent.get(c.eventId);
+    if (!prev || c.score > prev.score) {
+      bestScoreByEvent.set(c.eventId, { sportKey: c.sportKey, score: c.score });
+    }
+  }
+  if (!bestScoreByEvent.size) return;
+
+  const ranked = [...bestScoreByEvent.entries()]
+    .sort((a, b) => b[1].score - a[1].score)
+    .slice(0, CONFIG.TENNIS_ALT_SPREAD_LIMIT);
+
+  const events = await Promise.all(
+    ranked.map(async ([eventId, { sportKey }]) => {
+      if (state.tennisAltSpreads.has(eventId)) return state.tennisAltSpreads.get(eventId);
+
+      const url = new URL('/tennis-alt-spread', CONFIG.WORKER_URL);
+      url.searchParams.set('sport', sportKey);
+      url.searchParams.set('eventId', eventId);
+
+      const event = await fetch(url, { headers: { Accept: 'application/json' } })
+        .then((r) => (r.ok ? r.json() : null))
+        .then((d) => d?.event ?? null)
+        .catch(() => null);
+
+      state.tennisAltSpreads.set(eventId, event);
+      return event;
+    }),
+  );
+
+  const fresh = events.filter(Boolean);
+  if (!fresh.length) return;
+
+  const extra = analyze(fresh);
+  const existingIds = new Set(state.candidates.map((c) => c.id));
+  for (const c of extra) {
+    if (!existingIds.has(c.id)) state.candidates.push(c);
+  }
+}
+
 async function generate() {
   el.generate.disabled = true;
   try {
     await loadOdds();
+    await enrichTennisAltSpreads();
 
-    const slate = generateSlate(state.candidates, { exclude: state.seen });
+    const slate = topPicks(state.candidates, {
+      count: CONFIG.TOP_PICKS_COUNT,
+      oddsMin: state.oddsMin,
+      oddsMax: state.oddsMax,
+      minScore: state.minScore,
+      exclude: state.seen,
+    });
     slate.picks.forEach((pick) => pick.legs.forEach((leg) => state.seen.add(leg.id)));
 
     renderSlate(slate);
@@ -812,16 +922,33 @@ el.historyList.addEventListener('click', (event) => {
   reopenPick(Number(entry.dataset.entry), Number(entry.dataset.pick));
 });
 
+// Only one filter panel open at a time — opening one closes the other two.
+function closeOtherPanels(keepOpen) {
+  for (const [toggle, panel] of [
+    [el.leagueToggle, el.leaguePanel],
+    [el.bookToggle, el.bookPanel],
+    [el.rangeToggle, el.rangePanel],
+  ]) {
+    if (panel !== keepOpen) setPanelOpen(toggle, panel, false);
+  }
+}
+
 el.leagueToggle.addEventListener('click', () => {
   const open = el.leaguePanel.hidden;
   setPanelOpen(el.leagueToggle, el.leaguePanel, open);
-  if (open) setPanelOpen(el.bookToggle, el.bookPanel, false);
+  if (open) closeOtherPanels(el.leaguePanel);
 });
 
 el.bookToggle.addEventListener('click', () => {
   const open = el.bookPanel.hidden;
   setPanelOpen(el.bookToggle, el.bookPanel, open);
-  if (open) setPanelOpen(el.leagueToggle, el.leaguePanel, false);
+  if (open) closeOtherPanels(el.bookPanel);
+});
+
+el.rangeToggle.addEventListener('click', () => {
+  const open = el.rangePanel.hidden;
+  setPanelOpen(el.rangeToggle, el.rangePanel, open);
+  if (open) closeOtherPanels(el.rangePanel);
 });
 
 el.leagueReset.addEventListener('click', () => {
@@ -853,13 +980,49 @@ el.bookList.addEventListener('change', (event) => {
   renderBookFilter();
 });
 
+function persistFilters() {
+  saveJSON(FILTERS_KEY, {
+    oddsMin: state.oddsMin,
+    oddsMax: state.oddsMax,
+    minScore: state.minScore,
+  });
+}
+
+// 'input' fires continuously while dragging, for a live-updating label; the
+// filter itself only takes effect on the next Generate tap (free, within the
+// cache window), matching how the league/book filters already behave.
+el.oddsMinSlider.addEventListener('input', () => {
+  state.oddsMin = Number(el.oddsMinSlider.value);
+  renderRangeFilter();
+});
+el.oddsMinSlider.addEventListener('change', persistFilters);
+
+el.oddsMaxSlider.addEventListener('input', () => {
+  state.oddsMax = Number(el.oddsMaxSlider.value);
+  renderRangeFilter();
+});
+el.oddsMaxSlider.addEventListener('change', persistFilters);
+
+el.confidenceSlider.addEventListener('input', () => {
+  state.minScore = Number(el.confidenceSlider.value);
+  renderRangeFilter();
+});
+el.confidenceSlider.addEventListener('change', persistFilters);
+
+el.rangeReset.addEventListener('click', () => {
+  state.oddsMin = CONFIG.ODDS_MIN_DEFAULT;
+  state.oddsMax = CONFIG.ODDS_MAX_DEFAULT;
+  state.minScore = CONFIG.MIN_SCORE_DEFAULT;
+  persistFilters();
+  renderRangeFilter();
+});
+
 el.logoutBtn.addEventListener('click', signOut);
 
 document.addEventListener('keydown', (e) => {
   if (e.key !== 'Escape') return;
   if (!el.historyPanel.hidden) setHistoryOpen(false);
-  setPanelOpen(el.leagueToggle, el.leaguePanel, false);
-  setPanelOpen(el.bookToggle, el.bookPanel, false);
+  closeOtherPanels(null);
 });
 
 /* ---------------------------------------------------------------- */
@@ -873,6 +1036,7 @@ document.addEventListener('keydown', (e) => {
 
   renderLeagueFilter();
   renderBookFilter();
+  renderRangeFilter();
   renderHistory();
   // Free call, so it can happen on load — unlike the odds themselves.
   loadCatalogue();

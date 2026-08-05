@@ -30,7 +30,21 @@ export const RULES = {
   MIN_SCORE: 50,
 };
 
-const MARKET_LABELS = { h2h: 'Moneyline', spreads: 'Spread', totals: 'Total' };
+const MARKET_LABELS = {
+  h2h: 'Moneyline',
+  spreads: 'Spread',
+  totals: 'Total',
+  // NOT a set-spread market, despite the name this app first shipped it
+  // under. The Odds API's own docs describe alternate_spreads as "all
+  // available point spread outcomes" — the same game-margin axis as the
+  // featured 'spreads' market, just a denser ladder. Confirmed the hard way:
+  // a real match's ladder went to ±9.5, which is impossible as a sets margin
+  // in any tennis format (max is 2 in best-of-3, 3 in best-of-5). There is no
+  // genuine sets-won market in this feed. Still a real, useful addition on
+  // its own terms — more game-handicap points than the featured board offers
+  // — just not what "sets" would imply.
+  alternate_spreads: 'Alt Spread',
+};
 
 /* ------------------------------------------------------------------ */
 /* Sportsbooks                                                         */
@@ -176,6 +190,12 @@ function describe(event, marketKey, outcome) {
   if (marketKey === 'h2h') return `${name} to win`;
   if (marketKey === 'spreads') {
     return `${name} ${point > 0 ? `+${point}` : point}`;
+  }
+  if (marketKey === 'alternate_spreads') {
+    // Same game-margin axis as 'spreads', just a wider ladder — labelled
+    // distinctly only so it's visibly a different market key on the board,
+    // not because it's a different kind of bet.
+    return `${name} ${point > 0 ? `+${point}` : point} (alt)`;
   }
   if (marketKey === 'totals') {
     return `${name} ${point} — ${event.away_team} @ ${event.home_team}`;
@@ -383,14 +403,19 @@ function hslToRgb(h, s, l) {
 }
 
 /**
- * Confidence colour for a grade, amber at the MIN_SCORE floor through to green
- * at 100. Interpolated around the hue wheel rather than straight through RGB —
- * a linear RGB blend from amber to green passes through a muddy olive, whereas
+ * Confidence colour for a grade, amber at `floor` through to green at 100.
+ * Interpolated around the hue wheel rather than straight through RGB — a
+ * linear RGB blend from amber to green passes through a muddy olive, whereas
  * amber -> yellow -> lime -> green reads as one continuous ramp. Nothing here
  * goes red: anything that bad never reaches the board.
+ *
+ * `floor` defaults to RULES.MIN_SCORE but the UI's confidence slider can move
+ * it — the ramp is always anchored to whatever floor is actually in effect,
+ * not the fixed default, so amber still means "just cleared the bar" even
+ * when that bar has been dragged down to 20.
  */
-export function confidenceColor(score) {
-  const t = clamp01((score - RULES.MIN_SCORE) / (100 - RULES.MIN_SCORE));
+export function confidenceColor(score, floor = RULES.MIN_SCORE) {
+  const t = clamp01((score - floor) / (100 - floor));
   const [r, g, b] = hslToRgb(
     43 + (142 - 43) * t,   // amber hue -> green hue
     (96 + (69 - 96) * t) / 100,
@@ -550,4 +575,61 @@ export function analyze(events, { now = Date.now() } = {}) {
   return buildCandidates(events, { now })
     .map((c) => ({ ...c, ...scoreCandidate(c, { now }) }))
     .sort((a, b) => b.score - a.score);
+}
+
+/* ------------------------------------------------------------------ */
+/* Top-N straight-bet slate                                            */
+/* ------------------------------------------------------------------ */
+
+/**
+ * The best `count` individual bets across every sport currently on the board,
+ * ranked purely by grade — no per-sport quota, no auto-pairing short prices
+ * into a combo. That combo behavior in generateSlate() suits a 1-2 pick board
+ * where the app is choosing for you; here the point is the opposite — hand
+ * back a pool of straight, single-leg bets at their own real prices so the
+ * user builds their own parlays or straights out of them.
+ *
+ * Odds range and confidence floor are both caller-supplied rather than fixed
+ * at RULES' defaults, because the UI exposes both as adjustable controls: a
+ * thin board (MMA on a quiet night, say) is a real state the user should be
+ * able to widen into rather than stare at an empty list.
+ */
+export function topPicks(
+  candidates,
+  {
+    count = 8,
+    oddsMin = RULES.MIN_AMERICAN,
+    oddsMax = RULES.MAX_AMERICAN,
+    minScore = RULES.MIN_SCORE,
+    exclude = new Set(),
+  } = {},
+) {
+  const inRange = (a) => a >= oddsMin && a <= oddsMax;
+  const pool = candidates.filter((c) => inRange(c.american) && c.score >= minScore);
+  const fresh = pool.filter((c) => !exclude.has(c.id));
+  // Once everything in range has been shown this session, recycle rather than
+  // hand back fewer than the user asked for.
+  const source = fresh.length >= count ? fresh : pool;
+
+  const scores = pool.map((c) => c.score);
+  const sorted = [...source].sort((a, b) => b.score - a.score);
+
+  const picks = [];
+  const usedLegs = [];
+  for (const c of sorted) {
+    if (picks.length >= count) break;
+    // A higher-scored leg already on the board wins any contradiction; the
+    // sort order means we never reach the loser first.
+    if (usedLegs.some((leg) => contradicts(leg, c))) continue;
+    usedLegs.push(c);
+    picks.push({
+      type: 'single',
+      legs: [c],
+      american: c.american,
+      score: c.score,
+      percentile: percentileOf(c.score, scores),
+    });
+  }
+
+  return { picks, poolSize: pool.length, generatedAt: Date.now() };
 }

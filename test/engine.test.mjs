@@ -10,6 +10,7 @@ import {
   buildCandidates,
   analyze,
   generateSlate,
+  topPicks,
   contradicts,
   confidenceColor,
   bookOffers,
@@ -482,6 +483,173 @@ test('an empty or unpriced slate degrades gracefully', () => {
   assert.deepEqual(generateSlate([], { rng: seeded(1) }).picks, []);
   assert.equal(analyze([], { now: NOW }).length, 0);
   assert.equal(analyze(undefined, { now: NOW }).length, 0);
+});
+
+/* ---------------------------------------------------------------- */
+/* topPicks — flat, cross-sport, user-adjustable ranking               */
+/* ---------------------------------------------------------------- */
+
+test('topPicks returns straight bets only, never an auto-paired combo', () => {
+  // -220 is well short of SINGLE_FLOOR (-150) — generateSlate would pair this
+  // with a partner leg. topPicks must show it as its own single-leg pick at
+  // its own real price instead, so the user can build their own parlay.
+  const candidates = analyze(
+    [makeEvent('a', -220, 185, SHARP), makeEvent('b', -210, 175, SHARP)],
+    { now: NOW },
+  );
+  const { picks } = topPicks(candidates, { oddsMin: -1000, oddsMax: 500 });
+  assert.ok(picks.length > 0);
+  for (const pick of picks) {
+    assert.equal(pick.type, 'single');
+    assert.equal(pick.legs.length, 1);
+    assert.equal(pick.american, pick.legs[0].american);
+  }
+});
+
+test('topPicks ranks purely by score, highest first, regardless of sport', () => {
+  const candidates = analyze(
+    [
+      makeEvent('a', -140, 120, { ...SHARP, sport: 'baseball_mlb', sportTitle: 'MLB' }),
+      makeEvent('b', -180, 155, { ...SHARP, sport: 'americanfootball_nfl', sportTitle: 'NFL' }),
+      makeEvent('c', -110, -110, { ...SHARP, sport: 'mma_mixed_martial_arts', sportTitle: 'MMA' }),
+    ],
+    { now: NOW },
+  );
+  const { picks } = topPicks(candidates, { oddsMin: -1000, oddsMax: 500, count: 8 });
+  const scores = picks.map((p) => p.score);
+  assert.deepEqual(scores, [...scores].sort((a, b) => b - a), 'must be sorted descending');
+});
+
+test('topPicks caps at `count` even when more qualify', () => {
+  const events = Array.from({ length: 12 }, (_, i) => makeEvent(`g${i}`, -130, 115, SHARP));
+  const candidates = analyze(events, { now: NOW });
+  const { picks, poolSize } = topPicks(candidates, { oddsMin: -1000, oddsMax: 500, count: 8 });
+  assert.ok(poolSize > 8, 'fixture must produce more than 8 qualifiers to test the cap');
+  assert.equal(picks.length, 8);
+});
+
+test('topPicks respects a caller-supplied odds range and confidence floor', () => {
+  const candidates = analyze(
+    [
+      makeEvent('a', -140, 120, SHARP), // in -250..150
+      makeEvent('b', -700, 550, SHARP), // needs the widened range to qualify
+    ],
+    { now: NOW },
+  );
+
+  const narrow = topPicks(candidates, { oddsMin: -250, oddsMax: 150, minScore: 0 });
+  assert.ok(narrow.picks.every((p) => p.american >= -250 && p.american <= 150));
+
+  const widened = topPicks(candidates, { oddsMin: -1000, oddsMax: 500, minScore: 0 });
+  assert.ok(
+    widened.picks.some((p) => p.american < -250 || p.american > 150),
+    'widening the range must surface the -700/+550 leg the default band excludes',
+  );
+
+  // A confidence floor above every candidate's grade empties the slate — the
+  // whole point of an adjustable floor is that this is a real, expected state.
+  const strict = topPicks(candidates, { oddsMin: -1000, oddsMax: 500, minScore: 99.9 });
+  assert.deepEqual(strict.picks, []);
+});
+
+test('topPicks never shows both sides of the same game and market', () => {
+  const candidates = analyze(
+    [makeEvent('a', -140, 120, { ...SHARP, awayOutlier: 45 })],
+    { now: NOW },
+  );
+  const { picks } = topPicks(candidates, { oddsMin: -1000, oddsMax: 500, count: 8 });
+  const legs = picks.map((p) => p.legs[0]);
+  for (let i = 0; i < legs.length; i++) {
+    for (let j = i + 1; j < legs.length; j++) {
+      assert.ok(!contradicts(legs[i], legs[j]), 'both sides of one market must not both appear');
+    }
+  }
+});
+
+test('topPicks recycles exclusions once fewer than `count` remain fresh', () => {
+  const events = Array.from({ length: 4 }, (_, i) => makeEvent(`g${i}`, -130, 115, SHARP));
+  const candidates = analyze(events, { now: NOW });
+  const allIds = new Set(candidates.map((c) => c.id));
+
+  const { picks } = topPicks(candidates, { oddsMin: -1000, oddsMax: 500, count: 8, exclude: allIds });
+  // Every candidate has been "seen", but the pool is thinner than 8 — recycle
+  // rather than hand back an empty board.
+  assert.ok(picks.length > 0);
+});
+
+/* ---------------------------------------------------------------- */
+/* Tennis alternate spread (alternate_spreads) — a wider game-margin      */
+/* ladder than the featured 'spreads' market, NOT a sets-won market.     */
+/* The Odds API's own docs describe it as "all available point spread    */
+/* outcomes" for the same axis, and a live match's ladder ran to ±9.5 —  */
+/* impossible as a sets margin in any tennis format. Confirmed the hard  */
+/* way after first shipping this mislabeled as "Set Spread".             */
+/* ---------------------------------------------------------------- */
+
+/** A single-event alternate_spreads payload, shaped like the worker's
+ * /tennis-alt-spread response — the same event shape buildCandidates already
+ * reads, just with only one market present. */
+function makeAltSpreadEvent(id, favPoint, dogPoint, { hoursOut = 6, books = DEEP_BOOKS } = {}) {
+  return {
+    id,
+    sport_key: 'tennis_atp_test_open',
+    sport_title: 'ATP Test Open',
+    commence_time: new Date(NOW + hoursOut * HOUR).toISOString(),
+    home_team: `${id} Favorite`,
+    away_team: `${id} Underdog`,
+    bookmakers: books.map((title, i) => ({
+      key: BOOK_KEYS[title] ?? title.toLowerCase(),
+      title,
+      last_update: new Date(NOW - 10 * 60 * 1000).toISOString(),
+      markets: [
+        {
+          key: 'alternate_spreads',
+          last_update: new Date(NOW - 10 * 60 * 1000).toISOString(),
+          outcomes: [
+            { name: `${id} Favorite`, price: favPoint.price + (i === 0 ? 35 : 0), point: favPoint.point },
+            { name: `${id} Underdog`, price: dogPoint.price, point: dogPoint.point },
+          ],
+        },
+      ],
+    })),
+  };
+}
+
+test('an alternate-spread candidate is labelled distinctly from a game spread', () => {
+  const [event] = buildCandidates(
+    [makeAltSpreadEvent('m', { price: -900, point: -1.5 }, { price: 550, point: 1.5 })],
+    { now: NOW },
+  );
+  assert.equal(event.marketKey, 'alternate_spreads');
+  assert.equal(event.marketLabel, 'Alt Spread');
+  assert.match(event.selection, /\(alt\)$/, 'an alternate-spread selection must read distinctly from a game spread');
+});
+
+test('a tennis event can carry both a featured and an alternate spread without colliding', () => {
+  const gameSpread = makeEvent('m', -140, 120, { ...SHARP, sport: 'tennis_atp_test_open' });
+  const altSpread = makeAltSpreadEvent('m', { price: -900, point: -1.5 }, { price: 550, point: 1.5 });
+  const candidates = analyze([gameSpread, altSpread], { now: NOW });
+
+  const marketKeys = new Set(candidates.map((c) => c.marketKey));
+  assert.ok(marketKeys.has('h2h'));
+  assert.ok(marketKeys.has('alternate_spreads'));
+
+  // The two markets must never be treated as contradicting one another —
+  // they're different bets on the same match, not opposite sides of one.
+  const h2h = candidates.filter((c) => c.marketKey === 'h2h');
+  const alt = candidates.filter((c) => c.marketKey === 'alternate_spreads');
+  for (const a of h2h) for (const b of alt) assert.ok(!contradicts(a, b));
+});
+
+test('topPicks can surface an alternate-spread pick alongside picks from other markets', () => {
+  const altSpread = makeAltSpreadEvent('m', { price: -900, point: -1.5 }, { price: 550, point: 1.5 });
+  const other = makeEvent('n', -140, 120, SHARP);
+  const candidates = analyze([altSpread, other], { now: NOW });
+
+  // minScore: 0 — this checks that topPicks doesn't structurally exclude the
+  // market, not that this particular fixture grades highly.
+  const { picks } = topPicks(candidates, { oddsMin: -1000, oddsMax: 500, minScore: 0, count: 8 });
+  assert.ok(picks.some((p) => p.legs[0].marketKey === 'alternate_spreads'));
 });
 
 /* ---------------------------------------------------------------- */
