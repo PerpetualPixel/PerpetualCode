@@ -13,7 +13,7 @@ import { QuotaManager } from './quota.js';
 import { fetchContext, hasContext } from './context.js';
 import { fetchWeather, hasVenue } from './weather.js';
 import { fetchMmaContext } from './mma.js';
-import { currentPhase, runPotdPhase, getPotd } from './potd.js';
+import { currentPhase, runPotdPhase, getPotd, getPotdBySport } from './potd.js';
 
 const UPSTREAM = 'https://api.the-odds-api.com/v4';
 
@@ -470,21 +470,45 @@ async function handleSports(env, ctx, cors) {
 
 export { QuotaManager };
 
+const MORNING_PREWARM_HOUR = 4; // 4am ET
+
+/** ET wall-clock hour for a given instant — same self-correcting-across-DST
+ * approach as potd.js's own etParts, kept local since this is the only other
+ * place in the worker that needs an ET hour rather than a UTC one. */
+function etHour(ms) {
+  const fmt = new Intl.DateTimeFormat('en-US', { timeZone: 'America/New_York', hour: '2-digit', hour12: false });
+  return Number(fmt.format(ms)) % 24;
+}
+
 export default {
   /**
    * Fires hourly (see wrangler.toml's [triggers]) — most ticks are a no-op.
-   * currentPhase checks the actual ET wall-clock hour, so this self-corrects
-   * across DST without a UTC cron needing hand-maintenance twice a year.
+   * currentPhase / etHour check the actual ET wall-clock hour, so both self-
+   * correct across DST without a UTC cron needing hand-maintenance twice a
+   * year.
    */
   async scheduled(event, env, ctx) {
-    const phase = currentPhase(event.scheduledTime ?? Date.now());
+    const now = event.scheduledTime ?? Date.now();
+
+    // 4am ET: pre-warm the 'upcoming' board (the same "next games across
+    // every sport" pull the Full Slate/Pixel Picks tabs make on their own
+    // first tap) so it's already cached before anyone's awake, rather than
+    // the very first user of the day paying for a cold fetch. This is a
+    // cache warm, not a bigger pull than normal — it fetches exactly what
+    // 'upcoming' already means, once, and normal on-demand 15-minute
+    // caching carries the rest of the day exactly as it does today.
+    if (etHour(now) === MORNING_PREWARM_HOUR) {
+      ctx.waitUntil(fetchSport('upcoming', env, ctx));
+    }
+
+    const phase = currentPhase(now);
     if (!phase) return;
 
     ctx.waitUntil(
       runPotdPhase(phase, {
         env,
         ctx,
-        now: event.scheduledTime ?? Date.now(),
+        now,
         fetchBoard: async () => {
           const { events, error } = await fetchSport('upcoming', env, ctx);
           if (error) throw new Error(`PoTD board fetch failed: ${JSON.stringify(error)}`);
@@ -621,6 +645,23 @@ export default {
         );
       } catch (error) {
         return json({ potd: null, reason: String(error).slice(0, 120) }, { headers: cors });
+      }
+    }
+
+    // One Play of the Day per major sport, alongside the single pick above —
+    // same read-only KV path, same free cost.
+    if (pathname === '/potd-by-sport') {
+      if (request.method !== 'GET') {
+        return json({ error: 'Method not allowed' }, { status: 405, headers: cors });
+      }
+      try {
+        const bySport = await getPotdBySport(env);
+        return json(
+          { bySport },
+          { headers: { ...cors, 'Cache-Control': 'public, max-age=300' } },
+        );
+      } catch (error) {
+        return json({ bySport: {}, reason: String(error).slice(0, 120) }, { headers: cors });
       }
     }
 

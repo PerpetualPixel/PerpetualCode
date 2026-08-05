@@ -134,38 +134,96 @@ test('an empty board skips cleanly without writing to KV', async () => {
 /* runPotdPhase — idempotency                                         */
 /* ---------------------------------------------------------------- */
 
-test('a date already generated is never regenerated or re-fetched', async () => {
-  const { env } = makeKvStore();
+test('a date already generated is never regenerated, even if the board is re-fetched', async () => {
+  const { env, store } = makeKvStore();
   const events = [makeEvent('a', '2026-08-05T18:00:00Z')];
 
   const first = await runPotdPhase('morning', { env, ctx, now: MORNING_NOW, fetchBoard: async () => events });
   assert.equal(first.skipped, false);
+  const storedAfterFirst = store.get('potd:2026-08-05');
 
-  const second = await runPotdPhase('morning', {
-    env, ctx, now: MORNING_NOW,
-    fetchBoard: async () => { throw new Error('must not fetch — the date is already generated'); },
-  });
+  // Per-sport picks (see below) mean a later tick may still have real work to
+  // do for a sport that had nothing this time, so the board can legitimately
+  // be re-fetched — what must never happen is the overall pick itself being
+  // regenerated or overwritten once it's been decided.
+  const second = await runPotdPhase('morning', { env, ctx, now: MORNING_NOW, fetchBoard: async () => events });
   assert.equal(second.skipped, true);
   assert.equal(second.reason, 'already generated');
+  assert.equal(store.get('potd:2026-08-05'), storedAfterFirst, 'the stored record must be byte-identical, never rewritten');
 });
 
 test('an evening-early pick for tomorrow blocks the next morning run from overwriting it', async () => {
-  const { env } = makeKvStore();
+  const { env, store } = makeKvStore();
   const earlyEvents = [makeEvent('early-bird', '2026-08-06T10:00:00Z')];
   const evening = await runPotdPhase('evening-early', {
     env, ctx, now: EVENING_NOW, fetchBoard: async () => earlyEvents,
   });
   assert.equal(evening.skipped, false);
   assert.equal(evening.dateKey, '2026-08-06');
+  const storedAfterEvening = store.get('potd:2026-08-06');
 
   // The next morning (Aug 6, 8am ET) must not overwrite what last night wrote.
   const nextMorningNow = Date.parse('2026-08-06T12:00:00Z');
   const morning = await runPotdPhase('morning', {
-    env, ctx, now: nextMorningNow,
-    fetchBoard: async () => { throw new Error('must not fetch — evening-early already claimed this date'); },
+    env, ctx, now: nextMorningNow, fetchBoard: async () => earlyEvents,
   });
   assert.equal(morning.skipped, true);
   assert.equal(morning.reason, 'already generated');
+  assert.equal(store.get('potd:2026-08-06'), storedAfterEvening, 'the stored record must be byte-identical, never rewritten');
+});
+
+/* ---------------------------------------------------------------- */
+/* runPotdPhase — per-sport picks                                     */
+/* ---------------------------------------------------------------- */
+
+test('one pick per major sport is produced alongside the overall pick', async () => {
+  const { env } = makeKvStore();
+  const events = [
+    makeEvent('nba-game', '2026-08-05T18:00:00Z', { sport: 'basketball_nba', sportTitle: 'NBA', outlier: 40 }),
+    makeEvent('mlb-game', '2026-08-05T19:00:00Z', { sport: 'baseball_mlb', sportTitle: 'MLB', outlier: 15 }),
+  ];
+  const result = await runPotdPhase('morning', { env, ctx, now: MORNING_NOW, fetchBoard: async () => events });
+
+  assert.equal(result.bySport.nba.skipped, false);
+  assert.match(result.bySport.nba.pick.id, /^nba-game:/);
+  assert.equal(result.bySport.mlb.skipped, false);
+  assert.match(result.bySport.mlb.pick.id, /^mlb-game:/);
+  // No NFL/NHL/WNBA/MMA/tennis event was on the board — those buckets have
+  // nothing to report today, not a placeholder standing in for a real pick.
+  assert.equal(result.bySport.nfl.skipped, true);
+  assert.equal(result.bySport.nfl.reason, 'no qualifying candidate');
+});
+
+test('a sport with only an exhibition-format game gets no pick that day', async () => {
+  const { env } = makeKvStore();
+  const events = [
+    makeEvent('allstar', '2026-08-05T18:00:00Z', { sport: 'basketball_nba', sportTitle: 'NBA' }),
+  ];
+  // Overwrite the team names to look like an All-Star Game rather than a
+  // real matchup — the only signal available to filter on, since the Odds
+  // API carries no explicit game-type field.
+  events[0].home_team = 'Team LeBron';
+  events[0].away_team = 'Team Giannis';
+  events[0].bookmakers.forEach((b) => b.markets[0].outcomes.forEach((o) => {
+    o.name = o.name.includes('Home') ? 'Team LeBron' : 'Team Giannis';
+  }));
+
+  const result = await runPotdPhase('morning', { env, ctx, now: MORNING_NOW, fetchBoard: async () => events });
+  assert.equal(result.skipped, true, 'the overall pick must not surface an exhibition game either');
+  assert.equal(result.bySport.nba.skipped, true);
+  assert.equal(result.bySport.nba.reason, 'no qualifying candidate');
+});
+
+test('an early tomorrow game gives evening-early its own per-sport pick, independent of the main pick\'s window', async () => {
+  const { env } = makeKvStore();
+  const earlyEvents = [
+    makeEvent('nhl-early', '2026-08-06T10:00:00Z', { sport: 'icehockey_nhl', sportTitle: 'NHL' }),
+  ];
+  const result = await runPotdPhase('evening-early', {
+    env, ctx, now: EVENING_NOW, fetchBoard: async () => earlyEvents,
+  });
+  assert.equal(result.bySport.nhl.skipped, false);
+  assert.match(result.bySport.nhl.pick.id, /^nhl-early:/);
 });
 
 /* ---------------------------------------------------------------- */

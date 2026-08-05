@@ -1404,7 +1404,8 @@ function renderMmaBreakdown(mmaContext, subjectName) {
  * compact card's "why" panel already triggers — opening this for a leg
  * whose "why" panel is already open costs no extra network call.
  */
-async function openStatsDrawer(leg, opposite = null) {
+async function openStatsDrawer(leg, opposite = null, { fullscreen = false } = {}) {
+  el.statsDrawer.classList.toggle('is-fullscreen', fullscreen);
   el.statsDrawerTitle.textContent = leg.selection;
   el.statsDrawerBody.innerHTML = renderStatsSkeleton();
   setStatsDrawerOpen(true);
@@ -1598,6 +1599,10 @@ async function enrichTennisAltSpreads() {
 // Reset on every full render — same pattern as renderedLegs above.
 const renderedSlateCells = [];
 
+// One entry per rendered game, for the full-screen "More Info" button — reset
+// alongside renderedSlateCells on every full render.
+const renderedSlateGames = [];
+
 /**
  * This sport's candidates, grouped by event and split into the two sides of
  * each market. Built from state.rawEvents rather than state.candidates alone,
@@ -1698,10 +1703,36 @@ function slateTeamRow(game, side) {
     </div>`;
 }
 
+/** The single highest-graded side across every market on this game. */
+function bestCandidateForGame(game) {
+  const all = [
+    game.h2h.away, game.h2h.home,
+    game.spreads.away, game.spreads.home,
+    game.totals.away, game.totals.home,
+  ].filter(Boolean);
+  if (!all.length) return null;
+  return all.reduce((best, c) => (c.score > best.score ? c : best));
+}
+
+/** The market-mate of a candidate already known to belong to this game. */
+function opponentOf(game, cand) {
+  for (const market of [game.h2h, game.spreads, game.totals]) {
+    if (market.away === cand) return market.home;
+    if (market.home === cand) return market.away;
+  }
+  return null;
+}
+
 function slateGameHtml(game) {
+  const idx = renderedSlateGames.push(game) - 1;
+  const hasAnyPrice = bestCandidateForGame(game) != null;
+
   return `
     <article class="slate-game">
-      <div class="slate-game-time">${esc(dateFmt.format(new Date(game.commenceMs)))}</div>
+      <div class="slate-game-time">
+        <span>${esc(dateFmt.format(new Date(game.commenceMs)))}</span>
+        ${hasAnyPrice ? `<button type="button" class="more-info-btn" data-more-info="${idx}">More Info</button>` : ''}
+      </div>
       <div class="slate-header-row">
         <span></span><span>Spread</span><span>O/U</span><span>ML</span>
       </div>
@@ -1784,6 +1815,7 @@ function mmaClusters(games) {
 
 function renderFullSlate() {
   renderedSlateCells.length = 0;
+  renderedSlateGames.length = 0;
 
   if (!state.slateLeague) {
     el.slateBody.innerHTML = `<p class="empty">Select a league above, then tap Load slate.</p>`;
@@ -1987,6 +2019,14 @@ el.slateEventSelect.addEventListener('change', () => {
   renderFullSlate();
 });
 el.slateBody.addEventListener('click', (event) => {
+  const moreInfo = event.target.closest('[data-more-info]');
+  if (moreInfo) {
+    const game = renderedSlateGames[Number(moreInfo.dataset.moreInfo)];
+    const best = game ? bestCandidateForGame(game) : null;
+    if (best) openStatsDrawer(best, opponentOf(game, best), { fullscreen: true });
+    return;
+  }
+
   const button = event.target.closest('[data-slate-cell]');
   if (!button) return;
   const entry = renderedSlateCells[Number(button.dataset.slateCell)];
@@ -2372,21 +2412,14 @@ function renderPotdSection(section) {
     </div>`;
 }
 
-function renderPotd(potd) {
-  if (!potd) {
-    el.potdBody.innerHTML = `<p class="empty">
-      Nothing posted yet today. Play of the Day goes up once daily — around
-      8am ET most days, or the evening before when the pick's own game starts
-      too early for that (an early tennis match, say). Check back soon.</p>`;
-    return;
-  }
-
-  const { writeup, pick, generatedAt, stale } = potd;
+/** One Play of the Day card — the main daily pick and each per-sport pick
+ * share this exact rendering, since a per-sport pick is the same kind of
+ * editorial call, just scoped to one league instead of the whole board. */
+function renderPotdCard(writeup, generatedAt, stale) {
   const staleNote = stale
     ? `<p class="potd-stale">Today's pick hasn't posted yet — showing yesterday's.</p>`
     : '';
-
-  el.potdBody.innerHTML = `
+  return `
     <article class="potd-card">
       <div class="potd-head">
         <span class="chip"><strong>${esc(writeup.sportTitle)}</strong> · ${esc(writeup.marketLabel)}</span>
@@ -2405,6 +2438,26 @@ function renderPotd(potd) {
     </article>`;
 }
 
+function renderPotd(potd, bySport = {}) {
+  const bySportHtml = Object.entries(bySport)
+    .map(([, entry]) => renderPotdCard(entry.writeup, entry.generatedAt, entry.stale))
+    .join('');
+  const bySportSection = bySportHtml
+    ? `<h2 class="potd-by-sport-head">Play of the Day, by sport</h2><div class="potd-by-sport">${bySportHtml}</div>`
+    : '';
+
+  if (!potd) {
+    el.potdBody.innerHTML = `<p class="empty">
+      Nothing posted yet today. Play of the Day goes up once daily — around
+      8am ET most days, or the evening before when the pick's own game starts
+      too early for that (an early tennis match, say). Check back soon.</p>` + bySportSection;
+    return;
+  }
+
+  const { writeup, generatedAt, stale } = potd;
+  el.potdBody.innerHTML = renderPotdCard(writeup, generatedAt, stale) + bySportSection;
+}
+
 let potdLoaded = false;
 async function loadPotd({ force = false } = {}) {
   if (potdLoaded && !force) return;
@@ -2418,11 +2471,15 @@ async function loadPotd({ force = false } = {}) {
 
   el.potdBody.innerHTML = `<p class="empty">Loading…</p>`;
   try {
-    const response = await fetch(new URL('/potd', CONFIG.WORKER_URL), {
-      headers: { Accept: 'application/json' },
-    });
-    const data = await response.json();
-    renderPotd(data.potd ?? null);
+    const [potdRes, bySportRes] = await Promise.all([
+      fetch(new URL('/potd', CONFIG.WORKER_URL), { headers: { Accept: 'application/json' } }),
+      fetch(new URL('/potd-by-sport', CONFIG.WORKER_URL), { headers: { Accept: 'application/json' } }),
+    ]);
+    const data = await potdRes.json();
+    // A per-sport fetch failing shouldn't take down the main pick — it just
+    // means the "by sport" section is empty this load.
+    const bySportData = await bySportRes.json().catch(() => ({ bySport: {} }));
+    renderPotd(data.potd ?? null, bySportData.bySport ?? {});
   } catch {
     potdLoaded = false; // a network hiccup shouldn't permanently give up
     el.potdBody.innerHTML = `<p class="empty">Couldn't reach the odds feed.</p>`;

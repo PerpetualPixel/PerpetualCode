@@ -80,6 +80,44 @@ function targetDateFor(phase, now) {
   return phase === 'morning' ? etParts(now).date : etDatePlusDays(now, 1);
 }
 
+/**
+ * One Play of the Day per major sport, alongside the single overall pick
+ * above. Each bucket maps to real Odds API sport_key prefixes rather than one
+ * exact key — tennis in particular is keyed per-tournament
+ * (tennis_atp_wimbledon, tennis_wta_us_open, ...), never one blanket
+ * "tennis_atp" key, so a prefix match is what actually finds anything.
+ */
+const SPORT_BUCKETS = [
+  { key: 'nfl', label: 'NFL', match: (s) => s === 'americanfootball_nfl' },
+  { key: 'mlb', label: 'MLB', match: (s) => s === 'baseball_mlb' },
+  { key: 'nba', label: 'NBA', match: (s) => s === 'basketball_nba' },
+  { key: 'wnba', label: 'WNBA', match: (s) => s === 'basketball_wnba' },
+  { key: 'nhl', label: 'NHL', match: (s) => s === 'icehockey_nhl' },
+  { key: 'mma', label: 'MMA', match: (s) => isMma(s) },
+  { key: 'atp', label: "Tennis (ATP)", match: (s) => /^tennis_atp/i.test(s) },
+  { key: 'wta', label: "Tennis (WTA)", match: (s) => /^tennis_wta/i.test(s) },
+];
+
+/**
+ * Filters out exhibition-format games that happen to carry a real, gradeable
+ * price but aren't a real competitive game — an All-Star Game or Pro Bowl
+ * has odds priced on it same as anything else, but nobody wants it standing
+ * in as "today's NBA/NFL pick." The Odds API carries no explicit game-type
+ * field to key off, so this reads the only text available: the team names
+ * themselves, which for these formats aren't real team names at all (e.g.
+ * "Team LeBron", "AFC", "NL All-Stars").
+ */
+const EXHIBITION_PATTERN = /all[\s-]?star|pro\s?bowl|dunk contest|3-point contest|three-point contest|skills challenge|summer league|rising stars|g league|celebrity|exhibition/i;
+// NBA/NHL All-Star Games are draft-captain squads named "Team LeBron" or
+// "Team McDavid" rather than a real franchise name — a real team is never
+// named "Team <FirstName>", so this catches the actual naming pattern those
+// games use in the odds feed, which the keyword list above doesn't.
+const CAPTAIN_TEAM_PATTERN = /^team [a-z.'-]+$/i;
+function isExhibition(candidate) {
+  const names = [candidate.home, candidate.away];
+  return names.some((n) => EXHIBITION_PATTERN.test(n) || CAPTAIN_TEAM_PATTERN.test(n));
+}
+
 let tennisArchiveCache = null; // module-scope: survives across requests in the same isolate
 async function loadTennisArchive(sportKey) {
   const tour = /wta/i.test(sportKey) ? 'wta' : 'atp';
@@ -197,34 +235,10 @@ function buildWriteup(candidate, research, now) {
   };
 }
 
-/**
- * Run one phase's selection: pull the board, filter to this phase's time
- * window, take the single best-graded candidate, build its write-up, and
- * store it — unless that date's KV entry already exists, in which case this
- * phase has nothing to do (either it already ran today, or the evening
- * before already claimed the date for an early match).
- */
-export async function runPotdPhase(phase, { env, ctx, now = Date.now(), fetchBoard }) {
-  const dateKey = targetDateFor(phase, now);
-  const kvKey = `potd:${dateKey}`;
-
-  const existing = await env.POTD_KV.get(kvKey);
-  if (existing) return { skipped: true, reason: 'already generated', dateKey };
-
-  const events = await fetchBoard();
-  const candidates = analyze(events, { now });
-  const pool = candidates.filter((c) => c.score >= RULES.MIN_SCORE);
-  const eligible = eligibleForPhase(pool, phase, now);
-
-  if (!eligible.length) {
-    return { skipped: true, reason: 'no qualifying candidate in this phase\'s window', dateKey };
-  }
-
-  const best = eligible.reduce((a, b) => (b.score > a.score ? b : a));
+async function buildRecord(best, phase, dateKey, now, env, ctx) {
   const research = await researchFor(best, env, ctx);
   const writeup = buildWriteup(best, research, now);
-
-  const record = {
+  return {
     date: dateKey,
     phase,
     generatedAt: now,
@@ -235,11 +249,69 @@ export async function runPotdPhase(phase, { env, ctx, now = Date.now(), fetchBoa
     },
     writeup,
   };
+}
 
-  // A day's pick, once posted, doesn't move even if the market does — it's an
-  // editorial call made at a point in time, not a live-repriced candidate.
-  await env.POTD_KV.put(kvKey, JSON.stringify(record), { expirationTtl: 86400 * 8 });
-  return { skipped: false, dateKey, pick: record.pick };
+/**
+ * Run one phase's selection: pull the board, filter to this phase's time
+ * window (and out any exhibition-format game — see isExhibition), take the
+ * single best-graded candidate overall, build its write-up, and store it —
+ * unless that date's KV entry already exists, in which case the overall pick
+ * has nothing to do (either it already ran today, or the evening before
+ * already claimed the date for an early match).
+ *
+ * Each major sport (SPORT_BUCKETS) gets the same treatment independently,
+ * under its own KV key — a sport whose only game today is a WNBA All-Star
+ * Game, or that has nothing on the board at all, simply has no entry for
+ * that date, rather than a placeholder standing in for a game that isn't
+ * really there.
+ */
+export async function runPotdPhase(phase, { env, ctx, now = Date.now(), fetchBoard }) {
+  const dateKey = targetDateFor(phase, now);
+  const kvKey = `potd:${dateKey}`;
+
+  const events = await fetchBoard();
+  const candidates = analyze(events, { now });
+  const pool = candidates.filter((c) => c.score >= RULES.MIN_SCORE && !isExhibition(c));
+  const eligible = eligibleForPhase(pool, phase, now);
+
+  const existing = await env.POTD_KV.get(kvKey);
+  let mainResult;
+  if (existing) {
+    mainResult = { skipped: true, reason: 'already generated', dateKey };
+  } else if (!eligible.length) {
+    mainResult = { skipped: true, reason: 'no qualifying candidate in this phase\'s window', dateKey };
+  } else {
+    const best = eligible.reduce((a, b) => (b.score > a.score ? b : a));
+    const record = await buildRecord(best, phase, dateKey, now, env, ctx);
+    // A day's pick, once posted, doesn't move even if the market does — it's
+    // an editorial call made at a point in time, not a live-repriced candidate.
+    await env.POTD_KV.put(kvKey, JSON.stringify(record), { expirationTtl: 86400 * 8 });
+    mainResult = { skipped: false, dateKey, pick: record.pick };
+  }
+
+  const bySport = {};
+  for (const bucket of SPORT_BUCKETS) {
+    const bucketKey = `potd:${dateKey}:sport:${bucket.key}`;
+    const alreadyDone = await env.POTD_KV.get(bucketKey);
+    if (alreadyDone) {
+      bySport[bucket.key] = { skipped: true, reason: 'already generated' };
+      continue;
+    }
+
+    const bucketEligible = eligible.filter((c) => bucket.match(c.sportKey));
+    if (!bucketEligible.length) {
+      bySport[bucket.key] = { skipped: true, reason: 'no qualifying candidate' };
+      continue;
+    }
+
+    const best = bucketEligible.reduce((a, b) => (b.score > a.score ? b : a));
+    const record = await buildRecord(best, phase, dateKey, now, env, ctx);
+    record.sportLabel = bucket.label;
+    await env.POTD_KV.put(bucketKey, JSON.stringify(record), { expirationTtl: 86400 * 8 });
+    bySport[bucket.key] = { skipped: false, pick: record.pick };
+  }
+
+  return { ...mainResult, bySport };
 }
 
 /** Today's Play of the Day, or yesterday's as a labelled fallback if today's
@@ -254,4 +326,30 @@ export async function getPotd(env, now = Date.now()) {
   if (yesterdayRaw) return { ...JSON.parse(yesterdayRaw), stale: true };
 
   return null;
+}
+
+/**
+ * Today's per-sport Play of the Day picks, keyed by SPORT_BUCKETS' bucket
+ * key. Each sport is read independently and falls back to yesterday's the
+ * same way getPotd does — a sport with nothing generated today (no game, an
+ * off-season league, or every game filtered as exhibition) is simply absent
+ * from the result, never a placeholder.
+ */
+export async function getPotdBySport(env, now = Date.now()) {
+  const today = etParts(now).date;
+  const yesterday = etDatePlusDays(now, -1);
+
+  const results = await Promise.all(
+    SPORT_BUCKETS.map(async (bucket) => {
+      const todayRaw = await env.POTD_KV.get(`potd:${today}:sport:${bucket.key}`);
+      if (todayRaw) return [bucket.key, JSON.parse(todayRaw)];
+
+      const yesterdayRaw = await env.POTD_KV.get(`potd:${yesterday}:sport:${bucket.key}`);
+      if (yesterdayRaw) return [bucket.key, { ...JSON.parse(yesterdayRaw), stale: true }];
+
+      return [bucket.key, null];
+    }),
+  );
+
+  return Object.fromEntries(results.filter(([, value]) => value != null));
 }

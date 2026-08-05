@@ -200,6 +200,29 @@ body {
   color: var(--muted);
 }
 
+.potd-by-sport-head {
+  margin: 28px 0 14px;
+  font-family: var(--mono);
+  font-size: 0.85rem;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--muted);
+  border-top: 1px solid var(--line);
+  padding-top: 22px;
+}
+
+.potd-by-sport {
+  display: grid;
+  gap: 14px;
+}
+
+@media (min-width: 900px) {
+  .potd-by-sport {
+    grid-template-columns: repeat(auto-fill, minmax(420px, 1fr));
+    align-items: start;
+  }
+}
+
 /* ---------------------------------------------------------------- */
 /* Parlay Builder                                                     */
 /* ---------------------------------------------------------------- */
@@ -874,6 +897,17 @@ input[type="range"]:focus-visible {
 }
 .history[hidden] { display: none; }
 
+/* The "More Info" full-screen breakdown — same drawer element and content
+   pipeline as the narrow side panel, just claiming the whole viewport on
+   both mobile and desktop instead of a fixed sidebar width. Two classes
+   beats the plain .history/.stats-drawer selectors regardless of source
+   order or media query, so this always wins when applied. */
+.stats-drawer.is-fullscreen {
+  width: 100%;
+  max-width: none;
+  border-left: none;
+}
+
 .history-head {
   display: flex;
   align-items: center;
@@ -1461,6 +1495,10 @@ input[type="range"]:focus-visible {
 }
 
 .slate-game-time {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
   padding: 9px 14px;
   font-family: var(--mono);
   font-size: 0.7rem;
@@ -1468,6 +1506,21 @@ input[type="range"]:focus-visible {
   background: var(--surface-2);
   border-bottom: 1px solid var(--line);
 }
+
+.more-info-btn {
+  flex: none;
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  color: var(--accent);
+  font-family: var(--mono);
+  font-size: 0.66rem;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  padding: 5px 9px;
+  cursor: pointer;
+}
+.more-info-btn:hover { border-color: var(--accent); }
 
 .slate-header-row,
 .slate-team-row {
