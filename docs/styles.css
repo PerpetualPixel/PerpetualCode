@@ -1177,3 +1177,39 @@ input[type="range"]:focus-visible {
   0% { background-position: 200% 0; }
   100% { background-position: -200% 0; }
 }
+
+.stats-fighter-label {
+  margin: 14px 0 6px;
+  font-family: var(--mono);
+  font-size: 0.72rem;
+  font-weight: 700;
+  color: var(--text);
+}
+.stats-fighter-label:first-child { margin-top: 0; }
+
+.mma-bar-row {
+  display: grid;
+  grid-template-columns: 90px 1fr 28px;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 6px;
+  font-size: 0.75rem;
+}
+.mma-bar-label { color: var(--muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.mma-bar-track {
+  height: 10px;
+  border-radius: 5px;
+  background: var(--surface-2);
+  overflow: hidden;
+}
+.mma-bar-fill {
+  display: block;
+  height: 100%;
+  background: var(--accent);
+  border-radius: 5px;
+}
+.mma-bar-count {
+  font-family: var(--mono);
+  color: var(--text);
+  text-align: right;
+}

@@ -24,7 +24,20 @@ import {
   americanToDecimal,
   suggestedParlayStake,
 } from './engine.js';
-import { buildInsights, insightTexts, insightsByTier, isTennis, isMma } from './insights.js';
+import {
+  buildInsights,
+  insightTexts,
+  insightsByTier,
+  isTennis,
+  isMma,
+  resolveMmaFighters,
+  finishSummary,
+  vulnerabilitySummary,
+  fighterActivityByYear,
+  fighterRoundsEnded,
+  dataReliability,
+  commonOpponents,
+} from './insights.js';
 
 const HISTORY_KEY = 'pixelpick.history.v2';
 const LEAGUES_KEY = 'pixelpick.leagues.v2';
@@ -1154,6 +1167,139 @@ function renderStatsResearch(bullets) {
   ].join('');
 }
 
+/** A labelled horizontal bar, its width the share of `total` — the same
+ * lightweight div-width technique as the confidence meter, no charting
+ * library needed for something this simple. */
+function statBar(label, count, total) {
+  const pct = total > 0 ? Math.round((count / total) * 100) : 0;
+  return `
+    <div class="mma-bar-row">
+      <span class="mma-bar-label">${esc(label)}</span>
+      <div class="mma-bar-track"><span class="mma-bar-fill" style="width:${pct}%"></span></div>
+      <span class="mma-bar-count">${count}</span>
+    </div>`;
+}
+
+/** Physical-attribute pills for one fighter, from Sherdog's bio box — only
+ * the fields that actually parsed; reach and stance are frequently absent
+ * on Sherdog and are simply not shown rather than guessed at. */
+function renderMmaBio(fighter) {
+  const b = fighter?.bio;
+  if (!b) return '';
+  const parts = [];
+  if (b.age != null) parts.push(`${b.age} yrs`);
+  if (b.height) parts.push(b.height);
+  if (b.weight) parts.push(b.weight);
+  if (b.reach) parts.push(`${b.reach} reach`);
+  if (b.stance) parts.push(b.stance);
+  if (b.weightClass) parts.push(b.weightClass);
+  return parts.length ? `<div class="stats-pills">${parts.map((p) => `<span class="stat-pill">${esc(p)}</span>`).join('')}</div>` : '';
+}
+
+/**
+ * The MMA Fantasy-style breakdown: physical attributes, data reliability,
+ * method-of-victory/defeat bars, round-ended distribution, activity by
+ * year, and common opponents — everything genuinely derivable from the
+ * Sherdog scrape already in worker/src/mma.js. Percentile striking/grappling
+ * stats (MMA Fantasy's Strike Score/Accuracy/Defense/Evasion etc.) are
+ * deliberately absent: they need per-fight strike-volume data Sherdog's
+ * fight-history table doesn't carry, which this app has no source for yet.
+ */
+function renderMmaBreakdown(mmaContext, subjectName) {
+  const { me, opponent } = resolveMmaFighters(mmaContext, subjectName);
+  if (!me) return '';
+
+  const sections = [];
+
+  const bioMe = renderMmaBio(me);
+  const bioOpp = opponent ? renderMmaBio(opponent) : '';
+  if (bioMe || bioOpp) {
+    sections.push(`
+      <div class="stats-section">
+        <h3>Physical Attributes</h3>
+        ${bioMe ? `<p class="stats-fighter-label">${esc(me.name)}</p>${bioMe}` : ''}
+        ${bioOpp ? `<p class="stats-fighter-label">${esc(opponent.name)}</p>${bioOpp}` : ''}
+      </div>`);
+  }
+
+  const relPills = [`<span class="stat-pill">${esc(me.name)}: ${dataReliability(me.history)} (${me.history?.length ?? 0} fights on file)</span>`];
+  if (opponent) {
+    relPills.push(`<span class="stat-pill">${esc(opponent.name)}: ${dataReliability(opponent.history)} (${opponent.history?.length ?? 0} fights on file)</span>`);
+  }
+  sections.push(`<div class="stats-section"><h3>Data Reliability</h3><div class="stats-pills">${relPills.join('')}</div></div>`);
+
+  const methodBars = (fighter) => {
+    const fin = finishSummary(fighter);
+    if (!fin) return '';
+    return `
+      <p class="stats-fighter-label">${esc(fighter.name)} — Method of Victory (${fin.wins} wins)</p>
+      ${statBar('KO/TKO', fin.knockout, fin.wins)}
+      ${statBar('Submission', fin.submission, fin.wins)}
+      ${statBar('Decision', fin.decision, fin.wins)}`;
+  };
+  const victoryHtml = [methodBars(me), opponent ? methodBars(opponent) : ''].filter(Boolean).join('');
+  if (victoryHtml) sections.push(`<div class="stats-section"><h3>Method of Victory</h3>${victoryHtml}</div>`);
+
+  const defeatBars = (fighter) => {
+    const vuln = vulnerabilitySummary(fighter);
+    if (!vuln) return '';
+    const otherLosses = vuln.losses - vuln.koLosses - vuln.subLosses;
+    return `
+      <p class="stats-fighter-label">${esc(fighter.name)} — Method of Defeat (${vuln.losses} losses)</p>
+      ${statBar('KO/TKO', vuln.koLosses, vuln.losses)}
+      ${statBar('Submission', vuln.subLosses, vuln.losses)}
+      ${statBar('Decision/Other', otherLosses, vuln.losses)}`;
+  };
+  const defeatHtml = [defeatBars(me), opponent ? defeatBars(opponent) : ''].filter(Boolean).join('');
+  if (defeatHtml) sections.push(`<div class="stats-section"><h3>Method of Defeat</h3>${defeatHtml}</div>`);
+
+  const roundsHtml = (fighter) => {
+    const { rounds } = fighterRoundsEnded(fighter.history);
+    if (!rounds.length) return '';
+    const total = rounds.reduce((n, r) => n + r.count, 0);
+    return `
+      <p class="stats-fighter-label">${esc(fighter.name)} — Fights End By Round</p>
+      ${rounds.map((r) => statBar(`Round ${r.round}`, r.count, total)).join('')}`;
+  };
+  const roundsAll = [roundsHtml(me), opponent ? roundsHtml(opponent) : ''].filter(Boolean).join('');
+  if (roundsAll) sections.push(`<div class="stats-section"><h3>Fights End By Round</h3>${roundsAll}</div>`);
+
+  const activityHtml = (fighter) => {
+    const byYear = fighterActivityByYear(fighter.history);
+    if (!byYear.length) return '';
+    const max = Math.max(...byYear.map((a) => a.count));
+    return `
+      <p class="stats-fighter-label">${esc(fighter.name)} — Activity by Year</p>
+      ${byYear.map((a) => statBar(String(a.year), a.count, max)).join('')}`;
+  };
+  const activityAll = [activityHtml(me), opponent ? activityHtml(opponent) : ''].filter(Boolean).join('');
+  if (activityAll) sections.push(`<div class="stats-section"><h3>Activity by Year</h3>${activityAll}</div>`);
+
+  if (opponent) {
+    const shared = commonOpponents(me, opponent);
+    if (shared.length) {
+      const rows = shared.map((s) => `
+        <tr>
+          <td>${esc(s.opponent)}</td>
+          <td>${esc(s.a.result)}${s.a.method ? ` · ${esc(s.a.method)}` : ''}</td>
+          <td>${esc(s.b.result)}${s.b.method ? ` · ${esc(s.b.method)}` : ''}</td>
+        </tr>`).join('');
+      sections.push(`
+        <div class="stats-section">
+          <h3>Common Opponents</h3>
+          <div class="stats-table-scroll">
+            <table class="stats-table">
+              <thead><tr><th>Opponent</th><th>${esc(me.name)}</th><th>${esc(opponent.name)}</th></tr></thead>
+              <tbody>${rows}</tbody>
+            </table>
+          </div>
+        </div>`);
+    }
+  }
+
+  return sections.join('');
+}
+
 /**
  * Open the More Stats drawer for one leg: show a skeleton immediately, then
  * fill in the full breakdown once research resolves. Reuses the exact same
@@ -1175,11 +1321,15 @@ async function openStatsDrawer(leg) {
 
   let bullets = [];
   let weather = null;
+  let mmaBreakdownHtml = '';
   try {
     if (isTennis(leg.sportKey)) {
       bullets = buildInsights(leg, { tennisData: await tennisArchive(leg.sportKey) });
     } else if (isMma(leg.sportKey)) {
-      bullets = buildInsights(leg, { mmaContext: await mmaContextFor(leg) });
+      const mmaContext = await mmaContextFor(leg);
+      bullets = buildInsights(leg, { mmaContext });
+      const subject = leg.selection.replace(/ to win$/i, '').trim();
+      mmaBreakdownHtml = renderMmaBreakdown(mmaContext, subject);
     } else {
       const [context, w] = await Promise.all([eventContext(leg), weatherFor(leg)]);
       weather = w;
@@ -1199,6 +1349,7 @@ async function openStatsDrawer(leg) {
     `${esc(dateFmt.format(new Date(leg.commenceMs)))}</p>` +
     renderWeatherPills(weather) +
     priceHtml +
+    mmaBreakdownHtml +
     renderStatsResearch(bullets) +
     renderPriceTable(leg);
 }

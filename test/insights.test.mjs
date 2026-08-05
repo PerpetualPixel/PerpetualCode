@@ -5,6 +5,10 @@ import {
   tennisInsights,
   teamInsights,
   mmaInsights,
+  fighterActivityByYear,
+  fighterRoundsEnded,
+  dataReliability,
+  commonOpponents,
   buildInsights,
   insightTexts,
   insightsByTier,
@@ -322,6 +326,80 @@ test('one side missing from Sherdog does not block bullets for the side that res
   const text = mmaInsights(oneSided, 'Amanda Lemos').map((b) => b.text).join(' ');
   assert.match(text, /15-6-1/);
   assert.ok(!/undefined/.test(text));
+});
+
+/* ---------------------------------------------------------------- */
+/* MMA derived stats — activity, rounds ended, reliability, common       */
+/* opponents (MMA Fantasy-style breakdown, built entirely from the        */
+/* same Sherdog history already scraped)                                 */
+/* ---------------------------------------------------------------- */
+
+test('fighterActivityByYear buckets dated fights and skips undated ones', () => {
+  const history = [
+    { date: 'Mar / 14 / 2026', opponent: 'X' },
+    { date: 'Sep / 13 / 2025', opponent: 'Y' },
+    { date: 'Nov / 11 / 2023', opponent: 'Z' },
+    { date: 'not a real date', opponent: 'W' },
+  ];
+  assert.deepEqual(fighterActivityByYear(history), [
+    { year: 2023, count: 1 },
+    { year: 2025, count: 1 },
+    { year: 2026, count: 1 },
+  ]);
+});
+
+test('fighterActivityByYear handles an empty or missing history', () => {
+  assert.deepEqual(fighterActivityByYear([]), []);
+  assert.deepEqual(fighterActivityByYear(undefined), []);
+});
+
+test('fighterRoundsEnded tallies by round and counts undated separately from the total', () => {
+  const history = [
+    { round: 1 }, { round: 1 }, { round: 3 }, { round: null }, { round: 2 },
+  ];
+  const result = fighterRoundsEnded(history);
+  assert.deepEqual(result.rounds, [
+    { round: 1, count: 2 },
+    { round: 2, count: 1 },
+    { round: 3, count: 1 },
+  ]);
+  assert.equal(result.unknown, 1);
+  // Reconciles with the full history length.
+  const total = result.rounds.reduce((n, r) => n + r.count, 0) + result.unknown;
+  assert.equal(total, history.length);
+});
+
+test('dataReliability labels match MMA Fantasy\'s Strong/Moderate framing by fight count', () => {
+  assert.equal(dataReliability(Array(14).fill({})), 'Strong');
+  assert.equal(dataReliability(Array(7).fill({})), 'Moderate');
+  assert.equal(dataReliability(Array(2).fill({})), 'Limited');
+  assert.equal(dataReliability([]), 'None');
+  assert.equal(dataReliability(undefined), 'None');
+});
+
+test('commonOpponents finds a shared name and reports both outcomes against them', () => {
+  const a = { history: [
+    { opponent: 'Shared Foe', result: 'win', method: 'Decision', date: 'Jan / 01 / 2024' },
+    { opponent: 'Only A Fought', result: 'loss', method: 'KO', date: 'Jan / 01 / 2023' },
+  ] };
+  const b = { history: [
+    { opponent: 'shared foe', result: 'loss', method: 'Submission', date: 'Feb / 02 / 2022' }, // case/accent-insensitive match
+    { opponent: 'Only B Fought', result: 'win', method: 'Decision', date: 'Jan / 01 / 2021' },
+  ] };
+  const shared = commonOpponents(a, b);
+  assert.equal(shared.length, 1);
+  assert.equal(shared[0].opponent, 'Shared Foe');
+  assert.equal(shared[0].a.result, 'win');
+  assert.equal(shared[0].b.result, 'loss');
+});
+
+test('commonOpponents returns empty when the fighters have never overlapped, and handles missing fighters', () => {
+  const a = { history: [{ opponent: 'X', result: 'win' }] };
+  const b = { history: [{ opponent: 'Y', result: 'win' }] };
+  assert.deepEqual(commonOpponents(a, b), []);
+  assert.deepEqual(commonOpponents(null, b), []);
+  assert.deepEqual(commonOpponents(a, null), []);
+  assert.deepEqual(commonOpponents(null, null), []);
 });
 
 /* ---------------------------------------------------------------- */

@@ -489,7 +489,7 @@ function parseSherdogDate(text) {
 
 /** Wins broken down by how they ended — a finish rate is a real signal in a
  * sport where "decision machine" and "finisher" are genuinely different bets. */
-function finishSummary(fighter) {
+export function finishSummary(fighter) {
   const wins = fighter.history.filter((f) => f.result === 'win');
   if (!wins.length) return null;
   const tally = { knockout: 0, submission: 0, decision: 0, other: 0 };
@@ -501,7 +501,7 @@ function finishSummary(fighter) {
 /** Losses broken down the same way — how a fighter has been finished before
  * is a durability signal, and hiding it because it's unflattering would be
  * exactly the kind of one-sided card this app is built not to produce. */
-function vulnerabilitySummary(fighter) {
+export function vulnerabilitySummary(fighter) {
   const losses = fighter.history.filter((f) => f.result === 'loss');
   if (!losses.length) return null;
   const koLosses = losses.filter((f) => f.category === 'knockout').length;
@@ -542,16 +542,28 @@ function formLine(fighter, RECENT = 5) {
  * has no team-sport "supporting cast" — it's the two fighters and nothing
  * else — so that tier is never populated here.
  */
-export function mmaInsights(context, subjectName) {
-  if (!context) return [];
-
+/** Which of the two Sherdog-resolved fighters the bet names, and which is
+ * the other side — the same matching mmaInsights uses internally, exported
+ * so a caller building a fuller breakdown (the More Stats drawer's bar
+ * charts) doesn't need its own copy of this logic. Both null when neither
+ * side resolves confidently. */
+export function resolveMmaFighters(context, subjectName) {
+  if (!context) return { me: null, opponent: null };
   const subjectFold = fold(subjectName);
   const candidates = [context.a, context.b].filter(Boolean);
   const me = candidates.find((f) => fold(f.name) === subjectFold)
     ?? candidates.find((f) => containsWords(subjectFold, fold(f.name)) || containsWords(fold(f.name), subjectFold));
+  if (!me) return { me: null, opponent: null };
+  const opponent = [context.a, context.b].find((f) => f && f !== me) ?? null;
+  return { me, opponent };
+}
+
+export function mmaInsights(context, subjectName) {
+  if (!context) return [];
+
+  const { me, opponent } = resolveMmaFighters(context, subjectName);
   if (!me) return [];
 
-  const opponent = [context.a, context.b].find((f) => f && f !== me) ?? null;
   const bullets = [{ tier: 'personnel', text: recordLine(me) }];
 
   const form = formLine(me);
@@ -590,6 +602,78 @@ export function mmaInsights(context, subjectName) {
   }
 
   return bullets;
+}
+
+/**
+ * Career fight count grouped by year, oldest first — the raw material for a
+ * bar-chart "Activity Report" like MMA Fantasy's. Undated fights (Sherdog's
+ * date didn't parse) are simply not counted rather than guessed into a year.
+ */
+export function fighterActivityByYear(history) {
+  const tally = new Map();
+  for (const fight of history ?? []) {
+    const ms = parseSherdogDate(fight.date);
+    if (ms == null) continue;
+    const year = new Date(ms).getUTCFullYear();
+    tally.set(year, (tally.get(year) ?? 0) + 1);
+  }
+  return [...tally.entries()].sort((a, b) => a[0] - b[0]).map(([year, count]) => ({ year, count }));
+}
+
+/**
+ * How many of a fighter's past fights ended in each round — the "goes the
+ * distance vs. finishes early" signal. Fights with no round on file (an
+ * older Sherdog entry that predates the site tracking it, or a decision
+ * where the field genuinely wasn't captured) are counted separately rather
+ * than silently dropped, so the total here still reconciles with history.length.
+ */
+export function fighterRoundsEnded(history) {
+  const tally = new Map();
+  let unknown = 0;
+  for (const fight of history ?? []) {
+    if (fight.round == null) { unknown++; continue; }
+    tally.set(fight.round, (tally.get(fight.round) ?? 0) + 1);
+  }
+  return {
+    rounds: [...tally.entries()].sort((a, b) => a[0] - b[0]).map(([round, count]) => ({ round, count })),
+    unknown,
+  };
+}
+
+/**
+ * A plain-language confidence label for how much fight history is actually
+ * on file — MMA Fantasy's "Strong"/"Moderate" framing, adopted directly
+ * because it's exactly the right honesty check: a record built from 3 fights
+ * says less than one built from 15, and the reader should know which they're
+ * looking at rather than treat every stat here as equally solid.
+ */
+export function dataReliability(history) {
+  const n = history?.length ?? 0;
+  if (n >= 10) return 'Strong';
+  if (n >= 5) return 'Moderate';
+  if (n > 0) return 'Limited';
+  return 'None';
+}
+
+/** Opponents both fighters have faced, most recent meeting first per side —
+ * a real, cheap head-to-head-adjacent signal: two fighters who've both
+ * fought the same person invite a direct form comparison neither fighter's
+ * own record alone gives you. */
+export function commonOpponents(fighterA, fighterB) {
+  const opponentsOf = (fighter) => (fighter?.history ?? [])
+    .filter((f) => f.opponent)
+    .map((f) => ({ name: f.opponent, result: f.result, method: f.method, date: f.date }));
+
+  const aFights = opponentsOf(fighterA);
+  const bFights = opponentsOf(fighterB);
+  const bNames = new Set(bFights.map((f) => fold(f.name)));
+
+  const shared = [];
+  for (const af of aFights) {
+    const bf = bFights.find((f) => fold(f.name) === fold(af.name));
+    if (bf) shared.push({ opponent: af.name, a: af, b: bf });
+  }
+  return shared;
 }
 
 /* ------------------------------------------------------------------ */

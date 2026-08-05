@@ -168,6 +168,15 @@ function parseFightHistory(html) {
     const date = row.match(/class="sub_line">([^<]+)<\/span>/)?.[1]?.trim() ?? null;
     const method = row.match(/class="winby"><b>([^<]+)<\/b>/)?.[1]?.trim() ?? null;
 
+    // Round and time are the two plain <td> cells right after the winby
+    // block — confirmed against a live profile page before writing this,
+    // rather than assumed from the fight-history table's general shape.
+    const winbyEnd = row.indexOf('</td>', row.indexOf('class="winby"'));
+    const trailer = winbyEnd >= 0 ? row.slice(winbyEnd) : '';
+    const trailingCells = [...trailer.matchAll(/<td>([^<]*)<\/td>/g)].map((m) => m[1].trim());
+    const round = trailingCells[0] ? Number(trailingCells[0]) : null;
+    const time = trailingCells[1] || null;
+
     rows.push({
       result,
       opponent,
@@ -175,9 +184,47 @@ function parseFightHistory(html) {
       date,
       method,
       category: method ? METHOD_CATEGORY(method) : null,
+      round: Number.isFinite(round) ? round : null,
+      time,
     });
   }
   return rows;
+}
+
+/**
+ * Age, height, weight, weight class, and association from the profile's
+ * "bio-holder" info box. Reach and stance are read the same defensive way
+ * but genuinely absent for most fighters on Sherdog — not every field below
+ * exists for every fighter, and a missing one is left null rather than
+ * guessed at from weight class norms or anything else.
+ */
+function parseBio(html) {
+  const marker = html.indexOf('bio-holder');
+  if (marker < 0) return null;
+  const scoped = html.slice(marker, marker + 2000);
+
+  const age = scoped.match(/AGE<\/td>\s*<td><b>(\d+)<\/b>/)?.[1];
+  const height = scoped.match(/itemprop="height">([^<]+)</)?.[1];
+  const weight = scoped.match(/itemprop="weight">([^<]+)</)?.[1];
+  const weightClass = scoped.match(/weightclass=[^"]*"[^>]*>([^<]+)<\/a>/)?.[1];
+  const association = scoped.match(/itemprop="name">([^<]+)</)?.[1];
+  // Not present in the bio-holder table on every fighter's page — read
+  // defensively from wherever Sherdog does carry it when it's there.
+  const reach = html.match(/REACH<\/td>\s*<td><b>([^<]+)<\/b>/)?.[1];
+  const stance = html.match(/STANCE<\/td>\s*<td><b>([^<]+)<\/b>/)?.[1];
+
+  const bio = {
+    age: age ? Number(age) : null,
+    height: height ?? null,
+    weight: weight ?? null,
+    weightClass: weightClass?.trim() ?? null,
+    association: association?.trim() ?? null,
+    reach: reach?.trim() ?? null,
+    stance: stance?.trim() ?? null,
+  };
+  // Every field null means the box itself didn't parse the way expected —
+  // report that as "no bio", not a bio full of nulls.
+  return Object.values(bio).some((v) => v != null) ? bio : null;
 }
 
 /**
@@ -194,12 +241,14 @@ async function fetchFighter(name, ctx) {
 
   const history = parseFightHistory(html);
   const record = parseHeaderRecord(html, found.href) ?? deriveRecordFromHistory(history);
+  const bio = parseBio(html);
 
   return {
     name: found.name,
     profileUrl,
     record,
     history,
+    bio,
   };
 }
 
