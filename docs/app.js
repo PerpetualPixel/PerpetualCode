@@ -23,6 +23,7 @@ import {
   impliedProb,
   americanToDecimal,
   suggestedParlayStake,
+  suggestedStake,
 } from './engine.js';
 import {
   buildInsights,
@@ -45,6 +46,7 @@ const BOOKS_KEY = 'pixelpick.books.v1';
 const FILTERS_KEY = 'pixelpick.range.v1';
 const PARLAY_KEY = 'pixelpick.parlay.v1';
 const BANKROLL_KEY = 'pixelpick.bankroll.v1';
+const SLATE_LEAGUE_KEY = 'pixelpick.slateLeague.v1';
 // 1-2% of bankroll per unit is the standard range a flat-staking bettor
 // works from; 2% is the more conservative, more commonly cited end of it —
 // used here as the default recommendation when the user hasn't set their own.
@@ -75,6 +77,8 @@ const el = {
   bankrollUnitHint: document.getElementById('bankrollUnitHint'),
   bankrollShowDollars: document.getElementById('bankrollShowDollars'),
   bankrollShowUnits: document.getElementById('bankrollShowUnits'),
+  bankrollSubmit: document.getElementById('bankrollSubmit'),
+  bankrollSubmitHint: document.getElementById('bankrollSubmitHint'),
   guideToggle: document.getElementById('guideToggle'),
   guidePanel: document.getElementById('guidePanel'),
   guideClose: document.getElementById('guideClose'),
@@ -104,6 +108,12 @@ const el = {
   oddsMaxLabel: document.getElementById('oddsMaxLabel'),
   confidenceSlider: document.getElementById('confidenceSlider'),
   confidenceLabel: document.getElementById('confidenceLabel'),
+  tabSlate: document.getElementById('tabSlate'),
+  slateView: document.getElementById('slateView'),
+  slateStatus: document.getElementById('slateStatus'),
+  slateLeagueSelect: document.getElementById('slateLeagueSelect'),
+  slateLoad: document.getElementById('slateLoad'),
+  slateBody: document.getElementById('slateBody'),
   tabBoard: document.getElementById('tabBoard'),
   tabPotd: document.getElementById('tabPotd'),
   boardView: document.getElementById('boardView'),
@@ -126,6 +136,13 @@ const el = {
 
 const state = {
   candidates: [],
+  // Raw, un-graded events straight from the odds feed — every game the
+  // selected leagues returned, including ones where no market ever cleared
+  // MIN_BOOKS and so never became a candidate. The Full Slate tab reads from
+  // this (plus state.candidates for pricing) specifically so a thin market
+  // still shows the game with a "—", rather than the game silently vanishing
+  // because analyze() had nothing gradeable to say about it.
+  rawEvents: [],
   fetchedAt: 0,
   isDemo: false,
   seen: new Set(),
@@ -163,9 +180,22 @@ const state = {
   // Bankroll and unit size, purely local — never sent anywhere, only used to
   // turn a stake's %-of-bankroll figure into a dollar amount or unit count.
   // amount/unit of 0 means "unset"; unset amount falls back to showing the
-  // plain percentage everywhere a stake is displayed.
-  bankroll: loadJSON(BANKROLL_KEY, { amount: 0, unit: 0, displayMode: 'dollars' }),
+  // plain percentage everywhere a stake is displayed. `confirmed` gates that
+  // conversion on having actually pressed Submit — typing a number into the
+  // field alone shouldn't start changing what every "why" panel recommends.
+  bankroll: loadJSON(BANKROLL_KEY, { amount: 0, unit: 0, displayMode: 'dollars', confirmed: false }),
+  // Which league the Full Slate tab is currently showing. Re-derived against
+  // whatever's actually selected on boot (see init()) since a saved league
+  // could refer to one the user no longer has picked.
+  slateLeague: loadJSON(SLATE_LEAGUE_KEY, null),
 };
+
+// A bankroll saved before `confirmed` existed had no opinion on it — treat an
+// already-set amount from a returning user as already confirmed, rather than
+// silently withholding dollar figures they'd already configured.
+if (state.bankroll.confirmed === undefined) {
+  state.bankroll.confirmed = state.bankroll.amount > 0;
+}
 
 /* ---------------------------------------------------------------- */
 /* Storage                                                           */
@@ -264,6 +294,7 @@ async function loadCatalogue() {
     }));
     state.catalogue.unshift({ key: 'upcoming', title: 'Next up (all sports)' });
     renderLeagueFilter();
+    renderSlateLeagueOptions();
     return;
   }
 
@@ -280,6 +311,7 @@ async function loadCatalogue() {
     state.catalogue = [...state.selected].map((key) => ({ key, title: key }));
   }
   renderLeagueFilter();
+  renderSlateLeagueOptions();
 }
 
 function leagueCredits() {
@@ -392,6 +424,7 @@ async function loadOdds({ force = false } = {}) {
       ? DEMO_EVENTS
       : DEMO_EVENTS.filter((e) => wanted.has(e.sport_key));
     state.candidates = analyze(events);
+    state.rawEvents = events;
     state.isDemo = true;
     state.fetchedAt = Date.now();
     setStatus('Demo data — set WORKER_URL in config.js for live odds', 'demo');
@@ -418,6 +451,7 @@ async function loadOdds({ force = false } = {}) {
 
   const data = await response.json();
   state.candidates = analyze(data.events);
+  state.rawEvents = data.events;
   state.isDemo = false;
   state.fetchedAt = Date.now();
 
@@ -609,7 +643,10 @@ function formatStakeLine(stake) {
   if (stake <= 0) return null;
   const pct = `${(stake * 100).toFixed(1)}%`;
 
-  if (!(state.bankroll.amount > 0)) {
+  // A dollar/unit figure only appears once the user has actually pressed
+  // Submit on the Bankroll panel — typing a number into the field shouldn't,
+  // by itself, start changing what every "why" panel recommends betting.
+  if (!(state.bankroll.amount > 0) || !state.bankroll.confirmed) {
     return `Suggested stake: ${pct} of bankroll (¼-Kelly)`;
   }
 
@@ -625,6 +662,11 @@ function formatStakeLine(stake) {
 function stakeLine(pick) {
   const stake = suggestedParlayStake(pick.legs, americanToDecimal(pick.american));
   return formatStakeLine(stake);
+}
+
+/** Same stake line, for a single raw candidate rather than an assembled pick. */
+function singleStakeLine(candidate) {
+  return formatStakeLine(suggestedStake(candidate));
 }
 
 function renderConfidence(pick) {
@@ -1307,17 +1349,33 @@ function renderMmaBreakdown(mmaContext, subjectName) {
  * compact card's "why" panel already triggers — opening this for a leg
  * whose "why" panel is already open costs no extra network call.
  */
-async function openStatsDrawer(leg) {
+async function openStatsDrawer(leg, opposite = null) {
   el.statsDrawerTitle.textContent = leg.selection;
   el.statsDrawerBody.innerHTML = renderStatsSkeleton();
   setStatsDrawerOpen(true);
 
   const priceCase = explainExtensive(leg);
+  const stake = singleStakeLine(leg);
   const priceHtml = `
     <div class="stats-section">
       <h3>The Market &amp; Price Case</h3>
       <ul>${priceCase.map((t) => `<li>${esc(t)}</li>`).join('')}</ul>
+      ${stake ? `<div class="stake-line">${esc(stake)}</div>` : ''}
     </div>`;
+
+  // The other side of the same market, argued on its own terms — the board
+  // highlights one side, but a market cutting both ways is exactly why a bet
+  // has a price at all, and the case against the algorithm's lean deserves
+  // the same treatment as the case for it.
+  const devilStake = opposite ? singleStakeLine(opposite) : null;
+  const devilHtml = opposite
+    ? `
+      <div class="stats-section devil-advocate">
+        <h3>Devil's Advocate — ${esc(opposite.selection)}</h3>
+        <ul>${explainExtensive(opposite).map((t) => `<li>${esc(t)}</li>`).join('')}</ul>
+        ${devilStake ? `<div class="stake-line">${esc(devilStake)}</div>` : ''}
+      </div>`
+    : '';
 
   let bullets = [];
   let weather = null;
@@ -1349,6 +1407,7 @@ async function openStatsDrawer(leg) {
     `${esc(dateFmt.format(new Date(leg.commenceMs)))}</p>` +
     renderWeatherPills(weather) +
     priceHtml +
+    devilHtml +
     mmaBreakdownHtml +
     renderStatsResearch(bullets) +
     renderPriceTable(leg);
@@ -1378,6 +1437,10 @@ function renderBankrollPanel() {
 
   el.bankrollShowDollars.classList.toggle('is-active', state.bankroll.displayMode !== 'units');
   el.bankrollShowUnits.classList.toggle('is-active', state.bankroll.displayMode === 'units');
+
+  el.bankrollSubmitHint.textContent = state.bankroll.confirmed && state.bankroll.amount > 0
+    ? 'Applied — every "why" panel now shows a real $ or unit amount.'
+    : 'Tap Submit to start seeing suggested stakes in real $ or units, not just %.';
 }
 
 /* ---------------------------------------------------------------- */
@@ -1448,6 +1511,187 @@ async function enrichTennisAltSpreads() {
   }
 }
 
+/* ---------------------------------------------------------------- */
+/* Full Slate                                                        */
+/* ---------------------------------------------------------------- */
+
+// One entry per rendered slate cell that has a real candidate behind it, so a
+// click can look up both that candidate and its market-mate (the "other
+// side", for devil's advocate) without re-deriving either from the DOM.
+// Reset on every full render — same pattern as renderedLegs above.
+const renderedSlateCells = [];
+
+/**
+ * This sport's candidates, grouped by event and split into the two sides of
+ * each market. Built from state.rawEvents rather than state.candidates alone,
+ * so a game where every market stayed too thin to grade (fewer than
+ * RULES.MIN_BOOKS quoting it) still shows up on the slate — just with a dash
+ * instead of a price — rather than silently vanishing.
+ */
+function buildSlateGames(sportKey) {
+  const now = Date.now();
+  const byEvent = new Map();
+  for (const c of state.candidates) {
+    if (c.sportKey !== sportKey) continue;
+    if (!byEvent.has(c.eventId)) byEvent.set(c.eventId, []);
+    byEvent.get(c.eventId).push(c);
+  }
+
+  const pairFor = (cands, marketKey, event) => {
+    const inMarket = cands.filter((c) => c.marketKey === marketKey);
+    if (marketKey === 'totals') {
+      return {
+        away: inMarket.find((c) => /^over$/i.test(c.outcomeName)) ?? null,
+        home: inMarket.find((c) => /^under$/i.test(c.outcomeName)) ?? null,
+      };
+    }
+    return {
+      away: inMarket.find((c) => c.outcomeName === event.away_team) ?? null,
+      home: inMarket.find((c) => c.outcomeName === event.home_team) ?? null,
+    };
+  };
+
+  return (state.rawEvents ?? [])
+    .filter((e) => e.sport_key === sportKey)
+    .map((event) => {
+      const commenceMs = new Date(event.commence_time).getTime();
+      const cands = byEvent.get(event.id) ?? [];
+      return {
+        eventId: event.id,
+        home: event.home_team,
+        away: event.away_team,
+        commenceMs,
+        h2h: pairFor(cands, 'h2h', event),
+        spreads: pairFor(cands, 'spreads', event),
+        totals: pairFor(cands, 'totals', event),
+      };
+    })
+    .filter((g) => Number.isFinite(g.commenceMs) && g.commenceMs > now)
+    .sort((a, b) => a.commenceMs - b.commenceMs);
+}
+
+/**
+ * One market cell. A real candidate renders as a clickable price, ringed
+ * with a highlight when it grades higher than its market-mate (or when it's
+ * the only side priced at all — nothing to compare against, but still the
+ * only actionable side). A market with no qualifying price on this side
+ * renders a plain dash rather than making the whole game disappear.
+ */
+function slateCell(cand, opposite, { totalLabel } = {}) {
+  if (!cand) return `<span class="slate-cell is-empty">—</span>`;
+
+  const recommended = opposite ? cand.score > opposite.score : true;
+  const idx = renderedSlateCells.push({ cand, opposite }) - 1;
+  const label = totalLabel ? `${totalLabel}${formatAmerican(cand.american)}` : formatAmerican(cand.american);
+
+  return `
+    <button type="button" class="slate-cell ${recommended ? 'is-rec' : ''}"
+            data-slate-cell="${idx}" title="${esc(cand.selection)}">${esc(label)}</button>`;
+}
+
+function slateTeamRow(game, side) {
+  const isAway = side === 'away';
+  const team = isAway ? game.away : game.home;
+  const spread = isAway ? game.spreads.away : game.spreads.home;
+  const oppSpread = isAway ? game.spreads.home : game.spreads.away;
+  const total = isAway ? game.totals.away : game.totals.home;
+  const oppTotal = isAway ? game.totals.home : game.totals.away;
+  const h2h = isAway ? game.h2h.away : game.h2h.home;
+  const oppH2h = isAway ? game.h2h.home : game.h2h.away;
+  // Convention: Over renders on the away row, Under on the home row — a
+  // total isn't really "owned" by either team, this just keeps one row per
+  // team without a third, teamless row for it.
+  const totalLabel = total ? `${isAway ? 'o' : 'u'}${total.point ?? ''} ` : null;
+
+  return `
+    <div class="slate-team-row">
+      <span class="slate-team">${esc(team)}</span>
+      ${slateCell(spread, oppSpread)}
+      ${slateCell(total, oppTotal, { totalLabel })}
+      ${slateCell(h2h, oppH2h)}
+    </div>`;
+}
+
+function slateGameHtml(game) {
+  return `
+    <article class="slate-game">
+      <div class="slate-game-time">${esc(dateFmt.format(new Date(game.commenceMs)))}</div>
+      <div class="slate-header-row">
+        <span></span><span>Spread</span><span>O/U</span><span>ML</span>
+      </div>
+      ${slateTeamRow(game, 'away')}
+      ${slateTeamRow(game, 'home')}
+    </article>`;
+}
+
+/**
+ * Populate the league dropdown. Once odds have loaded, this reads the real
+ * sport keys actually present in the fetched games — necessary because the
+ * default league selection is the bundled 'upcoming' meta-sport, which isn't
+ * itself a real sportKey any game carries; the events it returns span
+ * whatever leagues have something on tonight. Before that first load, it
+ * falls back to the raw selected-leagues set so the dropdown isn't empty.
+ */
+function renderSlateLeagueOptions() {
+  const fromEvents = [...new Set((state.rawEvents ?? []).map((e) => e.sport_key))];
+  const leagues = fromEvents.length ? fromEvents : [...state.selected].filter((k) => k !== 'upcoming');
+  const labelFor = (key) =>
+    state.candidates.find((c) => c.sportKey === key)?.sportTitle
+    ?? state.catalogue.find((s) => s.key === key)?.title
+    ?? key;
+
+  if (!leagues.length) {
+    el.slateLeagueSelect.innerHTML = `<option value="">No leagues selected</option>`;
+    el.slateLeagueSelect.disabled = true;
+    return;
+  }
+
+  el.slateLeagueSelect.disabled = false;
+  if (!state.slateLeague || !leagues.includes(state.slateLeague)) {
+    state.slateLeague = leagues[0];
+  }
+  el.slateLeagueSelect.innerHTML = leagues
+    .map((key) => `<option value="${esc(key)}" ${key === state.slateLeague ? 'selected' : ''}>${esc(labelFor(key))}</option>`)
+    .join('');
+}
+
+function renderFullSlate() {
+  renderedSlateCells.length = 0;
+
+  if (!state.slateLeague) {
+    el.slateBody.innerHTML = `<p class="empty">Select a league above, then tap Load slate.</p>`;
+    return;
+  }
+
+  const games = buildSlateGames(state.slateLeague);
+  if (!games.length) {
+    el.slateBody.innerHTML = `<p class="empty">Nothing upcoming for this league right now — check back closer to game time, or pick another league above.</p>`;
+    return;
+  }
+
+  el.slateBody.innerHTML = games.map(slateGameHtml).join('');
+}
+
+/**
+ * Pulls the same /odds call Pixel Picks uses (and shares its cache — loading
+ * the slate right after generating picks, or vice versa, costs nothing extra
+ * within the 15-minute window) and renders every game for the selected
+ * league, filtered by nothing but which league is chosen.
+ */
+async function loadSlate() {
+  el.slateLoad.disabled = true;
+  el.slateBody.innerHTML = `<p class="empty">Loading…</p>`;
+  try {
+    await loadOdds();
+    renderSlateLeagueOptions();
+    renderFullSlate();
+  } catch (error) {
+    el.slateBody.innerHTML = `<p class="empty">Couldn't reach the odds feed. ${esc(error.message)}</p>`;
+  } finally {
+    el.slateLoad.disabled = false;
+  }
+}
+
 async function generate() {
   el.generate.disabled = true;
   try {
@@ -1507,6 +1751,19 @@ el.picks.addEventListener('click', toggleWhyPanel);
 el.parlayResult.addEventListener('click', toggleWhyPanel);
 
 el.generate.addEventListener('click', generate);
+
+el.slateLoad.addEventListener('click', loadSlate);
+el.slateLeagueSelect.addEventListener('change', () => {
+  state.slateLeague = el.slateLeagueSelect.value || null;
+  saveJSON(SLATE_LEAGUE_KEY, state.slateLeague);
+  renderFullSlate();
+});
+el.slateBody.addEventListener('click', (event) => {
+  const button = event.target.closest('[data-slate-cell]');
+  if (!button) return;
+  const entry = renderedSlateCells[Number(button.dataset.slateCell)];
+  if (entry) openStatsDrawer(entry.cand, entry.opposite);
+});
 
 el.historyToggle.addEventListener('click', () => setHistoryOpen(el.historyPanel.hidden));
 el.historyClose.addEventListener('click', () => setHistoryOpen(false));
@@ -1817,6 +2074,17 @@ el.bankrollUnit.addEventListener('change', () => {
   renderBankrollPanel();
 });
 
+el.bankrollSubmit.addEventListener('click', () => {
+  // Read the fields directly rather than relying on their 'change' events
+  // having already fired — a value typed and then Submit clicked without
+  // ever blurring the field should still be picked up.
+  state.bankroll.amount = Math.max(0, Number(el.bankrollAmount.value) || 0);
+  state.bankroll.unit = Math.max(0, Number(el.bankrollUnit.value) || 0);
+  state.bankroll.confirmed = true;
+  persistBankroll();
+  renderBankrollPanel();
+});
+
 el.bankrollShowDollars.addEventListener('click', () => {
   state.bankroll.displayMode = 'dollars';
   persistBankroll();
@@ -1926,8 +2194,8 @@ async function loadPotd({ force = false } = {}) {
 }
 
 function setActiveTab(tab) {
-  const views = { board: el.boardView, parlay: el.parlayView, potd: el.potdView };
-  const tabs = { board: el.tabBoard, parlay: el.tabParlay, potd: el.tabPotd };
+  const views = { slate: el.slateView, board: el.boardView, parlay: el.parlayView, potd: el.potdView };
+  const tabs = { slate: el.tabSlate, board: el.tabBoard, parlay: el.tabParlay, potd: el.tabPotd };
 
   for (const [name, view] of Object.entries(views)) {
     const active = name === tab;
@@ -1938,8 +2206,16 @@ function setActiveTab(tab) {
 
   if (tab === 'potd') loadPotd();
   if (tab === 'parlay') renderParlaySports();
+  // Re-render from whatever's already cached rather than re-fetching — the
+  // slate shares loadOdds()'s own 15-minute cache with Pixel Picks, so
+  // switching tabs is never itself a billed call.
+  if (tab === 'slate') {
+    renderSlateLeagueOptions();
+    if (state.candidates.length) renderFullSlate();
+  }
 }
 
+el.tabSlate.addEventListener('click', () => setActiveTab('slate'));
 el.tabBoard.addEventListener('click', () => setActiveTab('board'));
 el.tabParlay.addEventListener('click', () => setActiveTab('parlay'));
 el.tabPotd.addEventListener('click', () => setActiveTab('potd'));

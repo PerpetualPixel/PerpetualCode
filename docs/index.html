@@ -33,8 +33,11 @@
 </header>
 
 <nav class="top-tabs" role="tablist" aria-label="Sections">
-  <button id="tabBoard" class="top-tab is-active" role="tab" aria-selected="true" aria-controls="boardView">
-    Board
+  <button id="tabSlate" class="top-tab is-active" role="tab" aria-selected="true" aria-controls="slateView">
+    Full Slate
+  </button>
+  <button id="tabBoard" class="top-tab" role="tab" aria-selected="false" aria-controls="boardView">
+    Pixel Picks
   </button>
   <button id="tabParlay" class="top-tab" role="tab" aria-selected="false" aria-controls="parlayView">
     Parlay Builder
@@ -45,7 +48,31 @@
 </nav>
 
 <main id="main">
-<section id="boardView" role="tabpanel" aria-labelledby="tabBoard">
+<section id="slateView" role="tabpanel" aria-labelledby="tabSlate">
+  <div id="slateStatus" class="status" role="status" aria-live="polite">
+    Every game, every market — nothing here is filtered by odds or confidence.
+    That's what the Pixel Picks tab is for.
+  </div>
+
+  <div class="slate-controls">
+    <label class="slate-league-label" for="slateLeagueSelect">League</label>
+    <select id="slateLeagueSelect" class="slate-league-select"></select>
+    <button id="slateLoad" class="icon-btn slate-load-btn" type="button">Load slate</button>
+  </div>
+
+  <section id="slateBody" class="slate-body" aria-live="polite">
+    <p class="empty">Pick a league and tap Load slate — this pulls the same
+      odds call as Pixel Picks, so it only spends a credit once every 15
+      minutes no matter which tab asks for it.</p>
+  </section>
+</section>
+
+<section id="boardView" role="tabpanel" aria-labelledby="tabBoard" hidden>
+  <p class="filter-hint parlay-intro">
+    The algorithm's most confident winner-type bets, restricted to a
+    −200/+150 odds band by default — widen it under Odds &amp; Confidence
+    below. Every game regardless of price lives on the Full Slate tab.
+  </p>
   <div id="status" class="status" role="status" aria-live="polite">Loading the board…</div>
 
   <!-- Filters: which leagues to pull picks from, which books to price them at. -->
@@ -58,7 +85,7 @@
         Sportsbooks <span id="bookSummary" class="filter-count">7</span>
       </button>
       <button id="rangeToggle" class="filter-tab" aria-expanded="false" aria-controls="rangePanel">
-        Odds &amp; Confidence <span id="rangeSummary" class="filter-count">−250/+150 · ≥50</span>
+        Odds &amp; Confidence <span id="rangeSummary" class="filter-count">−200/+150 · ≥50</span>
       </button>
     </div>
 
@@ -95,9 +122,9 @@
       <div class="slider-row">
         <div class="slider-label">
           <span>Favorite limit</span>
-          <span id="oddsMinLabel" class="slider-value">−250</span>
+          <span id="oddsMinLabel" class="slider-value">−200</span>
         </div>
-        <input type="range" id="oddsMinSlider" min="-1000" max="-100" step="5" value="-250">
+        <input type="range" id="oddsMinSlider" min="-1000" max="-100" step="5" value="-200">
       </div>
 
       <div class="slider-row">
@@ -230,6 +257,11 @@
     <p id="bankrollUnitHint" class="bankroll-hint"></p>
   </div>
 
+  <button type="button" id="bankrollSubmit" class="generate bankroll-submit">
+    <span class="generate-label">Submit</span>
+  </button>
+  <p id="bankrollSubmitHint" class="bankroll-hint"></p>
+
   <div class="bankroll-field">
     <span class="bankroll-label-static">Show stakes as</span>
     <div class="bankroll-display-toggle">
@@ -322,10 +354,15 @@
     </details>
 
     <details>
-      <summary>The three tabs</summary>
-      <p><strong>Board</strong> is automatic: tap Generate and get the 8
-      best-graded bets across every sport you've selected, ranked purely by
-      edge. <strong>Parlay Builder</strong> is manual: toggle on the sports and
+      <summary>The four tabs</summary>
+      <p><strong>Full Slate</strong> shows every game in a league with a price
+      on it — nothing hidden by odds or confidence — with a glowing ring
+      around whichever side the algorithm leans toward on each market. Tap
+      any price to see the case for it, and the case against it.
+      <strong>Pixel Picks</strong> is automatic: tap Generate and get the 8
+      best-graded bets across every sport you've selected, restricted to a
+      −200/+150 odds band by default, ranked purely by edge.
+      <strong>Parlay Builder</strong> is manual: toggle on the sports and
       markets you want, set your own odds range and confidence floor, and
       build a ticket by hand. <strong>Play of the Day</strong> is one pick,
       chosen once a day and the same for everyone, with a full written

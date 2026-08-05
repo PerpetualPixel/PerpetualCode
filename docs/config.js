@@ -39,8 +39,9 @@ export const CONFIG = {
   // Default odds range and confidence floor, and the outer bounds the sliders
   // allow widening to. -1000/+500 is deliberately generous: the sliders exist
   // specifically so a thin board (MMA on a quiet night) can be widened into
-  // rather than come back empty.
-  ODDS_MIN_DEFAULT: -250,
+  // rather than come back empty. -200/+150 is the Pixel Picks tab's own
+  // spec'd band for its "most confident winner" picks.
+  ODDS_MIN_DEFAULT: -200,
   ODDS_MAX_DEFAULT: 150,
   ODDS_FLOOR: -1000,
   ODDS_CEIL: 500,

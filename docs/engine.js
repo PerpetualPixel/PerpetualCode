@@ -283,6 +283,14 @@ export function buildCandidates(events, { now = Date.now() } = {}) {
         away: event.away_team,
         marketKey: entry.marketKey,
         marketLabel: MARKET_LABELS[entry.marketKey],
+        // The outcome's own name and point straight from the API (a team
+        // name or "Over"/"Under"; the spread/total number or null for a
+        // moneyline) — kept separately from `selection` (which already has
+        // the point folded into display text) so a consumer can match a
+        // candidate back to a specific side of a market, or read its raw
+        // number, without parsing that display string.
+        outcomeName: entry.outcome.name,
+        point: entry.outcome.point ?? null,
         selection: describe(event, entry.marketKey, entry.outcome),
         american: best.american,
         decimal: best.decimal,

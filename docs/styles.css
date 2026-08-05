@@ -1008,6 +1008,12 @@ input[type="range"]:focus-visible {
   color: var(--muted);
 }
 
+.bankroll-submit {
+  padding: 14px 20px;
+  margin: 4px 0 0;
+}
+.bankroll-submit .generate-label { font-size: 0.85rem; }
+
 .bankroll-display-toggle {
   display: flex;
   gap: 8px;
@@ -1129,6 +1135,15 @@ input[type="range"]:focus-visible {
 .stats-section ul { margin: 0; padding-left: 18px; }
 .stats-section li { font-size: 0.84rem; color: #cbd5df; line-height: 1.55; margin-bottom: 8px; }
 .stats-section li:last-child { margin-bottom: 0; }
+
+.stats-section.devil-advocate h3 { color: var(--warn); }
+.stats-section.devil-advocate {
+  background: var(--surface-2);
+  margin-left: -16px;
+  margin-right: -16px;
+  padding: 16px;
+  border-top-color: var(--warn);
+}
 
 .stats-table-scroll {
   overflow-x: auto;
@@ -1275,4 +1290,138 @@ input[type="range"]:focus-visible {
   .icon-btn { padding: 8px 9px; font-size: 0.68rem; }
   .top-tab { padding: 10px 6px; font-size: 0.68rem; }
   .filter-tab { font-size: 0.66rem; padding: 9px 8px; }
+}
+
+/* ---------------------------------------------------------------- */
+/* Full Slate                                                         */
+/* ---------------------------------------------------------------- */
+
+.slate-controls {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin: 14px 0;
+}
+
+.slate-league-label {
+  font-family: var(--mono);
+  font-size: 0.7rem;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--muted);
+}
+
+.slate-league-select {
+  flex: 1;
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  color: var(--text);
+  font-family: var(--mono);
+  font-size: 0.8rem;
+  padding: 10px 12px;
+  min-height: 42px;
+}
+.slate-league-select:disabled { opacity: 0.5; }
+
+.slate-load-btn { white-space: nowrap; }
+
+.slate-body { display: grid; gap: 14px; }
+
+.slate-game {
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  overflow: hidden;
+}
+
+.slate-game-time {
+  padding: 9px 14px;
+  font-family: var(--mono);
+  font-size: 0.7rem;
+  color: var(--muted);
+  background: var(--surface-2);
+  border-bottom: 1px solid var(--line);
+}
+
+.slate-header-row,
+.slate-team-row {
+  display: grid;
+  grid-template-columns: 1fr 84px 96px 76px;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 14px;
+}
+
+.slate-header-row {
+  font-family: var(--mono);
+  font-size: 0.62rem;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--muted);
+  padding-top: 10px;
+  padding-bottom: 4px;
+}
+
+.slate-team-row + .slate-team-row { border-top: 1px dashed var(--line); }
+
+.slate-team {
+  font-size: 0.88rem;
+  font-weight: 650;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.slate-cell {
+  display: block;
+  width: 100%;
+  background: var(--surface-2);
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  color: var(--text);
+  font-family: var(--mono);
+  font-size: 0.74rem;
+  font-weight: 600;
+  padding: 8px 4px;
+  text-align: center;
+  cursor: pointer;
+}
+.slate-cell:hover { border-color: #36414d; }
+
+.slate-cell.is-empty {
+  background: transparent;
+  border-color: transparent;
+  color: var(--muted);
+  cursor: default;
+}
+
+/* The algorithm's recommended side of this market — a glowing ring, not just
+   a color change, so it reads at a glance across a whole slate of games. */
+.slate-cell.is-rec {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 2px var(--accent-dim), 0 0 10px 1px rgba(74, 222, 128, 0.55);
+  color: var(--accent);
+}
+
+@media (min-width: 900px) {
+  .slate-header-row,
+  .slate-team-row {
+    grid-template-columns: 1fr 110px 130px 100px;
+  }
+}
+
+/* Narrower Full Slate market columns on small phones — placed after the base
+   .slate-cell rules (later in source order, same specificity) so it actually
+   wins the cascade, rather than being overridden by them. */
+@media (max-width: 420px) {
+  .slate-header-row,
+  .slate-team-row {
+    grid-template-columns: 1fr 58px 72px 54px;
+    gap: 5px;
+    padding-left: 10px;
+    padding-right: 10px;
+  }
+  .slate-cell { font-size: 0.66rem; padding: 8px 2px; }
+  .slate-team { font-size: 0.8rem; }
 }
