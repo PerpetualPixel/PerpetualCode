@@ -1249,35 +1249,68 @@ function statBar(label, count, total) {
  * on Sherdog and are simply not shown rather than guessed at. */
 function renderMmaBio(fighter) {
   const b = fighter?.bio;
-  if (!b) return '';
+  const ufcB = fighter?.ufc?.bio;
+  if (!b && !ufcB) return '';
   const parts = [];
-  if (b.age != null) parts.push(`${b.age} yrs`);
-  if (b.height) parts.push(b.height);
-  if (b.weight) parts.push(b.weight);
-  if (b.reach) parts.push(`${b.reach} reach`);
-  if (b.stance) parts.push(b.stance);
-  if (b.weightClass) parts.push(b.weightClass);
+  if (b?.age != null) parts.push(`${b.age} yrs`);
+  else if (ufcB?.age) parts.push(`${ufcB.age} yrs`);
+  if (b?.height) parts.push(b.height);
+  if (b?.weight) parts.push(b.weight);
+  if (b?.reach) parts.push(`${b.reach} reach`);
+  if (b?.stance) parts.push(b.stance);
+  if (b?.weightClass) parts.push(b.weightClass);
+  // ufc.com fields only fill gaps Sherdog's own bio left — never override a
+  // Sherdog value that's already there, just cover what's missing.
+  if (!b?.reach && ufcB?.reach) parts.push(`${ufcB.reach}" reach (UFC.com)`);
+  if (ufcB?.trainsAt && !b?.association) parts.push(ufcB.trainsAt);
   return parts.length ? `<div class="stats-pills">${parts.map((p) => `<span class="stat-pill">${esc(p)}</span>`).join('')}</div>` : '';
 }
 
 /**
- * Head-to-head fighter photos from Sherdog, when both (or either) actually
- * parsed one. A fighter with no photo on their Sherdog page just gets an
- * initial in a plain circle — never a stock/placeholder image standing in
- * for a real one.
+ * Striking/takedown accuracy and significant-strike-by-position bars, from
+ * ufc.com's own athlete page — only ever populated for a fighter who's
+ * actually competed in the UFC, null otherwise (a PFL/Bellator-only fighter
+ * has no ufc.com profile at all, a real "no data" case, not an error).
+ */
+function pctBar(label, pct) {
+  return `
+    <div class="mma-bar-row">
+      <span class="mma-bar-label">${esc(label)}</span>
+      <div class="mma-bar-track"><span class="mma-bar-fill" style="width:${pct}%"></span></div>
+      <span class="mma-bar-count">${pct}%</span>
+    </div>`;
+}
+
+function renderUfcCareerStats(fighter) {
+  const ufc = fighter?.ufc;
+  if (!ufc) return '';
+  const rows = [];
+  if (ufc.strikingAccuracy != null) rows.push(pctBar('Striking Acc.', ufc.strikingAccuracy));
+  if (ufc.takedownAccuracy != null) rows.push(pctBar('Takedown Acc.', ufc.takedownAccuracy));
+  for (const p of ufc.strikePosition ?? []) rows.push(pctBar(`Str. ${p.label}`, p.pct));
+  if (!rows.length) return '';
+  return `<p class="stats-fighter-label">${esc(fighter.name)}</p>${rows.join('')}`;
+}
+
+/**
+ * Head-to-head fighter photos — ufc.com's official photo first (sharper,
+ * more current) when the fighter has a UFC.com profile, Sherdog's own photo
+ * otherwise. A fighter with neither just gets an initial in a plain circle —
+ * never a stock/placeholder image standing in for a real one.
  */
 function renderMmaPhotos(me, opponent) {
   const initials = (name) => esc((name ?? '?').trim().charAt(0).toUpperCase());
+  const photoOf = (fighter) => fighter?.ufc?.photo ?? fighter?.photo ?? null;
   const side = (fighter) => fighter ? `
     <div class="mma-photo-side">
-      ${fighter.photo
-        ? `<img class="mma-photo" src="${esc(fighter.photo)}" alt="${esc(fighter.name)}" loading="lazy"
+      ${photoOf(fighter)
+        ? `<img class="mma-photo" src="${esc(photoOf(fighter))}" alt="${esc(fighter.name)}" loading="lazy"
              onerror="this.outerHTML='<span class=&quot;mma-photo mma-photo-fallback&quot;>${initials(fighter.name)}</span>'">`
         : `<span class="mma-photo mma-photo-fallback">${initials(fighter.name)}</span>`}
       <p class="mma-photo-name">${esc(fighter.name)}</p>
     </div>` : '';
 
-  if (!me?.photo && !opponent?.photo) return '';
+  if (!photoOf(me) && !photoOf(opponent)) return '';
   return `
     <div class="mma-photo-row">
       ${side(me)}
@@ -1287,17 +1320,19 @@ function renderMmaPhotos(me, opponent) {
 }
 
 /**
- * The MMA Fantasy-style breakdown: photos, physical attributes, data
- * reliability, method-of-victory/defeat bars, round-ended distribution,
- * activity by year, and common opponents — everything genuinely derivable
- * from the Sherdog scrape already in worker/src/mma.js. Percentile striking/
- * grappling stats (MMA Fantasy's Strike Score/Accuracy/Defense/Evasion etc.)
- * are deliberately absent: UFCStats.com has exactly those numbers, but
- * returns a JS anti-bot challenge page to every request from this app's
- * Cloudflare Worker (confirmed live — a 200 response with a "checking your
- * browser" challenge, not real HTML) — the same class of block that ruled
- * out ESPN's site.api host earlier in this project, just on a different
- * host. Not fixable by trying harder against the same architecture.
+ * The MMA Fantasy-style breakdown: photos, physical attributes, career rate
+ * stats, data reliability, method-of-victory/defeat bars, round-ended
+ * distribution, activity by year, and common opponents. Sherdog
+ * (worker/src/mma.js) supplies cross-promotion history and bio; ufc.com
+ * (worker/src/ufc.js) supplies career rate stats — striking/takedown
+ * accuracy and significant-strike-by-position — for whichever fighters have
+ * actually competed in the UFC. UFCStats.com would have been the more
+ * obvious source for those exact numbers, but serves a JS anti-bot
+ * "checking your browser" challenge to every request this app's Cloudflare
+ * Worker makes to it (confirmed live, and confirmed it isn't Worker-
+ * specific — a plain curl from an ordinary machine gets the identical
+ * challenge). ufc.com's own athlete pages carry the same core numbers with
+ * no such wall.
  */
 function renderMmaBreakdown(mmaContext, subjectName) {
   const { me, opponent } = resolveMmaFighters(mmaContext, subjectName);
@@ -1316,6 +1351,16 @@ function renderMmaBreakdown(mmaContext, subjectName) {
         <h3>Physical Attributes</h3>
         ${bioMe ? `<p class="stats-fighter-label">${esc(me.name)}</p>${bioMe}` : ''}
         ${bioOpp ? `<p class="stats-fighter-label">${esc(opponent.name)}</p>${bioOpp}` : ''}
+      </div>`);
+  }
+
+  const ufcMe = renderUfcCareerStats(me);
+  const ufcOpp = opponent ? renderUfcCareerStats(opponent) : '';
+  if (ufcMe || ufcOpp) {
+    sections.push(`
+      <div class="stats-section">
+        <h3>Career Stats <span class="stats-source">via UFC.com</span></h3>
+        ${ufcMe}${ufcOpp}
       </div>`);
   }
 

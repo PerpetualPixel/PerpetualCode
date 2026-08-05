@@ -25,6 +25,8 @@
  * than reach for the fighter's amateur record or invent one.
  */
 
+import { fetchUfcProfile } from './ufc.js';
+
 const SHERDOG = 'https://www.sherdog.com';
 const SEARCH_TTL = 3600 * 6;   // a name resolves to the same fighter for months
 const PROFILE_TTL = 3600 * 6;  // a record only changes after that fighter's next fight
@@ -286,10 +288,20 @@ function deriveRecordFromHistory(history) {
  */
 export async function fetchMmaContext({ fighterA, fighterB }, ctx) {
   if (!fighterA || !fighterB) return null;
-  const [a, b] = await Promise.all([
+  const [a, b, ufcA, ufcB] = await Promise.all([
     fetchFighter(fighterA, ctx),
     fetchFighter(fighterB, ctx),
+    fetchUfcProfile(fighterA, ctx),
+    fetchUfcProfile(fighterB, ctx),
   ]);
   if (!a && !b) return null;
-  return { a, b };
+  // ufc.com only has a page for someone who's actually fought in the UFC —
+  // null here is a real, common outcome (a PFL or Bellator-only fighter),
+  // not a failed lookup. Attached alongside Sherdog's own bio/history rather
+  // than replacing any of it: Sherdog has cross-promotion history no other
+  // source carries, ufc.com has the career rate stats Sherdog doesn't.
+  return {
+    a: a ? { ...a, ufc: ufcA } : a,
+    b: b ? { ...b, ufc: ufcB } : b,
+  };
 }

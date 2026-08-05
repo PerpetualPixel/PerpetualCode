@@ -1234,6 +1234,13 @@ input[type="range"]:focus-visible {
   color: var(--muted);
 }
 
+.stats-source {
+  text-transform: none;
+  letter-spacing: normal;
+  font-weight: 400;
+  opacity: 0.7;
+}
+
 .stats-section ul { margin: 0; padding-left: 18px; }
 .stats-section li { font-size: 0.84rem; color: #cbd5df; line-height: 1.55; margin-bottom: 8px; }
 .stats-section li:last-child { margin-bottom: 0; }
