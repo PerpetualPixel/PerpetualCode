@@ -39,6 +39,9 @@ import {
   fighterRoundsEnded,
   dataReliability,
   commonOpponents,
+  tennisSurfaceFilters,
+  tennisRecentForm,
+  tennisHeadToHead,
 } from './insights.js';
 
 const HISTORY_KEY = 'pixelpick.history.v2';
@@ -1292,6 +1295,99 @@ function renderUfcCareerStats(fighter) {
   return `<p class="stats-fighter-label">${esc(fighter.name)}</p>${rows.join('')}`;
 }
 
+/* ------------------------------------------------------------------ */
+/* Tennis breakdown                                                     */
+/* ------------------------------------------------------------------ */
+
+// The archive plus both player names for whichever tennis drawer is
+// currently open — read by the surface-filter click handler below, since
+// clicking a filter re-renders just the filter body, not the whole drawer.
+let tennisBreakdownState = null;
+
+function tennisFormTable(form) {
+  if (!form.length) return `<p class="empty-inline">No matches for this filter.</p>`;
+  const rows = form.map((m) => `
+    <tr>
+      <td>${esc(m.dateLabel)}</td>
+      <td>${esc(m.opponent ?? '—')}</td>
+      <td>${esc(m.round ?? '—')}</td>
+      <td>${esc(m.surface ?? '—')}${m.retired ? ' <span class="stat-pill is-warn">ret.</span>' : ''}</td>
+      <td><span class="form-badge ${m.result === 'W' ? 'is-win' : 'is-loss'}">${m.result}</span></td>
+    </tr>`).join('');
+  return `
+    <div class="stats-table-scroll">
+      <table class="stats-table">
+        <thead><tr><th>Date</th><th>Opponent</th><th>Round</th><th>Surface</th><th></th></tr></thead>
+        <tbody>${rows}</tbody>
+      </table>
+    </div>`;
+}
+
+function tennisH2hTable(h2h) {
+  if (!h2h) return '';
+  if (!h2h.meetings.length) return `<p class="empty-inline">No meetings between these two on this filter.</p>`;
+  const rows = h2h.meetings.map((m) => `
+    <tr>
+      <td>${esc(m.dateLabel)}</td>
+      <td>${esc(m.round ?? '—')}</td>
+      <td>${esc(m.surface ?? '—')}</td>
+      <td>${esc(m.winner)}</td>
+    </tr>`).join('');
+  return `
+    <p class="stats-fighter-label">${esc(h2h.aName)} ${h2h.aWins} – ${h2h.bWins} ${esc(h2h.bName)}</p>
+    <div class="stats-table-scroll">
+      <table class="stats-table">
+        <thead><tr><th>Date</th><th>Round</th><th>Surface</th><th>Winner</th></tr></thead>
+        <tbody>${rows}</tbody>
+      </table>
+    </div>`;
+}
+
+function renderTennisFilterBody(filter) {
+  const { data, away, home } = tennisBreakdownState;
+  const formAway = tennisRecentForm(data, away, { filter, limit: 8 });
+  const formHome = tennisRecentForm(data, home, { filter, limit: 8 });
+  const h2h = tennisHeadToHead(data, away, home, { filter });
+
+  const formHtml = [
+    formAway.length ? `<p class="stats-fighter-label">${esc(away)} — Recent Form</p>${tennisFormTable(formAway)}` : '',
+    formHome.length ? `<p class="stats-fighter-label">${esc(home)} — Recent Form</p>${tennisFormTable(formHome)}` : '',
+  ].filter(Boolean).join('');
+
+  if (!formHtml && !h2h?.meetings.length) {
+    return `<p class="empty-inline">No archived matches for either player on this filter.</p>`;
+  }
+
+  return `
+    ${formHtml}
+    <p class="stats-fighter-label">Head-to-Head</p>
+    ${tennisH2hTable(h2h)}`;
+}
+
+/**
+ * Recent form and head-to-head, filterable by surface — built entirely from
+ * the tennis-data.co.uk archive already bundled with this app (no live
+ * fetch, no new source). Surface filter options are generated from what this
+ * specific archive actually contains (see tennisSurfaceFilters), so a tour
+ * with no indoor hard-court events simply doesn't offer that button rather
+ * than offering one that always comes back empty.
+ */
+function renderTennisBreakdown(data, away, home) {
+  if (!data?.matches?.length) return '';
+  tennisBreakdownState = { data, away, home };
+
+  const filters = tennisSurfaceFilters(data);
+  const filterButtons = filters.map((f, i) => `
+    <button type="button" class="surface-btn ${i === 0 ? 'is-active' : ''}" data-surface-key="${esc(f.key)}">${esc(f.label)}</button>`).join('');
+
+  return `
+    <div class="stats-section tennis-breakdown">
+      <h3>Recent Form &amp; Head-to-Head <span class="stats-source">via tennis-data.co.uk</span></h3>
+      <div class="surface-filters">${filterButtons}</div>
+      <div id="tennisFilterBody">${renderTennisFilterBody(filters[0])}</div>
+    </div>`;
+}
+
 /**
  * Head-to-head fighter photos — ufc.com's official photo first (sharper,
  * more current) when the fighter has a UFC.com profile, Sherdog's own photo
@@ -1481,9 +1577,12 @@ async function openStatsDrawer(leg, opposite = null, { fullscreen = false } = {}
   let bullets = [];
   let weather = null;
   let mmaBreakdownHtml = '';
+  let tennisBreakdownHtml = '';
   try {
     if (isTennis(leg.sportKey)) {
-      bullets = buildInsights(leg, { tennisData: await tennisArchive(leg.sportKey) });
+      const tennisData = await tennisArchive(leg.sportKey);
+      bullets = buildInsights(leg, { tennisData });
+      tennisBreakdownHtml = renderTennisBreakdown(tennisData, leg.away, leg.home);
     } else if (isMma(leg.sportKey)) {
       const mmaContext = await mmaContextFor(leg);
       bullets = buildInsights(leg, { mmaContext });
@@ -1516,6 +1615,7 @@ async function openStatsDrawer(leg, opposite = null, { fullscreen = false } = {}
     priceHtml +
     devilHtml +
     mmaBreakdownHtml +
+    tennisBreakdownHtml +
     renderStatsResearch(bullets) +
     renderPriceTable(leg);
 }
@@ -1541,6 +1641,18 @@ document.body.addEventListener('click', (event) => {
   if (!button) return;
   const leg = renderedLegs[Number(button.dataset.moreStats)];
   if (leg) openStatsDrawer(leg, findOpposite(leg));
+});
+
+document.body.addEventListener('click', (event) => {
+  const button = event.target.closest('[data-surface-key]');
+  if (!button || !tennisBreakdownState) return;
+  const filters = tennisSurfaceFilters(tennisBreakdownState.data);
+  const filter = filters.find((f) => f.key === button.dataset.surfaceKey);
+  if (!filter) return;
+
+  button.parentElement.querySelectorAll('.surface-btn').forEach((b) => b.classList.toggle('is-active', b === button));
+  const body = document.getElementById('tennisFilterBody');
+  if (body) body.innerHTML = renderTennisFilterBody(filter);
 });
 
 el.statsDrawerClose.addEventListener('click', () => setStatsDrawerOpen(false));

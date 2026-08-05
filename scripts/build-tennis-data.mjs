@@ -107,6 +107,8 @@ async function buildTour(tour, years) {
   const playerIndex = new Map();
   const surfaces = [];
   const surfaceIndex = new Map();
+  const courts = [];
+  const courtIndex = new Map();
   const rounds = [];
   const roundIndex = new Map();
 
@@ -143,6 +145,10 @@ async function buildTour(tour, years) {
       matches.push([
         day,
         intern(surfaces, surfaceIndex, row.Surface),
+        // "Indoor" | "Outdoor" — only meaningfully varies for Hard; Clay and
+        // Grass are effectively always Outdoor in this feed, but read
+        // directly from the row rather than assumed, same as everything else.
+        intern(courts, courtIndex, row.Court),
         intern(rounds, roundIndex, row.Round),
         intern(players, playerIndex, winner),
         intern(players, playerIndex, loser),
@@ -167,9 +173,10 @@ async function buildTour(tour, years) {
     epoch: '2000-01-01',
     seasons: years,
     // Columns of each match tuple, so the reader never guesses at positions.
-    fields: ['day', 'surface', 'round', 'winner', 'loser', 'wRank', 'lRank', 'retired'],
+    fields: ['day', 'surface', 'court', 'round', 'winner', 'loser', 'wRank', 'lRank', 'retired'],
     players,
     surfaces,
+    courts,
     rounds,
     matches,
   };

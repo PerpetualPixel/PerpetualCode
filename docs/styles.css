@@ -1282,6 +1282,52 @@ input[type="range"]:focus-visible {
 .stats-table tr:last-child td { border-bottom: none; }
 .stats-table tr.is-best td { color: var(--accent); }
 
+.empty-inline {
+  color: var(--muted);
+  font-size: 0.8rem;
+  margin: 6px 0 14px;
+}
+
+.surface-filters {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-bottom: 14px;
+}
+
+.surface-btn {
+  background: var(--surface-2);
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  color: var(--muted);
+  font-family: var(--mono);
+  font-size: 0.68rem;
+  letter-spacing: 0.03em;
+  padding: 7px 12px;
+  cursor: pointer;
+}
+.surface-btn:hover { color: var(--text); border-color: #36414d; }
+.surface-btn.is-active {
+  color: #04140a;
+  background: var(--accent);
+  border-color: var(--accent);
+  font-weight: 700;
+}
+
+.form-badge {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 20px;
+  height: 20px;
+  border-radius: 4px;
+  font-family: var(--mono);
+  font-size: 0.7rem;
+  font-weight: 700;
+}
+.form-badge.is-win { background: var(--accent-dim); color: var(--accent); }
+.form-badge.is-loss { background: rgba(248, 113, 113, 0.15); color: #f87171; }
+
 .stats-empty {
   color: var(--muted);
   font-size: 0.85rem;

@@ -102,7 +102,7 @@ export function matchPlayer(oddsName, players) {
 const EPOCH_MS = Date.UTC(2000, 0, 1);
 const toDayNum = (ms) => Math.round((ms - EPOCH_MS) / 86400000);
 
-const F = { DAY: 0, SURFACE: 1, ROUND: 2, WINNER: 3, LOSER: 4, WRANK: 5, LRANK: 6, RETIRED: 7 };
+const F = { DAY: 0, SURFACE: 1, COURT: 2, ROUND: 3, WINNER: 4, LOSER: 5, WRANK: 6, LRANK: 7, RETIRED: 8 };
 
 const pct = (n, d) => (d ? Math.round((n / d) * 100) : 0);
 const plural = (n, word) =>
@@ -295,6 +295,102 @@ export function tennisInsights(data, subject, opponent, { now = Date.now(), surf
   }
 
   return bullets;
+}
+
+/**
+ * The surface/court filters the More Info tennis breakdown offers — All
+ * Surfaces, Hard (Outdoor), Hard (Indoor), Clay, Grass. Built from whatever
+ * this archive's own surfaces/courts tables actually contain rather than a
+ * fixed list, so a tour-year with no indoor hard matches at all just omits
+ * that option instead of offering a filter that always returns nothing.
+ * Clay and Grass aren't split by court — this feed's own data confirms
+ * they're effectively always Outdoor, and the interesting Indoor/Outdoor
+ * distinction only ever applies to Hard.
+ */
+export function tennisSurfaceFilters(data) {
+  if (!data?.surfaces) return [{ key: 'all', label: 'All Surfaces', test: () => true }];
+
+  const surfaceIdx = (name) => data.surfaces.findIndex((s) => s.toLowerCase() === name);
+  const courtIdx = (name) => (data.courts ?? []).findIndex((c) => c.toLowerCase() === name);
+  const hard = surfaceIdx('hard');
+  const clay = surfaceIdx('clay');
+  const grass = surfaceIdx('grass');
+  const outdoor = courtIdx('outdoor');
+  const indoor = courtIdx('indoor');
+
+  const options = [{ key: 'all', label: 'All Surfaces', test: () => true }];
+  if (hard >= 0 && outdoor >= 0) {
+    options.push({ key: 'hard-outdoor', label: 'Hard (Outdoor)', test: (m) => m[F.SURFACE] === hard && m[F.COURT] === outdoor });
+  }
+  if (hard >= 0 && indoor >= 0) {
+    options.push({ key: 'hard-indoor', label: 'Hard (Indoor)', test: (m) => m[F.SURFACE] === hard && m[F.COURT] === indoor });
+  }
+  if (clay >= 0) options.push({ key: 'clay', label: 'Clay', test: (m) => m[F.SURFACE] === clay });
+  if (grass >= 0) options.push({ key: 'grass', label: 'Grass', test: (m) => m[F.SURFACE] === grass });
+  return options;
+}
+
+/**
+ * A player's most recent matches, newest first, optionally restricted to one
+ * of tennisSurfaceFilters()'s filters. Returns [] for an unmatched player or
+ * an archive with nothing for them on that filter — a real "no data for this
+ * surface" outcome the UI shows as an empty state, not an error.
+ */
+export function tennisRecentForm(data, playerName, { limit = 10, filter = null } = {}) {
+  if (!data?.matches?.length) return [];
+  const me = matchPlayer(playerName, data.players);
+  if (!me) return [];
+
+  const mine = data.matches.filter(
+    (m) => (m[F.WINNER] === me.index || m[F.LOSER] === me.index) && (!filter || filter.test(m)),
+  );
+
+  return mine.slice(-limit).reverse().map((m) => {
+    const won = m[F.WINNER] === me.index;
+    const opponentIndex = won ? m[F.LOSER] : m[F.WINNER];
+    return {
+      day: m[F.DAY],
+      dateLabel: shortDate(m[F.DAY]),
+      opponent: data.players[opponentIndex] ?? null,
+      round: data.rounds[m[F.ROUND]] ?? null,
+      surface: data.surfaces[m[F.SURFACE]] ?? null,
+      court: data.courts?.[m[F.COURT]] ?? null,
+      result: won ? 'W' : 'L',
+      retired: m[F.RETIRED] === 1,
+    };
+  });
+}
+
+/**
+ * Every archived meeting between two specific players, newest first,
+ * optionally restricted to one surface filter — the same "no data" honesty
+ * as everything else here: two players who've never played on grass in this
+ * archive just get an empty meetings list on that filter, not a fabricated
+ * one.
+ */
+export function tennisHeadToHead(data, playerA, playerB, { filter = null } = {}) {
+  if (!data?.matches?.length) return null;
+  const a = matchPlayer(playerA, data.players);
+  const b = matchPlayer(playerB, data.players);
+  if (!a || !b) return null;
+
+  const matches = data.matches.filter(
+    (m) =>
+      ((m[F.WINNER] === a.index && m[F.LOSER] === b.index) || (m[F.WINNER] === b.index && m[F.LOSER] === a.index)) &&
+      (!filter || filter.test(m)),
+  );
+
+  const meetings = matches.slice().reverse().map((m) => ({
+    day: m[F.DAY],
+    dateLabel: shortDate(m[F.DAY]),
+    round: data.rounds[m[F.ROUND]] ?? null,
+    surface: data.surfaces[m[F.SURFACE]] ?? null,
+    court: data.courts?.[m[F.COURT]] ?? null,
+    winner: m[F.WINNER] === a.index ? a.display : b.display,
+  }));
+
+  const aWins = matches.filter((m) => m[F.WINNER] === a.index).length;
+  return { aName: a.display, bName: b.display, aWins, bWins: matches.length - aWins, meetings };
 }
 
 /* ------------------------------------------------------------------ */

@@ -3,6 +3,9 @@ import assert from 'node:assert/strict';
 import {
   matchPlayer,
   tennisInsights,
+  tennisSurfaceFilters,
+  tennisRecentForm,
+  tennisHeadToHead,
   teamInsights,
   mmaInsights,
   fighterActivityByYear,
@@ -71,17 +74,18 @@ const ARCHIVE = {
   tour: 'test',
   seasons: [2025, 2026],
   surfaces: ['Hard', 'Clay'],
+  courts: ['Outdoor', 'Indoor'],
   rounds: ['1st Round', 'The Final'],
   players: ['Alpha A.', 'Bravo B.', 'Ghost G.'],
   matches: [
-    [day('2026-05-01'), 1, 0, 1, 0, 20, 10, 0], // Bravo beats Alpha on clay
-    [day('2026-07-01'), 0, 0, 0, 1, 10, 20, 0], // Alpha beats Bravo on hard
-    [day('2026-07-10'), 0, 0, 0, 1, 10, 20, 0], // Alpha beats Bravo on hard
-    [day('2026-07-15'), 0, 0, 0, 2, 10, 90, 0],
-    [day('2026-07-20'), 0, 0, 2, 0, 90, 10, 1], // retirement
-    [day('2026-07-25'), 0, 0, 0, 2, 10, 90, 0],
-    [day('2026-07-28'), 0, 0, 1, 2, 20, 90, 0],
-    [day('2026-08-01'), 0, 0, 1, 2, 20, 90, 0],
+    [day('2026-05-01'), 1, 0, 0, 1, 0, 20, 10, 0], // Bravo beats Alpha on clay
+    [day('2026-07-01'), 0, 0, 0, 0, 1, 10, 20, 0], // Alpha beats Bravo on hard
+    [day('2026-07-10'), 0, 0, 0, 0, 1, 10, 20, 0], // Alpha beats Bravo on hard
+    [day('2026-07-15'), 0, 0, 0, 0, 2, 10, 90, 0],
+    [day('2026-07-20'), 0, 0, 0, 2, 0, 90, 10, 1], // retirement
+    [day('2026-07-25'), 0, 0, 0, 0, 2, 10, 90, 0],
+    [day('2026-07-28'), 0, 0, 0, 1, 2, 20, 90, 0],
+    [day('2026-08-01'), 0, 0, 0, 1, 2, 20, 90, 0],
   ],
 };
 
@@ -119,7 +123,7 @@ test('retirements are surfaced as retirements, not diagnoses', () => {
 test('a long layoff is disclosed rather than passed off as current form', () => {
   const stale = {
     ...ARCHIVE,
-    matches: [[day('2026-01-05'), 0, 0, 0, 1, 10, 20, 0]],
+    matches: [[day('2026-01-05'), 0, 0, 0, 0, 1, 10, 20, 0]],
   };
   const text = tennisInsights(stale, 'Aaron Alpha', 'Ben Bravo', { now: NOW }).map((b) => b.text).join(' ');
   assert.match(text, /no recorded match since/);
@@ -138,6 +142,49 @@ test('an unknown player produces no bullets at all', () => {
     tennisInsights({ ...ARCHIVE, matches: [] }, 'Aaron Alpha', 'Ben Bravo', { now: NOW }),
     [],
   );
+});
+
+test('surface filters only offer combinations this archive actually has', () => {
+  const filters = tennisSurfaceFilters(ARCHIVE);
+  const keys = filters.map((f) => f.key);
+  assert.deepEqual(keys, ['all', 'hard-outdoor', 'hard-indoor', 'clay']);
+  // No Grass filter — ARCHIVE's surfaces table never lists it.
+  assert.ok(!keys.includes('grass'));
+});
+
+test('recent form lists a player\'s matches newest first, with the right result', () => {
+  const form = tennisRecentForm(ARCHIVE, 'Aaron Alpha', { limit: 3 });
+  assert.equal(form.length, 3);
+  assert.equal(form[0].opponent, 'Ghost G.');
+  assert.equal(form[0].result, 'W');
+  assert.equal(form[1].result, 'L');
+  assert.ok(form[0].day > form[1].day, 'must be newest first');
+});
+
+test('recent form filtered to a surface with no matches for that player is an honest empty list', () => {
+  const grassLike = tennisSurfaceFilters(ARCHIVE).find((f) => f.key === 'hard-indoor');
+  const form = tennisRecentForm(ARCHIVE, 'Aaron Alpha', { filter: grassLike });
+  assert.deepEqual(form, []);
+});
+
+test('recent form on an unknown player returns an empty list, not an error', () => {
+  assert.deepEqual(tennisRecentForm(ARCHIVE, 'Nobody At All'), []);
+  assert.deepEqual(tennisRecentForm(null, 'Aaron Alpha'), []);
+});
+
+test('head-to-head tallies match the bullets\' own head-to-head count', () => {
+  const h2h = tennisHeadToHead(ARCHIVE, 'Aaron Alpha', 'Ben Bravo');
+  assert.equal(h2h.aWins, 2);
+  assert.equal(h2h.bWins, 1);
+  assert.equal(h2h.meetings.length, 3);
+  // Newest first, and the clay meeting (Bravo's win) is the oldest of the three.
+  assert.equal(h2h.meetings[0].winner, 'Alpha');
+  assert.equal(h2h.meetings.at(-1).surface, 'Clay');
+});
+
+test('head-to-head returns null for a player never in the archive', () => {
+  assert.equal(tennisHeadToHead(ARCHIVE, 'Nobody At All', 'Ben Bravo'), null);
+  assert.equal(tennisHeadToHead(null, 'Aaron Alpha', 'Ben Bravo'), null);
 });
 
 /* ---------------------------------------------------------------- */
@@ -410,7 +457,7 @@ test('commonOpponents returns empty when the fighters have never overlapped, and
 test('every tennis bullet is tagged personnel or situational, never supporting', () => {
   // Force both an idle-gap flag (situational) and a retirement flag
   // (situational) alongside the usual record/form/H2H (personnel).
-  const stale = { ...ARCHIVE, matches: [[day('2026-01-05'), 0, 0, 0, 1, 10, 20, 0]] };
+  const stale = { ...ARCHIVE, matches: [[day('2026-01-05'), 0, 0, 0, 0, 1, 10, 20, 0]] };
   const bullets = tennisInsights(stale, 'Aaron Alpha', 'Ben Bravo', { now: NOW });
   assert.ok(bullets.length > 0);
   for (const b of bullets) assert.ok(['personnel', 'situational'].includes(b.tier), b.tier);
