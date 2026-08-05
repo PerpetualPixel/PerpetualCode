@@ -139,6 +139,24 @@ doesn't change again that day, regardless of what the market does afterward
 — it's an editorial call made at a point in time, not a live-repriced
 candidate like the ones on the main board.
 
+## Suggested stake (Kelly Criterion)
+
+Every pick — on the Board, in a Parlay Builder ticket, and on Play of the
+Day — carries a suggested stake as a % of bankroll, using quarter-Kelly
+against the pick's own no-vig consensus (`kellyFraction()` /
+`suggestedStake()` / `suggestedParlayStake()` in `engine.js`). Full Kelly
+maximizes long-run growth but is only correct if the win-probability input is
+exactly right, and a devigged market consensus is a good estimate of that,
+not a guarantee — quarter-Kelly trades some growth for a meaningfully
+smoother ride, the standard practice this app's own reference framework
+recommends over full Kelly. Capped at 5% of bankroll per bet regardless of
+what the raw formula says, as protection against the estimate being wrong in
+one particular market's favor, not a claim that the math itself is wrong. A
+parlay's stake uses the product of its legs' individual probabilities — the
+same independence assumption `combineLegs()` already makes when multiplying
+their decimal odds, and `buildParlay()` enforces structurally by refusing two
+legs from the same game.
+
 ## The price rules
 
 Straight from the spec, enforced in `engine.js` and covered by

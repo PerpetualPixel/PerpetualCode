@@ -20,6 +20,8 @@ import {
   confidenceColor,
   bookOffers,
   impliedProb,
+  americanToDecimal,
+  suggestedParlayStake,
 } from './engine.js';
 import { buildInsights, isTennis, isMma } from './insights.js';
 
@@ -506,9 +508,22 @@ async function hydrateInsights(container = el.picks) {
   );
 }
 
+/**
+ * Suggested stake as a %-of-bankroll string, or null when there's no real
+ * edge to size — quarter-Kelly against the pick's own no-vig consensus,
+ * capped (see engine.js's KELLY.MAX_STAKE) against one bet ever eating too
+ * much of a bankroll regardless of what the raw formula says.
+ */
+function stakeLine(pick) {
+  const stake = suggestedParlayStake(pick.legs, americanToDecimal(pick.american));
+  if (stake <= 0) return null;
+  return `Suggested stake: ${(stake * 100).toFixed(1)}% of bankroll (¼-Kelly)`;
+}
+
 function renderConfidence(pick) {
   const color = confidenceColor(pick.score, state.minScore);
   const beats = Math.round(pick.percentile ?? 0);
+  const stake = stakeLine(pick);
 
   return `
     <div class="confidence" style="--conf:${color}">
@@ -519,6 +534,7 @@ function renderConfidence(pick) {
         <span>Confidence <span class="conf-score">${Math.round(pick.score)}</span>/100</span>
         <span>Beats ${beats}% of the board</span>
       </div>
+      ${stake ? `<div class="stake-line">${esc(stake)}</div>` : ''}
     </div>`;
 }
 
@@ -1252,6 +1268,7 @@ function renderParlayResult(result) {
 
   renderedLegs.length = 0;
   const legsHtml = result.legs.map((leg, i) => renderLeg(leg, i, true)).join('');
+  const stake = suggestedParlayStake(result.legs, result.combined.decimal);
 
   el.parlayResult.innerHTML = `
     <article class="pick">
@@ -1259,6 +1276,7 @@ function renderParlayResult(result) {
         <span class="chip"><strong>${result.legs.length}-leg parlay</strong></span>
         <span class="price">${esc(formatAmerican(result.combined.american))}</span>
       </div>
+      ${stake > 0 ? `<div class="stake-line">Suggested stake: ${(stake * 100).toFixed(1)}% of bankroll (¼-Kelly)</div>` : ''}
       ${legsHtml}
     </article>`;
   hydrateInsights(el.parlayResult);
@@ -1350,8 +1368,11 @@ const potdDateTimeFmt = new Intl.DateTimeFormat(undefined, {
  * Generate tap pulled, which has no meaning for a single daily editorial
  * pick with no board of its own to compare against.
  */
-function renderPotdConfidence(score) {
+function renderPotdConfidence(score, stake) {
   const color = confidenceColor(score, RULES.MIN_SCORE);
+  const stakeText = stake > 0
+    ? `<div class="stake-line">Suggested stake: ${(stake * 100).toFixed(1)}% of bankroll (¼-Kelly)</div>`
+    : '';
   return `
     <div class="confidence" style="--conf:${color}">
       <div class="conf-track">
@@ -1360,6 +1381,7 @@ function renderPotdConfidence(score) {
       <div class="conf-label">
         <span>Confidence <span class="conf-score">${Math.round(score)}</span>/100</span>
       </div>
+      ${stakeText}
     </div>`;
 }
 
@@ -1396,7 +1418,7 @@ function renderPotd(potd) {
       <p class="potd-matchup">
         ${esc(writeup.matchup)} · ${esc(potdDateTimeFmt.format(new Date(writeup.commenceMs)))}
       </p>
-      ${renderPotdConfidence(writeup.score)}
+      ${renderPotdConfidence(writeup.score, writeup.stake)}
       ${writeup.sections.map(renderPotdSection).join('')}
       <p class="potd-meta">
         Best price at ${esc(writeup.book)} · posted ${esc(potdDateTimeFmt.format(new Date(generatedAt)))}

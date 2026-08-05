@@ -683,6 +683,15 @@ input[type="range"]:focus-visible {
 }
 .conf-score { color: var(--conf, var(--accent)); font-weight: 700; }
 
+.stake-line {
+  margin-top: 8px;
+  padding-top: 8px;
+  border-top: 1px dashed var(--line);
+  font-family: var(--mono);
+  font-size: 0.68rem;
+  color: var(--muted);
+}
+
 /* ---------------------------------------------------------------- */
 /* Sportsbook buttons                                                */
 /* ---------------------------------------------------------------- */

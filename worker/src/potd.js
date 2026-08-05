@@ -18,7 +18,7 @@
  * enforced by this idempotency check, not by only running once.
  */
 
-import { analyze, RULES, explain, formatAmerican } from '../../docs/engine.js';
+import { analyze, RULES, explain, formatAmerican, suggestedStake } from '../../docs/engine.js';
 import { buildInsights, isTennis, isMma } from '../../docs/insights.js';
 import { fetchContext, hasContext } from './context.js';
 import { fetchMmaContext } from './mma.js';
@@ -153,6 +153,7 @@ function buildWriteup(candidate, research) {
     book: candidate.book,
     score: Math.round(candidate.score),
     commenceMs: candidate.commenceMs,
+    stake: suggestedStake(candidate),
     sections: [
       { title: 'The price case', bullets: priceBullets },
       ...(research.length ? [{ title: 'The research case', bullets: research }] : []),

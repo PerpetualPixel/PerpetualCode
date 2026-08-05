@@ -12,6 +12,10 @@ import {
   generateSlate,
   topPicks,
   buildParlay,
+  KELLY,
+  kellyFraction,
+  suggestedStake,
+  suggestedParlayStake,
   contradicts,
   confidenceColor,
   bookOffers,
@@ -696,6 +700,59 @@ test('buildParlay respects the odds range and confidence floor like topPicks', (
     legCount: 1, oddsMin: 200, oddsMax: 500, minScore: 0, sportMarkets,
   });
   assert.equal(narrowRange.legs.length, 0, 'no candidate here prices inside +200..+500');
+});
+
+/* ---------------------------------------------------------------- */
+/* Kelly Criterion staking                                             */
+/* ---------------------------------------------------------------- */
+
+test('kellyFraction matches the textbook formula by hand', () => {
+  // p=0.55, decimal 2.0 (b=1): f* = (1*0.55 - 0.45)/1 = 0.10
+  assert.ok(Math.abs(kellyFraction(0.55, 2.0) - 0.10) < 1e-9);
+
+  // p=0.7, decimal 3.0 (b=2): f* = (2*0.7 - 0.3)/2 = 0.55
+  assert.ok(Math.abs(kellyFraction(0.7, 3.0) - 0.55) < 1e-9);
+});
+
+test('kellyFraction never suggests betting a negative edge', () => {
+  // p=0.4, decimal 2.0 (b=1): raw formula gives -0.2 — must clamp to 0.
+  assert.equal(kellyFraction(0.4, 2.0), 0);
+});
+
+test('kellyFraction handles degenerate inputs without throwing', () => {
+  assert.equal(kellyFraction(0.6, 1), 0);    // decimal 1.0 => b=0, no payout at all
+  assert.equal(kellyFraction(0.6, 0.5), 0);  // decimal below 1 is not a real price
+  assert.equal(kellyFraction(0, 2.0), 0);    // certain loss
+  assert.equal(kellyFraction(1, 2.0), 0);    // "certain win" — degenerate, not a real market
+});
+
+test('suggestedStake applies the quarter-Kelly fraction from RULES.KELLY', () => {
+  const candidate = { consensusProb: 0.55, decimal: 2.0 };
+  const full = kellyFraction(0.55, 2.0); // 0.10
+  const stake = suggestedStake(candidate);
+  assert.ok(Math.abs(stake - full * KELLY.FRACTION) < 1e-9);
+  assert.ok(stake < full, 'the fractional stake must be smaller than full Kelly');
+});
+
+test('suggestedStake is capped even when full Kelly would suggest far more', () => {
+  // p=0.7, decimal 3.0 => full Kelly 0.55, quarter-Kelly 0.1375 — well above
+  // the 5% cap, which must win.
+  const candidate = { consensusProb: 0.7, decimal: 3.0 };
+  assert.equal(suggestedStake(candidate), KELLY.MAX_STAKE);
+});
+
+test('suggestedStake is zero for a candidate with no real edge', () => {
+  const candidate = { consensusProb: 0.4, decimal: 2.0 };
+  assert.equal(suggestedStake(candidate), 0);
+});
+
+test('suggestedParlayStake multiplies leg probabilities as independent events', () => {
+  const legs = [{ consensusProb: 0.6 }, { consensusProb: 0.6 }];
+  const combinedDecimal = 4.0; // e.g. two +100 legs parlayed
+  const expectedProb = 0.6 * 0.6; // 0.36
+  const expectedFull = kellyFraction(expectedProb, combinedDecimal);
+  const stake = suggestedParlayStake(legs, combinedDecimal);
+  assert.ok(Math.abs(stake - Math.min(expectedFull * KELLY.FRACTION, KELLY.MAX_STAKE)) < 1e-9);
 });
 
 /* ---------------------------------------------------------------- */

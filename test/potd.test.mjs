@@ -183,6 +183,7 @@ test('the stored record carries a headline, price, and at least the price-case s
   assert.match(record.writeup.headline, /^a Home to win/);
   assert.ok(record.writeup.sections.some((s) => s.title === 'The price case'));
   assert.ok(record.writeup.sections[0].bullets.length > 0);
+  assert.ok(typeof record.writeup.stake === 'number' && record.writeup.stake >= 0);
 });
 
 /* ---------------------------------------------------------------- */

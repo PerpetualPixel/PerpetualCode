@@ -692,3 +692,59 @@ export function buildParlay(
   const combined = combineLegs(legs.map((l) => l.american));
   return { legs, combined, poolSize: eligible.length, complete: true };
 }
+
+/* ------------------------------------------------------------------ */
+/* Bankroll staking (Kelly Criterion)                                  */
+/* ------------------------------------------------------------------ */
+
+export const KELLY = {
+  // Quarter-Kelly: full Kelly maximizes long-run growth but produces
+  // white-knuckle variance, and is only correct if the win probability going
+  // in is exactly right — which a devigged market consensus is a good
+  // estimate of, not a guarantee of. A fraction trades some growth for a
+  // meaningfully smoother ride, which is the standard professional practice
+  // this app's own reference framework recommends over full Kelly.
+  FRACTION: 0.25,
+  // Full Kelly can still suggest an oversized stake when the market happens
+  // to be very thin or the estimate is off in one book's favor. This caps any
+  // single bet regardless of what the formula says — protection against
+  // model error, not a claim that the math is wrong.
+  MAX_STAKE: 0.05,
+};
+
+/**
+ * The Kelly Criterion's optimal bet fraction: f* = (b·p − q) / b, where b is
+ * net decimal odds, p is true win probability, and q = 1 − p. Returns 0
+ * rather than a negative fraction — this app never suggests betting the
+ * other side of a number it graded, it just says "no edge, no stake."
+ */
+export function kellyFraction(winProb, decimalOdds) {
+  const b = decimalOdds - 1;
+  if (b <= 0 || !(winProb > 0) || winProb >= 1) return 0;
+  const f = (b * winProb - (1 - winProb)) / b;
+  return Math.max(0, f);
+}
+
+/**
+ * Suggested stake as a fraction of bankroll for one graded candidate, using
+ * its own no-vig consensus as the win-probability input — the same number
+ * scoreCandidate()'s `ev` field is already built from, so a stake size and an
+ * EV% are always talking about the same edge.
+ */
+export function suggestedStake(candidate, { fraction = KELLY.FRACTION } = {}) {
+  const full = kellyFraction(candidate.consensusProb, candidate.decimal);
+  return Math.min(full * fraction, KELLY.MAX_STAKE);
+}
+
+/**
+ * Suggested stake for a completed parlay ticket. Legs are assumed
+ * independent — the same assumption combineLegs() already makes when
+ * multiplying their decimal odds, and buildParlay() enforces it structurally
+ * by refusing two legs from the same game — so the ticket's true win
+ * probability is just the product of each leg's own consensus probability.
+ */
+export function suggestedParlayStake(legs, combinedDecimal, { fraction = KELLY.FRACTION } = {}) {
+  const combinedProb = legs.reduce((p, leg) => p * leg.consensusProb, 1);
+  const full = kellyFraction(combinedProb, combinedDecimal);
+  return Math.min(full * fraction, KELLY.MAX_STAKE);
+}
