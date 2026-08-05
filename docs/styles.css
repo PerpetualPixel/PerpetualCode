@@ -33,6 +33,9 @@ body {
   padding: env(safe-area-inset-top) env(safe-area-inset-right)
            env(safe-area-inset-bottom) env(safe-area-inset-left);
   -webkit-tap-highlight-color: transparent;
+  /* A flex row (topbar, filter-tabs) that can't fully shrink on a narrow
+     phone should wrap, never push the page into sideways scroll. */
+  overflow-x: hidden;
 }
 
 /* ---------------------------------------------------------------- */
@@ -58,7 +61,7 @@ body {
 }
 .wordmark span { color: var(--accent); }
 
-.topbar-actions { display: flex; align-items: center; gap: 8px; }
+.topbar-actions { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; justify-content: flex-end; }
 
 .icon-btn {
   display: inline-flex;
@@ -275,10 +278,10 @@ body {
 
 .filters { margin-bottom: 14px; }
 
-.filter-tabs { display: flex; gap: 8px; }
+.filter-tabs { display: flex; gap: 8px; flex-wrap: wrap; }
 
 .filter-tab {
-  flex: 1;
+  flex: 1 1 140px;
   display: inline-flex;
   align-items: center;
   justify-content: center;
@@ -498,7 +501,7 @@ input[type="range"]:focus-visible {
 /* Pick cards                                                        */
 /* ---------------------------------------------------------------- */
 
-.picks { margin-top: 22px; display: grid; gap: 16px; }
+.picks { margin-top: 22px; display: grid; gap: 16px; align-items: start; }
 
 .pick {
   background: var(--surface);
@@ -1212,4 +1215,64 @@ input[type="range"]:focus-visible {
   font-family: var(--mono);
   color: var(--text);
   text-align: right;
+}
+
+/* ---------------------------------------------------------------- */
+/* Wide screens — the layout above is written mobile-first (a single */
+/* 620px column), which just leaves the rest of a desktop viewport   */
+/* empty. From here up, widen the shell and let picks flow into      */
+/* multiple columns so more of the board is visible without scrolling.*/
+/* ---------------------------------------------------------------- */
+
+@media (min-width: 900px) {
+  .topbar,
+  .top-tabs,
+  #main {
+    max-width: 1400px;
+  }
+
+  .picks {
+    grid-template-columns: repeat(auto-fill, minmax(360px, 1fr));
+    align-items: start;
+  }
+
+  /* A single-column read (Play of the Day, the Parlay ticket) stays
+     capped for readability — it's prose, not a grid of cards. */
+  .potd-card,
+  .parlay-result {
+    max-width: 720px;
+  }
+
+  .stats-drawer,
+  .history {
+    width: min(60vw, 480px);
+  }
+}
+
+@media (min-width: 1400px) {
+  .topbar,
+  .top-tabs,
+  #main {
+    max-width: 1760px;
+  }
+
+  .picks {
+    grid-template-columns: repeat(auto-fill, minmax(380px, 1fr));
+  }
+}
+
+/* ---------------------------------------------------------------- */
+/* Small phones — tighten spacing so the same UI reads as compact    */
+/* rather than just shrunk.                                          */
+/* ---------------------------------------------------------------- */
+
+@media (max-width: 420px) {
+  .topbar { padding: 14px 14px 10px; gap: 8px; }
+  .top-tabs { padding: 0 14px 12px; gap: 6px; }
+  #main { padding: 0 14px 40px; }
+
+  .wordmark { font-size: 0.95rem; }
+  .icon-btn { padding: 8px 9px; font-size: 0.68rem; }
+  .top-tab { padding: 10px 6px; font-size: 0.68rem; }
+  .filter-tab { font-size: 0.66rem; padding: 9px 8px; }
 }
