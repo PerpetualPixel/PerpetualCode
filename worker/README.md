@@ -217,6 +217,19 @@ several rows after the first one it couldn't match. Splitting into row chunks
 first, then reading each field independently, means one odd row loses a field
 or two and nothing else.
 
+**No Method of Victory market — confirmed at the schema level, not just "not
+populated yet."** Requesting a guessed market key like `method_of_victory`
+against The Odds API's own event-odds endpoint returns a distinct
+`INVALID_MARKET` error — proof the API validates market keys against a fixed
+list, not that a given key is simply empty right now. Cross-checked against
+every one of the ~280 market keys in The Odds API's own markets
+documentation: none of them are Method of Victory, or any other MMA prop,
+under any name. Checked the closest actual fight in the live feed at the time
+(66 hours out) and several others on the same card — all showed only `h2h`,
+which matches: if the key doesn't exist in the schema, no amount of waiting
+until closer to fight time changes that. This would need a different data
+provider entirely, not a timing fix.
+
 ```
 GET /tennis-alt-spread?sport=tennis_atp_canadian_open&eventId=...
 ```

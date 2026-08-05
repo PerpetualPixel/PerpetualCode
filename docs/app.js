@@ -14,6 +14,7 @@ import {
   DEFAULT_BOOKS,
   analyze,
   topPicks,
+  buildParlay,
   explain,
   formatAmerican,
   confidenceColor,
@@ -26,6 +27,7 @@ const HISTORY_KEY = 'pixelpick.history.v2';
 const LEAGUES_KEY = 'pixelpick.leagues.v2';
 const BOOKS_KEY = 'pixelpick.books.v1';
 const FILTERS_KEY = 'pixelpick.range.v1';
+const PARLAY_KEY = 'pixelpick.parlay.v1';
 // Entries carry full leg data now so history can be re-priced and reopened,
 // which makes each one heavier than the old summary rows.
 const HISTORY_LIMIT = 40;
@@ -71,6 +73,19 @@ const el = {
   boardView: document.getElementById('boardView'),
   potdView: document.getElementById('potdView'),
   potdBody: document.getElementById('potdBody'),
+  tabParlay: document.getElementById('tabParlay'),
+  parlayView: document.getElementById('parlayView'),
+  parlaySports: document.getElementById('parlaySports'),
+  parlayOddsMinSlider: document.getElementById('parlayOddsMinSlider'),
+  parlayOddsMinLabel: document.getElementById('parlayOddsMinLabel'),
+  parlayOddsMaxSlider: document.getElementById('parlayOddsMaxSlider'),
+  parlayOddsMaxLabel: document.getElementById('parlayOddsMaxLabel'),
+  parlayConfidenceSlider: document.getElementById('parlayConfidenceSlider'),
+  parlayConfidenceLabel: document.getElementById('parlayConfidenceLabel'),
+  parlayLegCountSlider: document.getElementById('parlayLegCountSlider'),
+  parlayLegCountLabel: document.getElementById('parlayLegCountLabel'),
+  parlayGenerate: document.getElementById('parlayGenerate'),
+  parlayResult: document.getElementById('parlayResult'),
 };
 
 const state = {
@@ -98,6 +113,17 @@ const state = {
     oddsMax: CONFIG.ODDS_MAX_DEFAULT,
     minScore: CONFIG.MIN_SCORE_DEFAULT,
   }),
+  // Parlay Builder's own filters — deliberately separate from the board's
+  // oddsMin/oddsMax/minScore above, since a parlay leg and a top-8 pick can
+  // reasonably want different ranges (the whole point of a manual builder).
+  // `sports` is never persisted: it's a Map<sportKey, Set<marketKey>> of
+  // what's toggled on, re-derived fresh from whatever's currently loaded each
+  // time the tab renders, since a saved sportKey could refer to a league
+  // that's no longer selected on the Board tab.
+  parlay: {
+    sports: new Map(),
+    ...loadJSON(PARLAY_KEY, { oddsMin: -250, oddsMax: 100, minScore: 60, legCount: 2 }),
+  },
 };
 
 /* ---------------------------------------------------------------- */
@@ -456,10 +482,10 @@ async function insightsFor(leg) {
  * already on screen: the price bullet is available immediately and the rest
  * appears when the lookups land, so a slow ESPN call never delays a pick.
  */
-async function hydrateInsights() {
+async function hydrateInsights(container = el.picks) {
   await Promise.all(
     renderedLegs.map(async (leg, slot) => {
-      const list = el.picks.querySelector(`[data-insights="${slot}"]`);
+      const list = container.querySelector(`[data-insights="${slot}"]`);
       if (!list) return;
 
       let lines = [];
@@ -1006,15 +1032,21 @@ function updatePoolLine() {
     `${count} qualifying bet${count === 1 ? '' : 's'} available`;
 }
 
-// One delegated listener covers every "?" button, including re-rendered ones.
-el.picks.addEventListener('click', (event) => {
+// A delegated listener per container covers every "?" button inside it,
+// including re-rendered ones.
+function toggleWhyPanel(event) {
   const button = event.target.closest('.why-btn');
   if (!button) return;
   const panel = document.getElementById(button.getAttribute('aria-controls'));
   const open = button.getAttribute('aria-expanded') === 'true';
   button.setAttribute('aria-expanded', String(!open));
   panel.hidden = open;
-});
+}
+
+// One delegated listener per container that can render a "?" why-button —
+// the Board's picks list and the Parlay Builder's result both use renderLeg.
+el.picks.addEventListener('click', toggleWhyPanel);
+el.parlayResult.addEventListener('click', toggleWhyPanel);
 
 el.generate.addEventListener('click', generate);
 
@@ -1138,6 +1170,172 @@ document.addEventListener('keydown', (e) => {
 });
 
 /* ---------------------------------------------------------------- */
+/* Parlay Builder                                                     */
+/* ---------------------------------------------------------------- */
+
+/** sportKey -> { title, markets: Map<marketKey, label> }, from whatever the
+ * Board tab currently has loaded. This is the only source of sports/markets
+ * the builder can offer — it never fetches anything of its own. */
+function parlaySportOptions() {
+  const bySport = new Map();
+  for (const c of state.candidates) {
+    if (!bySport.has(c.sportKey)) {
+      bySport.set(c.sportKey, { title: c.sportTitle ?? c.sportKey, markets: new Map() });
+    }
+    bySport.get(c.sportKey).markets.set(c.marketKey, c.marketLabel);
+  }
+  return bySport;
+}
+
+function persistParlayFilters() {
+  saveJSON(PARLAY_KEY, {
+    oddsMin: state.parlay.oddsMin,
+    oddsMax: state.parlay.oddsMax,
+    minScore: state.parlay.minScore,
+    legCount: state.parlay.legCount,
+  });
+}
+
+function renderParlaySliders() {
+  el.parlayOddsMinSlider.value = String(state.parlay.oddsMin);
+  el.parlayOddsMaxSlider.value = String(state.parlay.oddsMax);
+  el.parlayConfidenceSlider.value = String(state.parlay.minScore);
+  el.parlayLegCountSlider.value = String(state.parlay.legCount);
+
+  el.parlayOddsMinLabel.textContent = formatAmerican(state.parlay.oddsMin);
+  el.parlayOddsMaxLabel.textContent = formatAmerican(state.parlay.oddsMax);
+  el.parlayConfidenceLabel.textContent = `≥ ${Math.round(state.parlay.minScore)}`;
+  el.parlayLegCountLabel.textContent = String(state.parlay.legCount);
+}
+
+function renderParlaySports() {
+  const bySport = parlaySportOptions();
+
+  if (!bySport.size) {
+    el.parlaySports.innerHTML = `<p class="empty">
+      Nothing loaded yet. Go to Board and tap Generate Picks first — the
+      builder pulls from whatever that board ends up holding.</p>`;
+    return;
+  }
+
+  el.parlaySports.innerHTML = [...bySport.entries()]
+    .map(([sportKey, { title, markets }]) => {
+      const enabled = state.parlay.sports.has(sportKey);
+      const selected = state.parlay.sports.get(sportKey) ?? new Set();
+      return `
+        <div class="parlay-sport">
+          <label class="check">
+            <input type="checkbox" data-parlay-sport="${esc(sportKey)}" ${enabled ? 'checked' : ''}>
+            <span><strong>${esc(title)}</strong></span>
+          </label>
+          <div class="parlay-market-row" ${enabled ? '' : 'hidden'}>
+            ${[...markets.entries()].map(([marketKey, label]) => `
+              <label class="check-pill">
+                <input type="checkbox" data-parlay-market="${esc(sportKey)}|${esc(marketKey)}"
+                       ${selected.has(marketKey) ? 'checked' : ''}>
+                <span>${esc(label)}</span>
+              </label>`).join('')}
+          </div>
+        </div>`;
+    })
+    .join('');
+}
+
+function renderParlayResult(result) {
+  if (!result.complete) {
+    el.parlayResult.innerHTML = `<p class="empty">
+      Only ${result.legs.length} of ${state.parlay.legCount} leg${state.parlay.legCount === 1 ? '' : 's'}
+      available (${result.poolSize} candidate${result.poolSize === 1 ? '' : 's'} qualify). Toggle on more
+      sports or markets, or widen the range.</p>`;
+    return;
+  }
+
+  renderedLegs.length = 0;
+  const legsHtml = result.legs.map((leg, i) => renderLeg(leg, i, true)).join('');
+
+  el.parlayResult.innerHTML = `
+    <article class="pick">
+      <div class="pick-head">
+        <span class="chip"><strong>${result.legs.length}-leg parlay</strong></span>
+        <span class="price">${esc(formatAmerican(result.combined.american))}</span>
+      </div>
+      ${legsHtml}
+    </article>`;
+  hydrateInsights(el.parlayResult);
+}
+
+function generateParlay() {
+  const sportMarkets = new Map(
+    [...state.parlay.sports].filter(([, markets]) => markets.size),
+  );
+  if (!sportMarkets.size) {
+    el.parlayResult.innerHTML = `<p class="empty">Toggle on at least one sport and market first.</p>`;
+    return;
+  }
+
+  const result = buildParlay(state.candidates, {
+    legCount: state.parlay.legCount,
+    oddsMin: state.parlay.oddsMin,
+    oddsMax: state.parlay.oddsMax,
+    minScore: state.parlay.minScore,
+    sportMarkets,
+  });
+  renderParlayResult(result);
+}
+
+el.parlaySports.addEventListener('change', (event) => {
+  const sportBox = event.target.closest('input[data-parlay-sport]');
+  if (sportBox) {
+    const sportKey = sportBox.dataset.parlaySport;
+    if (sportBox.checked) {
+      // Default to every market that sport currently offers — the user
+      // narrows down from "all" rather than building up from nothing.
+      const markets = parlaySportOptions().get(sportKey)?.markets;
+      state.parlay.sports.set(sportKey, new Set(markets ? markets.keys() : []));
+    } else {
+      state.parlay.sports.delete(sportKey);
+    }
+    renderParlaySports();
+    return;
+  }
+
+  const marketBox = event.target.closest('input[data-parlay-market]');
+  if (marketBox) {
+    const [sportKey, marketKey] = marketBox.dataset.parlayMarket.split('|');
+    const set = state.parlay.sports.get(sportKey);
+    if (!set) return;
+    if (marketBox.checked) set.add(marketKey);
+    else set.delete(marketKey);
+  }
+});
+
+el.parlayOddsMinSlider.addEventListener('input', () => {
+  state.parlay.oddsMin = Number(el.parlayOddsMinSlider.value);
+  renderParlaySliders();
+});
+el.parlayOddsMinSlider.addEventListener('change', persistParlayFilters);
+
+el.parlayOddsMaxSlider.addEventListener('input', () => {
+  state.parlay.oddsMax = Number(el.parlayOddsMaxSlider.value);
+  renderParlaySliders();
+});
+el.parlayOddsMaxSlider.addEventListener('change', persistParlayFilters);
+
+el.parlayConfidenceSlider.addEventListener('input', () => {
+  state.parlay.minScore = Number(el.parlayConfidenceSlider.value);
+  renderParlaySliders();
+});
+el.parlayConfidenceSlider.addEventListener('change', persistParlayFilters);
+
+el.parlayLegCountSlider.addEventListener('input', () => {
+  state.parlay.legCount = Number(el.parlayLegCountSlider.value);
+  renderParlaySliders();
+});
+el.parlayLegCountSlider.addEventListener('change', persistParlayFilters);
+
+el.parlayGenerate.addEventListener('click', generateParlay);
+
+/* ---------------------------------------------------------------- */
 /* Play of the Day                                                   */
 /* ---------------------------------------------------------------- */
 
@@ -1231,17 +1429,22 @@ async function loadPotd({ force = false } = {}) {
 }
 
 function setActiveTab(tab) {
-  const onBoard = tab === 'board';
-  el.boardView.hidden = !onBoard;
-  el.potdView.hidden = onBoard;
-  el.tabBoard.classList.toggle('is-active', onBoard);
-  el.tabPotd.classList.toggle('is-active', !onBoard);
-  el.tabBoard.setAttribute('aria-selected', String(onBoard));
-  el.tabPotd.setAttribute('aria-selected', String(!onBoard));
-  if (!onBoard) loadPotd();
+  const views = { board: el.boardView, parlay: el.parlayView, potd: el.potdView };
+  const tabs = { board: el.tabBoard, parlay: el.tabParlay, potd: el.tabPotd };
+
+  for (const [name, view] of Object.entries(views)) {
+    const active = name === tab;
+    view.hidden = !active;
+    tabs[name].classList.toggle('is-active', active);
+    tabs[name].setAttribute('aria-selected', String(active));
+  }
+
+  if (tab === 'potd') loadPotd();
+  if (tab === 'parlay') renderParlaySports();
 }
 
 el.tabBoard.addEventListener('click', () => setActiveTab('board'));
+el.tabParlay.addEventListener('click', () => setActiveTab('parlay'));
 el.tabPotd.addEventListener('click', () => setActiveTab('potd'));
 
 /* ---------------------------------------------------------------- */
@@ -1256,6 +1459,7 @@ el.tabPotd.addEventListener('click', () => setActiveTab('potd'));
   renderLeagueFilter();
   renderBookFilter();
   renderRangeFilter();
+  renderParlaySliders();
   renderHistory();
   // Free call, so it can happen on load — unlike the odds themselves.
   loadCatalogue();

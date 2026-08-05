@@ -633,3 +633,62 @@ export function topPicks(
 
   return { picks, poolSize: pool.length, generatedAt: Date.now() };
 }
+
+/* ------------------------------------------------------------------ */
+/* Parlay builder                                                      */
+/* ------------------------------------------------------------------ */
+
+/**
+ * Build one parlay ticket from candidates filtered by sport, market type,
+ * odds range, and confidence floor — the manual-control counterpart to
+ * topPicks()'s automatic ranking. A user toggling "UFC: moneylines only" and
+ * "NFL: spreads only" is choosing exactly which markets are eligible per
+ * sport; `sportMarkets` encodes that directly rather than approximating it
+ * with a single global market filter.
+ *
+ * Legs always come from different games, the same rule generateSlate's combo
+ * pairing already enforces — combineLegs() multiplies decimal odds assuming
+ * independence, which is only true across separate events. Two markets on
+ * one game (a team to cover and the same game's total, say) are correlated
+ * and would make the combined price wrong, not just optimistic.
+ *
+ * @param candidates        scored candidates from analyze()
+ * @param opts.legCount     how many legs the ticket needs (default 2)
+ * @param opts.oddsMin/oddsMax   per-leg odds range
+ * @param opts.minScore     confidence floor
+ * @param opts.sportMarkets Map<sportKey, Set<marketKey>> — a sport absent
+ *   from this map contributes no legs at all, not "any market for it."
+ */
+export function buildParlay(
+  candidates,
+  {
+    legCount = 2,
+    oddsMin = RULES.MIN_AMERICAN,
+    oddsMax = RULES.MAX_AMERICAN,
+    minScore = RULES.MIN_SCORE,
+    sportMarkets = new Map(),
+  } = {},
+) {
+  const eligible = candidates.filter((c) => {
+    if (c.american < oddsMin || c.american > oddsMax) return false;
+    if (c.score < minScore) return false;
+    const markets = sportMarkets.get(c.sportKey);
+    return markets?.size ? markets.has(c.marketKey) : false;
+  });
+
+  const sorted = [...eligible].sort((a, b) => b.score - a.score);
+  const legs = [];
+  for (const c of sorted) {
+    if (legs.length >= legCount) break;
+    if (legs.some((leg) => leg.eventId === c.eventId)) continue; // different games only
+    if (legs.some((leg) => contradicts(leg, c))) continue;
+    legs.push(c);
+  }
+
+  if (legs.length < legCount) {
+    return { legs, combined: null, poolSize: eligible.length, complete: false };
+  }
+
+  const combined = combineLegs(legs.map((l) => l.american));
+  return { legs, combined, poolSize: eligible.length, complete: true };
+}

@@ -11,6 +11,7 @@ import {
   analyze,
   generateSlate,
   topPicks,
+  buildParlay,
   contradicts,
   confidenceColor,
   bookOffers,
@@ -575,6 +576,126 @@ test('topPicks recycles exclusions once fewer than `count` remain fresh', () => 
   // Every candidate has been "seen", but the pool is thinner than 8 — recycle
   // rather than hand back an empty board.
   assert.ok(picks.length > 0);
+});
+
+/* ---------------------------------------------------------------- */
+/* buildParlay — manual sport/market/odds/confidence-controlled ticket   */
+/* ---------------------------------------------------------------- */
+
+test('buildParlay only draws from sports explicitly present in sportMarkets', () => {
+  const candidates = analyze(
+    [
+      makeEvent('nfl1', -140, 120, { ...SHARP, sport: 'americanfootball_nfl' }),
+      makeEvent('mma1', -140, 120, { ...SHARP, sport: 'mma_mixed_martial_arts' }),
+      makeEvent('nba1', -140, 120, { ...SHARP, sport: 'basketball_nba' }),
+    ],
+    { now: NOW },
+  );
+
+  const sportMarkets = new Map([
+    ['americanfootball_nfl', new Set(['h2h'])],
+    ['mma_mixed_martial_arts', new Set(['h2h'])],
+    // basketball_nba deliberately absent — toggled off by the user.
+  ]);
+
+  const { legs } = buildParlay(candidates, {
+    legCount: 2, oddsMin: -1000, oddsMax: 500, minScore: 0, sportMarkets,
+  });
+  assert.equal(legs.length, 2);
+  assert.ok(legs.every((l) => l.sportKey !== 'basketball_nba'));
+});
+
+test('buildParlay respects a per-sport market restriction, not just a sport toggle', () => {
+  // NFL toggled on, but restricted to spreads only — h2h from the same sport
+  // must never be picked even though it's available and scores well.
+  const candidates = analyze(
+    [makeEvent('nfl1', -140, 120, { ...SHARP, sport: 'americanfootball_nfl' })],
+    { now: NOW },
+  );
+  const sportMarkets = new Map([['americanfootball_nfl', new Set(['spreads'])]]);
+
+  const { legs } = buildParlay(candidates, {
+    legCount: 1, oddsMin: -1000, oddsMax: 500, minScore: 0, sportMarkets,
+  });
+  // This fixture only ever produces an h2h market (makeEvent), so restricting
+  // to 'spreads' must starve the ticket rather than silently fall back to h2h.
+  assert.equal(legs.length, 0);
+});
+
+test('buildParlay never puts two legs on the same game', () => {
+  const candidates = analyze(
+    [makeEvent('g1', -140, 120, { ...SHARP, awayOutlier: 45 })],
+    { now: NOW },
+  );
+  const sportMarkets = new Map([['basketball_nba', new Set(['h2h'])]]);
+
+  const { legs, complete } = buildParlay(candidates, {
+    legCount: 2, oddsMin: -1000, oddsMax: 500, minScore: 0, sportMarkets,
+  });
+  // Both sides of the same game qualify individually, but a ticket needs two
+  // *different* games — this one can't complete from a single game's market.
+  assert.equal(complete, false);
+  assert.ok(legs.length <= 1);
+});
+
+test('buildParlay reports incomplete rather than padding with disqualified legs', () => {
+  const candidates = analyze(
+    [makeEvent('g1', -140, 120, { ...SHARP, sport: 'americanfootball_nfl' })],
+    { now: NOW },
+  );
+  const sportMarkets = new Map([['americanfootball_nfl', new Set(['h2h'])]]);
+
+  const { legs, combined, complete, poolSize } = buildParlay(candidates, {
+    legCount: 3, oddsMin: -1000, oddsMax: 500, minScore: 0, sportMarkets,
+  });
+  assert.equal(complete, false);
+  assert.equal(combined, null);
+  assert.ok(legs.length < 3);
+  // One game's h2h market is both sides (home + away) — both individually
+  // eligible, but they're one game between them, so a 3-leg ticket still
+  // can't complete from it.
+  assert.equal(poolSize, 2);
+  assert.equal(legs.length, 1, 'only one side of the same game can ever be used');
+});
+
+test('a completed parlay combines its legs\' decimal odds, not just reports them', () => {
+  const candidates = analyze(
+    [
+      makeEvent('a', -140, 120, { ...SHARP, sport: 'americanfootball_nfl' }),
+      makeEvent('b', -140, 120, { ...SHARP, sport: 'mma_mixed_martial_arts' }),
+    ],
+    { now: NOW },
+  );
+  const sportMarkets = new Map([
+    ['americanfootball_nfl', new Set(['h2h'])],
+    ['mma_mixed_martial_arts', new Set(['h2h'])],
+  ]);
+
+  const { legs, combined, complete } = buildParlay(candidates, {
+    legCount: 2, oddsMin: -1000, oddsMax: 500, minScore: 0, sportMarkets,
+  });
+  assert.equal(complete, true);
+  assert.equal(legs.length, 2);
+  const expected = combineLegs(legs.map((l) => l.american));
+  assert.equal(combined.american, expected.american);
+});
+
+test('buildParlay respects the odds range and confidence floor like topPicks', () => {
+  const candidates = analyze(
+    [makeEvent('a', -140, 120, { ...SHARP, sport: 'americanfootball_nfl' })],
+    { now: NOW },
+  );
+  const sportMarkets = new Map([['americanfootball_nfl', new Set(['h2h'])]]);
+
+  const tooStrict = buildParlay(candidates, {
+    legCount: 1, oddsMin: -1000, oddsMax: 500, minScore: 99.9, sportMarkets,
+  });
+  assert.equal(tooStrict.legs.length, 0);
+
+  const narrowRange = buildParlay(candidates, {
+    legCount: 1, oddsMin: 200, oddsMax: 500, minScore: 0, sportMarkets,
+  });
+  assert.equal(narrowRange.legs.length, 0, 'no candidate here prices inside +200..+500');
 });
 
 /* ---------------------------------------------------------------- */

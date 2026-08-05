@@ -30,6 +30,9 @@
   <button id="tabBoard" class="top-tab is-active" role="tab" aria-selected="true" aria-controls="boardView">
     Board
   </button>
+  <button id="tabParlay" class="top-tab" role="tab" aria-selected="false" aria-controls="parlayView">
+    Parlay Builder
+  </button>
   <button id="tabPotd" class="top-tab" role="tab" aria-selected="false" aria-controls="potdView">
     Play of the Day
   </button>
@@ -128,6 +131,55 @@
     21+. For entertainment only — nothing here is financial advice.
     <a href="https://www.1800gambler.net/" target="_blank" rel="noopener">1-800-GAMBLER</a>
   </p>
+</section>
+
+<section id="parlayView" role="tabpanel" aria-labelledby="tabParlay" hidden>
+  <p class="filter-hint parlay-intro">
+    Pulls from whatever's already loaded on the Board tab — toggle sports and
+    markets below, set your range, and build a ticket by hand instead of
+    taking the automatic top-8. Add more sports under Board → Leagues first if
+    what you want isn't listed.
+  </p>
+
+  <div id="parlaySports" class="parlay-sports"></div>
+
+  <div class="slider-row">
+    <div class="slider-label">
+      <span>Favorite limit</span>
+      <span id="parlayOddsMinLabel" class="slider-value">−250</span>
+    </div>
+    <input type="range" id="parlayOddsMinSlider" min="-1000" max="-100" step="5" value="-250">
+  </div>
+
+  <div class="slider-row">
+    <div class="slider-label">
+      <span>Underdog limit</span>
+      <span id="parlayOddsMaxLabel" class="slider-value">+150</span>
+    </div>
+    <input type="range" id="parlayOddsMaxSlider" min="100" max="500" step="5" value="150">
+  </div>
+
+  <div class="slider-row">
+    <div class="slider-label">
+      <span>Confidence floor</span>
+      <span id="parlayConfidenceLabel" class="slider-value">≥ 50</span>
+    </div>
+    <input type="range" id="parlayConfidenceSlider" min="0" max="100" step="1" value="50">
+  </div>
+
+  <div class="slider-row">
+    <div class="slider-label">
+      <span>Legs</span>
+      <span id="parlayLegCountLabel" class="slider-value">2</span>
+    </div>
+    <input type="range" id="parlayLegCountSlider" min="2" max="6" step="1" value="2">
+  </div>
+
+  <button id="parlayGenerate" class="generate">
+    <span class="generate-label">Generate Parlay</span>
+  </button>
+
+  <section id="parlayResult" class="parlay-result" aria-live="polite"></section>
 </section>
 
 <section id="potdView" role="tabpanel" aria-labelledby="tabPotd" hidden>

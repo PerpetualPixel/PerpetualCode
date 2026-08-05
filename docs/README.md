@@ -104,6 +104,25 @@ guaranteed one from, so it depends on the app having been open again before
 that game started to catch a later price. An aggregate CLV appears at the top
 of the History panel once at least one leg has closed.
 
+## Parlay Builder
+
+A third tab, separate from both the automatic top-8 and Play of the Day: pick
+your own legs by hand. Toggle on the sports you want (from whatever's already
+loaded on the Board — it never fetches anything of its own), and for each,
+which market types are eligible — "UFC: moneylines only," "NFL: spreads
+only." Set your own odds range, confidence floor, and leg count, then
+Generate builds one ticket from the highest-graded candidates that clear
+every filter (`buildParlay()` in `engine.js`).
+
+Legs always come from different games, the same rule `generateSlate()`'s
+combo-pairing already enforces — `combineLegs()` multiplies decimal odds
+assuming independence, which is only true across separate events. A team to
+cover and that same game's total are correlated bets; combining them as if
+independent would misstate the true parlay price, not just be optimistic
+about it. If a ticket can't fill every leg from what's toggled on, it says
+exactly how many legs are missing and how many candidates qualify, rather
+than padding it with something that fails the filter.
+
 ## Play of the Day
 
 A separate tab: one editorially-selected pick, the same for every visitor
