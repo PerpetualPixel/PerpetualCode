@@ -18,6 +18,7 @@ import {
   formatAmerican,
   confidenceColor,
   bookOffers,
+  impliedProb,
 } from './engine.js';
 import { buildInsights, isTennis, isMma } from './insights.js';
 
@@ -40,6 +41,7 @@ const el = {
   historyClear: document.getElementById('historyClear'),
   historyList: document.getElementById('historyList'),
   historyCount: document.getElementById('historyCount'),
+  clvSummary: document.getElementById('clvSummary'),
   scrim: document.getElementById('scrim'),
   logoutBtn: document.getElementById('logoutBtn'),
   leagueToggle: document.getElementById('leagueToggle'),
@@ -642,12 +644,70 @@ function recordSlate(slate) {
       pairReason: pick.pairReason,
       // Full legs, minus the score breakdown: enough to re-render the pick and
       // to re-price it against a later board.
-      legs: pick.legs.map(({ parts, ...leg }) => leg),
+      legs: pick.legs.map(({ parts, ...leg }) => ({
+        ...leg,
+        // Closing Line Value tracking: the sharp benchmark from the framework
+        // this app is built around — beating the closing line, consistently,
+        // is what separates a real edge from short-term variance. There's no
+        // historical-odds feed here to read a true close from, so this is a
+        // best-effort approximation: the freshest price seen for this exact
+        // leg while its game hadn't started yet, updated every time the board
+        // refreshes (updateClvSnapshots below) and left frozen the moment the
+        // game goes off the board. Seeded to the pick's own price so a leg
+        // that's never seen again still has a defined (zero-movement) CLV
+        // rather than a missing one.
+        lastKnownAmerican: leg.american,
+        lastKnownAt: slate.generatedAt,
+      })),
     })),
   });
   state.history = state.history.slice(0, HISTORY_LIMIT);
   saveHistory();
   renderHistory();
+}
+
+/**
+ * Refresh each open history leg's CLV snapshot against the board currently in
+ * state.candidates. A leg still priced (game hasn't started) gets its
+ * lastKnownAmerican/lastKnownAt bumped forward; a leg no longer on the board
+ * is left exactly as it was on the last refresh that did see it — which is
+ * this app's best available stand-in for "the closing price."
+ */
+function updateClvSnapshots() {
+  const live = livePriceIndex();
+  let changed = false;
+
+  for (const entry of state.history) {
+    for (const pick of entry.picks) {
+      for (const leg of pick.legs) {
+        const current = live.get(leg.id);
+        if (!current) continue; // off the board — freeze what we last saw
+        if (current.american === leg.lastKnownAmerican) continue;
+        leg.lastKnownAmerican = current.american;
+        leg.lastKnownAt = Date.now();
+        changed = true;
+      }
+    }
+  }
+
+  if (changed) saveHistory();
+  return changed;
+}
+
+/**
+ * CLV for one leg, or null when the game hasn't started yet — CLV is only
+ * meaningful once the price has actually stopped moving. American odds
+ * compare directly regardless of favorite/underdog: a higher number is
+ * always the better price for that same side, so pick.american >
+ * lastKnownAmerican is a beaten close in every case, not just favorites.
+ */
+function clvFor(leg) {
+  if (livePriceIndex().has(leg.id)) return null; // still on the board, not closed
+  if (leg.lastKnownAmerican === leg.american) return { pct: 0, beat: null };
+
+  const pct =
+    (impliedProb(leg.lastKnownAmerican) - impliedProb(leg.american)) * 100;
+  return { pct, beat: leg.american > leg.lastKnownAmerican };
 }
 
 /** Where each stored leg is priced on the board we're holding right now. */
@@ -659,7 +719,20 @@ function livePriceIndex() {
 
 function renderLiveLine(leg, live) {
   if (!live) {
-    return `<div class="h-now"><span class="h-gone">off the board</span></div>`;
+    const clv = clvFor(leg);
+    if (!clv || clv.beat === null) {
+      return `<div class="h-now"><span class="h-gone">off the board</span></div>`;
+    }
+    // "Closing" here means the last price this app ever saw for this leg
+    // before its game started, not a real historical-odds close — this app
+    // has no time-series feed to read a true one from. Framed honestly as an
+    // approximation rather than borrowing the sharp-betting term outright.
+    const cls = clv.beat ? 'h-moved-up' : 'h-moved-down';
+    return `
+      <div class="h-now">
+        <span class="${cls}">${clv.beat ? 'Beat' : 'Missed'} the close by ${Math.abs(clv.pct).toFixed(1)}pp</span>
+        · closed ${esc(formatAmerican(leg.lastKnownAmerican))}
+      </div>`;
   }
   if (live.american === leg.american) {
     return `<div class="h-now">now ${esc(formatAmerican(live.american))} · unchanged</div>`;
@@ -697,10 +770,43 @@ function renderHistoryBooks(leg) {
   return `<div class="history-books">${links}</div>`;
 }
 
+/**
+ * Average CLV across every closed (off-the-board) leg in history. This is
+ * the number the framework this app is built around treats as the real
+ * long-run tell — a single bet's outcome is variance, but a bettor who
+ * consistently beats the close is, by that model, playing a genuine edge
+ * regardless of how any one game landed.
+ */
+function aggregateClv() {
+  let sum = 0;
+  let n = 0;
+  for (const entry of state.history) {
+    for (const pick of entry.picks) {
+      for (const leg of pick.legs) {
+        const clv = clvFor(leg);
+        if (!clv || clv.beat === null) continue;
+        sum += clv.pct;
+        n++;
+      }
+    }
+  }
+  return n ? { avgPct: sum / n, n } : null;
+}
+
 function renderHistory() {
   const total = state.history.reduce((n, entry) => n + entry.picks.length, 0);
   el.historyCount.textContent = String(total);
   el.historyCount.hidden = total === 0;
+
+  const clv = aggregateClv();
+  el.clvSummary.hidden = !clv;
+  if (clv) {
+    const sign = clv.avgPct >= 0 ? '+' : '';
+    el.clvSummary.textContent =
+      `Your CLV: ${sign}${clv.avgPct.toFixed(1)}pp avg, beating the close vs. missing it, ` +
+      `across ${clv.n} closed ${clv.n === 1 ? 'leg' : 'legs'}.`;
+    el.clvSummary.classList.toggle('is-negative', clv.avgPct < 0);
+  }
 
   if (!state.history.length) {
     el.historyList.innerHTML =
@@ -858,6 +964,7 @@ async function generate() {
   try {
     await loadOdds();
     await enrichTennisAltSpreads();
+    updateClvSnapshots();
 
     const slate = topPicks(state.candidates, {
       count: CONFIG.TOP_PICKS_COUNT,

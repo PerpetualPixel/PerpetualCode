@@ -668,6 +668,19 @@ input[type="range"]:focus-visible {
   color: var(--muted);
 }
 
+.clv-summary {
+  margin: 10px 16px 0;
+  padding: 10px 12px;
+  border-radius: var(--radius-sm, 8px);
+  background: var(--surface-2);
+  border: 1px solid var(--line);
+  font-size: 0.75rem;
+  line-height: 1.5;
+  color: var(--accent);
+}
+
+.clv-summary.is-negative { color: #f87171; }
+
 /* Whole entry is a button so tapping it reopens the pick on the main view. */
 .history-entry {
   display: block;

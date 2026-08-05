@@ -71,12 +71,43 @@ Then four confidence weights decide which edges are trustworthy:
 The `?` on each pick shows the real numbers behind that grade, not a generated
 adjective.
 
+## Generate: a top-8 pool, not a pre-built slate
+
+Generate hands back up to 8 straight bets — `topPicks()` in `engine.js` —
+ranked purely by grade across every sport currently selected. Every pick is
+its own leg at its own real price; the app doesn't parlay any of them
+together. The point is a pool you build your own parlays or straights from,
+sized (per the app's own design goal) so 4 parlays or 5 straights don't
+over-expose one board.
+
+Odds range and confidence floor are both adjustable, under the "Odds &
+Confidence" filter tab — default −250 to +150, confidence ≥50, widenable to
+−1000/+500 and down to 0. A thin sport (MMA on a quiet night, tennis
+off-season) clearing nothing at the default settings is the range doing its
+job, not a bug — widen it rather than assume something's broken.
+
+(`generateSlate()`, the older 1–2 pick model that auto-pairs a short-priced
+leg with a partner to drag the combined price toward +100, still exists and
+is still tested — it's just not what the main Generate button calls anymore.)
+
+## Closing Line Value (CLV)
+
+The sharp-betting benchmark that matters across a large sample more than any
+single bet's outcome: did you get a better price than the line eventually
+closed at? History tracks this per leg — `lastKnownAmerican` is the freshest
+price seen for that exact bet while its game hadn't started yet, refreshed
+every time the board loads and left frozen the moment the game goes off the
+board. That frozen number is this app's best-effort stand-in for a true
+closing line — there's no historical-odds time-series feed here to read a
+guaranteed one from, so it depends on the app having been open again before
+that game started to catch a later price. An aggregate CLV appears at the top
+of the History panel once at least one leg has closed.
+
 ## The price rules
 
 Straight from the spec, enforced in `engine.js` and covered by
 `test/engine.test.mjs`:
 
-- Every leg sits between **-250 and +150**. Nothing outside that is shown.
 - A leg from **-150 to +150** can stand alone.
 - A leg from **-250 to -151** is *never shown alone* — it gets paired with a leg
   from a different game, chosen to drag the ticket as close to **+100** as
@@ -84,6 +115,10 @@ Straight from the spec, enforced in `engine.js` and covered by
 - A two-leg ticket **may exceed +150**. That's the point of pairing.
 - Combo legs always come from different games. Two legs of the same game are
   correlated, and a parlay price assumes they aren't.
+
+These are `generateSlate()`'s rules specifically — `topPicks()` (what Generate
+actually calls) shows every leg straight, at whatever price the user's own
+odds-range slider allows.
 
 Run the tests:
 
