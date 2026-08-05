@@ -6,6 +6,8 @@ import {
   teamInsights,
   mmaInsights,
   buildInsights,
+  insightTexts,
+  insightsByTier,
   isTennis,
   isMma,
 } from '../docs/insights.js';
@@ -81,7 +83,7 @@ const ARCHIVE = {
 
 test('tennis bullets report the actual head-to-head and form', () => {
   const bullets = tennisInsights(ARCHIVE, 'Aaron Alpha', 'Ben Bravo', { now: NOW });
-  const text = bullets.join(' ');
+  const text = bullets.map((b) => b.text).join(' ');
 
   // Alpha leads the series 2-1 and took the most recent meeting, on hard.
   assert.match(text, /Alpha 2, Bravo 1/);
@@ -98,13 +100,13 @@ test('the surface quoted is the one the tour is currently playing', () => {
   // Alpha's only clay match is a loss, but every recent match in the archive is
   // on hard. Quoting a clay record next to a hard-court fixture would be true
   // and still misleading, so the current surface wins.
-  const text = tennisInsights(ARCHIVE, 'Aaron Alpha', 'Ben Bravo', { now: NOW }).join(' ');
+  const text = tennisInsights(ARCHIVE, 'Aaron Alpha', 'Ben Bravo', { now: NOW }).map((b) => b.text).join(' ');
   assert.match(text, /On hard/);
   assert.ok(!/On clay/.test(text), 'must not quote the stale surface');
 });
 
 test('retirements are surfaced as retirements, not diagnoses', () => {
-  const text = tennisInsights(ARCHIVE, 'Chris Ghost', 'Aaron Alpha', { now: NOW }).join(' ');
+  const text = tennisInsights(ARCHIVE, 'Chris Ghost', 'Aaron Alpha', { now: NOW }).map((b) => b.text).join(' ');
   assert.match(text, /retirement or walkover/);
   // No invented medical claim.
   assert.ok(!/injur(y|ed)|hamstring|knee/i.test(text));
@@ -115,13 +117,13 @@ test('a long layoff is disclosed rather than passed off as current form', () => 
     ...ARCHIVE,
     matches: [[day('2026-01-05'), 0, 0, 0, 1, 10, 20, 0]],
   };
-  const text = tennisInsights(stale, 'Aaron Alpha', 'Ben Bravo', { now: NOW }).join(' ');
+  const text = tennisInsights(stale, 'Aaron Alpha', 'Ben Bravo', { now: NOW }).map((b) => b.text).join(' ');
   assert.match(text, /no recorded match since/);
   assert.match(text, /predate that gap/);
 });
 
 test('rankings are dated, because a ranking is only as fresh as its last match', () => {
-  const text = tennisInsights(ARCHIVE, 'Aaron Alpha', 'Ben Bravo', { now: NOW }).join(' ');
+  const text = tennisInsights(ARCHIVE, 'Aaron Alpha', 'Ben Bravo', { now: NOW }).map((b) => b.text).join(' ');
   assert.match(text, /Ranked 10 as of \w{3} \d+/);
 });
 
@@ -159,15 +161,15 @@ const CONTEXT = {
 };
 
 test('team bullets use the venue split that matches the side being bet', () => {
-  const home = teamInsights(CONTEXT, 'Baltimore Orioles').join(' ');
+  const home = teamInsights(CONTEXT, 'Baltimore Orioles').map((b) => b.text).join(' ');
   assert.match(home, /54-58 on the season and 30-29 at home/);
 
-  const away = teamInsights(CONTEXT, 'Los Angeles Angels').join(' ');
+  const away = teamInsights(CONTEXT, 'Los Angeles Angels').map((b) => b.text).join(' ');
   assert.match(away, /43-69 on the season and 18-36 on the road/);
 });
 
 test('injured-list statuses count as unavailable and keep their own casing', () => {
-  const text = teamInsights(CONTEXT, 'Baltimore Orioles').join(' ');
+  const text = teamInsights(CONTEXT, 'Baltimore Orioles').map((b) => b.text).join(' ');
   // Two on the IL; day-to-day is not "unavailable".
   assert.match(text, /2 players unavailable/);
   assert.match(text, /10-Day-IL/, 'status casing must survive');
@@ -175,9 +177,9 @@ test('injured-list statuses count as unavailable and keep their own casing', () 
 });
 
 test('against-the-spread only appears on spread bets', () => {
-  assert.ok(!/spread/i.test(teamInsights(CONTEXT, 'Baltimore Orioles', { marketKey: 'h2h' }).join(' ')));
+  assert.ok(!/spread/i.test(teamInsights(CONTEXT, 'Baltimore Orioles', { marketKey: 'h2h' }).map((b) => b.text).join(' ')));
   assert.match(
-    teamInsights(CONTEXT, 'Baltimore Orioles', { marketKey: 'spreads' }).join(' '),
+    teamInsights(CONTEXT, 'Baltimore Orioles', { marketKey: 'spreads' }).map((b) => b.text).join(' '),
     /Against the spread this season: Orioles 30-28/,
   );
 });
@@ -188,7 +190,7 @@ test('a season that has not started yet produces no record bullet', () => {
     home: { ...CONTEXT.home, overallRecord: '0-0', homeRecord: '0-0' },
     away: { ...CONTEXT.away, overallRecord: '0-0' },
   };
-  const text = teamInsights(preseason, 'Baltimore Orioles').join(' ');
+  const text = teamInsights(preseason, 'Baltimore Orioles').map((b) => b.text).join(' ');
   assert.ok(!/on the season/.test(text), '0-0 is true and worthless');
 });
 
@@ -206,7 +208,7 @@ test('draws are counted, not folded into losses', () => {
       injuries: [],
     },
   };
-  const text = teamInsights(soccer, 'Arsenal').join(' ');
+  const text = teamInsights(soccer, 'Arsenal').map((b) => b.text).join(' ');
   assert.match(text, /0W-2D-3L/);
   // One format per sentence — never "0 of 5" alongside "3W-2D-0L".
   assert.match(text, /3W-2D-0L/);
@@ -254,7 +256,7 @@ const MMA_CONTEXT = {
 };
 
 test('the record line states total, not just wins, and the finish breakdown', () => {
-  const text = mmaInsights(MMA_CONTEXT, 'Amanda Lemos').join(' ');
+  const text = mmaInsights(MMA_CONTEXT, 'Amanda Lemos').map((b) => b.text).join(' ');
   assert.match(text, /15-6-1 pro \(22 fights\)/);
   // 2 KO/TKO wins + 0 submission wins = 2 of 3 wins by finish (one win, the
   // Lucindo decision, is not a finish).
@@ -262,22 +264,22 @@ test('the record line states total, not just wins, and the finish breakdown', ()
 });
 
 test('a draw only appears in the record when there is one', () => {
-  const withDraw = mmaInsights(MMA_CONTEXT, 'Amanda Lemos').join(' ');
+  const withDraw = mmaInsights(MMA_CONTEXT, 'Amanda Lemos').map((b) => b.text).join(' ');
   assert.match(withDraw, /15-6-1/);
-  const noDraw = mmaInsights(MMA_CONTEXT, 'Alexia Thainara').join(' ');
+  const noDraw = mmaInsights(MMA_CONTEXT, 'Alexia Thainara').map((b) => b.text).join(' ');
   assert.match(noDraw, /14-1 pro/);
   assert.ok(!/14-1-0/.test(noDraw), 'a 0-draw record should not print a trailing -0');
 });
 
 test('recent form is newest-first and compares both fighters', () => {
-  const text = mmaInsights(MMA_CONTEXT, 'Amanda Lemos').join(' ');
+  const text = mmaInsights(MMA_CONTEXT, 'Amanda Lemos').map((b) => b.text).join(' ');
   // Lemos: loss, loss, win, loss, win -> L-L-W-L-W
   assert.match(text, /Last 5: L-L-W-L-W \(2 wins\)/);
   assert.match(text, /Alexia Thainara: Last 5: W-W-W-W-W \(5 wins\)/);
 });
 
 test('losses are broken down by finish type — durability is not hidden', () => {
-  const text = mmaInsights(MMA_CONTEXT, 'Amanda Lemos').join(' ');
+  const text = mmaInsights(MMA_CONTEXT, 'Amanda Lemos').map((b) => b.text).join(' ');
   // The count is read from the parsed history, not the header record — the
   // fixture's history has 3 losses (the header's 6 includes older fights this
   // mock doesn't bother listing), 1 of them by submission, 0 by KO/TKO.
@@ -291,13 +293,13 @@ test('a long layoff is disclosed, not silently folded into current form', () => 
     ]),
     b: null,
   };
-  const text = mmaInsights(stale, 'Old Timer').join(' ');
+  const text = mmaInsights(stale, 'Old Timer').map((b) => b.text).join(' ');
   assert.match(text, /last fight was Jan \/ 01 \/ 2023/);
   assert.match(text, /predates that layoff/);
 });
 
 test('no layoff notice for a fighter who fought recently', () => {
-  const text = mmaInsights(MMA_CONTEXT, 'Alexia Thainara').join(' ');
+  const text = mmaInsights(MMA_CONTEXT, 'Alexia Thainara').map((b) => b.text).join(' ');
   assert.ok(!/predates that layoff/.test(text));
 });
 
@@ -306,7 +308,7 @@ test('a fighter with no record on file still gets a named, honest bullet', () =>
     a: { name: 'Brand New Prospect', profileUrl: '#', record: null, history: [] },
     b: null,
   };
-  const text = mmaInsights(noRecord, 'Brand New Prospect').join(' ');
+  const text = mmaInsights(noRecord, 'Brand New Prospect').map((b) => b.text).join(' ');
   assert.match(text, /Brand New Prospect's pro record isn't on file/);
 });
 
@@ -317,9 +319,72 @@ test('an unresolved subject produces no bullets, never the wrong fighter\'s stat
 
 test('one side missing from Sherdog does not block bullets for the side that resolved', () => {
   const oneSided = { a: MMA_CONTEXT.a, b: null };
-  const text = mmaInsights(oneSided, 'Amanda Lemos').join(' ');
+  const text = mmaInsights(oneSided, 'Amanda Lemos').map((b) => b.text).join(' ');
   assert.match(text, /15-6-1/);
   assert.ok(!/undefined/.test(text));
+});
+
+/* ---------------------------------------------------------------- */
+/* Tier tagging — every bullet is { tier, text }, grouped for Play of    */
+/* the Day's 4-tier write-up (worker/src/potd.js)                        */
+/* ---------------------------------------------------------------- */
+
+test('every tennis bullet is tagged personnel or situational, never supporting', () => {
+  // Force both an idle-gap flag (situational) and a retirement flag
+  // (situational) alongside the usual record/form/H2H (personnel).
+  const stale = { ...ARCHIVE, matches: [[day('2026-01-05'), 0, 0, 0, 1, 10, 20, 0]] };
+  const bullets = tennisInsights(stale, 'Aaron Alpha', 'Ben Bravo', { now: NOW });
+  assert.ok(bullets.length > 0);
+  for (const b of bullets) assert.ok(['personnel', 'situational'].includes(b.tier), b.tier);
+  assert.ok(bullets.some((b) => b.tier === 'situational'), 'the idle-gap flag must be situational');
+  assert.ok(bullets.some((b) => b.tier === 'personnel'), 'record/form must be personnel');
+  // Individual sport — never a "supporting cast" bullet.
+  assert.ok(!bullets.some((b) => b.tier === 'supporting'));
+});
+
+test('every MMA bullet is tagged personnel or situational, never supporting', () => {
+  const stale = {
+    a: fighter('Old Timer', { wins: 10, losses: 2, draws: 0 }, [
+      { result: 'win', opponent: 'X', event: 'Y', date: 'Jan / 01 / 2023', method: 'Decision (Unanimous)', category: 'decision' },
+    ]),
+    b: null,
+  };
+  const bullets = mmaInsights(stale, 'Old Timer');
+  assert.ok(bullets.length > 0);
+  for (const b of bullets) assert.ok(['personnel', 'situational'].includes(b.tier), b.tier);
+  assert.ok(bullets.some((b) => b.tier === 'situational'), 'the layoff flag must be situational');
+  assert.ok(!bullets.some((b) => b.tier === 'supporting'));
+});
+
+test('team-sport bullets split personnel (record/form/H2H/ATS) from supporting (injuries)', () => {
+  const bullets = teamInsights(CONTEXT, 'Baltimore Orioles', { marketKey: 'spreads' });
+  const personnel = insightsByTier(bullets, 'personnel');
+  const supporting = insightsByTier(bullets, 'supporting');
+
+  assert.ok(personnel.some((t) => /on the season/.test(t)));
+  assert.ok(personnel.some((t) => /have won/.test(t))); // baseball has no draws: "have won N of 5", not "Last 5 —"
+  assert.ok(personnel.some((t) => /lead series/.test(t)));
+  assert.ok(personnel.some((t) => /Against the spread/.test(t)));
+  assert.ok(supporting.some((t) => /unavailable/.test(t)));
+  // The injury bullet must not also show up as personnel — one tier each.
+  assert.ok(!personnel.some((t) => /unavailable/.test(t)));
+});
+
+test('a team with no injuries produces no supporting-tier bullets at all', () => {
+  const bullets = teamInsights(CONTEXT, 'Los Angeles Angels');
+  assert.deepEqual(insightsByTier(bullets, 'supporting'), []);
+});
+
+test('insightTexts flattens tagged bullets back to the plain-string list compact cards render', () => {
+  const bullets = teamInsights(CONTEXT, 'Baltimore Orioles');
+  const flat = insightTexts(bullets);
+  assert.deepEqual(flat, bullets.map((b) => b.text));
+  assert.ok(flat.every((t) => typeof t === 'string'));
+});
+
+test('insightsByTier returns an empty array for a tier with nothing in it', () => {
+  const bullets = tennisInsights(ARCHIVE, 'Aaron Alpha', 'Ben Bravo', { now: NOW });
+  assert.deepEqual(insightsByTier(bullets, 'supporting'), []);
 });
 
 /* ---------------------------------------------------------------- */
@@ -372,7 +437,7 @@ test('a spread selection still resolves to its team', () => {
     selection: 'Baltimore Orioles -1.5',
     home: 'Baltimore Orioles', away: 'Los Angeles Angels',
   };
-  const text = buildInsights(spreadLeg, { context: CONTEXT }).join(' ');
+  const text = buildInsights(spreadLeg, { context: CONTEXT }).map((b) => b.text).join(' ');
   assert.match(text, /Orioles/);
   assert.match(text, /Against the spread/);
 });

@@ -20,6 +20,8 @@ import {
   confidenceColor,
   bookOffers,
   bookIdFor,
+  explain,
+  explainExtensive,
 } from '../docs/engine.js';
 
 const HOUR = 3.6e6;
@@ -753,6 +755,49 @@ test('suggestedParlayStake multiplies leg probabilities as independent events', 
   const expectedFull = kellyFraction(expectedProb, combinedDecimal);
   const stake = suggestedParlayStake(legs, combinedDecimal);
   assert.ok(Math.abs(stake - Math.min(expectedFull * KELLY.FRACTION, KELLY.MAX_STAKE)) < 1e-9);
+});
+
+/* ---------------------------------------------------------------- */
+/* explain / explainExtensive — the price-case bullets                  */
+/* ---------------------------------------------------------------- */
+
+test('explain returns exactly one bullet mentioning the fair value and best price', () => {
+  const [candidate] = analyze([makeEvent('a', -140, 120, SHARP)], { now: NOW });
+  const bullets = explain(candidate);
+  assert.equal(bullets.length, 1);
+  assert.match(bullets[0], new RegExp(candidate.book));
+});
+
+test('explainExtensive covers the same ground as explain, in more than one bullet', () => {
+  const [candidate] = analyze([makeEvent('a', -140, 120, SHARP)], { now: NOW });
+  const bullets = explainExtensive(candidate, { now: NOW });
+  assert.ok(bullets.length >= 3, `expected several bullets, got ${bullets.length}`);
+  assert.ok(bullets.some((b) => b.includes(candidate.book)));
+  assert.ok(bullets.some((b) => /books quote this/.test(b)), 'must cover book agreement');
+  assert.ok(bullets.some((b) => /kickoff/.test(b)), 'must cover freshness relative to game time');
+});
+
+test('explainExtensive states the line-shopping gain when there is one, and omits it when there is none', () => {
+  const withGap = { shopGain: 0.03, ev: 0.02, consensusProb: 0.55, fairAmerican: -110, american: 120, book: 'FanDuel', bookCount: 6, disagreement: 0.01, updatedMs: NOW - 600000, commenceMs: NOW + 6 * 3.6e6 };
+  const withoutGap = { ...withGap, shopGain: 0 };
+  assert.ok(explainExtensive(withGap, { now: NOW }).some((b) => /shopping alone/i.test(b)));
+  assert.ok(!explainExtensive(withoutGap, { now: NOW }).some((b) => /shopping alone/i.test(b)));
+});
+
+test('explainExtensive distinguishes a fresh line from a stale one relative to kickoff', () => {
+  const base = { ev: 0.02, consensusProb: 0.55, fairAmerican: -110, american: 120, book: 'FanDuel', bookCount: 6, disagreement: 0.01, shopGain: 0 };
+
+  // Near kickoff (6h out): staleness still reads as trustworthy.
+  const nearGame = explainExtensive({ ...base, updatedMs: NOW - 20 * 3.6e6, commenceMs: NOW + 6 * 3.6e6 }, { now: NOW });
+  assert.ok(nearGame.some((b) => /20 hours ago/.test(b)));
+  assert.ok(nearGame.some((b) => /Still close enough/.test(b)));
+
+  // Same staleness, but kickoff is days away: worth a recheck before betting.
+  const farGame = explainExtensive({ ...base, updatedMs: NOW - 20 * 3.6e6, commenceMs: NOW + 72 * 3.6e6 }, { now: NOW });
+  assert.ok(farGame.some((b) => /Worth a recheck/.test(b)), 'a line stale relative to a far-off kickoff should suggest rechecking');
+
+  const fresh = explainExtensive({ ...base, updatedMs: NOW - 30 * 60000, commenceMs: NOW + 6 * 3.6e6 }, { now: NOW });
+  assert.ok(fresh.some((b) => /under an hour ago/.test(b)));
 });
 
 /* ---------------------------------------------------------------- */

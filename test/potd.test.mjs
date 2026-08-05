@@ -181,9 +181,26 @@ test('the stored record carries a headline, price, and at least the price-case s
   assert.equal(record.date, '2026-08-05');
   assert.equal(record.phase, 'morning');
   assert.match(record.writeup.headline, /^a Home to win/);
-  assert.ok(record.writeup.sections.some((s) => s.title === 'The price case'));
-  assert.ok(record.writeup.sections[0].bullets.length > 0);
+  const priceCase = record.writeup.sections.find((s) => s.title === 'The Market & Price Case');
+  assert.ok(priceCase);
+  // The Market & Price Case is the extensive version (explainExtensive) —
+  // several distinct sentences, not the compact card's single bullet.
+  assert.ok(priceCase.bullets.length >= 3, `expected several price bullets, got ${priceCase.bullets.length}`);
   assert.ok(typeof record.writeup.stake === 'number' && record.writeup.stake >= 0);
+});
+
+test('sections only appear for tiers that actually have content', async () => {
+  const { env, store } = makeKvStore();
+  const events = [makeEvent('a', '2026-08-05T18:00:00Z')];
+  await runPotdPhase('morning', { env, ctx, now: MORNING_NOW, fetchBoard: async () => events });
+
+  const record = JSON.parse(store.get('potd:2026-08-05'));
+  // No worker-side research source is wired into this fixture (no real ESPN
+  // fetch happens for a mocked NBA event), so only the price case should
+  // appear — never an empty "Primary Personnel" or "Supporting Cast" heading
+  // with nothing under it.
+  const titles = record.writeup.sections.map((s) => s.title);
+  assert.deepEqual(titles, ['The Market & Price Case']);
 });
 
 /* ---------------------------------------------------------------- */

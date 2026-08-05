@@ -373,6 +373,50 @@ export function explain(c) {
   return [`${value} ${context}`];
 }
 
+/**
+ * The extensive version of explain(), for Play of the Day's "Market & Price
+ * Case" tier — every real signal scoreCandidate() actually weighs, each its
+ * own sentence, rather than the compact card's single deliberately-terse
+ * bullet. Verbalizes two numbers that are already computed for every
+ * candidate but never stated anywhere on the compact card: the line-shopping
+ * gain (shopGain) and how fresh the quote is relative to kickoff — both real
+ * inputs to the grade, not new analysis invented for this tier.
+ */
+export function explainExtensive(c, { now = Date.now() } = {}) {
+  const evPct = (c.ev * 100).toFixed(1);
+  const shopPct = (c.shopGain * 100).toFixed(1);
+  const hoursStale = (now - c.updatedMs) / 3.6e6;
+  const hoursOut = (c.commenceMs - now) / 3.6e6;
+
+  const bullets = [];
+
+  bullets.push(
+    c.ev >= 0.005
+      ? `No-vig consensus: ${(c.consensusProb * 100).toFixed(1)}% to win, which prices out to a fair value of ${formatAmerican(c.fairAmerican)}. The best available price is ${formatAmerican(c.american)} at ${c.book} — a gap worth about ${evPct}% of expected value per dollar staked.`
+      : `No-vig consensus: ${(c.consensusProb * 100).toFixed(1)}% to win, fair value ${formatAmerican(c.fairAmerican)}. The best price, ${formatAmerican(c.american)} at ${c.book}, sits close to that fair number (${evPct}% per dollar) — this pick is here on market quality and agreement, not a mispriced number.`,
+  );
+
+  bullets.push(
+    c.disagreement < 0.015
+      ? `${c.bookCount} books quote this exact line, clustered within ±${(c.disagreement * 100).toFixed(1)}% of each other — a tight consensus, which is what makes the one book paying more than the rest meaningful instead of noise.`
+      : `${c.bookCount} books quote this line but disagree by ±${(c.disagreement * 100).toFixed(1)}%, a wider spread than a tight market shows — the edge is real but softer, and sized accordingly.`,
+  );
+
+  if (c.shopGain > 0.001) {
+    bullets.push(
+      `Line shopping alone is worth about ${shopPct}pp here: the average price across every book quoting this line implies a shorter number than the ${formatAmerican(c.american)} actually available at ${c.book}. Taking the field average instead of the best price would have given back real edge.`,
+    );
+  }
+
+  bullets.push(
+    hoursStale < 1
+      ? `This price was last updated under an hour ago, ${hoursOut.toFixed(0)} hours before kickoff — a live, current number, not a stale one carried over from an earlier board.`
+      : `This price was last updated ${hoursStale.toFixed(0)} hours ago, ${hoursOut.toFixed(0)} hours before kickoff. ${hoursOut < 24 ? 'Still close enough to game time to trust.' : 'Worth a recheck closer to kickoff — lines move, and this one has room to before it does.'}`,
+  );
+
+  return bullets;
+}
+
 /* ------------------------------------------------------------------ */
 /* Slate construction                                                  */
 /* ------------------------------------------------------------------ */

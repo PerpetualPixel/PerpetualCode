@@ -23,7 +23,7 @@ import {
   americanToDecimal,
   suggestedParlayStake,
 } from './engine.js';
-import { buildInsights, isTennis, isMma } from './insights.js';
+import { buildInsights, insightTexts, isTennis, isMma } from './insights.js';
 
 const HISTORY_KEY = 'pixelpick.history.v2';
 const LEAGUES_KEY = 'pixelpick.leagues.v2';
@@ -490,14 +490,17 @@ function mmaContextFor(leg) {
   return state.context.get(key);
 }
 
+// buildInsights() returns bullets tagged { tier, text } for callers that want
+// to group them (Play of the Day's tiered write-up); the compact card just
+// wants the flat text list it's always shown, tier stripped.
 async function insightsFor(leg) {
   if (isTennis(leg.sportKey)) {
-    return buildInsights(leg, { tennisData: await tennisArchive(leg.sportKey) });
+    return insightTexts(buildInsights(leg, { tennisData: await tennisArchive(leg.sportKey) }));
   }
   if (isMma(leg.sportKey)) {
-    return buildInsights(leg, { mmaContext: await mmaContextFor(leg) });
+    return insightTexts(buildInsights(leg, { mmaContext: await mmaContextFor(leg) }));
   }
-  return buildInsights(leg, { context: await eventContext(leg) });
+  return insightTexts(buildInsights(leg, { context: await eventContext(leg) }));
 }
 
 /**

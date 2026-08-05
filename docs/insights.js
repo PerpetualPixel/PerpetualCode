@@ -150,6 +150,13 @@ function record(matches, playerIndex) {
 /**
  * Build tennis bullets for one pick.
  *
+ * Each bullet is tagged { tier, text } rather than returned as a plain
+ * string. The tier groups bullets into the same three buckets every sport
+ * here uses: 'personnel' (the subject and the direct matchup), 'situational'
+ * (form-affecting context around the match rather than the head-to-head
+ * itself). Tennis has no team-sport "supporting cast" — an individual
+ * carries their own match, so that tier is simply never populated here.
+ *
  * @param data      parsed docs/data/tennis-{atp,wta}.json
  * @param subject   the player the bet is on, as the odds feed names them
  * @param opponent  the other player
@@ -184,11 +191,13 @@ export function tennisInsights(data, subject, opponent, { now = Date.now(), surf
       const lastSurface = data.surfaces[last[F.SURFACE]] ?? 'an unlisted surface';
       const seasons = data.seasons.join('–');
 
-      bullets.push(
-        won === h2h.length
-          ? `${myName} has won all ${plural(h2h.length, 'meeting')} with ${theirName} across ${seasons}, most recently on ${lastSurface.toLowerCase()}.`
-          : `Head-to-head across ${seasons}: ${myName} ${won}, ${theirName} ${lost}. ${wonLast ? myName : theirName} took the last meeting, on ${lastSurface.toLowerCase()}.`,
-      );
+      bullets.push({
+        tier: 'personnel',
+        text:
+          won === h2h.length
+            ? `${myName} has won all ${plural(h2h.length, 'meeting')} with ${theirName} across ${seasons}, most recently on ${lastSurface.toLowerCase()}.`
+            : `Head-to-head across ${seasons}: ${myName} ${won}, ${theirName} ${lost}. ${wonLast ? myName : theirName} took the last meeting, on ${lastSurface.toLowerCase()}.`,
+      });
     }
   }
 
@@ -201,14 +210,21 @@ export function tennisInsights(data, subject, opponent, { now = Date.now(), surf
     const theirRecent = matchesFor(data, them.index, today).slice(-RECENT);
     if (theirRecent.length) {
       const theirForm = record(theirRecent, them.index);
-      bullets.push(
-        `Form over the last ${RECENT} matches: ${myName} ${myForm.won}-${myForm.lost}, ${theirName} ${theirForm.won}-${theirForm.lost}.`,
-      );
+      bullets.push({
+        tier: 'personnel',
+        text: `Form over the last ${RECENT} matches: ${myName} ${myForm.won}-${myForm.lost}, ${theirName} ${theirForm.won}-${theirForm.lost}.`,
+      });
     } else {
-      bullets.push(`${myName} is ${myForm.won}-${myForm.lost} over their last ${plural(myForm.played, 'match')}.`);
+      bullets.push({
+        tier: 'personnel',
+        text: `${myName} is ${myForm.won}-${myForm.lost} over their last ${plural(myForm.played, 'match')}.`,
+      });
     }
   } else {
-    bullets.push(`${myName} is ${myForm.won}-${myForm.lost} over their last ${plural(myForm.played, 'match')}.`);
+    bullets.push({
+      tier: 'personnel',
+      text: `${myName} is ${myForm.won}-${myForm.lost} over their last ${plural(myForm.played, 'match')}.`,
+    });
   }
 
   /* Surface ---------------------------------------------------------- */
@@ -230,15 +246,14 @@ export function tennisInsights(data, subject, opponent, { now = Date.now(), surf
           line += ` ${theirName} is ${tr.won}-${tr.lost} (${pct(tr.won, tr.played)}%).`;
         }
       }
-      bullets.push(line);
+      bullets.push({ tier: 'personnel', text: line });
     }
   }
 
-  /* Ranking and durability ------------------------------------------ */
+  /* Ranking ----------------------------------------------------------- */
   const lastMine = mine[mine.length - 1];
   const myRank = lastMine[F.WINNER] === me.index ? lastMine[F.WRANK] : lastMine[F.LRANK];
 
-  const extras = [];
   if (myRank > 0) {
     // Date-stamped on purpose: a ranking is only as current as the last match it
     // was recorded at, and a player returning from a layoff can be carrying a
@@ -249,32 +264,35 @@ export function tennisInsights(data, subject, opponent, { now = Date.now(), surf
       ? (lastTheirs[F.WINNER] === them.index ? lastTheirs[F.WRANK] : lastTheirs[F.LRANK])
       : 0;
 
-    extras.push(
-      theirRank > 0
-        ? `Ranked ${myRank} as of ${shortDate(lastMine[F.DAY])}, against ${theirName}'s ${theirRank} as of ${shortDate(lastTheirs[F.DAY])}.`
-        : `Ranked ${myRank} as of ${shortDate(lastMine[F.DAY])}.`,
-    );
+    bullets.push({
+      tier: 'personnel',
+      text:
+        theirRank > 0
+          ? `Ranked ${myRank} as of ${shortDate(lastMine[F.DAY])}, against ${theirName}'s ${theirRank} as of ${shortDate(lastTheirs[F.DAY])}.`
+          : `Ranked ${myRank} as of ${shortDate(lastMine[F.DAY])}.`,
+    });
   }
 
+  /* Situational: layoff and fitness flags ----------------------------- */
   // Form built from matches months old describes a different player. Say so
   // rather than letting a stale record read as current.
   const daysIdle = today - lastMine[F.DAY];
   if (daysIdle > 35) {
-    extras.push(
-      `${myName} has no recorded match since ${shortDate(lastMine[F.DAY])} (${daysIdle} days) — the form and ranking above predate that gap.`,
-    );
+    bullets.push({
+      tier: 'situational',
+      text: `${myName} has no recorded match since ${shortDate(lastMine[F.DAY])} (${daysIdle} days) — the form and ranking above predate that gap.`,
+    });
   }
 
   // A retirement or walkover is the only injury signal this archive carries, so
   // it is reported as exactly that and not dressed up as a diagnosis.
   const retirements = mine.slice(-20).filter((m) => m[F.RETIRED] === 1).length;
   if (retirements) {
-    extras.push(
-      `${plural(retirements, 'match')} in their last ${Math.min(20, mine.length)} ended in a retirement or walkover — worth checking fitness news before betting.`,
-    );
+    bullets.push({
+      tier: 'situational',
+      text: `${plural(retirements, 'match')} in their last ${Math.min(20, mine.length)} ended in a retirement or walkover — worth checking fitness news before betting.`,
+    });
   }
-
-  if (extras.length) bullets.push(extras.join(' '));
 
   return bullets;
 }
@@ -285,6 +303,13 @@ export function tennisInsights(data, subject, opponent, { now = Date.now(), surf
 
 /**
  * Build bullets from the worker's /context bundle (ESPN-derived).
+ *
+ * Each bullet is tagged { tier, text }. 'personnel' covers the subject team
+ * and the direct matchup (record, form, series history, ATS); 'supporting'
+ * is specifically roster availability — the one "who else is playing"
+ * signal this data source actually carries, standing in for the fuller
+ * bench-depth/workload picture a real supporting-cast tier would ideally
+ * have, which this app has no source for.
  *
  * @param context  normalised bundle, or null when nothing could be matched
  * @param subject  the team the bet is on, as the odds feed names them
@@ -313,11 +338,12 @@ export function teamInsights(context, subject, { marketKey = 'h2h' } = {}) {
     const opponentClause = hasRecord(them?.overallRecord)
       ? `; ${theirName} are ${them.overallRecord}.`
       : '.';
-    bullets.push(
-      hasRecord(venue)
+    bullets.push({
+      tier: 'personnel',
+      text: hasRecord(venue)
         ? `${myName} are ${me.overallRecord} on the season and ${venue} ${me.isHome ? 'at home' : 'on the road'}${opponentClause}`
         : `${myName} are ${me.overallRecord} on the season${opponentClause}`,
-    );
+    });
   }
 
   /* Form ------------------------------------------------------------- */
@@ -342,24 +368,26 @@ export function teamInsights(context, subject, { marketKey = 'h2h' } = {}) {
         ? `${t.W}W-${t.D}D-${t.L}L (${t.sequence})`
         : `${t.W} of ${t.games.length} (${t.sequence})`;
 
-    bullets.push(
-      anyDraws
+    bullets.push({
+      tier: 'personnel',
+      text: anyDraws
         ? `Last 5 — ${myName} ${show(myTally)}.${theirTally ? ` ${theirName} ${show(theirTally)}.` : ''}`
         : `${myName} have won ${show(myTally)}.${theirTally ? ` ${theirName} ${show(theirTally)}.` : ''}`,
-    );
+    });
   }
 
   /* Head to head, and ATS when the bet is a spread ------------------- */
   if (context.seriesSummary) {
     const series = context.seriesSummary.trim();
-    bullets.push(/[.!?]$/.test(series) ? series : `${series}.`);
+    bullets.push({ tier: 'personnel', text: /[.!?]$/.test(series) ? series : `${series}.` });
   }
 
   if (marketKey === 'spreads' && me.atsRecord) {
-    bullets.push(
-      `Against the spread this season: ${myName} ${me.atsRecord}` +
-      (them?.atsRecord ? `, ${theirName} ${them.atsRecord}.` : '.'),
-    );
+    bullets.push({
+      tier: 'personnel',
+      text: `Against the spread this season: ${myName} ${me.atsRecord}` +
+        (them?.atsRecord ? `, ${theirName} ${them.atsRecord}.` : '.'),
+    });
   }
 
   /* Availability ----------------------------------------------------- */
@@ -375,11 +403,12 @@ export function teamInsights(context, subject, { marketKey = 'h2h' } = {}) {
     const named = listed.slice(0, 3).map((p) => `${p.name} (${p.status})`).join(', ');
     const more = listed.length > 3 ? ` and ${listed.length - 3} more` : '';
 
-    bullets.push(
-      unavailable.length
+    bullets.push({
+      tier: 'supporting',
+      text: unavailable.length
         ? `${plural(unavailable.length, 'player')} unavailable for ${myName}: ${named}${more}.`
         : `${myName} injury report: ${named}${more}.`,
-    );
+    });
   }
 
   return bullets;
@@ -458,6 +487,12 @@ function formLine(fighter, RECENT = 5) {
  * worker's /mma-context — each side resolved independently, either of which
  * may be null when Sherdog has no confident match (a brand-new prospect is a
  * real "nothing on file" case, not a bug).
+ *
+ * Tagged the same way every sport here is: 'personnel' for the fighter's own
+ * record, finish tendencies, form, and durability; 'situational' for a
+ * layoff long enough to make that record's currency worth questioning. MMA
+ * has no team-sport "supporting cast" — it's the two fighters and nothing
+ * else — so that tier is never populated here.
  */
 export function mmaInsights(context, subjectName) {
   if (!context) return [];
@@ -469,17 +504,25 @@ export function mmaInsights(context, subjectName) {
   if (!me) return [];
 
   const opponent = [context.a, context.b].find((f) => f && f !== me) ?? null;
-  const bullets = [recordLine(me)];
+  const bullets = [{ tier: 'personnel', text: recordLine(me) }];
 
   const form = formLine(me);
-  if (form) bullets.push(opponent ? `${form} ${opponent.name}: ${formLine(opponent) ?? 'no history on file.'}` : form);
+  if (form) {
+    bullets.push({
+      tier: 'personnel',
+      text: opponent ? `${form} ${opponent.name}: ${formLine(opponent) ?? 'no history on file.'}` : form,
+    });
+  }
 
   const vuln = vulnerabilitySummary(me);
   if (vuln && (vuln.koLosses || vuln.subLosses)) {
     const parts = [];
     if (vuln.koLosses) parts.push(`${plural(vuln.koLosses, 'loss')} by KO/TKO`);
     if (vuln.subLosses) parts.push(`${plural(vuln.subLosses, 'loss')} by submission`);
-    bullets.push(`Of ${me.name}'s ${vuln.losses} career ${vuln.losses === 1 ? 'loss' : 'losses'}, ${parts.join(' and ')}.`);
+    bullets.push({
+      tier: 'personnel',
+      text: `Of ${me.name}'s ${vuln.losses} career ${vuln.losses === 1 ? 'loss' : 'losses'}, ${parts.join(' and ')}.`,
+    });
   }
 
   const last = me.history[0];
@@ -490,10 +533,11 @@ export function mmaInsights(context, subjectName) {
     // suspension, or a title-shot wait — worth surfacing before the fight, not
     // treating this fighter's dated form as current.
     if (days > 365) {
-      bullets.push(
-        `${me.name}'s last fight was ${last.date} (${Math.round(days / 30)} months ago) — ` +
-        `the record above predates that layoff.`,
-      );
+      bullets.push({
+        tier: 'situational',
+        text: `${me.name}'s last fight was ${last.date} (${Math.round(days / 30)} months ago) — ` +
+          `the record above predates that layoff.`,
+      });
     }
   }
 
@@ -508,9 +552,18 @@ export const isTennis = (sportKey) => String(sportKey ?? '').startsWith('tennis_
 export const isMma = (sportKey) => sportKey === 'mma_mixed_martial_arts';
 
 /**
- * Non-price bullets for one leg. Callers concatenate these after engine.js's
- * single price bullet. Returns [] when nothing could be sourced, which the UI
- * renders as a shorter card rather than filler.
+ * Non-price bullets for one leg, each tagged { tier, text }:
+ *   - 'personnel'   the subject and the direct matchup — record, form,
+ *                    head-to-head, surface/ranking, finish tendencies.
+ *   - 'supporting'  team-sport roster availability (injuries). Never
+ *                    populated for tennis or MMA — an individual sport has
+ *                    no supporting cast to report on.
+ *   - 'situational' something that affects how current the above is: a
+ *                    layoff, a retirement/walkover flag.
+ * Callers concatenate these after engine.js's single price bullet for the
+ * compact card (see insightTexts()), or group them by tier for a fuller
+ * breakdown (see worker/src/potd.js). Returns [] when nothing could be
+ * sourced, which the UI renders as a shorter card rather than filler.
  */
 export function buildInsights(leg, { tennisData = null, context = null, mmaContext = null, now = Date.now() } = {}) {
   if (isTennis(leg.sportKey)) {
@@ -533,3 +586,11 @@ export function buildInsights(leg, { tennisData = null, context = null, mmaConte
 
   return subject ? teamInsights(context, subject, { marketKey: leg.marketKey }) : [];
 }
+
+/** Flattens tagged bullets to plain text, in original order — what the
+ * compact card's single "why" list has always shown, tier tags stripped. */
+export const insightTexts = (bullets) => bullets.map((b) => b.text);
+
+/** Every bullet matching one tier, text only, in original order. */
+export const insightsByTier = (bullets, tier) =>
+  bullets.filter((b) => b.tier === tier).map((b) => b.text);

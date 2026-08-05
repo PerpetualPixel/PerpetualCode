@@ -139,6 +139,38 @@ doesn't change again that day, regardless of what the market does afterward
 — it's an editorial call made at a point in time, not a live-repriced
 candidate like the ones on the main board.
 
+### The write-up's tiers
+
+The write-up is built from up to four sections, each shown only when it
+actually has content:
+
+1. **The Market & Price Case** — `explainExtensive()` in `engine.js`, the
+   fuller version of the compact card's single price bullet: the no-vig
+   consensus and fair value, book agreement/clustering, the line-shopping
+   gain specifically (a real number every candidate already carries but
+   which the compact card never states on its own), and how fresh the quote
+   is relative to kickoff. Always present.
+2. **Primary Personnel & Direct Matchup** — the subject's own record, form,
+   head-to-head/series history, surface splits and ranking (tennis), or
+   finish tendencies (MMA).
+3. **Supporting Cast & Availability** — team-sport roster availability
+   (injuries) only. Never appears for tennis or MMA, which have no
+   supporting cast to report on — omitted, not a placeholder pretending
+   otherwise.
+4. **Situational Notes** — a layoff or retirement/walkover flag, the one "is
+   this record still current" signal this app's sources actually carry.
+   Deliberately not called "Environmental" — there's no weather, travel, or
+   venue data behind this app, and claiming that coverage would be exactly
+   the kind of invented authority `insights.js`'s own rule forbids.
+
+Every non-price bullet, from every sport, is tagged `{ tier, text }` at the
+source (`insights.js`) — `'personnel'`, `'supporting'`, or `'situational'` —
+rather than guessed at afterward from its wording. The compact card
+(`insightTexts()`) just flattens the tags away and shows the same list it
+always has; Play of the Day (`insightsByTier()`) groups by them. One set of
+real bullets, two ways of presenting them, matching how honest each surface
+gets to be about depth.
+
 ## Suggested stake (Kelly Criterion)
 
 Every pick — on the Board, in a Parlay Builder ticket, and on Play of the

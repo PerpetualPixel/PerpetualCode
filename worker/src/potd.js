@@ -18,8 +18,8 @@
  * enforced by this idempotency check, not by only running once.
  */
 
-import { analyze, RULES, explain, formatAmerican, suggestedStake } from '../../docs/engine.js';
-import { buildInsights, isTennis, isMma } from '../../docs/insights.js';
+import { analyze, RULES, explainExtensive, formatAmerican, suggestedStake } from '../../docs/engine.js';
+import { buildInsights, insightsByTier, isTennis, isMma } from '../../docs/insights.js';
 import { fetchContext, hasContext } from './context.js';
 import { fetchMmaContext } from './mma.js';
 
@@ -133,16 +133,34 @@ async function researchFor(candidate, env, ctx) {
 }
 
 /**
- * The full breakdown write-up for one candidate: the price case (same
- * no-vig/EV reasoning every pick card carries) plus every research bullet
- * this app can source for it, laid out as sections rather than a compact
- * list — this is meant to read as the extended version of a pick card, not a
- * different kind of claim.
+ * The full breakdown write-up for one candidate, in four named tiers:
+ *
+ *   1. The Market & Price Case — the same no-vig/EV reasoning every pick
+ *      card carries, just not truncated to one sentence.
+ *   2. Primary Personnel & Direct Matchup — the subject's own record, form,
+ *      head-to-head, and (MMA) finish tendencies.
+ *   3. Supporting Cast & Availability — team-sport roster availability only;
+ *      omitted entirely for tennis and MMA, which have no supporting cast to
+ *      report on rather than an empty placeholder pretending otherwise.
+ *   4. Situational Notes — layoff / retirement-and-walkover flags, the only
+ *      "is this record still current" signal this app's sources carry. Not
+ *      labelled "Environmental" — there is no weather, travel, or venue data
+ *      behind this app at all, and claiming that coverage would be exactly
+ *      the kind of invented authority this app's own research module refuses
+ *      to produce.
+ *
+ * Each tier is included only when it actually has content — an empty section
+ * with a heading and nothing under it reads as a gap the analysis missed,
+ * not as an honest "nothing sourced here."
  */
-function buildWriteup(candidate, research) {
-  const priceBullets = explain(candidate);
+function buildWriteup(candidate, research, now) {
+  const priceBullets = explainExtensive(candidate, { now });
   const headline = `${candidate.selection} (${formatAmerican(candidate.american)})`;
   const matchup = `${candidate.away} @ ${candidate.home}`;
+
+  const personnel = insightsByTier(research, 'personnel');
+  const supporting = insightsByTier(research, 'supporting');
+  const situational = insightsByTier(research, 'situational');
 
   return {
     headline,
@@ -155,8 +173,10 @@ function buildWriteup(candidate, research) {
     commenceMs: candidate.commenceMs,
     stake: suggestedStake(candidate),
     sections: [
-      { title: 'The price case', bullets: priceBullets },
-      ...(research.length ? [{ title: 'The research case', bullets: research }] : []),
+      { title: 'The Market & Price Case', bullets: priceBullets },
+      ...(personnel.length ? [{ title: 'Primary Personnel & Direct Matchup', bullets: personnel }] : []),
+      ...(supporting.length ? [{ title: 'Supporting Cast & Availability', bullets: supporting }] : []),
+      ...(situational.length ? [{ title: 'Situational Notes', bullets: situational }] : []),
     ],
   };
 }
@@ -186,7 +206,7 @@ export async function runPotdPhase(phase, { env, ctx, now = Date.now(), fetchBoa
 
   const best = eligible.reduce((a, b) => (b.score > a.score ? b : a));
   const research = await researchFor(best, env, ctx);
-  const writeup = buildWriteup(best, research);
+  const writeup = buildWriteup(best, research, now);
 
   const record = {
     date: dateKey,
