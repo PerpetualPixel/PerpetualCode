@@ -948,3 +948,109 @@ input[type="range"]:focus-visible {
   text-align: center;
   padding: 32px 12px;
 }
+
+/* ---------------------------------------------------------------- */
+/* Bankroll panel                                                     */
+/* ---------------------------------------------------------------- */
+
+.bankroll-field {
+  margin: 18px 16px 0;
+}
+
+.bankroll-field label,
+.bankroll-label-static {
+  display: block;
+  margin-bottom: 6px;
+  font-family: var(--mono);
+  font-size: 0.72rem;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--muted);
+}
+
+.bankroll-field input[type="number"] {
+  width: 100%;
+  background: var(--surface-2);
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  color: var(--text);
+  font-family: var(--mono);
+  font-size: 0.95rem;
+  padding: 11px 12px;
+  box-sizing: border-box;
+}
+.bankroll-field input[type="number"]:focus {
+  outline: none;
+  border-color: var(--accent);
+}
+
+.bankroll-hint {
+  margin: 6px 0 0;
+  font-size: 0.7rem;
+  color: var(--muted);
+}
+
+.bankroll-display-toggle {
+  display: flex;
+  gap: 8px;
+}
+
+.toggle-btn {
+  flex: 1;
+  background: var(--surface-2);
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  color: var(--muted);
+  font-family: var(--mono);
+  font-size: 0.75rem;
+  padding: 10px;
+  cursor: pointer;
+}
+.toggle-btn:hover { color: var(--text); }
+.toggle-btn.is-active {
+  color: #04140a;
+  background: var(--accent);
+  border-color: var(--accent);
+  font-weight: 700;
+}
+
+/* ---------------------------------------------------------------- */
+/* Guide panel                                                        */
+/* ---------------------------------------------------------------- */
+
+.guide-body {
+  padding: 4px 16px 24px;
+  overflow-y: auto;
+}
+
+.guide-body details {
+  border-bottom: 1px solid var(--line);
+  padding: 12px 0;
+}
+.guide-body details:first-child { padding-top: 0; }
+
+.guide-body summary {
+  cursor: pointer;
+  font-size: 0.88rem;
+  font-weight: 600;
+  list-style: none;
+}
+.guide-body summary::-webkit-details-marker { display: none; }
+.guide-body summary::before {
+  content: '+';
+  display: inline-block;
+  width: 1em;
+  color: var(--accent);
+  font-weight: 700;
+}
+.guide-body details[open] summary::before { content: '−'; }
+
+.guide-body p {
+  margin: 10px 0 0;
+  font-size: 0.82rem;
+  line-height: 1.55;
+  color: var(--muted);
+}
+.guide-body p + p { margin-top: 8px; }
+.guide-body strong { color: var(--text); }
+.guide-body em { color: var(--text); font-style: normal; }

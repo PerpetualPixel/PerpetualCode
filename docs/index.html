@@ -19,6 +19,12 @@
 <header class="topbar">
   <h1 class="wordmark">PIXEL<span>PICK</span></h1>
   <div class="topbar-actions">
+    <button id="guideToggle" class="icon-btn" aria-expanded="false" aria-controls="guidePanel">
+      Guide
+    </button>
+    <button id="bankrollToggle" class="icon-btn" aria-expanded="false" aria-controls="bankrollPanel">
+      Bankroll
+    </button>
     <button id="historyToggle" class="icon-btn" aria-expanded="false" aria-controls="historyPanel">
       History<span id="historyCount" class="badge" hidden>0</span>
     </button>
@@ -200,6 +206,141 @@
   <p id="clvSummary" class="clv-summary" hidden></p>
   <div id="historyList" class="history-list"></div>
   <button id="historyClear" class="clear-btn">Clear history</button>
+</aside>
+
+<aside id="bankrollPanel" class="history" aria-label="Bankroll settings" hidden>
+  <div class="history-head">
+    <h2>Bankroll</h2>
+    <button id="bankrollClose" class="icon-btn" aria-label="Close bankroll settings">✕</button>
+  </div>
+  <p class="history-note">
+    Set your bankroll once, and every pick's suggested stake — already sized
+    by ¼-Kelly against that pick's edge — converts to a real dollar amount or
+    a unit count. Stored on this device only; nothing here is sent anywhere.
+  </p>
+
+  <div class="bankroll-field">
+    <label for="bankrollAmount">Bankroll ($)</label>
+    <input type="number" id="bankrollAmount" min="0" step="1" inputmode="decimal" placeholder="e.g. 1000">
+  </div>
+
+  <div class="bankroll-field">
+    <label for="bankrollUnit">Unit size ($)</label>
+    <input type="number" id="bankrollUnit" min="0" step="1" inputmode="decimal" placeholder="e.g. 20">
+    <p id="bankrollUnitHint" class="bankroll-hint"></p>
+  </div>
+
+  <div class="bankroll-field">
+    <span class="bankroll-label-static">Show stakes as</span>
+    <div class="bankroll-display-toggle">
+      <button type="button" id="bankrollShowDollars" class="toggle-btn">Dollars</button>
+      <button type="button" id="bankrollShowUnits" class="toggle-btn">Units</button>
+    </div>
+    <p class="bankroll-hint">Applies next time you generate or open a pick.</p>
+  </div>
+
+  <p class="history-note">
+    A unit is a fixed slice of your bankroll — betting "1.5 units" instead of
+    a raw dollar figure keeps stakes proportional as your bankroll changes,
+    and is how most bettors size and track plays. 1–2% of bankroll per unit is
+    the standard range; leave Unit size blank to use the 2% recommendation
+    automatically.
+  </p>
+</aside>
+
+<aside id="guidePanel" class="history" aria-label="App guide" hidden>
+  <div class="history-head">
+    <h2>Guide</h2>
+    <button id="guideClose" class="icon-btn" aria-label="Close guide">✕</button>
+  </div>
+  <div class="guide-body">
+    <details open>
+      <summary>American odds, in plain terms</summary>
+      <p>A minus number (like <strong>-150</strong>) is the favorite: bet $150
+      to win $100. A plus number (like <strong>+150</strong>) is the underdog:
+      bet $100 to win $150. The bigger the minus number, the more likely that
+      side is thought to win — and the less it pays out if it does.</p>
+    </details>
+
+    <details>
+      <summary>What "Confidence" means</summary>
+      <p>Every price gets graded 0–100. It isn't a guess at who wins — it's how
+      good the <em>price</em> is relative to what the betting market itself
+      thinks is fair, once you strip out the sportsbook's own fee. A higher
+      confidence means a bigger gap between what you're being offered and what
+      the market's own consensus says the bet is actually worth.</p>
+      <p>"Beats X% of the board" shows where that grade ranks against every
+      other bet available right now — useful when you're choosing between a
+      few decent-looking picks.</p>
+    </details>
+
+    <details>
+      <summary>No-vig fair value and expected value (EV)</summary>
+      <p>Sportsbooks build a small fee into every price — the "vig." Strip it
+      out across enough books and you get a consensus for what a bet is
+      actually worth, fee-free. If the best price you can find beats that fair
+      value, you have positive expected value: over many bets like this you'd
+      expect to come out ahead, even though any single bet can still lose.</p>
+    </details>
+
+    <details>
+      <summary>Why every pick shows several sportsbooks</summary>
+      <p>The same bet is often priced slightly differently at different books.
+      "Line shopping" — checking several and taking the best number — costs
+      nothing extra and is one of the most reliable ways to improve results
+      over time. Every pick shows a button per book you've selected under
+      Sportsbooks; greyed-out ones simply aren't offering that exact line.</p>
+    </details>
+
+    <details>
+      <summary>Suggested stake, and what "¼-Kelly" means</summary>
+      <p>The Kelly Criterion is a formula for how much of your bankroll to risk
+      based on how big the edge is. Betting the <em>full</em> amount it
+      suggests produces wild bankroll swings, so this app uses a quarter of
+      that number instead — smoother, and still scaled to the size of the
+      edge. A bigger suggested stake means a bigger edge, not just a bigger
+      favorite.</p>
+      <p>Set a bankroll under the Bankroll button to see that suggestion as a
+      real dollar amount or a number of units instead of just a percentage.</p>
+    </details>
+
+    <details>
+      <summary>Bankroll and units</summary>
+      <p>A "unit" is a fixed slice of your bankroll — usually 1–2% — used as
+      your basic betting increment instead of raw dollars. Betting "1.5 units"
+      instead of "$30" keeps stakes proportional as your bankroll grows or
+      shrinks, and it's how most bettors track their own results.</p>
+    </details>
+
+    <details>
+      <summary>Closing Line Value (CLV)</summary>
+      <p>The single best long-run signal that you're actually finding good
+      bets, separate from whether any one of them won: did you get a better
+      price than the market eventually settled on? History tracks this
+      automatically for every pick that was still open when its game started,
+      and shows your running average at the top of the History panel.</p>
+    </details>
+
+    <details>
+      <summary>The three tabs</summary>
+      <p><strong>Board</strong> is automatic: tap Generate and get the 8
+      best-graded bets across every sport you've selected, ranked purely by
+      edge. <strong>Parlay Builder</strong> is manual: toggle on the sports and
+      markets you want, set your own odds range and confidence floor, and
+      build a ticket by hand. <strong>Play of the Day</strong> is one pick,
+      chosen once a day and the same for everyone, with a full written
+      breakdown instead of the compact card.</p>
+    </details>
+
+    <details>
+      <summary>Odds range and confidence floor</summary>
+      <p>By default the Board only shows bets priced between −250 and +150,
+      graded 50 or higher. Both are adjustable under "Odds &amp; Confidence" —
+      a thin sport on a quiet night clearing nothing at those settings isn't a
+      bug, it's the filter doing its job. Widen the range or lower the floor
+      to see more of the board.</p>
+    </details>
+  </div>
 </aside>
 
 <script type="module" src="app.js"></script>

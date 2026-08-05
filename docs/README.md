@@ -157,6 +157,31 @@ same independence assumption `combineLegs()` already makes when multiplying
 their decimal odds, and `buildParlay()` enforces structurally by refusing two
 legs from the same game.
 
+### Bankroll and units
+
+The Bankroll button (top bar) turns that %-of-bankroll figure into something
+directly actionable. Set a bankroll and every stake line converts to a real
+dollar amount; set a unit size too (or leave it blank to use the built-in 2%
+recommendation) and toggle "Show stakes as" to Units to see stakes the way
+most bettors actually track their own action — "1.5 units" rather than a raw
+dollar figure, which stays meaningful as the bankroll itself grows or
+shrinks. Everything here is local-only (`localStorage`, never sent
+anywhere) and display changes apply on the next Generate/parlay/Play-of-the-Day
+view rather than live-patching whatever's already on screen — the same
+"applies on next tap" convention the Odds & Confidence range filter already
+uses, and for the same reason: it avoids a spurious re-fetch of a pick's
+research bullets just to update a stake string.
+
+## Guide
+
+A plain-language reference for a new bettor, opened from the Guide button in
+the top bar: American odds, what "Confidence" and "no-vig fair value" mean,
+why picks show several sportsbooks, what Kelly staking and units are, what
+CLV is, and what each of the three tabs actually does. Static content in
+`index.html` (`#guidePanel`) — collapsible `<details>` sections, no
+JavaScript beyond the same panel-open/close plumbing every other side panel
+already uses.
+
 ## The price rules
 
 Straight from the spec, enforced in `engine.js` and covered by

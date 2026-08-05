@@ -30,6 +30,11 @@ const LEAGUES_KEY = 'pixelpick.leagues.v2';
 const BOOKS_KEY = 'pixelpick.books.v1';
 const FILTERS_KEY = 'pixelpick.range.v1';
 const PARLAY_KEY = 'pixelpick.parlay.v1';
+const BANKROLL_KEY = 'pixelpick.bankroll.v1';
+// 1-2% of bankroll per unit is the standard range a flat-staking bettor
+// works from; 2% is the more conservative, more commonly cited end of it —
+// used here as the default recommendation when the user hasn't set their own.
+const RECOMMENDED_UNIT_PCT = 0.02;
 // Entries carry full leg data now so history can be re-priced and reopened,
 // which makes each one heavier than the old summary rows.
 const HISTORY_LIMIT = 40;
@@ -48,6 +53,17 @@ const el = {
   clvSummary: document.getElementById('clvSummary'),
   scrim: document.getElementById('scrim'),
   logoutBtn: document.getElementById('logoutBtn'),
+  bankrollToggle: document.getElementById('bankrollToggle'),
+  bankrollPanel: document.getElementById('bankrollPanel'),
+  bankrollClose: document.getElementById('bankrollClose'),
+  bankrollAmount: document.getElementById('bankrollAmount'),
+  bankrollUnit: document.getElementById('bankrollUnit'),
+  bankrollUnitHint: document.getElementById('bankrollUnitHint'),
+  bankrollShowDollars: document.getElementById('bankrollShowDollars'),
+  bankrollShowUnits: document.getElementById('bankrollShowUnits'),
+  guideToggle: document.getElementById('guideToggle'),
+  guidePanel: document.getElementById('guidePanel'),
+  guideClose: document.getElementById('guideClose'),
   leagueToggle: document.getElementById('leagueToggle'),
   leaguePanel: document.getElementById('leaguePanel'),
   leagueList: document.getElementById('leagueList'),
@@ -126,6 +142,11 @@ const state = {
     sports: new Map(),
     ...loadJSON(PARLAY_KEY, { oddsMin: -250, oddsMax: 100, minScore: 60, legCount: 2 }),
   },
+  // Bankroll and unit size, purely local — never sent anywhere, only used to
+  // turn a stake's %-of-bankroll figure into a dollar amount or unit count.
+  // amount/unit of 0 means "unset"; unset amount falls back to showing the
+  // plain percentage everywhere a stake is displayed.
+  bankroll: loadJSON(BANKROLL_KEY, { amount: 0, unit: 0, displayMode: 'dollars' }),
 };
 
 /* ---------------------------------------------------------------- */
@@ -514,10 +535,46 @@ async function hydrateInsights(container = el.picks) {
  * capped (see engine.js's KELLY.MAX_STAKE) against one bet ever eating too
  * much of a bankroll regardless of what the raw formula says.
  */
+/** The recommended unit size — 2% of bankroll — used whenever the user
+ * hasn't set their own. Returns 0 when there's no bankroll to base it on. */
+function recommendedUnit() {
+  return state.bankroll.amount > 0 ? state.bankroll.amount * RECOMMENDED_UNIT_PCT : 0;
+}
+
+/** The unit size actually in effect: the user's own if they've set one,
+ * otherwise the recommendation. */
+function effectiveUnit() {
+  return state.bankroll.unit > 0 ? state.bankroll.unit : recommendedUnit();
+}
+
+/**
+ * A stake fraction (0–1) as display text. With no bankroll set, this is just
+ * the %-of-bankroll figure the Kelly math produces — which is all the app
+ * can say without knowing what "bankroll" means to this user. Once a
+ * bankroll is set, it converts to a real dollar amount or, if a unit size is
+ * also available (set or recommended), a unit count in the user's chosen
+ * display mode.
+ */
+function formatStakeLine(stake) {
+  if (stake <= 0) return null;
+  const pct = `${(stake * 100).toFixed(1)}%`;
+
+  if (!(state.bankroll.amount > 0)) {
+    return `Suggested stake: ${pct} of bankroll (¼-Kelly)`;
+  }
+
+  const dollars = state.bankroll.amount * stake;
+  const unit = effectiveUnit();
+  const dollarsText = `$${dollars.toFixed(2)}`;
+  const unitsText = unit > 0 ? `${(dollars / unit).toFixed(2)}u` : null;
+
+  const primary = state.bankroll.displayMode === 'units' && unitsText ? unitsText : dollarsText;
+  return `Suggested stake: ${primary} (${pct} · ¼-Kelly)`;
+}
+
 function stakeLine(pick) {
   const stake = suggestedParlayStake(pick.legs, americanToDecimal(pick.american));
-  if (stake <= 0) return null;
-  return `Suggested stake: ${(stake * 100).toFixed(1)}% of bankroll (¼-Kelly)`;
+  return formatStakeLine(stake);
 }
 
 function renderConfidence(pick) {
@@ -927,15 +984,62 @@ function reopenPick(entryIndex, pickIndex) {
   el.picks.scrollIntoView({ behavior: 'smooth', block: 'start' });
 }
 
-function setHistoryOpen(open) {
-  el.historyPanel.hidden = !open;
-  el.scrim.hidden = !open;
-  el.historyToggle.setAttribute('aria-expanded', String(open));
-  // Re-price on open so the panel reflects the board we're holding now.
-  if (open) {
-    renderHistory();
-    el.historyClose.focus();
+/**
+ * Shared side-panel open/close for History, Bankroll, and Guide — they all
+ * slide from the same edge and share one scrim, so only one can be open at a
+ * time. Opening one closes whichever else was open rather than stacking.
+ */
+let openAside = null; // { panel, toggle } or null
+
+function setAsideOpen(panel, toggle, open, { onOpen, focusEl } = {}) {
+  if (open && openAside && openAside.panel !== panel) {
+    openAside.panel.hidden = true;
+    openAside.toggle.setAttribute('aria-expanded', 'false');
   }
+  panel.hidden = !open;
+  toggle.setAttribute('aria-expanded', String(open));
+  el.scrim.hidden = !open;
+  openAside = open ? { panel, toggle } : null;
+  if (open) {
+    onOpen?.();
+    focusEl?.focus();
+  }
+}
+
+function setHistoryOpen(open) {
+  // Re-price on open so the panel reflects the board we're holding now.
+  setAsideOpen(el.historyPanel, el.historyToggle, open, {
+    onOpen: renderHistory,
+    focusEl: el.historyClose,
+  });
+}
+
+function setBankrollOpen(open) {
+  setAsideOpen(el.bankrollPanel, el.bankrollToggle, open, {
+    onOpen: renderBankrollPanel,
+    focusEl: el.bankrollClose,
+  });
+}
+
+function setGuideOpen(open) {
+  setAsideOpen(el.guidePanel, el.guideToggle, open, { focusEl: el.guideClose });
+}
+
+function persistBankroll() {
+  saveJSON(BANKROLL_KEY, state.bankroll);
+}
+
+function renderBankrollPanel() {
+  el.bankrollAmount.value = state.bankroll.amount > 0 ? state.bankroll.amount : '';
+  el.bankrollUnit.value = state.bankroll.unit > 0 ? state.bankroll.unit : '';
+
+  const rec = recommendedUnit();
+  el.bankrollUnitHint.textContent = rec > 0
+    ? `Recommended: $${rec.toFixed(2)} (2% of bankroll)`
+    : 'Set a bankroll above to see a recommended unit size.';
+
+  el.bankrollShowDollars.classList.toggle('is-active', state.bankroll.displayMode !== 'units');
+  el.bankrollShowUnits.classList.toggle('is-active', state.bankroll.displayMode === 'units');
 }
 
 /* ---------------------------------------------------------------- */
@@ -1068,7 +1172,16 @@ el.generate.addEventListener('click', generate);
 
 el.historyToggle.addEventListener('click', () => setHistoryOpen(el.historyPanel.hidden));
 el.historyClose.addEventListener('click', () => setHistoryOpen(false));
-el.scrim.addEventListener('click', () => setHistoryOpen(false));
+
+el.bankrollToggle.addEventListener('click', () => setBankrollOpen(el.bankrollPanel.hidden));
+el.bankrollClose.addEventListener('click', () => setBankrollOpen(false));
+
+el.guideToggle.addEventListener('click', () => setGuideOpen(el.guidePanel.hidden));
+el.guideClose.addEventListener('click', () => setGuideOpen(false));
+
+el.scrim.addEventListener('click', () => {
+  if (openAside) setAsideOpen(openAside.panel, openAside.toggle, false);
+});
 el.historyClear.addEventListener('click', () => {
   state.history = [];
   saveHistory();
@@ -1181,7 +1294,7 @@ el.logoutBtn.addEventListener('click', signOut);
 
 document.addEventListener('keydown', (e) => {
   if (e.key !== 'Escape') return;
-  if (!el.historyPanel.hidden) setHistoryOpen(false);
+  if (openAside) setAsideOpen(openAside.panel, openAside.toggle, false);
   closeOtherPanels(null);
 });
 
@@ -1269,6 +1382,7 @@ function renderParlayResult(result) {
   renderedLegs.length = 0;
   const legsHtml = result.legs.map((leg, i) => renderLeg(leg, i, true)).join('');
   const stake = suggestedParlayStake(result.legs, result.combined.decimal);
+  const stakeMsg = formatStakeLine(stake);
 
   el.parlayResult.innerHTML = `
     <article class="pick">
@@ -1276,7 +1390,7 @@ function renderParlayResult(result) {
         <span class="chip"><strong>${result.legs.length}-leg parlay</strong></span>
         <span class="price">${esc(formatAmerican(result.combined.american))}</span>
       </div>
-      ${stake > 0 ? `<div class="stake-line">Suggested stake: ${(stake * 100).toFixed(1)}% of bankroll (¼-Kelly)</div>` : ''}
+      ${stakeMsg ? `<div class="stake-line">${esc(stakeMsg)}</div>` : ''}
       ${legsHtml}
     </article>`;
   hydrateInsights(el.parlayResult);
@@ -1353,6 +1467,30 @@ el.parlayLegCountSlider.addEventListener('change', persistParlayFilters);
 
 el.parlayGenerate.addEventListener('click', generateParlay);
 
+el.bankrollAmount.addEventListener('change', () => {
+  state.bankroll.amount = Math.max(0, Number(el.bankrollAmount.value) || 0);
+  persistBankroll();
+  renderBankrollPanel();
+});
+
+el.bankrollUnit.addEventListener('change', () => {
+  state.bankroll.unit = Math.max(0, Number(el.bankrollUnit.value) || 0);
+  persistBankroll();
+  renderBankrollPanel();
+});
+
+el.bankrollShowDollars.addEventListener('click', () => {
+  state.bankroll.displayMode = 'dollars';
+  persistBankroll();
+  renderBankrollPanel();
+});
+
+el.bankrollShowUnits.addEventListener('click', () => {
+  state.bankroll.displayMode = 'units';
+  persistBankroll();
+  renderBankrollPanel();
+});
+
 /* ---------------------------------------------------------------- */
 /* Play of the Day                                                   */
 /* ---------------------------------------------------------------- */
@@ -1370,9 +1508,8 @@ const potdDateTimeFmt = new Intl.DateTimeFormat(undefined, {
  */
 function renderPotdConfidence(score, stake) {
   const color = confidenceColor(score, RULES.MIN_SCORE);
-  const stakeText = stake > 0
-    ? `<div class="stake-line">Suggested stake: ${(stake * 100).toFixed(1)}% of bankroll (¼-Kelly)</div>`
-    : '';
+  const stakeMsg = formatStakeLine(stake);
+  const stakeText = stakeMsg ? `<div class="stake-line">${esc(stakeMsg)}</div>` : '';
   return `
     <div class="confidence" style="--conf:${color}">
       <div class="conf-track">
