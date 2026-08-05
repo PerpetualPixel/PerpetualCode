@@ -228,6 +228,18 @@ function parseBio(html) {
 }
 
 /**
+ * The fighter's profile photo — confirmed live against Jon Jones' actual
+ * Sherdog page before writing this: an `itemprop="image"` tag with a
+ * `/image_crop/...` relative path sits just before the bio-holder box.
+ * Missing for very new or obscure fighters; null rather than a placeholder
+ * image, same "no data" honesty as everything else here.
+ */
+function parsePhoto(html) {
+  const src = html.match(/itemprop="image"\s+src="([^"]+)"/)?.[1];
+  return src ? `${SHERDOG}${src}` : null;
+}
+
+/**
  * Full fighter research bundle, or null if Sherdog has no confident match —
  * a real outcome for a brand-new prospect, not a failure to handle specially.
  */
@@ -242,6 +254,7 @@ async function fetchFighter(name, ctx) {
   const history = parseFightHistory(html);
   const record = parseHeaderRecord(html, found.href) ?? deriveRecordFromHistory(history);
   const bio = parseBio(html);
+  const photo = parsePhoto(html);
 
   return {
     name: found.name,
@@ -249,6 +262,7 @@ async function fetchFighter(name, ctx) {
     record,
     history,
     bio,
+    photo,
   };
 }
 

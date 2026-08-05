@@ -8,6 +8,7 @@
 
 import { CONFIG } from './config.js';
 import { DEMO_EVENTS } from './demo.js';
+import { teamLogoUrl } from './team-logos.js';
 import {
   RULES,
   SPORTSBOOKS,
@@ -1260,19 +1261,52 @@ function renderMmaBio(fighter) {
 }
 
 /**
- * The MMA Fantasy-style breakdown: physical attributes, data reliability,
- * method-of-victory/defeat bars, round-ended distribution, activity by
- * year, and common opponents — everything genuinely derivable from the
- * Sherdog scrape already in worker/src/mma.js. Percentile striking/grappling
- * stats (MMA Fantasy's Strike Score/Accuracy/Defense/Evasion etc.) are
- * deliberately absent: they need per-fight strike-volume data Sherdog's
- * fight-history table doesn't carry, which this app has no source for yet.
+ * Head-to-head fighter photos from Sherdog, when both (or either) actually
+ * parsed one. A fighter with no photo on their Sherdog page just gets an
+ * initial in a plain circle — never a stock/placeholder image standing in
+ * for a real one.
+ */
+function renderMmaPhotos(me, opponent) {
+  const initials = (name) => esc((name ?? '?').trim().charAt(0).toUpperCase());
+  const side = (fighter) => fighter ? `
+    <div class="mma-photo-side">
+      ${fighter.photo
+        ? `<img class="mma-photo" src="${esc(fighter.photo)}" alt="${esc(fighter.name)}" loading="lazy"
+             onerror="this.outerHTML='<span class=&quot;mma-photo mma-photo-fallback&quot;>${initials(fighter.name)}</span>'">`
+        : `<span class="mma-photo mma-photo-fallback">${initials(fighter.name)}</span>`}
+      <p class="mma-photo-name">${esc(fighter.name)}</p>
+    </div>` : '';
+
+  if (!me?.photo && !opponent?.photo) return '';
+  return `
+    <div class="mma-photo-row">
+      ${side(me)}
+      ${opponent ? '<span class="mma-photo-vs">VS</span>' : ''}
+      ${side(opponent)}
+    </div>`;
+}
+
+/**
+ * The MMA Fantasy-style breakdown: photos, physical attributes, data
+ * reliability, method-of-victory/defeat bars, round-ended distribution,
+ * activity by year, and common opponents — everything genuinely derivable
+ * from the Sherdog scrape already in worker/src/mma.js. Percentile striking/
+ * grappling stats (MMA Fantasy's Strike Score/Accuracy/Defense/Evasion etc.)
+ * are deliberately absent: UFCStats.com has exactly those numbers, but
+ * returns a JS anti-bot challenge page to every request from this app's
+ * Cloudflare Worker (confirmed live — a 200 response with a "checking your
+ * browser" challenge, not real HTML) — the same class of block that ruled
+ * out ESPN's site.api host earlier in this project, just on a different
+ * host. Not fixable by trying harder against the same architecture.
  */
 function renderMmaBreakdown(mmaContext, subjectName) {
   const { me, opponent } = resolveMmaFighters(mmaContext, subjectName);
   if (!me) return '';
 
   const sections = [];
+
+  const photos = renderMmaPhotos(me, opponent);
+  if (photos) sections.push(photos);
 
   const bioMe = renderMmaBio(me);
   const bioOpp = opponent ? renderMmaBio(opponent) : '';
@@ -1423,8 +1457,14 @@ async function openStatsDrawer(leg, opposite = null) {
   // the user is looking at now.
   if (el.statsDrawer.hidden || el.statsDrawerTitle.textContent !== leg.selection) return;
 
+  const awayLogo = teamLogoUrl(leg.sportKey, leg.away);
+  const homeLogo = teamLogoUrl(leg.sportKey, leg.home);
   el.statsDrawerBody.innerHTML =
-    `<p class="stats-meta"><strong>${esc(leg.away)} @ ${esc(leg.home)}</strong> · ${esc(leg.marketLabel)} · ` +
+    `<p class="stats-meta">` +
+    `<strong>` +
+    `${awayLogo ? `<img class="stats-meta-logo" src="${esc(awayLogo)}" alt="" loading="lazy">` : ''}${esc(leg.away)} @ ` +
+    `${homeLogo ? `<img class="stats-meta-logo" src="${esc(homeLogo)}" alt="" loading="lazy">` : ''}${esc(leg.home)}` +
+    `</strong> · ${esc(leg.marketLabel)} · ` +
     `${esc(dateFmt.format(new Date(leg.commenceMs)))}</p>` +
     renderWeatherPills(weather) +
     priceHtml +
@@ -1595,6 +1635,7 @@ function buildSlateGames(sportKey) {
       const cands = byEvent.get(event.id) ?? [];
       return {
         eventId: event.id,
+        sportKey,
         home: event.home_team,
         away: event.away_team,
         commenceMs,
@@ -1643,10 +1684,14 @@ function slateTeamRow(game, side) {
   // plain "chance to win" — the same number the algorithm's edge grading is
   // already built from, just read as a probability instead of a price.
   const winPct = h2h ? `${Math.round(h2h.consensusProb * 100)}%` : null;
+  const logo = teamLogoUrl(game.sportKey, team);
 
   return `
     <div class="slate-team-row">
-      <span class="slate-team">${esc(team)}${winPct ? ` <span class="slate-team-pct">${winPct}</span>` : ''}</span>
+      <span class="slate-team">
+        ${logo ? `<img class="slate-logo" src="${esc(logo)}" alt="" loading="lazy">` : ''}
+        ${esc(team)}${winPct ? ` <span class="slate-team-pct">${winPct}</span>` : ''}
+      </span>
       ${slateCell(spread, oppSpread)}
       ${slateCell(total, oppTotal, { totalLabel })}
       ${slateCell(h2h, oppH2h)}

@@ -1158,6 +1158,14 @@ input[type="range"]:focus-visible {
 }
 .stats-meta strong { color: var(--text); }
 
+.stats-meta-logo {
+  width: 16px;
+  height: 16px;
+  object-fit: contain;
+  vertical-align: -3px;
+  margin-right: 3px;
+}
+
 .stats-pills {
   display: flex;
   flex-wrap: wrap;
@@ -1264,6 +1272,63 @@ input[type="range"]:focus-visible {
   color: var(--text);
 }
 .stats-fighter-label:first-child { margin-top: 0; }
+
+.mma-photo-row {
+  display: flex;
+  align-items: flex-start;
+  justify-content: center;
+  gap: 18px;
+  margin-bottom: 20px;
+}
+
+.mma-photo-side {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 6px;
+  flex: 1;
+  min-width: 0;
+  max-width: 140px;
+}
+
+.mma-photo {
+  width: 96px;
+  height: 96px;
+  border-radius: 50%;
+  object-fit: cover;
+  object-position: top center;
+  border: 1px solid var(--line);
+  background: var(--surface-2);
+}
+
+.mma-photo-fallback {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-family: var(--mono);
+  font-size: 1.8rem;
+  font-weight: 700;
+  color: var(--muted);
+}
+
+.mma-photo-name {
+  margin: 0;
+  font-size: 0.78rem;
+  font-weight: 650;
+  text-align: center;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  max-width: 100%;
+}
+
+.mma-photo-vs {
+  align-self: center;
+  font-family: var(--mono);
+  font-size: 0.7rem;
+  color: var(--muted);
+  margin-top: 36px;
+}
 
 .mma-bar-row {
   display: grid;
@@ -1426,11 +1491,22 @@ input[type="range"]:focus-visible {
 .slate-team-row + .slate-team-row { border-top: 1px dashed var(--line); }
 
 .slate-team {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
   font-size: 0.88rem;
   font-weight: 650;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+  min-width: 0;
+}
+
+.slate-logo {
+  flex: none;
+  width: 20px;
+  height: 20px;
+  object-fit: contain;
 }
 
 .slate-team-pct {
