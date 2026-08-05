@@ -21,6 +21,7 @@
 import { analyze, RULES, explainExtensive, formatAmerican, suggestedStake } from '../../docs/engine.js';
 import { buildInsights, insightsByTier, isTennis, isMma } from '../../docs/insights.js';
 import { fetchContext, hasContext } from './context.js';
+import { fetchWeather } from './weather.js';
 import { fetchMmaContext } from './mma.js';
 
 const ET_TZ = 'America/New_York';
@@ -121,10 +122,15 @@ async function researchFor(candidate, env, ctx) {
       return buildInsights(leg, { mmaContext });
     }
     if (hasContext(candidate.sportKey)) {
-      const context = await fetchContext(
-        { sportKey: candidate.sportKey, home: candidate.home, away: candidate.away }, ctx,
-      );
-      return buildInsights(leg, { context });
+      const [context, weather] = await Promise.all([
+        fetchContext(
+          { sportKey: candidate.sportKey, home: candidate.home, away: candidate.away }, ctx,
+        ),
+        fetchWeather(
+          { sportKey: candidate.sportKey, homeTeam: candidate.home, commenceMs: candidate.commenceMs }, ctx,
+        ),
+      ]);
+      return buildInsights(leg, { context, weather });
     }
   } catch {
     /* Research is a bonus on the write-up, not a blocker for posting it. */
@@ -160,7 +166,17 @@ function buildWriteup(candidate, research, now) {
 
   const personnel = insightsByTier(research, 'personnel');
   const supporting = insightsByTier(research, 'supporting');
-  const situational = insightsByTier(research, 'situational');
+  // Environmental (weather, NFL/MLB only) and situational (a layoff or
+  // currency flag, tennis/MMA only) are separate tags at the source — they
+  // answer different questions — but in practice a given sport only ever
+  // populates one of the two, so the write-up presents them under one
+  // combined heading rather than two headings where one is nearly always
+  // empty. Environmental first: it's about the game itself, before notes
+  // about a specific competitor's recent history.
+  const environmental = [
+    ...insightsByTier(research, 'environmental'),
+    ...insightsByTier(research, 'situational'),
+  ];
 
   return {
     headline,
@@ -176,7 +192,7 @@ function buildWriteup(candidate, research, now) {
       { title: 'The Market & Price Case', bullets: priceBullets },
       ...(personnel.length ? [{ title: 'Primary Personnel & Direct Matchup', bullets: personnel }] : []),
       ...(supporting.length ? [{ title: 'Supporting Cast & Availability', bullets: supporting }] : []),
-      ...(situational.length ? [{ title: 'Situational Notes', bullets: situational }] : []),
+      ...(environmental.length ? [{ title: 'Environmental & Situational Notes', bullets: environmental }] : []),
     ],
   };
 }

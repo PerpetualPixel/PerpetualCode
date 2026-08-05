@@ -11,6 +11,7 @@ import {
 } from './auth.js';
 import { QuotaManager } from './quota.js';
 import { fetchContext, hasContext } from './context.js';
+import { fetchWeather, hasVenue } from './weather.js';
 import { fetchMmaContext } from './mma.js';
 import { currentPhase, runPotdPhase, getPotd } from './potd.js';
 
@@ -549,6 +550,35 @@ export default {
       } catch (error) {
         // Context is a bonus, never a blocker: a card without it is still a card.
         return json({ context: null, reason: String(error).slice(0, 120) }, { headers: cors });
+      }
+    }
+
+    // Live venue weather for one NFL/MLB fixture, from the National Weather
+    // Service — free, no key, no odds credit. Only ever asked for the two
+    // outdoor US sports this app has a venue table for; every other sport
+    // (and a game further out than NWS forecasts reach) gets null, not a
+    // guess.
+    if (pathname === '/weather') {
+      if (request.method !== 'GET') {
+        return json({ error: 'Method not allowed' }, { status: 405, headers: cors });
+      }
+      const { searchParams } = new URL(request.url);
+      const sportKey = searchParams.get('sport') ?? '';
+      const homeTeam = searchParams.get('home') ?? '';
+      const commenceMs = Number(searchParams.get('commenceMs') ?? '');
+
+      if (!hasVenue(sportKey) || !homeTeam || !Number.isFinite(commenceMs)) {
+        return json({ weather: null, reason: 'unsupported sport or missing params' }, { headers: cors });
+      }
+
+      try {
+        const weather = await fetchWeather({ sportKey, homeTeam, commenceMs }, ctx);
+        return json(
+          { weather },
+          { headers: { ...cors, 'Cache-Control': 'public, max-age=1800' } },
+        );
+      } catch (error) {
+        return json({ weather: null, reason: String(error).slice(0, 120) }, { headers: cors });
       }
     }
 

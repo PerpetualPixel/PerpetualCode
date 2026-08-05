@@ -466,6 +466,34 @@ function eventContext(leg) {
 }
 
 /**
+ * National Weather Service forecast for one NFL/MLB venue at game time, via
+ * the worker. Free — no odds credits — and null for every other sport, a
+ * domed venue, an unlisted venue, or a game further out than NWS forecasts
+ * reach, same "nothing to say, not an error" contract as eventContext.
+ */
+function weatherFor(leg) {
+  const key = `weather:${leg.eventId}`;
+  if (!state.context.has(key)) {
+    if (!CONFIG.WORKER_URL) {
+      state.context.set(key, Promise.resolve(null));
+    } else {
+      const url = new URL('/weather', CONFIG.WORKER_URL);
+      url.searchParams.set('sport', leg.sportKey);
+      url.searchParams.set('home', leg.home);
+      url.searchParams.set('commenceMs', String(leg.commenceMs));
+      state.context.set(
+        key,
+        fetch(url, { headers: { Accept: 'application/json' } })
+          .then((r) => (r.ok ? r.json() : null))
+          .then((d) => d?.weather ?? null)
+          .catch(() => null),
+      );
+    }
+  }
+  return state.context.get(key);
+}
+
+/**
  * Sherdog-derived fighter research for one MMA matchup, via the worker. Free —
  * no odds credits — and cached by fighter pair, same pattern as eventContext.
  */
@@ -500,7 +528,8 @@ async function insightsFor(leg) {
   if (isMma(leg.sportKey)) {
     return insightTexts(buildInsights(leg, { mmaContext: await mmaContextFor(leg) }));
   }
-  return insightTexts(buildInsights(leg, { context: await eventContext(leg) }));
+  const [context, weather] = await Promise.all([eventContext(leg), weatherFor(leg)]);
+  return insightTexts(buildInsights(leg, { context, weather }));
 }
 
 /**

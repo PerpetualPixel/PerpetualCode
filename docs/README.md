@@ -157,19 +157,27 @@ actually has content:
    (injuries) only. Never appears for tennis or MMA, which have no
    supporting cast to report on — omitted, not a placeholder pretending
    otherwise.
-4. **Situational Notes** — a layoff or retirement/walkover flag, the one "is
-   this record still current" signal this app's sources actually carry.
-   Deliberately not called "Environmental" — there's no weather, travel, or
-   venue data behind this app, and claiming that coverage would be exactly
-   the kind of invented authority `insights.js`'s own rule forbids.
+4. **Environmental & Situational Notes** — live venue weather (NFL/MLB,
+   from the National Weather Service — see `worker/README.md`'s `/weather`
+   entry) and a layoff or retirement/walkover flag (tennis/MMA), combined
+   under one heading since in practice a given sport only ever populates one
+   of the two. This *is* real environmental coverage now, unlike an earlier
+   version of this write-up, which called this tier "Situational Notes" and
+   explicitly declined the "Environmental" label because there was no
+   weather or venue data behind the app at all — that gap is what
+   `weather.js` closes.
 
 Every non-price bullet, from every sport, is tagged `{ tier, text }` at the
-source (`insights.js`) — `'personnel'`, `'supporting'`, or `'situational'` —
-rather than guessed at afterward from its wording. The compact card
+source (`insights.js`) — `'personnel'`, `'supporting'`, `'environmental'`, or
+`'situational'` — rather than guessed at afterward from its wording.
+`'environmental'` and `'situational'` stay separate tags (they answer
+different questions — the game's setting vs. a competitor's own recent
+history) even though the write-up presents them together. The compact card
 (`insightTexts()`) just flattens the tags away and shows the same list it
-always has; Play of the Day (`insightsByTier()`) groups by them. One set of
-real bullets, two ways of presenting them, matching how honest each surface
-gets to be about depth.
+always has — weather included, on a total as much as a side bet, since
+weather is about the game rather than either side of it; Play of the Day
+(`insightsByTier()`) groups by them. One set of real bullets, two ways of
+presenting them, matching how honest each surface gets to be about depth.
 
 ## Suggested stake (Kelly Criterion)
 

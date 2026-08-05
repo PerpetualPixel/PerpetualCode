@@ -270,3 +270,24 @@ DST without two hand-maintained UTC crons. Once a date's pick is written nothing
 overwrites it that day, including an early-match pick claimed the evening
 before — that idempotency check is what makes "consistent all day" actually
 true rather than just usually true.
+
+```
+GET /weather?sport=baseball_mlb&home=Houston+Astros&commenceMs=1785953400000
+```
+
+Live venue weather for one NFL or MLB fixture — temperature, short forecast,
+wind, and precipitation chance — from the **National Weather Service**
+(api.weather.gov), a free, no-API-key, official US government source.
+**Free** — no odds credit, cached 30 minutes. Returns `{ weather: null }` for
+every other sport, a domed venue (`worker/src/weather.js`'s static venue
+table — 32 NFL + 30 MLB, manually maintained and just as fragile to a
+stadium relocation or roof retrofit as `context.js`'s ESPN league-path
+table), or a game further out than NWS's forecast actually reaches — all
+real "nothing to say" cases, not fetch failures.
+
+A retractable-roof venue still gets a forecast, but every bullet built from
+it says plainly that whether the roof is actually open for that specific
+game isn't knowable from any source this app has — that's a team's own
+day-of call. Confirmed reachable from a live Worker before `weather.js` was
+built against it, the same check ESPN's site API failed and taught this app
+to always run first.

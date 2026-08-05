@@ -415,6 +415,54 @@ export function teamInsights(context, subject, { marketKey = 'h2h' } = {}) {
 }
 
 /* ------------------------------------------------------------------ */
+/* Weather (NFL, MLB — outdoor and retractable-roof venues)             */
+/* ------------------------------------------------------------------ */
+
+/**
+ * Bullets from the worker's /weather bundle (National Weather Service data
+ * for the home team's venue). `weather` is null for a domed stadium, an
+ * indoor sport, a venue this app doesn't have on file, or a game further out
+ * than NWS forecasts reach — every one of those is "nothing to say", not an
+ * error, so this returns [] rather than a placeholder.
+ *
+ * Tagged 'environmental' — its own tier, distinct from 'situational'
+ * (a layoff or currency flag about a competitor) even though Play of the
+ * Day's write-up presents both under one combined heading; the tags stay
+ * separate because they answer different questions.
+ */
+export function weatherInsights(weather) {
+  if (!weather) return [];
+
+  const bullets = [];
+  const parts = [];
+  if (weather.temperatureF != null) parts.push(`${weather.temperatureF}°F`);
+  if (weather.shortForecast) parts.push(weather.shortForecast.toLowerCase());
+  if (weather.windSpeed) {
+    parts.push(`wind ${weather.windSpeed}${weather.windDirection ? ` ${weather.windDirection}` : ''}`);
+  }
+
+  if (parts.length) {
+    bullets.push({ tier: 'environmental', text: `Forecast at kickoff: ${parts.join(', ')}.` });
+  }
+
+  if (weather.precipChance != null && weather.precipChance >= 30) {
+    bullets.push({
+      tier: 'environmental',
+      text: `${weather.precipChance}% chance of precipitation — worth checking closer to game time.`,
+    });
+  }
+
+  if (weather.roof === 'retractable' && bullets.length) {
+    bullets.push({
+      tier: 'environmental',
+      text: `This venue has a retractable roof — whether it's actually open for this game is a team decision made day-of, not something this forecast can tell you.`,
+    });
+  }
+
+  return bullets;
+}
+
+/* ------------------------------------------------------------------ */
 /* MMA (UFC / PFL / Dana White's Contender Series)                     */
 /* ------------------------------------------------------------------ */
 
@@ -565,7 +613,7 @@ export const isMma = (sportKey) => sportKey === 'mma_mixed_martial_arts';
  * breakdown (see worker/src/potd.js). Returns [] when nothing could be
  * sourced, which the UI renders as a shorter card rather than filler.
  */
-export function buildInsights(leg, { tennisData = null, context = null, mmaContext = null, now = Date.now() } = {}) {
+export function buildInsights(leg, { tennisData = null, context = null, mmaContext = null, weather = null, now = Date.now() } = {}) {
   if (isTennis(leg.sportKey)) {
     if (!tennisData) return [];
     // Tennis "teams" are the two players; the bet names one of them.
@@ -584,7 +632,10 @@ export function buildInsights(leg, { tennisData = null, context = null, mmaConte
     ? null // A total is about the game, not a side — no team to profile.
     : leg.selection.replace(/ to win$/i, '').replace(/\s[+-]\d+(\.\d+)?$/, '').trim();
 
-  return subject ? teamInsights(context, subject, { marketKey: leg.marketKey }) : [];
+  const bullets = subject ? teamInsights(context, subject, { marketKey: leg.marketKey }) : [];
+  // Weather applies to the game, not to whichever side the bet names — worth
+  // showing on a total exactly as much as a moneyline or spread.
+  return [...bullets, ...weatherInsights(weather)];
 }
 
 /** Flattens tagged bullets to plain text, in original order — what the

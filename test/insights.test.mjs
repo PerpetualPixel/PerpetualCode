@@ -441,3 +441,20 @@ test('a spread selection still resolves to its team', () => {
   assert.match(text, /Orioles/);
   assert.match(text, /Against the spread/);
 });
+
+test('weather bullets are appended for team sports, on a total as much as a side bet', () => {
+  const weather = { roof: 'outdoor', shortForecast: 'Clear', temperatureF: 75, windSpeed: '8 mph', windDirection: 'S' };
+
+  const totalLeg = {
+    sportKey: 'baseball_mlb', marketKey: 'totals',
+    selection: 'Under 8.5 — Los Angeles Angels @ Baltimore Orioles',
+    home: 'Baltimore Orioles', away: 'Los Angeles Angels',
+  };
+  const bullets = buildInsights(totalLeg, { context: CONTEXT, weather });
+  assert.ok(bullets.some((b) => b.tier === 'environmental' && /75°F/.test(b.text)));
+
+  // No weather bundle (domed venue, unsupported sport, etc.) adds nothing —
+  // team bullets are unaffected either way.
+  const withoutWeather = buildInsights(totalLeg, { context: CONTEXT, weather: null });
+  assert.ok(!withoutWeather.some((b) => b.tier === 'environmental'));
+});
