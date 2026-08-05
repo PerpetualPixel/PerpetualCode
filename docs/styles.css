@@ -497,6 +497,33 @@ input[type="range"]:focus-visible {
   text-transform: uppercase;
 }
 
+.sort-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-top: 16px;
+}
+
+.sort-label {
+  font-family: var(--mono);
+  font-size: 0.7rem;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--muted);
+}
+
+.sort-select {
+  flex: 1;
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  color: var(--text);
+  font-family: var(--mono);
+  font-size: 0.78rem;
+  padding: 9px 10px;
+  min-height: 38px;
+}
+
 /* ---------------------------------------------------------------- */
 /* Pick cards                                                        */
 /* ---------------------------------------------------------------- */
@@ -560,8 +587,41 @@ input[type="range"]:focus-visible {
 .leg-matchup {
   color: var(--muted);
   font-size: 0.85rem;
-  margin: 0 0 12px;
+  margin: 0;
 }
+
+/* The collapsed-by-default banner every leg shows — tapping it reveals the
+   full price/why/books breakdown below. Condenses a multi-leg parlay or a
+   whole Pixel Picks board down to one line of scannable banners per bet. */
+.leg-banner {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  width: 100%;
+  background: none;
+  border: none;
+  padding: 0;
+  margin: 0 0 4px;
+  text-align: left;
+  cursor: pointer;
+  font: inherit;
+  color: inherit;
+}
+.leg-banner-text { min-width: 0; }
+.leg-banner-chevron {
+  flex: none;
+  width: 9px;
+  height: 9px;
+  margin-top: 2px;
+  border-right: 2px solid var(--muted);
+  border-bottom: 2px solid var(--muted);
+  transform: rotate(45deg);
+  transition: transform 120ms ease;
+}
+.leg-banner[aria-expanded="true"] .leg-banner-chevron { transform: rotate(-135deg); margin-top: 6px; }
+
+.leg-detail { margin-top: 12px; }
 
 /* when / where / price grid */
 .meta {
@@ -1373,6 +1433,13 @@ input[type="range"]:focus-visible {
   white-space: nowrap;
 }
 
+.slate-team-pct {
+  font-family: var(--mono);
+  font-size: 0.7rem;
+  font-weight: 600;
+  color: var(--muted);
+}
+
 .slate-cell {
   display: block;
   width: 100%;
@@ -1405,9 +1472,18 @@ input[type="range"]:focus-visible {
 }
 
 @media (min-width: 900px) {
+  /* A single game row stretched to a full wide desktop screen was the
+     complaint: the name sat at the far left and the price columns sat at the
+     far right with a huge dead gap between them. Multiple games side by side
+     — the same pattern .picks already uses — fixes that and uses the wider
+     screen for more games visible at once, instead of one wider row. */
+  .slate-body {
+    grid-template-columns: repeat(auto-fill, minmax(460px, 1fr));
+    align-items: start;
+  }
   .slate-header-row,
   .slate-team-row {
-    grid-template-columns: 1fr 110px 130px 100px;
+    grid-template-columns: minmax(0, 1fr) 84px 100px 78px;
   }
 }
 

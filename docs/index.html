@@ -60,6 +60,11 @@
     <button id="slateLoad" class="icon-btn slate-load-btn" type="button">Load slate</button>
   </div>
 
+  <div class="slate-controls" id="slateEventRow" hidden>
+    <label class="slate-league-label" for="slateEventSelect">Card</label>
+    <select id="slateEventSelect" class="slate-league-select"></select>
+  </div>
+
   <section id="slateBody" class="slate-body" aria-live="polite">
     <p class="empty">Pick a league and tap Load slate — this pulls the same
       odds call as Pixel Picks, so it only spends a credit once every 15
@@ -156,6 +161,16 @@
     <span class="generate-label">Generate Picks</span>
     <span id="poolLine" class="generate-sub">—</span>
   </button>
+
+  <div class="sort-row" hidden id="pixelSortRow">
+    <label class="sort-label" for="pixelSort">Sort</label>
+    <select id="pixelSort" class="sort-select">
+      <option value="confidence">Confidence, high to low</option>
+      <option value="odds-asc">Odds, favorite to underdog</option>
+      <option value="odds-desc">Odds, underdog to favorite</option>
+      <option value="chrono">Soonest game first</option>
+    </select>
+  </div>
 
   <section id="picks" class="picks" aria-live="polite"></section>
 
