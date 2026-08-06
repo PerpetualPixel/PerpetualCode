@@ -1855,6 +1855,7 @@ function buildSlateGames(sportKey) {
         h2h: pairFor(cands, 'h2h', event),
         spreads: pairFor(cands, 'spreads', event),
         totals: pairFor(cands, 'totals', event),
+        ufc_event: event.ufc_event,
       };
     })
     .filter((g) => Number.isFinite(g.commenceMs) && g.commenceMs > now)
