@@ -5,6 +5,10 @@
  */
 
 const BANKROLL_INITIAL = 1000;
+// Flat 1-unit stake on every tracked pick, regardless of odds — the
+// simulation is measuring the algorithm's picking, not a staking strategy,
+// so every bet risks the same $20 (2% of the $1000 bankroll).
+export const FLAT_UNIT_STAKE = 20;
 const PICKS_DB_NAME = 'PixelPickLearning';
 const PICKS_STORE_NAME = 'picks';
 const RESULTS_STORE_NAME = 'results';
@@ -46,18 +50,44 @@ export async function initializePickDatabase() {
 }
 
 /**
- * Record a pick when it's generated on the Pixel Picks board.
+ * A pick's identity for tracking purposes: same game, same market, same
+ * side, same calendar day. Stable across regenerations — tapping Generate
+ * twice in one day on a board that includes the same lock both times must
+ * not double-log it, which is what a timestamp-based id would do.
  */
-export async function logPick(pick, stake) {
+function stablePickId(pick) {
+  const dateKey = new Date().toISOString().split('T')[0];
+  return `${dateKey}:${pick.eventId}:${pick.marketKey}:${pick.side}`;
+}
+
+export async function pickExists(pickId) {
+  if (!db) await initializePickDatabase();
+  return new Promise((resolve, reject) => {
+    const tx = db.transaction([PICKS_STORE_NAME], 'readonly');
+    const req = tx.objectStore(PICKS_STORE_NAME).get(pickId);
+    req.onerror = () => reject(req.error);
+    req.onsuccess = () => resolve(Boolean(req.result));
+  });
+}
+
+/**
+ * Record a pick when it's generated on the Pixel Picks board. Stake defaults
+ * to the flat 1-unit ($20) stake every tracked pick uses — pass an override
+ * only for tests. Silently a no-op if this exact pick (same game/market/side/
+ * day) is already tracked, so re-generating the board never double-counts.
+ */
+export async function logPick(pick, stake = FLAT_UNIT_STAKE) {
   if (!db) await initializePickDatabase();
 
-  const pickId = `${pick.eventId}:${pick.id}:${Date.now()}`;
+  const pickId = stablePickId(pick);
+  if (await pickExists(pickId)) return null;
+
   const pickRecord = {
     pickId,
     eventId: pick.eventId,
     sport: pick.sportKey,
     team: pick.away && pick.home ? `${pick.away} vs ${pick.home}` : 'Unknown',
-    side: pick.away, // The predicted winner
+    side: pick.side ?? pick.away, // The predicted winner
     marketKey: pick.marketKey,
     american: pick.american,
     decimal: pick.decimal,

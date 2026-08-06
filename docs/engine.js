@@ -654,6 +654,15 @@ export function topPicks(
     oddsMax = RULES.MAX_AMERICAN,
     minScore = RULES.MIN_SCORE,
     exclude = new Set(),
+    // Opt-in only — existing callers (and the test suite) rely on an empty
+    // board being a real, visible state when nothing clears the bar. Pixel
+    // Picks turns this on because it promises exactly `count` locks every
+    // time; everything else keeps the "empty is honest" behaviour.
+    guaranteeCount = false,
+    // Sport keys the user has said they'd rather see more of. This is a soft
+    // sort nudge, not a filter — it can move a close call to the front of the
+    // queue, never invent or hide a grade.
+    preferredSportKeys = null,
   } = {},
 ) {
   const inRange = (a) => a >= oddsMin && a <= oddsMax;
@@ -665,7 +674,15 @@ export function topPicks(
   const source = fresh.length >= count ? fresh : pool;
 
   const scores = pool.map((c) => c.score);
-  const sorted = [...source].sort((a, b) => b.score - a.score);
+
+  // A modest nudge — enough to reorder near-ties toward a preferred sport,
+  // never enough to put a real 55 ahead of a real 90. Sort key only; the
+  // score shown to the user is always the real, un-nudged grade.
+  const PREFERENCE_BONUS = 6;
+  const sortKey = (c) =>
+    c.score + (preferredSportKeys?.size && preferredSportKeys.has(c.sportKey) ? PREFERENCE_BONUS : 0);
+
+  const sorted = [...source].sort((a, b) => sortKey(b) - sortKey(a));
 
   const picks = [];
   const usedLegs = [];
@@ -683,7 +700,40 @@ export function topPicks(
       american: c.american,
       score: c.score,
       percentile: percentileOf(c.score, scores),
+      meetsStandard: true,
     });
+  }
+
+  // Pixel Picks promises `count` locks every time it runs. When the sharp
+  // board (odds range + confidence floor) can't fill it, the remaining slots
+  // come from the full candidate pool — still real, gradeable prices, just
+  // outside the sharp standard — and are flagged so the UI can say so rather
+  // than quietly passing them off as locks.
+  if (guaranteeCount && picks.length < count) {
+    const fallbackSorted = [...candidates]
+      .filter((c) => !usedLegs.includes(c))
+      .sort((a, b) => sortKey(b) - sortKey(a));
+
+    for (const c of fallbackSorted) {
+      if (picks.length >= count) break;
+      if (usedLegs.some((leg) => leg.eventId === c.eventId)) continue;
+      if (usedLegs.some((leg) => contradicts(leg, c))) continue;
+      usedLegs.push(c);
+
+      const reasons = [];
+      if (!inRange(c.american)) reasons.push(`odds outside ${formatAmerican(oddsMin)}/${formatAmerican(oddsMax)}`);
+      if (c.score < minScore) reasons.push(`confidence below ${Math.round(minScore)}`);
+
+      picks.push({
+        type: 'single',
+        legs: [c],
+        american: c.american,
+        score: c.score,
+        percentile: percentileOf(c.score, scores),
+        meetsStandard: false,
+        flagReason: reasons.length ? reasons.join(', ') : 'outside standard criteria',
+      });
+    }
   }
 
   return { picks, poolSize: pool.length, generatedAt: Date.now() };
