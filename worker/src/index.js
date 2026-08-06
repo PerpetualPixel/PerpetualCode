@@ -14,6 +14,7 @@ import { fetchContext, hasContext } from './context.js';
 import { fetchWeather, hasVenue } from './weather.js';
 import { fetchMmaContext } from './mma.js';
 import { fetchBaseballContext } from './baseball.js';
+import { fetchTeamStats, fetchRecentSchedule } from './mlb-stats.js';
 import { getUfcEventDetails } from './ufc-events.js';
 import { currentPhase, runPotdPhase, getPotd, getPotdBySport } from './potd.js';
 import { getOrGenerateAnalysis } from './analysis.js';
@@ -779,6 +780,33 @@ export default {
         );
       } catch (error) {
         return json({ event: null, reason: String(error).slice(0, 120) }, { headers: cors });
+      }
+    }
+
+    // MLB team stats endpoint
+    if (pathname === '/mlb-stats' && request.method === 'GET') {
+      const { searchParams } = new URL(request.url);
+      const teamAbbr = searchParams.get('team') ?? '';
+
+      if (!teamAbbr) {
+        return json({ error: 'team parameter required' }, { status: 400, headers: cors });
+      }
+
+      try {
+        const [teamStats, recentSchedule] = await Promise.all([
+          fetchTeamStats(teamAbbr, ctx),
+          fetchRecentSchedule(teamAbbr, ctx),
+        ]);
+
+        return json(
+          { teamStats, recentSchedule },
+          { headers: { ...cors, 'Cache-Control': 'public, max-age=3600' } },
+        );
+      } catch (error) {
+        return json(
+          { error: String(error).slice(0, 120) },
+          { status: 500, headers: cors },
+        );
       }
     }
 

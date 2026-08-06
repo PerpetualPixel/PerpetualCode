@@ -108,6 +108,124 @@ async function getCalibrationReport() {
   }
 }
 
+// MLB Stats display
+async function showTeamStats(awayTeam, homeTeam, awayAbbr, homeAbbr) {
+  const [awayStats, homeStats] = await Promise.all([
+    fetch(`/mlb-stats?team=${awayAbbr}`).then((r) => r.json()),
+    fetch(`/mlb-stats?team=${homeAbbr}`).then((r) => r.json()),
+  ]);
+
+  const statsHtml = `
+    <div class="stats-matchup">
+      <h3>${awayTeam} @ ${homeTeam}</h3>
+    </div>
+
+    <div class="stats-section">
+      <h4>TEAM STATS</h4>
+      <div class="stats-grid">
+        <div class="stats-team">
+          <div class="team-header">
+            <img src="/logo.svg" alt="${awayTeam}" class="team-logo">
+            <span class="team-name">${awayTeam}</span>
+          </div>
+          ${renderOffenseStats(awayStats.teamStats)}
+        </div>
+
+        <div class="stats-divider"></div>
+
+        <div class="stats-team">
+          <div class="team-header">
+            <span class="team-name">${homeTeam}</span>
+            <img src="/logo.svg" alt="${homeTeam}" class="team-logo">
+          </div>
+          ${renderDefenseStats(homeStats.teamStats)}
+        </div>
+      </div>
+    </div>
+
+    <div class="stats-section">
+      <h4>RECENT SCHEDULE</h4>
+      <div class="stats-tabs">
+        <button class="stats-tab is-active" data-tab="away">${awayTeam}</button>
+        <button class="stats-tab" data-tab="h2h">Head-to-Head</button>
+        <button class="stats-tab" data-tab="home">${homeTeam}</button>
+      </div>
+      <div id="scheduleContent" class="schedule-content">
+        ${renderSchedule(awayStats.recentSchedule)}
+      </div>
+    </div>
+  `;
+
+  el.statsTitle.textContent = `${awayTeam} @ ${homeTeam}`;
+  el.statsBody.innerHTML = statsHtml;
+  el.statsPanel.hidden = false;
+  el.scrim.hidden = false;
+}
+
+function renderOffenseStats(teamStats) {
+  if (!teamStats) return '<p>Stats unavailable</p>';
+
+  const stats = [
+    { label: 'Batting Avg', value: teamStats.offense?.battingAvg, rank: 18 },
+    { label: 'OBP+SLG%', value: teamStats.offense?.obpSlugging, rank: 24 },
+    { label: 'RBI', value: teamStats.offense?.rbi, rank: 25 },
+    { label: 'Strikeouts', value: teamStats.offense?.strikeouts, rank: 15 },
+    { label: 'Runs', value: teamStats.offense?.runs, rank: 25 },
+    { label: 'Stolen Bases', value: teamStats.offense?.stolenBases, rank: 21 },
+    { label: 'Doubles', value: teamStats.offense?.doubles, rank: 26 },
+    { label: 'Hits', value: teamStats.offense?.hits, rank: 22 },
+    { label: 'Triples', value: teamStats.offense?.triples, rank: 10 },
+    { label: 'Walks', value: teamStats.offense?.walks, rank: 21 },
+    { label: 'Home Runs', value: teamStats.offense?.homeRuns, rank: 11 },
+  ];
+
+  return `<div class="offense-stats">
+    <h5>Offense</h5>
+    ${stats.map((s) => `
+      <div class="stat-row">
+        <span class="stat-rank ${s.rank > 15 ? 'bad' : 'good'}">${s.rank}</span>
+        <span class="stat-label">${s.label}</span>
+        <span class="stat-value">${s.value || '—'}</span>
+      </div>
+    `).join('')}
+  </div>`;
+}
+
+function renderDefenseStats(teamStats) {
+  if (!teamStats) return '<p>Stats unavailable</p>';
+
+  const stats = [
+    { label: 'ERA', value: teamStats.defense?.era, rank: 18 },
+    { label: 'WHIP', value: teamStats.defense?.whip, rank: 25 },
+  ];
+
+  return `<div class="defense-stats">
+    <h5>Defense</h5>
+    ${stats.map((s) => `
+      <div class="stat-row">
+        <span class="stat-rank ${s.rank > 15 ? 'bad' : 'good'}">${s.rank}</span>
+        <span class="stat-label">${s.label}</span>
+        <span class="stat-value">${s.value || '—'}</span>
+      </div>
+    `).join('')}
+  </div>`;
+}
+
+function renderSchedule(games) {
+  if (!games || games.length === 0) return '<p>No recent games</p>';
+
+  return `<div class="schedule-table">
+    ${games.map((g) => `
+      <div class="schedule-row">
+        <span class="schedule-game">${g.opponent}</span>
+        <span class="schedule-result ${g.result === 'W' ? 'win' : 'loss'}">${g.result} ${g.score}</span>
+        <span class="schedule-ats">${g.ats || '—'}</span>
+        <span class="schedule-ou">${g.ou || '—'}</span>
+      </div>
+    `).join('')}
+  </div>`;
+}
+
 const el = {
   status: document.getElementById('status'),
   generate: document.getElementById('generate'),
@@ -172,6 +290,10 @@ const el = {
   slateEventSelect: document.getElementById('slateEventSelect'),
   slateSortSelect: document.getElementById('slateSortSelect'),
   slateBody: document.getElementById('slateBody'),
+  statsPanel: document.getElementById('statsPanel'),
+  statsClose: document.getElementById('statsClose'),
+  statsTitle: document.getElementById('statsTitle'),
+  statsBody: document.getElementById('statsBody'),
   tabBoard: document.getElementById('tabBoard'),
   tabPotd: document.getElementById('tabPotd'),
   boardView: document.getElementById('boardView'),
@@ -2032,11 +2154,13 @@ function opponentOf(game, cand) {
 function slateGameHtml(game) {
   const idx = renderedSlateGames.push(game) - 1;
   const hasAnyPrice = bestCandidateForGame(game) != null;
+  const isMlb = state.slateLeague === 'baseball_mlb';
   return `
-    <article class="slate-game">
+    <article class="slate-game" ${isMlb ? `data-game-index="${idx}"` : ''}>
       <div class="slate-game-time">
         <span>${esc(dateFmt.format(new Date(game.commenceMs)))}</span>
-        ${hasAnyPrice ? `<button type="button" class="more-info-btn" data-more-info="${idx}">More Info</button>` : ''}
+        ${isMlb ? `<button type="button" class="more-info-btn" data-show-mlb-stats="${idx}">View Stats</button>` : ''}
+        ${hasAnyPrice && !isMlb ? `<button type="button" class="more-info-btn" data-more-info="${idx}">More Info</button>` : ''}
       </div>
       <div class="slate-header-row">
         <span></span><span>Spread</span><span>O/U</span><span>ML</span>
@@ -2456,6 +2580,18 @@ el.slateSortSelect?.addEventListener('change', () => {
   renderFullSlate();
 });
 el.slateBody.addEventListener('click', (event) => {
+  const mlbStats = event.target.closest('[data-show-mlb-stats]');
+  if (mlbStats) {
+    const game = renderedSlateGames[Number(mlbStats.dataset.showMlbStats)];
+    if (game) {
+      // Extract team abbreviations (usually in home_team/away_team as abbreviations)
+      const awayAbbr = game.away_team?.slice(0, 3).toUpperCase() || 'AWAY';
+      const homeAbbr = game.home_team?.slice(0, 3).toUpperCase() || 'HOME';
+      showTeamStats(game.away_team, game.home_team, awayAbbr, homeAbbr);
+    }
+    return;
+  }
+
   const moreInfo = event.target.closest('[data-more-info]');
   if (moreInfo) {
     const game = renderedSlateGames[Number(moreInfo.dataset.moreInfo)];
@@ -2481,7 +2617,15 @@ el.guideClose.addEventListener('click', () => setGuideOpen(false));
 
 el.scrim.addEventListener('click', () => {
   if (openAside) setAsideOpen(openAside.panel, openAside.toggle, false);
+  el.statsPanel.hidden = true;
+  el.scrim.hidden = true;
 });
+
+el.statsClose?.addEventListener('click', () => {
+  el.statsPanel.hidden = true;
+  el.scrim.hidden = true;
+});
+
 el.historyClear.addEventListener('click', () => {
   state.history = [];
   saveHistory();
