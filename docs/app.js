@@ -204,6 +204,8 @@ const state = {
   // order just re-renders the same picks instead of re-rolling the board.
   lastPixelSlate: null,
   pixelSort: loadJSON(PIXEL_SORT_KEY, 'confidence'),
+  // Track when odds were last refreshed (timestamp ms) to rate-limit refreshes
+  slateRefreshTime: 0,
 };
 
 // A bankroll saved before `confirmed` existed had no opinion on it — treat an
@@ -2148,11 +2150,44 @@ async function fetchSingleLeague(sportKey) {
  * league, filtered by nothing but which league is chosen. A league outside
  * the normal pull gets its own on-demand fetch via fetchSingleLeague.
  */
+function updateRefreshStatus() {
+  const now = Date.now();
+  const oneHourMs = 60 * 60 * 1000;
+  const timeSinceRefresh = now - state.slateRefreshTime;
+
+  if (state.slateRefreshTime === 0) {
+    el.slateLoad.disabled = false;
+    return;
+  }
+
+  if (timeSinceRefresh < oneHourMs) {
+    const minutesLeft = Math.ceil((oneHourMs - timeSinceRefresh) / 60000);
+    el.slateLoad.disabled = true;
+    el.slateLoad.title = `Next refresh in ${minutesLeft} minute${minutesLeft === 1 ? '' : 's'}`;
+  } else {
+    el.slateLoad.disabled = false;
+    el.slateLoad.title = 'Refresh odds (1+ hour since last refresh)';
+  }
+}
+
 async function loadSlate() {
+  const now = Date.now();
+  const oneHourMs = 60 * 60 * 1000;
+  const timeSinceRefresh = now - state.slateRefreshTime;
+
+  // Rate limit: only allow refresh if 1+ hour has passed
+  if (state.slateRefreshTime > 0 && timeSinceRefresh < oneHourMs) {
+    const minutesLeft = Math.ceil((oneHourMs - timeSinceRefresh) / 60000);
+    el.slateBody.innerHTML =
+      `<p class="empty">Odds refreshed recently. Next refresh available in ${minutesLeft} minute${minutesLeft === 1 ? '' : 's'}.</p>`;
+    return;
+  }
+
   el.slateLoad.disabled = true;
-  el.slateBody.innerHTML = `<p class="empty">Loading…</p>`;
+  el.slateBody.innerHTML = `<p class="empty">Refreshing odds…</p>`;
   try {
     await loadOdds();
+    state.slateRefreshTime = Date.now();
     renderSlateLeagueOptions();
     if (state.slateLeague && !loadedSportKeys().has(state.slateLeague)) {
       await fetchSingleLeague(state.slateLeague);
@@ -2163,6 +2198,7 @@ async function loadSlate() {
     el.slateBody.innerHTML = `<p class="empty">Couldn't reach the odds feed. ${esc(error.message)}</p>`;
   } finally {
     el.slateLoad.disabled = false;
+    updateRefreshStatus();
   }
 }
 
@@ -2769,7 +2805,7 @@ el.tabPotd.addEventListener('click', () => setActiveTab('potd'));
 /* Boot                                                              */
 /* ---------------------------------------------------------------- */
 
-(function init() {
+(async function init() {
   if (!checkAuth()) return;
 
   el.logoutBtn.hidden = !(CONFIG.REQUIRE_AUTH && getToken());
@@ -2780,11 +2816,17 @@ el.tabPotd.addEventListener('click', () => setActiveTab('potd'));
   renderRangeFilter();
   renderParlaySliders();
   renderHistory();
-  // Free call, so it can happen on load — unlike the odds themselves.
+  // Free call, so it can happen on load.
   loadCatalogue();
 
-  // Deliberately no fetch on load. Odds cost API credits, and opening the app
-  // isn't the same as asking for a pick — the first tap pays for the board.
+  // Auto-load Full Slate data on app startup.
+  if (CONFIG.WORKER_URL) {
+    // Default to MMA for Full Slate
+    state.slateLeague = 'mma_mixed_martial_arts';
+    renderSlateLeagueOptions();
+    await loadSlate();
+  }
+
   setStatus(
     CONFIG.WORKER_URL
       ? 'Ready — tap to pull the board'
