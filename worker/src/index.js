@@ -80,13 +80,17 @@ function json(body, { status = 200, headers = {} } = {}) {
   });
 }
 
-function enrichMmaEvents(events) {
+async function enrichMmaEvents(events, ctx) {
   if (!events || !Array.isArray(events)) return events;
 
-  return events.map((event) => {
-    const eventDetails = getUfcEventDetails(event.home_team, event.away_team);
-    return eventDetails ? { ...event, ufc_event: eventDetails } : event;
-  });
+  const enriched = await Promise.all(
+    events.map(async (event) => {
+      const eventDetails = await getUfcEventDetails(event.home_team, event.away_team, ctx);
+      return eventDetails ? { ...event, ufc_event: eventDetails } : event;
+    }),
+  );
+
+  return enriched;
 }
 
 async function fetchSport(sport, env, ctx) {
@@ -107,7 +111,7 @@ async function fetchSport(sport, env, ctx) {
   if (cached) {
     let events = await cached.json();
     if (sport === 'mma_mixed_martial_arts') {
-      events = enrichMmaEvents(events);
+      events = await enrichMmaEvents(events, ctx);
     }
     return { events, cached: true, quota: null };
   }
@@ -126,7 +130,7 @@ async function fetchSport(sport, env, ctx) {
   };
 
   if (sport === 'mma_mixed_martial_arts') {
-    events = enrichMmaEvents(events);
+    events = await enrichMmaEvents(events, ctx);
   }
 
   ctx.waitUntil(
