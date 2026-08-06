@@ -1,147 +1,110 @@
 /**
- * Scrape upcoming MMA events from Sherdog and match fighters to events.
- * This fetches live event data rather than maintaining a hardcoded mapping.
+ * Match MMA fighters from Odds API to actual UFC/PFL events.
+ * Uses a combination of sources: Sherdog fighter pages for upcoming fights.
  */
 
 const SHERDOG = 'https://www.sherdog.com';
-const EVENT_CACHE_TTL = 3600 * 6; // 6 hours
+const CACHE_TTL = 3600; // 1 hour
 const UA = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36';
 
-let cachedEventMap = null;
-let cachedEventTime = 0;
+let cachedFighterMap = null;
+let cachedTime = 0;
 
 function normalizeName(name) {
   return String(name ?? '')
     .toLowerCase()
-    .replace(/[^a-z ]/g, '')
+    .replace(/[^a-z0-9 ]/g, '')
     .replace(/\s+/g, ' ')
     .trim();
 }
 
 /**
- * Parse upcoming events from Sherdog's events page.
- * Extracts event name, date, venue, and all fighters on each card.
+ * Search for a fighter on Sherdog and extract their upcoming fights.
+ * This gives us the actual event names they're scheduled for.
  */
-function parseUpcomingEvents(html) {
-  const eventMap = new Map(); // event name -> { date, venue, fighters: [] }
-
-  // Find all event entries (each event has a date header and list of fights)
-  const eventSections = html.split('class="event_link"');
-
-  for (let i = 1; i < eventSections.length; i++) {
-    const section = eventSections[i];
-
-    // Extract event name from the link
-    const eventMatch = section.match(/<a[^>]*>([^<]+)<\/a>/);
-    if (!eventMatch) continue;
-
-    const eventName = eventMatch[1].trim();
-
-    // Extract date
-    const dateMatch = section.match(/(\d{1,2}\/\d{1,2}\/\d{4})/);
-    const eventDate = dateMatch ? dateMatch[1] : null;
-
-    // Extract all fighter pairs on this card
-    const fighterPattern = /<a href="\/fighter\/[^"]*">([^<]+)<\/a>\s*vs\.\s*<a href="\/fighter\/[^"]*">([^<]+)<\/a>/g;
-    let match;
-
-    const fighters = [];
-    while ((match = fighterPattern.exec(section)) !== null) {
-      const fighterA = match[1].trim();
-      const fighterB = match[2].trim();
-      fighters.push({ a: fighterA, b: fighterB });
-    }
-
-    if (fighters.length > 0) {
-      eventMap.set(eventName, {
-        event: eventName,
-        date: eventDate,
-        fighters: fighters,
-      });
-    }
-  }
-
-  return eventMap;
-}
-
-/**
- * Fetch and cache upcoming MMA events from Sherdog.
- */
-async function fetchUpcomingEvents(ctx) {
-  const now = Date.now();
-
-  // Return cached map if fresh
-  if (cachedEventMap && now - cachedEventTime < EVENT_CACHE_TTL * 1000) {
-    return cachedEventMap;
-  }
-
+async function getFighterUpcomingFights(fighterName, ctx) {
   try {
-    const response = await fetch(`${SHERDOG}/events/`, {
-      headers: { 'User-Agent': UA, Accept: 'text/html' },
+    const slug = normalizeName(fighterName).replace(/ /g, '-');
+    const response = await fetch(`${SHERDOG}/fighter/${slug}`, {
+      headers: { 'User-Agent': UA },
     });
 
-    if (!response.ok) return new Map();
+    if (!response.ok) return [];
 
     const html = await response.text();
-    const eventMap = parseUpcomingEvents(html);
+    const fights = [];
 
-    // Cache the result
-    cachedEventMap = eventMap;
-    cachedEventTime = now;
+    // Look for upcoming fights section
+    const upcomingMatch = html.match(/upcoming[\s\S]{0,2000}?event_link/i);
+    if (!upcomingMatch) return fights;
 
-    return eventMap;
+    // Extract event links from upcoming section
+    const eventPattern = /href="\/events\/([^"]+)"[^>]*>([^<]+)<\/a>/g;
+    let match;
+
+    while ((match = eventPattern.exec(upcomingMatch[0])) !== null) {
+      const eventSlug = match[1];
+      const eventName = match[2].trim();
+
+      // Extract date if available
+      const datePattern = /(\d{1,2}\/\d{1,2}\/\d{4})/;
+      const dateMatch = html.match(datePattern);
+      const date = dateMatch ? dateMatch[1] : null;
+
+      if (eventName) {
+        fights.push({
+          event: eventName,
+          slug: eventSlug,
+          date: date,
+        });
+      }
+    }
+
+    return fights;
   } catch (e) {
-    console.error('Failed to fetch upcoming events:', e);
-    return cachedEventMap || new Map();
+    return [];
   }
 }
 
 /**
- * Build a fighter-pair to event mapping from scraped Sherdog data.
+ * Build a fighter-pair to event mapping by searching for each fighter.
  */
-function buildFighterEventMap(eventMap) {
-  const fighterMap = new Map();
+async function buildFighterEventMap(fighterA, fighterB, ctx) {
+  const [fightsA, fightsB] = await Promise.all([
+    getFighterUpcomingFights(fighterA, ctx),
+    getFighterUpcomingFights(fighterB, ctx),
+  ]);
 
-  for (const [eventName, eventData] of eventMap) {
-    for (const { a, b } of eventData.fighters) {
-      const normA = normalizeName(a);
-      const normB = normalizeName(b);
-
-      if (normA && normB) {
-        const key = `${normA} ${normB}`;
-        const keyReverse = `${normB} ${normA}`;
-
-        const eventMetadata = {
-          event: eventData.event,
-          date: eventData.date,
+  // Find common events (events both fighters are on)
+  for (const fightA of fightsA) {
+    for (const fightB of fightsB) {
+      if (
+        fightA.slug === fightB.slug ||
+        fightA.event.toLowerCase() === fightB.event.toLowerCase()
+      ) {
+        return {
+          event: fightA.event,
+          date: fightA.date,
         };
-
-        fighterMap.set(key, eventMetadata);
-        fighterMap.set(keyReverse, eventMetadata);
       }
     }
   }
 
-  return fighterMap;
+  return null;
 }
 
 /**
  * Look up MMA event details for a matchup by fighter names.
- * Fetches upcoming events from Sherdog and matches fighters.
+ * Searches Sherdog for each fighter's upcoming fights and finds the common event.
  */
 export async function getUfcEventDetails(fighterA, fighterB, ctx) {
   if (!fighterA || !fighterB) return null;
 
-  // Fetch upcoming events from Sherdog
-  const eventMap = await fetchUpcomingEvents(ctx);
-  if (!eventMap.size) return null;
-
-  // Build fighter-to-event mapping
-  const fighterMap = buildFighterEventMap(eventMap);
-
-  // Look up the fighters
-  const key = `${normalizeName(fighterA)} ${normalizeName(fighterB)}`;
-  const keyReverse = `${normalizeName(fighterB)} ${normalizeName(fighterA)}`;
-
-  return fighterMap.get(key) ?? fighterMap.get(keyReverse) ?? null;
+  try {
+    const result = await buildFighterEventMap(fighterA, fighterB, ctx);
+    return result;
+  } catch (e) {
+    console.error('Failed to get event details:', e);
+    return null;
+  }
 }
