@@ -411,11 +411,23 @@ const state = {
   // Odds range and confidence floor for the top-picks board. A view filter,
   // not a spend decision — unlike leagues/books this never changes what's
   // fetched, only which already-fetched candidates qualify.
-  ...loadJSON(FILTERS_KEY, {
-    oddsMin: CONFIG.ODDS_MIN_DEFAULT,
-    oddsMax: CONFIG.ODDS_MAX_DEFAULT,
-    minScore: CONFIG.MIN_SCORE_DEFAULT,
-  }),
+  ...(() => {
+    const loaded = loadJSON(FILTERS_KEY, {
+      oddsMin: CONFIG.ODDS_MIN_DEFAULT,
+      oddsMax: CONFIG.ODDS_MAX_DEFAULT,
+      minScore: CONFIG.MIN_SCORE_DEFAULT,
+    });
+    // Validate loaded filters to prevent corrupted localStorage from breaking the app
+    const validOddsMin = typeof loaded.oddsMin === 'number' && loaded.oddsMin >= -300 && loaded.oddsMin <= 0;
+    const validOddsMax = typeof loaded.oddsMax === 'number' && loaded.oddsMax >= 100 && loaded.oddsMax <= 300;
+    const validScore = typeof loaded.minScore === 'number' && loaded.minScore >= 0 && loaded.minScore <= 100;
+
+    return {
+      oddsMin: validOddsMin ? loaded.oddsMin : CONFIG.ODDS_MIN_DEFAULT,
+      oddsMax: validOddsMax ? loaded.oddsMax : CONFIG.ODDS_MAX_DEFAULT,
+      minScore: validScore ? loaded.minScore : CONFIG.MIN_SCORE_DEFAULT,
+    };
+  })(),
   // Parlay Builder's own filters — deliberately separate from the board's
   // oddsMin/oddsMax/minScore above, since a parlay leg and a top-8 pick can
   // reasonably want different ranges (the whole point of a manual builder).
