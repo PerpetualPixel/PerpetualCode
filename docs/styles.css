@@ -2608,3 +2608,186 @@ input[type="range"]:focus-visible {
     row-gap: 4px;
   }
 }
+
+/* ================================================================ */
+/* Learning Dashboard: Calendar                                      */
+/* ================================================================ */
+
+.calendar-nav {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 14px;
+  margin-bottom: 10px;
+}
+
+.calendar-month-label {
+  font-family: var(--mono);
+  font-size: 0.85rem;
+  font-weight: 600;
+  color: var(--text);
+  min-width: 140px;
+  text-align: center;
+}
+
+.calendar-weekday-row {
+  display: grid;
+  grid-template-columns: repeat(7, 1fr);
+  gap: 4px;
+  margin-bottom: 4px;
+}
+
+.calendar-weekday-row span {
+  text-align: center;
+  font-size: 10px;
+  color: var(--muted);
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+}
+
+.calendar-grid {
+  display: grid;
+  grid-template-columns: repeat(7, 1fr);
+  gap: 4px;
+}
+
+.calendar-cell {
+  aspect-ratio: 1;
+  border-radius: 6px;
+  border: 1px solid var(--line);
+  background: var(--surface);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 2px;
+  cursor: pointer;
+  min-width: 0;
+}
+
+.calendar-cell.is-empty {
+  border: none;
+  background: transparent;
+  cursor: default;
+}
+
+.calendar-cell.is-today {
+  border-color: var(--accent);
+  border-width: 2px;
+}
+
+.calendar-cell:not(.is-empty):hover {
+  border-color: var(--accent);
+}
+
+.calendar-daynum {
+  font-size: 9px;
+  color: var(--muted);
+}
+
+.calendar-value {
+  font-family: var(--mono);
+  font-size: 9.5px;
+  font-weight: 700;
+  color: var(--text);
+  line-height: 1;
+  text-align: center;
+}
+
+.calendar-cell.is-positive .calendar-value,
+.calendar-cell.is-positive .calendar-daynum { color: #e6fff5; }
+.calendar-cell.is-negative .calendar-value,
+.calendar-cell.is-negative .calendar-daynum { color: #ffe9e9; }
+
+@media (max-width: 420px) {
+  .calendar-value { font-size: 8px; }
+}
+
+/* ================================================================ */
+/* Learning Dashboard: Performance panel                             */
+/* ================================================================ */
+
+.perf-period-tabs {
+  display: flex;
+  gap: 6px;
+  margin-bottom: 8px;
+}
+
+.perf-period-btn {
+  flex: 1;
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  color: var(--muted);
+  font-family: var(--mono);
+  font-size: 0.75rem;
+  font-weight: 600;
+  padding: 7px 0;
+  cursor: pointer;
+  transition: all 150ms ease;
+}
+
+.perf-period-btn:hover { color: var(--text); border-color: #36414d; }
+
+.perf-period-btn.is-active {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: var(--bg);
+}
+
+.perf-period-label {
+  text-align: center;
+  font-size: 0.75rem;
+  color: var(--muted);
+  margin-bottom: 10px;
+}
+
+.perf-stats-row {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 10px;
+  margin-bottom: 14px;
+}
+
+.perf-stat {
+  background: var(--surface-2);
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  padding: 10px;
+  text-align: center;
+}
+
+.perf-stat-label {
+  font-size: 10px;
+  color: var(--muted);
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  margin-bottom: 4px;
+}
+
+.perf-stat-value {
+  font-family: var(--mono);
+  font-size: 1rem;
+  font-weight: 700;
+  color: var(--text);
+}
+
+.perf-stat-value.positive { color: var(--success); }
+.perf-stat-value.negative { color: var(--danger); }
+
+.perf-graph {
+  width: 100%;
+  height: 120px;
+}
+
+.perf-graph-svg {
+  width: 100%;
+  height: 100%;
+  display: block;
+}
+
+.perf-graph-zero {
+  stroke: var(--line);
+  stroke-width: 1;
+  stroke-dasharray: 3 3;
+}

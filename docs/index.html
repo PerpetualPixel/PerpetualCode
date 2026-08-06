@@ -447,6 +447,57 @@
       </div>
     </section>
 
+    <!-- Sport Filter -->
+    <section class="learning-section">
+      <div class="learning-section-head">
+        <h3>Filter by Sport</h3>
+      </div>
+      <p class="filter-hint">Unchecked sports are excluded from every figure below — the calendar, the graph, and the totals up top. Everything's included by default.</p>
+      <div id="trackerSportFilter" class="check-grid"></div>
+    </section>
+
+    <!-- Calendar -->
+    <section class="learning-section">
+      <div class="learning-section-head">
+        <h3>Calendar</h3>
+        <button id="calendarMetricToggle" class="link-btn" type="button">$</button>
+      </div>
+      <div class="calendar-nav">
+        <button id="calendarPrevMonth" class="icon-btn" type="button" aria-label="Previous month">‹</button>
+        <span id="calendarMonthLabel" class="calendar-month-label"></span>
+        <button id="calendarNextMonth" class="icon-btn" type="button" aria-label="Next month">›</button>
+      </div>
+      <div class="calendar-weekday-row">
+        <span>S</span><span>M</span><span>T</span><span>W</span><span>T</span><span>F</span><span>S</span>
+      </div>
+      <div id="calendarGrid" class="calendar-grid"></div>
+    </section>
+
+    <!-- Performance graph -->
+    <section class="learning-section">
+      <div id="perfPeriodTabs" class="perf-period-tabs" role="group" aria-label="Performance period">
+        <button class="perf-period-btn is-active" data-period="week" type="button">Week</button>
+        <button class="perf-period-btn" data-period="month" type="button">Month</button>
+        <button class="perf-period-btn" data-period="year" type="button">Year</button>
+      </div>
+      <div id="perfPeriodLabel" class="perf-period-label"></div>
+      <div class="perf-stats-row">
+        <div class="perf-stat">
+          <div class="perf-stat-label">Profit</div>
+          <div id="perfProfit" class="perf-stat-value">—</div>
+        </div>
+        <div class="perf-stat">
+          <div class="perf-stat-label">ROI</div>
+          <div id="perfRoi" class="perf-stat-value">—</div>
+        </div>
+        <div class="perf-stat">
+          <div class="perf-stat-label">Record</div>
+          <div id="perfRecord" class="perf-stat-value">—</div>
+        </div>
+      </div>
+      <div id="perfGraph" class="perf-graph"></div>
+    </section>
+
     <!-- Daily History -->
     <section class="learning-section">
       <div class="learning-section-head">

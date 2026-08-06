@@ -16,9 +16,12 @@ import {
   identifyPatterns,
   exportData,
   getPendingPicks,
-  getPicksByDay,
-  getOverallSummary,
+  getAllPicks,
+  summarizePicks,
+  groupPicksByDay,
   gradePick,
+  BANKROLL_INITIAL,
+  FLAT_UNIT_STAKE,
 } from './learning.js';
 import {
   RULES,
@@ -63,6 +66,8 @@ const SLATE_LEAGUE_KEY = 'pixelpick.slateLeague.v2';
 const PIXEL_SORT_KEY = 'pixelpick.sort.v1';
 const HISTORY_KEY = 'pixelpick.history.v2';
 const DAY_FILTER_KEY = 'pixelpick.dayFilter.v1';
+const CALENDAR_METRIC_KEY = 'pixelpick.calendarMetric.v1';
+const TRACKER_SPORT_FILTER_KEY = 'pixelpick.trackerSportFilter.v1';
 // 1-2% of bankroll per unit is the standard range a flat-staking bettor
 // works from; 2% is the more conservative, more commonly cited end of it —
 // used here as the default recommendation when the user hasn't set their own.
@@ -122,6 +127,20 @@ function withinDayFilter(commenceMs, sportKey) {
   if (isMmaSportKey(sportKey)) return true;
   const [start, end] = dayBounds(state.dayFilter);
   return commenceMs >= start && commenceMs < end;
+}
+
+/**
+ * A tracked pick's raw sport key (e.g. 'tennis_wta_canadian_open',
+ * 'baseball_mlb') mapped to its League Group label ('WTA', 'MLB') for the
+ * tracker's sport filter. Pattern-matches tennis rather than checking the
+ * live ATP/WTA group's keys — those rotate to a new tournament every week,
+ * so a historical pick's key is often no longer in the current group.
+ */
+function sportGroupLabel(sportKey) {
+  if (sportKey.startsWith('tennis_atp_')) return 'ATP';
+  if (sportKey.startsWith('tennis_wta_')) return 'WTA';
+  const group = LEAGUE_GROUPS.find((g) => g.keys.includes(sportKey));
+  return group ? group.label : sportKey;
 }
 
 function renderDayToggle() {
@@ -399,6 +418,18 @@ const el = {
   avgRoi: document.getElementById('avgRoi'),
   currentBankroll: document.getElementById('currentBankroll'),
   netProfit: document.getElementById('netProfit'),
+  trackerSportFilter: document.getElementById('trackerSportFilter'),
+  calendarMonthLabel: document.getElementById('calendarMonthLabel'),
+  calendarPrevMonth: document.getElementById('calendarPrevMonth'),
+  calendarNextMonth: document.getElementById('calendarNextMonth'),
+  calendarMetricToggle: document.getElementById('calendarMetricToggle'),
+  calendarGrid: document.getElementById('calendarGrid'),
+  perfPeriodTabs: document.getElementById('perfPeriodTabs'),
+  perfPeriodLabel: document.getElementById('perfPeriodLabel'),
+  perfProfit: document.getElementById('perfProfit'),
+  perfRoi: document.getElementById('perfRoi'),
+  perfRecord: document.getElementById('perfRecord'),
+  perfGraph: document.getElementById('perfGraph'),
   dailyHistory: document.getElementById('dailyHistory'),
   checkResultsBtn: document.getElementById('checkResultsBtn'),
   confidenceAnalysis: document.getElementById('confidenceAnalysis'),
@@ -439,6 +470,18 @@ const state = {
   dayFilter: ['today', 'tomorrow'].includes(loadJSON(DAY_FILTER_KEY, 'today'))
     ? loadJSON(DAY_FILTER_KEY, 'today')
     : 'today',
+  // Learning dashboard's calendar/graph — which month is on screen (also
+  // doubles as the range for the Month/Year performance-panel tabs, so
+  // paging the calendar moves the graph with it), which unit its cells and
+  // graph are shown in, and which sports (by League Group label, e.g. 'ATP')
+  // are excluded from every figure in the panel. Empty exclusion set means
+  // no filter — everything tracked counts, which is the default.
+  calendarMonth: new Date(new Date().getFullYear(), new Date().getMonth(), 1),
+  calendarMetric: ['dollars', 'units', 'roi'].includes(loadJSON(CALENDAR_METRIC_KEY, 'dollars'))
+    ? loadJSON(CALENDAR_METRIC_KEY, 'dollars')
+    : 'dollars',
+  perfPeriod: 'week',
+  trackerExcludedSports: new Set(loadJSON(TRACKER_SPORT_FILTER_KEY, [])),
   // Research caches. Both are free to fetch — ESPN and a static archive — so
   // they never touch the odds credit budget.
   tennis: new Map(),   // 'atp' | 'wta' -> parsed archive
@@ -2691,6 +2734,50 @@ if (learningToggle) {
 
 el.checkResultsBtn.addEventListener('click', () => runResultCheck());
 
+el.trackerSportFilter.addEventListener('change', (event) => {
+  const box = event.target.closest('[data-tracker-sport]');
+  if (!box) return;
+  if (box.checked) state.trackerExcludedSports.delete(box.dataset.trackerSport);
+  else state.trackerExcludedSports.add(box.dataset.trackerSport);
+  saveJSON(TRACKER_SPORT_FILTER_KEY, [...state.trackerExcludedSports]);
+  renderLearningDashboard();
+});
+
+el.calendarPrevMonth.addEventListener('click', () => {
+  state.calendarMonth = new Date(state.calendarMonth.getFullYear(), state.calendarMonth.getMonth() - 1, 1);
+  renderLearningDashboard();
+});
+
+el.calendarNextMonth.addEventListener('click', () => {
+  state.calendarMonth = new Date(state.calendarMonth.getFullYear(), state.calendarMonth.getMonth() + 1, 1);
+  renderLearningDashboard();
+});
+
+el.calendarMetricToggle.addEventListener('click', () => {
+  const metrics = ['dollars', 'units', 'roi'];
+  state.calendarMetric = metrics[(metrics.indexOf(state.calendarMetric) + 1) % metrics.length];
+  saveJSON(CALENDAR_METRIC_KEY, state.calendarMetric);
+  renderLearningDashboard();
+});
+
+// Tapping a calendar day jumps to and expands that day's entry in Daily History below.
+el.calendarGrid.addEventListener('click', (event) => {
+  const cell = event.target.closest('[data-date]');
+  if (!cell) return;
+  const block = el.dailyHistory.querySelector(`[data-day-date="${cell.dataset.date}"]`);
+  if (!block) return;
+  block.open = true;
+  block.scrollIntoView({ behavior: 'smooth', block: 'center' });
+});
+
+el.perfPeriodTabs.addEventListener('click', (event) => {
+  const btn = event.target.closest('[data-period]');
+  if (!btn) return;
+  state.perfPeriod = btn.dataset.period;
+  [...el.perfPeriodTabs.children].forEach((b) => b.classList.toggle('is-active', b === btn));
+  renderLearningDashboard();
+});
+
 el.exportDataBtn.addEventListener('click', async () => {
   const csv = await exportData(new Date(0), new Date());
   const blob = new Blob([csv], { type: 'text/csv' });
@@ -3250,6 +3337,35 @@ function formatSignedPct(pct) {
   return `${sign}${Math.abs(pct).toFixed(1)}%`;
 }
 
+/** Zero-padded local YYYY-MM-DD — matches stablePickId's date component exactly (see learning.js). */
+function ymd(year, month, day) {
+  return `${year}-${String(month + 1).padStart(2, '0')}-${String(day).padStart(2, '0')}`;
+}
+
+/** Every tracked pick, minus whatever sports are unchecked in the tracker's sport filter. */
+async function trackerFilteredPicks() {
+  const all = await getAllPicks();
+  if (!state.trackerExcludedSports.size) return all;
+  return all.filter((p) => !state.trackerExcludedSports.has(sportGroupLabel(p.sport)));
+}
+
+/** A day's net/units/ROI in the calendar's current unit, or null if nothing graded that day. */
+function metricValueFor(day, metric) {
+  if (!day || !day.graded) return null;
+  if (metric === 'units') return day.net / FLAT_UNIT_STAKE;
+  if (metric === 'roi') return day.roi;
+  return day.net;
+}
+
+function formatMetricValue(value, metric) {
+  if (value == null) return '';
+  const sign = value > 0 ? '+' : value < 0 ? '−' : '';
+  const abs = Math.abs(value);
+  if (metric === 'units') return `${sign}${abs.toFixed(1)}u`;
+  if (metric === 'roi') return `${sign}${abs.toFixed(0)}%`;
+  return `${sign}$${abs.toFixed(0)}`;
+}
+
 /** One collapsible day: header shows record/ROI/net at a glance, body lists every pick graded or not. */
 function renderDayBlock(day) {
   const dateLabel = new Date(`${day.date}T00:00:00`).toLocaleDateString(undefined, {
@@ -3272,7 +3388,7 @@ function renderDayBlock(day) {
   }).join('');
 
   return `
-    <details class="day-block">
+    <details class="day-block" data-day-date="${esc(day.date)}">
       <summary>
         <span class="day-date">${esc(dateLabel)}</span>
         <span class="day-record">${esc(record)}</span>
@@ -3283,17 +3399,173 @@ function renderDayBlock(day) {
     </details>`;
 }
 
+/** Sport-filter checkboxes — one per League Group label that has ever had a tracked pick, all checked by default. */
+function renderSportFilter(allPicks) {
+  const sports = [...new Set(allPicks.map((p) => sportGroupLabel(p.sport)))].sort();
+
+  if (!sports.length) {
+    el.trackerSportFilter.innerHTML = '';
+    return;
+  }
+
+  el.trackerSportFilter.innerHTML = sports
+    .map((sport) => {
+      const checked = !state.trackerExcludedSports.has(sport) ? 'checked' : '';
+      return `
+        <div class="filter-checkbox">
+          <input type="checkbox" id="tracker-sport-${esc(sport)}" data-tracker-sport="${esc(sport)}" ${checked}>
+          <label for="tracker-sport-${esc(sport)}">${esc(sport)}</label>
+        </div>`;
+    })
+    .join('');
+}
+
+/** Calendar grid for state.calendarMonth, colored/valued by state.calendarMetric, from the filtered picks pool. */
+function renderCalendar(filteredPicks) {
+  const dayList = groupPicksByDay(filteredPicks);
+  const byDate = new Map(dayList.map((d) => [d.date, d]));
+
+  const year = state.calendarMonth.getFullYear();
+  const month = state.calendarMonth.getMonth();
+  el.calendarMonthLabel.textContent = state.calendarMonth.toLocaleDateString(undefined, { month: 'long', year: 'numeric' });
+  el.calendarMetricToggle.textContent = { dollars: '$', units: 'Units', roi: 'ROI %' }[state.calendarMetric];
+
+  const firstWeekday = new Date(year, month, 1).getDay();
+  const daysInMonth = new Date(year, month + 1, 0).getDate();
+  const now = new Date();
+  const todayKey = ymd(now.getFullYear(), now.getMonth(), now.getDate());
+
+  let maxAbs = 1;
+  for (let d = 1; d <= daysInMonth; d++) {
+    const day = byDate.get(ymd(year, month, d));
+    if (day?.graded) maxAbs = Math.max(maxAbs, Math.abs(day.net));
+  }
+
+  let cells = '';
+  for (let i = 0; i < firstWeekday; i++) cells += `<div class="calendar-cell is-empty"></div>`;
+
+  for (let d = 1; d <= daysInMonth; d++) {
+    const key = ymd(year, month, d);
+    const day = byDate.get(key);
+    const value = metricValueFor(day, state.calendarMetric);
+    let cls = 'calendar-cell';
+    let style = '';
+    if (value != null) {
+      const alpha = (0.28 + 0.6 * (Math.abs(day.net) / maxAbs)).toFixed(2);
+      cls += value > 0 ? ' is-positive' : value < 0 ? ' is-negative' : ' is-flat';
+      const rgb = value > 0 ? '16,185,129' : value < 0 ? '239,68,68' : '148,163,184';
+      style = ` style="background: rgba(${rgb}, ${alpha})"`;
+    }
+    if (key === todayKey) cls += ' is-today';
+    const valueLabel = value != null
+      ? formatMetricValue(value, state.calendarMetric)
+      : (day?.pending ? `${day.pending}p` : '');
+    const title = day ? `${day.wins}-${day.losses}${day.pending ? ` · ${day.pending} pending` : ''}` : 'No picks';
+    cells += `
+      <div class="${cls}"${style} data-date="${esc(key)}" title="${esc(title)}">
+        <span class="calendar-daynum">${d}</span>
+        <span class="calendar-value">${esc(valueLabel)}</span>
+      </div>`;
+  }
+
+  el.calendarGrid.innerHTML = cells;
+}
+
+/** Date bounds + label for the Week/Month/Year performance tabs. Month/Year both key off the calendar's own month/year, so paging the calendar moves them too. */
+function periodRange(period) {
+  if (period === 'week') {
+    const now = new Date();
+    const end = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+    const start = new Date(end);
+    start.setDate(start.getDate() - 6);
+    const fmt = (d) => d.toLocaleDateString(undefined, { month: 'short', day: 'numeric' });
+    return { start, end, label: `${fmt(start)} – ${fmt(end)}` };
+  }
+  if (period === 'year') {
+    const year = state.calendarMonth.getFullYear();
+    return { start: new Date(year, 0, 1), end: new Date(year, 11, 31), label: String(year) };
+  }
+  const start = new Date(state.calendarMonth.getFullYear(), state.calendarMonth.getMonth(), 1);
+  const end = new Date(state.calendarMonth.getFullYear(), state.calendarMonth.getMonth() + 1, 0);
+  return { start, end, label: state.calendarMonth.toLocaleDateString(undefined, { month: 'long', year: 'numeric' }) };
+}
+
+/** Profit/ROI/Record stat row plus the cumulative-net line graph for the selected Week/Month/Year period. */
+function renderPerformancePanel(filteredPicks) {
+  const { start, end, label } = periodRange(state.perfPeriod);
+  const startKey = ymd(start.getFullYear(), start.getMonth(), start.getDate());
+  const endKey = ymd(end.getFullYear(), end.getMonth(), end.getDate());
+
+  const inRange = groupPicksByDay(filteredPicks)
+    .filter((d) => d.date >= startKey && d.date <= endKey)
+    .sort((a, b) => a.date.localeCompare(b.date));
+
+  const summary = summarizePicks(inRange.flatMap((d) => d.picks));
+
+  el.perfPeriodLabel.textContent = label;
+  el.perfProfit.textContent = summary.graded ? formatSignedMoney(summary.net) : '—';
+  el.perfProfit.className = 'perf-stat-value' + (summary.net > 0 ? ' positive' : summary.net < 0 ? ' negative' : '');
+  el.perfRoi.textContent = summary.graded ? formatSignedPct(summary.roi) : '—';
+  el.perfRoi.className = 'perf-stat-value' + (summary.roi > 0 ? ' positive' : summary.roi < 0 ? ' negative' : '');
+  el.perfRecord.textContent = summary.graded ? `${summary.wins}-${summary.losses}` : '—';
+
+  renderPerfGraph(inRange);
+}
+
+/** A hand-rolled SVG line of cumulative net (in $ or units) across a day-summary list, day by day. */
+function renderPerfGraph(dayList) {
+  const graded = dayList.filter((d) => d.graded);
+  if (!graded.length) {
+    el.perfGraph.innerHTML = `<p class="empty">No graded picks in this period yet.</p>`;
+    return;
+  }
+
+  const unitDivisor = state.calendarMetric === 'units' ? FLAT_UNIT_STAKE : 1;
+  let cumulative = 0;
+  const points = graded.map((d) => {
+    cumulative += d.net;
+    return cumulative / unitDivisor;
+  });
+
+  const width = 300, height = 120, pad = 8;
+  const allValues = [0, ...points];
+  const minV = Math.min(...allValues), maxV = Math.max(...allValues);
+  const range = maxV - minV || 1;
+  const stepX = points.length > 1 ? (width - pad * 2) / (points.length - 1) : 0;
+  const toY = (v) => height - pad - ((v - minV) / range) * (height - pad * 2);
+
+  const path = points
+    .map((v, i) => `${i === 0 ? 'M' : 'L'}${(pad + i * stepX).toFixed(1)},${toY(v).toFixed(1)}`)
+    .join(' ');
+  const lineColor = points[points.length - 1] >= 0 ? 'var(--success)' : 'var(--danger)';
+  const zeroY = toY(0).toFixed(1);
+
+  el.perfGraph.innerHTML = `
+    <svg viewBox="0 0 ${width} ${height}" class="perf-graph-svg" preserveAspectRatio="none">
+      <line x1="0" y1="${zeroY}" x2="${width}" y2="${zeroY}" class="perf-graph-zero" />
+      <path d="${path}" fill="none" stroke="${lineColor}" stroke-width="2" />
+    </svg>`;
+}
+
 async function renderLearningDashboard() {
-  const overall = await getOverallSummary();
-  const days = await getPicksByDay();
+  const allPicks = await getAllPicks();
+  const filteredPicks = allPicks.filter((p) => !state.trackerExcludedSports.has(sportGroupLabel(p.sport)));
+  const overall = summarizePicks(filteredPicks);
+  const winRate = overall.graded ? (overall.wins / overall.graded) * 100 : 0;
+  const bankroll = BANKROLL_INITIAL + overall.net;
+  const days = groupPicksByDay(filteredPicks);
   const patterns = await identifyPatterns(new Date(0), new Date());
 
   el.totalPicks.textContent = overall.total;
   el.gradedPicks.textContent = overall.graded;
-  el.winRate.textContent = overall.graded ? overall.winRate.toFixed(1) + '%' : '—';
+  el.winRate.textContent = overall.graded ? winRate.toFixed(1) + '%' : '—';
   el.avgRoi.textContent = overall.graded ? formatSignedPct(overall.roi) : '—';
-  el.currentBankroll.textContent = '$' + overall.bankroll.toFixed(0);
+  el.currentBankroll.textContent = '$' + bankroll.toFixed(0);
   el.netProfit.textContent = overall.graded ? formatSignedMoney(overall.net) : '—';
+
+  renderSportFilter(allPicks);
+  renderCalendar(filteredPicks);
+  renderPerformancePanel(filteredPicks);
 
   el.dailyHistory.innerHTML = days.length
     ? days.map(renderDayBlock).join('')

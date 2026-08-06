@@ -4,7 +4,7 @@
  * matches results, and provides performance analytics.
  */
 
-const BANKROLL_INITIAL = 1000;
+export const BANKROLL_INITIAL = 1000;
 // Flat 1-unit stake on every tracked pick, regardless of odds — the
 // simulation is measuring the algorithm's picking, not a staking strategy,
 // so every bet risks the same $20 (2% of the $1000 bankroll).
@@ -54,9 +54,15 @@ export async function initializePickDatabase() {
  * side, same calendar day. Stable across regenerations — tapping Generate
  * twice in one day on a board that includes the same lock both times must
  * not double-log it, which is what a timestamp-based id would do.
+ *
+ * The date component is the user's own local calendar day, not UTC —
+ * toISOString() would roll evening picks in negative-UTC-offset timezones
+ * (all of the US) into tomorrow's date, which is wrong both for the "don't
+ * double-log today's board" check and for a day-by-day calendar view.
  */
 function stablePickId(pick) {
-  const dateKey = new Date().toISOString().split('T')[0];
+  const now = new Date();
+  const dateKey = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}`;
   return `${dateKey}:${pick.eventId}:${pick.marketKey}:${pick.side}`;
 }
 
@@ -266,7 +272,14 @@ export function gradePick(pick, scoreEvent) {
   return { won, payout };
 }
 
-function summarizePickGroup(picks) {
+/**
+ * W-L/ROI/net summary over any picks array — the pure building block behind
+ * getOverallSummary and each day's entry in getPicksByDay. Exported directly
+ * so a caller that needs a summary over a *filtered* subset (the tracker's
+ * per-sport filter, say) can reuse the exact same math without going back
+ * through IndexedDB.
+ */
+export function summarizePicks(picks) {
   const graded = picks.filter((p) => p.status !== 'pending');
   const wins = graded.filter((p) => p.status === 'won').length;
   const losses = graded.filter((p) => p.status === 'lost').length;
@@ -286,15 +299,16 @@ function summarizePickGroup(picks) {
 }
 
 /**
- * Every tracked pick grouped by the calendar day it was generated on (the
+ * Groups any picks array by the calendar day it was generated on (the
  * stable pickId's own date prefix — see stablePickId — not recordedAt, so a
  * pick logged a few minutes after midnight still lands in the right day),
- * most recent day first, each with its own W-L/ROI/net summary.
+ * most recent day first, each with its own summarizePicks() result. Exported
+ * so a filtered subset can be grouped the same way getPicksByDay groups
+ * everything.
  */
-export async function getPicksByDay() {
-  const all = await getAllPicks();
+export function groupPicksByDay(picks) {
   const byDay = new Map();
-  for (const pick of all) {
+  for (const pick of picks) {
     const day = pick.pickId.split(':')[0];
     if (!byDay.has(day)) byDay.set(day, []);
     byDay.get(day).push(pick);
@@ -302,16 +316,20 @@ export async function getPicksByDay() {
 
   return [...byDay.entries()]
     .sort((a, b) => b[0].localeCompare(a[0]))
-    .map(([date, picks]) => ({
+    .map(([date, dayPicks]) => ({
       date,
-      ...summarizePickGroup(picks.sort((a, b) => b.recordedAt - a.recordedAt)),
+      ...summarizePicks(dayPicks.sort((a, b) => b.recordedAt - a.recordedAt)),
     }));
+}
+
+/** Every tracked pick grouped by day — see groupPicksByDay. */
+export async function getPicksByDay() {
+  return groupPicksByDay(await getAllPicks());
 }
 
 /** All-time W-L/ROI/net summary plus the running simulated bankroll. */
 export async function getOverallSummary() {
-  const all = await getAllPicks();
-  const summary = summarizePickGroup(all);
+  const summary = summarizePicks(await getAllPicks());
   return {
     ...summary,
     winRate: summary.graded ? (summary.wins / summary.graded) * 100 : 0,
