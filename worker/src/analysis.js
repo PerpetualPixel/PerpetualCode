@@ -156,22 +156,40 @@ function tennisFactSheet(data, awayName, homeName) {
     return `${name}: recent form — ${list}.`;
   };
   const lines = [form(awayName), form(homeName)];
+  // Always state the head-to-head situation explicitly, even when there
+  // isn't one — leaving it out entirely when matchPlayer/tennisHeadToHead
+  // comes up empty left the model to guess, and it guessed wrong (claiming
+  // "no head-to-head history" for a pair that in reality had a 4-0 record,
+  // simply because this archive didn't have it matched). An explicit "no
+  // meetings on file" is honest about the data gap; silence invited a
+  // hallucinated fact.
   const h2h = tennisHeadToHead(data, awayName, homeName, { filter: ALL_SURFACES });
-  if (h2h?.meetings.length) {
-    lines.push(`Head-to-head: ${h2h.aName} ${h2h.aWins}, ${h2h.bName} ${h2h.bWins}, most recent on ${h2h.meetings[0].surface ?? 'an unlisted surface'}.`);
-  }
+  lines.push(
+    h2h?.meetings.length
+      ? `Head-to-head (this archive only, may be incomplete): ${h2h.aName} ${h2h.aWins}, ${h2h.bName} ${h2h.bWins}, most recent on ${h2h.meetings[0].surface ?? 'an unlisted surface'}.`
+      : `Head-to-head: no meetings between these two found in this archive. This does not necessarily mean they have never played — only that this archive has no record of it.`,
+  );
   return lines.join('\n');
 }
 
 function buildPrompt({ away, home, sportTitle, factSheet, isMma = false, isBaseball = false }) {
-  let basePrompt = `You are a sports analyst writing a short matchup breakdown for a sports app. Nobody reading this is asking about betting odds, point spreads, moneylines, or market pricing — only about the actual teams or players.
+  const totalLabel = isMma ? '' : 'or "Over"/"Under" if this game\'s total is the more relevant call';
+
+  let basePrompt = `You are a sports analyst writing a short, strictly factual matchup breakdown for a sports app. Nobody reading this is asking about betting odds, point spreads, moneylines, or market pricing — only about the actual teams or players.
 
 Matchup: ${away} at ${home} (${sportTitle})
 
-Known facts:
+Known facts (this is the ONLY information you have — there is no other source):
 ${factSheet}
 
-Write a 5-to-10-sentence analysis of this matchup using only the facts above. Take a clear position on which side has the edge and explain why in plain terms — form, head-to-head history, injuries, or statistical tendencies. Do not mention betting odds, spreads, moneylines, implied probability, vig, or market pricing anywhere in your answer — this is a team/player analysis, not a price analysis. Write flowing prose in a confident, analytical voice, not a bulleted list. If the facts are thin, say so plainly rather than inventing detail.`;
+RULES — read carefully, these are not optional:
+1. Use ONLY the facts given above. Do not state, imply, or assume any statistic, record, ranking, or result that is not explicitly written above.
+2. Use the exact names "${away}" and "${home}" exactly as given, character for character. Never alter, merge, abbreviate, or substitute a different (even similar-sounding) name — if you are not completely sure of a name, use the exact string given here rather than reconstructing it from memory.
+3. Never invent a head-to-head record, injury, or prior-meeting detail. If the facts above don't mention something, do not mention it either — do not fill silence with a guess, and do not claim something did NOT happen just because it wasn't listed (absence of a fact is not evidence of its opposite).
+4. If the facts above are thin or say "no data" / "unknown" for something, say so plainly rather than working around the gap with invented detail.
+5. Do not mention betting odds, spreads, moneylines, implied probability, vig, or market pricing anywhere in your answer — this is a team/player analysis, not a price analysis.
+
+Write a 5-to-10-sentence analysis using only the facts above, in flowing prose, not a bulleted list. Take a clear position on which side has the edge and explain why — form, head-to-head history, injuries, or statistical tendencies, using only what's stated above.`;
 
   if (isBaseball) {
     basePrompt += `
@@ -183,30 +201,29 @@ Explicitly consider pitcher matchup advantages, home/away pitcher performance sp
   if (isMma) {
     basePrompt += `
 
-ADDITIONAL REQUIREMENT FOR MMA:
-After the main analysis, provide a JSON object on the last line (and only the last line) with this exact structure:
-{
-  "victoryMethods": {
-    "${away}": [
-      {"method": "SUB", "reasoning": "reason why this fighter might win by submission"},
-      {"method": "DEC", "reasoning": "reason why this fighter might win by decision"},
-      {"method": "TKO", "reasoning": "reason why this fighter might win by TKO"}
-    ],
-    "${home}": [
-      {"method": "SUB", "reasoning": "reason why this fighter might win by submission"},
-      {"method": "DEC", "reasoning": "reason why this fighter might win by decision"},
-      {"method": "TKO", "reasoning": "reason why this fighter might win by TKO"}
-    ]
-  }
+ADDITIONAL REQUIREMENT FOR MMA — after the main analysis, add victory-method reasoning to the trailing JSON object described below: a "victoryMethods" key alongside "favoredSide", structured as:
+"victoryMethods": {
+  "${away}": [
+    {"method": "SUB", "reasoning": "reason why this fighter might win by submission"},
+    {"method": "DEC", "reasoning": "reason why this fighter might win by decision"},
+    {"method": "TKO", "reasoning": "reason why this fighter might win by TKO"}
+  ],
+  "${home}": [ ...same structure... ]
 }
-
-The methods should be the TOP 3 most likely ways each fighter can win. Methods are: SUB (submission), DEC (decision), TKO (TKO/KO). Only include the JSON, no other text after the analysis.`;
+The methods should be the TOP 3 most likely ways each fighter can win. Methods are: SUB (submission), DEC (decision), TKO (TKO/KO).`;
   }
+
+  basePrompt += `
+
+After your prose analysis, on the very last line and ONLY the last line, output one JSON object (no other text on that line) with this exact structure:
+{"favoredSide": "<the exact name of whichever side — "${away}" or "${home}" ${totalLabel} — your analysis above concludes has the edge, copied character-for-character from this prompt, or null if the facts are too thin to lean either way>"${isMma ? ', "victoryMethods": { ... as described above ... }' : ''}}
+
+This is a completely independent, honest read of the facts — you are not being told what any algorithm or price already picked, and you should not try to guess or hedge toward one; just say what the facts above actually support.`;
 
   return basePrompt;
 }
 
-async function callClaude(prompt, env) {
+async function callClaude(prompt, env, { maxTokens = 600 } = {}) {
   const response = await fetch('https://api.anthropic.com/v1/messages', {
     method: 'POST',
     headers: {
@@ -216,7 +233,7 @@ async function callClaude(prompt, env) {
     },
     body: JSON.stringify({
       model: MODEL,
-      max_tokens: 500,
+      max_tokens: maxTokens,
       messages: [{ role: 'user', content: prompt }],
     }),
   });
@@ -237,7 +254,16 @@ export async function getOrGenerateAnalysis(candidate, env, ctx, now = Date.now(
   if (!env.ANTHROPIC_API_KEY) return null;
 
   const dateKey = etDate(now);
-  const kvKey = `analysis:${dateKey}:${candidate.eventId}`;
+  // v4: the response envelope and anti-hallucination prompt changed
+  // materially (added favoredSide, explicit H2H-absence statements, stricter
+  // name-fidelity rules); v2's line-based trailing-JSON extraction missed
+  // replies where the model ran the JSON on without a preceding newline; and
+  // v3 still truncated every MMA reply mid-JSON because 500 max_tokens
+  // wasn't enough room for prose plus two fighters' worth of victory-method
+  // reasoning. All three leaked raw JSON text into the visible analysis in
+  // one way or another — versioned so already-cached v1/v2/v3 analyses are
+  // never served again, rather than living out their existing 2-day TTL.
+  const kvKey = `analysis:v4:${dateKey}:${candidate.eventId}`;
   const cached = await env.POTD_KV.get(kvKey);
   if (cached) return cached;
 
@@ -279,33 +305,73 @@ export async function getOrGenerateAnalysis(candidate, env, ctx, now = Date.now(
     isBaseball,
   });
 
+  // MMA's reply carries a lot more than prose + a one-line favoredSide: two
+  // fighters x 3 victory methods each, with a reasoning sentence apiece —
+  // 500 tokens (fine for every other sport) was cutting that off mid-JSON
+  // before it could close, which made every MMA analysis fail to parse and
+  // fall back to dumping the raw truncated text (JSON fragment included) on
+  // screen. This is the exact bug that produced it.
   let text;
   try {
-    text = await callClaude(prompt, env);
+    text = await callClaude(prompt, env, { maxTokens: isMma ? 1000 : 600 });
   } catch {
     return null;
   }
   if (!text) return null;
 
-  // For MMA, extract victory methods from the response
-  let result = text;
-  if (isMma) {
+  // The model always closes with one trailing JSON object — see buildPrompt
+  // — but doesn't reliably put a newline before it (sometimes it runs on
+  // straight from the last sentence of prose), so splitting on '\n' and
+  // checking only the last line silently missed it about as often as it
+  // caught it, leaking the raw '{"favoredSide": ...}' text into the visible
+  // analysis. Searching backward for the last '{' that parses as valid JSON
+  // running all the way to the end of the reply works regardless of
+  // whitespace. favoredSide is the model's own independent read of which
+  // side the facts support, computed with no knowledge of what the app's
+  // price-based algorithm actually picked; the client compares the two
+  // itself and flags it plainly when they disagree, rather than the two
+  // silently contradicting each other on screen (the exact bug this
+  // whole structured-output pass exists to close off).
+  let analysis = text;
+  let favoredSide = null;
+  let victoryMethods = null;
+  const trimmed = text.trim();
+  let searchFrom = trimmed.length;
+  while (searchFrom > 0) {
+    const idx = trimmed.lastIndexOf('{', searchFrom - 1);
+    if (idx === -1) break;
     try {
-      const lines = text.split('\n');
-      const lastLine = lines[lines.length - 1].trim();
-      if (lastLine.startsWith('{')) {
-        const victoryData = JSON.parse(lastLine);
-        const analysis = lines.slice(0, -1).join('\n').trim();
-        result = JSON.stringify({
-          analysis,
-          victoryMethods: victoryData.victoryMethods,
-        });
+      const parsed = JSON.parse(trimmed.slice(idx));
+      analysis = trimmed.slice(0, idx).trim();
+      // Trust favoredSide only if it's exactly one of the names actually in
+      // play — a value that doesn't match anything given is itself a sign
+      // of a hallucinated or garbled name, and a wrong favoredSide is worse
+      // than none (it would raise a false "disagreement" flag downstream).
+      const validSides = new Set([candidate.away, candidate.home, 'Over', 'Under']);
+      if (typeof parsed.favoredSide === 'string' && validSides.has(parsed.favoredSide)) {
+        favoredSide = parsed.favoredSide;
       }
-    } catch (e) {
-      // If parsing fails, just return the text as-is
-      result = text;
+      if (isMma && parsed.victoryMethods) victoryMethods = parsed.victoryMethods;
+      break;
+    } catch {
+      searchFrom = idx; // that '{' didn't lead to valid JSON — try an earlier one
     }
   }
+
+  // Nothing above parsed — most likely the reply got cut off mid-JSON (a
+  // max_tokens truncation, not just a missing trailing object). Rather than
+  // ever show a raw, incomplete '{"favoredSide": ...' fragment to the user,
+  // find where the structured block appears to start and cut the analysis
+  // there anyway, even though favoredSide/victoryMethods stay null for this
+  // one — a shorter analysis is a far smaller problem than a screen full of
+  // visible JSON.
+  if (analysis === text) {
+    const marker = trimmed.indexOf('"favoredSide"');
+    const braceIdx = marker === -1 ? -1 : trimmed.lastIndexOf('{', marker);
+    if (braceIdx !== -1) analysis = trimmed.slice(0, braceIdx).trim();
+  }
+
+  const result = JSON.stringify({ analysis, favoredSide, ...(isMma ? { victoryMethods } : {}) });
 
   ctx.waitUntil(env.POTD_KV.put(kvKey, result, { expirationTtl: 86400 * CACHE_TTL_DAYS }));
   return result;

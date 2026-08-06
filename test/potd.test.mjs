@@ -84,6 +84,25 @@ test('morning picks the best-graded candidate from today, from the cutoff hour o
   assert.match(result.pick.id, /^strong:/, 'must pick the higher-scoring candidate, not just the first');
 });
 
+test('an extreme long shot never wins over an in-band candidate, even scoring higher on raw EV', async () => {
+  const { env } = makeKvStore();
+  const events = [
+    // One outlier book prices this side at +560 while the other 7 sit around
+    // -140 — a huge apparent EV gap (exactly the "thin consensus + soft
+    // outlier price" pattern that let a real 9%-to-win moneyline score
+    // highest and get surfaced as "the pick") that must NOT win regardless.
+    makeEvent('longshot', '2026-08-05T18:00:00Z', { outlier: 700 }),
+    // A normally-priced game elsewhere in the window, well within band.
+    makeEvent('sane', '2026-08-05T20:00:00Z', { outlier: 20 }),
+  ];
+  const result = await runPotdPhase('morning', { env, ctx, now: MORNING_NOW, fetchBoard: async () => events });
+  assert.equal(result.skipped, false);
+  assert.ok(
+    result.pick.american >= -250 && result.pick.american <= 150,
+    `expected an in-band pick, got ${result.pick.american} (${result.pick.id})`,
+  );
+});
+
 test('morning excludes an early-today game before the cutoff hour', async () => {
   const { env } = makeKvStore();
   // 6am ET Aug 5 — before MORNING_CUTOFF_HOUR (9), should be excluded from the

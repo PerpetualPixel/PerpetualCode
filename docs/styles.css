@@ -1389,6 +1389,18 @@ input[type="range"]:focus-visible {
   line-height: 1.65;
 }
 
+.analysis-disagree {
+  margin: 0 0 10px;
+  padding: 8px 10px;
+  border-radius: 6px;
+  background: rgba(251, 191, 36, 0.1);
+  border: 1px solid rgba(251, 191, 36, 0.35);
+  color: var(--warn);
+  font-size: 0.78rem;
+  font-weight: 600;
+  line-height: 1.4;
+}
+
 .stats-section.devil-advocate h3 { color: var(--warn); }
 .stats-section.devil-advocate {
   background: var(--surface-2);

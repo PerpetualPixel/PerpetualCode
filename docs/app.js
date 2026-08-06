@@ -1865,6 +1865,7 @@ async function openStatsDrawer(leg, opposite = null, { fullscreen = false } = {}
   let tennisBreakdownHtml = '';
   let analysisText = null;
   let victoryMethods = null;
+  let favoredSide = null;
   try {
     const analysisPromise = matchupAnalysisFor(leg);
     if (isTennis(leg.sportKey)) {
@@ -1882,25 +1883,33 @@ async function openStatsDrawer(leg, opposite = null, { fullscreen = false } = {}
       bullets = buildInsights(leg, { context, weather });
     }
     const analysis = await analysisPromise;
-    // Parse MMA analysis which includes victory methods
-    if (isMma(leg.sportKey) && analysis) {
+    // The worker always returns a JSON envelope now — {analysis,
+    // favoredSide, victoryMethods?} — favoredSide is the model's own
+    // independent read of which side the facts support, worked out with no
+    // knowledge of which side this card is actually highlighting. Compared
+    // against leg below so a disagreement is shown plainly instead of the
+    // title and the write-up silently contradicting each other.
+    if (analysis) {
       try {
         const parsed = JSON.parse(analysis);
-        if (parsed.analysis && parsed.victoryMethods) {
-          analysisText = parsed.analysis;
-          victoryMethods = parsed.victoryMethods;
-        } else {
-          analysisText = analysis;
-        }
+        analysisText = parsed.analysis ?? analysis;
+        favoredSide = parsed.favoredSide ?? null;
+        if (isMma(leg.sportKey) && parsed.victoryMethods) victoryMethods = parsed.victoryMethods;
       } catch {
         analysisText = analysis;
       }
-    } else {
-      analysisText = analysis;
     }
   } catch {
     /* Research is a bonus; the price case and book table still stand alone. */
   }
+
+  // leg.outcomeName is the exact team/player name for h2h and spreads, and
+  // literally "Over"/"Under" for totals — the same vocabulary favoredSide
+  // uses, so a plain string compare is enough to detect disagreement.
+  const disagreesWithPick = favoredSide && favoredSide !== leg.outcomeName;
+  const disagreementHtml = disagreesWithPick
+    ? `<p class="analysis-disagree">⚠ This matchup read favors <strong>${esc(favoredSide)}</strong>, not ${esc(leg.outcomeName)} — the algorithm's price-based pick and this qualitative read don't agree here. Worth weighing both before betting.</p>`
+    : '';
 
   // Build victory methods HTML for MMA
   const victoryMethodsHtml = victoryMethods
@@ -1936,6 +1945,7 @@ async function openStatsDrawer(leg, opposite = null, { fullscreen = false } = {}
     ? `
       <div class="stats-section">
         <h3>Matchup Analysis <span class="stats-source">AI-written, once daily</span></h3>
+        ${disagreementHtml}
         <p class="analysis-text">${esc(analysisText)}</p>
         ${victoryMethodsHtml}
         ${stake ? `<div class="stake-line">${esc(stake)}</div>` : ''}
@@ -2232,7 +2242,18 @@ function slateTeamRow(game, side) {
     </div>`;
 }
 
-/** The single highest-graded side across every market on this game. */
+/**
+ * The single highest-graded side across every market on this game — the
+ * subject of the game's "More Info" analysis card. Prefers a candidate
+ * inside Pixel Picks' own sharp band (-250/+250): raw score alone can let
+ * an extreme long shot win this comparison (a thin "consensus" built from
+ * as few as 2 other books, per RULES.MIN_BOOKS, is noisy, and a single
+ * soft/stale outlier price can make a real 9%-to-win moneyline look like
+ * value that isn't there) — and however defensible the EV math, a 9%
+ * shot is never what a reasonable person would call "the pick" for a
+ * whole game. Falls back to whatever's least extreme if nothing on this
+ * game actually clears the band, so More Info still has something to show.
+ */
 function bestCandidateForGame(game) {
   const all = [
     game.h2h.away, game.h2h.home,
@@ -2240,7 +2261,10 @@ function bestCandidateForGame(game) {
     game.totals.away, game.totals.home,
   ].filter(Boolean);
   if (!all.length) return null;
-  return all.reduce((best, c) => (c.score > best.score ? c : best));
+
+  const inBand = all.filter((c) => c.american >= CONFIG.ODDS_MIN_DEFAULT && c.american <= CONFIG.ODDS_MAX_DEFAULT);
+  const pool = inBand.length ? inBand : all;
+  return pool.reduce((best, c) => (c.score > best.score ? c : best));
 }
 
 /** The market-mate of a candidate already known to belong to this game. */

@@ -61,6 +61,22 @@ export function currentPhase(now = Date.now()) {
 }
 
 /**
+ * Prefer whichever candidates sit inside engine.js's own sharp odds band
+ * (RULES.MIN_AMERICAN/MAX_AMERICAN) before picking the single highest-graded
+ * one. Raw score alone can let an extreme long shot win that comparison — a
+ * thin "consensus" from as few as RULES.MIN_BOOKS other quotes is noisy, and
+ * a single soft/stale outlier price can make a real long-shot moneyline look
+ * like value that isn't really there — and however defensible the EV math,
+ * a heavy underdog is never what "Play of the Day" should mean. Falls back
+ * to the full list if nothing in this pool actually clears the band, so a
+ * phase with only long-shot games doesn't come up empty.
+ */
+function inBand(candidates) {
+  const banded = candidates.filter((c) => c.american >= RULES.MIN_AMERICAN && c.american <= RULES.MAX_AMERICAN);
+  return banded.length ? banded : candidates;
+}
+
+/**
  * Candidates eligible for a given phase's target date and time window.
  * Morning: today's games from the cutoff hour onward. Evening-early:
  * tomorrow's games before the cutoff hour — the ones morning would miss
@@ -281,7 +297,7 @@ export async function runPotdPhase(phase, { env, ctx, now = Date.now(), fetchBoa
   } else if (!eligible.length) {
     mainResult = { skipped: true, reason: 'no qualifying candidate in this phase\'s window', dateKey };
   } else {
-    const best = eligible.reduce((a, b) => (b.score > a.score ? b : a));
+    const best = inBand(eligible).reduce((a, b) => (b.score > a.score ? b : a));
     const record = await buildRecord(best, phase, dateKey, now, env, ctx);
     // A day's pick, once posted, doesn't move even if the market does — it's
     // an editorial call made at a point in time, not a live-repriced candidate.
@@ -304,7 +320,7 @@ export async function runPotdPhase(phase, { env, ctx, now = Date.now(), fetchBoa
       continue;
     }
 
-    const best = bucketEligible.reduce((a, b) => (b.score > a.score ? b : a));
+    const best = inBand(bucketEligible).reduce((a, b) => (b.score > a.score ? b : a));
     const record = await buildRecord(best, phase, dateKey, now, env, ctx);
     record.sportLabel = bucket.label;
     await env.POTD_KV.put(bucketKey, JSON.stringify(record), { expirationTtl: 86400 * 8 });
