@@ -108,11 +108,58 @@ async function getCalibrationReport() {
   }
 }
 
+// MLB team name to abbreviation mapping
+const MLB_ABBR_MAP = {
+  'Los Angeles Angels': 'LAA',
+  'Baltimore Orioles': 'BAL',
+  'Boston Red Sox': 'BOS',
+  'New York Yankees': 'NYY',
+  'Tampa Bay Rays': 'TB',
+  'Toronto Blue Jays': 'TOR',
+  'Chicago White Sox': 'CWS',
+  'Cleveland Guardians': 'CLE',
+  'Detroit Tigers': 'DET',
+  'Kansas City Royals': 'KC',
+  'Minnesota Twins': 'MIN',
+  'Houston Astros': 'HOU',
+  'Los Angeles Dodgers': 'LAD',
+  'Oakland Athletics': 'OAK',
+  'Seattle Mariners': 'SEA',
+  'Arizona Diamondbacks': 'ARI',
+  'Colorado Rockies': 'COL',
+  'San Diego Padres': 'SD',
+  'San Francisco Giants': 'SF',
+  'Atlanta Braves': 'ATL',
+  'Miami Marlins': 'MIA',
+  'New York Mets': 'NYM',
+  'Philadelphia Phillies': 'PHI',
+  'Washington Nationals': 'WSH',
+  'Chicago Cubs': 'CHC',
+  'Cincinnati Reds': 'CIN',
+  'Milwaukee Brewers': 'MIL',
+  'Pittsburgh Pirates': 'PIT',
+  'St. Louis Cardinals': 'STL',
+};
+
+function getTeamAbbr(teamName) {
+  if (!teamName) return 'UNKNOWN';
+  // Try direct map first
+  if (MLB_ABBR_MAP[teamName]) return MLB_ABBR_MAP[teamName];
+  // If already an abbreviation (2-3 chars), return as is
+  if (teamName.length <= 3) return teamName.toUpperCase();
+  // Extract from team name (last 3 chars or last word)
+  return teamName.split(' ').pop().slice(0, 3).toUpperCase();
+}
+
 // MLB Stats display
 async function showTeamStats(awayTeam, homeTeam, awayAbbr, homeAbbr) {
+  // Get proper abbreviations
+  const awayAbbrev = awayAbbr ? getTeamAbbr(awayAbbr) : getTeamAbbr(awayTeam);
+  const homeAbbrev = homeAbbr ? getTeamAbbr(homeAbbr) : getTeamAbbr(homeTeam);
+
   const [awayStats, homeStats] = await Promise.all([
-    fetch(`/mlb-stats?team=${awayAbbr}`).then((r) => r.json()),
-    fetch(`/mlb-stats?team=${homeAbbr}`).then((r) => r.json()),
+    fetch(`/mlb-stats?team=${awayAbbrev}`).then((r) => r.json()),
+    fetch(`/mlb-stats?team=${homeAbbrev}`).then((r) => r.json()),
   ]);
 
   const statsHtml = `
@@ -2154,13 +2201,12 @@ function opponentOf(game, cand) {
 function slateGameHtml(game) {
   const idx = renderedSlateGames.push(game) - 1;
   const hasAnyPrice = bestCandidateForGame(game) != null;
-  const isMlb = state.slateLeague === 'baseball_mlb';
+  const isMlb = game.sport_key === 'baseball_mlb';
   return `
     <article class="slate-game" ${isMlb ? `data-game-index="${idx}"` : ''}>
       <div class="slate-game-time">
         <span>${esc(dateFmt.format(new Date(game.commenceMs)))}</span>
-        ${isMlb ? `<button type="button" class="more-info-btn" data-show-mlb-stats="${idx}">View Stats</button>` : ''}
-        ${hasAnyPrice && !isMlb ? `<button type="button" class="more-info-btn" data-more-info="${idx}">More Info</button>` : ''}
+        ${isMlb ? `<button type="button" class="more-info-btn" data-show-mlb-stats="${idx}">View Stats</button>` : hasAnyPrice ? `<button type="button" class="more-info-btn" data-more-info="${idx}">More Info</button>` : ''}
       </div>
       <div class="slate-header-row">
         <span></span><span>Spread</span><span>O/U</span><span>ML</span>
@@ -2584,10 +2630,7 @@ el.slateBody.addEventListener('click', (event) => {
   if (mlbStats) {
     const game = renderedSlateGames[Number(mlbStats.dataset.showMlbStats)];
     if (game) {
-      // Extract team abbreviations (usually in home_team/away_team as abbreviations)
-      const awayAbbr = game.away_team?.slice(0, 3).toUpperCase() || 'AWAY';
-      const homeAbbr = game.home_team?.slice(0, 3).toUpperCase() || 'HOME';
-      showTeamStats(game.away_team, game.home_team, awayAbbr, homeAbbr);
+      showTeamStats(game.away_team, game.home_team);
     }
     return;
   }
