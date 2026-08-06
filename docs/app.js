@@ -122,6 +122,7 @@ const el = {
   slateLoad: document.getElementById('slateLoad'),
   slateEventRow: document.getElementById('slateEventRow'),
   slateEventSelect: document.getElementById('slateEventSelect'),
+  slateSortSelect: document.getElementById('slateSortSelect'),
   slateBody: document.getElementById('slateBody'),
   tabBoard: document.getElementById('tabBoard'),
   tabPotd: document.getElementById('tabPotd'),
@@ -2142,8 +2143,31 @@ function renderFullSlate() {
     }
   }
 
-  // Sort games chronologically (by time)
-  games = games.sort((a, b) => a.commenceMs - b.commenceMs);
+  // Get sort preference (default to chronological)
+  const sortMode = el.slateSortSelect?.value || 'time';
+
+  // Sort games based on selected mode
+  if (sortMode === 'confidence') {
+    // Sort by home team moneyline odds (as confidence proxy)
+    games = games.sort((a, b) => {
+      const aConfidence = a.h2h?.home?.score ?? 50;
+      const bConfidence = b.h2h?.home?.score ?? 50;
+      return bConfidence - aConfidence; // High to low
+    });
+  } else if (sortMode === 'both') {
+    // Sort by event time first, then by confidence within each event
+    games = games.sort((a, b) => {
+      if (a.ufc_event?.event !== b.ufc_event?.event) {
+        return a.commenceMs - b.commenceMs;
+      }
+      const aConfidence = a.h2h?.home?.score ?? 50;
+      const bConfidence = b.h2h?.home?.score ?? 50;
+      return bConfidence - aConfidence;
+    });
+  } else {
+    // Chronological (default)
+    games = games.sort((a, b) => a.commenceMs - b.commenceMs);
+  }
 
   // Render chronological slate view
   if (games.length) {
@@ -2374,6 +2398,9 @@ el.slateLeagueSelect.addEventListener('change', () => {
 });
 el.slateEventSelect.addEventListener('change', () => {
   state.slateEvent = el.slateEventSelect.value;
+  renderFullSlate();
+});
+el.slateSortSelect?.addEventListener('change', () => {
   renderFullSlate();
 });
 el.slateBody.addEventListener('click', (event) => {

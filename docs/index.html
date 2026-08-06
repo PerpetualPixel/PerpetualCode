@@ -63,6 +63,12 @@
   <div class="slate-controls" id="slateEventRow" hidden>
     <label class="slate-league-label" for="slateEventSelect">Card</label>
     <select id="slateEventSelect" class="slate-league-select"></select>
+    <label class="slate-league-label" for="slateSortSelect">Sort</label>
+    <select id="slateSortSelect" class="slate-league-select">
+      <option value="time">Chronological</option>
+      <option value="confidence">Highest Confidence</option>
+      <option value="both">Confidence + Time</option>
+    </select>
   </div>
 
   <section id="slateBody" class="slate-body" aria-live="polite">
