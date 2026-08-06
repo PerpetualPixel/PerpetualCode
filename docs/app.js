@@ -2446,7 +2446,15 @@ function renderFullSlate() {
     let html = '';
 
     for (const game of games) {
-      const eventName = game.ufc_event?.event || 'Upcoming Event';
+      // Use UFC event name for MMA, otherwise use sport title or league name
+      let eventName;
+      if (isMma(state.slateLeague)) {
+        eventName = game.ufc_event?.event || 'Upcoming Event';
+      } else {
+        // For tennis and other sports, use the sport title
+        const league = state.catalogue.find((s) => s.key === state.slateLeague);
+        eventName = league?.title || 'Upcoming Event';
+      }
 
       // Add event header when event changes
       if (eventName !== currentEvent) {
@@ -2466,7 +2474,11 @@ function renderFullSlate() {
 
     el.slateBody.innerHTML = html;
   } else {
-    el.slateBody.innerHTML = `<p class="empty">No upcoming UFC/PFL events with moneyline markets. Check back soon!</p>`;
+    // Show appropriate empty message based on sport
+    const emptyMsg = isMma(state.slateLeague)
+      ? 'No upcoming UFC/PFL events with moneyline markets. Check back soon!'
+      : 'Nothing upcoming for this league. Try a different league.';
+    el.slateBody.innerHTML = `<p class="empty">${emptyMsg}</p>`;
   }
 }
 
