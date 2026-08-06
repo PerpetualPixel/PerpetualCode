@@ -2893,7 +2893,6 @@ function renderParlayFilters() {
   state.parlay.sports.add(currentSlateLeague);
 
   // Render Events (only from current slate league)
-  const currentSlateLeague = state.slateLeague || Array.from(bySport.keys())[0];
   const currentLeagueSportKey = currentSlateLeague;
 
   const currentLeagueEvents = state.candidates
