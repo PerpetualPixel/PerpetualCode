@@ -22,6 +22,7 @@
 
 import { fetchContext, hasContext } from './context.js';
 import { fetchMmaContext } from './mma.js';
+import { fetchBaseballContext } from './baseball.js';
 import { tennisRecentForm, tennisHeadToHead } from '../../docs/insights.js';
 
 const MODEL = 'claude-haiku-4-5-20251001';
@@ -39,6 +40,15 @@ function etDate(ms) {
 
 const isTennisSport = (sportKey) => String(sportKey ?? '').startsWith('tennis_');
 const isMmaSport = (sportKey) => sportKey === 'mma_mixed_martial_arts';
+const isBaseballSport = (sportKey) => sportKey === 'baseball_mlb';
+
+function isDayGame(commenceTimeStr) {
+  if (!commenceTimeStr) return false;
+  const date = new Date(commenceTimeStr);
+  const hour = date.getUTCHours();
+  // Before 5 PM UTC is typically a day game in US time zones
+  return hour < 17;
+}
 
 // Module-scope: survives across requests in the same isolate, same pattern
 // potd.js already uses for this exact static asset.
@@ -97,6 +107,45 @@ function mmaFactSheet(mmaContext) {
   return lines.length ? lines.join('\n') : null;
 }
 
+function baseballFactSheet(baseballContext, awayTeam, homeTeam, isDay = false) {
+  if (!baseballContext) return null;
+  const { away, home, awayTeamStats, homeTeamStats } = baseballContext;
+
+  const pitcherInfo = (p, team, isHome) => {
+    if (!p) return null;
+    let info = `${team}: `;
+    if (p.name) info += `pitcher ${p.name}, `;
+    if (p.era) info += `ERA ${p.era.toFixed(2)}, `;
+    if (p.form) info += `form ${p.form}, `;
+    if (p.homeEra && p.awayEra) {
+      const splitNote = isHome
+        ? `home ERA ${p.homeEra.toFixed(2)}`
+        : `away ERA ${p.awayEra.toFixed(2)}`;
+      info += `${splitNote}, `;
+    }
+    if (p.newTeam) info += `new team (adjustment period), `;
+    return info.slice(0, -2) + '.';
+  };
+
+  const teamContext = (stats, isHome) => {
+    if (!stats) return null;
+    const dayOrNight = isDay ? 'day' : 'night';
+    const winPct = isDay ? stats.dayWinPct : stats.nightWinPct;
+    const gameCount = isDay ? stats.dayGameCount : stats.nightGameCount;
+    if (gameCount < 3) return null; // Too few games for meaningful split
+    return `${dayOrNight.charAt(0).toUpperCase() + dayOrNight.slice(1)} game record: ${(winPct).toFixed(1)}% win rate (${gameCount} games).`;
+  };
+
+  const lines = [
+    pitcherInfo(away, awayTeam, false),
+    pitcherInfo(home, homeTeam, true),
+    teamContext(awayTeamStats, isDay),
+    teamContext(homeTeamStats, isDay),
+  ].filter(Boolean);
+
+  return lines.length ? lines.join('\n') : null;
+}
+
 function tennisFactSheet(data, awayName, homeName) {
   if (!data?.matches?.length) return null;
   const form = (name) => {
@@ -113,7 +162,7 @@ function tennisFactSheet(data, awayName, homeName) {
   return lines.join('\n');
 }
 
-function buildPrompt({ away, home, sportTitle, factSheet, isMma = false }) {
+function buildPrompt({ away, home, sportTitle, factSheet, isMma = false, isBaseball = false }) {
   let basePrompt = `You are a sports analyst writing a short matchup breakdown for a sports app. Nobody reading this is asking about betting odds, point spreads, moneylines, or market pricing — only about the actual teams or players.
 
 Matchup: ${away} at ${home} (${sportTitle})
@@ -122,6 +171,13 @@ Known facts:
 ${factSheet}
 
 Write a 5-to-10-sentence analysis of this matchup using only the facts above. Take a clear position on which side has the edge and explain why in plain terms — form, head-to-head history, injuries, or statistical tendencies. Do not mention betting odds, spreads, moneylines, implied probability, vig, or market pricing anywhere in your answer — this is a team/player analysis, not a price analysis. Write flowing prose in a confident, analytical voice, not a bulleted list. If the facts are thin, say so plainly rather than inventing detail.`;
+
+  if (isBaseball) {
+    basePrompt += `
+
+CRITICAL FOR BASEBALL:
+Explicitly consider pitcher matchup advantages, home/away pitcher performance splits, day vs. night game context, and team travel/time zone adjustments. These factors often outweigh pure team strength. Pay special attention to pitchers new to their team (adjustment period) and recent form (last 10 games ERA). Do NOT invent pitcher information — use only what is provided above.`;
+  }
 
   if (isMma) {
     basePrompt += `
@@ -185,6 +241,7 @@ export async function getOrGenerateAnalysis(candidate, env, ctx, now = Date.now(
   if (cached) return cached;
 
   let factSheet = null;
+  let isBaseball = false;
   try {
     if (isTennisSport(candidate.sportKey)) {
       const data = await loadTennisArchive(candidate.sportKey);
@@ -192,6 +249,14 @@ export async function getOrGenerateAnalysis(candidate, env, ctx, now = Date.now(
     } else if (isMmaSport(candidate.sportKey)) {
       const mmaContext = await fetchMmaContext({ fighterA: candidate.away, fighterB: candidate.home }, ctx);
       factSheet = mmaFactSheet(mmaContext);
+    } else if (isBaseballSport(candidate.sportKey)) {
+      isBaseball = true;
+      const dayGame = isDayGame(candidate.commence_time);
+      const baseballContext = await fetchBaseballContext(
+        { awayTeam: candidate.away, homeTeam: candidate.home, awayPitcher: null, homePitcher: null },
+        ctx,
+      );
+      factSheet = baseballFactSheet(baseballContext, candidate.away, candidate.home, dayGame);
     } else if (hasContext(candidate.sportKey)) {
       const context = await fetchContext(
         { sportKey: candidate.sportKey, home: candidate.home, away: candidate.away }, ctx,
@@ -210,6 +275,7 @@ export async function getOrGenerateAnalysis(candidate, env, ctx, now = Date.now(
     sportTitle: candidate.sportTitle ?? candidate.sportKey,
     factSheet,
     isMma,
+    isBaseball,
   });
 
   let text;

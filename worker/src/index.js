@@ -13,6 +13,7 @@ import { QuotaManager } from './quota.js';
 import { fetchContext, hasContext } from './context.js';
 import { fetchWeather, hasVenue } from './weather.js';
 import { fetchMmaContext } from './mma.js';
+import { fetchBaseballContext } from './baseball.js';
 import { getUfcEventDetails } from './ufc-events.js';
 import { currentPhase, runPotdPhase, getPotd, getPotdBySport } from './potd.js';
 import { getOrGenerateAnalysis } from './analysis.js';
@@ -100,6 +101,31 @@ async function enrichMmaEvents(events, ctx) {
   return enriched;
 }
 
+async function enrichBaseballEvents(events, ctx) {
+  if (!events || !Array.isArray(events)) return events;
+
+  const enriched = await Promise.all(
+    events.map(async (event) => {
+      // Try to extract pitcher info from bookmaker data if available
+      // Odds API doesn't include pitchers, so we'll note that for manual future enhancement
+      const baseballContext = await fetchBaseballContext(
+        {
+          awayTeam: event.away_team,
+          homeTeam: event.home_team,
+          awayPitcher: null, // TODO: Pull from external source when available
+          homePitcher: null,
+        },
+        ctx,
+      );
+      return baseballContext
+        ? { ...event, baseball_context: baseballContext }
+        : event;
+    }),
+  );
+
+  return enriched;
+}
+
 async function fetchSport(sport, env, ctx) {
   const url = new URL(`${UPSTREAM}/sports/${sport}/odds`);
   url.searchParams.set('apiKey', (env.ODDS_API_KEY ?? '').trim());
@@ -119,6 +145,8 @@ async function fetchSport(sport, env, ctx) {
     let events = await cached.json();
     if (sport === 'mma_mixed_martial_arts') {
       events = await enrichMmaEvents(events, ctx);
+    } else if (sport === 'baseball_mlb') {
+      events = await enrichBaseballEvents(events, ctx);
     }
     return { events, cached: true, quota: null };
   }
@@ -138,6 +166,8 @@ async function fetchSport(sport, env, ctx) {
 
   if (sport === 'mma_mixed_martial_arts') {
     events = await enrichMmaEvents(events, ctx);
+  } else if (sport === 'baseball_mlb') {
+    events = await enrichBaseballEvents(events, ctx);
   }
 
   ctx.waitUntil(
