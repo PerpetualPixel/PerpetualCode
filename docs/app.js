@@ -2244,6 +2244,12 @@ function renderSlateLeagueOptions() {
     ?? state.catalogue.find((s) => s.key === key)?.title
     ?? key;
 
+  // Count games per league
+  const gameCountByLeague = new Map();
+  state.rawEvents?.forEach((e) => {
+    gameCountByLeague.set(e.sport_key, (gameCountByLeague.get(e.sport_key) || 0) + 1);
+  });
+
   if (!leagues.length) {
     el.slateLeagueSelect.innerHTML = `<option value="">No leagues available</option>`;
     el.slateLeagueSelect.disabled = true;
@@ -2255,7 +2261,13 @@ function renderSlateLeagueOptions() {
     state.slateLeague = leagues[0];
   }
   el.slateLeagueSelect.innerHTML = leagues
-    .map((key) => `<option value="${esc(key)}" ${key === state.slateLeague ? 'selected' : ''}>${esc(labelFor(key))}${loaded.has(key) ? '' : ' — tap Load Slate'}</option>`)
+    .map((key) => {
+      const title = labelFor(key);
+      const gameCount = gameCountByLeague.get(key) || 0;
+      const isLoaded = loaded.has(key);
+      const label = isLoaded ? `${title} — ${gameCount} games` : `${title} — tap Load Slate`;
+      return `<option value="${esc(key)}" ${key === state.slateLeague ? 'selected' : ''}>${esc(label)}</option>`;
+    })
     .join('');
 }
 
@@ -3218,11 +3230,15 @@ el.tabPotd.addEventListener('click', () => setActiveTab('potd'));
 
   // Auto-load Full Slate data on app startup.
   if (CONFIG.WORKER_URL) {
-    // Default to MMA for Full Slate
+    el.slateStatus.textContent = 'Loading all leagues…';
+
+    // Fetch upcoming (catches most sports) + MMA (not in upcoming)
+    const leaguesToLoad = ['upcoming', 'mma_mixed_martial_arts'];
+    await Promise.all(leaguesToLoad.map((league) => fetchSingleLeague(league)));
+
+    // Default to MMA for Full Slate if available, otherwise first loaded league
     state.slateLeague = 'mma_mixed_martial_arts';
     renderSlateLeagueOptions();
-    // Fetch MMA data directly since 'upcoming' doesn't include MMA
-    await fetchSingleLeague('mma_mixed_martial_arts');
     renderFullSlate();
   }
 
