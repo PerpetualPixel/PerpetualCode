@@ -2825,7 +2825,9 @@ el.tabPotd.addEventListener('click', () => setActiveTab('potd'));
     // Default to MMA for Full Slate
     state.slateLeague = 'mma_mixed_martial_arts';
     renderSlateLeagueOptions();
-    await loadSlate();
+    // Fetch MMA data directly since 'upcoming' doesn't include MMA
+    await fetchSingleLeague('mma_mixed_martial_arts');
+    renderFullSlate();
   }
 
   setStatus(
