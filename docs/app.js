@@ -1989,19 +1989,17 @@ function renderSlateLeagueOptions() {
 }
 
 /**
- * Group MMA bouts into cards by shared start time — the Odds API gives one
- * event per fight, not per card, but every fight on the same card shares one
- * commence_time, so that's a real, honest grouping key with no extra scraping
- * needed. Each card is labeled by its highest-graded bout, the closest
- * available stand-in for "main event" without a real card name from
- * upstream (The Odds API bundles every promotion under one MMA sport key —
- * there's no PFL/UFC/card-title field anywhere in this data to read instead).
+ * Group MMA bouts into cards by UFC event name (if available) or by shared
+ * start time as a fallback. Each card is labeled with its event name or,
+ * for events without UFC metadata, the highest-graded bout.
  */
 function mmaClusters(games) {
-  const byTime = new Map();
+  // Group by UFC event name first, fall back to commence time
+  const byEvent = new Map();
   for (const game of games) {
-    if (!byTime.has(game.commenceMs)) byTime.set(game.commenceMs, []);
-    byTime.get(game.commenceMs).push(game);
+    const eventKey = game.ufc_event?.event || `time-${game.commenceMs}`;
+    if (!byEvent.has(eventKey)) byEvent.set(eventKey, []);
+    byEvent.get(eventKey).push(game);
   }
 
   const bestScore = (game) => Math.max(
@@ -2010,15 +2008,29 @@ function mmaClusters(games) {
     game.totals.away?.score ?? 0, game.totals.home?.score ?? 0,
   );
 
-  return [...byTime.entries()]
-    .map(([commenceMs, cardGames]) => {
-      const headline = [...cardGames].sort((a, b) => bestScore(b) - bestScore(a))[0];
-      const label = cardGames.length > 1
-        ? `${headline.away} vs. ${headline.home} — ${cardGames.length} fights`
-        : `${headline.away} vs. ${headline.home}`;
-      return { commenceMs, games: cardGames, label };
+  return [...byEvent.entries()]
+    .map(([eventKey, cardGames]) => {
+      const firstGame = cardGames[0];
+      // Use UFC event name if available, otherwise use fighter names
+      let label;
+      if (firstGame.ufc_event?.event) {
+        label = cardGames.length > 1
+          ? `${firstGame.ufc_event.event} — ${cardGames.length} fights`
+          : firstGame.ufc_event.event;
+      } else {
+        const headline = [...cardGames].sort((a, b) => bestScore(b) - bestScore(a))[0];
+        label = cardGames.length > 1
+          ? `${headline.away} vs. ${headline.home} — ${cardGames.length} fights`
+          : `${headline.away} vs. ${headline.home}`;
+      }
+      return { eventKey, games: cardGames, label };
     })
-    .sort((a, b) => a.commenceMs - b.commenceMs);
+    .sort((a, b) => {
+      // Sort by first game's commence time
+      const aTime = a.games[0]?.commenceMs ?? 0;
+      const bTime = b.games[0]?.commenceMs ?? 0;
+      return aTime - bTime;
+    });
 }
 
 function renderFullSlate() {
@@ -2045,13 +2057,13 @@ function renderFullSlate() {
   if (clusters.length >= 2) {
     const options = [`<option value="all">All cards — ${allGames.length} fights</option>`]
       .concat(clusters.map((c) => {
-        const value = String(c.commenceMs);
-        return `<option value="${value}" ${value === state.slateEvent ? 'selected' : ''}>${esc(c.label)}</option>`;
+        const value = c.eventKey;
+        return `<option value="${esc(value)}" ${value === state.slateEvent ? 'selected' : ''}>${esc(c.label)}</option>`;
       }));
     el.slateEventSelect.innerHTML = options.join('');
 
     if (state.slateEvent !== 'all') {
-      const match = clusters.find((c) => String(c.commenceMs) === state.slateEvent);
+      const match = clusters.find((c) => c.eventKey === state.slateEvent);
       games = match ? match.games : allGames;
     }
   }
