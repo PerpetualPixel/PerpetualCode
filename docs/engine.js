@@ -657,16 +657,7 @@ export function topPicks(
   } = {},
 ) {
   const inRange = (a) => a >= oddsMin && a <= oddsMax;
-  // Apply all three audit filters: range, score, EV > 0, Kelly minimum
-  const pool = candidates.filter((c) => {
-    if (!inRange(c.american) || c.score < minScore) return false;
-    // EV Filter: reject picks with EV ≤ 0
-    if (c.ev <= 0) return false;
-    // Kelly Minimum Filter: Quarter-Kelly must be ≥ 0.25%
-    const quarterKelly = Math.min(kellyFraction(c.consensusProb, c.decimal) * KELLY.FRACTION, KELLY.MAX_STAKE);
-    if (quarterKelly < 0.0025) return false;
-    return true;
-  });
+  const pool = candidates.filter((c) => inRange(c.american) && c.score >= minScore);
 
   const fresh = pool.filter((c) => !exclude.has(c.id));
   // Once everything in range has been shown this session, recycle rather than
@@ -736,11 +727,6 @@ export function buildParlay(
   const eligible = candidates.filter((c) => {
     if (c.american < oddsMin || c.american > oddsMax) return false;
     if (c.score < minScore) return false;
-    // EV Filter: reject negative EV picks
-    if (c.ev <= 0) return false;
-    // Kelly Minimum: reject micro-stakes
-    const quarterKelly = Math.min(kellyFraction(c.consensusProb, c.decimal) * KELLY.FRACTION, KELLY.MAX_STAKE);
-    if (quarterKelly < 0.0025) return false;
     const markets = sportMarkets.get(c.sportKey);
     return markets?.size ? markets.has(c.marketKey) : false;
   });

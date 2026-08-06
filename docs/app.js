@@ -3279,17 +3279,75 @@ el.tabPotd.addEventListener('click', () => setActiveTab('potd'));
 /* Learning Dashboard                                                */
 /* ---------------------------------------------------------------- */
 
+/**
+ * Start tracking picks from current Pixel Picks board (top 8).
+ * Records picks with bankroll allocation and stores in learning database.
+ */
+async function startTrackingCurrentPicks() {
+  if (!state.lastPixelSlate || !state.lastPixelSlate.picks.length) {
+    alert('Generate picks first to track them!');
+    return;
+  }
+
+  const picks = state.lastPixelSlate.picks.slice(0, 8); // Top 8 picks
+  const bankroll = 1000; // Starting bankroll
+  const stakePerPick = bankroll / picks.length; // Equal allocation
+
+  let trackedCount = 0;
+  for (const pick of picks) {
+    const leg = pick.legs[0]; // Single-leg picks
+    try {
+      await logPick(
+        {
+          eventId: leg.eventId,
+          id: leg.id,
+          sport: leg.sportKey,
+          team: leg.selection,
+          marketKey: leg.marketKey,
+          american: leg.american,
+          decimal: leg.decimal,
+          score: pick.score,
+          consensusProb: leg.consensusProb,
+          ev: leg.ev,
+          kelly: leg.kelly,
+          commenceMs: leg.commenceMs,
+        },
+        stakePerPick
+      );
+      trackedCount++;
+    } catch (err) {
+      console.error('Failed to track pick:', err);
+    }
+  }
+
+  alert(`✅ Tracking started! ${trackedCount} picks recorded with $${stakePerPick.toFixed(2)} stake each.`);
+  await renderLearningDashboard();
+}
+
 async function renderLearningDashboard() {
   const performance = await analyzePerformance();
   const patterns = await identifyPatterns();
 
-  if (!performance) {
-    el.totalPicks.textContent = '0';
+  if (!performance || performance.gradedPicks === 0) {
+    el.totalPicks.textContent = performance?.totalPicks || '0';
     el.gradedPicks.textContent = '0';
-    el.winRate.textContent = '0%';
-    el.avgRoi.textContent = '0%';
+    el.winRate.textContent = '—';
+    el.avgRoi.textContent = '—';
     el.currentBankroll.textContent = '$1,000';
-    el.calibration.textContent = '0%';
+    el.calibration.textContent = '—';
+
+    // Show start tracking button if picks were generated
+    if (state.lastPixelSlate?.picks.length) {
+      el.recommendations.innerHTML = `
+        <button id="startTrackingBtn" class="action-btn" style="width:100%;margin-bottom:10px;">
+          START TRACKING (${state.lastPixelSlate.picks.length} Picks Available)
+        </button>
+        <div class="rec-item">Click above to start tracking the top 8 picks from the current board.</div>
+      `;
+      document.getElementById('startTrackingBtn').addEventListener('click', startTrackingCurrentPicks);
+    } else {
+      el.recommendations.innerHTML = '<div class="rec-item">Generate picks first, then click "Start Tracking" to begin recording.</div>';
+    }
     return;
   }
 
@@ -3335,8 +3393,16 @@ async function renderLearningDashboard() {
     el.sportAnalysis.innerHTML = html;
   }
 
-  // Render recommendations (placeholder for now)
-  el.recommendations.innerHTML = '<div class="rec-item">Collecting data — recommendations will appear after 10+ picks.</div>';
+  // Render recommendations
+  el.recommendations.innerHTML = `
+    <button id="newTrackingBtn" class="action-btn" style="width:100%;margin-bottom:10px;">
+      TRACK NEW PICKS (${state.lastPixelSlate?.picks.length || 0} Available)
+    </button>
+    <div class="rec-item">Generate new picks and click above to add them to tracking.</div>
+  `;
+  if (document.getElementById('newTrackingBtn')) {
+    document.getElementById('newTrackingBtn').addEventListener('click', startTrackingCurrentPicks);
+  }
 }
 
 async function openLearningDashboard() {
