@@ -23,6 +23,62 @@
 
 html { -webkit-text-size-adjust: 100%; }
 
+/* ================================================================ */
+/* Animations & Transitions                                         */
+/* ================================================================ */
+
+@keyframes logoPulse {
+  0%, 100% { transform: scale(1); opacity: 1; }
+  50% { transform: scale(1.08); opacity: 0.85; }
+}
+
+@keyframes buttonGlow {
+  0%, 100% { box-shadow: 0 0 0 0 rgba(74, 222, 128, 0.4); }
+  50% { box-shadow: 0 0 0 8px rgba(74, 222, 128, 0); }
+}
+
+@keyframes slideInDown {
+  from {
+    opacity: 0;
+    transform: translateY(-12px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+@keyframes slideInUp {
+  from {
+    opacity: 0;
+    transform: translateY(12px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+@keyframes fadeIn {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+
+@keyframes shimmer {
+  0% { background-position: -1000px 0; }
+  100% { background-position: 1000px 0; }
+}
+
+@keyframes pulse {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.6; }
+}
+
+@keyframes bounceIn {
+  0% { transform: scale(0.95); opacity: 0; }
+  100% { transform: scale(1); opacity: 1; }
+}
+
 body {
   margin: 0;
   background: var(--bg);
@@ -58,8 +114,14 @@ body {
   font-size: 1.05rem;
   font-weight: 700;
   letter-spacing: 0.16em;
+  animation: slideInDown 0.5s ease-out;
 }
-.wordmark span { color: var(--accent); }
+.wordmark span {
+  color: var(--accent);
+  animation: logoPulse 3s ease-in-out infinite;
+  display: inline-block;
+  transition: color 300ms ease;
+}
 
 .topbar-actions { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; justify-content: flex-end; }
 
@@ -72,6 +134,20 @@ body {
   border-radius: var(--radius);
   color: var(--muted);
   font-family: var(--mono);
+  transition: all 200ms cubic-bezier(0.34, 1.56, 0.64, 1);
+  cursor: pointer;
+  animation: slideInDown 0.6s ease-out 0.1s both;
+}
+.icon-btn:hover {
+  background: var(--surface-2);
+  border-color: var(--accent);
+  color: var(--accent);
+  transform: translateY(-2px);
+  box-shadow: 0 8px 16px rgba(0, 0, 0, 0.3);
+}
+.icon-btn:active {
+  transform: translateY(0px) scale(0.96);
+}
   font-size: 0.75rem;
   letter-spacing: 0.06em;
   text-transform: uppercase;
@@ -118,13 +194,19 @@ body {
   padding: 12px;
   min-height: 42px;
   cursor: pointer;
+  transition: all 200ms cubic-bezier(0.34, 1.56, 0.64, 1);
 }
-.top-tab:hover { color: var(--text); border-color: #36414d; }
+.top-tab:hover {
+  color: var(--text);
+  border-color: #36414d;
+  transform: translateY(-1px);
+}
 .top-tab.is-active {
   color: #04140a;
   background: var(--accent);
   border-color: var(--accent);
   font-weight: 700;
+  animation: bounceIn 0.4s ease-out;
 }
 
 /* ---------------------------------------------------------------- */
@@ -451,6 +533,34 @@ body {
 
 /* Custom track/thumb so range inputs match the dark theme instead of the
    browser's default light-grey control. */
+/* ================================================================ */
+/* Form Elements & Transitions                                      */
+/* ================================================================ */
+
+select,
+input[type="text"],
+input[type="number"],
+textarea {
+  transition: all 200ms ease;
+  border-color: var(--line);
+}
+
+select:hover,
+input[type="text"]:hover,
+input[type="number"]:hover,
+textarea:hover {
+  border-color: #36414d;
+}
+
+select:focus,
+input[type="text"]:focus,
+input[type="number"]:focus,
+textarea:focus {
+  border-color: var(--accent);
+  outline: none;
+  box-shadow: 0 0 0 3px rgba(74, 222, 128, 0.1);
+}
+
 input[type="range"] {
   -webkit-appearance: none;
   appearance: none;
@@ -499,10 +609,26 @@ input[type="range"]:focus-visible {
   padding: 22px 20px;
   cursor: pointer;
   font-family: var(--mono);
-  transition: transform 80ms ease, filter 120ms ease;
+  transition: transform 120ms cubic-bezier(0.34, 1.56, 0.64, 1), filter 120ms ease, box-shadow 200ms ease;
+  position: relative;
+  overflow: hidden;
 }
-.generate:active { transform: translateY(1px) scale(0.995); }
-.generate:disabled { opacity: 0.4; cursor: default; }
+.generate:hover:not(:disabled) {
+  transform: translateY(-2px);
+  filter: brightness(1.1);
+  box-shadow: 0 12px 24px rgba(74, 222, 128, 0.25);
+}
+.generate:active:not(:disabled) {
+  transform: translateY(1px) scale(0.98);
+  box-shadow: 0 4px 12px rgba(74, 222, 128, 0.15);
+}
+.generate:disabled {
+  opacity: 0.4;
+  cursor: default;
+}
+.generate:not(:disabled) {
+  animation: slideInDown 0.6s ease-out;
+}
 
 .generate-label {
   display: block;
@@ -1602,6 +1728,13 @@ input[type="range"]:focus-visible {
   border: 1px solid var(--line);
   border-radius: var(--radius);
   overflow: hidden;
+  animation: slideInUp 0.5s ease-out;
+  transition: all 200ms ease;
+}
+.slate-game:hover {
+  border-color: var(--accent);
+  box-shadow: 0 8px 16px rgba(74, 222, 128, 0.1);
+  transform: translateY(-2px);
 }
 
 .slate-game-time {
@@ -1615,6 +1748,7 @@ input[type="range"]:focus-visible {
   color: var(--muted);
   background: var(--surface-2);
   border-bottom: 1px solid var(--line);
+  transition: all 200ms ease;
 }
 
 .slate-event-label {
@@ -1640,8 +1774,17 @@ input[type="range"]:focus-visible {
   text-transform: uppercase;
   padding: 5px 9px;
   cursor: pointer;
+  transition: all 180ms cubic-bezier(0.34, 1.56, 0.64, 1);
 }
-.more-info-btn:hover { border-color: var(--accent); }
+.more-info-btn:hover {
+  border-color: var(--accent);
+  background: var(--accent-dim);
+  transform: translateY(-1px);
+  box-shadow: 0 4px 8px rgba(74, 222, 128, 0.15);
+}
+.more-info-btn:active {
+  transform: translateY(0px) scale(0.96);
+}
 
 .slate-header-row,
 .slate-team-row {
@@ -1703,14 +1846,29 @@ input[type="range"]:focus-visible {
   padding: 8px 4px;
   text-align: center;
   cursor: pointer;
+  transition: all 180ms cubic-bezier(0.34, 1.56, 0.64, 1);
 }
-.slate-cell:hover { border-color: #36414d; }
+.slate-cell:hover:not(.is-empty) {
+  border-color: #36414d;
+  background: var(--surface);
+  transform: scale(1.05);
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.3);
+}
+.slate-cell:active:not(.is-empty) {
+  transform: scale(0.98);
+}
 
 .slate-cell.is-empty {
   background: transparent;
   border-color: transparent;
   color: var(--muted);
   cursor: default;
+}
+
+.slate-cell.is-rec {
+  background: var(--accent-dim);
+  border-color: var(--accent);
+  color: var(--accent);
 }
 
 /* The algorithm's recommended side of this market — a glowing ring, not just
