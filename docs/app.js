@@ -60,6 +60,54 @@ const RECOMMENDED_UNIT_PCT = 0.02;
 // which makes each one heavier than the old summary rows.
 const HISTORY_LIMIT = 40;
 
+// Self-learning: archive picks and record outcomes
+async function archivePick(pick) {
+  try {
+    const payload = {
+      eventId: pick.eventId,
+      sportKey: pick.sportKey,
+      away: pick.away,
+      home: pick.home,
+      commence_time: pick.commence_time,
+      confidence: Math.round(impliedProb(pick.moneyline || 0)),
+      moneyline: pick.moneyline,
+      analysis: pick.analysis || null,
+      context: {
+        isDayGame: pick.isDayGame || null,
+        pitcherForm: pick.pitcherForm || null,
+      },
+    };
+    await fetch('/api/learning/archive-pick', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload),
+    });
+  } catch (e) {
+    console.debug('Pick archive skipped:', e.message);
+  }
+}
+
+async function recordPickOutcome(eventId, sportKey, result) {
+  try {
+    await fetch('/api/learning/record-outcome', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ eventId, sportKey, result }),
+    });
+  } catch (e) {
+    console.debug('Outcome record skipped:', e.message);
+  }
+}
+
+async function getCalibrationReport() {
+  try {
+    const res = await fetch('/api/learning/calibration');
+    return res.ok ? await res.json() : null;
+  } catch {
+    return null;
+  }
+}
+
 const el = {
   status: document.getElementById('status'),
   generate: document.getElementById('generate'),
@@ -878,6 +926,10 @@ function renderSlate(slate) {
     return;
   }
   el.picks.innerHTML = slate.picks.map(renderPick).join('');
+  // Self-learning: archive picks for calibration tracking
+  slate.picks.forEach((pick) => {
+    archivePick(pick);
+  });
   hydrateInsights();
 }
 

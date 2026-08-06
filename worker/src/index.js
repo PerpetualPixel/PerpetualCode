@@ -782,6 +782,59 @@ export default {
       }
     }
 
+    // Learning endpoints: archive picks and record outcomes
+    if (pathname === '/api/learning/archive-pick' && request.method === 'POST') {
+      try {
+        const pick = await request.json();
+        const pickId = `pick:${pick.eventId}:${pick.sportKey}`;
+        const archive = {
+          ...pick,
+          timestamp: Date.now(),
+        };
+        ctx.waitUntil(env.POTD_KV.put(pickId, JSON.stringify(archive), { expirationTtl: 86400 * 365 }));
+        return json({ archived: true }, { status: 201, headers: cors });
+      } catch (error) {
+        return json({ error: String(error).slice(0, 120) }, { status: 400, headers: cors });
+      }
+    }
+
+    if (pathname === '/api/learning/record-outcome' && request.method === 'POST') {
+      try {
+        const { eventId, sportKey, result } = await request.json();
+        if (!eventId || !sportKey || !result) {
+          return json({ error: 'eventId, sportKey, result required' }, { status: 400, headers: cors });
+        }
+        const pickId = `pick:${eventId}:${sportKey}`;
+        const archived = await env.POTD_KV.get(pickId);
+        if (!archived) {
+          return json({ error: 'Pick not found' }, { status: 404, headers: cors });
+        }
+        const pick = JSON.parse(archived);
+        pick.result = result;
+        pick.resolvedAt = Date.now();
+        ctx.waitUntil(env.POTD_KV.put(pickId, JSON.stringify(pick), { expirationTtl: 86400 * 365 }));
+        return json({ recorded: true }, { status: 200, headers: cors });
+      } catch (error) {
+        return json({ error: String(error).slice(0, 120) }, { status: 400, headers: cors });
+      }
+    }
+
+    if (pathname === '/api/learning/calibration' && request.method === 'GET') {
+      try {
+        // Placeholder: would need to scan picks from KV
+        return json(
+          {
+            note: 'Calibration requires picks database integration',
+            overallAccuracy: null,
+            sampleSize: 0,
+          },
+          { status: 200, headers: cors },
+        );
+      } catch (error) {
+        return json({ error: String(error).slice(0, 120) }, { status: 500, headers: cors });
+      }
+    }
+
     if (pathname === '/odds' || pathname === '/sports') {
       if (request.method !== 'GET') {
         return json({ error: 'Method not allowed' }, { status: 405, headers: cors });

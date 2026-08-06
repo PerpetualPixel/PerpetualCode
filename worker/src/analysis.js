@@ -23,6 +23,7 @@
 import { fetchContext, hasContext } from './context.js';
 import { fetchMmaContext } from './mma.js';
 import { fetchBaseballContext } from './baseball.js';
+import { archivePick } from './learning.js';
 import { tennisRecentForm, tennisHeadToHead } from '../../docs/insights.js';
 
 const MODEL = 'claude-haiku-4-5-20251001';
