@@ -2332,15 +2332,27 @@ function renderFullSlate() {
   renderedSlateCells.length = 0;
   renderedSlateGames.length = 0;
 
-  if (!state.slateLeague) {
-    el.slateBody.innerHTML = `<p class="empty">Select a league above, then tap Load slate.</p>`;
+  // Get all loaded leagues
+  const loaded = loadedSportKeys();
+  let allGames = [];
+
+  // If specific league selected, show that; otherwise show all loaded leagues
+  if (state.slateLeague && loaded.has(state.slateLeague)) {
+    allGames = buildSlateGames(state.slateLeague);
+  } else if (state.slateLeague && !loaded.has(state.slateLeague)) {
+    // Selected league not loaded, show empty
+    el.slateBody.innerHTML = `<p class="empty">Nothing upcoming for this league. Try a different league.</p>`;
     el.slateEventRow.hidden = true;
     return;
+  } else {
+    // No league selected, show all loaded leagues' games
+    for (const league of loaded) {
+      allGames = allGames.concat(buildSlateGames(league));
+    }
   }
 
-  const allGames = buildSlateGames(state.slateLeague);
   if (!allGames.length) {
-    el.slateBody.innerHTML = `<p class="empty">Nothing upcoming for this league right now — check back closer to game time, or pick another league above.</p>`;
+    el.slateBody.innerHTML = `<p class="empty">Nothing upcoming right now — check back closer to game time.</p>`;
     el.slateEventRow.hidden = true;
     return;
   }
@@ -3232,12 +3244,12 @@ el.tabPotd.addEventListener('click', () => setActiveTab('potd'));
   if (CONFIG.WORKER_URL) {
     el.slateStatus.textContent = 'Loading all leagues…';
 
-    // Fetch upcoming (catches most sports) + MMA (not in upcoming)
+    // Fetch all available leagues on startup
     const leaguesToLoad = ['upcoming', 'mma_mixed_martial_arts'];
     await Promise.all(leaguesToLoad.map((league) => fetchSingleLeague(league)));
 
-    // Default to MMA for Full Slate if available, otherwise first loaded league
-    state.slateLeague = 'mma_mixed_martial_arts';
+    // Don't select a specific league - show ALL loaded leagues' games
+    state.slateLeague = null;
     renderSlateLeagueOptions();
     renderFullSlate();
   }
