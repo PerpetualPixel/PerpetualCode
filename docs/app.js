@@ -2838,46 +2838,54 @@ function renderParlaySliders() {
 
 function renderParlayFilters() {
   const bySport = parlaySportOptions();
+  const currentSlateLeague = state.slateLeague || Array.from(bySport.keys())[0];
 
   if (!bySport.size) {
     el.parlaySportsList.innerHTML = `<p class="empty">
-      Nothing loaded yet. Go to Board and tap Generate Picks first.</p>`;
+      Nothing loaded yet. Go to Full Slate and tap Refresh Slate first.</p>`;
     el.parlayEventsList.innerHTML = '';
     el.parlayMarketsList.innerHTML = '';
     return;
   }
 
-  // Render Sports
-  el.parlaySportsList.innerHTML = [...bySport.keys()]
-    .map((sportKey) => {
-      const title = bySport.get(sportKey)?.title || sportKey;
-      const checked = state.parlay.sports?.has(sportKey) ? 'checked' : '';
-      return `
-        <div class="filter-checkbox">
-          <input type="checkbox" id="sport-${esc(sportKey)}"
-                 data-parlay-sport="${esc(sportKey)}" ${checked}>
-          <label for="sport-${esc(sportKey)}">${esc(title)}</label>
-        </div>`;
-    })
-    .join('');
+  // Render Current Sport (read-only)
+  const currentSportInfo = bySport.get(currentSlateLeague);
+  if (!currentSportInfo) {
+    el.parlaySportsList.innerHTML = '<p class="empty">Sport not available</p>';
+    el.parlayEventsList.innerHTML = '';
+    el.parlayMarketsList.innerHTML = '';
+    return;
+  }
 
-  // Render Events (from selected sports)
-  const selectedSports = [...bySport.keys()].filter((s) => state.parlay.sports?.has(s));
-  const allEvents = new Map();
-  selectedSports.forEach((sport) => {
-    state.candidates
-      ?.filter((c) => c.sportKey === sport)
-      .forEach((c) => {
-        const eventKey = `${c.sportKey}|${c.away}|${c.home}`;
-        allEvents.set(eventKey, { sport, away: c.away, home: c.home, sportTitle: c.sportTitle });
-      });
-  });
+  el.parlaySportsList.innerHTML = `
+    <div class="filter-checkbox">
+      <input type="checkbox" id="sport-${esc(currentSlateLeague)}"
+             data-parlay-sport="${esc(currentSlateLeague)}" checked disabled>
+      <label for="sport-${esc(currentSlateLeague)}">${esc(currentSportInfo.title)}</label>
+    </div>`;
+
+  // Auto-select current sport
+  state.parlay.sports.clear();
+  state.parlay.sports.add(currentSlateLeague);
+
+  // Render Events (only from current slate league)
+  const currentSlateLeague = state.slateLeague || Array.from(bySport.keys())[0];
+  const currentLeagueSportKey = currentSlateLeague;
+
+  const currentLeagueEvents = state.candidates
+    ?.filter((c) => c.sportKey === currentLeagueSportKey)
+    .map((c) => {
+      const eventKey = `${c.sportKey}|${c.away}|${c.home}`;
+      return { eventKey, away: c.away, home: c.home, sport: currentLeagueSportKey };
+    })
+    .filter((item, idx, arr) => arr.findIndex((t) => t.eventKey === item.eventKey) === idx) // dedupe
+    || [];
 
   el.parlayEventsList.innerHTML =
-    selectedSports.length === 0
-      ? '<p class="empty">Select sports above</p>'
-      : [...allEvents.entries()]
-          .map(([eventKey, { away, home, sportTitle }]) => {
+    currentLeagueEvents.length === 0
+      ? `<p class="empty">No events loaded for this league. Go to Full Slate and tap Refresh to load games.</p>`
+      : currentLeagueEvents
+          .map(({ eventKey, away, home }) => {
             const checked = state.parlay.events?.has(eventKey) ? 'checked' : '';
             return `
               <div class="filter-checkbox">
@@ -2888,14 +2896,12 @@ function renderParlayFilters() {
           })
           .join('');
 
-  // Render Markets (from selected sports)
+  // Render Markets (from current slate league)
+  const currentMarkets = currentSportInfo?.markets || new Map();
   el.parlayMarketsList.innerHTML =
-    selectedSports.length === 0
-      ? '<p class="empty">Select sports above</p>'
-      : [...bySport.entries()]
-          .filter(([sportKey]) => selectedSports.includes(sportKey))
-          .flatMap(([, { markets }]) => [...markets.entries()])
-          .filter((item, idx, arr) => arr.findIndex((t) => t[1] === item[1]) === idx) // dedupe
+    currentMarkets.size === 0
+      ? '<p class="empty">No markets available</p>'
+      : [...currentMarkets.entries()]
           .map(([, label]) => {
             const checked = state.parlay.markets?.has(label) ? 'checked' : '';
             return `
