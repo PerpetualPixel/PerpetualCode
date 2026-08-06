@@ -1989,40 +1989,52 @@ function renderSlateLeagueOptions() {
 }
 
 /**
- * Group MMA bouts into cards by UFC event name (if available) or by shared
- * start time as a fallback. Each card is labeled with its event name or,
- * for events without UFC metadata, the highest-graded bout.
+ * Filter MMA games to only those with moneyline markets and upcoming dates.
+ * Only includes UFC/PFL events with known event metadata (to filter out noise).
+ */
+function filterMmaGames(games) {
+  const now = Date.now();
+  const twoWeeksMs = 14 * 24 * 60 * 60 * 1000;
+
+  return games.filter((game) => {
+    // Must have moneyline (h2h) odds
+    if (!game.h2h?.away || !game.h2h?.home) return false;
+
+    // Must have UFC event metadata (filters to only recognized UFC/PFL events)
+    if (!game.ufc_event?.event) return false;
+
+    // Must be upcoming (not in the past)
+    if (game.commenceMs < now) return false;
+
+    // Should be within roughly 2 weeks (upcoming events)
+    if (game.commenceMs > now + twoWeeksMs) return false;
+
+    return true;
+  });
+}
+
+/**
+ * Group MMA bouts into cards by UFC event name. Only includes UFC/PFL events
+ * with moneyline markets coming up soon.
  */
 function mmaClusters(games) {
-  // Group by UFC event name first, fall back to commence time
+  // Filter to only UFC/PFL events with markets, coming soon
+  const filtered = filterMmaGames(games);
+  if (!filtered.length) return [];
+
+  // Group by UFC event name
   const byEvent = new Map();
-  for (const game of games) {
-    const eventKey = game.ufc_event?.event || `time-${game.commenceMs}`;
+  for (const game of filtered) {
+    const eventKey = game.ufc_event.event; // Already guaranteed to exist
     if (!byEvent.has(eventKey)) byEvent.set(eventKey, []);
     byEvent.get(eventKey).push(game);
   }
 
-  const bestScore = (game) => Math.max(
-    game.h2h.away?.score ?? 0, game.h2h.home?.score ?? 0,
-    game.spreads.away?.score ?? 0, game.spreads.home?.score ?? 0,
-    game.totals.away?.score ?? 0, game.totals.home?.score ?? 0,
-  );
-
   return [...byEvent.entries()]
     .map(([eventKey, cardGames]) => {
-      const firstGame = cardGames[0];
-      // Use UFC event name if available, otherwise use fighter names
-      let label;
-      if (firstGame.ufc_event?.event) {
-        label = cardGames.length > 1
-          ? `${firstGame.ufc_event.event} — ${cardGames.length} fights`
-          : firstGame.ufc_event.event;
-      } else {
-        const headline = [...cardGames].sort((a, b) => bestScore(b) - bestScore(a))[0];
-        label = cardGames.length > 1
-          ? `${headline.away} vs. ${headline.home} — ${cardGames.length} fights`
-          : `${headline.away} vs. ${headline.home}`;
-      }
+      const label = cardGames.length > 1
+        ? `${eventKey} — ${cardGames.length} fights`
+        : eventKey;
       return { eventKey, games: cardGames, label };
     })
     .sort((a, b) => {
@@ -2052,23 +2064,43 @@ function renderFullSlate() {
 
   let games = allGames;
   const clusters = isMma(state.slateLeague) ? mmaClusters(allGames) : [];
-  el.slateEventRow.hidden = clusters.length < 2;
 
-  if (clusters.length >= 2) {
-    const options = [`<option value="all">All cards — ${allGames.length} fights</option>`]
-      .concat(clusters.map((c) => {
-        const value = c.eventKey;
-        return `<option value="${esc(value)}" ${value === state.slateEvent ? 'selected' : ''}>${esc(c.label)}</option>`;
-      }));
-    el.slateEventSelect.innerHTML = options.join('');
+  // For MMA, only show card selector if we have UFC/PFL events with markets
+  if (isMma(state.slateLeague)) {
+    el.slateEventRow.hidden = clusters.length < 2;
 
-    if (state.slateEvent !== 'all') {
-      const match = clusters.find((c) => c.eventKey === state.slateEvent);
-      games = match ? match.games : allGames;
+    if (clusters.length >= 2) {
+      // Count total fights across all UFC/PFL events
+      const totalFights = clusters.reduce((sum, c) => sum + c.games.length, 0);
+      const options = [`<option value="all">All cards — ${totalFights} fights</option>`]
+        .concat(clusters.map((c) => {
+          const value = c.eventKey;
+          return `<option value="${esc(value)}" ${value === state.slateEvent ? 'selected' : ''}>${esc(c.label)}</option>`;
+        }));
+      el.slateEventSelect.innerHTML = options.join('');
+
+      if (state.slateEvent !== 'all') {
+        const match = clusters.find((c) => c.eventKey === state.slateEvent);
+        // Show only fights from selected event
+        games = match ? match.games : [];
+      } else {
+        // Show all filtered UFC/PFL fights (not the entire allGames list)
+        games = clusters.flatMap(c => c.games);
+      }
+    } else if (clusters.length === 1) {
+      // Only one event, show it without dropdown
+      games = clusters[0].games;
+      el.slateEventRow.hidden = true;
+    } else {
+      // No UFC/PFL events with markets, show empty
+      games = [];
+      el.slateEventRow.hidden = true;
     }
   }
 
-  el.slateBody.innerHTML = games.map(slateGameHtml).join('');
+  el.slateBody.innerHTML = games.length
+    ? games.map(slateGameHtml).join('')
+    : `<p class="empty">No upcoming UFC/PFL events with moneyline markets. Check back soon!</p>`;
 }
 
 /**

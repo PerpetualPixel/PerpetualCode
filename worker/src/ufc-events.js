@@ -1,9 +1,12 @@
 /**
- * Upcoming UFC events mapping — fighter name pairs to event details.
+ * Upcoming UFC and PFL events mapping — fighter name pairs to event details.
  * Updated periodically to enrich MMA odds with promotion/event labels.
  *
- * Source: UFC official schedule
+ * Source: UFC/PFL official schedules
  * Format: normalized fighter names -> { event, date, venue }
+ *
+ * To add PFL events, include fighter pairs from PFL Charlotte, PFL Tampa, etc.
+ * Example: 'fighter a fighter b': { event: 'PFL Charlotte', date: '2026-08-07', venue: '...' }
  */
 
 function normalizeName(name) {
