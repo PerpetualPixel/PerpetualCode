@@ -3243,9 +3243,22 @@ el.tabPotd.addEventListener('click', () => setActiveTab('potd'));
   if (CONFIG.WORKER_URL) {
     el.slateStatus.textContent = 'Loading all leagues…';
 
-    // Fetch all available leagues on startup
-    const leaguesToLoad = ['upcoming', 'mma_mixed_martial_arts'];
-    await Promise.all(leaguesToLoad.map((league) => fetchSingleLeague(league)));
+    // Wait for catalogue to load first
+    await loadCatalogue();
+
+    // Fetch all available leagues on startup (upcoming covers all sports, plus MMA, plus all tennis)
+    const leaguesToLoad = new Set(['upcoming', 'mma_mixed_martial_arts']);
+
+    // Add all tennis tournaments from the catalogue
+    if (state.catalogue) {
+      state.catalogue.forEach((league) => {
+        if (league.key && league.key.startsWith('tennis_')) {
+          leaguesToLoad.add(league.key);
+        }
+      });
+    }
+
+    await Promise.all(Array.from(leaguesToLoad).map((league) => fetchSingleLeague(league)));
 
     // Don't select a specific league - show ALL loaded leagues' games
     state.slateLeague = null;
