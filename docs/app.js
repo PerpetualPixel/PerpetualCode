@@ -13,10 +13,12 @@ import {
   initializePickDatabase,
   logPick,
   logResult,
-  analyzePerformance,
   identifyPatterns,
-  calculateBankroll,
   exportData,
+  getPendingPicks,
+  getPicksByDay,
+  getOverallSummary,
+  gradePick,
 } from './learning.js';
 import {
   RULES,
@@ -60,6 +62,7 @@ const BANKROLL_KEY = 'pixelpick.bankroll.v1';
 const SLATE_LEAGUE_KEY = 'pixelpick.slateLeague.v2';
 const PIXEL_SORT_KEY = 'pixelpick.sort.v1';
 const HISTORY_KEY = 'pixelpick.history.v2';
+const DAY_FILTER_KEY = 'pixelpick.dayFilter.v1';
 // 1-2% of bankroll per unit is the standard range a flat-staking bettor
 // works from; 2% is the more conservative, more commonly cited end of it —
 // used here as the default recommendation when the user hasn't set their own.
@@ -93,6 +96,52 @@ function populateTennisGroups() {
   const wta = LEAGUE_GROUP_BY_ID.get('wta');
   atp.keys = state.catalogue.filter((s) => s.key.startsWith('tennis_atp_')).map((s) => s.key);
   wta.keys = state.catalogue.filter((s) => s.key.startsWith('tennis_wta_')).map((s) => s.key);
+}
+
+const ONE_DAY_MS = 24 * 60 * 60 * 1000;
+
+function isMmaSportKey(sportKey) {
+  return LEAGUE_GROUP_BY_ID.get('mma').keys.includes(sportKey);
+}
+
+/** [start, end) timestamps for the local calendar day 'today' or 'tomorrow' falls on. */
+function dayBounds(which) {
+  const now = new Date();
+  const start = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+  if (which === 'tomorrow') start.setDate(start.getDate() + 1);
+  return [start.getTime(), start.getTime() + ONE_DAY_MS];
+}
+
+/**
+ * Whether a game belongs on the board under the current Today/Tomorrow
+ * toggle. MMA is exempt — cards get announced and sell tickets weeks out, so
+ * it keeps its own longer (~2 week) horizon via filterMmaGames instead of
+ * being scoped to a single day like every other league.
+ */
+function withinDayFilter(commenceMs, sportKey) {
+  if (isMmaSportKey(sportKey)) return true;
+  const [start, end] = dayBounds(state.dayFilter);
+  return commenceMs >= start && commenceMs < end;
+}
+
+function renderDayToggle() {
+  const [tomorrowStart] = dayBounds('tomorrow');
+  el.tomorrowDateLabel.textContent = `(${new Date(tomorrowStart).toLocaleDateString(undefined, { month: 'short', day: 'numeric' })})`;
+  el.dayFilterToday.classList.toggle('is-active', state.dayFilter === 'today');
+  el.dayFilterToday.setAttribute('aria-pressed', String(state.dayFilter === 'today'));
+  el.dayFilterTomorrow.classList.toggle('is-active', state.dayFilter === 'tomorrow');
+  el.dayFilterTomorrow.setAttribute('aria-pressed', String(state.dayFilter === 'tomorrow'));
+}
+
+function setDayFilter(which) {
+  if (state.dayFilter === which) return;
+  state.dayFilter = which;
+  saveJSON(DAY_FILTER_KEY, which);
+  renderDayToggle();
+  renderSlateLeagueOptions();
+  if (state.candidates.length) renderFullSlate();
+  renderParlayFilters();
+  updatePoolLine();
 }
 
 // MLB team name to abbreviation mapping
@@ -303,6 +352,10 @@ const el = {
   bookAll: document.getElementById('bookAll'),
   bookList: document.getElementById('bookList'),
   bookSummary: document.getElementById('bookSummary'),
+  dayFilterBar: document.getElementById('dayFilterBar'),
+  dayFilterToday: document.getElementById('dayFilterToday'),
+  dayFilterTomorrow: document.getElementById('dayFilterTomorrow'),
+  tomorrowDateLabel: document.getElementById('tomorrowDateLabel'),
   tabSlate: document.getElementById('tabSlate'),
   slateView: document.getElementById('slateView'),
   slateStatus: document.getElementById('slateStatus'),
@@ -345,7 +398,9 @@ const el = {
   winRate: document.getElementById('winRate'),
   avgRoi: document.getElementById('avgRoi'),
   currentBankroll: document.getElementById('currentBankroll'),
-  calibration: document.getElementById('calibration'),
+  netProfit: document.getElementById('netProfit'),
+  dailyHistory: document.getElementById('dailyHistory'),
+  checkResultsBtn: document.getElementById('checkResultsBtn'),
   confidenceAnalysis: document.getElementById('confidenceAnalysis'),
   sportAnalysis: document.getElementById('sportAnalysis'),
   recommendations: document.getElementById('recommendations'),
@@ -376,6 +431,14 @@ const state = {
   ),
   // The requestable catalogue, from the worker's free /sports endpoint.
   catalogue: [],
+  // Which calendar day Full Slate, Pixel Picks, and Parlay Builder all pull
+  // from — 'today' or 'tomorrow'. Shared globally rather than per-tab: it's
+  // one "which day am I looking at" question, not three. MMA ignores this
+  // entirely (see withinDayFilter/isMmaSportKey) since cards are announced
+  // and worth showing weeks ahead of a single day toggle.
+  dayFilter: ['today', 'tomorrow'].includes(loadJSON(DAY_FILTER_KEY, 'today'))
+    ? loadJSON(DAY_FILTER_KEY, 'today')
+    : 'today',
   // Research caches. Both are free to fetch — ESPN and a static archive — so
   // they never touch the odds credit budget.
   tennis: new Map(),   // 'atp' | 'wta' -> parsed archive
@@ -2072,7 +2135,7 @@ function buildSlateGames(sportKeys) {
         ufc_event: event.ufc_event,
       };
     })
-    .filter((g) => Number.isFinite(g.commenceMs))
+    .filter((g) => Number.isFinite(g.commenceMs) && withinDayFilter(g.commenceMs, g.sportKey))
     .sort((a, b) => a.commenceMs - b.commenceMs);
 }
 
@@ -2169,10 +2232,14 @@ function loadedSportKeys() {
   return new Set((state.rawEvents ?? []).map((e) => e.sport_key));
 }
 
-/** Total games loaded across every raw key in a league group. */
+/** Games within the current day filter (today/tomorrow, MMA exempt) across a league group's raw keys. */
 function groupGameCount(group) {
   const keys = new Set(group.keys);
-  return (state.rawEvents ?? []).filter((e) => keys.has(e.sport_key)).length;
+  return (state.rawEvents ?? []).filter((e) => {
+    if (!keys.has(e.sport_key)) return false;
+    const commenceMs = new Date(e.commence_time).getTime();
+    return Number.isFinite(commenceMs) && withinDayFilter(commenceMs, e.sport_key);
+  }).length;
 }
 
 /**
@@ -2478,13 +2545,18 @@ function preferredRawKeys() {
   return keys;
 }
 
+/** state.candidates narrowed to the current Today/Tomorrow window (MMA exempt — see withinDayFilter). */
+function dayFilteredCandidates() {
+  return state.candidates.filter((c) => withinDayFilter(c.commenceMs, c.sportKey));
+}
+
 /**
  * Pixel Picks: every league is already loaded (refreshAllLeagues ran at
  * boot), so Generate never fetches — it just re-ranks the pool that's
- * already sitting in state.candidates. Always hands back exactly
- * TOP_PICKS_COUNT picks; topPicks()'s guaranteeCount fills any slots the
- * sharp standard (-250/+250, confidence floor) can't with the next-best
- * candidates available, flagged as such.
+ * already sitting in state.candidates, scoped to the current day filter.
+ * Always hands back exactly TOP_PICKS_COUNT picks; topPicks()'s
+ * guaranteeCount fills any slots the sharp standard (-250/+250, confidence
+ * floor) can't with the next-best candidates available, flagged as such.
  */
 async function generate() {
   el.generate.disabled = true;
@@ -2492,7 +2564,7 @@ async function generate() {
     await enrichTennisAltSpreads();
     updateClvSnapshots();
 
-    const slate = topPicks(state.candidates, {
+    const slate = topPicks(dayFilteredCandidates(), {
       count: CONFIG.TOP_PICKS_COUNT,
       oddsMin: state.oddsMin,
       oddsMax: state.oddsMax,
@@ -2519,7 +2591,7 @@ async function generate() {
 }
 
 function updatePoolLine() {
-  const count = state.candidates.filter(qualifies).length;
+  const count = dayFilteredCandidates().filter(qualifies).length;
   el.poolLine.textContent = `${count} qualifying bet${count === 1 ? '' : 's'} available`;
 }
 
@@ -2556,6 +2628,9 @@ el.picks.addEventListener('click', toggleLegBanner);
 el.parlayResult.addEventListener('click', toggleLegBanner);
 
 el.generate.addEventListener('click', generate);
+
+el.dayFilterToday.addEventListener('click', () => setDayFilter('today'));
+el.dayFilterTomorrow.addEventListener('click', () => setDayFilter('tomorrow'));
 
 el.slateLoad.addEventListener('click', loadSlate);
 el.slateLeagueSelect.addEventListener('change', () => {
@@ -2614,8 +2689,10 @@ if (learningToggle) {
   learningToggle.addEventListener('click', () => openLearningDashboard());
 }
 
+el.checkResultsBtn.addEventListener('click', () => runResultCheck());
+
 el.exportDataBtn.addEventListener('click', async () => {
-  const csv = await exportData(new Date(), new Date());
+  const csv = await exportData(new Date(0), new Date());
   const blob = new Blob([csv], { type: 'text/csv' });
   const url = URL.createObjectURL(blob);
   const a = document.createElement('a');
@@ -3072,6 +3149,10 @@ function setActiveTab(tab) {
     tabs[name].setAttribute('aria-selected', String(active));
   }
 
+  // The day toggle applies to Full Slate/Pixel Picks/Parlay only — Play of
+  // the Day is a single fixed daily pick with no day of its own to choose.
+  el.dayFilterBar.hidden = tab === 'potd';
+
   if (tab === 'potd') loadPotd();
   if (tab === 'parlay') renderParlayFilters();
   // Re-render from whatever's already loaded rather than re-fetching —
@@ -3110,6 +3191,8 @@ async function trackNewPixelPicks(picks) {
       away: leg.away,
       home: leg.home,
       side: leg.selection,
+      outcomeName: leg.outcomeName,
+      point: leg.point,
       marketKey: leg.marketKey,
       american: leg.american,
       decimal: leg.decimal,
@@ -3126,72 +3209,147 @@ async function trackNewPixelPicks(picks) {
   return added;
 }
 
-async function renderLearningDashboard() {
-  const performance = await analyzePerformance();
-  const patterns = await identifyPatterns();
+/**
+ * Fetch scores for every sport with a pending tracked pick and grade
+ * whichever ones are now complete. Safe to call repeatedly — a graded pick's
+ * status is no longer 'pending', so it just drops out of the next pass.
+ */
+async function checkPendingResults() {
+  const pending = await getPendingPicks();
+  if (!pending.length || !CONFIG.WORKER_URL) return { checked: pending.length, graded: 0 };
 
-  if (!performance || performance.gradedPicks === 0) {
-    el.totalPicks.textContent = performance?.totalPicks || '0';
-    el.gradedPicks.textContent = '0';
-    el.winRate.textContent = '—';
-    el.avgRoi.textContent = '—';
-    el.currentBankroll.textContent = '$1,000';
-    el.calibration.textContent = '—';
-    el.recommendations.innerHTML = performance?.totalPicks
-      ? `<div class="rec-item">${performance.totalPicks} pick${performance.totalPicks === 1 ? '' : 's'} tracked today, none graded yet — check back once those games finish.</div>`
-      : `<div class="rec-item">Tap Generate on Pixel Picks — every board's 8 locks are tracked here automatically.</div>`;
-    return;
+  const sportKeys = [...new Set(pending.map((p) => p.sport))];
+  let scoreEvents = [];
+  try {
+    const url = new URL('/scores', CONFIG.WORKER_URL);
+    url.searchParams.set('sports', sportKeys.join(','));
+    const res = await fetch(url, { headers: { Accept: 'application/json' } });
+    if (res.ok) scoreEvents = (await res.json()).events ?? [];
+  } catch (err) {
+    console.error('Score fetch failed:', err);
   }
 
-  // Update summary metrics
-  el.totalPicks.textContent = performance.totalPicks;
-  el.gradedPicks.textContent = performance.gradedPicks;
-  el.winRate.textContent = performance.winRate.toFixed(1) + '%';
-  el.avgRoi.textContent = performance.roi.toFixed(2) + '%';
-  el.currentBankroll.textContent = '$' + (1000 + performance.totalRoi).toFixed(0);
-  el.calibration.textContent = performance.confidenceCalibration.toFixed(1) + '%';
-
-  // Render confidence analysis
-  if (patterns?.byConfidence) {
-    let html = '';
-    for (const level in patterns.byConfidence) {
-      const data = patterns.byConfidence[level];
-      html += `
-        <div class="learning-table-row">
-          <div class="label">${level} (${data.range})</div>
-          <div class="stat">${data.count}</div>
-          <div class="stat win-rate">${data.winRate.toFixed(1)}%</div>
-          <div class="stat roi">${data.avgRoi.toFixed(2)}%</div>
-        </div>
-      `;
-    }
-    el.confidenceAnalysis.innerHTML = html;
+  const byEventId = new Map(scoreEvents.map((e) => [e.id, e]));
+  let graded = 0;
+  for (const pick of pending) {
+    const outcome = gradePick(pick, byEventId.get(pick.eventId));
+    if (!outcome) continue;
+    await logResult(pick.pickId, outcome.won, outcome.payout);
+    graded++;
   }
-
-  // Render sport analysis
-  if (patterns?.bySport) {
-    let html = '';
-    for (const sport in patterns.bySport) {
-      const data = patterns.bySport[sport];
-      html += `
-        <div class="learning-table-row">
-          <div class="label">${sport}</div>
-          <div class="stat">${data.count}</div>
-          <div class="stat win-rate">${data.winRate.toFixed(1)}%</div>
-          <div class="stat roi">${data.avgRoi.toFixed(2)}%</div>
-        </div>
-      `;
-    }
-    el.sportAnalysis.innerHTML = html;
-  }
-
-  el.recommendations.innerHTML = `<div class="rec-item">Every Pixel Picks board tracks automatically — $20/pick against the $1000 simulated bankroll.</div>`;
+  return { checked: pending.length, graded };
 }
 
+function formatSignedMoney(amount) {
+  const sign = amount > 0 ? '+' : amount < 0 ? '−' : '';
+  return `${sign}$${Math.abs(amount).toFixed(2)}`;
+}
+
+function formatSignedPct(pct) {
+  const sign = pct > 0 ? '+' : pct < 0 ? '−' : '';
+  return `${sign}${Math.abs(pct).toFixed(1)}%`;
+}
+
+/** One collapsible day: header shows record/ROI/net at a glance, body lists every pick graded or not. */
+function renderDayBlock(day) {
+  const dateLabel = new Date(`${day.date}T00:00:00`).toLocaleDateString(undefined, {
+    weekday: 'short', month: 'short', day: 'numeric',
+  });
+  const record = `${day.wins}-${day.losses}` + (day.pending ? ` · ${day.pending} pending` : '');
+  const trendClass = day.net > 0 ? 'positive' : day.net < 0 ? 'negative' : '';
+
+  const rows = day.picks.map((p) => {
+    const statusClass = p.status === 'won' ? 'status-won' : p.status === 'lost' ? 'status-lost' : 'status-pending';
+    const statusLabel = p.status === 'won' ? 'WIN' : p.status === 'lost' ? 'LOSS' : 'PENDING';
+    const payoutLabel = p.result ? formatSignedMoney(p.result.payout) : '—';
+    return `
+      <div class="day-pick-row ${statusClass}">
+        <span class="pick-matchup">${esc(p.team)}</span>
+        <span class="pick-side">${esc(p.side)} (${esc(formatAmerican(p.american))})</span>
+        <span class="pick-status">${statusLabel}</span>
+        <span class="pick-payout">${esc(payoutLabel)}</span>
+      </div>`;
+  }).join('');
+
+  return `
+    <details class="day-block">
+      <summary>
+        <span class="day-date">${esc(dateLabel)}</span>
+        <span class="day-record">${esc(record)}</span>
+        <span class="day-roi ${trendClass}">${day.graded ? esc(formatSignedPct(day.roi)) : '—'}</span>
+        <span class="day-net ${trendClass}">${day.graded ? esc(formatSignedMoney(day.net)) : '—'}</span>
+      </summary>
+      <div class="day-picks">${rows}</div>
+    </details>`;
+}
+
+async function renderLearningDashboard() {
+  const overall = await getOverallSummary();
+  const days = await getPicksByDay();
+  const patterns = await identifyPatterns(new Date(0), new Date());
+
+  el.totalPicks.textContent = overall.total;
+  el.gradedPicks.textContent = overall.graded;
+  el.winRate.textContent = overall.graded ? overall.winRate.toFixed(1) + '%' : '—';
+  el.avgRoi.textContent = overall.graded ? formatSignedPct(overall.roi) : '—';
+  el.currentBankroll.textContent = '$' + overall.bankroll.toFixed(0);
+  el.netProfit.textContent = overall.graded ? formatSignedMoney(overall.net) : '—';
+
+  el.dailyHistory.innerHTML = days.length
+    ? days.map(renderDayBlock).join('')
+    : `<p class="empty">No picks tracked yet — tap Generate on Pixel Picks.</p>`;
+
+  const emptyBreakdown = `<p class="empty">Not enough graded picks yet.</p>`;
+
+  if (patterns?.byConfidence && Object.keys(patterns.byConfidence).length) {
+    el.confidenceAnalysis.innerHTML = Object.entries(patterns.byConfidence)
+      .map(([level, data]) => `
+        <div class="learning-table-row">
+          <div class="label">${esc(level)} (${esc(data.range)})</div>
+          <div class="stat">${data.count}</div>
+          <div class="stat win-rate">${data.winRate.toFixed(1)}%</div>
+          <div class="stat roi">${data.avgRoi.toFixed(2)}%</div>
+        </div>`)
+      .join('');
+  } else {
+    el.confidenceAnalysis.innerHTML = emptyBreakdown;
+  }
+
+  if (patterns?.bySport && Object.keys(patterns.bySport).length) {
+    el.sportAnalysis.innerHTML = Object.entries(patterns.bySport)
+      .map(([sport, data]) => `
+        <div class="learning-table-row">
+          <div class="label">${esc(sport)}</div>
+          <div class="stat">${data.count}</div>
+          <div class="stat win-rate">${data.winRate.toFixed(1)}%</div>
+          <div class="stat roi">${data.avgRoi.toFixed(2)}%</div>
+        </div>`)
+      .join('');
+  } else {
+    el.sportAnalysis.innerHTML = emptyBreakdown;
+  }
+
+  el.recommendations.innerHTML = `<div class="rec-item">Every Pixel Picks board tracks automatically — $20/pick against the $1000 simulated bankroll. Tap "Check Results" any time to grade whatever's finished.</div>`;
+}
+
+/** Renders from whatever's cached first (instant), then refreshes with any newly-graded results. */
 async function openLearningDashboard() {
   el.scrim.hidden = false;
   el.learningPanel.hidden = false;
   await renderLearningDashboard();
+  await runResultCheck();
+}
+
+async function runResultCheck() {
+  el.checkResultsBtn.disabled = true;
+  el.checkResultsBtn.textContent = 'Checking…';
+  try {
+    await checkPendingResults();
+    await renderLearningDashboard();
+  } finally {
+    el.checkResultsBtn.textContent = 'Check Results';
+    el.checkResultsBtn.disabled = false;
+  }
 }
 
 /* ---------------------------------------------------------------- */
@@ -3215,6 +3373,7 @@ async function openLearningDashboard() {
   renderBookFilter();
   renderParlaySliders();
   renderHistory();
+  renderDayToggle();
 
   el.slateStatus.textContent = 'Loading all leagues…';
   // Catalogue first — ATP/WTA can't resolve their tournament keys without it.

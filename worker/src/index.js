@@ -184,6 +184,80 @@ async function fetchSport(sport, env, ctx) {
 }
 
 /**
+ * Completed/live scores for a sport, used to grade tracked picks client-side.
+ * `daysFrom=3` is the widest lookback The Odds API's scores endpoint takes —
+ * plenty, since picks are graded the same day or the next. Cached for 5
+ * minutes regardless of CACHE_SECONDS: scores don't need odds-tap freshness,
+ * and this keeps repeated "check results" taps from burning credits.
+ */
+async function fetchScores(sport, env, ctx) {
+  const ttl = 300;
+  const cacheKey = new Request(`https://pixel-pick.cache/scores/${sport}`);
+  const cache = caches.default;
+
+  const cached = await cache.match(cacheKey);
+  if (cached) return { events: await cached.json(), cached: true };
+
+  const url = new URL(`${UPSTREAM}/sports/${sport}/scores`);
+  url.searchParams.set('apiKey', (env.ODDS_API_KEY ?? '').trim());
+  url.searchParams.set('daysFrom', '3');
+  url.searchParams.set('dateFormat', 'iso');
+
+  const upstream = await fetch(url.toString());
+  if (!upstream.ok) {
+    const detail = await upstream.text();
+    return { error: { sport, status: upstream.status, detail: detail.slice(0, 300) } };
+  }
+
+  const events = await upstream.json();
+
+  ctx.waitUntil(
+    cache.put(
+      cacheKey,
+      new Response(JSON.stringify(events), {
+        headers: { 'Content-Type': 'application/json', 'Cache-Control': `max-age=${ttl}` },
+      }),
+    ),
+  );
+
+  return { events, cached: false };
+}
+
+async function handleScores(request, env, ctx, cors) {
+  const { searchParams } = new URL(request.url);
+  const requested = (searchParams.get('sports') ?? '')
+    .split(',')
+    .map((s) => s.trim())
+    .filter(isAllowedSport);
+
+  if (!requested.length) {
+    return json({ error: 'No valid sports requested.' }, { status: 400, headers: cors });
+  }
+
+  const sports = [...new Set(requested)];
+  const results = await Promise.all(sports.map((s) => fetchScores(s, env, ctx)));
+
+  const events = [];
+  const errors = [];
+  for (const result of results) {
+    if (result.error) {
+      errors.push(result.error);
+      continue;
+    }
+    events.push(...result.events);
+  }
+
+  if (!events.length && errors.length) {
+    return json({ error: 'Upstream scores request failed', errors }, { status: 502, headers: cors });
+  }
+
+  return json(
+    { events, sports, errors },
+    { headers: { ...cors, 'Cache-Control': 'public, max-age=300' } },
+  );
+}
+
+/**
  * A tennis event's alternate_spreads market — a wider ladder of game-margin
  * handicaps than the featured 'spreads' market carries, not a sets-won
  * market. (There isn't one: The Odds API's own docs describe
@@ -863,7 +937,7 @@ export default {
       }
     }
 
-    if (pathname === '/odds' || pathname === '/sports') {
+    if (pathname === '/odds' || pathname === '/sports' || pathname === '/scores') {
       if (request.method !== 'GET') {
         return json({ error: 'Method not allowed' }, { status: 405, headers: cors });
       }
@@ -873,9 +947,9 @@ export default {
           { status: 500, headers: cors },
         );
       }
-      return pathname === '/sports'
-        ? handleSports(env, ctx, cors)
-        : handleOdds(request, env, ctx);
+      if (pathname === '/sports') return handleSports(env, ctx, cors);
+      if (pathname === '/scores') return handleScores(request, env, ctx, cors);
+      return handleOdds(request, env, ctx);
     }
 
     return json(

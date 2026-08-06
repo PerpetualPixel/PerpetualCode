@@ -50,6 +50,17 @@
   </button>
 </nav>
 
+<div id="dayFilterBar" class="day-toggle-bar">
+  <span class="day-toggle-label">Showing</span>
+  <div class="day-toggle" role="group" aria-label="Which day's games to show">
+    <button id="dayFilterToday" class="day-toggle-btn is-active" type="button" aria-pressed="true">Today</button>
+    <button id="dayFilterTomorrow" class="day-toggle-btn" type="button" aria-pressed="false">
+      Tomorrow <span id="tomorrowDateLabel"></span>
+    </button>
+  </div>
+  <span class="day-toggle-hint">MMA always shows every card in the next two weeks, regardless of this toggle.</span>
+</div>
+
 <main id="main">
 <section id="slateView" role="tabpanel" aria-labelledby="tabSlate">
   <div id="slateStatus" class="status" role="status" aria-live="polite">
@@ -407,7 +418,7 @@
   <div class="learning-content">
     <!-- Performance Summary -->
     <section class="learning-section">
-      <h3>Today's Performance</h3>
+      <h3>Overall Performance</h3>
       <div id="performanceSummary" class="learning-grid">
         <div class="metric-card">
           <div class="metric-label">Total Picks</div>
@@ -419,21 +430,30 @@
         </div>
         <div class="metric-card">
           <div class="metric-label">Win Rate</div>
-          <div id="winRate" class="metric-value">0%</div>
+          <div id="winRate" class="metric-value">—</div>
         </div>
         <div class="metric-card">
-          <div class="metric-label">Avg ROI</div>
-          <div id="avgRoi" class="metric-value">0%</div>
+          <div class="metric-label">ROI</div>
+          <div id="avgRoi" class="metric-value">—</div>
+        </div>
+        <div class="metric-card">
+          <div class="metric-label">Net $</div>
+          <div id="netProfit" class="metric-value">—</div>
         </div>
         <div class="metric-card">
           <div class="metric-label">Bankroll</div>
           <div id="currentBankroll" class="metric-value">$1,000</div>
         </div>
-        <div class="metric-card">
-          <div class="metric-label">Confidence Cal.</div>
-          <div id="calibration" class="metric-value">0%</div>
-        </div>
       </div>
+    </section>
+
+    <!-- Daily History -->
+    <section class="learning-section">
+      <div class="learning-section-head">
+        <h3>Daily History</h3>
+        <button id="checkResultsBtn" class="link-btn" type="button">Check Results</button>
+      </div>
+      <div id="dailyHistory" class="daily-history"></div>
     </section>
 
     <!-- By Confidence Level -->

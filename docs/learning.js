@@ -86,8 +86,12 @@ export async function logPick(pick, stake = FLAT_UNIT_STAKE) {
     pickId,
     eventId: pick.eventId,
     sport: pick.sportKey,
+    home: pick.home,
+    away: pick.away,
     team: pick.away && pick.home ? `${pick.away} vs ${pick.home}` : 'Unknown',
-    side: pick.side ?? pick.away, // The predicted winner
+    side: pick.side ?? pick.away, // Display string, e.g. "Chiefs +150"
+    outcomeName: pick.outcomeName, // Raw team name ('Over'/'Under' for totals) — what grading matches against
+    point: pick.point ?? null, // Spread/total line, null for moneyline
     marketKey: pick.marketKey,
     american: pick.american,
     decimal: pick.decimal,
@@ -194,55 +198,124 @@ export async function getResultsInRange(startDate, endDate) {
   });
 }
 
+/** Every tracked pick ever, regardless of day or status. */
+export async function getAllPicks() {
+  if (!db) await initializePickDatabase();
+
+  return new Promise((resolve, reject) => {
+    const tx = db.transaction([PICKS_STORE_NAME], 'readonly');
+    const req = tx.objectStore(PICKS_STORE_NAME).getAll();
+    req.onerror = () => reject(req.error);
+    req.onsuccess = () => resolve(req.result);
+  });
+}
+
+/** Every tracked pick still awaiting a graded outcome. */
+export async function getPendingPicks() {
+  if (!db) await initializePickDatabase();
+
+  return new Promise((resolve, reject) => {
+    const tx = db.transaction([PICKS_STORE_NAME], 'readonly');
+    const req = tx.objectStore(PICKS_STORE_NAME).index('statusIndex').getAll('pending');
+    req.onerror = () => reject(req.error);
+    req.onsuccess = () => resolve(req.result);
+  });
+}
+
 /**
- * Analyze performance for a date range.
+ * Decide win/loss for a tracked pick against the matching /scores event, and
+ * the resulting payout. Returns null if the game isn't completed yet, its
+ * score is missing/unparseable, or the result is a push — a push isn't a
+ * win or a loss, so it's left pending rather than graded either way.
  */
-export async function analyzePerformance(startDate = new Date(), endDate = new Date()) {
-  const startOfDay = new Date(startDate);
-  startOfDay.setHours(0, 0, 0, 0);
+export function gradePick(pick, scoreEvent) {
+  if (!scoreEvent?.completed || !Array.isArray(scoreEvent.scores)) return null;
 
-  const endOfDay = new Date(endDate);
-  endOfDay.setHours(23, 59, 59, 999);
+  const scoreFor = (teamName) => {
+    const entry = scoreEvent.scores.find((s) => s.name === teamName);
+    const value = entry ? Number(entry.score) : NaN;
+    return Number.isFinite(value) ? value : null;
+  };
 
-  const picks = await getPicksInRange(startOfDay, endOfDay);
-  const results = await getResultsInRange(startOfDay, endOfDay);
+  const homeScore = scoreFor(pick.home);
+  const awayScore = scoreFor(pick.away);
+  if (homeScore == null || awayScore == null) return null;
 
-  if (results.length === 0) {
-    return {
-      totalPicks: picks.length,
-      gradedPicks: 0,
-      pendingPicks: picks.filter((p) => p.status === 'pending').length,
-      wins: 0,
-      losses: 0,
-      winRate: 0,
-      roi: 0,
-      totalRoi: 0,
-      averageConfidence: 0,
-      confidenceCalibration: 0,
-    };
+  const pickedIsHome = pick.outcomeName === pick.home;
+  const pickedScore = pickedIsHome ? homeScore : awayScore;
+  const otherScore = pickedIsHome ? awayScore : homeScore;
+  const point = pick.point ?? 0;
+
+  let won;
+  if (pick.marketKey === 'h2h') {
+    if (pickedScore === otherScore) return null; // push (extra-innings/OT ties settle it elsewhere)
+    won = pickedScore > otherScore;
+  } else if (pick.marketKey === 'spreads') {
+    const margin = pickedScore + point - otherScore;
+    if (margin === 0) return null; // push
+    won = margin > 0;
+  } else if (pick.marketKey === 'totals') {
+    const total = homeScore + awayScore;
+    if (total === point) return null; // push
+    won = pick.outcomeName === 'Over' ? total > point : total < point;
+  } else {
+    return null; // unrecognized market — leave pending rather than guess
   }
 
-  const wins = results.filter((r) => r.actualOutcome === 'WIN').length;
-  const losses = results.filter((r) => r.actualOutcome === 'LOSS').length;
-  const totalRoi = results.reduce((sum, r) => sum + r.roiPercent, 0);
-  const avgConfidence = picks.reduce((sum, p) => sum + p.confidence, 0) / picks.length;
-  const calibrationError = results.reduce((sum, r) => sum + r.calibrationDelta, 0) / results.length;
+  const payout = won ? (pick.decimal - 1) * pick.suggested_stake : -pick.suggested_stake;
+  return { won, payout };
+}
 
+function summarizePickGroup(picks) {
+  const graded = picks.filter((p) => p.status !== 'pending');
+  const wins = graded.filter((p) => p.status === 'won').length;
+  const losses = graded.filter((p) => p.status === 'lost').length;
+  const staked = graded.reduce((sum, p) => sum + p.suggested_stake, 0);
+  const net = graded.reduce((sum, p) => sum + (p.result?.payout ?? 0), 0);
   return {
-    totalPicks: picks.length,
-    gradedPicks: results.length,
-    pendingPicks: picks.filter((p) => p.status === 'pending').length,
+    picks,
+    total: picks.length,
+    graded: graded.length,
+    pending: picks.length - graded.length,
     wins,
     losses,
-    winRate: (wins / results.length) * 100,
-    roi: totalRoi / results.length,
-    totalRoi,
-    averageConfidence: avgConfidence,
-    confidenceCalibration: calibrationError,
-    dateRange: {
-      start: startOfDay.toISOString().split('T')[0],
-      end: endOfDay.toISOString().split('T')[0],
-    },
+    staked,
+    net,
+    roi: staked ? (net / staked) * 100 : 0,
+  };
+}
+
+/**
+ * Every tracked pick grouped by the calendar day it was generated on (the
+ * stable pickId's own date prefix — see stablePickId — not recordedAt, so a
+ * pick logged a few minutes after midnight still lands in the right day),
+ * most recent day first, each with its own W-L/ROI/net summary.
+ */
+export async function getPicksByDay() {
+  const all = await getAllPicks();
+  const byDay = new Map();
+  for (const pick of all) {
+    const day = pick.pickId.split(':')[0];
+    if (!byDay.has(day)) byDay.set(day, []);
+    byDay.get(day).push(pick);
+  }
+
+  return [...byDay.entries()]
+    .sort((a, b) => b[0].localeCompare(a[0]))
+    .map(([date, picks]) => ({
+      date,
+      ...summarizePickGroup(picks.sort((a, b) => b.recordedAt - a.recordedAt)),
+    }));
+}
+
+/** All-time W-L/ROI/net summary plus the running simulated bankroll. */
+export async function getOverallSummary() {
+  const all = await getAllPicks();
+  const summary = summarizePickGroup(all);
+  return {
+    ...summary,
+    winRate: summary.graded ? (summary.wins / summary.graded) * 100 : 0,
+    bankroll: BANKROLL_INITIAL + summary.net,
   };
 }
 
@@ -325,17 +398,6 @@ export async function identifyPatterns(startDate = new Date(), endDate = new Dat
     byConfidence: confidenceAnalysis,
     bySport: sportAnalysis,
   };
-}
-
-/**
- * Calculate bankroll after a set of picks/results.
- */
-export function calculateBankroll(results) {
-  let bankroll = BANKROLL_INITIAL;
-  for (const result of results) {
-    bankroll += result.payout;
-  }
-  return bankroll;
 }
 
 /**

@@ -2429,3 +2429,182 @@ input[type="range"]:focus-visible {
   font-weight: 600;
   line-height: 1.4;
 }
+
+/* ================================================================ */
+/* Day toggle (Today / Tomorrow)                                    */
+/* ================================================================ */
+
+.day-toggle-bar {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+  padding: 10px 16px;
+  border-bottom: 1px solid var(--line);
+  background: var(--surface-2);
+}
+
+.day-toggle-label {
+  font-family: var(--mono);
+  font-size: 0.7rem;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--muted);
+}
+
+.day-toggle {
+  display: flex;
+  gap: 6px;
+}
+
+.day-toggle-btn {
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  color: var(--muted);
+  font-family: var(--mono);
+  font-size: 0.75rem;
+  font-weight: 600;
+  padding: 7px 12px;
+  cursor: pointer;
+  transition: all 150ms ease;
+}
+
+.day-toggle-btn:hover { color: var(--text); border-color: #36414d; }
+
+.day-toggle-btn.is-active {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: var(--bg);
+}
+
+.day-toggle-hint {
+  font-size: 0.7rem;
+  color: var(--muted);
+  margin-left: auto;
+}
+
+@media (max-width: 640px) {
+  .day-toggle-hint { display: none; }
+}
+
+/* ================================================================ */
+/* Learning Dashboard: Daily History                                 */
+/* ================================================================ */
+
+.learning-section-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 12px;
+}
+
+.learning-section-head h3 { margin: 0; }
+
+.daily-history {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.day-block {
+  background: var(--surface-2);
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  overflow: hidden;
+}
+
+.day-block summary {
+  display: grid;
+  grid-template-columns: 1fr auto auto auto;
+  gap: 10px;
+  align-items: center;
+  padding: 10px 12px;
+  cursor: pointer;
+  font-size: 12px;
+  list-style: none;
+}
+
+.day-block summary::-webkit-details-marker { display: none; }
+
+.day-date {
+  color: var(--text);
+  font-weight: 600;
+}
+
+.day-record {
+  color: var(--muted);
+  font-family: var(--mono);
+}
+
+.day-roi, .day-net {
+  font-family: var(--mono);
+  font-weight: 600;
+  text-align: right;
+  min-width: 60px;
+  color: var(--muted);
+}
+
+.day-roi.positive, .day-net.positive { color: var(--success); }
+.day-roi.negative, .day-net.negative { color: var(--danger); }
+
+.day-picks {
+  border-top: 1px solid var(--line);
+  display: flex;
+  flex-direction: column;
+}
+
+.day-pick-row {
+  display: grid;
+  grid-template-columns: 1fr auto auto auto;
+  gap: 10px;
+  align-items: center;
+  padding: 8px 12px;
+  font-size: 11.5px;
+  border-top: 1px solid var(--line);
+}
+
+.day-pick-row:first-child { border-top: none; }
+
+.pick-matchup {
+  color: var(--text);
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.pick-side {
+  color: var(--muted);
+  font-family: var(--mono);
+}
+
+.pick-status {
+  font-family: var(--mono);
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  text-align: center;
+}
+
+.status-won .pick-status { color: var(--success); }
+.status-lost .pick-status { color: var(--danger); }
+.status-pending .pick-status { color: var(--muted); }
+
+.pick-payout {
+  font-family: var(--mono);
+  font-weight: 600;
+  text-align: right;
+  min-width: 60px;
+}
+
+.status-won .pick-payout { color: var(--success); }
+.status-lost .pick-payout { color: var(--danger); }
+.status-pending .pick-payout { color: var(--muted); }
+
+@media (max-width: 480px) {
+  .day-block summary, .day-pick-row {
+    grid-template-columns: 1fr auto;
+    grid-template-areas: "main main" "extra extra";
+    row-gap: 4px;
+  }
+}
