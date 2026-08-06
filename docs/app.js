@@ -10,6 +10,15 @@ import { CONFIG } from './config.js';
 import { DEMO_EVENTS } from './demo.js';
 import { teamLogoUrl } from './team-logos.js';
 import {
+  initializePickDatabase,
+  logPick,
+  logResult,
+  analyzePerformance,
+  identifyPatterns,
+  calculateBankroll,
+  exportData,
+} from './learning.js';
+import {
   RULES,
   SPORTSBOOKS,
   DEFAULT_BOOKS,
@@ -361,6 +370,18 @@ const el = {
   parlayLegCountLabel: document.getElementById('parlayLegCountLabel'),
   parlayGenerate: document.getElementById('parlayGenerate'),
   parlayResult: document.getElementById('parlayResult'),
+  learningPanel: document.getElementById('learningPanel'),
+  learningPanelClose: document.getElementById('learningPanelClose'),
+  totalPicks: document.getElementById('totalPicks'),
+  gradedPicks: document.getElementById('gradedPicks'),
+  winRate: document.getElementById('winRate'),
+  avgRoi: document.getElementById('avgRoi'),
+  currentBankroll: document.getElementById('currentBankroll'),
+  calibration: document.getElementById('calibration'),
+  confidenceAnalysis: document.getElementById('confidenceAnalysis'),
+  sportAnalysis: document.getElementById('sportAnalysis'),
+  recommendations: document.getElementById('recommendations'),
+  exportDataBtn: document.getElementById('exportDataBtn'),
 };
 
 const state = {
@@ -2686,6 +2707,27 @@ el.bankrollClose.addEventListener('click', () => setBankrollOpen(false));
 el.guideToggle.addEventListener('click', () => setGuideOpen(el.guidePanel.hidden));
 el.guideClose.addEventListener('click', () => setGuideOpen(false));
 
+el.learningPanelClose.addEventListener('click', () => {
+  el.learningPanel.hidden = true;
+  el.scrim.hidden = true;
+});
+
+const learningToggle = document.getElementById('learningToggle');
+if (learningToggle) {
+  learningToggle.addEventListener('click', () => openLearningDashboard());
+}
+
+el.exportDataBtn.addEventListener('click', async () => {
+  const csv = await exportData(new Date(), new Date());
+  const blob = new Blob([csv], { type: 'text/csv' });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = `pixel-pick-history-${new Date().toISOString().split('T')[0]}.csv`;
+  a.click();
+  URL.revokeObjectURL(url);
+});
+
 el.scrim.addEventListener('click', () => {
   if (openAside) setAsideOpen(openAside.panel, openAside.toggle, false);
   el.statsPanel.hidden = true;
@@ -3222,11 +3264,88 @@ el.tabParlay.addEventListener('click', () => setActiveTab('parlay'));
 el.tabPotd.addEventListener('click', () => setActiveTab('potd'));
 
 /* ---------------------------------------------------------------- */
+/* Learning Dashboard                                                */
+/* ---------------------------------------------------------------- */
+
+async function renderLearningDashboard() {
+  const performance = await analyzePerformance();
+  const patterns = await identifyPatterns();
+
+  if (!performance) {
+    el.totalPicks.textContent = '0';
+    el.gradedPicks.textContent = '0';
+    el.winRate.textContent = '0%';
+    el.avgRoi.textContent = '0%';
+    el.currentBankroll.textContent = '$1,000';
+    el.calibration.textContent = '0%';
+    return;
+  }
+
+  // Update summary metrics
+  el.totalPicks.textContent = performance.totalPicks;
+  el.gradedPicks.textContent = performance.gradedPicks;
+  el.winRate.textContent = performance.winRate.toFixed(1) + '%';
+  el.avgRoi.textContent = performance.roi.toFixed(2) + '%';
+  el.currentBankroll.textContent = '$' + (1000 + performance.totalRoi).toFixed(0);
+  el.calibration.textContent = performance.confidenceCalibration.toFixed(1) + '%';
+
+  // Render confidence analysis
+  if (patterns?.byConfidence) {
+    let html = '';
+    for (const level in patterns.byConfidence) {
+      const data = patterns.byConfidence[level];
+      html += `
+        <div class="learning-table-row">
+          <div class="label">${level} (${data.range})</div>
+          <div class="stat">${data.count}</div>
+          <div class="stat win-rate">${data.winRate.toFixed(1)}%</div>
+          <div class="stat roi">${data.avgRoi.toFixed(2)}%</div>
+        </div>
+      `;
+    }
+    el.confidenceAnalysis.innerHTML = html;
+  }
+
+  // Render sport analysis
+  if (patterns?.bySport) {
+    let html = '';
+    for (const sport in patterns.bySport) {
+      const data = patterns.bySport[sport];
+      html += `
+        <div class="learning-table-row">
+          <div class="label">${sport}</div>
+          <div class="stat">${data.count}</div>
+          <div class="stat win-rate">${data.winRate.toFixed(1)}%</div>
+          <div class="stat roi">${data.avgRoi.toFixed(2)}%</div>
+        </div>
+      `;
+    }
+    el.sportAnalysis.innerHTML = html;
+  }
+
+  // Render recommendations (placeholder for now)
+  el.recommendations.innerHTML = '<div class="rec-item">Collecting data — recommendations will appear after 10+ picks.</div>';
+}
+
+async function openLearningDashboard() {
+  el.scrim.hidden = false;
+  el.learningPanel.hidden = false;
+  await renderLearningDashboard();
+}
+
+/* ---------------------------------------------------------------- */
 /* Boot                                                              */
 /* ---------------------------------------------------------------- */
 
 (async function init() {
   if (!checkAuth()) return;
+
+  // Initialize pick database for learning system
+  try {
+    await initializePickDatabase();
+  } catch (err) {
+    console.error('Failed to initialize pick database:', err);
+  }
 
   el.logoutBtn.hidden = !(CONFIG.REQUIRE_AUTH && getToken());
   el.pixelSort.value = state.pixelSort;

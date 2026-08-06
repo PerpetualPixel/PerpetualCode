@@ -28,6 +28,9 @@
     <button id="historyToggle" class="icon-btn" aria-expanded="false" aria-controls="historyPanel">
       History<span id="historyCount" class="badge" hidden>0</span>
     </button>
+    <button id="learningToggle" class="icon-btn" aria-expanded="false" aria-controls="learningPanel">
+      Learning
+    </button>
     <button id="logoutBtn" class="icon-btn" hidden>Sign out</button>
   </div>
 </header>
@@ -431,6 +434,69 @@
     <button id="statsDrawerClose" class="icon-btn" aria-label="Close more stats">✕</button>
   </div>
   <div id="statsDrawerBody" class="stats-body"></div>
+</aside>
+
+<aside id="learningPanel" class="history" aria-label="Learning dashboard" hidden>
+  <div class="history-head">
+    <h2>Learning Dashboard</h2>
+    <button id="learningPanelClose" class="icon-btn" aria-label="Close learning">✕</button>
+  </div>
+
+  <div class="learning-content">
+    <!-- Performance Summary -->
+    <section class="learning-section">
+      <h3>Today's Performance</h3>
+      <div id="performanceSummary" class="learning-grid">
+        <div class="metric-card">
+          <div class="metric-label">Total Picks</div>
+          <div id="totalPicks" class="metric-value">0</div>
+        </div>
+        <div class="metric-card">
+          <div class="metric-label">Graded</div>
+          <div id="gradedPicks" class="metric-value">0</div>
+        </div>
+        <div class="metric-card">
+          <div class="metric-label">Win Rate</div>
+          <div id="winRate" class="metric-value">0%</div>
+        </div>
+        <div class="metric-card">
+          <div class="metric-label">Avg ROI</div>
+          <div id="avgRoi" class="metric-value">0%</div>
+        </div>
+        <div class="metric-card">
+          <div class="metric-label">Bankroll</div>
+          <div id="currentBankroll" class="metric-value">$1,000</div>
+        </div>
+        <div class="metric-card">
+          <div class="metric-label">Confidence Cal.</div>
+          <div id="calibration" class="metric-value">0%</div>
+        </div>
+      </div>
+    </section>
+
+    <!-- By Confidence Level -->
+    <section class="learning-section">
+      <h3>Performance by Confidence</h3>
+      <div id="confidenceAnalysis" class="learning-table"></div>
+    </section>
+
+    <!-- By Sport -->
+    <section class="learning-section">
+      <h3>Performance by Sport</h3>
+      <div id="sportAnalysis" class="learning-table"></div>
+    </section>
+
+    <!-- Learning Recommendations -->
+    <section class="learning-section">
+      <h3>Learning Insights</h3>
+      <div id="recommendations" class="learning-recs"></div>
+    </section>
+
+    <!-- Export Data -->
+    <section class="learning-section">
+      <button id="exportDataBtn" class="action-btn">Export Pick History (CSV)</button>
+    </section>
+  </div>
 </aside>
 
 <script type="module" src="app.js"></script>
