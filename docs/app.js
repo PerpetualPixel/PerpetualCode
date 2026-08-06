@@ -2142,9 +2142,37 @@ function renderFullSlate() {
     }
   }
 
-  el.slateBody.innerHTML = games.length
-    ? games.map(slateGameHtml).join('')
-    : `<p class="empty">No upcoming UFC/PFL events with moneyline markets. Check back soon!</p>`;
+  // Sort games chronologically (by time)
+  games = games.sort((a, b) => a.commenceMs - b.commenceMs);
+
+  // Render chronological slate view
+  if (games.length) {
+    let currentEvent = null;
+    let html = '';
+
+    for (const game of games) {
+      const eventName = game.ufc_event?.event || 'Upcoming Event';
+
+      // Add event header when event changes
+      if (eventName !== currentEvent) {
+        if (currentEvent !== null) {
+          html += '</div>'; // Close previous event section
+        }
+        html += `<div class="slate-event-section"><h3 class="slate-event-header">${esc(eventName)}</h3>`;
+        currentEvent = eventName;
+      }
+
+      html += slateGameHtml(game);
+    }
+
+    if (currentEvent !== null) {
+      html += '</div>'; // Close last event section
+    }
+
+    el.slateBody.innerHTML = html;
+  } else {
+    el.slateBody.innerHTML = `<p class="empty">No upcoming UFC/PFL events with moneyline markets. Check back soon!</p>`;
+  }
 }
 
 /**

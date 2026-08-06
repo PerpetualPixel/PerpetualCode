@@ -1721,20 +1721,45 @@ input[type="range"]:focus-visible {
 
 .slate-load-btn { white-space: nowrap; }
 
-.slate-body { display: grid; gap: 14px; }
+.slate-body {
+  display: flex;
+  flex-direction: column;
+  gap: 0;
+}
+
+/* Chronological event grouping */
+.slate-event-section {
+  margin-bottom: 24px;
+  animation: slideInUp 0.5s ease-out;
+}
+
+.slate-event-header {
+  font-family: var(--mono);
+  font-size: 0.9rem;
+  font-weight: 700;
+  color: var(--accent);
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  margin: 0 0 12px 0;
+  padding: 12px 0;
+  border-bottom: 2px solid var(--accent);
+  animation: slideInDown 0.4s ease-out;
+}
 
 .slate-game {
   background: var(--surface);
   border: 1px solid var(--line);
-  border-radius: var(--radius);
+  border-left: 3px solid var(--surface-2);
+  border-radius: 0;
   overflow: hidden;
-  animation: slideInUp 0.5s ease-out;
+  animation: slideInUp 0.4s ease-out;
   transition: all 200ms ease;
+  margin-bottom: 1px;
 }
 .slate-game:hover {
-  border-color: var(--accent);
-  box-shadow: 0 8px 16px rgba(74, 222, 128, 0.1);
-  transform: translateY(-2px);
+  border-left-color: var(--accent);
+  background: var(--surface-2);
+  transform: translateX(2px);
 }
 
 .slate-game-time {
