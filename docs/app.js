@@ -2862,7 +2862,7 @@ function renderParlaySliders() {
 
 function renderParlayFilters() {
   const bySport = parlaySportOptions();
-  const currentSlateLeague = state.slateLeague || Array.from(bySport.keys())[0];
+  const currentSlateLeague = state.slateLeague || (bySport.size > 0 ? Array.from(bySport.keys())[0] : null);
 
   if (!bySport.size) {
     el.parlaySportsList.innerHTML = `<p class="empty">
