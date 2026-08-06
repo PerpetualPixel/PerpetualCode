@@ -1935,12 +1935,9 @@ function opponentOf(game, cand) {
 function slateGameHtml(game) {
   const idx = renderedSlateGames.push(game) - 1;
   const hasAnyPrice = bestCandidateForGame(game) != null;
-  const eventLabel = game.ufc_event ? `<span class="slate-event-label">${esc(game.ufc_event.event)}</span>` : '';
-
   return `
     <article class="slate-game">
       <div class="slate-game-time">
-        ${eventLabel}
         <span>${esc(dateFmt.format(new Date(game.commenceMs)))}</span>
         ${hasAnyPrice ? `<button type="button" class="more-info-btn" data-more-info="${idx}">More Info</button>` : ''}
       </div>
