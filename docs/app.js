@@ -2002,7 +2002,7 @@ function filterMmaGames(games) {
     // Must have moneyline (h2h) odds
     if (!game.h2h?.away || !game.h2h?.home) return false;
 
-    // Must have UFC event metadata (filters to only recognized UFC/PFL events)
+    // Must have event enrichment (Sherdog or fallback date-based)
     if (!game.ufc_event?.event) return false;
 
     // Must be upcoming (not in the past)

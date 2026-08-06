@@ -1,14 +1,10 @@
 /**
  * Match MMA fighters from Odds API to actual UFC/PFL events.
- * Uses a combination of sources: Sherdog fighter pages for upcoming fights.
+ * Tries Sherdog for known fighters, falls back to date-based grouping.
  */
 
 const SHERDOG = 'https://www.sherdog.com';
-const CACHE_TTL = 3600; // 1 hour
 const UA = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36';
-
-let cachedFighterMap = null;
-let cachedTime = 0;
 
 function normalizeName(name) {
   return String(name ?? '')
@@ -20,9 +16,8 @@ function normalizeName(name) {
 
 /**
  * Search for a fighter on Sherdog and extract their upcoming fights.
- * This gives us the actual event names they're scheduled for.
  */
-async function getFighterUpcomingFights(fighterName, ctx) {
+async function getFighterUpcomingFights(fighterName) {
   try {
     const slug = normalizeName(fighterName).replace(/ /g, '-');
     const response = await fetch(`${SHERDOG}/fighter/${slug}`, {
@@ -38,25 +33,14 @@ async function getFighterUpcomingFights(fighterName, ctx) {
     const upcomingMatch = html.match(/upcoming[\s\S]{0,2000}?event_link/i);
     if (!upcomingMatch) return fights;
 
-    // Extract event links from upcoming section
+    // Extract event links
     const eventPattern = /href="\/events\/([^"]+)"[^>]*>([^<]+)<\/a>/g;
     let match;
 
     while ((match = eventPattern.exec(upcomingMatch[0])) !== null) {
-      const eventSlug = match[1];
       const eventName = match[2].trim();
-
-      // Extract date if available
-      const datePattern = /(\d{1,2}\/\d{1,2}\/\d{4})/;
-      const dateMatch = html.match(datePattern);
-      const date = dateMatch ? dateMatch[1] : null;
-
       if (eventName) {
-        fights.push({
-          event: eventName,
-          slug: eventSlug,
-          date: date,
-        });
+        fights.push({ event: eventName, slug: match[1] });
       }
     }
 
@@ -67,44 +51,47 @@ async function getFighterUpcomingFights(fighterName, ctx) {
 }
 
 /**
- * Build a fighter-pair to event mapping by searching for each fighter.
+ * Format a date from commenceMs for grouping and display.
  */
-async function buildFighterEventMap(fighterA, fighterB, ctx) {
-  const [fightsA, fightsB] = await Promise.all([
-    getFighterUpcomingFights(fighterA, ctx),
-    getFighterUpcomingFights(fighterB, ctx),
-  ]);
-
-  // Find common events (events both fighters are on)
-  for (const fightA of fightsA) {
-    for (const fightB of fightsB) {
-      if (
-        fightA.slug === fightB.slug ||
-        fightA.event.toLowerCase() === fightB.event.toLowerCase()
-      ) {
-        return {
-          event: fightA.event,
-          date: fightA.date,
-        };
-      }
-    }
-  }
-
-  return null;
+function formatEventDate(commenceMs) {
+  const date = new Date(commenceMs);
+  const month = String(date.getUTCMonth() + 1).padStart(2, '0');
+  const day = String(date.getUTCDate()).padStart(2, '0');
+  const year = date.getUTCFullYear();
+  return `${month}/${day}/${year}`;
 }
 
 /**
- * Look up MMA event details for a matchup by fighter names.
- * Searches Sherdog for each fighter's upcoming fights and finds the common event.
+ * Look up MMA event details for a matchup.
+ * Tries Sherdog first; falls back to date-based event naming.
  */
-export async function getUfcEventDetails(fighterA, fighterB, ctx) {
+export async function getUfcEventDetails(fighterA, fighterB, commenceMs) {
   if (!fighterA || !fighterB) return null;
 
   try {
-    const result = await buildFighterEventMap(fighterA, fighterB, ctx);
-    return result;
+    // Try to find on Sherdog
+    const [fightsA, fightsB] = await Promise.all([
+      getFighterUpcomingFights(fighterA),
+      getFighterUpcomingFights(fighterB),
+    ]);
+
+    // Look for common events
+    for (const fightA of fightsA) {
+      for (const fightB of fightsB) {
+        if (fightA.slug === fightB.slug) {
+          return { event: fightA.event };
+        }
+      }
+    }
   } catch (e) {
-    console.error('Failed to get event details:', e);
-    return null;
+    // Fall through to fallback
   }
+
+  // Fallback: return date-based event name for ungrouped/unknown events
+  if (commenceMs) {
+    const dateStr = formatEventDate(commenceMs);
+    return { event: `Event - ${dateStr}` };
+  }
+
+  return null;
 }

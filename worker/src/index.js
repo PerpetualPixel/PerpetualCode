@@ -85,7 +85,14 @@ async function enrichMmaEvents(events, ctx) {
 
   const enriched = await Promise.all(
     events.map(async (event) => {
-      const eventDetails = await getUfcEventDetails(event.home_team, event.away_team, ctx);
+      const commenceMs = event.commence_time
+        ? new Date(event.commence_time).getTime()
+        : null;
+      const eventDetails = await getUfcEventDetails(
+        event.home_team,
+        event.away_team,
+        commenceMs,
+      );
       return eventDetails ? { ...event, ufc_event: eventDetails } : event;
     }),
   );
