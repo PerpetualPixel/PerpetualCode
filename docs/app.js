@@ -348,7 +348,9 @@ const el = {
   potdBody: document.getElementById('potdBody'),
   tabParlay: document.getElementById('tabParlay'),
   parlayView: document.getElementById('parlayView'),
-  parlaySports: document.getElementById('parlaySports'),
+  parlaySportsList: document.getElementById('parlaySportsList'),
+  parlayEventsList: document.getElementById('parlayEventsList'),
+  parlayMarketsList: document.getElementById('parlayMarketsList'),
   parlayOddsMinSlider: document.getElementById('parlayOddsMinSlider'),
   parlayOddsMinLabel: document.getElementById('parlayOddsMinLabel'),
   parlayOddsMaxSlider: document.getElementById('parlayOddsMaxSlider'),
@@ -401,7 +403,9 @@ const state = {
   // time the tab renders, since a saved sportKey could refer to a league
   // that's no longer selected on the Board tab.
   parlay: {
-    sports: new Map(),
+    sports: new Set(),
+    events: new Set(),
+    markets: new Set(),
     ...loadJSON(PARLAY_KEY, { oddsMin: -250, oddsMax: 100, minScore: 60, legCount: 2 }),
   },
   // Bankroll and unit size, purely local — never sent anywhere, only used to
@@ -2832,37 +2836,76 @@ function renderParlaySliders() {
   el.parlayLegCountLabel.textContent = String(state.parlay.legCount);
 }
 
-function renderParlaySports() {
+function renderParlayFilters() {
   const bySport = parlaySportOptions();
 
   if (!bySport.size) {
-    el.parlaySports.innerHTML = `<p class="empty">
-      Nothing loaded yet. Go to Board and tap Generate Picks first — the
-      builder pulls from whatever that board ends up holding.</p>`;
+    el.parlaySportsList.innerHTML = `<p class="empty">
+      Nothing loaded yet. Go to Board and tap Generate Picks first.</p>`;
+    el.parlayEventsList.innerHTML = '';
+    el.parlayMarketsList.innerHTML = '';
     return;
   }
 
-  el.parlaySports.innerHTML = [...bySport.entries()]
-    .map(([sportKey, { title, markets }]) => {
-      const enabled = state.parlay.sports.has(sportKey);
-      const selected = state.parlay.sports.get(sportKey) ?? new Set();
+  // Render Sports
+  el.parlaySportsList.innerHTML = [...bySport.keys()]
+    .map((sportKey) => {
+      const title = bySport.get(sportKey)?.title || sportKey;
+      const checked = state.parlay.sports?.has(sportKey) ? 'checked' : '';
       return `
-        <div class="parlay-sport">
-          <label class="check">
-            <input type="checkbox" data-parlay-sport="${esc(sportKey)}" ${enabled ? 'checked' : ''}>
-            <span><strong>${esc(title)}</strong></span>
-          </label>
-          <div class="parlay-market-row" ${enabled ? '' : 'hidden'}>
-            ${[...markets.entries()].map(([marketKey, label]) => `
-              <label class="check-pill">
-                <input type="checkbox" data-parlay-market="${esc(sportKey)}|${esc(marketKey)}"
-                       ${selected.has(marketKey) ? 'checked' : ''}>
-                <span>${esc(label)}</span>
-              </label>`).join('')}
-          </div>
+        <div class="filter-checkbox">
+          <input type="checkbox" id="sport-${esc(sportKey)}"
+                 data-parlay-sport="${esc(sportKey)}" ${checked}>
+          <label for="sport-${esc(sportKey)}">${esc(title)}</label>
         </div>`;
     })
     .join('');
+
+  // Render Events (from selected sports)
+  const selectedSports = [...bySport.keys()].filter((s) => state.parlay.sports?.has(s));
+  const allEvents = new Map();
+  selectedSports.forEach((sport) => {
+    state.candidates
+      ?.filter((c) => c.sportKey === sport)
+      .forEach((c) => {
+        const eventKey = `${c.sportKey}|${c.away}|${c.home}`;
+        allEvents.set(eventKey, { sport, away: c.away, home: c.home, sportTitle: c.sportTitle });
+      });
+  });
+
+  el.parlayEventsList.innerHTML =
+    selectedSports.length === 0
+      ? '<p class="empty">Select sports above</p>'
+      : [...allEvents.entries()]
+          .map(([eventKey, { away, home, sportTitle }]) => {
+            const checked = state.parlay.events?.has(eventKey) ? 'checked' : '';
+            return `
+              <div class="filter-checkbox">
+                <input type="checkbox" id="event-${esc(eventKey)}"
+                       data-parlay-event="${esc(eventKey)}" ${checked}>
+                <label for="event-${esc(eventKey)}">${esc(away)} vs ${esc(home)}</label>
+              </div>`;
+          })
+          .join('');
+
+  // Render Markets (from selected sports)
+  el.parlayMarketsList.innerHTML =
+    selectedSports.length === 0
+      ? '<p class="empty">Select sports above</p>'
+      : [...bySport.entries()]
+          .filter(([sportKey]) => selectedSports.includes(sportKey))
+          .flatMap(([, { markets }]) => [...markets.entries()])
+          .filter((item, idx, arr) => arr.findIndex((t) => t[1] === item[1]) === idx) // dedupe
+          .map(([, label]) => {
+            const checked = state.parlay.markets?.has(label) ? 'checked' : '';
+            return `
+              <div class="filter-checkbox">
+                <input type="checkbox" id="market-${esc(label)}"
+                       data-parlay-market="${esc(label)}" ${checked}>
+                <label for="market-${esc(label)}">${esc(label)}</label>
+              </div>`;
+          })
+          .join('');
 }
 
 function renderParlayResult(result) {
@@ -2910,29 +2953,41 @@ function generateParlay() {
   renderParlayResult(result);
 }
 
-el.parlaySports.addEventListener('change', (event) => {
-  const sportBox = event.target.closest('input[data-parlay-sport]');
-  if (sportBox) {
-    const sportKey = sportBox.dataset.parlaySport;
-    if (sportBox.checked) {
-      // Default to every market that sport currently offers — the user
-      // narrows down from "all" rather than building up from nothing.
-      const markets = parlaySportOptions().get(sportKey)?.markets;
-      state.parlay.sports.set(sportKey, new Set(markets ? markets.keys() : []));
+// New parlay filter listeners
+el.parlaySportsList.addEventListener('change', (event) => {
+  const checkbox = event.target.closest('[data-parlay-sport]');
+  if (checkbox) {
+    if (checkbox.checked) {
+      state.parlay.sports.add(checkbox.dataset.parlaySport);
     } else {
-      state.parlay.sports.delete(sportKey);
+      state.parlay.sports.delete(checkbox.dataset.parlaySport);
     }
-    renderParlaySports();
-    return;
+    renderParlayFilters();
+    renderParlayResult(buildParlay(state.candidates, state.parlay));
   }
+});
 
-  const marketBox = event.target.closest('input[data-parlay-market]');
-  if (marketBox) {
-    const [sportKey, marketKey] = marketBox.dataset.parlayMarket.split('|');
-    const set = state.parlay.sports.get(sportKey);
-    if (!set) return;
-    if (marketBox.checked) set.add(marketKey);
-    else set.delete(marketKey);
+el.parlayEventsList.addEventListener('change', (event) => {
+  const checkbox = event.target.closest('[data-parlay-event]');
+  if (checkbox) {
+    if (checkbox.checked) {
+      state.parlay.events.add(checkbox.dataset.parlayEvent);
+    } else {
+      state.parlay.events.delete(checkbox.dataset.parlayEvent);
+    }
+    renderParlayResult(buildParlay(state.candidates, state.parlay));
+  }
+});
+
+el.parlayMarketsList.addEventListener('change', (event) => {
+  const checkbox = event.target.closest('[data-parlay-market]');
+  if (checkbox) {
+    if (checkbox.checked) {
+      state.parlay.markets.add(checkbox.dataset.parlayMarket);
+    } else {
+      state.parlay.markets.delete(checkbox.dataset.parlayMarket);
+    }
+    renderParlayResult(buildParlay(state.candidates, state.parlay));
   }
 });
 
@@ -3122,7 +3177,7 @@ function setActiveTab(tab) {
   }
 
   if (tab === 'potd') loadPotd();
-  if (tab === 'parlay') renderParlaySports();
+  if (tab === 'parlay') renderParlayFilters();
   // Re-render from whatever's already cached rather than re-fetching — the
   // slate shares loadOdds()'s own 15-minute cache with Pixel Picks, so
   // switching tabs is never itself a billed call.

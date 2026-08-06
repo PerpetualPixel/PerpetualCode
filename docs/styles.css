@@ -2165,3 +2165,70 @@ input[type="range"]:focus-visible {
     display: none;
   }
 }
+
+/* Parlay Builder Filters */
+.parlay-filters {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  margin-bottom: 16px;
+  padding: 12px;
+  background: var(--surface-2);
+  border-radius: var(--radius);
+}
+
+.filter-section {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.filter-section h3 {
+  margin: 0;
+  font-size: 0.85rem;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  color: var(--accent);
+}
+
+.filter-grid {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.filter-checkbox {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 10px;
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  cursor: pointer;
+  font-size: 0.8rem;
+  transition: all 150ms ease;
+  user-select: none;
+}
+
+.filter-checkbox:hover {
+  border-color: var(--accent);
+  background: var(--surface-2);
+}
+
+.filter-checkbox input[type="checkbox"] {
+  margin: 0;
+  cursor: pointer;
+}
+
+.filter-checkbox input[type="checkbox"]:checked + label {
+  color: var(--accent);
+  font-weight: 600;
+}
+
+.filter-checkbox label {
+  margin: 0;
+  cursor: pointer;
+  flex: 1;
+}
