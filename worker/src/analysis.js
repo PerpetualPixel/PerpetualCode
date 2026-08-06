@@ -113,8 +113,8 @@ function tennisFactSheet(data, awayName, homeName) {
   return lines.join('\n');
 }
 
-function buildPrompt({ away, home, sportTitle, factSheet }) {
-  return `You are a sports analyst writing a short matchup breakdown for a sports app. Nobody reading this is asking about betting odds, point spreads, moneylines, or market pricing — only about the actual teams or players.
+function buildPrompt({ away, home, sportTitle, factSheet, isMma = false }) {
+  let basePrompt = `You are a sports analyst writing a short matchup breakdown for a sports app. Nobody reading this is asking about betting odds, point spreads, moneylines, or market pricing — only about the actual teams or players.
 
 Matchup: ${away} at ${home} (${sportTitle})
 
@@ -122,6 +122,31 @@ Known facts:
 ${factSheet}
 
 Write a 5-to-10-sentence analysis of this matchup using only the facts above. Take a clear position on which side has the edge and explain why in plain terms — form, head-to-head history, injuries, or statistical tendencies. Do not mention betting odds, spreads, moneylines, implied probability, vig, or market pricing anywhere in your answer — this is a team/player analysis, not a price analysis. Write flowing prose in a confident, analytical voice, not a bulleted list. If the facts are thin, say so plainly rather than inventing detail.`;
+
+  if (isMma) {
+    basePrompt += `
+
+ADDITIONAL REQUIREMENT FOR MMA:
+After the main analysis, provide a JSON object on the last line (and only the last line) with this exact structure:
+{
+  "victoryMethods": {
+    "${away}": [
+      {"method": "SUB", "reasoning": "reason why this fighter might win by submission"},
+      {"method": "DEC", "reasoning": "reason why this fighter might win by decision"},
+      {"method": "TKO", "reasoning": "reason why this fighter might win by TKO"}
+    ],
+    "${home}": [
+      {"method": "SUB", "reasoning": "reason why this fighter might win by submission"},
+      {"method": "DEC", "reasoning": "reason why this fighter might win by decision"},
+      {"method": "TKO", "reasoning": "reason why this fighter might win by TKO"}
+    ]
+  }
+}
+
+The methods should be the TOP 3 most likely ways each fighter can win. Methods are: SUB (submission), DEC (decision), TKO (TKO/KO). Only include the JSON, no other text after the analysis.`;
+  }
+
+  return basePrompt;
 }
 
 async function callClaude(prompt, env) {
@@ -178,8 +203,13 @@ export async function getOrGenerateAnalysis(candidate, env, ctx, now = Date.now(
   }
   if (!factSheet) return null;
 
+  const isMma = isMmaSport(candidate.sportKey);
   const prompt = buildPrompt({
-    away: candidate.away, home: candidate.home, sportTitle: candidate.sportTitle ?? candidate.sportKey, factSheet,
+    away: candidate.away,
+    home: candidate.home,
+    sportTitle: candidate.sportTitle ?? candidate.sportKey,
+    factSheet,
+    isMma,
   });
 
   let text;
@@ -190,6 +220,26 @@ export async function getOrGenerateAnalysis(candidate, env, ctx, now = Date.now(
   }
   if (!text) return null;
 
-  ctx.waitUntil(env.POTD_KV.put(kvKey, text, { expirationTtl: 86400 * CACHE_TTL_DAYS }));
-  return text;
+  // For MMA, extract victory methods from the response
+  let result = text;
+  if (isMma) {
+    try {
+      const lines = text.split('\n');
+      const lastLine = lines[lines.length - 1].trim();
+      if (lastLine.startsWith('{')) {
+        const victoryData = JSON.parse(lastLine);
+        const analysis = lines.slice(0, -1).join('\n').trim();
+        result = JSON.stringify({
+          analysis,
+          victoryMethods: victoryData.victoryMethods,
+        });
+      }
+    } catch (e) {
+      // If parsing fails, just return the text as-is
+      result = text;
+    }
+  }
+
+  ctx.waitUntil(env.POTD_KV.put(kvKey, result, { expirationTtl: 86400 * CACHE_TTL_DAYS }));
+  return result;
 }

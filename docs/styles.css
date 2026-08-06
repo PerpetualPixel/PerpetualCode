@@ -1261,6 +1261,56 @@ input[type="range"]:focus-visible {
   border-top-color: var(--warn);
 }
 
+.stats-section.victory-methods h4 {
+  font-size: 0.9rem;
+  color: #a8b5c2;
+  margin: 12px 0 10px 0;
+  font-weight: 600;
+}
+
+.victory-fighters {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 16px;
+  margin-top: 8px;
+}
+
+.victory-fighter {
+  padding: 10px;
+  background: var(--surface-2);
+  border-radius: 6px;
+}
+
+.victory-fighter .fighter-name {
+  font-size: 0.82rem;
+  font-weight: 600;
+  color: #e4e9f0;
+  margin-bottom: 8px;
+  display: block;
+}
+
+.victory-list {
+  list-style: none;
+  padding: 0;
+  margin: 0;
+}
+
+.victory-list li {
+  font-size: 0.78rem;
+  color: #cbd5df;
+  margin-bottom: 6px;
+  line-height: 1.4;
+}
+
+.victory-list li:last-child {
+  margin-bottom: 0;
+}
+
+.victory-list strong {
+  color: #a8b5c2;
+  font-weight: 600;
+}
+
 .stats-table-scroll {
   overflow-x: auto;
   border: 1px solid var(--line);

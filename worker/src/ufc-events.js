@@ -1,10 +1,9 @@
+import { UPCOMING_UFC_EVENTS, findUfcEventForFight } from './ufc-events-upcoming.js';
+
 /**
  * Match MMA fighters from Odds API to actual UFC/PFL events.
- * Tries Sherdog for known fighters, falls back to date-based grouping.
+ * Uses official event mapping maintained in ufc-events-upcoming.js
  */
-
-const SHERDOG = 'https://www.sherdog.com';
-const UA = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36';
 
 function normalizeName(name) {
   return String(name ?? '')
@@ -15,43 +14,7 @@ function normalizeName(name) {
 }
 
 /**
- * Search for a fighter on Sherdog and extract their upcoming fights.
- */
-async function getFighterUpcomingFights(fighterName) {
-  try {
-    const slug = normalizeName(fighterName).replace(/ /g, '-');
-    const response = await fetch(`${SHERDOG}/fighter/${slug}`, {
-      headers: { 'User-Agent': UA },
-    });
-
-    if (!response.ok) return [];
-
-    const html = await response.text();
-    const fights = [];
-
-    // Look for upcoming fights section
-    const upcomingMatch = html.match(/upcoming[\s\S]{0,2000}?event_link/i);
-    if (!upcomingMatch) return fights;
-
-    // Extract event links
-    const eventPattern = /href="\/events\/([^"]+)"[^>]*>([^<]+)<\/a>/g;
-    let match;
-
-    while ((match = eventPattern.exec(upcomingMatch[0])) !== null) {
-      const eventName = match[2].trim();
-      if (eventName) {
-        fights.push({ event: eventName, slug: match[1] });
-      }
-    }
-
-    return fights;
-  } catch (e) {
-    return [];
-  }
-}
-
-/**
- * Format a date from commenceMs for grouping and display.
+ * Format a date from commenceMs for fallback grouping.
  */
 function formatEventDate(commenceMs) {
   const date = new Date(commenceMs);
@@ -62,31 +25,18 @@ function formatEventDate(commenceMs) {
 
 /**
  * Look up MMA event details for a matchup.
- * Tries Sherdog first; falls back to date-based event naming.
+ * First tries official UFC events list, then falls back to date grouping.
  */
 export async function getUfcEventDetails(fighterA, fighterB, commenceMs) {
   if (!fighterA || !fighterB) return null;
 
-  try {
-    // Try to find on Sherdog
-    const [fightsA, fightsB] = await Promise.all([
-      getFighterUpcomingFights(fighterA),
-      getFighterUpcomingFights(fighterB),
-    ]);
-
-    // Look for common events
-    for (const fightA of fightsA) {
-      for (const fightB of fightsB) {
-        if (fightA.slug === fightB.slug) {
-          return { event: fightA.event };
-        }
-      }
-    }
-  } catch (e) {
-    // Fall through to fallback
+  // Try to match against official UFC events
+  const officialEvent = findUfcEventForFight(fighterA, fighterB);
+  if (officialEvent) {
+    return { event: officialEvent };
   }
 
-  // Fallback: return date-based event name for ungrouped/unknown events
+  // Fallback: return date-based event name for fights not yet in mapping
   if (commenceMs) {
     const dateStr = formatEventDate(commenceMs);
     return { event: `Card - ${dateStr}` };

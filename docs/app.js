@@ -1594,6 +1594,7 @@ async function openStatsDrawer(leg, opposite = null, { fullscreen = false } = {}
   let mmaBreakdownHtml = '';
   let tennisBreakdownHtml = '';
   let analysisText = null;
+  let victoryMethods = null;
   try {
     const analysisPromise = matchupAnalysisFor(leg);
     if (isTennis(leg.sportKey)) {
@@ -1610,10 +1611,52 @@ async function openStatsDrawer(leg, opposite = null, { fullscreen = false } = {}
       weather = w;
       bullets = buildInsights(leg, { context, weather });
     }
-    analysisText = await analysisPromise;
+    const analysis = await analysisPromise;
+    // Parse MMA analysis which includes victory methods
+    if (isMma(leg.sportKey) && analysis) {
+      try {
+        const parsed = JSON.parse(analysis);
+        if (parsed.analysis && parsed.victoryMethods) {
+          analysisText = parsed.analysis;
+          victoryMethods = parsed.victoryMethods;
+        } else {
+          analysisText = analysis;
+        }
+      } catch {
+        analysisText = analysis;
+      }
+    } else {
+      analysisText = analysis;
+    }
   } catch {
     /* Research is a bonus; the price case and book table still stand alone. */
   }
+
+  // Build victory methods HTML for MMA
+  const victoryMethodsHtml = victoryMethods
+    ? `
+      <div class="stats-section victory-methods">
+        <h4>Expected Methods of Victory</h4>
+        <div class="victory-fighters">
+          <div class="victory-fighter">
+            <div class="fighter-name">${esc(leg.away)}</div>
+            <ul class="victory-list">
+              ${(victoryMethods[leg.away] || [])
+                .map((v) => `<li><strong>${esc(v.method)}</strong>: ${esc(v.reasoning)}</li>`)
+                .join('')}
+            </ul>
+          </div>
+          <div class="victory-fighter">
+            <div class="fighter-name">${esc(leg.home)}</div>
+            <ul class="victory-list">
+              ${(victoryMethods[leg.home] || [])
+                .map((v) => `<li><strong>${esc(v.method)}</strong>: ${esc(v.reasoning)}</li>`)
+                .join('')}
+            </ul>
+          </div>
+        </div>
+      </div>`
+    : '';
 
   // The AI-written matchup analysis replaces the quantitative price case
   // entirely when it's available (see worker/src/analysis.js) — falls back
@@ -1624,6 +1667,7 @@ async function openStatsDrawer(leg, opposite = null, { fullscreen = false } = {}
       <div class="stats-section">
         <h3>Matchup Analysis <span class="stats-source">AI-written, once daily</span></h3>
         <p class="analysis-text">${esc(analysisText)}</p>
+        ${victoryMethodsHtml}
         ${stake ? `<div class="stake-line">${esc(stake)}</div>` : ''}
       </div>`
     : `
