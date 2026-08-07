@@ -53,11 +53,26 @@ new_sqlite_classes = ["QuotaManager"]
 binding = "POTD_KV"
 id = "15a94259af1c4d4cb4bc19076d0be2d9"
 
-# Runs hourly rather than at the two exact target times, because Cron Triggers
-# are UTC-only and the target times are ET wall-clock (8am / 7pm), which shift
-# by an hour across DST — an hourly tick lets the handler itself check current
-# ET time via Intl and only do real work in the matching hour, so the schedule
-# stays correct across DST without needing two separate UTC crons maintained
-# by hand twice a year.
+# Runs every 20 minutes rather than at the exact target times, because Cron
+# Triggers are UTC-only and the target times are ET wall-clock (2am/3am/4am/
+# 7am), which shift by an hour across DST — a frequent tick lets the handler
+# itself check current ET time via Intl and only do the once-daily/once-
+# weekly work in the matching hour, so the schedule stays correct across DST
+# without needing separate UTC crons maintained by hand twice a year.
+#
+# 20 minutes (not hourly) is deliberate: the CLV snapshot + grading pass
+# (tracking.js's runClvSnapshot/runGrading and their Full Slate/POTD
+# equivalents) is what actually benefits from a shorter interval — a pick
+# gets graded within 20 minutes of its game ending instead of sitting
+# "pending" for up to an hour. This roughly triples the Odds API credits that
+# heartbeat spends (each tick is a cache miss against the 900s odds cache and
+# 300s scores cache either way, hourly or every 20 min, so more ticks = more
+# real upstream calls) — the once-daily 2am batch generation and 4am prewarm
+# are unaffected, since those are gated to a single matching hour regardless
+# of tick frequency. Checked live before changing this: ~17,167 of a ~20,000
+# credit budget remaining, comfortable headroom for the 3x increase. If
+# credits start running tight, widen this back toward "*/30" or "0 * * * *"
+# before touching CACHE_SECONDS (900s) below — cache duration is the bigger
+# lever per the comment above it.
 [triggers]
-crons = ["0 * * * *"]
+crons = ["*/20 * * * *"]

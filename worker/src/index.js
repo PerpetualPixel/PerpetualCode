@@ -467,12 +467,35 @@ function etWeekday(ms) {
   return days.indexOf(fmt.format(ms));
 }
 
+/**
+ * True only on the first of the three ticks now landing within any given
+ * hour (the cron fires every 20 minutes — see wrangler.toml). ET's offset
+ * from UTC is always a whole number of hours (never a fractional-hour
+ * shift), so the UTC minute of "top of the ET hour" is always :00 regardless
+ * of DST — no ET-specific minute lookup needed, just the UTC minute.
+ *
+ * Every once-per-day/week gated block below (2am/3am/4am ET, Monday 7am ET)
+ * needs this in addition to its own etHour/etWeekday check: those blocks'
+ * own idempotency (a manifest/KV key already written today) only guards the
+ * WORK each batch does, not the fetch that feeds it — runTop5Batch and
+ * friends all share one fetchFullSlateEvents() call made unconditionally
+ * before any of them run, and that fetch alone reaches every sport at real
+ * Odds-API cost. Without this gate, three ticks in the target hour would
+ * mean three full-slate fetches a day instead of one, even though the
+ * batches themselves would still only ever generate picks once.
+ */
+function isTopOfHour(ms) {
+  return new Date(ms).getUTCMinutes() === 0;
+}
+
 export default {
   /**
-   * Fires hourly (see wrangler.toml's [triggers]) — most ticks are a no-op.
-   * etHour checks the actual ET wall-clock hour, so every gated task below
-   * self-corrects across DST without a UTC cron needing hand-maintenance
-   * twice a year.
+   * Fires every 20 minutes (see wrangler.toml's [triggers]) — most ticks are
+   * a no-op for the once-daily/once-weekly gated tasks below. etHour/
+   * etWeekday check the actual ET wall-clock, so every gated task self-
+   * corrects across DST without a UTC cron needing hand-maintenance twice a
+   * year, and still only fires once per matching hour even though the cron
+   * itself ticks 3x within that hour.
    */
   async scheduled(event, env, ctx) {
     const now = event.scheduledTime ?? Date.now();
@@ -484,7 +507,7 @@ export default {
     // cache warm, not a bigger pull than normal — it fetches exactly what
     // 'upcoming' already means, once, and normal on-demand 15-minute
     // caching carries the rest of the day exactly as it does today.
-    if (etHour(now) === MORNING_PREWARM_HOUR) {
+    if (etHour(now) === MORNING_PREWARM_HOUR && isTopOfHour(now)) {
       ctx.waitUntil(fetchSport('upcoming', env, ctx));
     }
 
@@ -494,7 +517,7 @@ export default {
     // request's own schedule/situational calls blew Cloudflare's per-
     // invocation subrequest cap (confirmed live). The result is one KV blob;
     // a live /mlb-stats request only ever reads it, never re-fetches it.
-    if (etHour(now) === MLB_LEAGUE_STATS_HOUR) {
+    if (etHour(now) === MLB_LEAGUE_STATS_HOUR && isTopOfHour(now)) {
       ctx.waitUntil(refreshMlbLeagueStats(env, ctx));
     }
 
@@ -507,8 +530,13 @@ export default {
     // charges, and the same race-prone subrequest-stampede risk the MMA
     // schedule bug earlier had) for the same data. Each batch is itself
     // idempotent per ET day (checks its own manifest/KV key), so a retried
-    // or overlapping tick can't double-generate any of the three.
-    if (etHour(now) === TOP5_BATCH_HOUR) {
+    // or overlapping tick can't double-generate any of the three — but that
+    // idempotency guards the WORK, not this fetch: fetchFullSlateEvents()
+    // below runs unconditionally, at real Odds-API cost, before any of the
+    // three batches gets a chance to no-op. isTopOfHour keeps this to one
+    // real fetch a day even with the cron now ticking 3x within the 2am
+    // hour (see isTopOfHour's own comment).
+    if (etHour(now) === TOP5_BATCH_HOUR && isTopOfHour(now)) {
       const sharedSlate = fetchFullSlateEvents(env, ctx);
       const fetchFullSlate = () => sharedSlate;
       ctx.waitUntil(runTop5Batch(env, ctx, now, { fetchFullSlate }));
@@ -518,12 +546,15 @@ export default {
       );
     }
 
-    // Every hour: refresh the closing-line snapshot for whatever's still
-    // pending and not yet underway, and grade whatever now has a completed
-    // score. Safe to run every tick for all three trackers — CLV only
-    // touches games that haven't started, grading only touches picks still
-    // pending — so there's no "already ran today" gate needed the way the
-    // 2am batch has.
+    // Every tick (now every 20 min, not gated to the top of the hour): refresh
+    // the closing-line snapshot for whatever's still pending and not yet
+    // underway, and grade whatever now has a completed score. This is the
+    // one block that's meant to benefit from the faster cron — a pick gets
+    // graded within 20 minutes of its game ending instead of sitting
+    // "pending" for up to an hour. Safe to run every tick for all three
+    // trackers — CLV only touches games that haven't started, grading only
+    // touches picks still pending — so there's no "already ran today" gate
+    // needed the way the 2am batch has.
     ctx.waitUntil(runClvSnapshot(env, ctx, now));
     ctx.waitUntil(runGrading(env, ctx, now));
     ctx.waitUntil(runPotdClvSnapshot(env, ctx, now));
@@ -539,7 +570,7 @@ export default {
     // shipped default) one global EV/Kelly/score floor if overall
     // performance is weak. runAlgoHealthReview is itself idempotent per ISO
     // week, so a retried or overlapping tick can't double-act.
-    if (etWeekday(now) === ALGO_HEALTH_WEEKDAY && etHour(now) === ALGO_HEALTH_HOUR) {
+    if (etWeekday(now) === ALGO_HEALTH_WEEKDAY && etHour(now) === ALGO_HEALTH_HOUR && isTopOfHour(now)) {
       ctx.waitUntil(
         runAlgoHealthReview(env, ctx, now, {
           getPicks: () => getAllTrackedPicks(env, { now, days: HEALTH_WINDOW_DAYS }),
