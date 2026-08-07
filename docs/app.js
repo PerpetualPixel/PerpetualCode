@@ -1668,7 +1668,8 @@ const aboutBuildFmt = new Intl.DateTimeFormat(undefined, {
 function renderAboutPanel() {
   const built = new Date(BUILD_INFO.builtAt);
   const when = Number.isNaN(built.getTime()) ? 'unknown' : aboutBuildFmt.format(built);
-  el.aboutVersion.textContent = `Build ${BUILD_INFO.commit} · ${when}`;
+  el.aboutVersion.textContent = `Version ${BUILD_INFO.version} · ${when}`;
+  el.aboutVersion.title = `commit ${BUILD_INFO.commit}`;
 }
 
 function setAboutOpen(open) {
