@@ -40,7 +40,7 @@
     Full Slate
   </button>
   <button id="tabBoard" class="top-tab" role="tab" aria-selected="false" aria-controls="boardView">
-    Pixel Picks
+    Pixel's Picks
   </button>
   <button id="tabParlay" class="top-tab" role="tab" aria-selected="false" aria-controls="parlayView">
     Parlay Builder
@@ -65,7 +65,7 @@
 <section id="slateView" role="tabpanel" aria-labelledby="tabSlate">
   <div id="slateStatus" class="status" role="status" aria-live="polite">
     Every game, every market — nothing here is filtered by odds or confidence.
-    That's what the Pixel Picks tab is for.
+    That's what the Pixel's Picks tab is for.
   </div>
 
   <div class="slate-controls">
@@ -102,54 +102,11 @@
 <section id="boardView" role="tabpanel" aria-labelledby="tabBoard" hidden>
   <p class="filter-hint parlay-intro">
     Up to 8 locks — sharp range −250/+250, positive EV, and a real Kelly edge
-    required, drawn from every league regardless of what's checked below.
-    Sports Preference just nudges which ones win close calls; nothing here
-    ever pads out to 8 with a bet that isn't actually worth taking. Every
-    game regardless of price lives on the Full Slate tab.
+    required, drawn from every league and every sportsbook automatically.
+    Nothing here ever pads out to 8 with a bet that isn't actually worth
+    taking. Every game regardless of price lives on the Full Slate tab.
   </p>
   <div id="status" class="status" role="status" aria-live="polite">Loading the board…</div>
-
-  <!-- Filters: sports preference (a ranking nudge, not a fetch limit) and which books to price at. -->
-  <section class="filters">
-    <div class="filter-tabs">
-      <button id="leagueToggle" class="filter-tab" aria-expanded="false" aria-controls="leaguePanel">
-        Sports Preference <span id="leagueSummary" class="filter-count">no preference</span>
-      </button>
-      <button id="bookToggle" class="filter-tab" aria-expanded="false" aria-controls="bookPanel">
-        Sportsbooks <span id="bookSummary" class="filter-count">7</span>
-      </button>
-    </div>
-
-    <div id="leaguePanel" class="filter-panel" hidden>
-      <div class="filter-head">
-        <span class="filter-cost">Nudges ranking only — every league always loads</span>
-        <button type="button" id="leagueReset" class="link-btn">Clear</button>
-      </div>
-      <div id="leagueList" class="check-grid"></div>
-      <p class="filter-hint">
-        Check any sports you'd like the algorithm to favor when picks are
-        close. Nothing here limits what loads — every league is always on the
-        board.
-      </p>
-    </div>
-
-    <div id="bookPanel" class="filter-panel" hidden>
-      <label class="check check-all">
-        <input type="checkbox" id="bookAll">
-        <span>Select all sportsbooks</span>
-      </label>
-      <div id="bookList" class="check-grid"></div>
-      <p class="filter-hint">
-        Every pick shows a button per book you use. Books that aren't pricing
-        that exact line are shown greyed out.
-      </p>
-    </div>
-  </section>
-
-  <button id="generate" class="generate" disabled>
-    <span class="generate-label">Generate Picks</span>
-    <span id="poolLine" class="generate-sub">—</span>
-  </button>
 
   <div class="sort-row" hidden id="pixelSortRow">
     <label class="sort-label" for="pixelSort">Sort</label>
@@ -349,8 +306,8 @@
       <p>The same bet is often priced slightly differently at different books.
       "Line shopping" — checking several and taking the best number — costs
       nothing extra and is one of the most reliable ways to improve results
-      over time. Every pick shows a button per book you've selected under
-      Sportsbooks; greyed-out ones simply aren't offering that exact line.</p>
+      over time. Every pick shows a button per sportsbook; greyed-out ones
+      simply aren't offering that exact line.</p>
     </details>
 
     <details>
@@ -361,8 +318,9 @@
       that number instead — smoother, and still scaled to the size of the
       edge. A bigger suggested stake means a bigger edge, not just a bigger
       favorite.</p>
-      <p>Set a bankroll under the Bankroll button to see that suggestion as a
-      real dollar amount or a number of units instead of just a percentage.</p>
+      <p>Set a bankroll and a unit size under the Bankroll button to see that
+      suggestion as a recommended number of units to bet instead of just a
+      percentage.</p>
     </details>
 
     <details>
@@ -388,9 +346,9 @@
       on it — nothing hidden by odds or confidence — with a glowing ring
       around whichever side the algorithm leans toward on each market. Tap
       any price to see the case for it, and the case against it.
-      <strong>Pixel Picks</strong> is automatic: tap Generate and get 8 locks,
-      sharp range −250/+250, ranked purely by edge — Sports Preference just
-      nudges which sports win close calls, it never limits what's eligible.
+      <strong>Pixel's Picks</strong> is fully automatic: up to 8 locks, sharp
+      range −250/+250, ranked purely by edge, generated and refreshed on
+      their own — nothing to press.
       <strong>Parlay Builder</strong> is manual: pick a league (and an event
       within it, if you want), toggle the markets you want, set your own odds
       range, confidence floor, and leg count, and build a ticket by hand.
@@ -400,8 +358,8 @@
     </details>
 
     <details>
-      <summary>Pixel Picks' sharp standard</summary>
-      <p>Pixel Picks always hands back 8 locks, priced between −250 and +250,
+      <summary>Pixel's Picks' sharp standard</summary>
+      <p>Pixel's Picks always hands back 8 locks, priced between −250 and +250,
       graded 50 or higher whenever enough real edges clear that bar. On a
       quiet slate where fewer than 8 do, the rest fill in from the next-best
       prices available and are flagged "Outside standard criteria" — still

@@ -27,7 +27,6 @@ import {
 import {
   RULES,
   SPORTSBOOKS,
-  DEFAULT_BOOKS,
   analyze,
   topPicks,
   buildParlay,
@@ -59,8 +58,6 @@ import {
   tennisHeadToHead,
 } from './insights.js';
 
-const LEAGUES_KEY = 'pixelpick.sportprefs.v1';
-const BOOKS_KEY = 'pixelpick.books.v1';
 const PARLAY_KEY = 'pixelpick.parlay.v2';
 const BANKROLL_KEY = 'pixelpick.bankroll.v1';
 const SLATE_LEAGUE_KEY = 'pixelpick.slateLeague.v2';
@@ -165,9 +162,11 @@ function setDayFilter(which) {
   saveJSON(DAY_FILTER_KEY, which);
   renderDayToggle();
   renderSlateLeagueOptions();
-  if (state.candidates.length) renderFullSlate();
+  if (state.candidates.length) {
+    renderFullSlate();
+    generate(); // Pixel's Picks re-ranks automatically for the newly-selected day
+  }
   renderParlayFilters();
-  updatePoolLine();
 }
 
 function renderSlateStateToggle() {
@@ -353,8 +352,6 @@ function renderSchedule(games) {
 
 const el = {
   status: document.getElementById('status'),
-  generate: document.getElementById('generate'),
-  poolLine: document.getElementById('poolLine'),
   picks: document.getElementById('picks'),
   pixelSortRow: document.getElementById('pixelSortRow'),
   pixelSort: document.getElementById('pixelSort'),
@@ -384,16 +381,6 @@ const el = {
   statsDrawerTitle: document.getElementById('statsDrawerTitle'),
   statsDrawerClose: document.getElementById('statsDrawerClose'),
   statsDrawerBody: document.getElementById('statsDrawerBody'),
-  leagueToggle: document.getElementById('leagueToggle'),
-  leaguePanel: document.getElementById('leaguePanel'),
-  leagueList: document.getElementById('leagueList'),
-  leagueSummary: document.getElementById('leagueSummary'),
-  leagueReset: document.getElementById('leagueReset'),
-  bookToggle: document.getElementById('bookToggle'),
-  bookPanel: document.getElementById('bookPanel'),
-  bookAll: document.getElementById('bookAll'),
-  bookList: document.getElementById('bookList'),
-  bookSummary: document.getElementById('bookSummary'),
   dayFilterBar: document.getElementById('dayFilterBar'),
   dayFilterToday: document.getElementById('dayFilterToday'),
   dayFilterTomorrow: document.getElementById('dayFilterTomorrow'),
@@ -485,17 +472,7 @@ const state = {
   rawEvents: [],
   fetchedAt: 0,
   isDemo: false,
-  seen: new Set(),
   history: loadJSON(HISTORY_KEY, []),
-  books: new Set(loadJSON(BOOKS_KEY, DEFAULT_BOOKS)),
-  // Sports the user would rather the algorithm favor. A soft nudge on ranking,
-  // not a fetch decision — every league group loads regardless (see
-  // refreshAllLeagues). Empty means no preference, every sport ranked purely
-  // on its own grade. Validated against the known group ids so a stale value
-  // from before this scheme (raw sport keys, 'upcoming') can't leak through.
-  selected: new Set(
-    loadJSON(LEAGUES_KEY, []).filter((id) => LEAGUE_GROUP_BY_ID.has(id)),
-  ),
   // The requestable catalogue, from the worker's free /sports endpoint.
   catalogue: [],
   // Which calendar day Full Slate, Pixel Picks, and Parlay Builder all pull
@@ -672,13 +649,6 @@ function esc(value) {
 /* Filters                                                           */
 /* ---------------------------------------------------------------- */
 
-// Pixel Picks' fixed sharp standard (state.oddsMin/oddsMax/minScore), not a
-// user-adjustable filter — see CONFIG.ODDS_MIN_DEFAULT etc.
-const qualifies = (c) =>
-  c.american >= state.oddsMin &&
-  c.american <= state.oddsMax &&
-  c.score >= state.minScore;
-
 /**
  * The league catalogue, from the worker's /sports proxy. The Odds API bills
  * nothing for this, so populating the picker on page load is free — unlike the
@@ -692,7 +662,6 @@ async function loadCatalogue() {
       title: DEMO_EVENTS.find((e) => e.sport_key === key)?.sport_title ?? key,
     }));
     populateTennisGroups();
-    renderLeagueFilter();
     renderSlateLeagueOptions();
     return;
   }
@@ -711,58 +680,7 @@ async function loadCatalogue() {
     state.catalogue = [];
   }
   populateTennisGroups();
-  renderLeagueFilter();
   renderSlateLeagueOptions();
-}
-
-/**
- * The "Leagues" panel on Pixel Picks, repurposed as a sports preference
- * selector: which of the eight groups (if any) the algorithm should favor
- * when ranking. Every group loads and qualifies regardless of what's checked
- * here — this only nudges ordering, so there's no cap and nothing ever locks.
- */
-function renderLeagueFilter() {
-  el.leagueList.innerHTML = LEAGUE_GROUPS
-    .map(({ id, label }) => {
-      const on = state.selected.has(id);
-      return `
-        <label class="check">
-          <input type="checkbox" data-league="${esc(id)}" ${on ? 'checked' : ''}>
-          <span>${esc(label)}</span>
-        </label>`;
-    })
-    .join('');
-
-  el.leagueSummary.textContent = state.selected.size ? String(state.selected.size) : 'no preference';
-}
-
-function toggleLeague(id, on) {
-  if (on) state.selected.add(id);
-  else state.selected.delete(id);
-  saveJSON(LEAGUES_KEY, [...state.selected]);
-  renderLeagueFilter();
-}
-
-function renderBookFilter() {
-  const ids = Object.keys(SPORTSBOOKS);
-
-  el.bookList.innerHTML = ids
-    .map((id) => `
-      <label class="check">
-        <input type="checkbox" data-book="${esc(id)}"
-               ${state.books.has(id) ? 'checked' : ''}>
-        <span>${esc(SPORTSBOOKS[id].name)}</span>
-      </label>`)
-    .join('');
-
-  el.bookSummary.textContent = String(state.books.size);
-  el.bookAll.checked = state.books.size === ids.length;
-  el.bookAll.indeterminate = state.books.size > 0 && state.books.size < ids.length;
-}
-
-function setPanelOpen(button, panel, open) {
-  panel.hidden = !open;
-  button.setAttribute('aria-expanded', String(open));
 }
 
 /* ---------------------------------------------------------------- */
@@ -1062,18 +980,14 @@ function renderConfidence(pick) {
 }
 
 /**
- * One button per book the user bets at. A book with no quote on this exact line
- * is rendered but disabled — knowing FanDuel isn't offering it is information.
+ * One button per registered sportsbook. A book with no quote on this exact
+ * line is rendered but disabled — knowing FanDuel isn't offering it is
+ * information.
  */
 function renderBooks(leg) {
-  if (!state.books.size) {
-    return `<p class="books-empty">No sportsbooks selected — pick yours above.</p>`;
-  }
-
   const offers = bookOffers(leg);
 
-  const buttons = [...state.books]
-    .filter((id) => SPORTSBOOKS[id])
+  const buttons = Object.keys(SPORTSBOOKS)
     .map((id) => {
       const meta = SPORTSBOOKS[id];
       const offer = offers.get(id);
@@ -1337,11 +1251,9 @@ function renderLiveLine(leg, live) {
 }
 
 function renderHistoryBooks(leg) {
-  if (!state.books.size) return '';
   const offers = bookOffers(leg);
 
-  const links = [...state.books]
-    .filter((id) => SPORTSBOOKS[id])
+  const links = Object.keys(SPORTSBOOKS)
     .map((id) => {
       const meta = SPORTSBOOKS[id];
       const offer = offers.get(id);
@@ -2362,7 +2274,7 @@ async function refreshSlateScores(group) {
  * only actionable side). A market with no qualifying price on this side
  * renders a plain dash rather than making the whole game disappear.
  */
-function slateCell(cand, opposite, { totalLabel, suppressRec = false } = {}) {
+function slateCell(cand, opposite, { totalLabel, suppressRec = false, rank = null } = {}) {
   if (!cand) return `<span class="slate-cell is-empty">—</span>`;
 
   // Once a game is live or finished, the recommended-side glow stops
@@ -2371,13 +2283,40 @@ function slateCell(cand, opposite, { totalLabel, suppressRec = false } = {}) {
   const recommended = !suppressRec && (opposite ? cand.score > opposite.score : true);
   const idx = renderedSlateCells.push({ cand, opposite }) - 1;
   const label = totalLabel ? `${totalLabel}${formatAmerican(cand.american)}` : formatAmerican(cand.american);
+  const badge = recommended && rank ? `<span class="slate-rank-badge">${rank}</span>` : '';
 
   return `
     <button type="button" class="slate-cell ${recommended ? 'is-rec' : ''}"
-            data-slate-cell="${idx}" title="${esc(cand.selection)}">${esc(label)}</button>`;
+            data-slate-cell="${idx}" title="${esc(cand.selection)}">${badge}${esc(label)}</button>`;
 }
 
-function slateTeamRow(game, side, { gameState, scoreEvent }) {
+/**
+ * Up to three ranked picks per game — the same recommended side per market
+ * (spread/total/moneyline) slateCell() already glows, just ranked 1 (Main),
+ * 2 (Secondary), 3 (Tertiary) by score. Rank 1 is always the same candidate
+ * bestCandidateForGame() picks, since that's just the highest-scored of
+ * these same three — so "the Main play" shown pregame and "the pick" a
+ * finished game's outcome later gets graded against are never two
+ * different answers to the same question.
+ */
+function rankedGamePicks(game) {
+  const picks = [];
+  for (const [away, home] of [
+    [game.spreads.away, game.spreads.home],
+    [game.totals.away, game.totals.home],
+    [game.h2h.away, game.h2h.home],
+  ]) {
+    if (away && home) picks.push(away.score > home.score ? away : home);
+    else if (away || home) picks.push(away || home);
+  }
+  picks.sort((a, b) => b.score - a.score);
+
+  const ranks = new Map();
+  picks.forEach((cand, i) => ranks.set(cand.id, i + 1));
+  return ranks;
+}
+
+function slateTeamRow(game, side, { gameState, scoreEvent, ranks }) {
   const isAway = side === 'away';
   const team = isAway ? game.away : game.home;
   const spread = isAway ? game.spreads.away : game.spreads.home;
@@ -2407,9 +2346,9 @@ function slateTeamRow(game, side, { gameState, scoreEvent }) {
         ${esc(team)}${winPct ? ` <span class="slate-team-pct">${winPct}</span>` : ''}
         ${score != null ? ` <span class="slate-team-score">${score}</span>` : ''}
       </span>
-      ${slateCell(spread, oppSpread, { suppressRec })}
-      ${slateCell(total, oppTotal, { totalLabel, suppressRec })}
-      ${slateCell(h2h, oppH2h, { suppressRec })}
+      ${slateCell(spread, oppSpread, { suppressRec, rank: spread && ranks.get(spread.id) })}
+      ${slateCell(total, oppTotal, { totalLabel, suppressRec, rank: total && ranks.get(total.id) })}
+      ${slateCell(h2h, oppH2h, { suppressRec, rank: h2h && ranks.get(h2h.id) })}
     </div>`;
 }
 
@@ -2456,7 +2395,7 @@ function slateGameHtml(game) {
   const gameState = slateGameState(game);
   const scoreEvent = state.slateScores.get(game.eventId);
   const outcome = slateGameOutcome(game, rec); // 'won' | 'lost' | null — only set once finished
-  const rowProps = { gameState, scoreEvent };
+  const rowProps = { gameState, scoreEvent, ranks: rankedGamePicks(game) };
 
   const cardClass = [
     'slate-game',
@@ -2815,28 +2754,16 @@ function sortPicks(picks, mode) {
   return sorted;
 }
 
-/**
- * Every group id the user has checked under Sports Preference, expanded to
- * the raw sport keys topPicks() actually sees on each candidate.
- */
-function preferredRawKeys() {
-  const keys = new Set();
-  for (const id of state.selected) {
-    const group = LEAGUE_GROUP_BY_ID.get(id);
-    if (group) group.keys.forEach((k) => keys.add(k));
-  }
-  return keys;
-}
-
 /** state.candidates narrowed to the current Today/Tomorrow window (MMA exempt — see withinDayFilter). */
 function dayFilteredCandidates() {
   return state.candidates.filter((c) => withinDayFilter(c.commenceMs, c.sportKey));
 }
 
 /**
- * Pixel Picks: every league is already loaded (refreshAllLeagues ran at
- * boot), so Generate never fetches — it just re-ranks the pool that's
- * already sitting in state.candidates, scoped to the current day filter.
+ * Pixel's Picks: fully automatic, no button — every league is already
+ * loaded (refreshAllLeagues ran at boot), so this just ranks the pool
+ * already sitting in state.candidates, scoped to the current day filter,
+ * and re-runs whenever that pool changes (boot, Today/Tomorrow toggle).
  * Up to TOP_PICKS_COUNT picks; topPicks()'s guaranteeCount fills any slots
  * the sharp standard (-250/+250, confidence floor) can't with the next-best
  * candidates available, flagged as such — but minEv/minKelly are a hard
@@ -2845,7 +2772,6 @@ function dayFilteredCandidates() {
  * that's demonstrably not worth taking.
  */
 async function generate() {
-  el.generate.disabled = true;
   try {
     await enrichTennisAltSpreads();
     updateClvSnapshots();
@@ -2863,30 +2789,19 @@ async function generate() {
       // is thin that day.
       minEv: RULES.MIN_EV_PCT,
       minKelly: RULES.MIN_KELLY_FRACTION,
-      exclude: state.seen,
       guaranteeCount: true,
-      preferredSportKeys: preferredRawKeys(),
     });
-    slate.picks.forEach((pick) => pick.legs.forEach((leg) => state.seen.add(leg.id)));
 
     state.lastPixelSlate = slate;
     el.pixelSortRow.hidden = !slate.picks.length;
     renderSlate({ ...slate, picks: sortPicks(slate.picks, state.pixelSort) });
     recordSlate(slate);
-    updatePoolLine();
     trackNewPixelPicks(slate.picks).catch((err) => console.error('Pick tracking failed:', err));
   } catch (error) {
     setStatus(error.message, 'error');
     el.picks.innerHTML = `<p class="empty">Couldn't reach the odds feed.
       ${esc(error.message)}</p>`;
-  } finally {
-    el.generate.disabled = false;
   }
-}
-
-function updatePoolLine() {
-  const count = dayFilteredCandidates().filter(qualifies).length;
-  el.poolLine.textContent = `${count} qualifying bet${count === 1 ? '' : 's'} available`;
 }
 
 // A delegated listener per container covers every "?" button inside it,
@@ -2920,8 +2835,6 @@ el.picks.addEventListener('click', toggleWhyPanel);
 el.parlayResult.addEventListener('click', toggleWhyPanel);
 el.picks.addEventListener('click', toggleLegBanner);
 el.parlayResult.addEventListener('click', toggleLegBanner);
-
-el.generate.addEventListener('click', generate);
 
 el.dayFilterToday.addEventListener('click', () => setDayFilter('today'));
 el.dayFilterTomorrow.addEventListener('click', () => setDayFilter('tomorrow'));
@@ -3111,55 +3024,6 @@ el.historyList.addEventListener('click', (event) => {
   reopenPick(Number(entry.dataset.entry), Number(entry.dataset.pick));
 });
 
-// Only one filter panel open at a time — opening one closes the other two.
-function closeOtherPanels(keepOpen) {
-  for (const [toggle, panel] of [
-    [el.leagueToggle, el.leaguePanel],
-    [el.bookToggle, el.bookPanel],
-  ]) {
-    if (panel !== keepOpen) setPanelOpen(toggle, panel, false);
-  }
-}
-
-el.leagueToggle.addEventListener('click', () => {
-  const open = el.leaguePanel.hidden;
-  setPanelOpen(el.leagueToggle, el.leaguePanel, open);
-  if (open) closeOtherPanels(el.leaguePanel);
-});
-
-el.bookToggle.addEventListener('click', () => {
-  const open = el.bookPanel.hidden;
-  setPanelOpen(el.bookToggle, el.bookPanel, open);
-  if (open) closeOtherPanels(el.bookPanel);
-});
-
-el.leagueReset.addEventListener('click', () => {
-  state.selected = new Set();
-  saveJSON(LEAGUES_KEY, []);
-  renderLeagueFilter();
-});
-
-el.leagueList.addEventListener('change', (event) => {
-  const box = event.target.closest('input[data-league]');
-  if (!box) return;
-  toggleLeague(box.dataset.league, box.checked);
-});
-
-el.bookAll.addEventListener('change', () => {
-  state.books = el.bookAll.checked ? new Set(Object.keys(SPORTSBOOKS)) : new Set();
-  saveJSON(BOOKS_KEY, [...state.books]);
-  renderBookFilter();
-});
-
-el.bookList.addEventListener('change', (event) => {
-  const box = event.target.closest('input[data-book]');
-  if (!box) return;
-  if (box.checked) state.books.add(box.dataset.book);
-  else state.books.delete(box.dataset.book);
-  saveJSON(BOOKS_KEY, [...state.books]);
-  renderBookFilter();
-});
-
 el.pixelSort.addEventListener('change', () => {
   state.pixelSort = el.pixelSort.value;
   saveJSON(PIXEL_SORT_KEY, state.pixelSort);
@@ -3173,7 +3037,6 @@ el.logoutBtn.addEventListener('click', signOut);
 document.addEventListener('keydown', (e) => {
   if (e.key !== 'Escape') return;
   if (openAside) setAsideOpen(openAside.panel, openAside.toggle, false);
-  closeOtherPanels(null);
 });
 
 /* ---------------------------------------------------------------- */
@@ -4240,8 +4103,6 @@ async function runResultCheck() {
   el.logoutBtn.hidden = !(CONFIG.REQUIRE_AUTH && getToken());
   el.pixelSort.value = state.pixelSort;
 
-  renderLeagueFilter();
-  renderBookFilter();
   renderParlaySliders();
   renderHistory();
   renderDayToggle();
@@ -4258,13 +4119,12 @@ async function runResultCheck() {
 
   renderSlateLeagueOptions();
   renderFullSlate();
-  updatePoolLine();
-  el.generate.disabled = false;
+  await generate(); // Pixel's Picks is automatic — no button, ready as soon as the slate is
   loadTop5Tags(); // fire-and-forget — a badge lookup, never blocks the board
 
   setStatus(
     CONFIG.WORKER_URL
-      ? 'Ready — tap Generate for today\'s locks'
+      ? 'Ready — today\'s locks below'
       : 'Demo data — set WORKER_URL in config.js for live odds',
     CONFIG.WORKER_URL ? '' : 'demo',
   );
