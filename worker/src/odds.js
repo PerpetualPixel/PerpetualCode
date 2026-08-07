@@ -44,6 +44,41 @@ export const DEFAULT_CACHE_SECONDS = 900;
 // The sports catalogue is free to fetch and changes on the order of days.
 export const SPORTS_LIST_CACHE_SECONDS = 3600;
 
+function extractMoneylineOdds(event) {
+  // Extract the best h2h (moneyline) odds from the bookmakers array
+  // The home_team's odds go into the `american` field, and all available
+  // quotes across bookmakers go into the `quotes` array (for line shopping).
+  if (!event.bookmakers?.length) return event;
+
+  const allH2hOutcomes = [];
+  for (const book of event.bookmakers) {
+    const h2hMarket = book.markets?.find((m) => m.key === 'h2h');
+    if (!h2hMarket?.outcomes?.length) continue;
+
+    for (const outcome of h2hMarket.outcomes) {
+      if (outcome.name === event.home_team && outcome.price != null) {
+        allH2hOutcomes.push({
+          book: book.key,
+          american: outcome.price,
+          decimal: outcome.price > 0 ? (outcome.price / 100) + 1 : (-100 / outcome.price) + 1,
+        });
+      }
+    }
+  }
+
+  if (!allH2hOutcomes.length) return event;
+
+  // Sort by best decimal value (highest for picking), take first as primary
+  allH2hOutcomes.sort((a, b) => b.decimal - a.decimal);
+  const best = allH2hOutcomes[0];
+
+  return {
+    ...event,
+    american: best.american,
+    quotes: allH2hOutcomes.map((q) => ({ book: q.book, american: q.american })),
+  };
+}
+
 export async function enrichMmaEvents(events, ctx) {
   if (!events || !Array.isArray(events)) return events;
 
@@ -71,7 +106,8 @@ export async function enrichMmaEvents(events, ctx) {
         ctx,
         schedule,
       );
-      return eventDetails ? { ...event, ufc_event: eventDetails } : event;
+      const withEventName = eventDetails ? { ...event, ufc_event: eventDetails } : event;
+      return extractMoneylineOdds(withEventName);
     }),
   );
 
