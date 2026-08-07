@@ -28,9 +28,6 @@
     <button id="bankrollToggle" class="icon-btn" aria-expanded="false" aria-controls="bankrollPanel">
       Bankroll
     </button>
-    <button id="historyToggle" class="icon-btn" aria-expanded="false" aria-controls="historyPanel">
-      History<span id="historyCount" class="badge" hidden>0</span>
-    </button>
     <button id="learningToggle" class="icon-btn" aria-expanded="false" aria-controls="learningPanel">
       Tracking
     </button>
@@ -212,19 +209,6 @@
   </div>
 </aside>
 
-<aside id="historyPanel" class="history" aria-label="Pick history" hidden>
-  <div class="history-head">
-    <h2>History</h2>
-    <button id="historyClose" class="icon-btn overlay-close-btn" aria-label="Close history">✕</button>
-  </div>
-  <p class="history-note">
-    Prices re-checked against the current board. Tap a pick to reopen it.
-  </p>
-  <p id="clvSummary" class="clv-summary" hidden></p>
-  <div id="historyList" class="history-list"></div>
-  <button id="historyClear" class="clear-btn">Clear history</button>
-</aside>
-
 <aside id="bankrollPanel" class="history" aria-label="Bankroll settings" hidden>
   <div class="history-head">
     <h2>Bankroll</h2>
@@ -339,9 +323,8 @@
       <summary>Closing Line Value (CLV)</summary>
       <p>The single best long-run signal that you're actually finding good
       bets, separate from whether any one of them won: did you get a better
-      price than the market eventually settled on? History tracks this
-      automatically for every pick that was still open when its game started,
-      and shows your running average at the top of the History panel.</p>
+      price than the market eventually settled on? The Tracking Dashboard's
+      server-tracked picks show an Avg CLV figure for exactly this.</p>
     </details>
 
     <details>

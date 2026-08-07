@@ -55,7 +55,6 @@ const PARLAY_KEY = 'pixelpick.parlay.v2';
 const BANKROLL_KEY = 'pixelpick.bankroll.v1';
 const SLATE_LEAGUE_KEY = 'pixelpick.slateLeague.v2';
 const PIXEL_SORT_KEY = 'pixelpick.sort.v1';
-const HISTORY_KEY = 'pixelpick.history.v2';
 const DAY_FILTER_KEY = 'pixelpick.dayFilter.v1';
 // The Tracking Dashboard's user-dragged width in px, or null for its default
 // (fills the viewport). Only ever set by actually dragging the resize
@@ -66,9 +65,6 @@ const LEARNING_PANEL_MIN_WIDTH = 320;
 // works from; 2% is the more conservative, more commonly cited end of it —
 // used here as the default recommendation when the user hasn't set their own.
 const RECOMMENDED_UNIT_PCT = 0.02;
-// Entries carry full leg data now so history can be re-priced and reopened,
-// which makes each one heavier than the old summary rows.
-const HISTORY_LIMIT = 40;
 
 /**
  * The leagues the app always keeps loaded. Tennis has no single sport
@@ -518,13 +514,6 @@ const el = {
   picks: document.getElementById('picks'),
   pixelSortRow: document.getElementById('pixelSortRow'),
   pixelSort: document.getElementById('pixelSort'),
-  historyToggle: document.getElementById('historyToggle'),
-  historyPanel: document.getElementById('historyPanel'),
-  historyClose: document.getElementById('historyClose'),
-  historyClear: document.getElementById('historyClear'),
-  historyList: document.getElementById('historyList'),
-  historyCount: document.getElementById('historyCount'),
-  clvSummary: document.getElementById('clvSummary'),
   scrim: document.getElementById('scrim'),
   logoutBtn: document.getElementById('logoutBtn'),
   bankrollToggle: document.getElementById('bankrollToggle'),
@@ -620,7 +609,6 @@ const state = {
   rawEvents: [],
   fetchedAt: 0,
   isDemo: false,
-  history: loadJSON(HISTORY_KEY, []),
   // The requestable catalogue, from the worker's free /sports endpoint.
   catalogue: [],
   // Which calendar day Full Slate, Pixel Picks, and Parlay Builder all pull
@@ -1324,265 +1312,10 @@ function renderSlate(slate) {
   hydrateInsights();
 }
 
-/* ---------------------------------------------------------------- */
-/* History                                                           */
-/* ---------------------------------------------------------------- */
-
-function saveHistory() {
-  saveJSON(HISTORY_KEY, state.history.slice(0, HISTORY_LIMIT));
-}
-
-function recordSlate(slate) {
-  state.history.unshift({
-    at: slate.generatedAt,
-    poolSize: slate.poolSize,
-    demo: state.isDemo,
-    picks: slate.picks.map((pick) => ({
-      type: pick.type,
-      american: pick.american,
-      score: pick.score,
-      percentile: pick.percentile,
-      pairReason: pick.pairReason,
-      // Full legs, minus the score breakdown: enough to re-render the pick and
-      // to re-price it against a later board.
-      legs: pick.legs.map(({ parts, ...leg }) => ({
-        ...leg,
-        // Closing Line Value tracking: the sharp benchmark from the framework
-        // this app is built around — beating the closing line, consistently,
-        // is what separates a real edge from short-term variance. There's no
-        // historical-odds feed here to read a true close from, so this is a
-        // best-effort approximation: the freshest price seen for this exact
-        // leg while its game hadn't started yet, updated every time the board
-        // refreshes (updateClvSnapshots below) and left frozen the moment the
-        // game goes off the board. Seeded to the pick's own price so a leg
-        // that's never seen again still has a defined (zero-movement) CLV
-        // rather than a missing one.
-        lastKnownAmerican: leg.american,
-        lastKnownAt: slate.generatedAt,
-      })),
-    })),
-  });
-  state.history = state.history.slice(0, HISTORY_LIMIT);
-  saveHistory();
-  renderHistory();
-}
-
 /**
- * Refresh each open history leg's CLV snapshot against the board currently in
- * state.candidates. A leg still priced (game hasn't started) gets its
- * lastKnownAmerican/lastKnownAt bumped forward; a leg no longer on the board
- * is left exactly as it was on the last refresh that did see it — which is
- * this app's best available stand-in for "the closing price."
- */
-function updateClvSnapshots() {
-  const live = livePriceIndex();
-  let changed = false;
-
-  for (const entry of state.history) {
-    for (const pick of entry.picks) {
-      for (const leg of pick.legs) {
-        const current = live.get(leg.id);
-        if (!current) continue; // off the board — freeze what we last saw
-        if (current.american === leg.lastKnownAmerican) continue;
-        leg.lastKnownAmerican = current.american;
-        leg.lastKnownAt = Date.now();
-        changed = true;
-      }
-    }
-  }
-
-  if (changed) saveHistory();
-  return changed;
-}
-
-/**
- * CLV for one leg, or null when the game hasn't started yet — CLV is only
- * meaningful once the price has actually stopped moving. American odds
- * compare directly regardless of favorite/underdog: a higher number is
- * always the better price for that same side, so pick.american >
- * lastKnownAmerican is a beaten close in every case, not just favorites.
- */
-function clvFor(leg) {
-  if (livePriceIndex().has(leg.id)) return null; // still on the board, not closed
-  if (leg.lastKnownAmerican === leg.american) return { pct: 0, beat: null };
-
-  const pct =
-    (impliedProb(leg.lastKnownAmerican) - impliedProb(leg.american)) * 100;
-  return { pct, beat: leg.american > leg.lastKnownAmerican };
-}
-
-/** Where each stored leg is priced on the board we're holding right now. */
-function livePriceIndex() {
-  const index = new Map();
-  for (const c of state.candidates) index.set(c.id, c);
-  return index;
-}
-
-function renderLiveLine(leg, live) {
-  if (!live) {
-    const clv = clvFor(leg);
-    if (!clv || clv.beat === null) {
-      return `<div class="h-now"><span class="h-gone">off the board</span></div>`;
-    }
-    // "Closing" here means the last price this app ever saw for this leg
-    // before its game started, not a real historical-odds close — this app
-    // has no time-series feed to read a true one from. Framed honestly as an
-    // approximation rather than borrowing the sharp-betting term outright.
-    const cls = clv.beat ? 'h-moved-up' : 'h-moved-down';
-    return `
-      <div class="h-now">
-        <span class="${cls}">${clv.beat ? 'Beat' : 'Missed'} the close by ${Math.abs(clv.pct).toFixed(1)}pp</span>
-        · closed ${esc(formatAmerican(leg.lastKnownAmerican))}
-      </div>`;
-  }
-  if (live.american === leg.american) {
-    return `<div class="h-now">now ${esc(formatAmerican(live.american))} · unchanged</div>`;
-  }
-
-  const better = live.american > leg.american;
-  const cls = better ? 'h-moved-up' : 'h-moved-down';
-  return `
-    <div class="h-now">now
-      <span class="${cls}">${esc(formatAmerican(live.american))}</span>
-      · ${better ? 'better than' : 'worse than'} when picked
-    </div>`;
-}
-
-function renderHistoryBooks(leg) {
-  const offers = bookOffers(leg);
-
-  const links = Object.keys(SPORTSBOOKS)
-    .map((id) => {
-      const meta = SPORTSBOOKS[id];
-      const offer = offers.get(id);
-      if (!offer) {
-        return `<span class="h-book is-off">${esc(meta.name)}</span>`;
-      }
-      return `
-        <a class="h-book" style="--book:${esc(meta.color)}"
-           href="${esc(offer.link ?? meta.url)}" target="_blank" rel="noopener">
-          ${esc(meta.name)} ${esc(formatAmerican(offer.american))}
-        </a>`;
-    })
-    .join('');
-
-  return `<div class="history-books">${links}</div>`;
-}
-
-/**
- * Average CLV across every closed (off-the-board) leg in history. This is
- * the number the framework this app is built around treats as the real
- * long-run tell — a single bet's outcome is variance, but a bettor who
- * consistently beats the close is, by that model, playing a genuine edge
- * regardless of how any one game landed.
- */
-function aggregateClv() {
-  let sum = 0;
-  let n = 0;
-  for (const entry of state.history) {
-    for (const pick of entry.picks) {
-      for (const leg of pick.legs) {
-        const clv = clvFor(leg);
-        if (!clv || clv.beat === null) continue;
-        sum += clv.pct;
-        n++;
-      }
-    }
-  }
-  return n ? { avgPct: sum / n, n } : null;
-}
-
-function renderHistory() {
-  const total = state.history.reduce((n, entry) => n + entry.picks.length, 0);
-  el.historyCount.textContent = String(total);
-  el.historyCount.hidden = total === 0;
-
-  const clv = aggregateClv();
-  el.clvSummary.hidden = !clv;
-  if (clv) {
-    const sign = clv.avgPct >= 0 ? '+' : '';
-    el.clvSummary.textContent =
-      `Your CLV: ${sign}${clv.avgPct.toFixed(1)}pp avg, beating the close vs. missing it, ` +
-      `across ${clv.n} closed ${clv.n === 1 ? 'leg' : 'legs'}.`;
-    el.clvSummary.classList.toggle('is-negative', clv.avgPct < 0);
-  }
-
-  if (!state.history.length) {
-    el.historyList.innerHTML =
-      `<p class="history-empty">No picks yet. Hit Generate Picks.</p>`;
-    return;
-  }
-
-  const live = livePriceIndex();
-
-  el.historyList.innerHTML = state.history
-    .map((entry, entryIndex) => {
-      const groups = entry.picks
-        .map((pick, pickIndex) => {
-          const color = confidenceColor(pick.score ?? state.minScore, state.minScore);
-
-          const legs = pick.legs
-            .map((leg) => {
-              const current = live.get(leg.id) ?? null;
-              return `
-                <div class="history-item" style="--conf:${color}">
-                  <div class="h-sel">${esc(leg.selection)}</div>
-                  <div class="h-meta">
-                    <span class="h-price">${esc(formatAmerican(leg.american))}</span>
-                    · ${esc(leg.book)} · ${esc(leg.away)} @ ${esc(leg.home)}
-                  </div>
-                  ${renderLiveLine(leg, current)}
-                  ${renderHistoryBooks(current ?? leg)}
-                </div>`;
-            })
-            .join('');
-
-          return `
-            <button class="history-entry" type="button"
-                    data-entry="${entryIndex}" data-pick="${pickIndex}">
-              ${legs}
-              <span class="history-foot">
-                <span>${esc(formatAmerican(pick.american))} ·
-                  ${pick.type === 'combo' ? '2-leg' : 'straight'}</span>
-                <span class="h-reopen">Reopen</span>
-              </span>
-            </button>`;
-        })
-        .join('');
-
-      return `
-        <div class="history-group">
-          <h3>${esc(timeFmt.format(new Date(entry.at)))} ·
-            ${entry.picks.length} pick${entry.picks.length === 1 ? '' : 's'} ·
-            ${entry.poolSize} available${entry.demo ? ' · demo' : ''}</h3>
-          ${groups}
-        </div>`;
-    })
-    .join('');
-}
-
-/** Reopen a stored pick on the main view, re-priced against the current board. */
-function reopenPick(entryIndex, pickIndex) {
-  const stored = state.history[entryIndex]?.picks?.[pickIndex];
-  if (!stored) return;
-
-  const live = livePriceIndex();
-  const pick = {
-    ...stored,
-    legs: stored.legs.map((leg) => live.get(leg.id) ?? leg),
-  };
-
-  renderedLegs.length = 0;
-  el.picks.innerHTML = renderPick(pick);
-  hydrateInsights();
-  setHistoryOpen(false);
-  el.picks.scrollIntoView({ behavior: 'smooth', block: 'start' });
-}
-
-/**
- * Shared side-panel open/close for History, Bankroll, and Guide — they all
- * slide from the same edge and share one scrim, so only one can be open at a
- * time. Opening one closes whichever else was open rather than stacking.
+ * Shared side-panel open/close for Bankroll and Guide — they slide from the
+ * same edge and share one scrim, so only one can be open at a time. Opening
+ * one closes whichever else was open rather than stacking.
  */
 let openAside = null; // { panel, toggle } or null
 
@@ -1599,14 +1332,6 @@ function setAsideOpen(panel, toggle, open, { onOpen, focusEl } = {}) {
     onOpen?.();
     focusEl?.focus();
   }
-}
-
-function setHistoryOpen(open) {
-  // Re-price on open so the panel reflects the board we're holding now.
-  setAsideOpen(el.historyPanel, el.historyToggle, open, {
-    onOpen: renderHistory,
-    focusEl: el.historyClose,
-  });
 }
 
 function setBankrollOpen(open) {
@@ -3608,9 +3333,6 @@ el.statsBody.addEventListener('click', async (event) => {
   }
 });
 
-el.historyToggle.addEventListener('click', () => setHistoryOpen(el.historyPanel.hidden));
-el.historyClose.addEventListener('click', () => setHistoryOpen(false));
-
 el.bankrollToggle.addEventListener('click', () => setBankrollOpen(el.bankrollPanel.hidden));
 el.bankrollClose.addEventListener('click', () => setBankrollOpen(false));
 
@@ -3672,19 +3394,6 @@ el.scrim.addEventListener('click', () => {
 el.statsClose?.addEventListener('click', () => {
   el.statsPanel.hidden = true;
   el.scrim.hidden = true;
-});
-
-el.historyClear.addEventListener('click', () => {
-  state.history = [];
-  saveHistory();
-  renderHistory();
-});
-
-el.historyList.addEventListener('click', (event) => {
-  const entry = event.target.closest('.history-entry');
-  // A book link inside the entry is its own destination, not a reopen.
-  if (!entry || event.target.closest('.h-book')) return;
-  reopenPick(Number(entry.dataset.entry), Number(entry.dataset.pick));
 });
 
 el.pixelSort.addEventListener('change', () => {
@@ -4161,7 +3870,7 @@ async function fetchTop5History() {
   }
 }
 
-/** CLV%, positive means the price beat the close (see docs/app.js's own clvFor() for the client-side equivalent this mirrors). */
+/** CLV%, positive means the price beat the close. */
 function top5ClvPct(pick) {
   if (!pick.clv) return null;
   return (impliedProb(pick.clv.closeAmerican) - impliedProb(pick.clv.openAmerican)) * 100;
@@ -4639,7 +4348,6 @@ async function openLearningDashboard() {
   el.pixelSort.value = state.pixelSort;
 
   renderParlaySliders();
-  renderHistory();
   renderDayToggle();
   renderSlateStateToggle();
   initLearningPanelResize();
