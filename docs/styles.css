@@ -2352,6 +2352,11 @@ input[type="range"]:focus-visible {
 /* ================================================================ */
 
 .learning-content {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  -webkit-overflow-scrolling: touch;
+  overscroll-behavior: contain;
   padding: 16px;
   display: flex;
   flex-direction: column;

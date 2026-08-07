@@ -29,7 +29,7 @@
       History<span id="historyCount" class="badge" hidden>0</span>
     </button>
     <button id="learningToggle" class="icon-btn" aria-expanded="false" aria-controls="learningPanel">
-      Learning
+      Tracking
     </button>
     <button id="logoutBtn" class="icon-btn" hidden>Sign out</button>
   </div>
@@ -72,6 +72,15 @@
     <label class="slate-league-label" for="slateLeagueSelect">League</label>
     <select id="slateLeagueSelect" class="slate-league-select"></select>
     <button id="slateLoad" class="icon-btn slate-load-btn" type="button">Refresh slate</button>
+  </div>
+
+  <div class="slate-controls">
+    <span class="slate-league-label">Status</span>
+    <div class="day-toggle" role="group" aria-label="Which games to show">
+      <button id="slateStateUpcoming" class="day-toggle-btn is-active" type="button" aria-pressed="true">Upcoming</button>
+      <button id="slateStateLive" class="day-toggle-btn" type="button" aria-pressed="false">Live</button>
+      <button id="slateStateFinished" class="day-toggle-btn" type="button" aria-pressed="false">Finished</button>
+    </div>
   </div>
 
   <div class="slate-controls" id="slateEventRow" hidden>
@@ -410,10 +419,10 @@
   <div id="statsDrawerBody" class="stats-body"></div>
 </aside>
 
-<aside id="learningPanel" class="history" aria-label="Learning dashboard" hidden>
+<aside id="learningPanel" class="history" aria-label="Tracking dashboard" hidden>
   <div class="history-head">
-    <h2>Learning Dashboard</h2>
-    <button id="learningPanelClose" class="icon-btn" aria-label="Close learning">✕</button>
+    <h2>Tracking Dashboard</h2>
+    <button id="learningPanelClose" class="icon-btn" aria-label="Close tracking">✕</button>
   </div>
 
   <div class="learning-content">
@@ -522,7 +531,7 @@
 
     <!-- Learning Recommendations -->
     <section class="learning-section">
-      <h3>Learning Insights</h3>
+      <h3>Tracking Insights</h3>
       <div id="recommendations" class="learning-recs"></div>
     </section>
 

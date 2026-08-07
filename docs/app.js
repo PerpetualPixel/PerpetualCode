@@ -164,6 +164,22 @@ function setDayFilter(which) {
   updatePoolLine();
 }
 
+function renderSlateStateToggle() {
+  el.slateStateUpcoming.classList.toggle('is-active', state.slateGameFilter === 'upcoming');
+  el.slateStateUpcoming.setAttribute('aria-pressed', String(state.slateGameFilter === 'upcoming'));
+  el.slateStateLive.classList.toggle('is-active', state.slateGameFilter === 'live');
+  el.slateStateLive.setAttribute('aria-pressed', String(state.slateGameFilter === 'live'));
+  el.slateStateFinished.classList.toggle('is-active', state.slateGameFilter === 'finished');
+  el.slateStateFinished.setAttribute('aria-pressed', String(state.slateGameFilter === 'finished'));
+}
+
+function setSlateGameFilter(which) {
+  if (state.slateGameFilter === which) return;
+  state.slateGameFilter = which;
+  renderSlateStateToggle();
+  if (state.candidates.length || state.rawEvents.length) renderFullSlate();
+}
+
 // MLB team name to abbreviation mapping
 const MLB_ABBR_MAP = {
   'Los Angeles Angels': 'LAA',
@@ -381,6 +397,9 @@ const el = {
   slateStatus: document.getElementById('slateStatus'),
   slateLeagueSelect: document.getElementById('slateLeagueSelect'),
   slateLoad: document.getElementById('slateLoad'),
+  slateStateUpcoming: document.getElementById('slateStateUpcoming'),
+  slateStateLive: document.getElementById('slateStateLive'),
+  slateStateFinished: document.getElementById('slateStateFinished'),
   slateEventRow: document.getElementById('slateEventRow'),
   slateEventLabel: document.getElementById('slateEventLabel'),
   slateEventSelect: document.getElementById('slateEventSelect'),
@@ -501,6 +520,10 @@ const state = {
   // per sport-group (see refreshSlateScores) rather than on every render.
   slateScores: new Map(),
   slateScoresFetchedAt: new Map(), // group.id -> last fetch time, so switching leagues never gets throttled by an unrelated sport's recent fetch
+  // Full Slate's Upcoming/Live/Finished toggle — defaults to Upcoming each
+  // fresh load rather than persisting, since "what's live right now" isn't
+  // something you'd want stuck from a prior session.
+  slateGameFilter: 'upcoming',
   // Research caches. Both are free to fetch — ESPN and a static archive — so
   // they never touch the odds credit budget.
   tennis: new Map(),   // 'atp' | 'wta' -> parsed archive
@@ -2184,9 +2207,10 @@ const renderedSlateGames = [];
  *
  * Takes an array of raw sport keys (a league group can cover several — every
  * ATP tournament currently running, say) rather than one. Nothing filters on
- * commence time: the odds feed itself stops returning an event the moment no
- * book is pricing it any more, so a game already live or finished simply
- * isn't in state.rawEvents — no separate "is this over" check needed here.
+ * commence time itself: the odds feed stops returning an event the moment no
+ * book is pricing it any more (typically immediately once it's finished), so
+ * those are backfilled below from whatever /scores data is already cached —
+ * that's the only reason a finished game still shows up here at all.
  */
 function buildSlateGames(sportKeys) {
   const keys = new Set(Array.isArray(sportKeys) ? sportKeys : [sportKeys]);
@@ -2211,7 +2235,7 @@ function buildSlateGames(sportKeys) {
     };
   };
 
-  return (state.rawEvents ?? [])
+  const oddsGames = (state.rawEvents ?? [])
     .filter((e) => keys.has(e.sport_key))
     .map((event) => {
       const commenceMs = new Date(event.commence_time).getTime();
@@ -2227,7 +2251,33 @@ function buildSlateGames(sportKeys) {
         totals: pairFor(cands, 'totals', event),
         ufc_event: event.ufc_event,
       };
-    })
+    });
+
+  // The odds feed drops an event the instant no book is pricing it any
+  // more — for a finished game that's immediate, so it's often gone from
+  // state.rawEvents entirely even though /scores still has its final
+  // result. Backfill those from whatever scores are already cached
+  // (state.slateScores, populated by refreshSlateScores) as market-less
+  // games — no spread/total/ML, since the book pulled them — so a
+  // finished game still shows up with its score instead of vanishing.
+  const oddsEventIds = new Set(oddsGames.map((g) => g.eventId));
+  const orphanGames = [];
+  for (const scoreEvent of state.slateScores.values()) {
+    if (!keys.has(scoreEvent.sport_key) || oddsEventIds.has(scoreEvent.id)) continue;
+    orphanGames.push({
+      eventId: scoreEvent.id,
+      sportKey: scoreEvent.sport_key,
+      home: scoreEvent.home_team,
+      away: scoreEvent.away_team,
+      commenceMs: new Date(scoreEvent.commence_time).getTime(),
+      h2h: { away: null, home: null },
+      spreads: { away: null, home: null },
+      totals: { away: null, home: null },
+      ufc_event: undefined,
+    });
+  }
+
+  return oddsGames.concat(orphanGames)
     .filter((g) => Number.isFinite(g.commenceMs) && withinDayFilter(g.commenceMs, g.sportKey))
     .sort((a, b) => a.commenceMs - b.commenceMs);
 }
@@ -2606,6 +2656,10 @@ function renderFullSlate() {
     el.slateEventRow.hidden = true;
   }
 
+  // Upcoming/Live/Finished toggle — applied after event/card selection so
+  // switching it never reshuffles the tournament/card dropdown itself.
+  games = games.filter((g) => slateGameState(g) === state.slateGameFilter);
+
   // Get sort preference (default to chronological)
   const sortMode = el.slateSortSelect?.value || 'time';
 
@@ -2665,9 +2719,11 @@ function renderFullSlate() {
 
     el.slateBody.innerHTML = html;
   } else {
-    const emptyMsg = group.id === 'mma'
-      ? 'No upcoming UFC/PFL events with moneyline markets. Check back soon!'
-      : `Nothing on the board for ${group.label} right now.`;
+    const emptyMsg = state.slateGameFilter !== 'upcoming'
+      ? `No ${state.slateGameFilter} games for ${group.label} right now.`
+      : group.id === 'mma'
+        ? 'No upcoming UFC/PFL events with moneyline markets. Check back soon!'
+        : `Nothing on the board for ${group.label} right now.`;
     el.slateBody.innerHTML = `<p class="empty">${esc(emptyMsg)}</p>`;
   }
 }
@@ -2857,6 +2913,10 @@ el.generate.addEventListener('click', generate);
 
 el.dayFilterToday.addEventListener('click', () => setDayFilter('today'));
 el.dayFilterTomorrow.addEventListener('click', () => setDayFilter('tomorrow'));
+
+el.slateStateUpcoming.addEventListener('click', () => setSlateGameFilter('upcoming'));
+el.slateStateLive.addEventListener('click', () => setSlateGameFilter('live'));
+el.slateStateFinished.addEventListener('click', () => setSlateGameFilter('finished'));
 
 el.slateLoad.addEventListener('click', loadSlate);
 el.slateLeagueSelect.addEventListener('change', () => {
@@ -4053,6 +4113,7 @@ async function runResultCheck() {
   renderParlaySliders();
   renderHistory();
   renderDayToggle();
+  renderSlateStateToggle();
 
   el.slateStatus.textContent = 'Loading all leagues…';
   // Catalogue first — ATP/WTA can't resolve their tournament keys without it.
