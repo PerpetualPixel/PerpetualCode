@@ -2316,7 +2316,7 @@ function rankedGamePicks(game) {
   return ranks;
 }
 
-function slateTeamRow(game, side, { gameState, scoreEvent, ranks }) {
+function slateTeamRow(game, side, { gameState, scoreEvent, ranks, hideMarkets = false }) {
   const isAway = side === 'away';
   const team = isAway ? game.away : game.home;
   const spread = isAway ? game.spreads.away : game.spreads.home;
@@ -2340,15 +2340,17 @@ function slateTeamRow(game, side, { gameState, scoreEvent, ranks }) {
   const score = gameState === 'upcoming' ? null : slateScoreFor(scoreEvent, team);
 
   return `
-    <div class="slate-team-row">
+    <div class="slate-team-row ${hideMarkets ? 'no-markets' : ''}">
       <span class="slate-team">
         ${logo ? `<img class="slate-logo" src="${esc(logo)}" alt="" loading="lazy">` : ''}
         ${esc(team)}${winPct ? ` <span class="slate-team-pct">${winPct}</span>` : ''}
         ${score != null ? ` <span class="slate-team-score">${score}</span>` : ''}
       </span>
+      ${hideMarkets ? '' : `
       ${slateCell(spread, oppSpread, { suppressRec, rank: spread && ranks.get(spread.id) })}
       ${slateCell(total, oppTotal, { totalLabel, suppressRec, rank: total && ranks.get(total.id) })}
       ${slateCell(h2h, oppH2h, { suppressRec, rank: h2h && ranks.get(h2h.id) })}
+      `}
     </div>`;
 }
 
@@ -2395,7 +2397,8 @@ function slateGameHtml(game) {
   const gameState = slateGameState(game);
   const scoreEvent = state.slateScores.get(game.eventId);
   const outcome = slateGameOutcome(game, rec); // 'won' | 'lost' | null — only set once finished
-  const rowProps = { gameState, scoreEvent, ranks: rankedGamePicks(game) };
+  const isFinished = gameState === 'finished';
+  const rowProps = { gameState, scoreEvent, ranks: rankedGamePicks(game), hideMarkets: isFinished };
 
   const cardClass = [
     'slate-game',
@@ -2412,11 +2415,23 @@ function slateGameHtml(game) {
     ? `<button type="button" class="more-info-btn" data-show-mlb-stats="${idx}">View Stats</button>`
     : `<button type="button" class="more-info-btn" data-more-info="${idx}">More Info</button>`;
 
-  const timeHtml = gameState === 'finished'
+  const timeHtml = isFinished
     ? `<span class="slate-final">Final</span>`
     : gameState === 'live'
       ? `<span class="slate-live-badge">● Live</span>`
       : `<span>${esc(dateFmt.format(new Date(game.commenceMs)))}</span>`;
+
+  // Once a game is finished, the per-market price grid no longer means
+  // anything — replaced by a single line naming the algorithm's Main play
+  // (the same candidate the card's green/red border is graded from) and
+  // whether it won. No tag at all if it couldn't be graded (e.g. a push).
+  const mainPlayHtml = isFinished && rec
+    ? `<div class="slate-main-play">
+        <span class="slate-main-play-label">Main play</span>
+        <span class="slate-main-play-selection">${esc(rec.selection)}</span>
+        ${outcome ? `<span class="slate-main-play-outcome is-${outcome}">${outcome === 'won' ? 'Won' : 'Lost'}</span>` : ''}
+      </div>`
+    : '';
 
   return `
     <article class="${cardClass}" ${isMlb ? `data-game-index="${idx}"` : ''}>
@@ -2424,11 +2439,13 @@ function slateGameHtml(game) {
         ${timeHtml}
         ${infoButtonHtml}
       </div>
+      ${isFinished ? '' : `
       <div class="slate-header-row">
         <span></span><span>Spread</span><span>O/U</span><span>ML</span>
-      </div>
+      </div>`}
       ${slateTeamRow(game, 'away', rowProps)}
       ${slateTeamRow(game, 'home', rowProps)}
+      ${mainPlayHtml}
     </article>`;
 }
 

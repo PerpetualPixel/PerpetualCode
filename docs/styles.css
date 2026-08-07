@@ -2012,6 +2012,43 @@ input[type="range"]:focus-visible {
 
 .slate-team-row + .slate-team-row { border-top: 1px dashed var(--line); }
 
+/* A finished game's rows drop the three market cells (see slateTeamRow's
+   hideMarkets) — collapse the grid to a single column so the team name
+   doesn't leave three empty reserved column tracks sitting to its right. */
+.slate-team-row.no-markets { grid-template-columns: 1fr; }
+
+/* Replaces the market grid entirely once a game is finished — the
+   algorithm's Main play for that game, and whether it won. */
+.slate-main-play {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+  padding: 10px 14px 14px;
+}
+.slate-main-play-label {
+  font-family: var(--mono);
+  font-size: 0.62rem;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--muted);
+}
+.slate-main-play-selection {
+  font-weight: 700;
+  font-size: 0.9rem;
+}
+.slate-main-play-outcome {
+  font-family: var(--mono);
+  font-size: 0.7rem;
+  font-weight: 800;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  padding: 2px 8px;
+  border-radius: var(--radius);
+}
+.slate-main-play-outcome.is-won { color: var(--success); background: rgba(16, 185, 129, 0.14); }
+.slate-main-play-outcome.is-lost { color: var(--danger); background: rgba(239, 68, 68, 0.14); }
+
 .slate-team {
   display: inline-flex;
   align-items: center;
