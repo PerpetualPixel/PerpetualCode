@@ -1918,14 +1918,9 @@ function renderMmaMoneylines(leg) {
 
   return `
     <div class="stats-section">
-      <h3>Moneyline (${leg.away} vs ${leg.home})</h3>
-      <div style="display: flex; gap: 1.5rem; flex-wrap: wrap;">
-        ${uniquePrices.map(q => `
-          <div style="text-align: center;">
-            <div style="font-size: 0.85rem; color: #999; margin-bottom: 0.5rem;">${esc(q.book)}</div>
-            <div style="font-size: 1.5rem; font-weight: bold; font-family: monospace; color: #1a1a1a;">${esc(formatAmerican(q.american))}</div>
-            <div style="font-size: 0.75rem; color: #999; margin-top: 0.25rem;">${(impliedProb(q.american) * 100).toFixed(1)}% implied</div>
-          </div>`).join('')}
+      <h3>Moneyline (${esc(leg.away)} vs ${esc(leg.home)})</h3>
+      <div class="stats-pills">
+        ${uniquePrices.map((q) => `<span class="stat-pill">${esc(q.book)}: ${esc(formatAmerican(q.american))} (${(impliedProb(q.american) * 100).toFixed(1)}%)</span>`).join('')}
       </div>
     </div>`;
 }
