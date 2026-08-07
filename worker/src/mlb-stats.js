@@ -18,6 +18,8 @@ const STATS_TTL = 3600 * 24;      // team season stats move once a day at most
 const SCHEDULE_TTL = 3600 * 6;    // today's game can complete mid-cache-window
 const STANDINGS_TTL = 3600 * 6;
 const SETTLED_GAME_TTL = 3600 * 24 * 30; // a finished game's line/result never changes
+const PITCHER_TTL = 3600; // a probable starter can still be swapped pre-game
+const GAMELOG_TTL = 3600 * 6; // a pitcher's own log moves once he next takes the mound
 
 async function cachedJson(url, ttl, ctx) {
   const cacheKey = new Request(`https://pixel-pick.cache/mlb-stats/${encodeURIComponent(url)}`);
@@ -312,4 +314,117 @@ export async function fetchHeadToHead(teamAbbr, opponentAbbr, ctx) {
   }).reverse();
 
   return Promise.all(meetings.map((e) => gradeCompletedEvent(e, teamAbbr, ctx)));
+}
+
+const ESPN_ATHLETE_BASE = 'https://site.web.api.espn.com/apis/common/v3/sports/baseball/mlb/athletes';
+
+/** One probable/confirmed starter's real season pitching line, from ESPN's own per-game "probables" field — never a guess: a team with nothing announced yet simply returns null for that side. */
+function pitcherFromProbable(probable) {
+  if (!probable?.athlete) return null;
+  const stats = probable.statistics?.splits?.categories ?? [];
+  const stat = (name) => statValue(stats, name);
+  const fullInnings = stat('fullInnings');
+  const partInnings = stat('partInnings');
+  return {
+    playerId: probable.athlete.id,
+    name: probable.athlete.displayName,
+    jersey: probable.athlete.jersey ?? null,
+    throws: probable.athlete.throws?.abbreviation ?? null,
+    wins: stat('wins'),
+    losses: stat('losses'),
+    era: stat('ERA'),
+    whip: stat('WHIP'),
+    ip: fullInnings != null && partInnings != null ? `${fullInnings}.${partInnings}` : null,
+    hits: stat('hits'),
+    strikeouts: stat('strikeouts'),
+    walks: stat('walks'),
+  };
+}
+
+/**
+ * Both teams' confirmed/probable starting pitcher for the specific upcoming
+ * game between teamAbbr and opponentAbbr. Starting pitchers are per-game
+ * data (ESPN attaches them to the matchup, not the team), and this app's
+ * only event id in hand client-side is The Odds API's own id, which has no
+ * relationship to ESPN's — so this instead finds the game the same way
+ * fetchHeadToHead already does: scan teamAbbr's own schedule for the game
+ * against opponentAbbr, take its ESPN event id from there. Either side (or
+ * both) comes back null when ESPN hasn't posted a starter yet, or the
+ * matchup can't be found — shown client-side as "TBD," never fabricated.
+ */
+export async function fetchStartingPitchers(teamAbbr, opponentAbbr, ctx) {
+  if (!teamAbbr || !opponentAbbr) return { away: null, home: null };
+
+  const data = await cachedJson(`${ESPN_SITE}/teams/${teamAbbr.toLowerCase()}/schedule`, SCHEDULE_TTL, ctx);
+  const events = data?.events ?? [];
+  const upcoming = events.find((e) => {
+    const comp = e.competitions?.[0];
+    if (comp?.status?.type?.completed) return false;
+    return comp?.competitors?.some((c) => c.team?.abbreviation?.toLowerCase() === opponentAbbr.toLowerCase());
+  });
+  if (!upcoming) return { away: null, home: null };
+
+  const summary = await cachedJson(`${ESPN_SITE}/summary?event=${upcoming.id}`, PITCHER_TTL, ctx);
+  const competitors = summary?.header?.competitions?.[0]?.competitors ?? [];
+  const away = competitors.find((c) => c.homeAway === 'away');
+  const home = competitors.find((c) => c.homeAway === 'home');
+  return {
+    away: pitcherFromProbable(away?.probables?.[0]),
+    home: pitcherFromProbable(home?.probables?.[0]),
+  };
+}
+
+/**
+ * A pitcher's last N real outings this season, most recent first — real
+ * per-game line (IP/H/R/ER/HR/BB/K), opponent, and result, from ESPN's own
+ * athlete gamelog (the same per-game log ESPN's own player pages use).
+ * Columns are read by name from the log's own `names` index rather than a
+ * hardcoded position, so a reordered response can't silently mislabel a
+ * column.
+ */
+export async function fetchPitcherOutings(playerId, ctx, limit = 5) {
+  if (!playerId) return [];
+  const data = await cachedJson(`${ESPN_ATHLETE_BASE}/${playerId}/gamelog`, GAMELOG_TTL, ctx);
+  const names = data?.names;
+  const categories = data?.seasonTypes?.[0]?.categories;
+  if (!Array.isArray(names) || !Array.isArray(categories)) return [];
+
+  const col = (name) => names.indexOf(name);
+  const idx = {
+    innings: col('innings'), hits: col('hits'), runs: col('runs'),
+    earnedRuns: col('earnedRuns'), homeRuns: col('homeRuns'),
+    walks: col('walks'), strikeouts: col('strikeouts'),
+  };
+
+  const entries = categories.flatMap((c) => c.events ?? []);
+  const withMeta = entries
+    .map((entry) => ({ entry, meta: data.events?.[entry.eventId] }))
+    .filter((x) => x.meta?.gameDate);
+  withMeta.sort((a, b) => new Date(b.meta.gameDate) - new Date(a.meta.gameDate));
+
+  const val = (stats, i) => (i >= 0 && stats[i] != null ? stats[i] : null);
+  return withMeta.slice(0, limit).map(({ entry, meta }) => {
+    // ESPN's gamelog reports raw home/away score — reorder winner-first
+    // (the box-score convention: "W 4-1" / "L 3-0"), since atVs alone
+    // doesn't say which of home/away actually won.
+    const mine = meta.atVs === '@' ? meta.awayTeamScore : meta.homeTeamScore;
+    const theirs = meta.atVs === '@' ? meta.homeTeamScore : meta.awayTeamScore;
+    const won = meta.gameResult === 'W';
+    const winnerScore = won ? mine : theirs;
+    const loserScore = won ? theirs : mine;
+    return {
+      date: meta.gameDate,
+      opponent: meta.opponent?.abbreviation ?? '',
+      atVs: meta.atVs ?? '',
+      result: meta.gameResult ?? null,
+      score: winnerScore != null && loserScore != null ? `${winnerScore}-${loserScore}` : null,
+      ip: val(entry.stats, idx.innings),
+      hits: val(entry.stats, idx.hits),
+      runs: val(entry.stats, idx.runs),
+      earnedRuns: val(entry.stats, idx.earnedRuns),
+      homeRuns: val(entry.stats, idx.homeRuns),
+      walks: val(entry.stats, idx.walks),
+      strikeouts: val(entry.stats, idx.strikeouts),
+    };
+  });
 }

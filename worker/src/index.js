@@ -21,6 +21,8 @@ import {
   fetchSituationalSplits,
   rankTeamStats,
   fetchHeadToHead,
+  fetchStartingPitchers,
+  fetchPitcherOutings,
 } from './mlb-stats.js';
 import { POTD_HOUR, runPotdDaily, runPotdClvSnapshot, runPotdGrading, getPotd, getPotdHistory } from './potd.js';
 import { getOrGenerateAnalysis } from './analysis.js';
@@ -752,22 +754,27 @@ export default {
     if (pathname === '/mlb-stats' && request.method === 'GET') {
       const { searchParams } = new URL(request.url);
       const teamAbbr = searchParams.get('team') ?? '';
-      // Only present once the client opens the Head-to-Head tab — computing
-      // it means scanning the requesting team's whole-season schedule, not
-      // just the last 5 games, so it's skipped unless actually asked for.
+      // The opponent, for the Starting Pitchers section (both teams' probable
+      // starter for this specific matchup) and, once the client opens the
+      // Head-to-Head tab, for scanning the requesting team's whole-season
+      // schedule for their meetings — sent on every call since it's cheap
+      // (same schedule fetch either way), but headToHead itself only
+      // computed when explicitly asked for.
       const opponentAbbr = searchParams.get('opponent') ?? '';
+      const wantHeadToHead = searchParams.get('h2h') === '1';
 
       if (!teamAbbr) {
         return json({ error: 'team parameter required' }, { status: 400, headers: cors });
       }
 
       try {
-        const [teamStats, leagueStats, recentSchedule, situational, headToHead] = await Promise.all([
+        const [teamStats, leagueStats, recentSchedule, situational, headToHead, startingPitchers] = await Promise.all([
           fetchTeamStats(teamAbbr, ctx),
           fetchLeagueStats(env),
           fetchRecentSchedule(teamAbbr, ctx),
           fetchSituationalSplits(teamAbbr, ctx),
-          opponentAbbr ? fetchHeadToHead(teamAbbr, opponentAbbr, ctx) : Promise.resolve(null),
+          wantHeadToHead && opponentAbbr ? fetchHeadToHead(teamAbbr, opponentAbbr, ctx) : Promise.resolve(null),
+          opponentAbbr ? fetchStartingPitchers(teamAbbr, opponentAbbr, ctx) : Promise.resolve(null),
         ]);
 
         // Ranked server-side against all 30 teams so the client only ever
@@ -775,7 +782,7 @@ export default {
         const rankedStats = teamStats ? rankTeamStats(teamStats, leagueStats) : null;
 
         return json(
-          { teamStats: rankedStats, recentSchedule, situational, headToHead },
+          { teamStats: rankedStats, recentSchedule, situational, headToHead, startingPitchers },
           { headers: { ...cors, 'Cache-Control': 'public, max-age=3600' } },
         );
       } catch (error) {
@@ -783,6 +790,25 @@ export default {
           { error: String(error).slice(0, 120) },
           { status: 500, headers: cors },
         );
+      }
+    }
+
+    // A single pitcher's last 5 real outings — lazy-loaded only once the
+    // client opens that drilldown, same reasoning as head-to-head above.
+    if (pathname === '/mlb-pitcher-outings' && request.method === 'GET') {
+      const { searchParams } = new URL(request.url);
+      const playerId = searchParams.get('player') ?? '';
+      if (!playerId) {
+        return json({ error: 'player parameter required' }, { status: 400, headers: cors });
+      }
+      try {
+        const outings = await fetchPitcherOutings(playerId, ctx);
+        return json(
+          { outings },
+          { headers: { ...cors, 'Cache-Control': 'public, max-age=3600' } },
+        );
+      } catch (error) {
+        return json({ outings: [], reason: String(error).slice(0, 120) }, { headers: cors });
       }
     }
 

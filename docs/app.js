@@ -287,19 +287,29 @@ async function showTeamStats(awayTeam, homeTeam, awayAbbr, homeAbbr) {
   }
 
   try {
-    const fetchTeam = (abbr) => {
+    // Each call also sends the opponent so the worker can resolve the
+    // specific upcoming matchup and return both teams' starting pitcher —
+    // cheap either way (same schedule fetch h2h would need), so it's sent
+    // on this initial load rather than gated behind another tab click.
+    const fetchTeam = (abbr, opponentAbbr) => {
       const url = new URL('/mlb-stats', CONFIG.WORKER_URL);
       url.searchParams.set('team', abbr);
+      url.searchParams.set('opponent', opponentAbbr);
       return fetch(url, { headers: { Accept: 'application/json' } }).then((r) => {
         if (!r.ok) throw new Error(`mlb-stats returned ${r.status}`);
         return r.json();
       });
     };
-    const [awayData, homeData] = await Promise.all([fetchTeam(awayAbbrev), fetchTeam(homeAbbrev)]);
+    const [awayData, homeData] = await Promise.all([
+      fetchTeam(awayAbbrev, homeAbbrev),
+      fetchTeam(homeAbbrev, awayAbbrev),
+    ]);
 
     currentMlbStats = {
       awayTeam, homeTeam, awayAbbrev, homeAbbrev, awayData, homeData,
       category: 'offense', scheduleTab: 'away', headToHead: undefined,
+      startingPitchers: awayData.startingPitchers ?? homeData.startingPitchers ?? null,
+      pitcherOutings: {},
     };
     renderMlbStatsPanel();
   } catch {
@@ -312,6 +322,11 @@ function renderMlbStatsPanel() {
   if (!d) return;
   el.statsBody.innerHTML = `
     <div class="stats-matchup"><h3>${esc(d.awayTeam)} @ ${esc(d.homeTeam)}</h3></div>
+    ${d.startingPitchers && (d.startingPitchers.away || d.startingPitchers.home) ? `
+    <div class="stats-section">
+      <h4>Starting Pitchers</h4>
+      ${renderMlbStartingPitchers(d)}
+    </div>` : ''}
     <div class="stats-section">
       <h4>Situational Results</h4>
       ${renderMlbSituational(d)}
@@ -325,6 +340,84 @@ function renderMlbStatsPanel() {
       ${renderMlbScheduleSection(d)}
     </div>
   `;
+}
+
+const MLB_PITCHER_STAT_LABELS = { era: 'ERA', whip: 'WHIP', ip: 'IP', hits: 'H', strikeouts: 'K', walks: 'BB' };
+const MLB_PITCHER_TWO_DECIMAL_STATS = new Set(['era', 'whip']);
+
+function formatPitcherStat(key, value) {
+  if (value == null) return '—';
+  if (MLB_PITCHER_TWO_DECIMAL_STATS.has(key)) return value.toFixed(2);
+  return String(value);
+}
+
+/**
+ * Both teams' confirmed/probable starter, side by side — a side with nothing
+ * announced yet ("TBD") is simply omitted rather than showing an empty card,
+ * same convention as every other data gap in this panel.
+ */
+function renderMlbStartingPitchers(d) {
+  const pitchers = [
+    { side: 'away', pitcher: d.startingPitchers.away },
+    { side: 'home', pitcher: d.startingPitchers.home },
+  ];
+
+  const pitcherCard = (side, pitcher) => {
+    if (!pitcher) return `<div class="stats-team"><p class="empty">TBD</p></div>`;
+    const record = pitcher.wins != null && pitcher.losses != null ? `${pitcher.wins}-${pitcher.losses}` : '—';
+    const expanded = d.pitcherOutings[pitcher.playerId] !== undefined;
+    return `
+      <div class="stats-team pitcher-card">
+        <div class="team-header">
+          <span class="team-name">${esc(pitcher.name)}</span>
+          <span class="pitcher-meta">${record}${pitcher.jersey ? `, #${esc(pitcher.jersey)}` : ''}${pitcher.throws ? ` · ${esc(pitcher.throws)}HP` : ''}</span>
+        </div>
+        ${Object.entries(MLB_PITCHER_STAT_LABELS).map(([key, label]) => `
+          <div class="stat-row">
+            <span class="stat-label">${label}</span>
+            <span class="stat-value">${esc(formatPitcherStat(key, pitcher[key]))}</span>
+          </div>`).join('')}
+        <button type="button" class="pitcher-outings-toggle" data-pitcher-outings="${side}" data-player-id="${esc(pitcher.playerId)}">
+          ${expanded ? 'Hide' : 'Show'} Past 5 Outings
+        </button>
+      </div>`;
+  };
+
+  // Outings render full-width below both cards, not nested in the half-width
+  // side-by-side grid — a 7-column per-outing line needs the room, and the
+  // reference layout shows it as its own drop-down panel too.
+  const expandedOutings = pitchers
+    .filter(({ pitcher }) => pitcher && d.pitcherOutings[pitcher.playerId] !== undefined)
+    .map(({ pitcher }) => `
+      <div class="pitcher-outings-block">
+        <h5>${esc(pitcher.name)} — Past 5 Outings</h5>
+        ${renderMlbPitcherOutings(d.pitcherOutings[pitcher.playerId])}
+      </div>`)
+    .join('');
+
+  return `
+    <div class="stats-grid">
+      ${pitcherCard('away', d.startingPitchers.away)}
+      <div class="stats-divider"></div>
+      ${pitcherCard('home', d.startingPitchers.home)}
+    </div>
+    ${expandedOutings}`;
+}
+
+function renderMlbPitcherOutings(outings) {
+  if (outings === null) return `<p class="empty">Loading…</p>`;
+  if (!outings.length) return `<p class="empty">No recent outings found.</p>`;
+  return `<div class="schedule-table pitcher-outings">
+    ${outings.map((o) => `
+      <div class="schedule-row">
+        <span class="schedule-game">${esc(o.atVs)} ${esc(o.opponent)}</span>
+        <span class="schedule-result ${o.result === 'W' ? 'win' : 'loss'}">${o.result ? esc(o.result) : ''} ${o.score ? esc(o.score) : ''}</span>
+        <span class="stat-value">${o.ip != null ? `${esc(String(o.ip))} IP` : '—'}</span>
+        <span class="stat-value">${o.earnedRuns != null ? `${esc(String(o.earnedRuns))} ER` : '—'}</span>
+        <span class="stat-value">${o.strikeouts != null ? `${esc(String(o.strikeouts))} K` : '—'}</span>
+      </div>
+    `).join('')}
+  </div>`;
 }
 
 /** Season/Last 10/venue-split rows — no Underdog/Favorite split, since no data source tracks a team's record by whether it was favored. */
@@ -3108,6 +3201,7 @@ el.statsBody.addEventListener('click', async (event) => {
         const url = new URL('/mlb-stats', CONFIG.WORKER_URL);
         url.searchParams.set('team', d.awayAbbrev);
         url.searchParams.set('opponent', d.homeAbbrev);
+        url.searchParams.set('h2h', '1');
         const data = await fetch(url, { headers: { Accept: 'application/json' } }).then((r) => r.json());
         d.headToHead = data.headToHead ?? [];
       } catch {
@@ -3119,6 +3213,30 @@ el.statsBody.addEventListener('click', async (event) => {
       return;
     }
     renderMlbStatsPanel();
+    return;
+  }
+
+  const outingsBtn = event.target.closest('[data-pitcher-outings]');
+  if (outingsBtn && currentMlbStats) {
+    const d = currentMlbStats;
+    const playerId = outingsBtn.dataset.playerId;
+    if (d.pitcherOutings[playerId] !== undefined) {
+      // Already loaded (or currently loading) — toggling again just hides it.
+      delete d.pitcherOutings[playerId];
+      renderMlbStatsPanel();
+      return;
+    }
+    d.pitcherOutings[playerId] = null; // marks "loading" so a second click can't double-fetch
+    renderMlbStatsPanel();
+    try {
+      const url = new URL('/mlb-pitcher-outings', CONFIG.WORKER_URL);
+      url.searchParams.set('player', playerId);
+      const data = await fetch(url, { headers: { Accept: 'application/json' } }).then((r) => r.json());
+      d.pitcherOutings[playerId] = data.outings ?? [];
+    } catch {
+      d.pitcherOutings[playerId] = [];
+    }
+    if (currentMlbStats === d) renderMlbStatsPanel();
   }
 });
 
