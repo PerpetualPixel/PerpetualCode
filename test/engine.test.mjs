@@ -8,6 +8,8 @@ import {
   combineLegs,
   devig,
   buildCandidates,
+  scoreCandidate,
+  QUALITATIVE,
   analyze,
   generateSlate,
   topPicks,
@@ -247,6 +249,85 @@ test('confidence ramps amber to green with nothing red', () => {
   // Out-of-range scores clamp rather than producing nonsense channels.
   assert.deepEqual(rgb(0), floor);
   assert.deepEqual(rgb(140), top);
+});
+
+/* ---------------------------------------------------------------- */
+/* Scoring — qualitative swing                                        */
+/* ---------------------------------------------------------------- */
+
+test('scoreCandidate with no qualitative argument matches today\'s price-only formula exactly', () => {
+  const [c] = buildCandidates(
+    [makeEvent('a', -140, 120, { ...SHARP, sport: 'americanfootball_nfl' })],
+    { now: NOW },
+  );
+  const withDefault = scoreCandidate(c, { now: NOW });
+  const explicitZero = scoreCandidate(c, { now: NOW, qualitative: 0 });
+  assert.equal(withDefault.score, explicitZero.score);
+  assert.equal(withDefault.parts.qualitative, 0);
+});
+
+test('a full +1/-1 qualitative signal swings the score by exactly QUALITATIVE.MAX_SWING before clamping', () => {
+  const [c] = buildCandidates(
+    // A mid-pack price so the swing has room to move without hitting 0 or 100.
+    [makeEvent('a', -140, 120, { ...SHARP, outlier: 15, sport: 'americanfootball_nfl' })],
+    { now: NOW },
+  );
+  const base = scoreCandidate(c, { now: NOW }).score;
+  const up = scoreCandidate(c, { now: NOW, qualitative: 1 }).score;
+  const down = scoreCandidate(c, { now: NOW, qualitative: -1 }).score;
+  assert.ok(Math.abs(up - (base + QUALITATIVE.MAX_SWING)) < 1e-9);
+  assert.ok(Math.abs(down - (base - QUALITATIVE.MAX_SWING)) < 1e-9);
+});
+
+test('score stays clamped to [0, 100] even when the qualitative swing would push it past the bounds', () => {
+  // Deliberately extreme, well inside the sharp band, everything maxed out —
+  // priceScore alone should already be sitting near the top of the range.
+  const [strong] = buildCandidates(
+    [makeEvent('a', -140, 120, { ...SHARP, outlier: 40, sport: 'americanfootball_nfl' })],
+    { now: NOW },
+  );
+  const high = scoreCandidate(strong, { now: NOW, qualitative: 1 });
+  assert.ok(high.score <= 100);
+
+  // A synthetic worst-case candidate (bypassing buildCandidates/makeEvent,
+  // which can't easily produce a near-zero price score) shouldn't go
+  // negative on a -1 qualitative signal either.
+  const weak = {
+    ev: -0.03, bookCount: RULES.MIN_BOOKS, disagreement: 0.05, shopGain: 0,
+    commenceMs: NOW + 200 * HOUR, updatedMs: NOW - 20 * HOUR,
+  };
+  const low = scoreCandidate(weak, { now: NOW, qualitative: -1 });
+  assert.ok(low.score >= 0);
+});
+
+test('a modest qualitative signal flips a close price call but cannot flip a lopsided one', () => {
+  // Two candidates a few score-points apart — small enough for MAX_SWING=8 to close the gap.
+  const [closeA] = buildCandidates(
+    [makeEvent('a', -140, 120, { ...SHARP, outlier: 10, sport: 'americanfootball_nfl' })],
+    { now: NOW },
+  );
+  const [closeB] = buildCandidates(
+    [makeEvent('b', -140, 120, { ...SHARP, outlier: 12, sport: 'americanfootball_nfl' })],
+    { now: NOW },
+  );
+  const a1 = scoreCandidate(closeA, { now: NOW }).score;
+  const b1 = scoreCandidate(closeB, { now: NOW }).score;
+  assert.ok(Math.abs(a1 - b1) < QUALITATIVE.MAX_SWING, 'fixture must actually be close enough to flip');
+  const bBoosted = scoreCandidate(closeB, { now: NOW, qualitative: b1 < a1 ? 1 : -1 }).score;
+  assert.ok((bBoosted > a1) !== (b1 > a1), 'a modest signal must be able to flip a close ranking');
+
+  // A deliberately lopsided pair — full MAX_SWING in the trailing side's favor still can't catch up.
+  const [lopsidedStrong] = buildCandidates(
+    [makeEvent('c', -140, 120, { ...SHARP, outlier: 40, sport: 'americanfootball_nfl' })],
+    { now: NOW },
+  );
+  const lopsidedWeak = {
+    ev: -0.03, bookCount: RULES.MIN_BOOKS, disagreement: 0.05, shopGain: 0,
+    commenceMs: NOW + 200 * HOUR, updatedMs: NOW - 20 * HOUR,
+  };
+  const strongScore = scoreCandidate(lopsidedStrong, { now: NOW }).score;
+  const weakBoosted = scoreCandidate(lopsidedWeak, { now: NOW, qualitative: 1 }).score;
+  assert.ok(weakBoosted < strongScore, 'a full qualitative signal must not overturn a real, lopsided price edge');
 });
 
 /* ---------------------------------------------------------------- */

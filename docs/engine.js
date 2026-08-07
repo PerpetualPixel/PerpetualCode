@@ -182,6 +182,11 @@ function norm(x, lo, hi) {
   return clamp01((x - lo) / (hi - lo));
 }
 
+/** General-purpose clamp, exported so qualitative.js's -1..1 signal can use the exact same clamping as scoreCandidate() does when it applies that signal. */
+export function clamp(x, lo, hi) {
+  return Math.min(hi, Math.max(lo, x));
+}
+
 /* ------------------------------------------------------------------ */
 /* Candidate extraction                                                */
 /* ------------------------------------------------------------------ */
@@ -336,11 +341,30 @@ export function buildCandidates(events, { now = Date.now() } = {}) {
 /* Scoring                                                             */
 /* ------------------------------------------------------------------ */
 
+// Max points (of the 0-100 grade) a fully one-sided qualitative signal (see
+// docs/qualitative.js) can swing a candidate's score, either direction.
+// norm(c.ev, -0.03, 0.06) below means the 45-point edge weight is worth
+// roughly 5 score-points per 1pp of EV, so an 8-point swing is worth about
+// 1.6pp of EV — enough to flip a genuinely close price call (a few points
+// apart) but far short of overturning a real, one-sided edge (typically
+// 20+ points apart). Tunable; sanity-check against real slates.
+export const QUALITATIVE = { MAX_SWING: 8 };
+
 /**
  * Composite 0–100 grade. Edge dominates; everything else is confidence that
  * the edge is real rather than an artifact of a thin or stale market.
+ *
+ * `qualitative` is an optional -1..1 signal (recent form / head-to-head /
+ * injuries — see docs/qualitative.js) applied as a small, capped swing on
+ * top of the price-only score, never folded into the weighted average
+ * above: averaging would need a 0 (no data) to land at the average's
+ * midpoint alongside genuinely neutral results, silently bumping every
+ * candidate with no qualitative data at all. Applied additively instead,
+ * "no data" and "computed neutral" both contribute exactly 0 — every
+ * existing caller that doesn't pass `qualitative` gets byte-for-byte the
+ * same score this function has always produced.
  */
-export function scoreCandidate(c, { now = Date.now() } = {}) {
+export function scoreCandidate(c, { now = Date.now(), qualitative = 0 } = {}) {
   const hoursOut = (c.commenceMs - now) / 3.6e6;
   const hoursStale = (now - c.updatedMs) / 3.6e6;
 
@@ -355,15 +379,20 @@ export function scoreCandidate(c, { now = Date.now() } = {}) {
     shopping: norm(c.shopGain, 0, 0.04),
     // Prefer lines quoted recently, on games close enough to be priced sharply.
     freshness: (1 - norm(hoursStale, 0.5, 12)) * (1 - norm(hoursOut, 24, 168)),
+    // Recent form / head-to-head / injuries — see docs/qualitative.js. 0
+    // when there's no usable data for this candidate.
+    qualitative: clamp(qualitative, -1, 1),
   };
 
-  const score =
+  const priceScore =
     100 *
     (0.45 * parts.edge +
       0.18 * parts.liquidity +
       0.15 * parts.agreement +
       0.14 * parts.shopping +
       0.08 * parts.freshness);
+
+  const score = clamp(priceScore + QUALITATIVE.MAX_SWING * parts.qualitative, 0, 100);
 
   return { score, parts };
 }

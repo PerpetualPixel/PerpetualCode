@@ -410,15 +410,39 @@ export function tennisHeadToHead(data, playerA, playerB, { filter = null } = {})
  * @param context  normalised bundle, or null when nothing could be matched
  * @param subject  the team the bet is on, as the odds feed names them
  */
-export function teamInsights(context, subject, { marketKey = 'h2h' } = {}) {
-  if (!context) return [];
-
+/**
+ * Which side of a context bundle is the bet's own team ("me") vs. the
+ * opponent ("them") — the odds feed and ESPN don't always spell a team's
+ * name identically, so this matches on the full name first and falls back
+ * to a fuzzy short-name containment check. Shared by teamInsights() (the
+ * prose bullets) and qualitative.js's teamQualitativeSignal() (the score
+ * adjustment) so the two can never disagree about which side is which.
+ */
+export function matchTeamSide(context, subject) {
+  if (!context) return { me: null, them: null };
   const subjectFold = fold(subject);
   const sides = [context.home, context.away].filter(Boolean);
   const me = sides.find((t) => fold(t.name) === subjectFold)
     ?? sides.find((t) => containsWords(subjectFold, fold(t.shortName ?? '')))
     ?? null;
   const them = sides.find((t) => t !== me) ?? null;
+  return { me, them };
+}
+
+/**
+ * Whether an injury-status string means the player is actually unavailable
+ * (on an injured list, out, suspended) as opposed to merely questionable —
+ * statuses arrive in each league's own vocabulary ("Out", "60-Day-IL",
+ * "Injured Reserve", "Day-To-Day"). Day-to-day does not count.
+ */
+export function isUnavailable(injury) {
+  return /\bout\b|injured reserve|\bir\b|-il\b|\bil\b|suspend/i.test(injury.status);
+}
+
+export function teamInsights(context, subject, { marketKey = 'h2h' } = {}) {
+  if (!context) return [];
+
+  const { me, them } = matchTeamSide(context, subject);
   if (!me) return [];
 
   const bullets = [];
@@ -488,13 +512,9 @@ export function teamInsights(context, subject, { marketKey = 'h2h' } = {}) {
 
   /* Availability ----------------------------------------------------- */
   if (me.injuries?.length) {
-    // Statuses arrive in each league's own vocabulary — "Out", "60-Day-IL",
-    // "Injured Reserve", "Day-To-Day". Anything on an injured list means
-    // unavailable; day-to-day does not. Left in the source's own casing rather
-    // than lower-cased, which turned "10-Day-IL" into "10-day-il".
-    const unavailable = me.injuries.filter((p) =>
-      /\bout\b|injured reserve|\bir\b|-il\b|\bil\b|suspend/i.test(p.status),
-    );
+    // Left in the source's own casing rather than lower-cased, which turned
+    // "10-Day-IL" into "10-day-il".
+    const unavailable = me.injuries.filter(isUnavailable);
     const listed = unavailable.length ? unavailable : me.injuries;
     const named = listed.slice(0, 3).map((p) => `${p.name} (${p.status})`).join(', ');
     const more = listed.length > 3 ? ` and ${listed.length - 3} more` : '';

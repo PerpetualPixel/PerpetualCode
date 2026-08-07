@@ -39,7 +39,13 @@ import {
   americanToDecimal,
   suggestedParlayStake,
   suggestedStake,
+  scoreCandidate,
 } from './engine.js';
+import {
+  tennisQualitativeSignal,
+  teamQualitativeSignal,
+  supportsQualitativeSignal,
+} from './qualitative.js';
 import {
   buildInsights,
   insightTexts,
@@ -165,6 +171,7 @@ function setDayFilter(which) {
   if (state.candidates.length) {
     renderFullSlate();
     generate(); // Pixel's Picks re-ranks automatically for the newly-selected day
+    refreshQualitativeSignals(); // fire-and-forget — re-enriches the newly-visible day
   }
   renderParlayFilters();
 }
@@ -2107,6 +2114,50 @@ async function enrichTennisAltSpreads() {
   }
 }
 
+// Bumped on every refreshQualitativeSignals() call — lets a slow run started
+// before the user switched days/leagues detect it's been superseded and
+// discard its own results rather than overwriting a newer run's.
+let qualitativeRunToken = 0;
+
+/**
+ * Deterministic, rule-based enrichment: recomputes .score for every eligible
+ * candidate using recent form / head-to-head / injuries already fetched for
+ * the research bullets (tennisArchive/eventContext) — see docs/qualitative.js.
+ * Never a new LLM call, never blocks first paint — fire-and-forget, re-renders
+ * itself once done. MMA (Sherdog scraping, unproven at bulk scale) and totals
+ * (no team/player side to attach a signal to) are skipped; those candidates
+ * keep their price-only score exactly as before this function existed.
+ */
+async function refreshQualitativeSignals() {
+  const token = ++qualitativeRunToken;
+  const targets = dayFilteredCandidates().filter(
+    (c) => supportsQualitativeSignal(c.marketKey) && !isMmaSportKey(c.sportKey),
+  );
+  if (!targets.length) return;
+
+  await Promise.allSettled(targets.map(async (c) => {
+    let signal = null;
+    try {
+      if (isTennis(c.sportKey)) {
+        const data = await tennisArchive(c.sportKey);
+        const opponent = c.outcomeName === c.home ? c.away : c.home;
+        signal = data ? tennisQualitativeSignal(data, c.outcomeName, opponent) : null;
+      } else {
+        const context = await eventContext(c);
+        signal = teamQualitativeSignal(context, c.outcomeName);
+      }
+    } catch {
+      /* enrichment is a bonus; the price score stands on its own */
+    }
+    if (token !== qualitativeRunToken) return; // a newer run has already started
+    Object.assign(c, scoreCandidate(c, { now: Date.now(), qualitative: signal ?? 0 }));
+  }));
+
+  if (token !== qualitativeRunToken) return; // superseded while awaiting — skip the render too
+  renderFullSlate();
+  generate();
+}
+
 /* ---------------------------------------------------------------- */
 /* Full Slate                                                        */
 /* ---------------------------------------------------------------- */
@@ -2754,6 +2805,7 @@ async function loadSlate() {
     state.slateRefreshTime = Date.now();
     renderSlateLeagueOptions();
     renderFullSlate();
+    refreshQualitativeSignals(); // fire-and-forget — enriches any newly-arrived games
   } catch (error) {
     el.slateBody.innerHTML = `<p class="empty">Couldn't reach the odds feed. ${esc(error.message)}</p>`;
   } finally {
@@ -4189,6 +4241,7 @@ async function runResultCheck() {
   renderFullSlate();
   await generate(); // Pixel's Picks is automatic — no button, ready as soon as the slate is
   loadTop5Tags(); // fire-and-forget — a badge lookup, never blocks the board
+  refreshQualitativeSignals(); // fire-and-forget — enriches scores with form/H2H/injuries once loaded
 
   setStatus(
     CONFIG.WORKER_URL
