@@ -433,39 +433,6 @@ function renderMlbSchedule(games) {
   </div>`;
 }
 
-el.statsBody.addEventListener('click', async (event) => {
-  const categoryBtn = event.target.closest('[data-mlb-category]');
-  if (categoryBtn && currentMlbStats) {
-    currentMlbStats.category = categoryBtn.dataset.mlbCategory;
-    renderMlbStatsPanel();
-    return;
-  }
-
-  const scheduleTabBtn = event.target.closest('[data-mlb-schedule-tab]');
-  if (scheduleTabBtn && currentMlbStats) {
-    const tab = scheduleTabBtn.dataset.mlbScheduleTab;
-    currentMlbStats.scheduleTab = tab;
-    if (tab === 'h2h' && currentMlbStats.headToHead === undefined) {
-      renderMlbStatsPanel(); // shows the "Loading head-to-head…" state immediately
-      const d = currentMlbStats;
-      try {
-        const url = new URL('/mlb-stats', CONFIG.WORKER_URL);
-        url.searchParams.set('team', d.awayAbbrev);
-        url.searchParams.set('opponent', d.homeAbbrev);
-        const data = await fetch(url, { headers: { Accept: 'application/json' } }).then((r) => r.json());
-        d.headToHead = data.headToHead ?? [];
-      } catch {
-        d.headToHead = [];
-      }
-      // Only re-render if the panel is still open on this same matchup —
-      // the user could have closed it or opened a different game while this awaited.
-      if (currentMlbStats === d) renderMlbStatsPanel();
-      return;
-    }
-    renderMlbStatsPanel();
-  }
-});
-
 const el = {
   status: document.getElementById('status'),
   picks: document.getElementById('picks'),
@@ -3113,6 +3080,39 @@ el.slateBody.addEventListener('click', (event) => {
   if (!button) return;
   const entry = renderedSlateCells[Number(button.dataset.slateCell)];
   if (entry) openStatsDrawer(entry.cand, entry.opposite);
+});
+
+el.statsBody.addEventListener('click', async (event) => {
+  const categoryBtn = event.target.closest('[data-mlb-category]');
+  if (categoryBtn && currentMlbStats) {
+    currentMlbStats.category = categoryBtn.dataset.mlbCategory;
+    renderMlbStatsPanel();
+    return;
+  }
+
+  const scheduleTabBtn = event.target.closest('[data-mlb-schedule-tab]');
+  if (scheduleTabBtn && currentMlbStats) {
+    const tab = scheduleTabBtn.dataset.mlbScheduleTab;
+    currentMlbStats.scheduleTab = tab;
+    if (tab === 'h2h' && currentMlbStats.headToHead === undefined) {
+      renderMlbStatsPanel(); // shows the "Loading head-to-head…" state immediately
+      const d = currentMlbStats;
+      try {
+        const url = new URL('/mlb-stats', CONFIG.WORKER_URL);
+        url.searchParams.set('team', d.awayAbbrev);
+        url.searchParams.set('opponent', d.homeAbbrev);
+        const data = await fetch(url, { headers: { Accept: 'application/json' } }).then((r) => r.json());
+        d.headToHead = data.headToHead ?? [];
+      } catch {
+        d.headToHead = [];
+      }
+      // Only re-render if the panel is still open on this same matchup —
+      // the user could have closed it or opened a different game while this awaited.
+      if (currentMlbStats === d) renderMlbStatsPanel();
+      return;
+    }
+    renderMlbStatsPanel();
+  }
 });
 
 el.historyToggle.addEventListener('click', () => setHistoryOpen(el.historyPanel.hidden));
