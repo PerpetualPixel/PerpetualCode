@@ -22,6 +22,9 @@
     <button id="guideToggle" class="icon-btn" aria-expanded="false" aria-controls="guidePanel">
       Guide
     </button>
+    <button id="aboutToggle" class="icon-btn" aria-expanded="false" aria-controls="aboutPanel">
+      About
+    </button>
     <button id="bankrollToggle" class="icon-btn" aria-expanded="false" aria-controls="bankrollPanel">
       Bankroll
     </button>
@@ -366,6 +369,27 @@
       real, gradeable bets, just not sharp enough to call a lock without
       saying so.</p>
     </details>
+  </div>
+</aside>
+
+<aside id="aboutPanel" class="history" aria-label="About Pixel Pick" hidden>
+  <div class="history-head">
+    <h2>About</h2>
+    <button id="aboutClose" class="icon-btn overlay-close-btn" aria-label="Close about">✕</button>
+  </div>
+  <div class="guide-body">
+    <p>Pixel Pick prices every game on the board against the market's own
+    no-vig consensus — the same math a sharp bettor would do by hand, run
+    across every book at once — and surfaces the real edges: Full Slate for
+    every market on every game, Pixel's Picks for the sharpest 8 locks,
+    Parlay Builder for hand-built tickets, and Play of the Day for one
+    highest-conviction pick, posted automatically each morning. Every
+    tracked pick is graded against its actual result, win or lose, so the
+    Tracking Dashboard reflects real performance, not a marketing number.</p>
+    <p class="about-footer">
+      Created by Perpetual Pixel<br>
+      <span id="aboutVersion" class="about-version"></span>
+    </p>
   </div>
 </aside>
 

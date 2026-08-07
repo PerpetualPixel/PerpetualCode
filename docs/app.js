@@ -9,6 +9,7 @@
 import { CONFIG } from './config.js';
 import { DEMO_EVENTS } from './demo.js';
 import { teamLogoUrl } from './team-logos.js';
+import { BUILD_INFO } from './version.js';
 import {
   initializePickDatabase,
   logPick,
@@ -553,6 +554,10 @@ const el = {
   guideToggle: document.getElementById('guideToggle'),
   guidePanel: document.getElementById('guidePanel'),
   guideClose: document.getElementById('guideClose'),
+  aboutToggle: document.getElementById('aboutToggle'),
+  aboutPanel: document.getElementById('aboutPanel'),
+  aboutClose: document.getElementById('aboutClose'),
+  aboutVersion: document.getElementById('aboutVersion'),
   statsDrawer: document.getElementById('statsDrawer'),
   statsDrawerTitle: document.getElementById('statsDrawerTitle'),
   statsDrawerClose: document.getElementById('statsDrawerClose'),
@@ -1602,6 +1607,20 @@ function setBankrollOpen(open) {
 
 function setGuideOpen(open) {
   setAsideOpen(el.guidePanel, el.guideToggle, open, { focusEl: el.guideClose });
+}
+
+const aboutBuildFmt = new Intl.DateTimeFormat(undefined, {
+  month: 'short', day: 'numeric', year: 'numeric', hour: 'numeric', minute: '2-digit', timeZoneName: 'short',
+});
+
+function renderAboutPanel() {
+  const built = new Date(BUILD_INFO.builtAt);
+  const when = Number.isNaN(built.getTime()) ? 'unknown' : aboutBuildFmt.format(built);
+  el.aboutVersion.textContent = `Build ${BUILD_INFO.commit} · ${when}`;
+}
+
+function setAboutOpen(open) {
+  setAsideOpen(el.aboutPanel, el.aboutToggle, open, { onOpen: renderAboutPanel, focusEl: el.aboutClose });
 }
 
 /* ---------------------------------------------------------------- */
@@ -3248,6 +3267,9 @@ el.bankrollClose.addEventListener('click', () => setBankrollOpen(false));
 
 el.guideToggle.addEventListener('click', () => setGuideOpen(el.guidePanel.hidden));
 el.guideClose.addEventListener('click', () => setGuideOpen(false));
+
+el.aboutToggle.addEventListener('click', () => setAboutOpen(el.aboutPanel.hidden));
+el.aboutClose.addEventListener('click', () => setAboutOpen(false));
 
 el.learningPanelClose.addEventListener('click', () => {
   el.learningPanel.hidden = true;

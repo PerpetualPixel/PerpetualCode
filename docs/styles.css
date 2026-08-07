@@ -1393,6 +1393,23 @@ input[type="range"]:focus-visible {
 .guide-body strong { color: var(--text); }
 .guide-body em { color: var(--text); font-style: normal; }
 
+.about-footer {
+  margin-top: 24px;
+  padding-top: 16px;
+  border-top: 1px solid var(--line);
+  font-weight: 600;
+  color: var(--text) !important;
+}
+
+.about-version {
+  display: inline-block;
+  margin-top: 4px;
+  font-family: var(--mono);
+  font-size: 0.7rem;
+  font-weight: 500;
+  color: var(--muted) !important;
+}
+
 /* ---------------------------------------------------------------- */
 /* More Stats drawer                                                  */
 /* ---------------------------------------------------------------- */
