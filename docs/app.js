@@ -1925,7 +1925,7 @@ async function openStatsDrawer(leg, opposite = null, { fullscreen = false } = {}
   const priceHtml = analysisText
     ? `
       <div class="stats-section">
-        <h3>Matchup Analysis <span class="stats-source">AI-written, once daily</span></h3>
+        <h3>Matchup Analysis</h3>
         ${disagreementHtml}
         ${quickTakeHtml}
         <p class="analysis-text">${esc(analysisText)}</p>
