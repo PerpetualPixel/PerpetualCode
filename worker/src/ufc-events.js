@@ -197,21 +197,36 @@ export async function getUfcEventDetails(fighterA, fighterB, commenceMs, ctx, sc
 
   // Neither fighter matched any listed fight on any card — before falling
   // back to a generic date label, check whether exactly one scheduled
-  // event's own start time falls on the same UTC calendar day as this
+  // event's own start time falls within a card-length window of this
   // fight. A real card often has untelevised early-prelim bouts ESPN's
   // scoreboard API simply doesn't list as individual competitions —
-  // confirmed live: "Miles Johns vs Gianni Vazquez," 40 minutes after UFC
-  // Fight Night: Gamrot vs Salkilld went live, appearing on neither UFC's
-  // nor PFL's schedule at all, yet with no other UFC/PFL card anywhere
-  // near that date. Still a real fight on that real card, not a fighter
-  // this app has never heard of. Only applied when exactly one event
-  // matches that day — a same-day double-header (rare, but not impossible
-  // between two promotions) would be ambiguous, and an ambiguous guess is
-  // worse than the plain date label.
+  // confirmed live twice now: "Miles Johns vs Gianni Vazquez" 40 minutes
+  // after UFC Fight Night: Gamrot vs Salkilld went live, and "Charles
+  // Johnson vs Jose Ochoa" 5 hours after UFC 330's own listed start —
+  // neither on UFC's nor PFL's schedule at all, yet both on cards with no
+  // other UFC/PFL event anywhere nearby.
+  //
+  // This was first built as a same-UTC-calendar-day check and that's
+  // exactly what missed the Ochoa fight: ESPN lists UFC 330's start as
+  // 2026-08-15T21:00Z (evening US primetime), but the main card runs past
+  // midnight UTC into 2026-08-16 — same real card, different UTC date. A
+  // fixed time window anchored to the event's own start, not calendar-day
+  // equality, is what actually matches "same card": no real UFC/PFL
+  // promotion runs a single event's prelims-to-main-event span past 16
+  // hours, and consecutive separate events are always at least a day or
+  // two apart (confirmed against ESPN's own 30-day schedule), so a 16-hour
+  // window can't accidentally straddle two different cards.
+  //
+  // Only applied when exactly one event's window contains this fight — a
+  // same-day double-header between two promotions (rare, but not
+  // impossible) would be ambiguous, and an ambiguous guess is worse than
+  // the plain date label.
   if (commenceMs) {
-    const dayKey = (ms) => new Date(ms).toISOString().slice(0, 10);
-    const sameDay = sched.filter((event) => event.date != null && dayKey(event.date) === dayKey(commenceMs));
-    if (sameDay.length === 1) return { event: sameDay[0].name };
+    const CARD_WINDOW_MS = 16 * 3600000;
+    const withinWindow = sched.filter(
+      (event) => event.date != null && Math.abs(commenceMs - event.date) <= CARD_WINDOW_MS,
+    );
+    if (withinWindow.length === 1) return { event: withinWindow[0].name };
     return { event: `Card - ${formatEventDate(commenceMs)}` };
   }
   return null;

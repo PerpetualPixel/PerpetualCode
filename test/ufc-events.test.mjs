@@ -169,7 +169,7 @@ test('UFC scoreboard failing does not block PFL fighters from matching', async (
   assert.equal(result.event, 'PFL Charlotte: Battle vs. Rosta');
 });
 
-test('an unmatched fighter pair still lands on the real card when it starts the same day (untelevised early prelim)', async () => {
+test('an unmatched fighter pair still lands on the real card when it starts within the card window (untelevised early prelim)', async () => {
   globalThis.caches = { default: { async match() { return null; }, async put() {} } };
   globalThis.fetch = async (url) => {
     // Only UFC's own scoreboard carries this card — PFL's returns nothing,
@@ -181,13 +181,31 @@ test('an unmatched fighter pair still lands on the real card when it starts the 
   };
   // Neither fighter is on the listed card at all — ESPN's scoreboard just
   // never listed this early-prelim bout as its own competition — but it
-  // starts the same UTC day as the one event ESPN did list.
+  // starts 40 minutes after the one event ESPN did list.
   const commenceMs = Date.parse('2026-08-08T21:40:00Z');
   const result = await getUfcEventDetails('Miles Johns', 'Gianni Vazquez', commenceMs, ctx);
   assert.equal(result.event, 'UFC Fight Night: Gamrot vs Salkilld');
 });
 
-test('same-day fallback stays quiet (plain date label) when two events land on the same day', async () => {
+test('the card-window fallback survives a card that crosses UTC midnight (regression: UFC 330\'s own listed start is Aug 15, its main card runs into Aug 16)', async () => {
+  // Confirmed live: "Charles Johnson vs Jose Ochoa" (commence 2026-08-16T02:00Z)
+  // fell through to "Card - 08/16" under a same-UTC-calendar-day version of
+  // this fallback, because ESPN lists UFC 330's own start as
+  // 2026-08-15T21:00Z — a real fight on a real, already-matched card, just on
+  // the other side of UTC midnight from the event's own listed date.
+  globalThis.caches = { default: { async match() { return null; }, async put() {} } };
+  globalThis.fetch = async (url) => {
+    const events = String(url).includes('/mma/ufc/')
+      ? [makeEspnEvent('UFC 330: Makhachev vs. Machado Garry', [['Islam Makhachev', 'Ian Machado Garry']], '2026-08-15T21:00Z')]
+      : [];
+    return { ok: true, text: async () => JSON.stringify({ events }) };
+  };
+  const commenceMs = Date.parse('2026-08-16T02:00:00Z');
+  const result = await getUfcEventDetails('Charles Johnson', 'Jose Ochoa', commenceMs, ctx);
+  assert.equal(result.event, 'UFC 330: Makhachev vs. Machado Garry');
+});
+
+test('card-window fallback stays quiet (plain date label) when two events are both within the window', async () => {
   globalThis.caches = { default: { async match() { return null; }, async put() {} } };
   globalThis.fetch = async (url) => {
     const events = String(url).includes('/mma/ufc/')
@@ -200,7 +218,21 @@ test('same-day fallback stays quiet (plain date label) when two events land on t
   assert.equal(result.event, 'Card - 08/08');
 });
 
-test('same-day fallback never fires when ESPN omits a date on every event', async () => {
+test('card-window fallback correctly stays quiet beyond the 16-hour window (two genuinely separate cards, not one that crossed midnight)', async () => {
+  globalThis.caches = { default: { async match() { return null; }, async put() {} } };
+  globalThis.fetch = async (url) => {
+    const events = String(url).includes('/mma/ufc/')
+      ? [makeEspnEvent('UFC Fight Night: Gamrot vs Salkilld', [['Mateusz Gamrot', 'Quillan Salkilld']], '2026-08-08T21:00Z')]
+      : [];
+    return { ok: true, text: async () => JSON.stringify({ events }) };
+  };
+  // 20 hours after the event's own listed start — outside any real card's span.
+  const commenceMs = Date.parse('2026-08-09T17:00:00Z');
+  const result = await getUfcEventDetails('Unmatched One', 'Unmatched Two', commenceMs, ctx);
+  assert.equal(result.event, 'Card - 08/09');
+});
+
+test('card-window fallback never fires when ESPN omits a date on every event', async () => {
   // Every existing fixture in this file omits `date` — this locks in that
   // those tests' plain-date-fallback behavior can never accidentally start
   // matching once a schedule entry does carry a date.
