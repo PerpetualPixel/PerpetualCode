@@ -1353,17 +1353,23 @@ const aboutBuildFmt = new Intl.DateTimeFormat(undefined, {
 function renderAboutPanel() {
   let when = 'unknown';
   if (BUILD_INFO.builtAt) {
-    // If builtAt includes an explicit timezone like "EST", preserve it
-    if (BUILD_INFO.builtAt.includes(' EST')) {
-      when = BUILD_INFO.builtAt;
-    } else if (BUILD_INFO.builtAt.includes(' EDT')) {
-      when = BUILD_INFO.builtAt;
-    } else {
-      // Fallback: parse ISO date and use system timezone
-      const built = new Date(BUILD_INFO.builtAt);
-      if (!Number.isNaN(built.getTime())) {
-        when = aboutBuildFmt.format(built);
-      }
+    const built = new Date(BUILD_INFO.builtAt);
+    if (!Number.isNaN(built.getTime())) {
+      // Format in America/New_York timezone (EDT in summer, EST in winter)
+      const estTime = new Date(built.toLocaleString('en-US', { timeZone: 'America/New_York' }));
+      const parts = new Intl.DateTimeFormat('en-US', {
+        month: 'short',
+        day: 'numeric',
+        year: 'numeric',
+        hour: 'numeric',
+        minute: '2-digit',
+        hour12: true,
+        timeZone: 'America/New_York',
+      }).formatToParts(built);
+
+      const formatted = parts.map(p => p.value).join('');
+      const tz = built.toLocaleString('en-US', { timeZone: 'America/New_York', timeZoneName: 'short' }).split(' ').pop();
+      when = `${formatted} ${tz}`;
     }
   }
   el.aboutVersion.textContent = `Version ${BUILD_INFO.version} · ${when}`;
