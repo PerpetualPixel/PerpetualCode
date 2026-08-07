@@ -5,11 +5,11 @@
  * actually reflects what's live rather than going stale.
  *
  * version is a plain incrementing minor counter (0.1, 0.2, ... 0.10, 0.11),
- * not a decimal fraction — bump the number after the dot by 1 per shipped
+ * not a decimal fraction; bump the number after the dot by 1 per shipped
  * commit. Stays below 1.0 until the app is actually considered a 1.0.
  */
 export const BUILD_INFO = {
-  version: '0.2',
-  commit: '7820509',
-  builtAt: '2026-08-07T14:20:00-04:00',
+  version: '0.3',
+  commit: '65178c8',
+  builtAt: '2026-08-07T14:38:00-04:00',
 };
