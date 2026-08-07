@@ -2421,6 +2421,8 @@ input[type="range"]:focus-visible {
   color: var(--muted);
   font-size: 0.7rem;
 }
+.schedule-ats.win, .schedule-ou.win { color: var(--accent); }
+.schedule-ats.loss, .schedule-ou.loss { color: #ef4444; }
 
 @media (max-width: 600px) {
   .stats-panel {

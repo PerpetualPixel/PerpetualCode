@@ -200,14 +200,15 @@ const MLB_ABBR_MAP = {
   'New York Yankees': 'NYY',
   'Tampa Bay Rays': 'TB',
   'Toronto Blue Jays': 'TOR',
-  'Chicago White Sox': 'CWS',
+  'Chicago White Sox': 'CHW', // ESPN's own slug, not the common "CWS" abbreviation — confirmed live (cws -> 400, chw -> 200)
   'Cleveland Guardians': 'CLE',
   'Detroit Tigers': 'DET',
   'Kansas City Royals': 'KC',
   'Minnesota Twins': 'MIN',
   'Houston Astros': 'HOU',
   'Los Angeles Dodgers': 'LAD',
-  'Oakland Athletics': 'OAK',
+  'Oakland Athletics': 'ATH', // relocated for the 2026 season; ESPN's own slug moved from "oak" to "ath" (confirmed live: oak -> 400, ath -> 200)
+  'Athletics': 'ATH', // some odds feeds already dropped the city name post-relocation
   'Seattle Mariners': 'SEA',
   'Arizona Diamondbacks': 'ARI',
   'Colorado Rockies': 'COL',
@@ -235,127 +236,235 @@ function getTeamAbbr(teamName) {
   return teamName.split(' ').pop().slice(0, 3).toUpperCase();
 }
 
-// MLB Stats display
+// MLB Stats display — labels shown for each stat key, in display order.
+// Direction (higher/lower is better) is decided server-side (see
+// worker/src/mlb-stats.js's HIGHER_IS_BETTER); the client just renders
+// whatever rank the server already computed against the real league.
+const MLB_OFFENSE_LABELS = {
+  battingAvg: 'Batting Avg', obpSlugging: 'OBP+SLG%', rbi: 'RBI', strikeouts: 'Strikeouts',
+  runs: 'Runs', stolenBases: 'Stolen Bases', doubles: 'Doubles', hits: 'Hits',
+  triples: 'Triples', walks: 'Walks', homeRuns: 'Home Runs',
+};
+const MLB_DEFENSE_LABELS = {
+  era: 'ERA', whip: 'WHIP', strikeoutsPitching: 'Strikeouts', fieldingPercentage: 'Fielding %', errors: 'Errors',
+};
+const MLB_THREE_DECIMAL_STATS = new Set(['battingAvg', 'obpSlugging', 'fieldingPercentage']);
+const MLB_TWO_DECIMAL_STATS = new Set(['era', 'whip']);
+
+function formatMlbStatValue(key, value) {
+  if (value == null) return '—';
+  if (MLB_THREE_DECIMAL_STATS.has(key)) return value.toFixed(3);
+  if (MLB_TWO_DECIMAL_STATS.has(key)) return value.toFixed(2);
+  return Math.round(value).toLocaleString();
+}
+
+function ordinal(n) {
+  if (n == null) return '—';
+  const mod100 = n % 100;
+  if (mod100 >= 11 && mod100 <= 13) return `${n}th`;
+  const suffix = ['th', 'st', 'nd', 'rd'][n % 10] ?? 'th';
+  return `${n}${suffix}`;
+}
+
+/** The panel's currently-loaded data, so the Offense/Defense and schedule tabs can re-render without re-fetching. Reset each time showTeamStats() opens a new matchup. */
+let currentMlbStats = null;
+
+// MLB Stats display — fetches both teams' real ESPN-backed stats via the
+// worker, opens the panel with a loading state, and shows a clear error
+// rather than doing nothing if the fetch fails (the original bug report).
 async function showTeamStats(awayTeam, homeTeam, awayAbbr, homeAbbr) {
-  // Get proper abbreviations
   const awayAbbrev = awayAbbr ? getTeamAbbr(awayAbbr) : getTeamAbbr(awayTeam);
   const homeAbbrev = homeAbbr ? getTeamAbbr(homeAbbr) : getTeamAbbr(homeTeam);
 
-  const [awayStats, homeStats] = await Promise.all([
-    fetch(`/mlb-stats?team=${awayAbbrev}`).then((r) => r.json()),
-    fetch(`/mlb-stats?team=${homeAbbrev}`).then((r) => r.json()),
-  ]);
-
-  const statsHtml = `
-    <div class="stats-matchup">
-      <h3>${awayTeam} @ ${homeTeam}</h3>
-    </div>
-
-    <div class="stats-section">
-      <h4>TEAM STATS</h4>
-      <div class="stats-grid">
-        <div class="stats-team">
-          <div class="team-header">
-            <img src="/logo.svg" alt="${awayTeam}" class="team-logo">
-            <span class="team-name">${awayTeam}</span>
-          </div>
-          ${renderOffenseStats(awayStats.teamStats)}
-        </div>
-
-        <div class="stats-divider"></div>
-
-        <div class="stats-team">
-          <div class="team-header">
-            <span class="team-name">${homeTeam}</span>
-            <img src="/logo.svg" alt="${homeTeam}" class="team-logo">
-          </div>
-          ${renderDefenseStats(homeStats.teamStats)}
-        </div>
-      </div>
-    </div>
-
-    <div class="stats-section">
-      <h4>RECENT SCHEDULE</h4>
-      <div class="stats-tabs">
-        <button class="stats-tab is-active" data-tab="away">${awayTeam}</button>
-        <button class="stats-tab" data-tab="h2h">Head-to-Head</button>
-        <button class="stats-tab" data-tab="home">${homeTeam}</button>
-      </div>
-      <div id="scheduleContent" class="schedule-content">
-        ${renderSchedule(awayStats.recentSchedule)}
-      </div>
-    </div>
-  `;
-
   el.statsTitle.textContent = `${awayTeam} @ ${homeTeam}`;
-  el.statsBody.innerHTML = statsHtml;
+  el.statsBody.innerHTML = `<p class="empty">Loading stats…</p>`;
   el.statsPanel.hidden = false;
   el.scrim.hidden = false;
+
+  if (!CONFIG.WORKER_URL) {
+    el.statsBody.innerHTML = `<p class="empty">Team stats aren't available in demo mode.</p>`;
+    return;
+  }
+
+  try {
+    const fetchTeam = (abbr) => {
+      const url = new URL('/mlb-stats', CONFIG.WORKER_URL);
+      url.searchParams.set('team', abbr);
+      return fetch(url, { headers: { Accept: 'application/json' } }).then((r) => {
+        if (!r.ok) throw new Error(`mlb-stats returned ${r.status}`);
+        return r.json();
+      });
+    };
+    const [awayData, homeData] = await Promise.all([fetchTeam(awayAbbrev), fetchTeam(homeAbbrev)]);
+
+    currentMlbStats = {
+      awayTeam, homeTeam, awayAbbrev, homeAbbrev, awayData, homeData,
+      category: 'offense', scheduleTab: 'away', headToHead: undefined,
+    };
+    renderMlbStatsPanel();
+  } catch {
+    el.statsBody.innerHTML = `<p class="empty">Couldn't load stats for this matchup right now.</p>`;
+  }
 }
 
-function renderOffenseStats(teamStats) {
-  if (!teamStats) return '<p>Stats unavailable</p>';
+function renderMlbStatsPanel() {
+  const d = currentMlbStats;
+  if (!d) return;
+  el.statsBody.innerHTML = `
+    <div class="stats-matchup"><h3>${esc(d.awayTeam)} @ ${esc(d.homeTeam)}</h3></div>
+    <div class="stats-section">
+      <h4>Situational Results</h4>
+      ${renderMlbSituational(d)}
+    </div>
+    <div class="stats-section">
+      <h4>Team Stats</h4>
+      ${renderMlbTeamStats(d)}
+    </div>
+    <div class="stats-section">
+      <h4>Recent Schedule</h4>
+      ${renderMlbScheduleSection(d)}
+    </div>
+  `;
+}
 
-  const stats = [
-    { label: 'Batting Avg', value: teamStats.offense?.battingAvg, rank: 18 },
-    { label: 'OBP+SLG%', value: teamStats.offense?.obpSlugging, rank: 24 },
-    { label: 'RBI', value: teamStats.offense?.rbi, rank: 25 },
-    { label: 'Strikeouts', value: teamStats.offense?.strikeouts, rank: 15 },
-    { label: 'Runs', value: teamStats.offense?.runs, rank: 25 },
-    { label: 'Stolen Bases', value: teamStats.offense?.stolenBases, rank: 21 },
-    { label: 'Doubles', value: teamStats.offense?.doubles, rank: 26 },
-    { label: 'Hits', value: teamStats.offense?.hits, rank: 22 },
-    { label: 'Triples', value: teamStats.offense?.triples, rank: 10 },
-    { label: 'Walks', value: teamStats.offense?.walks, rank: 21 },
-    { label: 'Home Runs', value: teamStats.offense?.homeRuns, rank: 11 },
-  ];
+/** Season/Last 10/venue-split rows — no Underdog/Favorite split, since no data source tracks a team's record by whether it was favored. */
+function renderMlbSituational(d) {
+  const away = d.awayData.situational;
+  const home = d.homeData.situational;
+  if (!away && !home) return `<p class="empty">Situational data unavailable.</p>`;
 
-  return `<div class="offense-stats">
-    <h5>Offense</h5>
-    ${stats.map((s) => `
-      <div class="stat-row">
-        <span class="stat-rank ${s.rank > 15 ? 'bad' : 'good'}">${s.rank}</span>
-        <span class="stat-label">${s.label}</span>
-        <span class="stat-value">${s.value || '—'}</span>
+  const row = (label, value) => `
+    <div class="stat-row">
+      <span class="stat-label">${esc(label)}</span>
+      <span class="stat-value">${value ? esc(value) : '—'}</span>
+    </div>`;
+
+  return `
+    <div class="stats-grid">
+      <div class="stats-team">
+        <div class="team-header"><span class="team-name">${esc(d.awayAbbrev)}</span></div>
+        ${row('Season', away?.season)}
+        ${row('Last 10', away?.lastTen)}
+        ${row('Away', away?.away)}
       </div>
-    `).join('')}
-  </div>`;
-}
-
-function renderDefenseStats(teamStats) {
-  if (!teamStats) return '<p>Stats unavailable</p>';
-
-  const stats = [
-    { label: 'ERA', value: teamStats.defense?.era, rank: 18 },
-    { label: 'WHIP', value: teamStats.defense?.whip, rank: 25 },
-  ];
-
-  return `<div class="defense-stats">
-    <h5>Defense</h5>
-    ${stats.map((s) => `
-      <div class="stat-row">
-        <span class="stat-rank ${s.rank > 15 ? 'bad' : 'good'}">${s.rank}</span>
-        <span class="stat-label">${s.label}</span>
-        <span class="stat-value">${s.value || '—'}</span>
+      <div class="stats-divider"></div>
+      <div class="stats-team">
+        <div class="team-header"><span class="team-name">${esc(d.homeAbbrev)}</span></div>
+        ${row('Season', home?.season)}
+        ${row('Last 10', home?.lastTen)}
+        ${row('Home', home?.home)}
       </div>
-    `).join('')}
-  </div>`;
+    </div>`;
 }
 
-function renderSchedule(games) {
-  if (!games || games.length === 0) return '<p>No recent games</p>';
+function renderMlbTeamStats(d) {
+  const category = d.category;
+  const labels = category === 'offense' ? MLB_OFFENSE_LABELS : MLB_DEFENSE_LABELS;
+
+  const statRows = (stats) => {
+    if (!stats) return `<p class="empty">Stats unavailable</p>`;
+    return Object.entries(labels).map(([key, label]) => {
+      const entry = stats[key];
+      const rankClass = entry?.rank == null ? '' : entry.rank <= 15 ? 'good' : 'bad';
+      return `
+        <div class="stat-row">
+          <span class="stat-rank ${rankClass}">${ordinal(entry?.rank)}</span>
+          <span class="stat-label">${esc(label)}</span>
+          <span class="stat-value">${formatMlbStatValue(key, entry?.value)}</span>
+        </div>`;
+    }).join('');
+  };
+
+  return `
+    <div class="stats-tabs">
+      <button type="button" class="stats-tab ${category === 'offense' ? 'is-active' : ''}" data-mlb-category="offense">Offense</button>
+      <button type="button" class="stats-tab ${category === 'defense' ? 'is-active' : ''}" data-mlb-category="defense">Defense</button>
+    </div>
+    <div class="stats-grid">
+      <div class="stats-team">
+        <div class="team-header"><span class="team-name">${esc(d.awayTeam)}</span></div>
+        ${statRows(d.awayData.teamStats?.[category])}
+      </div>
+      <div class="stats-divider"></div>
+      <div class="stats-team">
+        <div class="team-header"><span class="team-name">${esc(d.homeTeam)}</span></div>
+        ${statRows(d.homeData.teamStats?.[category])}
+      </div>
+    </div>`;
+}
+
+function renderMlbScheduleSection(d) {
+  const tab = d.scheduleTab;
+  let body;
+  if (tab === 'h2h') {
+    body = d.headToHead === undefined
+      ? `<p class="empty">Loading head-to-head…</p>`
+      : renderMlbSchedule(d.headToHead);
+  } else if (tab === 'home') {
+    body = renderMlbSchedule(d.homeData.recentSchedule);
+  } else {
+    body = renderMlbSchedule(d.awayData.recentSchedule);
+  }
+
+  return `
+    <div class="stats-tabs">
+      <button type="button" class="stats-tab ${tab === 'away' ? 'is-active' : ''}" data-mlb-schedule-tab="away">${esc(d.awayTeam)}</button>
+      <button type="button" class="stats-tab ${tab === 'h2h' ? 'is-active' : ''}" data-mlb-schedule-tab="h2h">Head-to-Head</button>
+      <button type="button" class="stats-tab ${tab === 'home' ? 'is-active' : ''}" data-mlb-schedule-tab="home">${esc(d.homeTeam)}</button>
+    </div>
+    <div class="schedule-content">${body}</div>`;
+}
+
+function renderMlbSchedule(games) {
+  if (!games || games.length === 0) return '<p class="empty">No games found.</p>';
+
+  const resultClass = (text, winPrefix, lossPrefix) =>
+    text?.startsWith(winPrefix) ? 'win' : text?.startsWith(lossPrefix) ? 'loss' : '';
 
   return `<div class="schedule-table">
     ${games.map((g) => `
       <div class="schedule-row">
-        <span class="schedule-game">${g.opponent}</span>
-        <span class="schedule-result ${g.result === 'W' ? 'win' : 'loss'}">${g.result} ${g.score}</span>
-        <span class="schedule-ats">${g.ats || '—'}</span>
-        <span class="schedule-ou">${g.ou || '—'}</span>
+        <span class="schedule-game">${esc(g.opponent)}</span>
+        <span class="schedule-result ${g.result === 'W' ? 'win' : 'loss'}">${esc(g.result)} ${esc(g.score)}</span>
+        <span class="schedule-ats ${resultClass(g.ats, 'W', 'L')}">${g.ats ? esc(g.ats) : '—'}</span>
+        <span class="schedule-ou ${resultClass(g.ou, 'O', 'U')}">${g.ou ? esc(g.ou) : '—'}</span>
       </div>
     `).join('')}
   </div>`;
 }
+
+el.statsBody.addEventListener('click', async (event) => {
+  const categoryBtn = event.target.closest('[data-mlb-category]');
+  if (categoryBtn && currentMlbStats) {
+    currentMlbStats.category = categoryBtn.dataset.mlbCategory;
+    renderMlbStatsPanel();
+    return;
+  }
+
+  const scheduleTabBtn = event.target.closest('[data-mlb-schedule-tab]');
+  if (scheduleTabBtn && currentMlbStats) {
+    const tab = scheduleTabBtn.dataset.mlbScheduleTab;
+    currentMlbStats.scheduleTab = tab;
+    if (tab === 'h2h' && currentMlbStats.headToHead === undefined) {
+      renderMlbStatsPanel(); // shows the "Loading head-to-head…" state immediately
+      const d = currentMlbStats;
+      try {
+        const url = new URL('/mlb-stats', CONFIG.WORKER_URL);
+        url.searchParams.set('team', d.awayAbbrev);
+        url.searchParams.set('opponent', d.homeAbbrev);
+        const data = await fetch(url, { headers: { Accept: 'application/json' } }).then((r) => r.json());
+        d.headToHead = data.headToHead ?? [];
+      } catch {
+        d.headToHead = [];
+      }
+      // Only re-render if the panel is still open on this same matchup —
+      // the user could have closed it or opened a different game while this awaited.
+      if (currentMlbStats === d) renderMlbStatsPanel();
+      return;
+    }
+    renderMlbStatsPanel();
+  }
+});
 
 const el = {
   status: document.getElementById('status'),

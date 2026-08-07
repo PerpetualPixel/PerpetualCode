@@ -13,7 +13,15 @@ import { QuotaManager } from './quota.js';
 import { fetchContext, hasContext } from './context.js';
 import { fetchWeather, hasVenue } from './weather.js';
 import { fetchMmaContext } from './mma.js';
-import { fetchTeamStats, fetchRecentSchedule } from './mlb-stats.js';
+import {
+  fetchTeamStats,
+  fetchRecentSchedule,
+  fetchLeagueStats,
+  refreshMlbLeagueStats,
+  fetchSituationalSplits,
+  rankTeamStats,
+  fetchHeadToHead,
+} from './mlb-stats.js';
 import { currentPhase, runPotdPhase, getPotd, getPotdBySport } from './potd.js';
 import { getOrGenerateAnalysis } from './analysis.js';
 import {
@@ -417,6 +425,7 @@ async function handleSports(env, ctx, cors) {
 export { QuotaManager };
 
 const MORNING_PREWARM_HOUR = 4; // 4am ET
+const MLB_LEAGUE_STATS_HOUR = 3; // 3am ET
 
 /** ET wall-clock hour for a given instant — same self-correcting-across-DST
  * approach as potd.js's own etParts, kept local since this is the only other
@@ -445,6 +454,16 @@ export default {
     // caching carries the rest of the day exactly as it does today.
     if (etHour(now) === MORNING_PREWARM_HOUR) {
       ctx.waitUntil(fetchSport('upcoming', env, ctx));
+    }
+
+    // 3am ET: refresh the league-wide MLB batting/pitching snapshot "View
+    // Stats" ranks every team against. Has to run standalone, with nothing
+    // else in the same invocation — fetching all 30 teams alongside a live
+    // request's own schedule/situational calls blew Cloudflare's per-
+    // invocation subrequest cap (confirmed live). The result is one KV blob;
+    // a live /mlb-stats request only ever reads it, never re-fetches it.
+    if (etHour(now) === MLB_LEAGUE_STATS_HOUR) {
+      ctx.waitUntil(refreshMlbLeagueStats(env, ctx));
     }
 
     // 6am ET: the day's Top 5 tracked picks — same engine, same sharp
@@ -733,19 +752,30 @@ export default {
     if (pathname === '/mlb-stats' && request.method === 'GET') {
       const { searchParams } = new URL(request.url);
       const teamAbbr = searchParams.get('team') ?? '';
+      // Only present once the client opens the Head-to-Head tab — computing
+      // it means scanning the requesting team's whole-season schedule, not
+      // just the last 5 games, so it's skipped unless actually asked for.
+      const opponentAbbr = searchParams.get('opponent') ?? '';
 
       if (!teamAbbr) {
         return json({ error: 'team parameter required' }, { status: 400, headers: cors });
       }
 
       try {
-        const [teamStats, recentSchedule] = await Promise.all([
+        const [teamStats, leagueStats, recentSchedule, situational, headToHead] = await Promise.all([
           fetchTeamStats(teamAbbr, ctx),
+          fetchLeagueStats(env),
           fetchRecentSchedule(teamAbbr, ctx),
+          fetchSituationalSplits(teamAbbr, ctx),
+          opponentAbbr ? fetchHeadToHead(teamAbbr, opponentAbbr, ctx) : Promise.resolve(null),
         ]);
 
+        // Ranked server-side against all 30 teams so the client only ever
+        // gets {value, rank} pairs, not the full league's raw numbers.
+        const rankedStats = teamStats ? rankTeamStats(teamStats, leagueStats) : null;
+
         return json(
-          { teamStats, recentSchedule },
+          { teamStats: rankedStats, recentSchedule, situational, headToHead },
           { headers: { ...cors, 'Cache-Control': 'public, max-age=3600' } },
         );
       } catch (error) {
