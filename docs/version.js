@@ -11,5 +11,5 @@
 export const BUILD_INFO = {
   version: '0.8',
   commit: '5969d37',
-  builtAt: '2026-08-07T22:52:00-04:00',
+  builtAt: '2026-08-07T22:52:00 EST',
 };

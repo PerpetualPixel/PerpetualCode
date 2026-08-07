@@ -1351,8 +1351,21 @@ const aboutBuildFmt = new Intl.DateTimeFormat(undefined, {
 });
 
 function renderAboutPanel() {
-  const built = new Date(BUILD_INFO.builtAt);
-  const when = Number.isNaN(built.getTime()) ? 'unknown' : aboutBuildFmt.format(built);
+  let when = 'unknown';
+  if (BUILD_INFO.builtAt) {
+    // If builtAt includes an explicit timezone like "EST", preserve it
+    if (BUILD_INFO.builtAt.includes(' EST')) {
+      when = BUILD_INFO.builtAt;
+    } else if (BUILD_INFO.builtAt.includes(' EDT')) {
+      when = BUILD_INFO.builtAt;
+    } else {
+      // Fallback: parse ISO date and use system timezone
+      const built = new Date(BUILD_INFO.builtAt);
+      if (!Number.isNaN(built.getTime())) {
+        when = aboutBuildFmt.format(built);
+      }
+    }
+  }
   el.aboutVersion.textContent = `Version ${BUILD_INFO.version} · ${when}`;
   el.aboutVersion.title = `commit ${BUILD_INFO.commit}`;
 }
