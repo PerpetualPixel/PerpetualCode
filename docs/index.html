@@ -362,6 +362,76 @@
       card.</p>
     </details>
 
+    <!--
+      IMPORTANT: this block documents the actual pick pipeline in
+      docs/engine.js (scoreCandidate/analyze/topPicks), docs/qualitative.js,
+      worker/src/tracking.js (runTop5Batch), and worker/src/analysis.js.
+      Keep it in sync any time that pipeline changes — a stale explanation
+      here is worse than none, since a reader has no way to tell it's out of
+      date.
+    -->
+    <details>
+      <summary>How picks are made, step by step</summary>
+      <p><strong>1. Every priced game becomes a candidate.</strong> For each
+      league, every market (moneyline, spread, total) on every live
+      sportsbook quote is pulled in — nothing is excluded up front by odds or
+      "gut feel." Each book's own price is stripped of its built-in fee
+      (de-vigged) to get that book's honest read, then every book <em>except</em>
+      the one offering the best price is combined into a consensus fair
+      value — excluding the best price keeps it from inflating its own
+      benchmark, which would make every bet look artificially profitable.</p>
+      <p><strong>2. Each candidate is graded 0–100.</strong> The best available
+      price is compared against that consensus to get its real expected value
+      (EV) — that's the dominant factor (45% of the grade). The rest is
+      confidence that the edge is real rather than a fluke of a thin or stale
+      market: how many books agree (18%), how tightly they agree (15%), how
+      much better the best price is than the field average — "line shopping"
+      gain (14%) — and how fresh the quote is relative to kickoff (8%). For
+      team sports only (never MMA — see below), a small, capped adjustment
+      from recent form, head-to-head history, and injury news can nudge the
+      grade up to about 8 points either way; it can sharpen a close call but
+      can't manufacture an edge that isn't there in the price.</p>
+      <p><strong>3. Long-shot and heavy-favorite prices are filtered out.</strong>
+      Only prices between −250 and +150 are considered at all — anything more
+      extreme is excluded regardless of how good its grade looks, since the
+      Kelly math and win-rate assumptions this app runs on stop being
+      reliable that far from even money. A pick also has to clear a minimum
+      real edge (at least 1.5% EV) and a minimum suggested stake (a
+      rounding-error-sized edge doesn't count even if the score looks
+      decent) — scoring well on liquidity and freshness alone isn't enough;
+      the price itself has to actually be worth taking.</p>
+      <p><strong>4. Only today's games are eligible.</strong> A team-sport
+      game has to be happening today (same ET calendar date) to be
+      considered — a real edge on an NFL line for a game months out never
+      gets to compete with tonight's board. MMA gets its own version of this
+      window (today, or before 6am ET the next morning, since a late main
+      event can run past midnight) since fight cards don't follow the same
+      daily schedule as league games.</p>
+      <p><strong>5. The best-graded picks are selected.</strong> Full Slate
+      and Parlay Builder rank live by score. Pixel's Picks is different: once
+      a day at 2am ET, the server locks in the 5 best picks that clear every
+      filter above and posts them for the whole day — reloading the page
+      later never changes them, and nothing about the picks reacts to price
+      movement afterward. On a quiet day where fewer than 5 real edges clear
+      the bar, the rest are filled from the next-best available prices and
+      explicitly flagged "Outside standard criteria" — still real, gradeable
+      bets, just not sharp enough to call a lock without saying so, and
+      excluded from the Tracking Dashboard's win-rate math so a thin day
+      can't quietly inflate the numbers.</p>
+      <p><strong>6. The write-up explains the pick that was already made — it
+      never re-decides.</strong> Once a side is chosen by the math above, the
+      AI matchup analysis is told which side that is and asked to build the
+      strongest honest case <em>for</em> it from real facts (form,
+      head-to-head, injuries), plus genuine risks specific to that pick — it
+      is never asked to independently guess who's favored, so it can't
+      contradict the pick shown on the card. MMA gets no qualitative scoring
+      at all (see step 2) — Sherdog/UFC.com research is shown for context,
+      but an MMA pick, underdog or favorite, is chosen purely on the price
+      math in steps 1–3, and the "Market &amp; Price Case" section always
+      stays visible for MMA specifically so that reasoning is never hidden
+      behind the AI's fighter-facts write-up.</p>
+    </details>
+
     <details>
       <summary>Pixel's Picks' sharp standard</summary>
       <p>Pixel's Picks always hands back 5 locks, priced between −250 and +250,
