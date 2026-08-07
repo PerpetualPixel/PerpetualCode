@@ -269,7 +269,11 @@ export function buildCandidates(events, { now = Date.now() } = {}) {
 
     for (const [key, entry] of pool) {
       const { quotes } = entry;
-      if (quotes.length < RULES.MIN_BOOKS) continue;
+      // MMA markets (especially PFL) are often thin with fewer books — require
+      // only 1 book minimum, while other sports require the standard 3.
+      const isMmaMarket = event.sport_key === 'mma_mixed_martial_arts';
+      const minBooks = isMmaMarket ? 1 : RULES.MIN_BOOKS;
+      if (quotes.length < minBooks) continue;
 
       // Best price = highest decimal payout. This is the line-shopping winner.
       const best = quotes.reduce((a, b) => (b.decimal > a.decimal ? b : a));
