@@ -1,19 +1,27 @@
 /**
- * Match MMA fighters from The Odds API to their real UFC event — sourced
- * live from ESPN's own MMA scoreboard rather than a hand-maintained list.
+ * Match MMA fighters from The Odds API to their real event — sourced live
+ * from ESPN's own MMA scoreboards rather than a hand-maintained list.
  *
  * This used to be a static, manually-updated fighter-to-event mapping
  * (worker/src/ufc-events-upcoming.js, "updated weekly") that went stale and
  * produced actively wrong results — e.g. it buried "Gamrot vs. Salkilld" as
  * one fight inside a different event's roster ("UFC Fight Night: Miller vs.
  * Goff") instead of recognizing it as its own separate card. ESPN's own
- * scoreboard (site.web.api.espn.com — the same host already proven reachable
+ * scoreboards (site.web.api.espn.com — the same host already proven reachable
  * from a Cloudflare Worker for MLB stats, unlike the 403-blocked
- * site.api.espn.com) carries the real, current event name and full fight
- * card for weeks out, so this is read live and cached instead of hand-kept.
+ * site.api.espn.com) carry the real, current event name and full fight card
+ * for weeks out, so this is read live and cached instead of hand-kept.
+ *
+ * The Odds API's "mma_mixed_martial_arts" market blends multiple promotions
+ * (UFC and PFL both post fights under it), and each promotion has its own
+ * separate ESPN scoreboard endpoint — a PFL fighter is never on UFC's board
+ * or vice versa — so both are fetched and merged into one lookup index.
  */
 
-const ESPN_MMA_SCOREBOARD = 'https://site.web.api.espn.com/apis/site/v2/sports/mma/ufc/scoreboard';
+const ESPN_MMA_SCOREBOARDS = {
+  ufc: 'https://site.web.api.espn.com/apis/site/v2/sports/mma/ufc/scoreboard',
+  pfl: 'https://site.web.api.espn.com/apis/site/v2/sports/mma/pfl/scoreboard',
+};
 const SCHEDULE_TTL = 3600 * 6; // a card can still be adjusted; not worth caching longer
 
 function normalizeName(name) {
@@ -54,16 +62,8 @@ async function cachedJson(url, ttl, ctx) {
   return JSON.parse(body);
 }
 
-/**
- * Every upcoming UFC event ESPN has scheduled over the next 30 days, each
- * with its real name and the normalized fighter-pair for every fight on the
- * card — built once per cache window, not once per fight, since a single
- * request already covers the whole window.
- */
-export async function fetchUfcSchedule(ctx, now = Date.now()) {
-  const data = await cachedJson(`${ESPN_MMA_SCOREBOARD}?dates=${dateRangeParam(now)}`, SCHEDULE_TTL, ctx);
+function parseSchedule(data) {
   const events = data?.events ?? [];
-
   return events.map((e) => ({
     name: e.name,
     fights: (e.competitions ?? []).map((c) => {
@@ -74,6 +74,28 @@ export async function fetchUfcSchedule(ctx, now = Date.now()) {
       };
     }),
   }));
+}
+
+/**
+ * Every upcoming UFC + PFL event ESPN has scheduled over the next 30 days,
+ * each with its real name and the normalized fighter-pair for every fight on
+ * the card — built once per cache window, not once per fight, since a single
+ * request per promotion already covers the whole window. A promotion whose
+ * fetch fails is simply left out of the merged schedule rather than failing
+ * the whole lookup; only a total failure across every promotion falls
+ * through to the caller's date-grouping fallback.
+ */
+export async function fetchMmaSchedule(ctx, now = Date.now()) {
+  const dates = dateRangeParam(now);
+  const results = await Promise.allSettled(
+    Object.values(ESPN_MMA_SCOREBOARDS).map((base) => cachedJson(`${base}?dates=${dates}`, SCHEDULE_TTL, ctx)),
+  );
+
+  const schedule = results.filter((r) => r.status === 'fulfilled').flatMap((r) => parseSchedule(r.value));
+  if (schedule.length === 0 && results.every((r) => r.status === 'rejected')) {
+    throw results[0].reason;
+  }
+  return schedule;
 }
 
 /**
@@ -92,23 +114,36 @@ function formatEventDate(commenceMs) {
  * Look up the real UFC/MMA event for one matchup, from ESPN's live schedule.
  * Falls back to date-based grouping only when the live fetch itself fails —
  * never falls back to a stale hardcoded guess.
+ *
+ * `schedule` is optional: pass an already-fetched schedule (see
+ * `fetchMmaSchedule`) when matching many fights in the same request — a
+ * whole event slate enriches its fights concurrently (`Promise.all`), and
+ * without a shared schedule each fight would independently re-fetch both
+ * ESPN scoreboards with no request coalescing, which is exactly what blew
+ * through Cloudflare's per-invocation subrequest limit once a second
+ * promotion (PFL) doubled the outbound calls. Omit it only for one-off
+ * lookups outside that batch path.
  */
-export async function getUfcEventDetails(fighterA, fighterB, commenceMs, ctx) {
+export async function getUfcEventDetails(fighterA, fighterB, commenceMs, ctx, schedule) {
   if (!fighterA || !fighterB) return null;
 
   const normA = normalizeName(fighterA);
   const normB = normalizeName(fighterB);
 
-  try {
-    const schedule = await fetchUfcSchedule(ctx);
-    for (const event of schedule) {
-      const matched = event.fights.some(
-        (f) => (f.a === normA && f.b === normB) || (f.a === normB && f.b === normA),
-      );
-      if (matched) return { event: event.name };
+  let sched = schedule;
+  if (sched === undefined) {
+    try {
+      sched = await fetchMmaSchedule(ctx);
+    } catch {
+      sched = [];
     }
-  } catch {
-    /* ESPN unreachable this tick — fall through to date grouping below. */
+  }
+
+  for (const event of sched) {
+    const matched = event.fights.some(
+      (f) => (f.a === normA && f.b === normB) || (f.a === normB && f.b === normA),
+    );
+    if (matched) return { event: event.name };
   }
 
   if (commenceMs) {

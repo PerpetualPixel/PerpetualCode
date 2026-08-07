@@ -181,8 +181,14 @@ export async function runTop5Batch(
   if (existing) return { skipped: true, reason: 'already generated today', dateKey };
 
   const events = await fetchFullSlate();
+  // Team sports post odds for games weeks or months out (an NFL regular-
+  // season line can go up in August) — without this, "today's locks" could
+  // silently include a game that isn't happening for months. Restricted to
+  // today's ET calendar date, same day boundary the pick itself is stored
+  // under; MMA keeps its own separate (today-or-early-tomorrow) window
+  // since a late main event can roll past midnight.
   const candidates = analyze(events, { now })
-    .filter((c) => !isMma(c.sportKey) || isEligibleMmaFight(c.commenceMs, now));
+    .filter((c) => (isMma(c.sportKey) ? isEligibleMmaFight(c.commenceMs, now) : etDate(c.commenceMs) === dateKey));
 
   const slate = topPicks(candidates, {
     count: TOP5_COUNT,

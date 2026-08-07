@@ -83,3 +83,34 @@ test('missing fighter names returns null rather than throwing', async () => {
   const result = await getUfcEventDetails(null, 'Someone', Date.now(), ctx);
   assert.equal(result, null);
 });
+
+test('a PFL fighter matches against PFL\'s own scoreboard, separate from UFC\'s', async () => {
+  globalThis.caches = { default: { async match() { return null; }, async put() {} } };
+  globalThis.fetch = async (url) => {
+    const isPfl = String(url).includes('/mma/pfl/');
+    const events = isPfl
+      ? [makeEspnEvent('PFL Charlotte: Battle vs. Rosta', [['Trey Waters', 'Trukon Carson']])]
+      : [makeEspnEvent('UFC Fight Night: Gamrot vs Salkilld', [['Mateusz Gamrot', 'Quillan Salkilld']])];
+    return { ok: true, text: async () => JSON.stringify({ events }) };
+  };
+
+  const pfl = await getUfcEventDetails('Trey Waters', 'Trukon Carson', Date.now(), ctx);
+  assert.equal(pfl.event, 'PFL Charlotte: Battle vs. Rosta');
+
+  const ufc = await getUfcEventDetails('Mateusz Gamrot', 'Quillan Salkilld', Date.now(), ctx);
+  assert.equal(ufc.event, 'UFC Fight Night: Gamrot vs Salkilld');
+});
+
+test('UFC scoreboard failing does not block PFL fighters from matching', async () => {
+  globalThis.caches = { default: { async match() { return null; }, async put() {} } };
+  globalThis.fetch = async (url) => {
+    if (String(url).includes('/mma/ufc/')) return { ok: false, status: 500 };
+    return {
+      ok: true,
+      text: async () => JSON.stringify({ events: [makeEspnEvent('PFL Charlotte: Battle vs. Rosta', [['Trey Waters', 'Trukon Carson']])] }),
+    };
+  };
+
+  const result = await getUfcEventDetails('Trey Waters', 'Trukon Carson', Date.now(), ctx);
+  assert.equal(result.event, 'PFL Charlotte: Battle vs. Rosta');
+});

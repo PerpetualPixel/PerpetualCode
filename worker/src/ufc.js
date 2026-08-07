@@ -97,6 +97,25 @@ function chartPercent(html, label) {
 }
 
 /**
+ * One `c-stat-compare__group` number — the "Sig. Str. Landed/Absorbed Per
+ * Min", "Takedown avg/Submission avg Per 15 Min", and "Sig. Str./Takedown
+ * Defense" rate-stat pairs further down the page from the chart-circle
+ * accuracy stats. Confirmed live against Islam Makhachev's page before
+ * writing this: the number sits in its own `c-stat-compare__number` div,
+ * with the matching `c-stat-compare__label` following within the same
+ * `c-stat-compare__group` (sometimes with a `c-stat-compare__percent` "%"
+ * div in between for the percentage-based rows) — captured within a fixed
+ * character window rather than requiring an exact tag sequence, so either
+ * shape matches.
+ */
+function statCompareNumber(html, label) {
+  const escaped = label.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  const re = new RegExp(`c-stat-compare__number">\\s*([\\d.]+)[\\s\\S]{0,150}?c-stat-compare__label">${escaped}`, 'i');
+  const n = html.match(re)?.[1];
+  return n != null ? Number(n) : null;
+}
+
+/**
  * One `c-stat-3bar` group — "Sig. Str. By Position" (Standing/Clinch/Ground)
  * or "Win by Method" (KO/TKO/DEC/SUB) are the two this app reads, each a
  * `c-stat-3bar__title` followed by three `c-stat-3bar__group` label/value
@@ -151,9 +170,21 @@ export async function fetchUfcProfile(name, ctx) {
   const strikePosition = statBarGroup(html, 'Sig. Str. By Position');
   const winMethod = statBarGroup(html, 'Win by Method');
 
+  // The rate-stat comparison rows further down the page — landed/absorbed
+  // per minute, takedown/submission average per 15 minutes, and defensive
+  // percentages. Confirmed live against Islam Makhachev's page: these sit
+  // outside the chart-circle and 3bar blocks above, in their own
+  // `c-stat-compare` groups.
+  const sigStrikeLandedPerMin = statCompareNumber(html, 'Sig. Str. Landed');
+  const sigStrikeAbsorbedPerMin = statCompareNumber(html, 'Sig. Str. Absorbed');
+  const sigStrikeDefense = statCompareNumber(html, 'Sig. Str. Defense');
+  const takedownAvgPer15Min = statCompareNumber(html, 'Takedown avg');
+  const takedownDefense = statCompareNumber(html, 'Takedown Defense');
+
   const hasBio = Object.values(bio).some((v) => v != null);
   const hasAnything = hasBio || strikingAccuracy != null || takedownAccuracy != null
-    || strikePosition.length > 0 || winMethod.length > 0;
+    || strikePosition.length > 0 || winMethod.length > 0
+    || sigStrikeLandedPerMin != null || takedownAvgPer15Min != null;
   if (!hasAnything) return null;
 
   return {
@@ -165,5 +196,10 @@ export async function fetchUfcProfile(name, ctx) {
     takedownAccuracy,
     strikePosition,
     winMethod,
+    sigStrikeLandedPerMin,
+    sigStrikeAbsorbedPerMin,
+    sigStrikeDefense,
+    takedownAvgPer15Min,
+    takedownDefense,
   };
 }

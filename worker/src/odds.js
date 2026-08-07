@@ -7,7 +7,7 @@
  * import back into index.js (index.js calls into tracking.js from its
  * scheduled() handler, so tracking.js can't import from index.js).
  */
-import { getUfcEventDetails } from './ufc-events.js';
+import { getUfcEventDetails, fetchMmaSchedule } from './ufc-events.js';
 import { fetchBaseballContext } from './baseball.js';
 
 export const UPSTREAM = 'https://api.the-odds-api.com/v4';
@@ -44,8 +44,20 @@ export const DEFAULT_CACHE_SECONDS = 900;
 // The sports catalogue is free to fetch and changes on the order of days.
 export const SPORTS_LIST_CACHE_SECONDS = 3600;
 
-async function enrichMmaEvents(events, ctx) {
+export async function enrichMmaEvents(events, ctx) {
   if (!events || !Array.isArray(events)) return events;
+
+  // Fetch the merged UFC+PFL schedule once for the whole slate, not once per
+  // fight — a slate enriches every fight concurrently below, and without a
+  // shared schedule each one independently re-fetches both ESPN scoreboards
+  // (no request coalescing across concurrent calls), which blows through
+  // Cloudflare's per-invocation subrequest limit on a full MMA slate.
+  let schedule;
+  try {
+    schedule = await fetchMmaSchedule(ctx);
+  } catch {
+    schedule = [];
+  }
 
   const enriched = await Promise.all(
     events.map(async (event) => {
@@ -57,6 +69,7 @@ async function enrichMmaEvents(events, ctx) {
         event.away_team,
         commenceMs,
         ctx,
+        schedule,
       );
       return eventDetails ? { ...event, ufc_event: eventDetails } : event;
     }),

@@ -1935,6 +1935,166 @@ function renderMmaPhotos(me, opponent) {
 }
 
 /**
+ * Overall record plus a last-five-fights strip — five small circles, newest
+ * first, green "W" for a win and red "L" for a loss (amber for a draw/no
+ * contest, since those aren't "W or L" either). Renders under the fighter
+ * photos whether or not a photo actually loaded for either side, since the
+ * record itself comes from Sherdog (worker/src/mma.js) independently of
+ * whether either fighter has a photo on file.
+ */
+function lastFiveCircles(history) {
+  const RESULT = {
+    win: { label: 'W', cls: 'is-win' },
+    loss: { label: 'L', cls: 'is-loss' },
+    draw: { label: 'D', cls: 'is-draw' },
+    nc: { label: 'NC', cls: 'is-draw' },
+  };
+  const recent = (history ?? []).slice(0, 5);
+  if (!recent.length) return '';
+  return recent
+    .map((f) => {
+      const r = RESULT[f.result] ?? { label: '?', cls: 'is-draw' };
+      return `<span class="mma-form-circle ${r.cls}" title="${esc(f.opponent ? `vs ${f.opponent}` : '')}">${r.label}</span>`;
+    })
+    .join('');
+}
+
+function renderMmaRecordStrip(fighter) {
+  if (!fighter) return '';
+  const r = fighter.record;
+  const recordStr = r ? `${r.wins}-${r.losses}${r.draws ? `-${r.draws}` : ''}` : null;
+  const circles = lastFiveCircles(fighter.history);
+  if (!recordStr && !circles) return '';
+  return `
+    <div class="mma-record-strip">
+      <p class="mma-record-name">${esc(fighter.name)}</p>
+      ${recordStr ? `<p class="mma-record-overall">${esc(recordStr)} <span class="mma-record-caption">overall</span></p>` : ''}
+      ${circles ? `<div class="mma-form-circles">${circles}<span class="mma-record-caption">last 5</span></div>` : ''}
+    </div>`;
+}
+
+/**
+ * The UFC.com-style tabbed matchup comparison — Matchup Stats / Win By /
+ * Significant Strikes / Grappling, each fighter's number on its own side of
+ * a shared label, matching the layout of ufc.com's own pre-fight comparison
+ * widget. Needs both fighters resolved (a comparison against nobody isn't
+ * one); a side missing a given stat shows "—" rather than a guessed value,
+ * same honesty policy as the rest of this drawer.
+ */
+function compareSplit(aVal, bVal) {
+  const a = typeof aVal === 'number' ? aVal : 0;
+  const b = typeof bVal === 'number' ? bVal : 0;
+  const total = a + b;
+  if (total <= 0) return [0, 0];
+  return [Math.round((a / total) * 100), Math.round((b / total) * 100)];
+}
+
+function compareRow(label, aVal, bVal, unit = '') {
+  const fmt = (v) => (v == null ? '—' : `${v}${unit}`);
+  const [aPct, bPct] = compareSplit(aVal, bVal);
+  return `
+    <div class="compare-row">
+      <div class="compare-values">
+        <span class="compare-val compare-val-a">${esc(fmt(aVal))}</span>
+        <span class="compare-label">${esc(label)}</span>
+        <span class="compare-val compare-val-b">${esc(fmt(bVal))}</span>
+      </div>
+      <div class="compare-bar">
+        <span class="compare-bar-a" style="width:${aPct}%"></span>
+        <span class="compare-bar-b" style="width:${bPct}%"></span>
+      </div>
+    </div>`;
+}
+
+function textCompareRow(label, aVal, bVal) {
+  return `
+    <div class="compare-row compare-row-text">
+      <span class="compare-val compare-val-a">${esc(aVal ?? '—')}</span>
+      <span class="compare-label">${esc(label)}</span>
+      <span class="compare-val compare-val-b">${esc(bVal ?? '—')}</span>
+    </div>`;
+}
+
+const LAST_FIGHT_LABEL = { win: 'Win', loss: 'Loss', draw: 'Draw', nc: 'NC' };
+
+function fighterCountry(fighter) {
+  const pob = fighter?.ufc?.bio?.placeOfBirth;
+  if (!pob) return null;
+  const parts = pob.split(',').map((s) => s.trim()).filter(Boolean);
+  return parts[parts.length - 1] ?? null;
+}
+
+function mmaMatchupStatsTab(me, opponent) {
+  const recordOf = (f) => (f?.record ? `${f.record.wins}-${f.record.losses}${f.record.draws ? `-${f.record.draws}` : ''}` : null);
+  const lastFightOf = (f) => LAST_FIGHT_LABEL[f?.history?.[0]?.result] ?? null;
+  return [
+    textCompareRow('Record', recordOf(me), recordOf(opponent)),
+    textCompareRow('Last Fight', lastFightOf(me), lastFightOf(opponent)),
+    textCompareRow('Country', fighterCountry(me), fighterCountry(opponent)),
+  ].join('');
+}
+
+function mmaWinByTab(me, opponent) {
+  const pctFor = (f, label) => f?.ufc?.winMethod?.find((w) => w.label === label)?.pct ?? null;
+  return [
+    compareRow('KO/TKO', pctFor(me, 'KO/TKO'), pctFor(opponent, 'KO/TKO'), '%'),
+    compareRow('Submission', pctFor(me, 'SUB'), pctFor(opponent, 'SUB'), '%'),
+    compareRow('Decision', pctFor(me, 'DEC'), pctFor(opponent, 'DEC'), '%'),
+  ].join('');
+}
+
+function mmaStrikesTab(me, opponent) {
+  return [
+    compareRow('Landed Per Min', me?.ufc?.sigStrikeLandedPerMin, opponent?.ufc?.sigStrikeLandedPerMin),
+    compareRow('Significant Strikes', me?.ufc?.strikingAccuracy, opponent?.ufc?.strikingAccuracy, '%'),
+    compareRow('Absorbed Per Min', me?.ufc?.sigStrikeAbsorbedPerMin, opponent?.ufc?.sigStrikeAbsorbedPerMin),
+  ].join('');
+}
+
+function mmaGrapplingTab(me, opponent) {
+  return [
+    compareRow('Takedown Avg', me?.ufc?.takedownAvgPer15Min, opponent?.ufc?.takedownAvgPer15Min),
+    compareRow('Takedown Accuracy', me?.ufc?.takedownAccuracy, opponent?.ufc?.takedownAccuracy, '%'),
+    compareRow('Takedown Defense', me?.ufc?.takedownDefense, opponent?.ufc?.takedownDefense, '%'),
+  ].join('');
+}
+
+const MMA_COMPARE_TABS = [
+  { key: 'matchup', label: 'Matchup Stats', build: mmaMatchupStatsTab },
+  { key: 'winby', label: 'Win By', build: mmaWinByTab },
+  { key: 'strikes', label: 'Significant Strikes', build: mmaStrikesTab },
+  { key: 'grappling', label: 'Grappling', build: mmaGrapplingTab },
+];
+
+// The two fighters for whichever MMA drawer is currently open — read by the
+// tab-switch click handler below, since clicking a tab re-renders just the
+// tab body, not the whole drawer. Same pattern as tennisBreakdownState.
+let mmaCompareState = null;
+
+function renderUfcStatComparison(me, opponent) {
+  if (!me || !opponent) return '';
+  const hasSherdog = me.record || opponent.record || me.history?.length || opponent.history?.length;
+  const hasUfc = me.ufc || opponent.ufc;
+  if (!hasSherdog && !hasUfc) return '';
+
+  mmaCompareState = { me, opponent };
+  const tabButtons = MMA_COMPARE_TABS
+    .map((t, i) => `<button type="button" class="compare-tab-btn ${i === 0 ? 'is-active' : ''}" data-mma-compare-tab="${esc(t.key)}">${esc(t.label)}</button>`)
+    .join('');
+
+  return `
+    <div class="stats-section mma-compare">
+      <h3>Matchup Comparison <span class="stats-source">via UFC.com</span></h3>
+      <div class="compare-header">
+        <span class="compare-fighter-a">${esc(me.name)}</span>
+        <span class="compare-fighter-b">${esc(opponent.name)}</span>
+      </div>
+      <div class="compare-tabs">${tabButtons}</div>
+      <div id="mmaCompareBody">${MMA_COMPARE_TABS[0].build(me, opponent)}</div>
+    </div>`;
+}
+
+/**
  * The MMA Fantasy-style breakdown: photos, physical attributes, career rate
  * stats, data reliability, method-of-victory/defeat bars, round-ended
  * distribution, activity by year, and common opponents. Sherdog
@@ -1957,6 +2117,16 @@ function renderMmaBreakdown(mmaContext, subjectName) {
 
   const photos = renderMmaPhotos(me, opponent);
   if (photos) sections.push(photos);
+
+  // Record + last-five-fights strip — always shown when the data's there,
+  // regardless of whether a photo actually rendered above for either side.
+  const recordStrip = [renderMmaRecordStrip(me), opponent ? renderMmaRecordStrip(opponent) : '']
+    .filter(Boolean)
+    .join('');
+  if (recordStrip) sections.push(`<div class="stats-section mma-record-section">${recordStrip}</div>`);
+
+  const compareHtml = opponent ? renderUfcStatComparison(me, opponent) : '';
+  if (compareHtml) sections.push(compareHtml);
 
   const bioMe = renderMmaBio(me);
   const bioOpp = opponent ? renderMmaBio(opponent) : '';
@@ -2145,25 +2315,48 @@ async function openStatsDrawer(leg, opposite = null, { fullscreen = false } = {}
     ? `<ul class="quick-take-list">${quickTake.map((t) => `<li>${esc(t)}</li>`).join('')}</ul>`
     : '';
 
-  // The AI-written matchup analysis replaces the quantitative price case
-  // entirely when it's available (see worker/src/analysis.js) — falls back
-  // to the existing no-vig/EV read whenever it isn't, so the drawer always
-  // has a real "why" either way.
-  const priceHtml = analysisText
+  // MMA gets no qualitative/form scoring at all (see docs/app.js's
+  // refreshQualitativeSignals(), which explicitly skips MMA) — every MMA
+  // pick, underdog or favorite, is chosen purely on the price math below.
+  // The AI analysis is barred from ever mentioning price (worker/src/
+  // analysis.js's prompt rules), so if it replaced the price case the way it
+  // does for other sports, an MMA underdog pick would show a thin
+  // fighter-facts paragraph with no visible link to the actual reason it was
+  // picked. So for MMA specifically, both sections always render — the AI's
+  // fighter-facts read (when available) plus the real "why," never one
+  // instead of the other.
+  const stakeHtml = stake ? `<div class="stake-line">${esc(stake)}</div>` : '';
+  const isUnderdogPick = typeof leg.american === 'number' && leg.american > 0;
+  const mmaMarketNote = isMma(leg.sportKey) && isUnderdogPick
+    ? `MMA picks are chosen on this price math alone — this app applies no fighter-quality or form scoring to MMA (the research below is for context, not scoring). An underdog pick like this one means the market itself disagrees with the favorite's price; it isn't a projection that this fighter is actually better.`
+    : null;
+
+  const analysisSectionHtml = analysisText
     ? `
       <div class="stats-section">
         <h3>Matchup Analysis</h3>
         ${quickTakeHtml}
         <p class="analysis-text">${esc(analysisText)}</p>
         ${victoryMethodsHtml}
-        ${stake ? `<div class="stake-line">${esc(stake)}</div>` : ''}
+        ${isMma(leg.sportKey) ? '' : stakeHtml}
       </div>`
-    : `
-      <div class="stats-section">
-        <h3>The Market &amp; Price Case</h3>
-        <ul>${explainExtensive(leg).map((t) => `<li>${esc(t)}</li>`).join('')}</ul>
-        ${stake ? `<div class="stake-line">${esc(stake)}</div>` : ''}
-      </div>`;
+    : '';
+
+  const marketCaseSectionHtml = `
+    <div class="stats-section">
+      <h3>The Market &amp; Price Case</h3>
+      ${mmaMarketNote ? `<p class="market-note">${esc(mmaMarketNote)}</p>` : ''}
+      <ul>${explainExtensive(leg).map((t) => `<li>${esc(t)}</li>`).join('')}</ul>
+      ${stakeHtml}
+    </div>`;
+
+  // The AI-written matchup analysis replaces the quantitative price case
+  // entirely when it's available (see worker/src/analysis.js) — falls back
+  // to the existing no-vig/EV read whenever it isn't. MMA is the one
+  // exception: both always render, per the note above.
+  const priceHtml = isMma(leg.sportKey)
+    ? analysisSectionHtml + marketCaseSectionHtml
+    : (analysisText ? analysisSectionHtml : marketCaseSectionHtml);
 
   // Genuine risk to THIS pick, not a case for the other side — the model is
   // told which side the app already picked (worker/src/analysis.js) and
@@ -2238,6 +2431,17 @@ document.body.addEventListener('click', (event) => {
   button.parentElement.querySelectorAll('.surface-btn').forEach((b) => b.classList.toggle('is-active', b === button));
   const body = document.getElementById('tennisFilterBody');
   if (body) body.innerHTML = renderTennisFilterBody(filter);
+});
+
+document.body.addEventListener('click', (event) => {
+  const button = event.target.closest('[data-mma-compare-tab]');
+  if (!button || !mmaCompareState) return;
+  const tab = MMA_COMPARE_TABS.find((t) => t.key === button.dataset.mmaCompareTab);
+  if (!tab) return;
+
+  button.parentElement.querySelectorAll('.compare-tab-btn').forEach((b) => b.classList.toggle('is-active', b === button));
+  const body = document.getElementById('mmaCompareBody');
+  if (body) body.innerHTML = tab.build(mmaCompareState.me, mmaCompareState.opponent);
 });
 
 el.statsDrawerClose.addEventListener('click', () => setStatsDrawerOpen(false));
@@ -2791,18 +2995,18 @@ function renderSlateLeagueOptions() {
  */
 function filterMmaGames(games) {
   const now = Date.now();
-  const twoWeeksMs = 14 * 24 * 60 * 60 * 1000;
+  const oneWeekMs = 9 * 24 * 60 * 60 * 1000;
 
   return games.filter((game) => {
     // Must have moneyline (h2h) odds
     if (!game.h2h?.away || !game.h2h?.home) return false;
 
-    // Must have event enrichment (Sherdog or fallback date-based)
+    // Must have event enrichment (live ESPN lookup or fallback date-based)
     if (!game.ufc_event?.event) return false;
 
-    // Should be within roughly 2 weeks (upcoming events) — no lower bound, so
-    // a card that's started stays visible instead of vanishing mid-event.
-    if (game.commenceMs > now + twoWeeksMs) return false;
+    // Should be within about a week out — no lower bound, so a card that's
+    // started stays visible instead of vanishing mid-event.
+    if (game.commenceMs > now + oneWeekMs) return false;
 
     return true;
   });

@@ -120,6 +120,30 @@ test('runTop5Batch stores at most TOP5_COUNT picks, all clearing the EV/Kelly fl
   }
 });
 
+test('runTop5Batch never picks a team-sport game that isn\'t happening today (e.g. NFL season odds posted months out)', async () => {
+  const { env } = makeKvStore();
+  const events = [
+    // A real NFL line, priced months ahead of kickoff — must never surface
+    // as "today's lock."
+    makeEvent('nfl-far-out', { outlier: 40, hoursOut: 24 * 140, sport: 'americanfootball_nfl', sportTitle: 'NFL' }),
+    makeEvent('mlb-today', { outlier: 35, hoursOut: 6 }),
+  ];
+
+  const result = await runTop5Batch(env, ctx, NOW, { fetchFullSlate: async () => events });
+  assert.equal(result.skipped, false);
+
+  const picks = await getTop5(env, { dateKey: '2026-08-05' });
+  assert.ok(picks.every((p) => p.sportKey !== 'americanfootball_nfl'), 'the far-out NFL game must never be picked');
+  assert.ok(picks.some((p) => p.pickId.startsWith('mlb-today:')), 'the same-day MLB game should still be picked');
+});
+
+test('runTop5Batch excludes a team-sport game on tomorrow\'s date too, not just far-future ones', async () => {
+  const { env } = makeKvStore();
+  const events = [makeEvent('tomorrow', { outlier: 40, hoursOut: 30 })]; // ~30h out crosses into the next ET day
+  const result = await runTop5Batch(env, ctx, NOW, { fetchFullSlate: async () => events });
+  assert.equal(result.count, 0, 'nothing today qualifies, so no picks should be stored even though tomorrow has a real edge');
+});
+
 test('runTop5Batch pads to 5 with flagged picks on a thin day, real picks stay unflagged', async () => {
   const { env } = makeKvStore();
   // Two real sharp edges (inside the -250/+250 band) plus one real-EV

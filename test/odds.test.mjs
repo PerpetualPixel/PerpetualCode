@@ -1,0 +1,92 @@
+import { test } from 'node:test';
+import assert from 'node:assert/strict';
+import { enrichMmaEvents } from '../worker/src/odds.js';
+
+/**
+ * Regression coverage for a real production bug: enrichMmaEvents used to call
+ * getUfcEventDetails once per fight, and each call independently re-fetched
+ * both ESPN scoreboards (no request coalescing across the concurrent
+ * Promise.all). On a full ~65-fight MMA slate that fanned out to ~130
+ * subrequests in one Worker invocation, blowing through Cloudflare's
+ * per-invocation subrequest limit — every fight silently fell back to
+ * "Card - MM/DD" grouping instead of its real event name. The fix hoists the
+ * schedule fetch above the per-fight loop so it happens once per request
+ * no matter how many fights are on the slate.
+ */
+
+const ctx = { waitUntil: (p) => p };
+
+function makeEspnEvent(name, fights) {
+  return {
+    name,
+    competitions: fights.map(([a, b]) => ({
+      competitors: [{ athlete: { displayName: a } }, { athlete: { displayName: b } }],
+    })),
+  };
+}
+
+function makeOddsEvent(id, homeTeam, awayTeam, commenceIso) {
+  return { id, home_team: homeTeam, away_team: awayTeam, commence_time: commenceIso };
+}
+
+test('enrichMmaEvents fetches the ESPN schedule once, not once per fight', async () => {
+  let fetchCalls = 0;
+  globalThis.caches = { default: { async match() { return null; }, async put() {} } };
+  globalThis.fetch = async () => {
+    fetchCalls++;
+    return {
+      ok: true,
+      text: async () => JSON.stringify({
+        events: [makeEspnEvent('UFC Fight Night: Gamrot vs Salkilld', [['Mateusz Gamrot', 'Quillan Salkilld']])],
+      }),
+    };
+  };
+
+  // A 20-fight slate — big enough that the old per-fight fetch pattern would
+  // have made 40 outbound calls (20 fights x 2 promotions).
+  const events = Array.from({ length: 20 }, (_, i) =>
+    makeOddsEvent(`fight-${i}`, 'Mateusz Gamrot', 'Quillan Salkilld', '2026-08-08T00:00:00Z'),
+  );
+
+  await enrichMmaEvents(events, ctx);
+
+  // Exactly one fetch per promotion (UFC + PFL), regardless of slate size.
+  assert.equal(fetchCalls, 2, `expected 2 total fetches (one per promotion), got ${fetchCalls}`);
+});
+
+test('enrichMmaEvents still tags every fight with the real event name from the shared schedule', async () => {
+  globalThis.caches = { default: { async match() { return null; }, async put() {} } };
+  globalThis.fetch = async (url) => {
+    const isPfl = String(url).includes('/mma/pfl/');
+    const events = isPfl
+      ? [makeEspnEvent('PFL Charlotte: Battle vs. Rosta', [['Trey Waters', 'Trukon Carson']])]
+      : [makeEspnEvent('UFC Fight Night: Gamrot vs Salkilld', [['Mateusz Gamrot', 'Quillan Salkilld']])];
+    return { ok: true, text: async () => JSON.stringify({ events }) };
+  };
+
+  const events = [
+    makeOddsEvent('a', 'Mateusz Gamrot', 'Quillan Salkilld', '2026-08-08T00:00:00Z'),
+    makeOddsEvent('b', 'Trey Waters', 'Trukon Carson', '2026-08-07T23:00:00Z'),
+  ];
+
+  const enriched = await enrichMmaEvents(events, ctx);
+  assert.equal(enriched.find((e) => e.id === 'a').ufc_event.event, 'UFC Fight Night: Gamrot vs Salkilld');
+  assert.equal(enriched.find((e) => e.id === 'b').ufc_event.event, 'PFL Charlotte: Battle vs. Rosta');
+});
+
+test('enrichMmaEvents falls back to date grouping for every fight when both scoreboards fail, without retrying per fight', async () => {
+  let fetchCalls = 0;
+  globalThis.caches = { default: { async match() { return null; }, async put() {} } };
+  globalThis.fetch = async () => {
+    fetchCalls++;
+    return { ok: false, status: 500 };
+  };
+
+  const events = Array.from({ length: 10 }, (_, i) =>
+    makeOddsEvent(`fight-${i}`, 'Someone', 'Else', '2026-08-09T20:00:00Z'),
+  );
+
+  const enriched = await enrichMmaEvents(events, ctx);
+  assert.ok(enriched.every((e) => e.ufc_event.event === 'Card - 08/09'));
+  assert.equal(fetchCalls, 2, `a total failure should still only attempt 2 fetches, got ${fetchCalls}`);
+});
