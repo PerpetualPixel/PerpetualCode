@@ -496,6 +496,11 @@ const state = {
   // fetched once at boot — just for badging matching Pixel Picks cards, not
   // itself the source of truth for anything the client computes.
   top5Ids: new Set(),
+  // Full Slate's live/final game state — eventId -> the raw /scores event
+  // for it (has `completed` and `scores`). Refreshed at most once a minute
+  // per sport-group (see refreshSlateScores) rather than on every render.
+  slateScores: new Map(),
+  slateScoresFetchedAt: new Map(), // group.id -> last fetch time, so switching leagues never gets throttled by an unrelated sport's recent fetch
   // Research caches. Both are free to fetch — ESPN and a static archive — so
   // they never touch the odds credit budget.
   tennis: new Map(),   // 'atp' | 'wta' -> parsed archive
@@ -2227,6 +2232,67 @@ function buildSlateGames(sportKeys) {
     .sort((a, b) => a.commenceMs - b.commenceMs);
 }
 
+/** Raw per-team score lookup from a /scores event, same pattern as worker/src/tracking.js's own gradePick() uses. */
+function slateScoreFor(scoreEvent, teamName) {
+  if (!scoreEvent?.scores) return null;
+  const entry = scoreEvent.scores.find((s) => s.name === teamName);
+  const value = entry ? Number(entry.score) : NaN;
+  return Number.isFinite(value) ? value : null;
+}
+
+/** 'upcoming' | 'live' | 'finished' for a game, from whatever /scores data is currently cached. */
+function slateGameState(game) {
+  const scoreEvent = state.slateScores.get(game.eventId);
+  if (scoreEvent?.completed) return 'finished';
+  if (game.commenceMs <= Date.now()) return 'live';
+  return 'upcoming';
+}
+
+/**
+ * Whether the game's own recommended side (bestCandidateForGame — the same
+ * one More Info opens on) won, once the game is finished — reuses the exact
+ * same gradePick() the tracker itself grades picks with, so "did the pick
+ * win" here and "did a tracked pick win" elsewhere are never two different
+ * answers to the same question. Returns null for an upcoming/live game, a
+ * game with no recommended side, or a push (a push isn't a win or a loss).
+ */
+function slateGameOutcome(game, rec) {
+  if (!rec || slateGameState(game) !== 'finished') return null;
+  const scoreEvent = state.slateScores.get(game.eventId);
+  const outcome = gradePick(
+    { home: game.home, away: game.away, outcomeName: rec.outcomeName, point: rec.point, marketKey: rec.marketKey, decimal: rec.decimal, suggested_stake: 1 },
+    scoreEvent,
+  );
+  return outcome ? (outcome.won ? 'won' : 'lost') : null;
+}
+
+/**
+ * Scores for whatever's on the currently-viewed league's board — cached
+ * client-side for a minute (the server itself caches these 5 minutes) so
+ * paging through sort/event filters on the same league doesn't refetch.
+ * Fire-and-forget from renderFullSlate; a stale/empty cache just means
+ * every game still renders as 'upcoming' until this resolves.
+ */
+async function refreshSlateScores(group) {
+  if (!CONFIG.WORKER_URL || !group.keys.length) return false;
+  const lastFetch = state.slateScoresFetchedAt.get(group.id) ?? 0;
+  if (Date.now() - lastFetch < 60000) return false;
+  state.slateScoresFetchedAt.set(group.id, Date.now());
+  try {
+    const url = new URL('/scores', CONFIG.WORKER_URL);
+    url.searchParams.set('sports', group.keys.join(','));
+    const res = await fetch(url, { headers: { Accept: 'application/json' } });
+    if (!res.ok) return false;
+    const data = await res.json();
+    for (const scoreEvent of data.events ?? []) {
+      state.slateScores.set(scoreEvent.id, scoreEvent);
+    }
+    return true;
+  } catch {
+    return false; // scores are an enhancement; the price grid still works without them
+  }
+}
+
 /**
  * One market cell. A real candidate renders as a clickable price, ringed
  * with a highlight when it grades higher than its market-mate (or when it's
@@ -2234,10 +2300,13 @@ function buildSlateGames(sportKeys) {
  * only actionable side). A market with no qualifying price on this side
  * renders a plain dash rather than making the whole game disappear.
  */
-function slateCell(cand, opposite, { totalLabel } = {}) {
+function slateCell(cand, opposite, { totalLabel, suppressRec = false } = {}) {
   if (!cand) return `<span class="slate-cell is-empty">—</span>`;
 
-  const recommended = opposite ? cand.score > opposite.score : true;
+  // Once a game is live or finished, the recommended-side glow stops
+  // meaning anything — it was a pregame read, not a live one — so it's
+  // suppressed rather than left pointing at a bet that's already decided.
+  const recommended = !suppressRec && (opposite ? cand.score > opposite.score : true);
   const idx = renderedSlateCells.push({ cand, opposite }) - 1;
   const label = totalLabel ? `${totalLabel}${formatAmerican(cand.american)}` : formatAmerican(cand.american);
 
@@ -2246,7 +2315,7 @@ function slateCell(cand, opposite, { totalLabel } = {}) {
             data-slate-cell="${idx}" title="${esc(cand.selection)}">${esc(label)}</button>`;
 }
 
-function slateTeamRow(game, side) {
+function slateTeamRow(game, side, { gameState, scoreEvent }) {
   const isAway = side === 'away';
   const team = isAway ? game.away : game.home;
   const spread = isAway ? game.spreads.away : game.spreads.home;
@@ -2261,19 +2330,24 @@ function slateTeamRow(game, side) {
   const totalLabel = total ? `${isAway ? 'o' : 'u'}${total.point ?? ''} ` : null;
   // The moneyline candidate's own no-vig consensus probability doubles as a
   // plain "chance to win" — the same number the algorithm's edge grading is
-  // already built from, just read as a probability instead of a price.
-  const winPct = h2h ? `${Math.round(h2h.consensusProb * 100)}%` : null;
+  // already built from, just read as a probability instead of a price —
+  // only useful pregame, so it's swapped for the actual score once the game
+  // has started.
+  const winPct = h2h && gameState === 'upcoming' ? `${Math.round(h2h.consensusProb * 100)}%` : null;
   const logo = teamLogoUrl(game.sportKey, team);
+  const suppressRec = gameState !== 'upcoming';
+  const score = gameState === 'upcoming' ? null : slateScoreFor(scoreEvent, team);
 
   return `
     <div class="slate-team-row">
       <span class="slate-team">
         ${logo ? `<img class="slate-logo" src="${esc(logo)}" alt="" loading="lazy">` : ''}
         ${esc(team)}${winPct ? ` <span class="slate-team-pct">${winPct}</span>` : ''}
+        ${score != null ? ` <span class="slate-team-score">${score}</span>` : ''}
       </span>
-      ${slateCell(spread, oppSpread)}
-      ${slateCell(total, oppTotal, { totalLabel })}
-      ${slateCell(h2h, oppH2h)}
+      ${slateCell(spread, oppSpread, { suppressRec })}
+      ${slateCell(total, oppTotal, { totalLabel, suppressRec })}
+      ${slateCell(h2h, oppH2h, { suppressRec })}
     </div>`;
 }
 
@@ -2313,19 +2387,47 @@ function opponentOf(game, cand) {
 
 function slateGameHtml(game) {
   const idx = renderedSlateGames.push(game) - 1;
-  const hasAnyPrice = bestCandidateForGame(game) != null;
+  const rec = bestCandidateForGame(game);
+  const hasAnyPrice = rec != null;
   const isMlb = game.sportKey === 'baseball_mlb';
+
+  const gameState = slateGameState(game);
+  const scoreEvent = state.slateScores.get(game.eventId);
+  const outcome = slateGameOutcome(game, rec); // 'won' | 'lost' | null — only set once finished
+  const rowProps = { gameState, scoreEvent };
+
+  const cardClass = [
+    'slate-game',
+    gameState === 'live' ? 'is-live' : '',
+    outcome ? `pick-${outcome}` : '', // pick-won -> green border, pick-lost -> red border
+  ].filter(Boolean).join(' ');
+
+  // "More Info"/"View Stats" only makes sense pregame or live — once a game
+  // is finished, the game state itself (score + Final) is the whole story,
+  // and the button that would open it is dropped rather than left pointing
+  // at a decision that's already made.
+  const showInfoButton = hasAnyPrice && gameState !== 'finished';
+  const infoButtonHtml = !showInfoButton ? '' : isMlb
+    ? `<button type="button" class="more-info-btn" data-show-mlb-stats="${idx}">View Stats</button>`
+    : `<button type="button" class="more-info-btn" data-more-info="${idx}">More Info</button>`;
+
+  const timeHtml = gameState === 'finished'
+    ? `<span class="slate-final">Final</span>`
+    : gameState === 'live'
+      ? `<span class="slate-live-badge">● Live</span>`
+      : `<span>${esc(dateFmt.format(new Date(game.commenceMs)))}</span>`;
+
   return `
-    <article class="slate-game" ${isMlb ? `data-game-index="${idx}"` : ''}>
+    <article class="${cardClass}" ${isMlb ? `data-game-index="${idx}"` : ''}>
       <div class="slate-game-time">
-        <span>${esc(dateFmt.format(new Date(game.commenceMs)))}</span>
-        ${isMlb ? `<button type="button" class="more-info-btn" data-show-mlb-stats="${idx}">View Stats</button>` : hasAnyPrice ? `<button type="button" class="more-info-btn" data-more-info="${idx}">More Info</button>` : ''}
+        ${timeHtml}
+        ${infoButtonHtml}
       </div>
       <div class="slate-header-row">
         <span></span><span>Spread</span><span>O/U</span><span>ML</span>
       </div>
-      ${slateTeamRow(game, 'away')}
-      ${slateTeamRow(game, 'home')}
+      ${slateTeamRow(game, 'away', rowProps)}
+      ${slateTeamRow(game, 'home', rowProps)}
     </article>`;
 }
 
@@ -2455,6 +2557,17 @@ function renderFullSlate() {
   renderedSlateGames.length = 0;
 
   const group = LEAGUE_GROUP_BY_ID.get(state.slateLeague) ?? LEAGUE_GROUPS[0];
+
+  // Fire-and-forget: renders now with whatever's already cached (nothing on
+  // first load), then repaints once fresh scores land — but only if the
+  // user is still looking at this same league by the time they do, so a
+  // slow response can't overwrite a board they've since navigated away from.
+  refreshSlateScores(group).then((updated) => {
+    if (updated && (LEAGUE_GROUP_BY_ID.get(state.slateLeague) ?? LEAGUE_GROUPS[0]) === group) {
+      renderFullSlate();
+    }
+  });
+
   const allGames = buildSlateGames(group.keys);
 
   if (!allGames.length) {

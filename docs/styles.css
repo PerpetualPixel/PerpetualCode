@@ -1826,6 +1826,44 @@ input[type="range"]:focus-visible {
   box-shadow: var(--shadow);
 }
 
+/* Once a game is finished, the border itself says whether the algorithm's
+   own pregame pick won or lost — no need to open the card to find out. */
+.slate-game.pick-won {
+  border-color: var(--success);
+  border-left-color: var(--success);
+}
+.slate-game.pick-lost {
+  border-color: var(--danger);
+  border-left-color: var(--danger);
+}
+
+.slate-game.is-live {
+  border-left-color: var(--danger);
+}
+
+.slate-live-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  color: var(--danger);
+  font-weight: 700;
+  letter-spacing: 0.06em;
+}
+
+.slate-final {
+  color: var(--muted);
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+
+.slate-team-score {
+  font-family: var(--mono);
+  font-size: 0.85rem;
+  font-weight: 800;
+  color: var(--text);
+}
+
 .slate-game-time {
   display: flex;
   align-items: center;
