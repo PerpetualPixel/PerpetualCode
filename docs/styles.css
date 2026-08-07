@@ -1078,6 +1078,43 @@ input[type="range"]:focus-visible {
 }
 .history[hidden] { display: none; }
 
+/* The Tracking Dashboard defaults to the full viewport width instead of
+   .history's narrow drawer width — an id selector so it wins regardless of
+   the .history media queries below — with a drag handle (below) to size it
+   back down. JS sets an inline width once the user actually drags it. */
+#learningPanel {
+  width: 100%;
+  max-width: none;
+  border-left: none;
+}
+
+.panel-resize-handle {
+  position: absolute;
+  top: 0;
+  left: 0;
+  bottom: 0;
+  width: 14px;
+  cursor: ew-resize;
+  z-index: 5;
+  touch-action: none;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+.panel-resize-handle::before {
+  content: '';
+  width: 4px;
+  height: 56px;
+  border-radius: 2px;
+  background: var(--line);
+  transition: background 150ms ease, height 150ms ease;
+}
+.panel-resize-handle:hover::before,
+.panel-resize-handle.is-dragging::before {
+  background: var(--accent);
+  height: 72px;
+}
+
 /* The "More Info" full-screen breakdown — same drawer element and content
    pipeline as the narrow side panel, just claiming the whole viewport on
    both mobile and desktop instead of a fixed sidebar width. Two classes
@@ -2398,6 +2435,15 @@ input[type="range"]:focus-visible {
   display: flex;
   flex-direction: column;
   gap: 24px;
+  /* The panel itself claims the full viewport, but the two-column metric
+     grid and calendar were built for a narrow drawer — left unconstrained
+     they'd stretch edge to edge on a wide desktop window. Capping and
+     centering the content keeps it readable while the panel behind it
+     still covers the whole screen. */
+  width: 100%;
+  max-width: 720px;
+  margin: 0 auto;
+  box-sizing: border-box;
 }
 
 .learning-section {

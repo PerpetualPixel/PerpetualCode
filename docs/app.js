@@ -69,6 +69,11 @@ const HISTORY_KEY = 'pixelpick.history.v2';
 const DAY_FILTER_KEY = 'pixelpick.dayFilter.v1';
 const CALENDAR_METRIC_KEY = 'pixelpick.calendarMetric.v1';
 const TRACKER_SPORT_FILTER_KEY = 'pixelpick.trackerSportFilter.v1';
+// The Tracking Dashboard's user-dragged width in px, or null for its default
+// (fills the viewport). Only ever set by actually dragging the resize
+// handle — there's no other UI that writes to this.
+const LEARNING_PANEL_WIDTH_KEY = 'pixelpick.learningPanelWidth.v1';
+const LEARNING_PANEL_MIN_WIDTH = 320;
 // 1-2% of bankroll per unit is the standard range a flat-staking bettor
 // works from; 2% is the more conservative, more commonly cited end of it —
 // used here as the default recommendation when the user hasn't set their own.
@@ -432,6 +437,7 @@ const el = {
   parlayGenerate: document.getElementById('parlayGenerate'),
   parlayResult: document.getElementById('parlayResult'),
   learningPanel: document.getElementById('learningPanel'),
+  learningPanelResize: document.getElementById('learningPanelResize'),
   learningPanelClose: document.getElementById('learningPanelClose'),
   totalPicks: document.getElementById('totalPicks'),
   gradedPicks: document.getElementById('gradedPicks'),
@@ -4119,10 +4125,88 @@ async function renderLearningDashboard() {
   renderCalibrationReport(top5Picks);
 }
 
+/** Applies the user's last-dragged width, if any — otherwise the panel keeps its CSS default (fills the viewport). */
+function applyLearningPanelWidth() {
+  const saved = loadJSON(LEARNING_PANEL_WIDTH_KEY, null);
+  if (!Number.isFinite(saved)) {
+    el.learningPanel.style.width = '';
+    return;
+  }
+  const clamped = Math.min(Math.max(saved, LEARNING_PANEL_MIN_WIDTH), window.innerWidth);
+  el.learningPanel.style.width = `${clamped}px`;
+}
+
+/** Drag-to-resize on the panel's left edge — pointer events cover mouse and touch alike, so this works the same on mobile and desktop. */
+function initLearningPanelResize() {
+  const handle = el.learningPanelResize;
+  let dragging = false;
+  let startX = 0;
+  let moved = false;
+  let lastTapAt = 0;
+
+  function onPointerMove(event) {
+    if (!dragging) return;
+    if (Math.abs(event.clientX - startX) > 3) moved = true;
+    const width = Math.min(Math.max(window.innerWidth - event.clientX, LEARNING_PANEL_MIN_WIDTH), window.innerWidth);
+    el.learningPanel.style.width = `${width}px`;
+  }
+
+  function onPointerUp() {
+    if (!dragging) return;
+    dragging = false;
+    handle.classList.remove('is-dragging');
+    document.removeEventListener('pointermove', onPointerMove);
+    document.removeEventListener('pointerup', onPointerUp);
+
+    if (!moved) {
+      // A plain tap/click, not a drag. The handle's pointerdown below calls
+      // preventDefault() (needed to stop text selection mid-drag), which
+      // also suppresses the browser's own synthesized dblclick — so two
+      // quick taps are detected by hand instead, as "reset to fullscreen".
+      const now = Date.now();
+      if (now - lastTapAt < 400) {
+        el.learningPanel.style.width = '';
+        saveJSON(LEARNING_PANEL_WIDTH_KEY, null);
+        lastTapAt = 0;
+      } else {
+        lastTapAt = now;
+      }
+      return;
+    }
+
+    const width = Math.round(el.learningPanel.getBoundingClientRect().width);
+    // Full-width (or near enough) counts as "still at the default" — no
+    // point pinning a literal pixel figure that just happens to match.
+    saveJSON(LEARNING_PANEL_WIDTH_KEY, width >= window.innerWidth - 4 ? null : width);
+  }
+
+  handle.addEventListener('pointerdown', (event) => {
+    dragging = true;
+    moved = false;
+    startX = event.clientX;
+    handle.classList.add('is-dragging');
+    event.preventDefault();
+    document.addEventListener('pointermove', onPointerMove);
+    document.addEventListener('pointerup', onPointerUp);
+  });
+
+  // A saved custom width can outlive the window it was dragged in (rotating
+  // a phone, shrinking a desktop window) — reclamp so it never sticks out
+  // past the new viewport while the panel's open.
+  window.addEventListener('resize', () => {
+    if (el.learningPanel.hidden) return;
+    const current = parseFloat(el.learningPanel.style.width);
+    if (Number.isFinite(current) && current > window.innerWidth) {
+      el.learningPanel.style.width = `${window.innerWidth}px`;
+    }
+  });
+}
+
 /** Renders from whatever's cached first (instant), then refreshes with any newly-graded results. */
 async function openLearningDashboard() {
   el.scrim.hidden = false;
   el.learningPanel.hidden = false;
+  applyLearningPanelWidth();
   await renderLearningDashboard();
   await runResultCheck();
 }
@@ -4162,6 +4246,7 @@ async function runResultCheck() {
   renderHistory();
   renderDayToggle();
   renderSlateStateToggle();
+  initLearningPanelResize();
 
   el.slateStatus.textContent = 'Loading all leagues…';
   // Catalogue first — ATP/WTA can't resolve their tournament keys without it.
