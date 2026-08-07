@@ -3302,6 +3302,20 @@ el.parlayLegCountSlider.addEventListener('change', persistParlayFilters);
 
 el.parlayGenerate.addEventListener('click', generateParlay);
 
+/**
+ * Re-renders whatever's already on screen with fresh "Suggested stake"
+ * text — cheap (no re-fetch, no re-rank, just reflects the current
+ * state.bankroll into already-rendered cards) — needed because Pixel's
+ * Picks generates once automatically rather than on a Generate click the
+ * user would naturally press again after setting their bankroll.
+ */
+function refreshStakeDisplays() {
+  if (state.lastPixelSlate) {
+    renderSlate({ ...state.lastPixelSlate, picks: sortPicks(state.lastPixelSlate.picks, state.pixelSort) });
+  }
+  if (lastParlayResult) renderParlayResult(lastParlayResult);
+}
+
 el.bankrollAmount.addEventListener('change', () => {
   state.bankroll.amount = Math.max(0, Number(el.bankrollAmount.value) || 0);
   persistBankroll();
@@ -3321,20 +3335,27 @@ el.bankrollSubmit.addEventListener('click', () => {
   state.bankroll.amount = Math.max(0, Number(el.bankrollAmount.value) || 0);
   state.bankroll.unit = Math.max(0, Number(el.bankrollUnit.value) || 0);
   state.bankroll.confirmed = true;
+  // Setting a unit size is a clear signal the user thinks in units — show
+  // every "Suggested stake" as a recommended unit count by default rather
+  // than making them separately discover the Units toggle.
+  if (state.bankroll.unit > 0) state.bankroll.displayMode = 'units';
   persistBankroll();
   renderBankrollPanel();
+  refreshStakeDisplays();
 });
 
 el.bankrollShowDollars.addEventListener('click', () => {
   state.bankroll.displayMode = 'dollars';
   persistBankroll();
   renderBankrollPanel();
+  refreshStakeDisplays();
 });
 
 el.bankrollShowUnits.addEventListener('click', () => {
   state.bankroll.displayMode = 'units';
   persistBankroll();
   renderBankrollPanel();
+  refreshStakeDisplays();
 });
 
 /* ---------------------------------------------------------------- */
