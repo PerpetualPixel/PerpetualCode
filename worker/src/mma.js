@@ -26,6 +26,7 @@
  */
 
 import { fetchUfcProfile } from './ufc.js';
+import { parseSherdogDate } from '../../docs/insights.js';
 
 const SHERDOG = 'https://www.sherdog.com';
 const SEARCH_TTL = 3600 * 6;   // a name resolves to the same fighter for months
@@ -161,7 +162,9 @@ function parseFightHistory(html) {
     const result = row.match(/class="final_result (win|loss|draw|nc)"/)?.[1];
     if (!result) continue; // the header row has no final_result span
 
-    const opponent = row.match(/<a href="\/fighter\/[^"]+">([^<]+)<\/a>/)?.[1]?.trim() ?? null;
+    const opponentLink = row.match(/<a href="(\/fighter\/[^"]+)">([^<]+)<\/a>/);
+    const opponentHref = opponentLink?.[1] ?? null;
+    const opponent = opponentLink?.[2]?.trim() ?? null;
     // The event name is the text of whichever tag sits inside the /events/
     // link — direct text for a normal card, an inner <span itemprop="award">
     // for a title fight — so strip tags rather than assume either shape.
@@ -182,6 +185,7 @@ function parseFightHistory(html) {
     rows.push({
       result,
       opponent,
+      opponentHref,
       event,
       date,
       method,
@@ -242,6 +246,109 @@ function parsePhoto(html) {
 }
 
 /**
+ * A fighter's nickname, if Sherdog has one on file — many don't (a real,
+ * common "no data" case, not a parse failure). Confirmed live: a fighter
+ * with no nickname carries `<span class="nickname_empty">`; one with a
+ * nickname carries `<span class="nickname">"<em>The Butcher</em>"</span>`
+ * inside an `<h1>` right after the fighter's own name.
+ */
+export function parseNickname(html) {
+  if (html.includes('nickname_empty')) return null;
+  const raw = html.match(/class="nickname">"?<em>([^<]+)<\/em>"?/)?.[1];
+  return raw?.trim() || null;
+}
+
+/**
+ * Nationality and hometown/region from the profile header's
+ * `fighter-nationality` block. Sherdog carries exactly one location per
+ * fighter here — confirmed live it doesn't reliably distinguish "born in"
+ * from "fights out of" the way some other sites do (Bryan Battle's own page
+ * lists "Charlotte, North Carolina" here, his current camp city, not his
+ * birth city) — so this is surfaced honestly as a single "based in" fact
+ * rather than asserting a birth-vs-training distinction Sherdog's own markup
+ * doesn't actually make.
+ */
+export function parseNationalityLocation(html) {
+  const marker = html.indexOf('fighter-nationality');
+  if (marker < 0) return { nationality: null, location: null };
+  const scoped = html.slice(marker, marker + 700);
+  const nationality = scoped.match(/itemprop="nationality">([^<]+)</)?.[1]?.trim() ?? null;
+  const location = scoped.match(/itemprop="addressLocality"[^>]*>([^<]+)</)?.[1]?.trim() ?? null;
+  return { nationality, location };
+}
+
+/**
+ * How many fights in a row (from most recent) share the same result — "3
+ * Win" or "1 Loss" — computed from the same history array already parsed,
+ * no extra fetch. Null when history is empty (nothing to compute a streak
+ * from) rather than a misleading "0".
+ */
+export function computeCurrentStreak(history) {
+  if (!history.length) return null;
+  const result = history[0].result;
+  let count = 0;
+  for (const fight of history) {
+    if (fight.result !== result) break;
+    count++;
+  }
+  return { result, count };
+}
+
+// Bounds how many of a fighter's history rows get an opponent's
+// record-at-the-time attached — each one costs a real extra fetch (the
+// opponent's own Sherdog page), so this is capped to the fights a reader is
+// actually likely to look at rather than a whole 30-fight veteran's career.
+const OPPONENT_RECORD_LOOKBACK = 10;
+
+/**
+ * Reconstructs what an opponent's own record was heading into one specific
+ * past fight — not their current record, which is what today's Sherdog
+ * profile would otherwise show and would be actively misleading for an old
+ * fight (e.g. showing a now-veteran opponent's 20-3 record for a bout that
+ * happened when they were 4-1). Fetches that opponent's own profile (already
+ * have their Sherdog href from the history row, no name-search needed) and
+ * counts wins/losses/draws among fights on THEIR history dated on or before
+ * `beforeMs`.
+ */
+async function fetchOpponentRecordAtDate(opponentHref, beforeMs, ctx) {
+  if (!opponentHref || !Number.isFinite(beforeMs)) return null;
+  const html = await cachedText(`${SHERDOG}${opponentHref}`, PROFILE_TTL, ctx);
+  if (!html) return null;
+
+  const history = parseFightHistory(html);
+  const tally = { wins: 0, losses: 0, draws: 0 };
+  let counted = 0;
+  for (const fight of history) {
+    const ms = parseSherdogDate(fight.date);
+    if (ms == null || ms > beforeMs) continue;
+    counted++;
+    if (fight.result === 'win') tally.wins++;
+    else if (fight.result === 'loss') tally.losses++;
+    else if (fight.result === 'draw') tally.draws++;
+  }
+  return counted > 0 ? tally : null;
+}
+
+/**
+ * Attaches `opponentRecordAtTime` to each of a fighter's most recent
+ * `OPPONENT_RECORD_LOOKBACK` history rows, fetched in parallel. Rows beyond
+ * the lookback simply don't get one (still shown, just without that one
+ * field) rather than fetching a whole career's worth of opponent profiles.
+ */
+async function attachOpponentRecords(history, ctx) {
+  const recent = history.slice(0, OPPONENT_RECORD_LOOKBACK);
+  const records = await Promise.all(
+    recent.map((fight) => {
+      const beforeMs = parseSherdogDate(fight.date);
+      return fetchOpponentRecordAtDate(fight.opponentHref, beforeMs, ctx);
+    }),
+  );
+  return history.map((fight, i) => (
+    i < recent.length ? { ...fight, opponentRecordAtTime: records[i] } : fight
+  ));
+}
+
+/**
  * Full fighter research bundle, or null if Sherdog has no confident match —
  * a real outcome for a brand-new prospect, not a failure to handle specially.
  */
@@ -253,10 +360,14 @@ async function fetchFighter(name, ctx) {
   const html = await cachedText(profileUrl, PROFILE_TTL, ctx);
   if (!html) return null;
 
-  const history = parseFightHistory(html);
+  const rawHistory = parseFightHistory(html);
+  const history = await attachOpponentRecords(rawHistory, ctx);
   const record = parseHeaderRecord(html, found.href) ?? deriveRecordFromHistory(history);
   const bio = parseBio(html);
   const photo = parsePhoto(html);
+  const nickname = parseNickname(html);
+  const { nationality, location } = parseNationalityLocation(html);
+  const streak = computeCurrentStreak(history);
 
   return {
     name: found.name,
@@ -265,6 +376,10 @@ async function fetchFighter(name, ctx) {
     history,
     bio,
     photo,
+    nickname,
+    nationality,
+    location,
+    streak,
   };
 }
 

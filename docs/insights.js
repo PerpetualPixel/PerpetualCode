@@ -593,9 +593,15 @@ export function weatherInsights(weather) {
 
 const MONTHS = 'Jan Feb Mar Apr May Jun Jul Aug Sep Oct Nov Dec'.split(' ');
 
-/** Sherdog dates read "Mon / DD / YYYY" — parsed rather than displayed as-is
- * so a layoff can be measured, but the original string is what's ever shown. */
-function parseSherdogDate(text) {
+/**
+ * Sherdog dates read "Mon / DD / YYYY" — parsed rather than displayed as-is
+ * so a layoff can be measured, but the original string is what's ever shown.
+ * Exported so worker/src/mma.js can reuse the exact same parsing when
+ * reconstructing an opponent's record as of a specific past fight date —
+ * duplicating this regex risked the two ever silently drifting apart on an
+ * edge case (a 2-digit vs 1-digit day, an abbreviated month typo, etc).
+ */
+export function parseSherdogDate(text) {
   const m = String(text ?? '').match(/([A-Za-z]{3})\s*\/\s*(\d{1,2})\s*\/\s*(\d{4})/);
   if (!m) return null;
   const month = MONTHS.indexOf(m[1]);

@@ -1801,6 +1801,80 @@ function renderMmaBio(fighter) {
   return parts.length ? `<div class="stats-pills">${parts.map((p) => `<span class="stat-pill">${esc(p)}</span>`).join('')}</div>` : '';
 }
 
+const MMA_STREAK_LABEL = { win: 'Win', loss: 'Loss', draw: 'Draw', nc: 'NC' };
+
+function mmaDetailRow(label, value) {
+  return `<div class="learning-table-row"><div class="label">${esc(label)}</div><div class="stat">${esc(value)}</div></div>`;
+}
+
+/**
+ * Nickname, current streak, nationality, and location, from Sherdog's own
+ * profile header (worker/src/mma.js). Sherdog carries exactly one location
+ * field per fighter, not a separate birthplace-vs-training-camp split, so
+ * it's labeled "Based In" here rather than asserting a distinction the
+ * source data doesn't actually make.
+ */
+function renderMmaFighterDetails(fighter) {
+  if (!fighter) return '';
+  const rows = [];
+  if (fighter.nickname) rows.push(mmaDetailRow('Nickname', `"${fighter.nickname}"`));
+  if (fighter.record) {
+    const r = fighter.record;
+    rows.push(mmaDetailRow('Pro MMA Record', `${r.wins}-${r.losses}${r.draws ? `-${r.draws}` : ''}`));
+  }
+  if (fighter.streak) {
+    const label = MMA_STREAK_LABEL[fighter.streak.result] ?? fighter.streak.result;
+    rows.push(mmaDetailRow('Current Streak', `${fighter.streak.count} ${label}${fighter.streak.count === 1 ? '' : 's'}`));
+  }
+  if (fighter.nationality) rows.push(mmaDetailRow('Nationality', fighter.nationality));
+  if (fighter.location) rows.push(mmaDetailRow('Based In', fighter.location));
+  if (!rows.length) return '';
+  return `<p class="stats-fighter-label">${esc(fighter.name)}</p><div class="learning-table">${rows.join('')}</div>`;
+}
+
+// How many of a fighter's most recent fights get an opponent's
+// record-at-the-time shown — matches worker/src/mma.js's own
+// OPPONENT_RECORD_LOOKBACK; fights beyond this still show in the table,
+// just without that one column filled in, since fetching a whole career's
+// worth of opponent profiles isn't worth the extra cost for older fights.
+const MMA_OPPONENT_RECORD_LOOKBACK = 10;
+
+/**
+ * Full professional bout history — every completed fight Sherdog has on
+ * file, opponent, opponent's OWN record as of that specific fight (not
+ * their current record, which would misrepresent an old win over a then-green
+ * prospect who's since built a long career), method, event, and date.
+ */
+function renderMmaProfessionalBouts(fighter) {
+  if (!fighter?.history?.length) return '';
+  const rows = fighter.history.map((f) => {
+    const badge = { win: 'W', loss: 'L', draw: 'D', nc: 'NC' }[f.result] ?? '?';
+    const badgeClass = f.result === 'win' ? 'is-win' : f.result === 'loss' ? 'is-loss' : '';
+    const oppRecord = f.opponentRecordAtTime
+      ? `${f.opponentRecordAtTime.wins}-${f.opponentRecordAtTime.losses}${f.opponentRecordAtTime.draws ? `-${f.opponentRecordAtTime.draws}` : ''}`
+      : '—';
+    return `
+      <tr>
+        <td><span class="form-badge ${badgeClass}">${esc(badge)}</span></td>
+        <td>${esc(f.opponent ?? '—')}</td>
+        <td>${esc(oppRecord)}</td>
+        <td>${esc(f.method ?? '—')}</td>
+        <td>${esc(f.event ?? '—')}</td>
+        <td>${esc(f.date ?? '—')}</td>
+      </tr>`;
+  }).join('');
+
+  return `
+    <p class="stats-fighter-label">${esc(fighter.name)}</p>
+    <div class="stats-table-scroll">
+      <table class="stats-table">
+        <thead><tr><th></th><th>Opponent</th><th>Opp. Record*</th><th>Method</th><th>Event</th><th>Date</th></tr></thead>
+        <tbody>${rows}</tbody>
+      </table>
+    </div>
+    <p class="stats-source-note">*Opponent's record as of that fight, shown for the most recent ${MMA_OPPONENT_RECORD_LOOKBACK} bouts.</p>`;
+}
+
 /**
  * Striking/takedown accuracy and significant-strike-by-position bars, from
  * ufc.com's own athlete page — only ever populated for a fighter who's
@@ -2152,6 +2226,16 @@ function renderMmaBreakdown(mmaContext, subjectName) {
       </div>`);
   }
 
+  const detailsMe = renderMmaFighterDetails(me);
+  const detailsOpp = opponent ? renderMmaFighterDetails(opponent) : '';
+  if (detailsMe || detailsOpp) {
+    sections.push(`
+      <div class="stats-section">
+        <h3>Fighter Details</h3>
+        ${detailsMe}${detailsOpp}
+      </div>`);
+  }
+
   const ufcMe = renderUfcCareerStats(me);
   const ufcOpp = opponent ? renderUfcCareerStats(opponent) : '';
   if (ufcMe || ufcOpp) {
@@ -2167,6 +2251,16 @@ function renderMmaBreakdown(mmaContext, subjectName) {
     relPills.push(`<span class="stat-pill">${esc(opponent.name)}: ${dataReliability(opponent.history)} (${opponent.history?.length ?? 0} fights on file)</span>`);
   }
   sections.push(`<div class="stats-section"><h3>Data Reliability</h3><div class="stats-pills">${relPills.join('')}</div></div>`);
+
+  const boutsMe = renderMmaProfessionalBouts(me);
+  const boutsOpp = opponent ? renderMmaProfessionalBouts(opponent) : '';
+  if (boutsMe || boutsOpp) {
+    sections.push(`
+      <div class="stats-section">
+        <h3>Professional Bouts</h3>
+        ${boutsMe}${boutsOpp}
+      </div>`);
+  }
 
   const methodBars = (fighter) => {
     const fin = finishSummary(fighter);
