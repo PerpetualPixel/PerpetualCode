@@ -22,7 +22,7 @@ import {
   rankTeamStats,
   fetchHeadToHead,
 } from './mlb-stats.js';
-import { currentPhase, runPotdPhase, getPotd, getPotdBySport } from './potd.js';
+import { POTD_HOUR, runPotdDaily, runPotdClvSnapshot, runPotdGrading, getPotd, getPotdHistory } from './potd.js';
 import { getOrGenerateAnalysis } from './analysis.js';
 import {
   UPSTREAM,
@@ -41,6 +41,7 @@ import {
   getTop5,
   getAllTrackedPicks,
   resetAllTracking,
+  fetchFullSlateEvents,
   TOP5_BATCH_HOUR,
 } from './tracking.js';
 
@@ -438,9 +439,9 @@ function etHour(ms) {
 export default {
   /**
    * Fires hourly (see wrangler.toml's [triggers]) — most ticks are a no-op.
-   * currentPhase / etHour check the actual ET wall-clock hour, so both self-
-   * correct across DST without a UTC cron needing hand-maintenance twice a
-   * year.
+   * etHour checks the actual ET wall-clock hour, so every gated task below
+   * self-corrects across DST without a UTC cron needing hand-maintenance
+   * twice a year.
    */
   async scheduled(event, env, ctx) {
     const now = event.scheduledTime ?? Date.now();
@@ -480,24 +481,22 @@ export default {
     // score. Both are safe to run every tick — CLV only touches games that
     // haven't started, grading only touches picks still pending — so
     // there's no "already ran today" gate needed the way the 6am batch has.
+    // Same reasoning applies to Play of the Day's own CLV/grading below.
     ctx.waitUntil(runClvSnapshot(env, ctx, now));
     ctx.waitUntil(runGrading(env, ctx, now));
+    ctx.waitUntil(runPotdClvSnapshot(env, ctx, now));
+    ctx.waitUntil(runPotdGrading(env, ctx, now));
 
-    const phase = currentPhase(now);
-    if (!phase) return;
-
-    ctx.waitUntil(
-      runPotdPhase(phase, {
-        env,
-        ctx,
-        now,
-        fetchBoard: async () => {
-          const { events, error } = await fetchSport('upcoming', env, ctx);
-          if (error) throw new Error(`PoTD board fetch failed: ${JSON.stringify(error)}`);
-          return events;
-        },
-      }),
-    );
+    // 2am ET: the single Play of the Day pick — scans the same full slate
+    // the Top 5 batch does (fetchFullSlateEvents), restricted to a
+    // moneyline-friendly -200..+150 band. runPotdDaily is itself idempotent
+    // per ET day (checks its own KV key), so a retried or overlapping tick
+    // can't double-generate.
+    if (etHour(now) === POTD_HOUR) {
+      ctx.waitUntil(
+        runPotdDaily(env, ctx, now, { fetchFullSlate: () => fetchFullSlateEvents(env, ctx) }),
+      );
+    }
   },
 
   async fetch(request, env, ctx) {
@@ -660,20 +659,21 @@ export default {
       }
     }
 
-    // One Play of the Day per major sport, alongside the single pick above —
-    // same read-only KV path, same free cost.
-    if (pathname === '/potd-by-sport') {
+    // Every Play of the Day pick still in KV (up to 90 days) — the raw
+    // material for the Tracking Dashboard's Play of the Day section.
+    // Read-only, KV only, no odds credit.
+    if (pathname === '/potd-history') {
       if (request.method !== 'GET') {
         return json({ error: 'Method not allowed' }, { status: 405, headers: cors });
       }
       try {
-        const bySport = await getPotdBySport(env);
+        const picks = await getPotdHistory(env);
         return json(
-          { bySport },
+          { picks },
           { headers: { ...cors, 'Cache-Control': 'public, max-age=300' } },
         );
       } catch (error) {
-        return json({ bySport: {}, reason: String(error).slice(0, 120) }, { headers: cors });
+        return json({ picks: [], reason: String(error).slice(0, 120) }, { headers: cors });
       }
     }
 

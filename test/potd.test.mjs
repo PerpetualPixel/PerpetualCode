@@ -1,6 +1,13 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { currentPhase, runPotdPhase, getPotd } from '../worker/src/potd.js';
+import {
+  POTD_HOUR,
+  runPotdDaily,
+  runPotdClvSnapshot,
+  runPotdGrading,
+  getPotd,
+  getPotdHistory,
+} from '../worker/src/potd.js';
 
 /* ---------------------------------------------------------------- */
 /* Fixtures                                                          */
@@ -14,16 +21,17 @@ function makeKvStore() {
       POTD_KV: {
         async get(key) { return store.get(key) ?? null; },
         async put(key, value) { store.set(key, value); },
+        async delete(key) { store.delete(key); },
       },
     },
   };
 }
 
 const ctx = { waitUntil: (p) => p };
+const NOW = Date.parse('2026-08-05T07:00:00Z'); // 3am ET Aug 5 (EDT) — after POTD_HOUR
 
 /** A single-market h2h event, deep enough to clear RULES.MIN_SCORE. */
-function makeEvent(id, commenceIso, { sport = 'basketball_nba', sportTitle = 'NBA', outlier = 35 } = {}) {
-  const nowRef = Date.parse('2026-08-05T12:00:00Z');
+function makeEvent(id, commenceIso, { sport = 'basketball_nba', sportTitle = 'NBA', outlier = 35, favoritePrice = -140 } = {}) {
   const books = ['b0', 'b1', 'b2', 'b3', 'b4', 'b5', 'b6', 'b7'];
   return {
     id,
@@ -35,12 +43,12 @@ function makeEvent(id, commenceIso, { sport = 'basketball_nba', sportTitle = 'NB
     bookmakers: books.map((key, i) => ({
       key,
       title: key,
-      last_update: new Date(nowRef - 600000).toISOString(),
+      last_update: new Date(NOW - 600000).toISOString(),
       markets: [{
         key: 'h2h',
-        last_update: new Date(nowRef - 600000).toISOString(),
+        last_update: new Date(NOW - 600000).toISOString(),
         outcomes: [
-          { name: `${id} Home`, price: -140 + (i === 0 ? outlier : 0) },
+          { name: `${id} Home`, price: favoritePrice + (i === 0 ? outlier : 0) },
           { name: `${id} Away`, price: 120 },
         ],
       }],
@@ -49,235 +57,197 @@ function makeEvent(id, commenceIso, { sport = 'basketball_nba', sportTitle = 'NB
 }
 
 /* ---------------------------------------------------------------- */
-/* currentPhase — DST self-correction                                 */
+/* runPotdDaily — odds band                                          */
 /* ---------------------------------------------------------------- */
 
-test('currentPhase resolves the correct ET hour across both DST offsets', () => {
-  // EST (winter, UTC-5): 8am ET = 13:00 UTC, 7pm ET = 00:00 UTC next day.
-  assert.equal(currentPhase(Date.parse('2026-01-15T13:00:00Z')), 'morning');
-  assert.equal(currentPhase(Date.parse('2026-01-15T00:00:00Z')), 'evening-early');
-  assert.equal(currentPhase(Date.parse('2026-01-15T12:00:00Z')), null);
-
-  // EDT (summer, UTC-4): 8am ET = 12:00 UTC, 7pm ET = 23:00 UTC.
-  assert.equal(currentPhase(Date.parse('2026-07-15T12:00:00Z')), 'morning');
-  assert.equal(currentPhase(Date.parse('2026-07-15T23:00:00Z')), 'evening-early');
-  // The winter UTC hour for 8am ET is a no-op in summer — proves this isn't a
-  // hardcoded UTC hour that would silently drift wrong for half the year.
-  assert.equal(currentPhase(Date.parse('2026-07-15T13:00:00Z')), null);
+test('POTD_HOUR is 2am ET', () => {
+  assert.equal(POTD_HOUR, 2);
 });
 
-/* ---------------------------------------------------------------- */
-/* runPotdPhase — selection                                           */
-/* ---------------------------------------------------------------- */
-
-const MORNING_NOW = Date.parse('2026-08-05T12:00:00Z'); // 8am ET Aug 5 (EDT)
-const EVENING_NOW = Date.parse('2026-08-05T23:00:00Z'); // 7pm ET Aug 5 (EDT)
-
-test('morning picks the best-graded candidate from today, from the cutoff hour on', async () => {
+test('picks the best in-band candidate even when an out-of-band one scores higher', async () => {
   const { env } = makeKvStore();
   const events = [
-    makeEvent('weak', '2026-08-05T18:00:00Z', { outlier: 10 }),  // 2pm ET today, weaker edge
-    makeEvent('strong', '2026-08-05T20:00:00Z', { outlier: 40 }), // 4pm ET today, stronger edge
+    // A huge apparent edge, but the price itself (+560) is way outside the
+    // -200..+150 band this module enforces.
+    makeEvent('longshot', '2026-08-05T20:00:00Z', { outlier: 700, favoritePrice: -140 }),
+    // Well within band, real edge.
+    makeEvent('sane', '2026-08-05T21:00:00Z', { outlier: 20, favoritePrice: -140 }),
   ];
-  const result = await runPotdPhase('morning', { env, ctx, now: MORNING_NOW, fetchBoard: async () => events });
+  const result = await runPotdDaily(env, ctx, NOW, { fetchFullSlate: async () => events });
   assert.equal(result.skipped, false);
-  assert.match(result.pick.id, /^strong:/, 'must pick the higher-scoring candidate, not just the first');
+  assert.match(result.pick.pickId, /^sane:/);
+  assert.ok(result.pick.american >= -200 && result.pick.american <= 150);
 });
 
-test('an extreme long shot never wins over an in-band candidate, even scoring higher on raw EV', async () => {
-  const { env } = makeKvStore();
-  const events = [
-    // One outlier book prices this side at +560 while the other 7 sit around
-    // -140 — a huge apparent EV gap (exactly the "thin consensus + soft
-    // outlier price" pattern that let a real 9%-to-win moneyline score
-    // highest and get surfaced as "the pick") that must NOT win regardless.
-    makeEvent('longshot', '2026-08-05T18:00:00Z', { outlier: 700 }),
-    // A normally-priced game elsewhere in the window, well within band.
-    makeEvent('sane', '2026-08-05T20:00:00Z', { outlier: 20 }),
-  ];
-  const result = await runPotdPhase('morning', { env, ctx, now: MORNING_NOW, fetchBoard: async () => events });
-  assert.equal(result.skipped, false);
-  assert.ok(
-    result.pick.american >= -250 && result.pick.american <= 150,
-    `expected an in-band pick, got ${result.pick.american} (${result.pick.id})`,
-  );
-});
-
-test('morning excludes an early-today game before the cutoff hour', async () => {
-  const { env } = makeKvStore();
-  // 6am ET Aug 5 — before MORNING_CUTOFF_HOUR (9), should be excluded from the
-  // morning window even though it's the right calendar date.
-  const events = [makeEvent('early', '2026-08-05T10:00:00Z')];
-  const result = await runPotdPhase('morning', { env, ctx, now: MORNING_NOW, fetchBoard: async () => events });
+test('a day with nothing in the -200..+150 band posts nothing', async () => {
+  const { env, store } = makeKvStore();
+  // Both sides of this game are far outside the band (heavy favorite / big dog).
+  const events = [makeEvent('lopsided', '2026-08-05T20:00:00Z', { outlier: 10, favoritePrice: -400 })];
+  const result = await runPotdDaily(env, ctx, NOW, { fetchFullSlate: async () => events });
   assert.equal(result.skipped, true);
-});
-
-test('morning excludes games on other calendar dates', async () => {
-  const { env } = makeKvStore();
-  const events = [
-    makeEvent('yesterday', '2026-08-04T20:00:00Z'),
-    makeEvent('tomorrow', '2026-08-06T20:00:00Z'),
-  ];
-  const result = await runPotdPhase('morning', { env, ctx, now: MORNING_NOW, fetchBoard: async () => events });
-  assert.equal(result.skipped, true);
-});
-
-test('evening-early targets only tomorrow\'s early games, not tomorrow\'s normal ones', async () => {
-  const { env } = makeKvStore();
-  const events = [
-    makeEvent('tomorrow-early', '2026-08-06T10:00:00Z'), // 6am ET Aug 6 — eligible
-    makeEvent('tomorrow-normal', '2026-08-06T20:00:00Z'), // 4pm ET Aug 6 — not eligible here
-  ];
-  const result = await runPotdPhase('evening-early', { env, ctx, now: EVENING_NOW, fetchBoard: async () => events });
-  assert.equal(result.skipped, false);
-  assert.match(result.pick.id, /^tomorrow-early:/);
-  assert.equal(result.dateKey, '2026-08-06');
+  assert.equal(result.reason, 'no qualifying candidate in odds band today');
+  assert.equal(store.size, 0);
 });
 
 test('a candidate below the confidence floor is never selected', async () => {
   const { env } = makeKvStore();
-  // outlier: 0 — a thin, un-sharp market that shouldn't clear RULES.MIN_SCORE.
-  const events = [makeEvent('weak', '2026-08-05T18:00:00Z', { outlier: 0 })];
-  const result = await runPotdPhase('morning', { env, ctx, now: MORNING_NOW, fetchBoard: async () => events });
+  const events = [makeEvent('weak', '2026-08-05T20:00:00Z', { outlier: 0 })];
+  const result = await runPotdDaily(env, ctx, NOW, { fetchFullSlate: async () => events });
   assert.equal(result.skipped, true);
 });
 
-test('an empty board skips cleanly without writing to KV', async () => {
-  const { env, store } = makeKvStore();
-  const result = await runPotdPhase('morning', { env, ctx, now: MORNING_NOW, fetchBoard: async () => [] });
-  assert.equal(result.skipped, true);
-  assert.equal(store.size, 0);
-});
-
-/* ---------------------------------------------------------------- */
-/* runPotdPhase — idempotency                                         */
-/* ---------------------------------------------------------------- */
-
-test('a date already generated is never regenerated, even if the board is re-fetched', async () => {
-  const { env, store } = makeKvStore();
-  const events = [makeEvent('a', '2026-08-05T18:00:00Z')];
-
-  const first = await runPotdPhase('morning', { env, ctx, now: MORNING_NOW, fetchBoard: async () => events });
-  assert.equal(first.skipped, false);
-  const storedAfterFirst = store.get('potd:2026-08-05');
-
-  // Per-sport picks (see below) mean a later tick may still have real work to
-  // do for a sport that had nothing this time, so the board can legitimately
-  // be re-fetched — what must never happen is the overall pick itself being
-  // regenerated or overwritten once it's been decided.
-  const second = await runPotdPhase('morning', { env, ctx, now: MORNING_NOW, fetchBoard: async () => events });
-  assert.equal(second.skipped, true);
-  assert.equal(second.reason, 'already generated');
-  assert.equal(store.get('potd:2026-08-05'), storedAfterFirst, 'the stored record must be byte-identical, never rewritten');
-});
-
-test('an evening-early pick for tomorrow blocks the next morning run from overwriting it', async () => {
-  const { env, store } = makeKvStore();
-  const earlyEvents = [makeEvent('early-bird', '2026-08-06T10:00:00Z')];
-  const evening = await runPotdPhase('evening-early', {
-    env, ctx, now: EVENING_NOW, fetchBoard: async () => earlyEvents,
-  });
-  assert.equal(evening.skipped, false);
-  assert.equal(evening.dateKey, '2026-08-06');
-  const storedAfterEvening = store.get('potd:2026-08-06');
-
-  // The next morning (Aug 6, 8am ET) must not overwrite what last night wrote.
-  const nextMorningNow = Date.parse('2026-08-06T12:00:00Z');
-  const morning = await runPotdPhase('morning', {
-    env, ctx, now: nextMorningNow, fetchBoard: async () => earlyEvents,
-  });
-  assert.equal(morning.skipped, true);
-  assert.equal(morning.reason, 'already generated');
-  assert.equal(store.get('potd:2026-08-06'), storedAfterEvening, 'the stored record must be byte-identical, never rewritten');
-});
-
-/* ---------------------------------------------------------------- */
-/* runPotdPhase — per-sport picks                                     */
-/* ---------------------------------------------------------------- */
-
-test('one pick per major sport is produced alongside the overall pick', async () => {
+test('an exhibition-format game is never selected even if it scores well', async () => {
   const { env } = makeKvStore();
-  const events = [
-    makeEvent('nba-game', '2026-08-05T18:00:00Z', { sport: 'basketball_nba', sportTitle: 'NBA', outlier: 40 }),
-    makeEvent('mlb-game', '2026-08-05T19:00:00Z', { sport: 'baseball_mlb', sportTitle: 'MLB', outlier: 15 }),
-  ];
-  const result = await runPotdPhase('morning', { env, ctx, now: MORNING_NOW, fetchBoard: async () => events });
-
-  assert.equal(result.bySport.nba.skipped, false);
-  assert.match(result.bySport.nba.pick.id, /^nba-game:/);
-  assert.equal(result.bySport.mlb.skipped, false);
-  assert.match(result.bySport.mlb.pick.id, /^mlb-game:/);
-  // No NFL/NHL/WNBA/MMA/tennis event was on the board — those buckets have
-  // nothing to report today, not a placeholder standing in for a real pick.
-  assert.equal(result.bySport.nfl.skipped, true);
-  assert.equal(result.bySport.nfl.reason, 'no qualifying candidate');
-});
-
-test('a sport with only an exhibition-format game gets no pick that day', async () => {
-  const { env } = makeKvStore();
-  const events = [
-    makeEvent('allstar', '2026-08-05T18:00:00Z', { sport: 'basketball_nba', sportTitle: 'NBA' }),
-  ];
-  // Overwrite the team names to look like an All-Star Game rather than a
-  // real matchup — the only signal available to filter on, since the Odds
-  // API carries no explicit game-type field.
+  const events = [makeEvent('allstar', '2026-08-05T20:00:00Z', { sport: 'basketball_nba' })];
   events[0].home_team = 'Team LeBron';
   events[0].away_team = 'Team Giannis';
   events[0].bookmakers.forEach((b) => b.markets[0].outcomes.forEach((o) => {
     o.name = o.name.includes('Home') ? 'Team LeBron' : 'Team Giannis';
   }));
-
-  const result = await runPotdPhase('morning', { env, ctx, now: MORNING_NOW, fetchBoard: async () => events });
-  assert.equal(result.skipped, true, 'the overall pick must not surface an exhibition game either');
-  assert.equal(result.bySport.nba.skipped, true);
-  assert.equal(result.bySport.nba.reason, 'no qualifying candidate');
+  const result = await runPotdDaily(env, ctx, NOW, { fetchFullSlate: async () => events });
+  assert.equal(result.skipped, true);
 });
 
-test('an early tomorrow game gives evening-early its own per-sport pick, independent of the main pick\'s window', async () => {
+/* ---------------------------------------------------------------- */
+/* runPotdDaily — eligibility window                                 */
+/* ---------------------------------------------------------------- */
+
+test('excludes games on other calendar dates', async () => {
   const { env } = makeKvStore();
-  const earlyEvents = [
-    makeEvent('nhl-early', '2026-08-06T10:00:00Z', { sport: 'icehockey_nhl', sportTitle: 'NHL' }),
+  const events = [
+    makeEvent('yesterday', '2026-08-04T20:00:00Z'),
+    makeEvent('tomorrow', '2026-08-06T20:00:00Z'),
   ];
-  const result = await runPotdPhase('evening-early', {
-    env, ctx, now: EVENING_NOW, fetchBoard: async () => earlyEvents,
-  });
-  assert.equal(result.bySport.nhl.skipped, false);
-  assert.match(result.bySport.nhl.pick.id, /^nhl-early:/);
+  const result = await runPotdDaily(env, ctx, NOW, { fetchFullSlate: async () => events });
+  assert.equal(result.skipped, true);
+});
+
+test('excludes a game that has already started', async () => {
+  const { env } = makeKvStore();
+  const events = [makeEvent('underway', '2026-08-05T06:00:00Z')]; // before NOW (7am UTC)
+  const result = await runPotdDaily(env, ctx, NOW, { fetchFullSlate: async () => events });
+  assert.equal(result.skipped, true);
+});
+
+test('an empty slate skips cleanly without writing to KV', async () => {
+  const { env, store } = makeKvStore();
+  const result = await runPotdDaily(env, ctx, NOW, { fetchFullSlate: async () => [] });
+  assert.equal(result.skipped, true);
+  assert.equal(store.size, 0);
 });
 
 /* ---------------------------------------------------------------- */
-/* runPotdPhase — write-up shape                                      */
+/* runPotdDaily — idempotency                                        */
 /* ---------------------------------------------------------------- */
 
-test('the stored record carries a headline, price, and at least the price-case section', async () => {
+test('a date already generated is never regenerated', async () => {
   const { env, store } = makeKvStore();
-  const events = [makeEvent('a', '2026-08-05T18:00:00Z')];
-  await runPotdPhase('morning', { env, ctx, now: MORNING_NOW, fetchBoard: async () => events });
+  const events = [makeEvent('a', '2026-08-05T20:00:00Z')];
+
+  const first = await runPotdDaily(env, ctx, NOW, { fetchFullSlate: async () => events });
+  assert.equal(first.skipped, false);
+  const storedAfterFirst = store.get('potd:2026-08-05');
+
+  const second = await runPotdDaily(env, ctx, NOW, { fetchFullSlate: async () => events });
+  assert.equal(second.skipped, true);
+  assert.equal(second.reason, 'already generated');
+  assert.equal(store.get('potd:2026-08-05'), storedAfterFirst);
+});
+
+/* ---------------------------------------------------------------- */
+/* runPotdDaily — write-up + tracking fields                         */
+/* ---------------------------------------------------------------- */
+
+test('the stored record carries a headline, price, and tracking fields', async () => {
+  const { env, store } = makeKvStore();
+  const events = [makeEvent('a', '2026-08-05T20:00:00Z')];
+  await runPotdDaily(env, ctx, NOW, { fetchFullSlate: async () => events });
 
   const record = JSON.parse(store.get('potd:2026-08-05'));
   assert.equal(record.date, '2026-08-05');
-  assert.equal(record.phase, 'morning');
   assert.match(record.writeup.headline, /^a Home to win/);
   const priceCase = record.writeup.sections.find((s) => s.title === 'The Market & Price Case');
   assert.ok(priceCase);
-  // The Market & Price Case is the extensive version (explainExtensive) —
-  // several distinct sentences, not the compact card's single bullet.
-  assert.ok(priceCase.bullets.length >= 3, `expected several price bullets, got ${priceCase.bullets.length}`);
-  assert.ok(typeof record.writeup.stake === 'number' && record.writeup.stake >= 0);
+  assert.ok(priceCase.bullets.length >= 3);
+
+  assert.equal(record.pick.status, 'pending');
+  assert.equal(record.pick.suggested_stake, 20);
+  assert.equal(record.pick.dateKey, '2026-08-05');
+  assert.equal(record.pick.clv.openAmerican, record.pick.american);
+  assert.equal(record.pick.result, null);
 });
 
-test('sections only appear for tiers that actually have content', async () => {
-  const { env, store } = makeKvStore();
-  const events = [makeEvent('a', '2026-08-05T18:00:00Z')];
-  await runPotdPhase('morning', { env, ctx, now: MORNING_NOW, fetchBoard: async () => events });
+/* ---------------------------------------------------------------- */
+/* runPotdClvSnapshot                                                 */
+/* ---------------------------------------------------------------- */
 
-  const record = JSON.parse(store.get('potd:2026-08-05'));
-  // No worker-side research source is wired into this fixture (no real ESPN
-  // fetch happens for a mocked NBA event), so only the price case should
-  // appear — never an empty "Primary Personnel" or "Supporting Cast" heading
-  // with nothing under it.
-  const titles = record.writeup.sections.map((s) => s.title);
-  assert.deepEqual(titles, ['The Market & Price Case']);
+test('runPotdClvSnapshot updates closeAmerican when the price has moved', async () => {
+  const { env } = makeKvStore();
+  const original = makeEvent('a', '2026-08-05T20:00:00Z', { outlier: 20 });
+  await runPotdDaily(env, ctx, NOW, { fetchFullSlate: async () => [original] });
+
+  const before = await getPotd(env, NOW);
+  assert.equal(before.pick.clv.closeAmerican, before.pick.clv.openAmerican);
+
+  const moved = makeEvent('a', '2026-08-05T20:00:00Z', { outlier: 40 });
+  const r1 = await runPotdClvSnapshot(env, ctx, NOW + 3.6e6, { fetchSportFn: async () => ({ events: [moved] }) });
+  assert.equal(r1.updated, true);
+
+  const after = await getPotd(env, NOW);
+  assert.notEqual(after.pick.clv.closeAmerican, after.pick.clv.openAmerican);
+
+  const r2 = await runPotdClvSnapshot(env, ctx, NOW + 2 * 3.6e6, { fetchSportFn: async () => ({ events: [moved] }) });
+  assert.equal(r2.updated, false);
+});
+
+test('runPotdClvSnapshot is a no-op once the game has started', async () => {
+  const { env } = makeKvStore();
+  const original = makeEvent('a', '2026-08-05T20:00:00Z', { outlier: 20 });
+  await runPotdDaily(env, ctx, NOW, { fetchFullSlate: async () => [original] });
+
+  const wayLater = Date.parse('2026-08-06T02:00:00Z'); // after the game's commence time
+  const moved = makeEvent('a', '2026-08-05T20:00:00Z', { outlier: 40 });
+  const result = await runPotdClvSnapshot(env, ctx, wayLater, { fetchSportFn: async () => ({ events: [moved] }) });
+  assert.equal(result.updated, false);
+});
+
+/* ---------------------------------------------------------------- */
+/* runPotdGrading                                                     */
+/* ---------------------------------------------------------------- */
+
+test('runPotdGrading grades a completed pick won/lost via the shared gradePick()', async () => {
+  const { env } = makeKvStore();
+  const event = makeEvent('a', '2026-08-05T09:00:00Z'); // 2 hours after NOW
+  await runPotdDaily(env, ctx, NOW, { fetchFullSlate: async () => [event] });
+
+  const before = await getPotd(env, NOW);
+  const scoreEvent = {
+    id: 'a',
+    completed: true,
+    scores: [
+      { name: 'a Home', score: before.pick.outcomeName === 'a Home' ? '5' : '2' },
+      { name: 'a Away', score: before.pick.outcomeName === 'a Away' ? '5' : '2' },
+    ],
+  };
+
+  const result = await runPotdGrading(env, ctx, NOW + 6 * 3.6e6, { fetchScoresFn: async () => ({ events: [scoreEvent] }) });
+  assert.equal(result.graded, true);
+
+  const after = await getPotd(env, NOW);
+  assert.equal(after.pick.status, 'won');
+  assert.ok(after.pick.result.payout > 0);
+});
+
+test('runPotdGrading leaves a pick pending when no completed score is available yet', async () => {
+  const { env } = makeKvStore();
+  const event = makeEvent('a', '2026-08-05T09:00:00Z');
+  await runPotdDaily(env, ctx, NOW, { fetchFullSlate: async () => [event] });
+
+  const result = await runPotdGrading(env, ctx, NOW + 3.6e6, { fetchScoresFn: async () => ({ events: [] }) });
+  assert.equal(result.graded, false);
+
+  const potd = await getPotd(env, NOW);
+  assert.equal(potd.pick.status, 'pending');
 });
 
 /* ---------------------------------------------------------------- */
@@ -287,7 +257,7 @@ test('sections only appear for tiers that actually have content', async () => {
 test('getPotd returns today\'s record when present', async () => {
   const { env, store } = makeKvStore();
   store.set('potd:2026-08-05', JSON.stringify({ date: '2026-08-05', pick: { selection: 'Today' } }));
-  const potd = await getPotd(env, MORNING_NOW);
+  const potd = await getPotd(env, NOW);
   assert.equal(potd.pick.selection, 'Today');
   assert.equal(potd.stale, undefined);
 });
@@ -295,13 +265,53 @@ test('getPotd returns today\'s record when present', async () => {
 test('getPotd falls back to yesterday, labelled stale, when today has nothing', async () => {
   const { env, store } = makeKvStore();
   store.set('potd:2026-08-04', JSON.stringify({ date: '2026-08-04', pick: { selection: 'Yesterday' } }));
-  const potd = await getPotd(env, MORNING_NOW);
+  const potd = await getPotd(env, NOW);
   assert.equal(potd.pick.selection, 'Yesterday');
   assert.equal(potd.stale, true);
 });
 
 test('getPotd returns null when nothing has ever been generated', async () => {
   const { env } = makeKvStore();
-  const potd = await getPotd(env, MORNING_NOW);
+  const potd = await getPotd(env, NOW);
   assert.equal(potd, null);
+});
+
+/* ---------------------------------------------------------------- */
+/* getPotdHistory                                                     */
+/* ---------------------------------------------------------------- */
+
+test('getPotdHistory walks multiple days and returns one pick per day generated', async () => {
+  const { env } = makeKvStore();
+  const day1 = NOW;
+  const day2 = NOW + 86400000;
+
+  await runPotdDaily(env, ctx, day1, { fetchFullSlate: async () => [makeEvent('d1', '2026-08-05T20:00:00Z')] });
+  await runPotdDaily(env, ctx, day2, { fetchFullSlate: async () => [makeEvent('d2', '2026-08-06T20:00:00Z')] });
+
+  const history = await getPotdHistory(env, { now: day2, days: 5 });
+  assert.equal(history.length, 2);
+  assert.ok(history.every((p) => p.dateKey && p.status === 'pending'));
+});
+
+test('getPotdHistory skips days with nothing generated', async () => {
+  const { env } = makeKvStore();
+  await runPotdDaily(env, ctx, NOW, { fetchFullSlate: async () => [makeEvent('d1', '2026-08-05T20:00:00Z')] });
+
+  const history = await getPotdHistory(env, { now: NOW, days: 5 });
+  assert.equal(history.length, 1);
+});
+
+test('getPotdHistory skips a pre-migration record with no tracking fields', async () => {
+  const { env, store } = makeKvStore();
+  // Shape the old two-phase/per-sport system wrote: a write-up-only pick
+  // with no status/clv/result/dateKey at all.
+  store.set('potd:2026-08-04', JSON.stringify({
+    date: '2026-08-04',
+    pick: { id: 'old:h2h|Foo|', selection: 'Foo to win', american: 500 },
+  }));
+  await runPotdDaily(env, ctx, NOW, { fetchFullSlate: async () => [makeEvent('d1', '2026-08-05T20:00:00Z')] });
+
+  const history = await getPotdHistory(env, { now: NOW, days: 5 });
+  assert.equal(history.length, 1);
+  assert.equal(history[0].dateKey, '2026-08-05');
 });

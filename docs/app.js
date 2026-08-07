@@ -539,6 +539,13 @@ const el = {
   top5NetProfit: document.getElementById('top5NetProfit'),
   top5AvgClv: document.getElementById('top5AvgClv'),
   top5DailyHistory: document.getElementById('top5DailyHistory'),
+  potdTotalPicks: document.getElementById('potdTotalPicks'),
+  potdGradedPicks: document.getElementById('potdGradedPicks'),
+  potdWinRate: document.getElementById('potdWinRate'),
+  potdRoi: document.getElementById('potdRoi'),
+  potdNetProfit: document.getElementById('potdNetProfit'),
+  potdAvgClv: document.getElementById('potdAvgClv'),
+  potdDailyHistory: document.getElementById('potdDailyHistory'),
   calibrationReport: document.getElementById('calibrationReport'),
   exportDataBtn: document.getElementById('exportDataBtn'),
   archiveResetBtn: document.getElementById('archiveResetBtn'),
@@ -3614,9 +3621,7 @@ function renderPotdSection(section) {
     </div>`;
 }
 
-/** One Play of the Day card — the main daily pick and each per-sport pick
- * share this exact rendering, since a per-sport pick is the same kind of
- * editorial call, just scoped to one league instead of the whole board. */
+/** The single Play of the Day card. */
 function renderPotdCard(writeup, generatedAt, stale) {
   const staleNote = stale
     ? `<p class="potd-stale">Today's pick hasn't posted yet — showing yesterday's.</p>`
@@ -3640,24 +3645,16 @@ function renderPotdCard(writeup, generatedAt, stale) {
     </article>`;
 }
 
-function renderPotd(potd, bySport = {}) {
-  const bySportHtml = Object.entries(bySport)
-    .map(([, entry]) => renderPotdCard(entry.writeup, entry.generatedAt, entry.stale))
-    .join('');
-  const bySportSection = bySportHtml
-    ? `<h2 class="potd-by-sport-head">Play of the Day, by sport</h2><div class="potd-by-sport">${bySportHtml}</div>`
-    : '';
-
+function renderPotd(potd) {
   if (!potd) {
     el.potdBody.innerHTML = `<p class="empty">
-      Nothing posted yet today. Play of the Day goes up once daily — around
-      8am ET most days, or the evening before when the pick's own game starts
-      too early for that (an early tennis match, say). Check back soon.</p>` + bySportSection;
+      Nothing posted yet today. Play of the Day goes up once daily, around
+      2am ET. Check back soon.</p>`;
     return;
   }
 
   const { writeup, generatedAt, stale } = potd;
-  el.potdBody.innerHTML = renderPotdCard(writeup, generatedAt, stale) + bySportSection;
+  el.potdBody.innerHTML = renderPotdCard(writeup, generatedAt, stale);
 }
 
 let potdLoaded = false;
@@ -3673,15 +3670,9 @@ async function loadPotd({ force = false } = {}) {
 
   el.potdBody.innerHTML = `<p class="empty">Loading…</p>`;
   try {
-    const [potdRes, bySportRes] = await Promise.all([
-      fetch(new URL('/potd', CONFIG.WORKER_URL), { headers: { Accept: 'application/json' } }),
-      fetch(new URL('/potd-by-sport', CONFIG.WORKER_URL), { headers: { Accept: 'application/json' } }),
-    ]);
-    const data = await potdRes.json();
-    // A per-sport fetch failing shouldn't take down the main pick — it just
-    // means the "by sport" section is empty this load.
-    const bySportData = await bySportRes.json().catch(() => ({ bySport: {} }));
-    renderPotd(data.potd ?? null, bySportData.bySport ?? {});
+    const res = await fetch(new URL('/potd', CONFIG.WORKER_URL), { headers: { Accept: 'application/json' } });
+    const data = await res.json();
+    renderPotd(data.potd ?? null);
   } catch {
     potdLoaded = false; // a network hiccup shouldn't permanently give up
     el.potdBody.innerHTML = `<p class="empty">Couldn't reach the odds feed.</p>`;
@@ -4109,6 +4100,50 @@ async function renderTop5Section() {
   return picks;
 }
 
+/** Every Play of the Day pick the worker has ever tracked (see worker/src/potd.js's getPotdHistory), up to 90 days. */
+async function fetchPotdHistory() {
+  if (!CONFIG.WORKER_URL) return [];
+  try {
+    const url = new URL('/potd-history', CONFIG.WORKER_URL);
+    const res = await fetch(url, { headers: { Accept: 'application/json' } });
+    if (!res.ok) return [];
+    const data = await res.json();
+    return data.picks ?? [];
+  } catch {
+    return [];
+  }
+}
+
+/**
+ * Play of the Day's own Tracking Dashboard section — one pick per day, so
+ * this reuses the exact same summary math and day-block rendering the Top 5
+ * section uses (groupTop5ByDay/renderTop5DayBlock/top5ClvPct/summarizePicks
+ * are all generic over any picks array with the right field shape, which
+ * getPotdHistory's output already matches by construction) rather than
+ * duplicating it.
+ */
+async function renderPotdTrackingSection() {
+  const picks = await fetchPotdHistory();
+  const overall = summarizePicks(picks);
+  const winRate = overall.graded ? (overall.wins / overall.graded) * 100 : 0;
+  const clvValues = picks.map(top5ClvPct).filter((v) => v != null);
+  const avgClv = clvValues.length ? clvValues.reduce((a, b) => a + b, 0) / clvValues.length : null;
+
+  el.potdTotalPicks.textContent = overall.total;
+  el.potdGradedPicks.textContent = overall.graded;
+  el.potdWinRate.textContent = overall.graded ? winRate.toFixed(1) + '%' : '—';
+  el.potdRoi.textContent = overall.graded ? formatSignedPct(overall.roi) : '—';
+  el.potdNetProfit.textContent = overall.graded ? formatSignedMoney(overall.net) : '—';
+  el.potdAvgClv.textContent = avgClv != null ? formatSignedPct(avgClv) : '—';
+
+  const days = groupTop5ByDay(picks);
+  el.potdDailyHistory.innerHTML = days.length
+    ? days.map(renderTop5DayBlock).join('')
+    : `<p class="empty">Nothing tracked yet — the worker generates its first Play of the Day pick at 2am ET.</p>`;
+
+  return picks;
+}
+
 /**
  * Reporting only, per the brief this was scoped to — never adjusts any
  * threshold or weight itself. Computes a real Brier score (using each
@@ -4241,6 +4276,7 @@ async function renderLearningDashboard() {
 
   const top5Picks = await renderTop5Section();
   renderCalibrationReport(top5Picks);
+  await renderPotdTrackingSection();
 }
 
 /** Applies the user's last-dragged width, if any — otherwise the panel keeps its CSS default (fills the viewport). */

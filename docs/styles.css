@@ -312,29 +312,6 @@ body {
   color: var(--muted);
 }
 
-.potd-by-sport-head {
-  margin: 28px 0 14px;
-  font-family: var(--mono);
-  font-size: 0.85rem;
-  letter-spacing: 0.06em;
-  text-transform: uppercase;
-  color: var(--muted);
-  border-top: 1px solid var(--line);
-  padding-top: 22px;
-}
-
-.potd-by-sport {
-  display: grid;
-  gap: 14px;
-}
-
-@media (min-width: 900px) {
-  .potd-by-sport {
-    grid-template-columns: repeat(auto-fill, minmax(420px, 1fr));
-    align-items: start;
-  }
-}
-
 /* ---------------------------------------------------------------- */
 /* Parlay Builder                                                     */
 /* ---------------------------------------------------------------- */

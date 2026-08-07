@@ -71,7 +71,7 @@ async function fullSlateSportKeys(env, ctx) {
 }
 
 /** Every event across the full slate, merged — sports that failed to fetch just contribute nothing rather than failing the whole batch. */
-async function fetchFullSlateEvents(env, ctx) {
+export async function fetchFullSlateEvents(env, ctx) {
   const keys = await fullSlateSportKeys(env, ctx);
   const results = await Promise.all(keys.map((k) => fetchSport(k, env, ctx)));
   const events = [];
@@ -130,9 +130,9 @@ export async function runTop5Batch(
   env,
   ctx,
   now = Date.now(),
-  // Injected for testability, same reasoning as potd.js's runPotdPhase
-  // taking fetchBoard as a parameter — lets tests supply a fixed event list
-  // instead of needing to mock the network.
+  // Injected for testability, same reasoning as potd.js's runPotdDaily
+  // taking fetchFullSlate as a parameter — lets tests supply a fixed event
+  // list instead of needing to mock the network.
   { fetchFullSlate = () => fetchFullSlateEvents(env, ctx) } = {},
 ) {
   const dateKey = etDate(now);
