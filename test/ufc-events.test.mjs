@@ -84,6 +84,59 @@ test('missing fighter names returns null rather than throwing', async () => {
   assert.equal(result, null);
 });
 
+test('matches despite an unstripped diacritic mismatch (José vs Jose)', async () => {
+  // Confirmed live on UFC 330: ESPN lists "Joel Álvarez", the Odds API
+  // offers "Joel Alvarez" — a plain [^a-z0-9] strip on the un-normalized
+  // string mangles "é" into nothing ("jos" instead of "jose"), silently
+  // breaking the match.
+  stubEspnScoreboard([
+    makeEspnEvent('UFC 330: Makhachev vs. Machado Garry', [['Chidi Njokuani', 'Joel Álvarez']]),
+  ]);
+  const result = await getUfcEventDetails('Chidi Njokuani', 'Joel Alvarez', Date.now(), ctx);
+  assert.equal(result.event, 'UFC 330: Makhachev vs. Machado Garry');
+});
+
+test('matches despite a missing/extra middle name (Billy Ray Goff vs Billy Goff)', async () => {
+  stubEspnScoreboard([
+    makeEspnEvent('UFC Fight Night: Gamrot vs Salkilld', [['Billy Ray Goff', 'Ty Miller']]),
+  ]);
+  const result = await getUfcEventDetails('Ty Miller', 'Billy Goff', Date.now(), ctx);
+  assert.equal(result.event, 'UFC Fight Night: Gamrot vs Salkilld');
+});
+
+test('matches despite a missing given name (Carlos Diego Ferreira vs Diego Ferreira)', async () => {
+  stubEspnScoreboard([
+    makeEspnEvent('UFC Fight Night: Gamrot vs Salkilld', [['Diego Ferreira', 'Billy Quarantillo']]),
+  ]);
+  const result = await getUfcEventDetails('Carlos Diego Ferreira', 'Billy Quarantillo', Date.now(), ctx);
+  assert.equal(result.event, 'UFC Fight Night: Gamrot vs Salkilld');
+});
+
+test('matches despite a two-word surname one source concatenates (del Valle vs DelValle)', async () => {
+  stubEspnScoreboard([
+    makeEspnEvent('UFC Fight Night: Gamrot vs Salkilld', [['Darren Elkins', 'Yadier del Valle']]),
+  ]);
+  const result = await getUfcEventDetails('Darren Elkins', 'Yadier DelValle', Date.now(), ctx);
+  assert.equal(result.event, 'UFC Fight Night: Gamrot vs Salkilld');
+});
+
+test('matches despite a nickname used as a first name (Gigi vs Giovanna)', async () => {
+  stubEspnScoreboard([
+    makeEspnEvent('UFC Fight Night: Gamrot vs Salkilld', [['Gigi Canuto', 'Carol Foro']]),
+  ]);
+  const result = await getUfcEventDetails('Giovanna Canuto', 'Carol Foro', Date.now(), ctx);
+  assert.equal(result.event, 'UFC Fight Night: Gamrot vs Salkilld');
+});
+
+test('a wholly unrelated fighter pair still falls back to date grouping, not a false surname match', async () => {
+  stubEspnScoreboard([
+    makeEspnEvent('UFC 330: Makhachev vs. Machado Garry', [['Islam Makhachev', 'Ian Machado Garry']]),
+  ]);
+  const commenceMs = Date.parse('2026-09-01T20:00:00Z');
+  const result = await getUfcEventDetails('Conor McGregor', 'Jorge Masvidal', commenceMs, ctx);
+  assert.equal(result.event, 'Card - 09/01');
+});
+
 test('a PFL fighter matches against PFL\'s own scoreboard, separate from UFC\'s', async () => {
   globalThis.caches = { default: { async match() { return null; }, async put() {} } };
   globalThis.fetch = async (url) => {

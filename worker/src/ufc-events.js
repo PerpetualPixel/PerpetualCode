@@ -24,12 +24,56 @@ const ESPN_MMA_SCOREBOARDS = {
 };
 const SCHEDULE_TTL = 3600 * 6; // a card can still be adjusted; not worth caching longer
 
+/**
+ * Folds accents before stripping non-alphanumerics (NFD-normalize, then drop
+ * the resulting combining-diacritic codepoints) — matching worker/src/mma.js's
+ * own `fold()` convention. Without this, a plain `[^a-z0-9 ]` strip on an
+ * un-normalized string mangles an accented letter into nothing rather than
+ * its base letter (e.g. "José" -> "jos" instead of "jose"), which broke real
+ * matches against ESPN's own accented spellings — confirmed live: "Joel
+ * Álvarez" (ESPN) vs "Joel Alvarez" (Odds API) silently failed to match
+ * before this fix.
+ */
 function normalizeName(name) {
   return String(name ?? '')
+    .normalize('NFD')
+    .replace(/[̀-ͯ]/g, '')
     .toLowerCase()
     .replace(/[^a-z0-9 ]/g, '')
     .replace(/\s+/g, ' ')
     .trim();
+}
+
+/** The last space-separated token of a normalized name — the surname, for the common "First [Middle] Last" shape. */
+function lastToken(normalized) {
+  const parts = normalized.split(' ').filter(Boolean);
+  return parts[parts.length - 1] ?? '';
+}
+
+/**
+ * Whether two normalized names plausibly refer to the same fighter. Odds API
+ * and ESPN routinely disagree on a fighter's exact name string for the same
+ * real person — confirmed live across a full week's UFC/PFL cards: a
+ * nickname used as a first name ("Gigi" vs "Giovanna" Canuto), a missing or
+ * extra middle name ("Billy Ray Goff" vs "Billy Goff", "Carlos Diego
+ * Ferreira" vs "Diego Ferreira"), a shortened first name ("Josh" vs
+ * "Joshua" Silveira), and a two-word surname one source concatenates and the
+ * other doesn't ("DelValle" vs "del Valle") all showed up as real,
+ * currently-scheduled fights that an exact-string match silently missed and
+ * fell back to a generic "Card - MM/DD" grouping for. A shared surname (the
+ * most stable part of a name across sources) or a squashed-whitespace
+ * containment match catches all of the above without needing a fuzzy-string
+ * library; the risk of a false positive (two different fighters on the same
+ * card sharing a surname) is bounded by this only ever affecting which
+ * event NAME a fight displays under, never any other data.
+ */
+function namesLikelyMatch(a, b) {
+  if (!a || !b) return false;
+  if (a === b) return true;
+  if (lastToken(a) && lastToken(a) === lastToken(b)) return true;
+  const squashedA = a.replace(/ /g, '');
+  const squashedB = b.replace(/ /g, '');
+  return squashedA.includes(squashedB) || squashedB.includes(squashedA);
 }
 
 function dateRangeParam(now) {
@@ -141,7 +185,8 @@ export async function getUfcEventDetails(fighterA, fighterB, commenceMs, ctx, sc
 
   for (const event of sched) {
     const matched = event.fights.some(
-      (f) => (f.a === normA && f.b === normB) || (f.a === normB && f.b === normA),
+      (f) => (namesLikelyMatch(f.a, normA) && namesLikelyMatch(f.b, normB))
+        || (namesLikelyMatch(f.a, normB) && namesLikelyMatch(f.b, normA)),
     );
     if (matched) return { event: event.name };
   }
