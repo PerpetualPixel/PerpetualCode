@@ -2398,7 +2398,11 @@ function slateGameHtml(game) {
   const scoreEvent = state.slateScores.get(game.eventId);
   const outcome = slateGameOutcome(game, rec); // 'won' | 'lost' | null — only set once finished
   const isFinished = gameState === 'finished';
-  const rowProps = { gameState, scoreEvent, ranks: rankedGamePicks(game), hideMarkets: isFinished };
+  // The market grid only means anything pregame — once a game is live the
+  // prices are stale and the algorithm's read was a pregame one, so it's
+  // dropped for live games exactly like it already was for finished ones.
+  const hideMarkets = gameState !== 'upcoming';
+  const rowProps = { gameState, scoreEvent, ranks: rankedGamePicks(game), hideMarkets };
 
   const cardClass = [
     'slate-game',
@@ -2421,11 +2425,13 @@ function slateGameHtml(game) {
       ? `<span class="slate-live-badge">● Live</span>`
       : `<span>${esc(dateFmt.format(new Date(game.commenceMs)))}</span>`;
 
-  // Once a game is finished, the per-market price grid no longer means
-  // anything — replaced by a single line naming the algorithm's Main play
-  // (the same candidate the card's green/red border is graded from) and
-  // whether it won. No tag at all if it couldn't be graded (e.g. a push).
-  const mainPlayHtml = isFinished && rec
+  // Once a game is live or finished, the per-market price grid no longer
+  // means anything — replaced by a single line naming the algorithm's Main
+  // play (the same candidate the card's green/red border is graded from
+  // once finished). Only a finished game ever has an outcome to tag —
+  // slateGameOutcome() returns null for a live game, so the Won/Lost badge
+  // simply never appears until there's an actual result to show.
+  const mainPlayHtml = hideMarkets && rec
     ? `<div class="slate-main-play">
         <span class="slate-main-play-label">Main play</span>
         <span class="slate-main-play-selection">${esc(rec.selection)}</span>
@@ -2439,7 +2445,7 @@ function slateGameHtml(game) {
         ${timeHtml}
         ${infoButtonHtml}
       </div>
-      ${isFinished ? '' : `
+      ${hideMarkets ? '' : `
       <div class="slate-header-row">
         <span></span><span>Spread</span><span>O/U</span><span>ML</span>
       </div>`}
