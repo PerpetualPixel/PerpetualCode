@@ -2821,17 +2821,22 @@ function renderSlateLeagueOptions() {
 }
 
 /**
- * Filter MMA games to only those with moneyline markets and upcoming dates.
- * Only includes UFC/PFL events with known event metadata (to filter out noise).
+ * Filter MMA games to only those with known event metadata and upcoming
+ * dates. Deliberately does NOT require a graded moneyline candidate — a
+ * fight with fewer than RULES.MIN_BOOKS quoting it (a real, common state
+ * for a card early in the week, or a thin promotion like PFL) still has a
+ * real event and belongs on the card list, same as how buildSlateGames
+ * already shows a thin market with a dash instead of hiding the game
+ * everywhere else in the app. Confirmed live: this silently dropped every
+ * PFL Charlotte fight from the event dropdown (only 2 books were quoting
+ * it, below the 3-book candidate floor) even though the fights themselves
+ * were real and upcoming.
  */
 function filterMmaGames(games) {
   const now = Date.now();
   const oneWeekMs = 9 * 24 * 60 * 60 * 1000;
 
   return games.filter((game) => {
-    // Must have moneyline (h2h) odds
-    if (!game.h2h?.away || !game.h2h?.home) return false;
-
     // Must have event enrichment (live ESPN lookup or fallback date-based)
     if (!game.ufc_event?.event) return false;
 

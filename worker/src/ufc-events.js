@@ -110,6 +110,10 @@ function parseSchedule(data) {
   const events = data?.events ?? [];
   return events.map((e) => ({
     name: e.name,
+    // ESPN's own start time for the event, used only for the same-day
+    // fallback below — null (not NaN) when ESPN omits it, so a schedule
+    // entry with no date never accidentally matches every fight.
+    date: e.date ? Date.parse(e.date) : null,
     fights: (e.competitions ?? []).map((c) => {
       const [a, b] = c.competitors ?? [];
       return {
@@ -191,7 +195,23 @@ export async function getUfcEventDetails(fighterA, fighterB, commenceMs, ctx, sc
     if (matched) return { event: event.name };
   }
 
+  // Neither fighter matched any listed fight on any card — before falling
+  // back to a generic date label, check whether exactly one scheduled
+  // event's own start time falls on the same UTC calendar day as this
+  // fight. A real card often has untelevised early-prelim bouts ESPN's
+  // scoreboard API simply doesn't list as individual competitions —
+  // confirmed live: "Miles Johns vs Gianni Vazquez," 40 minutes after UFC
+  // Fight Night: Gamrot vs Salkilld went live, appearing on neither UFC's
+  // nor PFL's schedule at all, yet with no other UFC/PFL card anywhere
+  // near that date. Still a real fight on that real card, not a fighter
+  // this app has never heard of. Only applied when exactly one event
+  // matches that day — a same-day double-header (rare, but not impossible
+  // between two promotions) would be ambiguous, and an ambiguous guess is
+  // worse than the plain date label.
   if (commenceMs) {
+    const dayKey = (ms) => new Date(ms).toISOString().slice(0, 10);
+    const sameDay = sched.filter((event) => event.date != null && dayKey(event.date) === dayKey(commenceMs));
+    if (sameDay.length === 1) return { event: sameDay[0].name };
     return { event: `Card - ${formatEventDate(commenceMs)}` };
   }
   return null;

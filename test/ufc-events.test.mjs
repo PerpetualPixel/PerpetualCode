@@ -20,9 +20,10 @@ function stubEspnScoreboard(events) {
 
 const ctx = { waitUntil: (p) => p };
 
-function makeEspnEvent(name, fights) {
+function makeEspnEvent(name, fights, date) {
   return {
     name,
+    ...(date ? { date } : {}),
     competitions: fights.map(([a, b]) => ({
       competitors: [{ athlete: { displayName: a } }, { athlete: { displayName: b } }],
     })),
@@ -166,4 +167,45 @@ test('UFC scoreboard failing does not block PFL fighters from matching', async (
 
   const result = await getUfcEventDetails('Trey Waters', 'Trukon Carson', Date.now(), ctx);
   assert.equal(result.event, 'PFL Charlotte: Battle vs. Rosta');
+});
+
+test('an unmatched fighter pair still lands on the real card when it starts the same day (untelevised early prelim)', async () => {
+  globalThis.caches = { default: { async match() { return null; }, async put() {} } };
+  globalThis.fetch = async (url) => {
+    // Only UFC's own scoreboard carries this card — PFL's returns nothing,
+    // same as fetchMmaSchedule always merges two separate promotions.
+    const events = String(url).includes('/mma/ufc/')
+      ? [makeEspnEvent('UFC Fight Night: Gamrot vs Salkilld', [['Mateusz Gamrot', 'Quillan Salkilld']], '2026-08-08T21:00Z')]
+      : [];
+    return { ok: true, text: async () => JSON.stringify({ events }) };
+  };
+  // Neither fighter is on the listed card at all — ESPN's scoreboard just
+  // never listed this early-prelim bout as its own competition — but it
+  // starts the same UTC day as the one event ESPN did list.
+  const commenceMs = Date.parse('2026-08-08T21:40:00Z');
+  const result = await getUfcEventDetails('Miles Johns', 'Gianni Vazquez', commenceMs, ctx);
+  assert.equal(result.event, 'UFC Fight Night: Gamrot vs Salkilld');
+});
+
+test('same-day fallback stays quiet (plain date label) when two events land on the same day', async () => {
+  globalThis.caches = { default: { async match() { return null; }, async put() {} } };
+  globalThis.fetch = async (url) => {
+    const events = String(url).includes('/mma/ufc/')
+      ? [makeEspnEvent('UFC Fight Night: Gamrot vs Salkilld', [['Mateusz Gamrot', 'Quillan Salkilld']], '2026-08-08T21:00Z')]
+      : [makeEspnEvent('PFL Charlotte: Battle vs. Rosta', [['Someone Else', 'Another Fighter']], '2026-08-08T23:00Z')];
+    return { ok: true, text: async () => JSON.stringify({ events }) };
+  };
+  const commenceMs = Date.parse('2026-08-08T22:00:00Z');
+  const result = await getUfcEventDetails('Unmatched One', 'Unmatched Two', commenceMs, ctx);
+  assert.equal(result.event, 'Card - 08/08');
+});
+
+test('same-day fallback never fires when ESPN omits a date on every event', async () => {
+  // Every existing fixture in this file omits `date` — this locks in that
+  // those tests' plain-date-fallback behavior can never accidentally start
+  // matching once a schedule entry does carry a date.
+  stubEspnScoreboard([makeEspnEvent('UFC 305: Makhachev vs. Garry', [['Islam Makhachev', 'Ian Garry']])]);
+  const commenceMs = Date.parse('2026-08-15T22:00:00Z');
+  const result = await getUfcEventDetails('Unknown Fighter A', 'Unknown Fighter B', commenceMs, ctx);
+  assert.equal(result.event, 'Card - 08/15');
 });
