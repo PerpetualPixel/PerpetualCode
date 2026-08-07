@@ -46,6 +46,17 @@ import {
   fetchFullSlateEvents,
   TOP5_BATCH_HOUR,
 } from './tracking.js';
+import {
+  runAlgoHealthReview,
+  getAlgoConfig,
+  getPausedSegments,
+  getHealthLog,
+  resumeSegmentNow,
+  resetAlgoConfigToDefaults,
+  defaultAlgoConfig,
+  TUNABLE_BOUNDS,
+  HEALTH_WINDOW_DAYS,
+} from './algo-health.js';
 
 // Each sport is a separate billed call: 3 markets x 1 region = 3 credits apiece.
 // Three is the ceiling the app's league picker enforces, repeated here because
@@ -429,6 +440,8 @@ export { QuotaManager };
 
 const MORNING_PREWARM_HOUR = 4; // 4am ET
 const MLB_LEAGUE_STATS_HOUR = 3; // 3am ET
+const ALGO_HEALTH_HOUR = 7; // Monday 7am ET
+const ALGO_HEALTH_WEEKDAY = 1; // Monday (0=Sunday per Intl's 'short' weekday index below)
 
 /** ET wall-clock hour for a given instant — same self-correcting-across-DST
  * approach as potd.js's own etParts, kept local since this is the only other
@@ -436,6 +449,15 @@ const MLB_LEAGUE_STATS_HOUR = 3; // 3am ET
 function etHour(ms) {
   const fmt = new Intl.DateTimeFormat('en-US', { timeZone: 'America/New_York', hour: '2-digit', hour12: false });
   return Number(fmt.format(ms)) % 24;
+}
+
+/** ET calendar weekday for a given instant, 0=Sunday..6=Saturday — same
+ * DST-safe Intl approach as etHour, just for the weekly algorithm health
+ * review's Monday gate rather than an hourly one. */
+function etWeekday(ms) {
+  const fmt = new Intl.DateTimeFormat('en-US', { timeZone: 'America/New_York', weekday: 'short' });
+  const days = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
+  return days.indexOf(fmt.format(ms));
 }
 
 export default {
@@ -499,6 +521,22 @@ export default {
     if (etHour(now) === POTD_HOUR) {
       ctx.waitUntil(
         runPotdDaily(env, ctx, now, { fetchFullSlate: () => fetchFullSlateEvents(env, ctx) }),
+      );
+    }
+
+    // Monday 7am ET: the weekly algorithm health review (worker/src/
+    // algo-health.js) — looks at the last HEALTH_WINDOW_DAYS of graded
+    // Pixel's Picks history, auto-pauses a sport+bet-type segment that's
+    // significantly underperforming its own no-vig expectation, auto-
+    // resumes one that's recovered, and can tighten (never loosen below the
+    // shipped default) one global EV/Kelly/score floor if overall
+    // performance is weak. runAlgoHealthReview is itself idempotent per ISO
+    // week, so a retried or overlapping tick can't double-act.
+    if (etWeekday(now) === ALGO_HEALTH_WEEKDAY && etHour(now) === ALGO_HEALTH_HOUR) {
+      ctx.waitUntil(
+        runAlgoHealthReview(env, ctx, now, {
+          getPicks: () => getAllTrackedPicks(env, { now, days: HEALTH_WINDOW_DAYS }),
+        }),
       );
     }
   },
@@ -725,6 +763,53 @@ export default {
       try {
         const result = await resetAllTracking(env);
         return json({ ...result }, { headers: cors });
+      } catch (error) {
+        return json({ error: String(error).slice(0, 120) }, { status: 500, headers: cors });
+      }
+    }
+
+    // Current state of the weekly algorithm health review (worker/src/
+    // algo-health.js) — tuned config vs. shipped defaults, currently paused
+    // segments, and the recent action/proposal log — for the Tracking
+    // Dashboard's Algorithm Health panel. Read-only, KV only.
+    if (pathname === '/algo-health' && request.method === 'GET') {
+      try {
+        const [config, paused, log] = await Promise.all([
+          getAlgoConfig(env),
+          getPausedSegments(env),
+          getHealthLog(env),
+        ]);
+        return json(
+          { config, defaults: defaultAlgoConfig(), bounds: TUNABLE_BOUNDS, paused, log },
+          { headers: { ...cors, 'Cache-Control': 'public, max-age=300' } },
+        );
+      } catch (error) {
+        return json({ error: String(error).slice(0, 120) }, { status: 500, headers: cors });
+      }
+    }
+
+    // Manual early resume of one paused segment — the human-override
+    // counterpart to the automatic, evidence-based resume the weekly review
+    // does on its own. Body: {"key": "sportKey|marketKey"}.
+    if (pathname === '/algo-health/resume' && request.method === 'POST') {
+      try {
+        const body = await request.json().catch(() => ({}));
+        if (!body.key) return json({ error: 'Missing "key"' }, { status: 400, headers: cors });
+        const resumed = await resumeSegmentNow(env, body.key);
+        return json({ resumed }, { headers: cors });
+      } catch (error) {
+        return json({ error: String(error).slice(0, 120) }, { status: 500, headers: cors });
+      }
+    }
+
+    // Manual full reset of the tuned config back to shipped defaults — does
+    // not touch paused segments (those resume individually via the route
+    // above). Never run on a schedule; only ever hit by the dashboard's own
+    // "Reset to defaults" button.
+    if (pathname === '/algo-health/reset' && request.method === 'POST') {
+      try {
+        const config = await resetAlgoConfigToDefaults(env);
+        return json({ config }, { headers: cors });
       } catch (error) {
         return json({ error: String(error).slice(0, 120) }, { status: 500, headers: cors });
       }

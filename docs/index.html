@@ -645,6 +645,26 @@
       <div id="calibrationReport" class="learning-recs"></div>
     </section>
 
+    <!-- Algorithm Health -->
+    <section class="learning-section">
+      <h3>Algorithm Health <span class="stats-source">Automatic — reviews every Monday, 7am ET</span></h3>
+      <p class="filter-hint">
+        Unlike Calibration &amp; Audit above, this section acts on its own: a
+        sport + bet-type segment whose actual results fall significantly
+        short of what its own no-vig fair probability predicted gets
+        auto-paused — excluded from Pixel's Picks and Play of the Day until
+        it recovers or you resume it below. If overall performance is weak,
+        one threshold (EV floor, Kelly floor, or score floor) can tighten by
+        one step — never below the shipped default. Anything bigger than a
+        threshold nudge stays a written proposal for you to act on by hand,
+        never applied automatically.
+      </p>
+      <div id="algoHealthConfig" class="learning-table"></div>
+      <div id="algoHealthPaused" class="learning-recs"></div>
+      <div id="algoHealthLog" class="learning-recs"></div>
+      <button id="algoHealthResetBtn" class="action-btn" type="button">Reset Tuning to Defaults</button>
+    </section>
+
     <!-- Export / Reset -->
     <section class="learning-section">
       <button id="exportDataBtn" class="action-btn">Export Pick History (CSV)</button>

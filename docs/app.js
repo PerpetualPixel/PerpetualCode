@@ -640,6 +640,10 @@ const el = {
   top5AvgClv: document.getElementById('top5AvgClv'),
   top5DailyHistory: document.getElementById('top5DailyHistory'),
   calibrationReport: document.getElementById('calibrationReport'),
+  algoHealthConfig: document.getElementById('algoHealthConfig'),
+  algoHealthPaused: document.getElementById('algoHealthPaused'),
+  algoHealthLog: document.getElementById('algoHealthLog'),
+  algoHealthResetBtn: document.getElementById('algoHealthResetBtn'),
   exportDataBtn: document.getElementById('exportDataBtn'),
   archiveResetBtn: document.getElementById('archiveResetBtn'),
 };
@@ -4624,6 +4628,126 @@ function renderCalibrationReport(picks) {
   ].join('');
 }
 
+const ALGO_HEALTH_MARKET_LABELS = { h2h: 'Moneyline', spreads: 'Spread', totals: 'Total', alternate_spreads: 'Alt Spread' };
+
+/** "sportKey|marketKey" (worker/src/algo-health.js's segment key, sport half already
+ * normalized — one virtual ATP/WTA segment regardless of which tournament) into a
+ * readable label, e.g. "MMA — Moneyline". */
+function algoSegmentLabel(key) {
+  const [sportKey, marketKey] = String(key ?? '').split('|');
+  const sportLabel = sportKey === 'tennis_atp' ? 'ATP' : sportKey === 'tennis_wta' ? 'WTA' : sportGroupLabel(sportKey ?? '');
+  return `${sportLabel} — ${ALGO_HEALTH_MARKET_LABELS[marketKey] ?? marketKey}`;
+}
+
+/** Current state of the weekly algorithm health review (see worker/src/algo-health.js). */
+async function fetchAlgoHealth() {
+  if (!CONFIG.WORKER_URL) return null;
+  try {
+    const url = new URL('/algo-health', CONFIG.WORKER_URL);
+    const res = await fetch(url, { headers: { Accept: 'application/json' } });
+    if (!res.ok) return null;
+    return await res.json();
+  } catch {
+    return null;
+  }
+}
+
+const ALGO_HEALTH_PARAM_LABELS = {
+  MIN_EV_PCT: { label: 'EV floor', fmt: (v) => `${(v * 100).toFixed(2)}%` },
+  MIN_KELLY_FRACTION: { label: 'Kelly floor', fmt: (v) => `${(v * 100).toFixed(2)}%` },
+  MIN_SCORE: { label: 'Score floor', fmt: (v) => v.toFixed(0) },
+};
+
+const ALGO_HEALTH_ACTION_LABELS = {
+  pause: { label: 'Paused', cls: 'high' },
+  resume: { label: 'Resumed', cls: 'low' },
+  tighten: { label: 'Tightened', cls: '' },
+  proposal: { label: 'Proposal', cls: '' },
+  reset: { label: 'Reset', cls: '' },
+  reviewed: { label: 'Reviewed', cls: '' },
+};
+
+/**
+ * Renders the Algorithm Health panel: current tuned config vs. shipped
+ * defaults (with a "tightened" indicator when they differ), the paused-
+ * segment list with a manual "Resume now" per segment, and a scrollable log
+ * of past actions/proposals — everything the weekly review
+ * (worker/src/algo-health.js's runAlgoHealthReview) has done or flagged.
+ * Unlike Calibration & Audit above, this section documents automatic
+ * behavior, so it says so plainly rather than implying it's just reporting.
+ */
+async function renderAlgoHealthSection() {
+  const data = await fetchAlgoHealth();
+  if (!data) {
+    el.algoHealthConfig.innerHTML = `<p class="empty">Couldn't load algorithm health data.</p>`;
+    el.algoHealthPaused.innerHTML = '';
+    el.algoHealthLog.innerHTML = '';
+    return;
+  }
+
+  const { config, defaults, bounds, paused, log } = data;
+
+  el.algoHealthConfig.innerHTML = Object.entries(ALGO_HEALTH_PARAM_LABELS)
+    .map(([param, { label, fmt }]) => {
+      const current = config[param];
+      const isTightened = current !== defaults[param];
+      return `
+        <div class="learning-table-row">
+          <div class="label">${esc(label)}${isTightened ? ' <span class="stat-pill is-warn">tightened</span>' : ''}</div>
+          <div class="stat">${esc(fmt(current))}</div>
+          <div class="stat" style="opacity:.6">default ${esc(fmt(defaults[param]))} · max ${esc(fmt(bounds[param].max))}</div>
+        </div>`;
+    })
+    .join('');
+
+  el.algoHealthPaused.innerHTML = paused.length
+    ? paused.map((p) => `
+      <div class="rec-item high">
+        <strong>${esc(algoSegmentLabel(p.key))}</strong> paused since ${esc(new Date(p.pausedAt).toLocaleDateString())} — ${esc(p.reason ?? '')}
+        <button type="button" class="link-btn" data-algo-resume="${esc(p.key)}" style="margin-left:8px">Resume now</button>
+      </div>`).join('')
+    : `<div class="rec-item low">No segments currently paused.</div>`;
+
+  const logEntries = (log ?? []).filter((e) => e.action !== 'reviewed').slice(0, 30);
+  el.algoHealthLog.innerHTML = logEntries.length
+    ? logEntries.map((e) => {
+        const meta = ALGO_HEALTH_ACTION_LABELS[e.action] ?? { label: e.action, cls: '' };
+        const segmentPart = e.segment ? `${esc(algoSegmentLabel(e.segment))} — ` : '';
+        return `<div class="rec-item ${meta.cls}"><strong>${esc(meta.label)}</strong> (${esc(e.week)}): ${segmentPart}${esc(e.reason ?? '')}</div>`;
+      }).join('')
+    : `<div class="rec-item">No actions or proposals yet — the first weekly review runs the next Monday 7am ET after enough graded history accumulates.</div>`;
+}
+
+document.body.addEventListener('click', async (event) => {
+  const button = event.target.closest('[data-algo-resume]');
+  if (!button || !CONFIG.WORKER_URL) return;
+  button.disabled = true;
+  try {
+    const url = new URL('/algo-health/resume', CONFIG.WORKER_URL);
+    await fetch(url, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ key: button.dataset.algoResume }),
+    });
+    await renderAlgoHealthSection();
+  } finally {
+    button.disabled = false;
+  }
+});
+
+el.algoHealthResetBtn?.addEventListener('click', async () => {
+  if (!CONFIG.WORKER_URL) return;
+  if (!confirm('Reset all algorithm tuning back to shipped defaults? Paused segments are not affected — resume those individually.')) return;
+  el.algoHealthResetBtn.disabled = true;
+  try {
+    const url = new URL('/algo-health/reset', CONFIG.WORKER_URL);
+    await fetch(url, { method: 'POST' });
+    await renderAlgoHealthSection();
+  } finally {
+    el.algoHealthResetBtn.disabled = false;
+  }
+});
+
 async function renderLearningDashboard() {
   const allPicks = await getAllPicks();
   const filteredPicks = allPicks.filter((p) => !state.trackerExcludedSports.has(sportGroupLabel(p.sport)));
@@ -4682,6 +4806,7 @@ async function renderLearningDashboard() {
 
   const trackedPicks = await renderPixelPicksSection();
   renderCalibrationReport(trackedPicks);
+  await renderAlgoHealthSection();
 }
 
 /** Applies the user's last-dragged width, if any — otherwise the panel keeps its CSS default (fills the viewport). */

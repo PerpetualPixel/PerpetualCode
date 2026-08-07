@@ -2,16 +2,22 @@
  * Server-side Pixel's Picks daily tracked picks (internally still named
  * "Top 5" throughout this file/KV keys — the count/timing changed, the name
  * didn't, to avoid a wide rename across every call site): a 2am ET batch
- * that runs the existing engine (unmodified — same topPicks(), same
- * RULES.MIN_EV_PCT/MIN_KELLY_FRACTION floor) against the full slate and
- * stores the result in KV so it survives independent of any one user's
- * browser and never changes after the fact — this is now the single source
- * of truth the Pixel's Picks tab itself renders (docs/app.js's
+ * that runs the existing engine (unmodified — same topPicks()) against the
+ * full slate and stores the result in KV so it survives independent of any
+ * one user's browser and never changes after the fact — this is now the
+ * single source of truth the Pixel's Picks tab itself renders (docs/app.js's
  * loadPixelPicks()), not just a background tracker; an hourly CLV snapshot
  * for whatever's still pending; and a grading pass (also hourly, not just at
  * a single nightly instant — see runGrading's own note) that fetches scores
  * and grades via the exact same gradePick() the client's own "Check
  * Results" button uses.
+ *
+ * The EV/Kelly/score floor isn't the fixed docs/engine.js RULES constant
+ * anymore — it's read fresh from worker/src/algo-health.js's getAlgoConfig()
+ * on every run, which starts at exactly those RULES defaults and can only
+ * ever be tightened (never loosened below them) by the weekly algorithm
+ * health review. Candidates in a segment that review has paused are also
+ * excluded here, before topPicks() ever sees them.
  *
  * This is deliberately a *second*, independent tracking record from the
  * browser-local IndexedDB one in docs/learning.js — that one is per-device
@@ -19,11 +25,12 @@
  * single, server-side, always-on history that doesn't depend on anyone
  * having the app open.
  */
-import { analyze, topPicks, RULES } from '../../docs/engine.js';
+import { analyze, topPicks } from '../../docs/engine.js';
 import { gradePick } from '../../docs/learning.js';
 import { isMma } from '../../docs/insights.js';
 import { CONFIG } from '../../docs/config.js';
 import { fetchSport, fetchScores, fetchCatalogue } from './odds.js';
+import { getAlgoConfig, getPausedSegments, isSegmentPaused } from './algo-health.js';
 
 export const TOP5_COUNT = 5;
 export const TOP5_BATCH_HOUR = 2; // 2am ET — same run as Play of the Day
@@ -180,6 +187,13 @@ export async function runTop5Batch(
   const existing = await env.POTD_KV.get(manifestKey);
   if (existing) return { skipped: true, reason: 'already generated today', dateKey };
 
+  // The weekly algorithm health review (worker/src/algo-health.js) can
+  // tighten these floors within pre-approved bounds, and can pause a
+  // sport+bet-type segment entirely, based on that segment's real graded
+  // history — both read fresh here so a Monday-morning review takes effect
+  // on the very next batch, not just future ones.
+  const [algoConfig, pausedSegments] = await Promise.all([getAlgoConfig(env), getPausedSegments(env)]);
+
   const events = await fetchFullSlate();
   // Team sports post odds for games weeks or months out (an NFL regular-
   // season line can go up in August) — without this, "today's locks" could
@@ -188,15 +202,16 @@ export async function runTop5Batch(
   // under; MMA keeps its own separate (today-or-early-tomorrow) window
   // since a late main event can roll past midnight.
   const candidates = analyze(events, { now })
-    .filter((c) => (isMma(c.sportKey) ? isEligibleMmaFight(c.commenceMs, now) : etDate(c.commenceMs) === dateKey));
+    .filter((c) => (isMma(c.sportKey) ? isEligibleMmaFight(c.commenceMs, now) : etDate(c.commenceMs) === dateKey))
+    .filter((c) => !isSegmentPaused(c, pausedSegments));
 
   const slate = topPicks(candidates, {
     count: TOP5_COUNT,
     oddsMin: CONFIG.ODDS_MIN_DEFAULT,
     oddsMax: CONFIG.ODDS_MAX_DEFAULT,
-    minScore: CONFIG.MIN_SCORE_DEFAULT,
-    minEv: RULES.MIN_EV_PCT,
-    minKelly: RULES.MIN_KELLY_FRACTION,
+    minScore: algoConfig.MIN_SCORE,
+    minEv: algoConfig.MIN_EV_PCT,
+    minKelly: algoConfig.MIN_KELLY_FRACTION,
     guaranteeCount: true,
   });
 

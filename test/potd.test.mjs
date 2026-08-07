@@ -89,6 +89,21 @@ test('a day with nothing in the -200..+150 band posts nothing', async () => {
   assert.equal(store.size, 0);
 });
 
+test('a candidate whose segment the weekly algorithm health review has paused is skipped, even if it scores best', async () => {
+  const { env } = makeKvStore();
+  await env.POTD_KV.put('algo:paused', JSON.stringify([{ key: 'basketball_nba|h2h', pausedAt: NOW, reason: 'test' }]));
+
+  const events = [
+    // Would otherwise win outright on score/edge, but its sport+market is paused.
+    makeEvent('paused-sport', '2026-08-05T20:00:00Z', { outlier: 60, favoritePrice: -140, sport: 'basketball_nba', sportTitle: 'NBA' }),
+    makeEvent('active-sport', '2026-08-05T21:00:00Z', { outlier: 20, favoritePrice: -140, sport: 'baseball_mlb', sportTitle: 'MLB' }),
+  ];
+
+  const result = await runPotdDaily(env, ctx, NOW, { fetchFullSlate: async () => events });
+  assert.equal(result.skipped, false);
+  assert.match(result.pick.pickId, /^active-sport:/);
+});
+
 test('a candidate below the confidence floor is never selected', async () => {
   const { env } = makeKvStore();
   const events = [makeEvent('weak', '2026-08-05T20:00:00Z', { outlier: 0 })];

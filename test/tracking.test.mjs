@@ -9,6 +9,7 @@ import {
   resetAllTracking,
   TOP5_COUNT,
 } from '../worker/src/tracking.js';
+import { TUNABLE_BOUNDS } from '../worker/src/algo-health.js';
 
 /* ---------------------------------------------------------------- */
 /* Fixtures — same shape as test/potd.test.mjs's, kept independent   */
@@ -191,6 +192,40 @@ test('runTop5Batch only runs once per ET day', async () => {
 
   const second = await runTop5Batch(env, ctx, NOW, { fetchFullSlate: async () => events });
   assert.equal(second.skipped, true);
+});
+
+test('runTop5Batch excludes candidates from a segment the weekly algorithm health review has paused', async () => {
+  const { env } = makeKvStore();
+  await env.POTD_KV.put('algo:paused', JSON.stringify([{ key: 'baseball_mlb|h2h', pausedAt: NOW, reason: 'test' }]));
+
+  const events = [
+    makeEvent('paused-sport', { outlier: 35, sport: 'baseball_mlb', sportTitle: 'MLB' }),
+    makeEvent('active-sport', { outlier: 35, sport: 'basketball_wnba', sportTitle: 'WNBA' }),
+  ];
+
+  const result = await runTop5Batch(env, ctx, NOW, { fetchFullSlate: async () => events });
+  const picks = await getTop5(env, { dateKey: '2026-08-05' });
+
+  assert.ok(picks.every((p) => p.sportKey !== 'baseball_mlb'), 'the paused MLB segment must never be picked');
+  assert.ok(picks.some((p) => p.pickId.startsWith('active-sport:')), 'the non-paused WNBA segment should still be picked');
+});
+
+test('runTop5Batch uses the tuned EV floor from algo:config, not the shipped default, when one is stored', async () => {
+  const { env } = makeKvStore();
+  // Tuned floor well above what a modest +100/-140 edge (outlier: 20) clears
+  // but the shipped default (RULES.MIN_EV_PCT, ~1.5%) would allow through.
+  await env.POTD_KV.put('algo:config', JSON.stringify({
+    MIN_EV_PCT: TUNABLE_BOUNDS.MIN_EV_PCT.max,
+    MIN_KELLY_FRACTION: TUNABLE_BOUNDS.MIN_KELLY_FRACTION.min,
+    MIN_SCORE: TUNABLE_BOUNDS.MIN_SCORE.min,
+  }));
+
+  const events = [makeEvent('modest-edge', { outlier: 20 })];
+  const result = await runTop5Batch(env, ctx, NOW, { fetchFullSlate: async () => events });
+  const picks = await getTop5(env, { dateKey: '2026-08-05' });
+
+  assert.equal(picks.length, 0, 'a modest edge that clears the shipped default should not clear a tightened floor');
+  assert.equal(result.count, 0);
 });
 
 /* ---------------------------------------------------------------- */

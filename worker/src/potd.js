@@ -31,6 +31,7 @@ import { fetchContext, hasContext } from './context.js';
 import { fetchWeather } from './weather.js';
 import { fetchMmaContext } from './mma.js';
 import { fetchSport, fetchScores } from './odds.js';
+import { getPausedSegments, isSegmentPaused } from './algo-health.js';
 
 const ET_TZ = 'America/New_York';
 export const POTD_HOUR = 2; // 2am ET
@@ -250,6 +251,12 @@ export async function runPotdDaily(env, ctx, now = Date.now(), { fetchFullSlate 
   const existing = await env.POTD_KV.get(kvKey);
   if (existing) return { skipped: true, reason: 'already generated', dateKey };
 
+  // A segment the weekly algorithm health review has paused (worker/src/
+  // algo-health.js, on evidence from Pixel's Picks' own graded history)
+  // shouldn't be able to become the single Play of the Day pick either —
+  // benching it for one surface but not the other would be inconsistent.
+  const pausedSegments = await getPausedSegments(env);
+
   const events = await fetchFullSlate();
   const candidates = analyze(events, { now });
   const eligible = candidates.filter((c) => {
@@ -257,6 +264,7 @@ export async function runPotdDaily(env, ctx, now = Date.now(), { fetchFullSlate 
     if (isExhibition(c)) return false;
     if (c.american < POTD_MIN_AMERICAN || c.american > POTD_MAX_AMERICAN) return false;
     if (c.commenceMs <= now) return false;
+    if (isSegmentPaused(c, pausedSegments)) return false;
     return etParts(c.commenceMs).date === dateKey;
   });
 
