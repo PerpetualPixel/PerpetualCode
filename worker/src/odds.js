@@ -56,6 +56,7 @@ async function enrichMmaEvents(events, ctx) {
         event.home_team,
         event.away_team,
         commenceMs,
+        ctx,
       );
       return eventDetails ? { ...event, ufc_event: eventDetails } : event;
     }),

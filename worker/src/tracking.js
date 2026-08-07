@@ -1,26 +1,32 @@
 /**
- * Server-side Top 5 daily tracked picks: a 6am ET batch that runs the
- * existing engine (unmodified — same topPicks(), same RULES.MIN_EV_PCT/
- * MIN_KELLY_FRACTION floor Pixel Picks itself uses) against the full slate
- * and stores the result in KV so it survives independent of any one user's
- * browser; an hourly CLV snapshot for whatever's still pending; and a
- * grading pass (also hourly, not just at a single nightly instant — see
- * runGrading's own note) that fetches scores and grades via the exact same
- * gradePick() the client's own "Check Results" button uses.
+ * Server-side Pixel's Picks daily tracked picks (internally still named
+ * "Top 5" throughout this file/KV keys — the count/timing changed, the name
+ * didn't, to avoid a wide rename across every call site): a 2am ET batch
+ * that runs the existing engine (unmodified — same topPicks(), same
+ * RULES.MIN_EV_PCT/MIN_KELLY_FRACTION floor) against the full slate and
+ * stores the result in KV so it survives independent of any one user's
+ * browser and never changes after the fact — this is now the single source
+ * of truth the Pixel's Picks tab itself renders (docs/app.js's
+ * loadPixelPicks()), not just a background tracker; an hourly CLV snapshot
+ * for whatever's still pending; and a grading pass (also hourly, not just at
+ * a single nightly instant — see runGrading's own note) that fetches scores
+ * and grades via the exact same gradePick() the client's own "Check
+ * Results" button uses.
  *
  * This is deliberately a *second*, independent tracking record from the
  * browser-local IndexedDB one in docs/learning.js — that one is per-device
- * and stays that way; this one exists specifically so the Top 5 has a
+ * and stays that way; this one exists specifically so Pixel's Picks has a
  * single, server-side, always-on history that doesn't depend on anyone
  * having the app open.
  */
 import { analyze, topPicks, RULES } from '../../docs/engine.js';
 import { gradePick } from '../../docs/learning.js';
+import { isMma } from '../../docs/insights.js';
 import { CONFIG } from '../../docs/config.js';
 import { fetchSport, fetchScores, fetchCatalogue } from './odds.js';
 
 export const TOP5_COUNT = 5;
-export const TOP5_BATCH_HOUR = 6; // 6am ET
+export const TOP5_BATCH_HOUR = 2; // 2am ET — same run as Play of the Day
 // Matches docs/learning.js's own FLAT_UNIT_STAKE — duplicated rather than
 // imported because that module's exported constant sits alongside
 // IndexedDB-touching functions this file never calls; importing just the
@@ -53,6 +59,30 @@ function etDate(ms) {
 function etHour(ms) {
   const fmt = new Intl.DateTimeFormat('en-US', { timeZone: 'America/New_York', hour: '2-digit', hour12: false });
   return Number(fmt.format(ms)) % 24;
+}
+
+// How far into the next calendar day a fight still counts as "tonight's
+// card" for Pixel's Picks — a main event can start after midnight local
+// time and still be part of the same show that started at a normal hour.
+// Matches docs/app.js's own (now-removed) client-side isPixelPicksMmaFight —
+// ported here since Pixel's Picks is now selected once, server-side, rather
+// than re-filtered live on every client render.
+const MMA_NEXT_DAY_CUTOFF_HOUR = 6;
+
+/**
+ * MMA cards get announced and sell tickets weeks out, so every other part of
+ * this app (Full Slate, Parlay Builder) shows them on a much longer horizon
+ * — but Pixel's Picks should never surface a pick for a fight that isn't
+ * actually happening soon. Eligible if it starts on today's ET calendar
+ * date, or before MMA_NEXT_DAY_CUTOFF_HOUR the morning after (a late main
+ * event that started on-schedule but rolled past midnight).
+ */
+function isEligibleMmaFight(commenceMs, now) {
+  const today = etDate(now);
+  const commenceDate = etDate(commenceMs);
+  if (commenceDate === today) return true;
+  const tomorrow = etDate(now + 86400000);
+  return commenceDate === tomorrow && etHour(commenceMs) < MMA_NEXT_DAY_CUTOFF_HOUR;
 }
 
 /**
@@ -112,19 +142,29 @@ function pickRecordFrom(pick, dateKey, now) {
     status: 'pending',
     clv: { openAmerican: leg.american, closeAmerican: leg.american, updatedAt: now },
     result: null,
+    // Whether this pick actually cleared the sharp standard, or is a
+    // guaranteeCount() fallback filling out the board on a thin day (see
+    // docs/engine.js's topPicks()) — callers computing win-rate/ROI/CLV
+    // summaries must exclude flagged picks; the day-by-day history still
+    // shows them, just visibly marked with flagReason.
+    meetsStandard: pick.meetsStandard,
+    flagReason: pick.flagReason ?? null,
   };
 }
 
 /**
- * The 6am ET batch: pull the full slate, run the existing, unmodified
+ * The 2am ET batch: pull the full slate, run the existing, unmodified
  * topPicks() with the exact same sharp standard (-250/+250, confidence
- * floor) and EV/Kelly edge floor Pixel Picks itself enforces, and store the
- * top 5 as this app's own dedicated tracked leaderboard. guaranteeCount is
- * deliberately off — a day without 5 genuine edges gets fewer than 5 rather
- * than padding the featured list with a pick that doesn't clear the bar.
- * Runs at most once per ET calendar day (checked via the day's own manifest
- * key), so a redeploy or a retried cron tick can't silently re-pick a
- * different 5 partway through the day.
+ * floor) and EV/Kelly edge floor Pixel's Picks itself enforces, and store
+ * the result as the single locked "Pixel's Picks" board for the day — the
+ * same set the client tab now renders (see docs/app.js's loadPixelPicks())
+ * instead of recomputing live against drifting prices. guaranteeCount is on:
+ * the board always shows at least 5, padding with flagged (meetsStandard:
+ * false) picks on a thin day rather than shrinking — but minEv/minKelly stay
+ * a hard floor even for the padding, so a -EV or dust-edge candidate never
+ * fills a slot just to hit the count. Runs at most once per ET calendar day
+ * (checked via the day's own manifest key), so a redeploy or a retried cron
+ * tick can't silently re-pick a different set partway through the day.
  */
 export async function runTop5Batch(
   env,
@@ -141,7 +181,8 @@ export async function runTop5Batch(
   if (existing) return { skipped: true, reason: 'already generated today', dateKey };
 
   const events = await fetchFullSlate();
-  const candidates = analyze(events, { now });
+  const candidates = analyze(events, { now })
+    .filter((c) => !isMma(c.sportKey) || isEligibleMmaFight(c.commenceMs, now));
 
   const slate = topPicks(candidates, {
     count: TOP5_COUNT,
@@ -150,7 +191,7 @@ export async function runTop5Batch(
     minScore: CONFIG.MIN_SCORE_DEFAULT,
     minEv: RULES.MIN_EV_PCT,
     minKelly: RULES.MIN_KELLY_FRACTION,
-    guaranteeCount: false,
+    guaranteeCount: true,
   });
 
   const pickIds = [];

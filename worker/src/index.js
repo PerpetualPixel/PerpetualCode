@@ -469,9 +469,11 @@ export default {
       ctx.waitUntil(refreshMlbLeagueStats(env, ctx));
     }
 
-    // 6am ET: the day's Top 5 tracked picks — same engine, same sharp
-    // standard and EV/Kelly floor Pixel Picks itself uses, just run once
-    // server-side instead of per-user. runTop5Batch is itself idempotent
+    // 2am ET: the day's locked Pixel's Picks — same engine, same sharp
+    // standard and EV/Kelly floor as always, just run once server-side
+    // instead of live per-request so the board never changes after the
+    // fact (the client's Pixel's Picks tab now renders this same set — see
+    // docs/app.js's loadPixelPicks()). runTop5Batch is itself idempotent
     // per ET day (checks its own manifest key), so a retried or overlapping
     // tick can't double-generate.
     if (etHour(now) === TOP5_BATCH_HOUR) {
@@ -607,9 +609,14 @@ export default {
         sportTitle: searchParams.get('sportTitle') ?? '',
         home: searchParams.get('home') ?? '',
         away: searchParams.get('away') ?? '',
+        // The side this app's own pricing already picked — the model builds
+        // its case around this rather than independently guessing (see
+        // worker/src/analysis.js), so the write-up can never disagree with
+        // the pick shown next to it.
+        outcomeName: searchParams.get('outcomeName') ?? '',
       };
-      if (!candidate.eventId || !candidate.sportKey || !candidate.home || !candidate.away) {
-        return json({ analysis: null, reason: 'missing eventId/sportKey/home/away' }, { headers: cors });
+      if (!candidate.eventId || !candidate.sportKey || !candidate.home || !candidate.away || !candidate.outcomeName) {
+        return json({ analysis: null, reason: 'missing eventId/sportKey/home/away/outcomeName' }, { headers: cors });
       }
       try {
         const analysis = await getOrGenerateAnalysis(candidate, env, ctx);

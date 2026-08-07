@@ -14,14 +14,16 @@ export const CONFIG = {
   // lock you out of your own app.
   REQUIRE_AUTH: false,
 
-  // How many straight bets Generate hands back. topPicks() runs with
-  // guaranteeCount, so this is always exactly how many locks the board shows
-  // — the sharp ones first, the rest flagged if the standard below couldn't
-  // fill every slot.
-  TOP_PICKS_COUNT: 8,
+  // How many picks Pixel's Picks shows — matches worker/src/tracking.js's
+  // own TOP5_COUNT, the real source of truth now that Pixel's Picks is
+  // generated once daily server-side (2am ET) rather than live per-request;
+  // topPicks() runs with guaranteeCount there too, so this is always exactly
+  // how many locks the board shows — the sharp ones first, the rest flagged
+  // if the standard below couldn't fill every slot.
+  TOP_PICKS_COUNT: 5,
 
-  // Pixel Picks' fixed sharp standard — not user-adjustable. A pick outside
-  // this range or below this grade can still appear (to guarantee 8), but
+  // Pixel's Picks' fixed sharp standard — not user-adjustable. A pick outside
+  // this range or below this grade can still appear (to guarantee 5), but
   // flagged as outside the standard rather than shown as a plain lock.
   ODDS_MIN_DEFAULT: -250,
   ODDS_MAX_DEFAULT: 250,

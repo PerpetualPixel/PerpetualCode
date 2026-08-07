@@ -171,9 +171,7 @@ function tennisFactSheet(data, awayName, homeName) {
   return lines.join('\n');
 }
 
-function buildPrompt({ away, home, sportTitle, factSheet, isMma = false, isBaseball = false }) {
-  const totalLabel = isMma ? '' : 'or "Over"/"Under" if this game\'s total is the more relevant call';
-
+function buildPrompt({ away, home, sportTitle, factSheet, pick, isMma = false, isBaseball = false }) {
   let basePrompt = `You are a sports analyst writing a short, strictly factual matchup breakdown for a sports app. Nobody reading this is asking about betting odds, point spreads, moneylines, or market pricing — only about the actual teams or players.
 
 Matchup: ${away} at ${home} (${sportTitle})
@@ -181,17 +179,19 @@ Matchup: ${away} at ${home} (${sportTitle})
 Known facts (this is the ONLY information you have — there is no other source):
 ${factSheet}
 
+This app's own pricing model has already identified "${pick}" as today's pick for this matchup, based on the betting market's own numbers (not shown to you here). Your job is NOT to independently decide who's favored — it's to explain, using only the facts above, why "${pick}" makes sense, and to be honest about the real risks to it. Do not contradict this pick or name the other side as your own lean anywhere in your answer.
+
 RULES — read carefully, these are not optional:
 1. Use ONLY the facts given above. Do not state, imply, or assume any statistic, record, ranking, or result that is not explicitly written above.
 2. Use the exact names "${away}" and "${home}" exactly as given, character for character. Never alter, merge, abbreviate, or substitute a different (even similar-sounding) name — if you are not completely sure of a name, use the exact string given here rather than reconstructing it from memory.
 3. Never invent a head-to-head record, injury, or prior-meeting detail. If the facts above don't mention something, do not mention it either — do not fill silence with a guess, and do not claim something did NOT happen just because it wasn't listed (absence of a fact is not evidence of its opposite).
-4. If the facts above are thin or say "no data" / "unknown" for something, say so plainly rather than working around the gap with invented detail.
+4. If the facts above are thin or say "no data" / "unknown" for something, say so plainly rather than working around the gap with invented detail — but still build the strongest honest case for "${pick}" available from what's given, even a modest one.
 5. Do not mention betting odds, spreads, moneylines, implied probability, vig, or market pricing anywhere in your answer — this is a team/player analysis, not a price analysis.
 6. No markdown: no "#" headings, no "**bold**", no bullet points in Part 1. Start Part 1 directly with its first sentence — the app already shows its own title above this text, so a heading here would just be repeated as literal text.
 
 Write your response in two parts, in this order.
 
-PART 1 — Analysis (plain text, before the JSON described below): 5-to-10 sentences of flowing prose, not a bulleted list, using only the facts above. Take a clear position on which side has the edge and explain why — form, head-to-head history, injuries, or statistical tendencies. Also describe how you expect the matchup to actually unfold — pace, tempo, or the likely pattern of play — grounded only in what's stated above.`;
+PART 1 — Analysis (plain text, before the JSON described below): 5-to-10 sentences of flowing prose, not a bulleted list, using only the facts above. Explain why "${pick}" has the edge — form, head-to-head history, injuries, or statistical tendencies. Also describe how you expect the matchup to actually unfold — pace, tempo, or the likely pattern of play — grounded only in what's stated above.`;
 
   if (isBaseball) {
     basePrompt += `
@@ -204,13 +204,12 @@ Explicitly consider pitcher matchup advantages, home/away pitcher performance sp
 
 PART 2 — Structured summary: after Part 1, on the very last line and ONLY the last line, output one JSON object (no other text on that line, and none of Part 1's prose repeated inside it) with this exact structure:
 {
-  "favoredSide": "<the exact name of whichever side — "${away}" or "${home}" ${totalLabel} — your analysis concludes has the edge, copied character-for-character from this prompt, or null if the facts are too thin to lean either way>",
-  "quickTake": ["<short reason 1 favoredSide has the edge>", "<short reason 2>", "<short reason 3>"],
-  "devilsAdvocate": ["<a genuine way the OTHER side could still win or cover>", "<a second genuine vulnerability or tactical path>"]${isMma ? ',\n  "victoryMethods": { ...see MMA requirement below... }' : ''}
+  "quickTake": ["<short reason 1 "${pick}" has the edge>", "<short reason 2>", "<short reason 3>"],
+  "devilsAdvocate": ["<a genuine weakness or risk in "${pick}" that could cause it to lose>", "<a second genuine vulnerability or way this specific pick could fail>"]${isMma ? ',\n  "victoryMethods": { ...see MMA requirement below... }' : ''}
 }
 
-- quickTake: exactly 3 short, punchy sentences (under ~18 words each) on why favoredSide has the edge — a form/statistical driver, a head-to-head or matchup factor, and a situational note — each traceable to a fact given above. If favoredSide is null, use quickTake to say plainly why it's too close to call instead.
-- devilsAdvocate: exactly 2 short sentences on how the side OTHER than favoredSide could genuinely win or cover — a real vulnerability in favoredSide or a real tactical path for the other side, not a token "anything can happen" disclaimer. This is the counter-argument, so it must name the other side's actual path, not restate why favoredSide is good.`;
+- quickTake: exactly 3 short, punchy sentences (under ~18 words each) on why "${pick}" has the edge — a form/statistical driver, a head-to-head or matchup factor, and a situational note — each traceable to a fact given above.
+- devilsAdvocate: exactly 2 short sentences on genuine weaknesses or risks in "${pick}" specifically — not a case for the other side winning, but honest reasons this exact pick could still lose (a real vulnerability, a matchup risk, a form concern), grounded only in the facts above. Not a token "anything can happen" disclaimer.`;
 
   if (isMma) {
     basePrompt += `
@@ -224,12 +223,8 @@ ADDITIONAL REQUIREMENT FOR MMA — "victoryMethods" in the JSON above must give 
   ],
   "${home}": [ ...same structure... ]
 }
-Methods are: SUB (submission), TKO (TKO/KO), DEC (decision). Percentages are your own estimate of how likely each specific method is for that fighter — the three for one fighter do not need to sum to 100 (they're independent paths, not exhaustive of that fighter's full win chance). quickTake's reason 3 and devilsAdvocate's second sentence should each reference that side's single most likely method with its percentage (e.g., "Most likely via TKO (38%)").`;
+Methods are: SUB (submission), TKO (TKO/KO), DEC (decision). Percentages are your own estimate of how likely each specific method is for that fighter — the three for one fighter do not need to sum to 100 (they're independent paths, not exhaustive of that fighter's full win chance). quickTake's reason 3 should reference "${pick}"'s single most likely method with its percentage (e.g., "Most likely via TKO (38%)"), and devilsAdvocate's second sentence should reference the opponent's most likely method as the concrete way "${pick}" could lose.`;
   }
-
-  basePrompt += `
-
-This is a completely independent, honest read of the facts — you are not being told what any algorithm or price already picked, and you should not try to guess or hedge toward one; just say what the facts above actually support.`;
 
   return basePrompt;
 }
@@ -302,15 +297,26 @@ export async function getOrGenerateAnalysis(candidate, env, ctx, now = Date.now(
   if (!env.ANTHROPIC_API_KEY) return null;
 
   const dateKey = etDate(now);
-  // v6 strips a leading markdown "# Heading" the model sometimes prepended
-  // to Part 1 despite being asked for plain prose — cosmetic (it rendered as
-  // literal "# " text, no markdown renderer here) but versioned anyway so
-  // today's analyses come back clean rather than waiting out the TTL. v5
-  // added quickTake/devilsAdvocate and MMA percentage likelihoods; v4 fixed
-  // the response envelope/anti-hallucination prompt, a trailing-JSON
-  // extraction bug, and an MMA token-truncation bug — see prior versions'
-  // history in git blame for detail.
-  const kvKey = `analysis:v6:${dateKey}:${candidate.eventId}`;
+  // v7 stops asking the model to independently guess who's favored
+  // (favoredSide, dropped entirely) and instead tells it which side the
+  // app's own pricing model already picked, asking it to build the case for
+  // that pick and be honest about its risks in devilsAdvocate — closes off
+  // the "algorithm and write-up can silently disagree" bug the old
+  // independent-read design allowed. Cache key now includes outcomeName —
+  // the write-up is specific to a pick, not just a game, so a game's
+  // favorite and its underdog can no longer collide on one shared cache
+  // entry written for the other side (this module used to be scoped "per
+  // game, shared across every market" on purpose; that assumption no longer
+  // holds now that the text itself argues for a specific side). v6 strips a
+  // leading markdown "# Heading" the model sometimes prepended to Part 1
+  // despite being asked for plain prose — cosmetic (it rendered as literal
+  // "# " text, no markdown renderer here) but versioned anyway so today's
+  // analyses come back clean rather than waiting out the TTL. v5 added
+  // quickTake/devilsAdvocate and MMA percentage likelihoods; v4 fixed the
+  // response envelope/anti-hallucination prompt, a trailing-JSON extraction
+  // bug, and an MMA token-truncation bug — see prior versions' history in
+  // git blame for detail.
+  const kvKey = `analysis:v7:${dateKey}:${candidate.eventId}:${candidate.outcomeName}`;
   const cached = await env.POTD_KV.get(kvKey);
   if (cached) return cached;
 
@@ -343,19 +349,31 @@ export async function getOrGenerateAnalysis(candidate, env, ctx, now = Date.now(
   if (!factSheet) return null;
 
   const isMma = isMmaSport(candidate.sportKey);
+  // outcomeName is the exact team/player name for h2h and spreads, and
+  // literally "Over"/"Under" for totals (see docs/app.js's own comment on
+  // this same field) — passed to the model as a given, not something it's
+  // asked to independently derive. This is the fix for the algorithm and
+  // the write-up being able to contradict each other: the model used to
+  // form its own honest, independent read of who's favored, and the client
+  // flagged it when that read disagreed with the actual pick. Now the model
+  // is told the pick up front and asked to build the case for it (and be
+  // honest about its risks in devilsAdvocate) — there's no independent side
+  // left to disagree with.
+  const pick = candidate.outcomeName;
   const prompt = buildPrompt({
     away: candidate.away,
     home: candidate.home,
     sportTitle: candidate.sportTitle ?? candidate.sportKey,
     factSheet,
+    pick,
     isMma,
     isBaseball,
   });
 
-  // MMA's reply carries a lot more than prose + favoredSide: two fighters x
-  // 3 victory methods each with a percentage and a reasoning sentence apiece,
-  // plus quickTake/devilsAdvocate on top — 500 tokens (fine for plain prose)
-  // was cutting MMA replies off mid-JSON before they could close, which made
+  // MMA's reply carries a lot more than prose: two fighters x 3 victory
+  // methods each with a percentage and a reasoning sentence apiece, plus
+  // quickTake/devilsAdvocate on top — 500 tokens (fine for plain prose) was
+  // cutting MMA replies off mid-JSON before they could close, which made
   // every MMA analysis fail to parse and fall back to dumping the raw
   // truncated text (JSON fragment included) on screen. Every sport's reply
   // grew with quickTake/devilsAdvocate too, hence the non-MMA bump as well.
@@ -373,15 +391,8 @@ export async function getOrGenerateAnalysis(candidate, env, ctx, now = Date.now(
   // checking only the last line silently missed it about as often as it
   // caught it, leaking raw JSON text into the visible analysis. Searching
   // backward for the last '{' that parses as valid JSON running all the way
-  // to the end of the reply works regardless of whitespace. favoredSide is
-  // the model's own independent read of which side the facts support,
-  // computed with no knowledge of what the app's price-based algorithm
-  // actually picked; the client compares the two itself and flags it
-  // plainly when they disagree, rather than the two silently contradicting
-  // each other on screen (the exact bug this whole structured-output pass
-  // exists to close off).
+  // to the end of the reply works regardless of whitespace.
   let analysis = text;
-  let favoredSide = null;
   let quickTake = null;
   let devilsAdvocate = null;
   let victoryMethods = null;
@@ -393,14 +404,6 @@ export async function getOrGenerateAnalysis(candidate, env, ctx, now = Date.now(
     try {
       const parsed = JSON.parse(trimmed.slice(idx));
       analysis = trimmed.slice(0, idx).trim();
-      // Trust favoredSide only if it's exactly one of the names actually in
-      // play — a value that doesn't match anything given is itself a sign
-      // of a hallucinated or garbled name, and a wrong favoredSide is worse
-      // than none (it would raise a false "disagreement" flag downstream).
-      const validSides = new Set([candidate.away, candidate.home, 'Over', 'Under']);
-      if (typeof parsed.favoredSide === 'string' && validSides.has(parsed.favoredSide)) {
-        favoredSide = parsed.favoredSide;
-      }
       quickTake = asStringBullets(parsed.quickTake, 4);
       devilsAdvocate = asStringBullets(parsed.devilsAdvocate, 3);
       if (isMma && parsed.victoryMethods) victoryMethods = sanitizeVictoryMethods(parsed.victoryMethods);
@@ -412,13 +415,13 @@ export async function getOrGenerateAnalysis(candidate, env, ctx, now = Date.now(
 
   // Nothing above parsed — most likely the reply got cut off mid-JSON (a
   // max_tokens truncation, not just a missing trailing object). Rather than
-  // ever show a raw, incomplete '{"favoredSide": ...' fragment to the user,
+  // ever show a raw, incomplete '{"quickTake": ...' fragment to the user,
   // find where the structured block appears to start and cut the analysis
-  // there anyway, even though favoredSide/victoryMethods stay null for this
-  // one — a shorter analysis is a far smaller problem than a screen full of
-  // visible JSON.
+  // there anyway, even though quickTake/devilsAdvocate/victoryMethods stay
+  // null for this one — a shorter analysis is a far smaller problem than a
+  // screen full of visible JSON.
   if (analysis === text) {
-    const marker = trimmed.indexOf('"favoredSide"');
+    const marker = trimmed.indexOf('"quickTake"');
     const braceIdx = marker === -1 ? -1 : trimmed.lastIndexOf('{', marker);
     if (braceIdx !== -1) analysis = trimmed.slice(0, braceIdx).trim();
   }
@@ -431,7 +434,6 @@ export async function getOrGenerateAnalysis(candidate, env, ctx, now = Date.now(
 
   const result = JSON.stringify({
     analysis,
-    favoredSide,
     quickTake,
     devilsAdvocate,
     ...(isMma ? { victoryMethods } : {}),

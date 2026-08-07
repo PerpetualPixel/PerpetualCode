@@ -171,7 +171,9 @@ function setDayFilter(which) {
   renderSlateLeagueOptions();
   if (state.candidates.length) {
     renderFullSlate();
-    generate(); // Pixel's Picks re-ranks automatically for the newly-selected day
+    // Pixel's Picks is a fixed daily set locked server-side (see
+    // loadPixelPicks()) — it doesn't have a Today/Tomorrow of its own to
+    // re-rank into, so switching the toggle doesn't touch it.
     refreshQualitativeSignals(); // fire-and-forget — re-enriches the newly-visible day
   }
   renderParlayFilters();
@@ -637,13 +639,6 @@ const el = {
   top5NetProfit: document.getElementById('top5NetProfit'),
   top5AvgClv: document.getElementById('top5AvgClv'),
   top5DailyHistory: document.getElementById('top5DailyHistory'),
-  potdTotalPicks: document.getElementById('potdTotalPicks'),
-  potdGradedPicks: document.getElementById('potdGradedPicks'),
-  potdWinRate: document.getElementById('potdWinRate'),
-  potdRoi: document.getElementById('potdRoi'),
-  potdNetProfit: document.getElementById('potdNetProfit'),
-  potdAvgClv: document.getElementById('potdAvgClv'),
-  potdDailyHistory: document.getElementById('potdDailyHistory'),
   calibrationReport: document.getElementById('calibrationReport'),
   exportDataBtn: document.getElementById('exportDataBtn'),
   archiveResetBtn: document.getElementById('archiveResetBtn'),
@@ -684,9 +679,6 @@ const state = {
   perfPeriod: 'week',
   trackerExcludedSports: new Set(loadJSON(TRACKER_SPORT_FILTER_KEY, [])),
   // Today's server-side tracked Top 5 pick ids (see worker/src/tracking.js),
-  // fetched once at boot — just for badging matching Pixel Picks cards, not
-  // itself the source of truth for anything the client computes.
-  top5Ids: new Set(),
   // Full Slate's live/final game state — eventId -> the raw /scores event
   // for it (has `completed` and `scores`). Refreshed at most once a minute
   // per sport-group (see refreshSlateScores) rather than on every render.
@@ -1027,7 +1019,11 @@ function mmaContextFor(leg) {
  * shows a broken section.
  */
 function matchupAnalysisFor(leg) {
-  const key = `analysis:${leg.eventId}`;
+  // Keyed per pick (eventId + outcomeName), not just per game — the model
+  // now writes its case around a specific given pick (see
+  // worker/src/analysis.js), so a game's h2h favorite and its underdog
+  // can't share one cached write-up written for the other side.
+  const key = `analysis:${leg.eventId}:${leg.outcomeName}`;
   if (!state.context.has(key)) {
     if (!CONFIG.WORKER_URL) {
       state.context.set(key, Promise.resolve(null));
@@ -1038,6 +1034,7 @@ function matchupAnalysisFor(leg) {
       url.searchParams.set('sportTitle', leg.sportTitle ?? leg.sportKey);
       url.searchParams.set('home', leg.home);
       url.searchParams.set('away', leg.away);
+      url.searchParams.set('outcomeName', leg.outcomeName);
       state.context.set(
         key,
         fetch(url, { headers: { Accept: 'application/json' } })
@@ -1151,8 +1148,15 @@ function singleStakeLine(candidate) {
 
 function renderConfidence(pick) {
   const color = confidenceColor(pick.score, state.minScore);
-  const beats = Math.round(pick.percentile ?? 0);
   const stake = stakeLine(pick);
+  // percentile is only meaningful against the live pool topPicks() itself
+  // ranked against (Parlay Builder) — Pixel's Picks is a locked, server-
+  // picked set with no "board" of its own left to compare against by the
+  // time it's rendered, so this line is omitted rather than showing a
+  // meaningless "beats 0%".
+  const beatsLine = pick.percentile != null
+    ? `<span>Beats ${Math.round(pick.percentile)}% of the board</span>`
+    : '';
 
   return `
     <div class="confidence" style="--conf:${color}">
@@ -1161,7 +1165,7 @@ function renderConfidence(pick) {
       </div>
       <div class="conf-label">
         <span>Confidence <span class="conf-score">${Math.round(pick.score)}</span>/100</span>
-        <span>Beats ${beats}% of the board</span>
+        ${beatsLine}
       </div>
       ${stake ? `<div class="stake-line">${esc(stake)}</div>` : ''}
     </div>`;
@@ -1270,15 +1274,12 @@ function renderLeg(leg, index, isCombo) {
 }
 
 function renderPick(pick) {
+  if (pick.degraded) return renderDegradedPick(pick);
+
   const isCombo = pick.type === 'combo';
   const lead = pick.legs[0];
   const sport = lead.sportTitle ?? lead.sportKey;
   const flagged = pick.meetsStandard === false;
-  // Badges whichever card matches one of today's server-tracked Top 5 —
-  // the same candidate id scheme (eventId+market+outcome+point) both the
-  // client and worker's own topPicks() call produce, so a straight id
-  // lookup is all this needs (see loadTop5Tags).
-  const isTop5 = !isCombo && state.top5Ids.has(lead.id);
 
   return `
     <article class="pick ${flagged ? 'is-outside-standard' : ''}">
@@ -1286,7 +1287,6 @@ function renderPick(pick) {
         <span class="pick-head-left">
           <span class="chip"><strong>${esc(sport)}</strong> ·
             ${isCombo ? '2-leg combo' : 'Straight bet'}</span>
-          ${isTop5 ? '<span class="top5-badge">🏆 Top 5</span>' : ''}
         </span>
         <span class="price">${esc(formatAmerican(pick.american))}</span>
       </div>
@@ -1298,6 +1298,45 @@ function renderPick(pick) {
       ${isCombo ? `<p class="pair-note">${esc(pick.pairReason)}</p>` : ''}
 
       ${pick.legs.map((leg, i) => renderLeg(leg, i, isCombo)).join('')}
+    </article>`;
+}
+
+/**
+ * A locked Pixel's Picks pick whose game has already started or finished
+ * (or whose market otherwise fell off the live board) — no live candidate
+ * left to match by id, so there's no fresh book table or "why" panel to
+ * show. Renders from the stored tracked record alone: selection, price at
+ * lock time, and result status. Mirrors Full Slate's own finished-game
+ * treatment (score/result shown, no live market grid) rather than inventing
+ * a new visual language.
+ */
+function renderDegradedPick(pick) {
+  const record = pick.record;
+  const flagged = pick.meetsStandard === false;
+  const resultClass = record.status === 'won' ? 'win' : record.status === 'lost' ? 'loss' : '';
+  const statusLabel = record.status === 'won' ? 'Won'
+    : record.status === 'lost' ? 'Lost'
+    : record.commenceMs <= Date.now() ? 'Live / Final' : 'Locked';
+
+  return `
+    <article class="pick ${flagged ? 'is-outside-standard' : ''}">
+      <div class="pick-head">
+        <span class="pick-head-left">
+          <span class="chip"><strong>Straight bet</strong></span>
+        </span>
+        <span class="price">${esc(formatAmerican(pick.american))}</span>
+      </div>
+
+      ${flagged ? `<div class="pick-flag">⚠ Outside standard criteria — ${esc(record.flagReason)}</div>` : ''}
+
+      <div class="confidence" style="--conf:${confidenceColor(pick.score, state.minScore)}">
+        <div class="conf-track"><span class="conf-fill" style="width:${Math.round(pick.score)}%"></span></div>
+        <div class="conf-label"><span>Confidence <span class="conf-score">${Math.round(pick.score)}</span>/100</span></div>
+      </div>
+
+      <p class="leg-selection">${esc(record.selection)}</p>
+      <p class="leg-matchup">${esc(record.away)} @ ${esc(record.home)} ·
+        <span class="schedule-result ${resultClass}">${esc(statusLabel)}</span></p>
     </article>`;
 }
 
@@ -2032,7 +2071,6 @@ async function openStatsDrawer(leg, opposite = null, { fullscreen = false } = {}
   setStatsDrawerOpen(true);
 
   const stake = singleStakeLine(leg);
-  const devilStake = opposite ? singleStakeLine(opposite) : null;
 
   let bullets = [];
   let weather = null;
@@ -2040,7 +2078,6 @@ async function openStatsDrawer(leg, opposite = null, { fullscreen = false } = {}
   let tennisBreakdownHtml = '';
   let analysisText = null;
   let victoryMethods = null;
-  let favoredSide = null;
   let quickTake = null;
   let devilsAdvocate = null;
   try {
@@ -2060,18 +2097,15 @@ async function openStatsDrawer(leg, opposite = null, { fullscreen = false } = {}
       bullets = buildInsights(leg, { context, weather });
     }
     const analysis = await analysisPromise;
-    // The worker always returns a JSON envelope now — {analysis,
-    // favoredSide, quickTake, devilsAdvocate, victoryMethods?} —
-    // favoredSide is the model's own independent read of which side the
-    // facts support, worked out with no knowledge of which side this card
-    // is actually highlighting. Compared against leg below so a
-    // disagreement is shown plainly instead of the title and the write-up
-    // silently contradicting each other.
+    // The worker always returns a JSON envelope now — {analysis, quickTake,
+    // devilsAdvocate, victoryMethods?} — the model is told which side this
+    // app already picked (see worker/src/analysis.js) and asked to build
+    // the case for it, so there's no independent "favoredSide" left to
+    // disagree with the pick shown here.
     if (analysis) {
       try {
         const parsed = JSON.parse(analysis);
         analysisText = parsed.analysis ?? analysis;
-        favoredSide = parsed.favoredSide ?? null;
         quickTake = Array.isArray(parsed.quickTake) ? parsed.quickTake : null;
         devilsAdvocate = Array.isArray(parsed.devilsAdvocate) ? parsed.devilsAdvocate : null;
         if (isMma(leg.sportKey) && parsed.victoryMethods) victoryMethods = parsed.victoryMethods;
@@ -2082,14 +2116,6 @@ async function openStatsDrawer(leg, opposite = null, { fullscreen = false } = {}
   } catch {
     /* Research is a bonus; the price case and book table still stand alone. */
   }
-
-  // leg.outcomeName is the exact team/player name for h2h and spreads, and
-  // literally "Over"/"Under" for totals — the same vocabulary favoredSide
-  // uses, so a plain string compare is enough to detect disagreement.
-  const disagreesWithPick = favoredSide && favoredSide !== leg.outcomeName;
-  const disagreementHtml = disagreesWithPick
-    ? `<p class="analysis-disagree">⚠ This matchup read favors <strong>${esc(favoredSide)}</strong>, not ${esc(leg.outcomeName)} — the algorithm's price-based pick and this qualitative read don't agree here. Worth weighing both before betting.</p>`
-    : '';
 
   const methodLabel = { SUB: 'Submission', TKO: 'TKO/KO', DEC: 'Decision' };
   const victoryList = (entries) =>
@@ -2127,7 +2153,6 @@ async function openStatsDrawer(leg, opposite = null, { fullscreen = false } = {}
     ? `
       <div class="stats-section">
         <h3>Matchup Analysis</h3>
-        ${disagreementHtml}
         ${quickTakeHtml}
         <p class="analysis-text">${esc(analysisText)}</p>
         ${victoryMethodsHtml}
@@ -2140,23 +2165,20 @@ async function openStatsDrawer(leg, opposite = null, { fullscreen = false } = {}
         ${stake ? `<div class="stake-line">${esc(stake)}</div>` : ''}
       </div>`;
 
-  // The other side of the same market, argued on its own terms — the board
-  // highlights one side, but a market cutting both ways is exactly why a bet
-  // has a price at all, and the case against the algorithm's lean deserves
-  // the same treatment as the case for it. devilsAdvocate (qualitative, from
-  // the same AI read as favoredSide) leads when available; the quantitative
-  // price-case bullets always follow, since that math holds regardless of
-  // whether the AI analysis loaded.
+  // Genuine risk to THIS pick, not a case for the other side — the model is
+  // told which side the app already picked (worker/src/analysis.js) and
+  // asked to be honest about how it could still lose. AI-only: no
+  // deterministic fallback, same as quickTake/analysisText above, since
+  // there's no quantitative "weakness in our own pick" bullet list to fall
+  // back to (explainExtensive only argues a side's own case, never against it).
   const devilQuickTakeHtml = devilsAdvocate?.length
     ? `<ul class="quick-take-list">${devilsAdvocate.map((t) => `<li>${esc(t)}</li>`).join('')}</ul>`
     : '';
-  const devilHtml = opposite
+  const devilHtml = devilQuickTakeHtml
     ? `
       <div class="stats-section devil-advocate">
-        <h3>Devil's Advocate — ${esc(opposite.selection)}</h3>
+        <h3>Devil's Advocate</h3>
         ${devilQuickTakeHtml}
-        <ul>${explainExtensive(opposite).map((t) => `<li>${esc(t)}</li>`).join('')}</ul>
-        ${devilStake ? `<div class="stake-line">${esc(devilStake)}</div>` : ''}
       </div>`
     : '';
 
@@ -2350,7 +2372,10 @@ async function refreshQualitativeSignals() {
 
   if (token !== qualitativeRunToken) return; // superseded while awaiting — skip the render too
   renderFullSlate();
-  generate();
+  // Pixel's Picks itself is locked server-side now (see loadPixelPicks()) —
+  // this enrichment can't change which picks those are or their score, only
+  // re-render in case a live-matched leg's other displayed fields shifted.
+  renderPixelPicksBoard();
 }
 
 /* ---------------------------------------------------------------- */
@@ -3054,73 +3079,122 @@ function dayFilteredCandidates() {
   return state.candidates.filter((c) => withinDayFilter(c.commenceMs, c.sportKey));
 }
 
-// How far into the next calendar day a fight still counts as "tonight's
-// card" for Pixel's Picks — a main event can start after midnight local
-// time and still be part of the same show that started at a normal hour.
-const MMA_NEXT_DAY_CUTOFF_HOUR = 6;
-
 /**
- * MMA is exempt from the Today/Tomorrow toggle everywhere else in the app
- * (Full Slate/Parlay Builder show every card in the next two weeks — a
- * card sells tickets and gets previewed well before fight night) — but
- * Pixel's Picks specifically should never surface a pick for a fight
- * that isn't actually happening soon. Eligible if it starts on the
- * currently-selected day (Today/Tomorrow, same as every other sport), or
- * before MMA_NEXT_DAY_CUTOFF_HOUR the morning after (a late main event
- * that started on-schedule but rolled past midnight).
+ * Turn one stored, locked Pixel's Picks record into a displayable pick.
+ * Looks for a live candidate still in state.candidates matching the same id
+ * (the same eventId+market+outcome+point scheme both the client and the
+ * worker's own topPicks() call produce) — when found, the pick renders with
+ * the full live price/book table/why panel exactly like any other card;
+ * when not (the game's started, or the market's fallen off the board), it
+ * degrades to a simpler card built from the stored record alone (see
+ * renderDegradedPick). Either way the SELECTION and RANK are exactly what
+ * the server locked in at 2am ET — only supplementary display data (current
+ * price, book comparison) can ever differ from that.
  */
-function isPixelPicksMmaFight(commenceMs) {
-  const [dayStart] = dayBounds(state.dayFilter);
-  const cutoff = dayStart + ONE_DAY_MS + MMA_NEXT_DAY_CUTOFF_HOUR * 60 * 60 * 1000;
-  return commenceMs >= dayStart && commenceMs < cutoff;
+function pixelPickFromRecord(record) {
+  const live = state.candidates.find((c) => c.id === record.pickId);
+  if (live) {
+    return {
+      type: 'single',
+      legs: [live],
+      american: live.american,
+      score: record.score,
+      percentile: null,
+      meetsStandard: record.meetsStandard,
+      flagReason: record.flagReason,
+    };
+  }
+  return {
+    type: 'single',
+    degraded: true,
+    record,
+    legs: [{ commenceMs: record.commenceMs }],
+    american: record.american,
+    score: record.score,
+    meetsStandard: record.meetsStandard,
+    flagReason: record.flagReason,
+  };
 }
 
+/** Re-render the board from whatever's currently in pixelPicksRecords — no re-fetch, so the Sort control and a bankroll change can both call this directly. */
+function renderPixelPicksBoard() {
+  const picks = pixelPicksRecords.map(pixelPickFromRecord);
+  state.lastPixelSlate = { picks, poolSize: picks.length };
+  el.pixelSortRow.hidden = !picks.length;
+  renderSlate({ picks: sortPicks(picks, state.pixelSort), poolSize: picks.length });
+}
+
+/** The shape trackNewPixelPicks()/logPick() expect — a minimal single-leg pick built from a stored tracked record rather than a live candidate. */
+function pixelRecordToTrackedPick(record) {
+  return {
+    score: record.score,
+    legs: [{
+      eventId: record.eventId,
+      sportKey: record.sportKey,
+      away: record.away,
+      home: record.home,
+      selection: record.selection,
+      outcomeName: record.outcomeName,
+      point: record.point,
+      marketKey: record.marketKey,
+      american: record.american,
+      decimal: record.decimal,
+      book: record.book,
+      consensusProb: record.consensusProb,
+      commenceMs: record.commenceMs,
+    }],
+  };
+}
+
+let pixelPicksRecords = [];
+let lastTrackedPixelPicksIdKey = null;
+
 /**
- * Pixel's Picks: fully automatic, no button — every league is already
- * loaded (refreshAllLeagues ran at boot), so this just ranks the pool
- * already sitting in state.candidates, scoped to the current day filter,
- * and re-runs whenever that pool changes (boot, Today/Tomorrow toggle).
- * Up to TOP_PICKS_COUNT picks; topPicks()'s guaranteeCount fills any slots
- * the sharp standard (-250/+250, confidence floor) can't with the next-best
- * candidates available, flagged as such — but minEv/minKelly are a hard
- * floor even in that fallback, so a thin day with too few real edges comes
- * back with fewer than 8 rather than padding the board out with a bet
- * that's demonstrably not worth taking.
+ * Pixel's Picks: the worker's own locked, server-generated set for today
+ * (2am ET — see worker/src/tracking.js's runTop5Batch), fetched once and
+ * rendered here rather than recomputed client-side against a drifting
+ * board. The same 5 (or more, on a day the sharp standard pads out with
+ * flagged picks) show no matter how many times the page is reloaded or how
+ * the market has moved since 2am. The manual Sort control still re-orders
+ * for display — it never changes which picks these are.
  */
-async function generate() {
+async function loadPixelPicks() {
+  if (!CONFIG.WORKER_URL) {
+    el.picks.innerHTML = `<p class="empty">Pixel's Picks needs the odds worker — set WORKER_URL in config.js.</p>`;
+    el.pixelSortRow.hidden = true;
+    return;
+  }
+
   try {
     await enrichTennisAltSpreads();
-    updateClvSnapshots();
-
-    const pool = dayFilteredCandidates().filter(
-      (c) => !isMmaSportKey(c.sportKey) || isPixelPicksMmaFight(c.commenceMs),
-    );
-
-    const slate = topPicks(pool, {
-      count: CONFIG.TOP_PICKS_COUNT,
-      oddsMin: state.oddsMin,
-      oddsMax: state.oddsMax,
-      minScore: state.minScore,
-      // A candidate can clear minScore on liquidity/agreement/freshness
-      // alone with almost no real edge — these are the hard "is this
-      // actually worth the stake" floors on top of that (see RULES in
-      // engine.js). Applied even to guaranteeCount's fallback slots: a -EV
-      // or dust-edge pick doesn't become a real lock just because the board
-      // is thin that day.
-      minEv: RULES.MIN_EV_PCT,
-      minKelly: RULES.MIN_KELLY_FRACTION,
-      guaranteeCount: true,
-    });
-
-    state.lastPixelSlate = slate;
-    el.pixelSortRow.hidden = !slate.picks.length;
-    renderSlate({ ...slate, picks: sortPicks(slate.picks, state.pixelSort) });
-    recordSlate(slate);
-    trackNewPixelPicks(slate.picks).catch((err) => console.error('Pick tracking failed:', err));
+    const url = new URL('/top5', CONFIG.WORKER_URL);
+    const res = await fetch(url, { headers: { Accept: 'application/json' } });
+    const data = await res.json();
+    pixelPicksRecords = data.picks ?? [];
   } catch (error) {
-    setStatus(error.message, 'error');
     el.picks.innerHTML = `<p class="empty">Couldn't reach the odds feed.
       ${esc(error.message)}</p>`;
+    el.pixelSortRow.hidden = true;
+    return;
+  }
+
+  renderPixelPicksBoard();
+
+  // logPick()'s own stablePickId dedup already makes a repeat call with the
+  // same locked set a safe no-op, but skip it outright once today's set is
+  // already the last one this device tried to log — no reason to touch
+  // IndexedDB on every reload for a set that hasn't changed. Only the clean
+  // (meetsStandard) picks get tracked, per the sharp-standard rule the
+  // Tracking Dashboard's win-rate math also enforces. Tracked separately
+  // from state.history (a differently-shaped, persisted array for the
+  // History panel) rather than reusing it, so this can't corrupt that
+  // panel's own entry shape.
+  const idKey = pixelPicksRecords.map((r) => r.pickId).sort().join(',');
+  if (lastTrackedPixelPicksIdKey !== idKey) {
+    const trackable = pixelPicksRecords.filter((r) => r.meetsStandard !== false);
+    trackNewPixelPicks(trackable.map(pixelRecordToTrackedPick))
+      .then(() => { lastTrackedPixelPicksIdKey = idKey; })
+      .catch((err) => console.error('Pick tracking failed:', err));
   }
 }
 
@@ -3830,9 +3904,10 @@ function setActiveTab(tab) {
     tabs[name].setAttribute('aria-selected', String(active));
   }
 
-  // The day toggle applies to Full Slate/Pixel Picks/Parlay only — Play of
-  // the Day is a single fixed daily pick with no day of its own to choose.
-  el.dayFilterBar.hidden = tab === 'potd';
+  // The day toggle applies to Full Slate/Parlay only — Play of the Day and
+  // Pixel's Picks are both fixed daily sets locked server-side, with no
+  // Today/Tomorrow of their own to choose.
+  el.dayFilterBar.hidden = tab === 'potd' || tab === 'board';
 
   if (tab === 'potd') loadPotd();
   if (tab === 'parlay') renderParlayFilters();
@@ -4136,25 +4211,7 @@ function renderPerfGraph(dayList) {
     </svg>`;
 }
 
-/**
- * Today's server-tracked Top 5 pick ids (see worker/src/tracking.js) — a
- * pure badge lookup, fetched once at boot. Never itself a source of truth
- * for Pixel Picks; if the fetch fails, cards just render without the badge.
- */
-async function loadTop5Tags() {
-  if (!CONFIG.WORKER_URL) return;
-  try {
-    const url = new URL('/top5', CONFIG.WORKER_URL);
-    const res = await fetch(url, { headers: { Accept: 'application/json' } });
-    if (!res.ok) return;
-    const data = await res.json();
-    state.top5Ids = new Set((data.picks ?? []).map((p) => p.pickId));
-  } catch {
-    /* Badge is a bonus; Pixel Picks itself never depends on this. */
-  }
-}
-
-/** Every pick the worker's own 6am batch has ever tracked, across every day still in KV (up to 90). */
+/** Every pick the worker's own 2am batch has ever tracked, across every day still in KV (up to 90). */
 async function fetchTop5History() {
   if (!CONFIG.WORKER_URL) return [];
   try {
@@ -4174,7 +4231,19 @@ function top5ClvPct(pick) {
   return (impliedProb(pick.clv.closeAmerican) - impliedProb(pick.clv.openAmerican)) * 100;
 }
 
-/** Groups server-tracked picks by their own stored dateKey (not a pickId prefix — these ids are raw candidate ids, not date-prefixed like the client's). */
+/**
+ * A pick actually cleared the sharp standard, vs. a guaranteeCount()
+ * fallback padding out a thin day's board (see docs/engine.js's topPicks()
+ * and worker/src/tracking.js's runTop5Batch). Flagged picks are tracked
+ * (win/loss still recorded) but must never count toward the performance
+ * metrics — undefined counts as true (Play of the Day has no padding
+ * concept at all, so its records simply never carry this field).
+ */
+function meetsTrackingStandard(pick) {
+  return pick.meetsStandard !== false;
+}
+
+/** Groups server-tracked picks by their own stored dateKey (not a pickId prefix — these ids are raw candidate ids, not date-prefixed like the client's). Each day's own record/ROI/net is computed from clean picks only — flagged ones still appear in the row list, just excluded from the day's own math same as the overall summary. */
 function groupTop5ByDay(picks) {
   const byDay = new Map();
   for (const p of picks) {
@@ -4183,7 +4252,11 @@ function groupTop5ByDay(picks) {
   }
   return [...byDay.entries()]
     .sort((a, b) => b[0].localeCompare(a[0]))
-    .map(([date, dayPicks]) => ({ date, picks: dayPicks, ...summarizePicks(dayPicks) }));
+    .map(([date, dayPicks]) => ({
+      date,
+      picks: dayPicks,
+      ...summarizePicks(dayPicks.filter(meetsTrackingStandard)),
+    }));
 }
 
 function renderTop5DayBlock(day) {
@@ -4197,9 +4270,10 @@ function renderTop5DayBlock(day) {
     const statusClass = p.status === 'won' ? 'status-won' : p.status === 'lost' ? 'status-lost' : 'status-pending';
     const statusLabel = p.status === 'won' ? 'WIN' : p.status === 'lost' ? 'LOSS' : 'PENDING';
     const payoutLabel = p.result ? formatSignedMoney(p.result.payout) : '—';
+    const flagged = !meetsTrackingStandard(p);
     return `
       <div class="day-pick-row ${statusClass}">
-        <span class="pick-matchup">${esc(p.away)} @ ${esc(p.home)}</span>
+        <span class="pick-matchup">${esc(p.away)} @ ${esc(p.home)}${flagged ? ' <span class="pick-flag-inline" title="Outside standard criteria — excluded from the totals above">⚠ flagged</span>' : ''}</span>
         <span class="pick-side">${esc(p.selection)}</span>
         <span class="pick-status">${statusLabel}</span>
         <span class="pick-payout">${esc(payoutLabel)}</span>
@@ -4218,28 +4292,6 @@ function renderTop5DayBlock(day) {
     </details>`;
 }
 
-async function renderTop5Section() {
-  const picks = await fetchTop5History();
-  const overall = summarizePicks(picks);
-  const winRate = overall.graded ? (overall.wins / overall.graded) * 100 : 0;
-  const clvValues = picks.map(top5ClvPct).filter((v) => v != null);
-  const avgClv = clvValues.length ? clvValues.reduce((a, b) => a + b, 0) / clvValues.length : null;
-
-  el.top5TotalPicks.textContent = overall.total;
-  el.top5GradedPicks.textContent = overall.graded;
-  el.top5WinRate.textContent = overall.graded ? winRate.toFixed(1) + '%' : '—';
-  el.top5Roi.textContent = overall.graded ? formatSignedPct(overall.roi) : '—';
-  el.top5NetProfit.textContent = overall.graded ? formatSignedMoney(overall.net) : '—';
-  el.top5AvgClv.textContent = avgClv != null ? formatSignedPct(avgClv) : '—';
-
-  const days = groupTop5ByDay(picks);
-  el.top5DailyHistory.innerHTML = days.length
-    ? days.map(renderTop5DayBlock).join('')
-    : `<p class="empty">Nothing tracked yet — the worker generates its first Top 5 at 6am ET.</p>`;
-
-  return picks;
-}
-
 /** Every Play of the Day pick the worker has ever tracked (see worker/src/potd.js's getPotdHistory), up to 90 days. */
 async function fetchPotdHistory() {
   if (!CONFIG.WORKER_URL) return [];
@@ -4255,31 +4307,38 @@ async function fetchPotdHistory() {
 }
 
 /**
- * Play of the Day's own Tracking Dashboard section — one pick per day, so
- * this reuses the exact same summary math and day-block rendering the Top 5
- * section uses (groupTop5ByDay/renderTop5DayBlock/top5ClvPct/summarizePicks
- * are all generic over any picks array with the right field shape, which
- * getPotdHistory's output already matches by construction) rather than
- * duplicating it.
+ * Pixel's Picks and Play of the Day, combined into one Tracking Dashboard
+ * section and one daily history — both are server-locked once daily now
+ * (2am ET), both return the same picks shape from their history endpoints
+ * (dateKey/away/home/selection/status/result/suggested_stake/clv), so
+ * concatenating before grouping by day naturally buckets each day's Pixel's
+ * Picks together with that day's Play of the Day pick — reusing
+ * groupTop5ByDay/renderTop5DayBlock/top5ClvPct/summarizePicks unchanged
+ * rather than duplicating them. Overall metrics exclude flagged
+ * (meetsStandard: false) picks per meetsTrackingStandard — Play of the Day
+ * never flags (no padding concept), so its picks always count.
  */
-async function renderPotdTrackingSection() {
-  const picks = await fetchPotdHistory();
-  const overall = summarizePicks(picks);
+async function renderPixelPicksSection() {
+  const [top5Picks, potdPicks] = await Promise.all([fetchTop5History(), fetchPotdHistory()]);
+  const picks = [...top5Picks, ...potdPicks];
+  const clean = picks.filter(meetsTrackingStandard);
+
+  const overall = summarizePicks(clean);
   const winRate = overall.graded ? (overall.wins / overall.graded) * 100 : 0;
-  const clvValues = picks.map(top5ClvPct).filter((v) => v != null);
+  const clvValues = clean.map(top5ClvPct).filter((v) => v != null);
   const avgClv = clvValues.length ? clvValues.reduce((a, b) => a + b, 0) / clvValues.length : null;
 
-  el.potdTotalPicks.textContent = overall.total;
-  el.potdGradedPicks.textContent = overall.graded;
-  el.potdWinRate.textContent = overall.graded ? winRate.toFixed(1) + '%' : '—';
-  el.potdRoi.textContent = overall.graded ? formatSignedPct(overall.roi) : '—';
-  el.potdNetProfit.textContent = overall.graded ? formatSignedMoney(overall.net) : '—';
-  el.potdAvgClv.textContent = avgClv != null ? formatSignedPct(avgClv) : '—';
+  el.top5TotalPicks.textContent = overall.total;
+  el.top5GradedPicks.textContent = overall.graded;
+  el.top5WinRate.textContent = overall.graded ? winRate.toFixed(1) + '%' : '—';
+  el.top5Roi.textContent = overall.graded ? formatSignedPct(overall.roi) : '—';
+  el.top5NetProfit.textContent = overall.graded ? formatSignedMoney(overall.net) : '—';
+  el.top5AvgClv.textContent = avgClv != null ? formatSignedPct(avgClv) : '—';
 
   const days = groupTop5ByDay(picks);
-  el.potdDailyHistory.innerHTML = days.length
+  el.top5DailyHistory.innerHTML = days.length
     ? days.map(renderTop5DayBlock).join('')
-    : `<p class="empty">Nothing tracked yet — the worker generates its first Play of the Day pick at 2am ET.</p>`;
+    : `<p class="empty">Nothing tracked yet — the worker generates Pixel's Picks and Play of the Day at 2am ET.</p>`;
 
   return picks;
 }
@@ -4293,7 +4352,10 @@ async function renderPotdTrackingSection() {
  * and win rate segmented by confidence tier and market type.
  */
 function renderCalibrationReport(picks) {
-  const graded = picks.filter((p) => p.status === 'won' || p.status === 'lost');
+  // Flagged (non-standard) picks were never real sharp locks — mixing them
+  // in would skew the read on how well confidence/CLV track reality for
+  // the picks that actually clear the standard.
+  const graded = picks.filter(meetsTrackingStandard).filter((p) => p.status === 'won' || p.status === 'lost');
   if (graded.length < 5) {
     el.calibrationReport.innerHTML = `<div class="rec-item">Not enough graded picks yet (${graded.length}) for a meaningful read — check back after a couple of weeks of tracking.</div>`;
     return;
@@ -4414,9 +4476,8 @@ async function renderLearningDashboard() {
 
   el.recommendations.innerHTML = `<div class="rec-item">Every Pixel Picks board tracks automatically — $20/pick against the $1000 simulated bankroll. Tap "Check Results" any time to grade whatever's finished.</div>`;
 
-  const top5Picks = await renderTop5Section();
-  renderCalibrationReport(top5Picks);
-  await renderPotdTrackingSection();
+  const trackedPicks = await renderPixelPicksSection();
+  renderCalibrationReport(trackedPicks);
 }
 
 /** Applies the user's last-dragged width, if any — otherwise the panel keeps its CSS default (fills the viewport). */
@@ -4550,8 +4611,7 @@ async function runResultCheck() {
 
   renderSlateLeagueOptions();
   renderFullSlate();
-  await generate(); // Pixel's Picks is automatic — no button, ready as soon as the slate is
-  loadTop5Tags(); // fire-and-forget — a badge lookup, never blocks the board
+  await loadPixelPicks(); // Pixel's Picks is the worker's own 2am ET locked set, never re-picked client-side
   refreshQualitativeSignals(); // fire-and-forget — enriches scores with form/H2H/injuries once loaded
 
   setStatus(
