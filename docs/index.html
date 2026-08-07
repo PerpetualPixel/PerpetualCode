@@ -67,7 +67,7 @@
 <main id="main">
 <section id="slateView" role="tabpanel" aria-labelledby="tabSlate">
   <div id="slateStatus" class="status" role="status" aria-live="polite">
-    Every game, every market — nothing here is filtered by odds or confidence.
+    Every game, every market. Nothing here is filtered by odds or confidence.
     That's what the Pixel's Picks tab is for.
   </div>
 
@@ -104,7 +104,7 @@
 
 <section id="boardView" role="tabpanel" aria-labelledby="tabBoard" hidden>
   <p class="filter-hint parlay-intro">
-    5 locks, generated automatically once a day and never re-picked after —
+    5 locks, generated automatically once a day and never re-picked after:
     sharp range −250/+250, positive EV, and a real Kelly edge required, drawn
     from every league and every sportsbook. Nothing here ever pads out with a
     bet that isn't actually worth taking. Every game regardless of price
@@ -126,7 +126,7 @@
 
   <p class="disclaimer">
     Odds move. Always confirm the number at the book before you bet.
-    21+. For entertainment only — nothing here is financial advice.
+    21+. For entertainment only, nothing here is financial advice.
     <a href="https://www.1800gambler.net/" target="_blank" rel="noopener">1-800-GAMBLER</a>
   </p>
 </section>
@@ -231,8 +231,8 @@
     <button id="bankrollClose" class="icon-btn overlay-close-btn" aria-label="Close bankroll settings">✕</button>
   </div>
   <p class="history-note">
-    Set your bankroll once, and every pick's suggested stake — already sized
-    by ¼-Kelly against that pick's edge — converts to a real dollar amount or
+    Set your bankroll once, and every pick's suggested stake (already sized
+    by ¼-Kelly against that pick's edge) converts to a real dollar amount or
     a unit count. Stored on this device only; nothing here is sent anywhere.
   </p>
 
@@ -262,7 +262,7 @@
   </div>
 
   <p class="history-note">
-    A unit is a fixed slice of your bankroll — betting "1.5 units" instead of
+    A unit is a fixed slice of your bankroll: betting "1.5 units" instead of
     a raw dollar figure keeps stakes proportional as your bankroll changes,
     and is how most bettors size and track plays. 1–2% of bankroll per unit is
     the standard range; leave Unit size blank to use the 2% recommendation
@@ -281,24 +281,24 @@
       <p>A minus number (like <strong>-150</strong>) is the favorite: bet $150
       to win $100. A plus number (like <strong>+150</strong>) is the underdog:
       bet $100 to win $150. The bigger the minus number, the more likely that
-      side is thought to win — and the less it pays out if it does.</p>
+      side is thought to win, and the less it pays out if it does.</p>
     </details>
 
     <details>
       <summary>What "Confidence" means</summary>
-      <p>Every price gets graded 0–100. It isn't a guess at who wins — it's how
+      <p>Every price gets graded 0–100. It isn't a guess at who wins, it's how
       good the <em>price</em> is relative to what the betting market itself
       thinks is fair, once you strip out the sportsbook's own fee. A higher
       confidence means a bigger gap between what you're being offered and what
       the market's own consensus says the bet is actually worth.</p>
       <p>"Beats X% of the board" shows where that grade ranks against every
-      other bet available right now — useful when you're choosing between a
+      other bet available right now, useful when you're choosing between a
       few decent-looking picks.</p>
     </details>
 
     <details>
       <summary>No-vig fair value and expected value (EV)</summary>
-      <p>Sportsbooks build a small fee into every price — the "vig." Strip it
+      <p>Sportsbooks build a small fee into every price, the "vig." Strip it
       out across enough books and you get a consensus for what a bet is
       actually worth, fee-free. If the best price you can find beats that fair
       value, you have positive expected value: over many bets like this you'd
@@ -308,7 +308,7 @@
     <details>
       <summary>Why every pick shows several sportsbooks</summary>
       <p>The same bet is often priced slightly differently at different books.
-      "Line shopping" — checking several and taking the best number — costs
+      "Line shopping" (checking several and taking the best number) costs
       nothing extra and is one of the most reliable ways to improve results
       over time. Every pick shows a button per sportsbook; greyed-out ones
       simply aren't offering that exact line.</p>
@@ -319,7 +319,7 @@
       <p>The Kelly Criterion is a formula for how much of your bankroll to risk
       based on how big the edge is. Betting the <em>full</em> amount it
       suggests produces wild bankroll swings, so this app uses a quarter of
-      that number instead — smoother, and still scaled to the size of the
+      that number instead: smoother, and still scaled to the size of the
       edge. A bigger suggested stake means a bigger edge, not just a bigger
       favorite.</p>
       <p>Set a bankroll and a unit size under the Bankroll button to see that
@@ -329,7 +329,7 @@
 
     <details>
       <summary>Bankroll and units</summary>
-      <p>A "unit" is a fixed slice of your bankroll — usually 1–2% — used as
+      <p>A "unit" is a fixed slice of your bankroll (usually 1-2%) used as
       your basic betting increment instead of raw dollars. Betting "1.5 units"
       instead of "$30" keeps stakes proportional as your bankroll grows or
       shrinks, and it's how most bettors track their own results.</p>
@@ -347,12 +347,12 @@
     <details>
       <summary>The four tabs</summary>
       <p><strong>Full Slate</strong> shows every game in a league with a price
-      on it — nothing hidden by odds or confidence — with a glowing ring
+      on it, nothing hidden by odds or confidence, with a glowing ring
       around whichever side the algorithm leans toward on each market. Tap
       any price to see the case for it, and the case against it.
       <strong>Pixel's Picks</strong> is fully automatic: 5 locks, sharp
       range −250/+250, ranked purely by edge, generated once daily at 2am ET
-      and locked in for the day — nothing to press, and nothing changes
+      and locked in for the day. Nothing to press, and nothing changes
       after it's posted.
       <strong>Parlay Builder</strong> is manual: pick a league (and an event
       within it, if you want), toggle the markets you want, set your own odds
@@ -374,35 +374,35 @@
       <summary>How picks are made, step by step</summary>
       <p><strong>1. Every priced game becomes a candidate.</strong> For each
       league, every market (moneyline, spread, total) on every live
-      sportsbook quote is pulled in — nothing is excluded up front by odds or
+      sportsbook quote is pulled in, nothing is excluded up front by odds or
       "gut feel." Each book's own price is stripped of its built-in fee
       (de-vigged) to get that book's honest read, then every book <em>except</em>
       the one offering the best price is combined into a consensus fair
-      value — excluding the best price keeps it from inflating its own
+      value. Excluding the best price keeps it from inflating its own
       benchmark, which would make every bet look artificially profitable.</p>
       <p><strong>2. Each candidate is graded 0–100.</strong> The best available
       price is compared against that consensus to get its real expected value
-      (EV) — that's the dominant factor (45% of the grade). The rest is
+      (EV), the dominant factor (45% of the grade). The rest is
       confidence that the edge is real rather than a fluke of a thin or stale
       market: how many books agree (18%), how tightly they agree (15%), how
-      much better the best price is than the field average — "line shopping"
-      gain (14%) — and how fresh the quote is relative to kickoff (8%). For
-      team sports only (never MMA — see below), a small, capped adjustment
+      much better the best price is than the field average, "line shopping"
+      gain (14%), and how fresh the quote is relative to kickoff (8%). For
+      team sports only (never MMA, see below), a small, capped adjustment
       from recent form, head-to-head history, and injury news can nudge the
       grade up to about 8 points either way; it can sharpen a close call but
       can't manufacture an edge that isn't there in the price.</p>
       <p><strong>3. Long-shot and heavy-favorite prices are filtered out.</strong>
-      Only prices between −250 and +150 are considered at all — anything more
+      Only prices between −250 and +150 are considered at all. Anything more
       extreme is excluded regardless of how good its grade looks, since the
       Kelly math and win-rate assumptions this app runs on stop being
       reliable that far from even money. A pick also has to clear a minimum
       real edge (at least 1.5% EV) and a minimum suggested stake (a
       rounding-error-sized edge doesn't count even if the score looks
-      decent) — scoring well on liquidity and freshness alone isn't enough;
+      decent). Scoring well on liquidity and freshness alone isn't enough;
       the price itself has to actually be worth taking.</p>
       <p><strong>4. Only today's games are eligible.</strong> A team-sport
       game has to be happening today (same ET calendar date) to be
-      considered — a real edge on an NFL line for a game months out never
+      considered. A real edge on an NFL line for a game months out never
       gets to compete with tonight's board. MMA gets its own version of this
       window (today, or before 6am ET the next morning, since a late main
       event can run past midnight) since fight cards don't follow the same
@@ -410,38 +410,40 @@
       <p><strong>5. The best-graded picks are selected.</strong> Full Slate
       and Parlay Builder rank live by score. Pixel's Picks is different: once
       a day at 2am ET, the server locks in the 5 best picks that clear every
-      filter above and posts them for the whole day — reloading the page
+      filter above and posts them for the whole day. Reloading the page
       later never changes them, and nothing about the picks reacts to price
       movement afterward. On a quiet day where fewer than 5 real edges clear
       the bar, the rest are filled from the next-best available prices and
-      explicitly flagged "Outside standard criteria" — still real, gradeable
-      bets, just not sharp enough to call a lock without saying so, and
-      excluded from the Tracking Dashboard's win-rate math so a thin day
-      can't quietly inflate the numbers.</p>
-      <p><strong>6. The write-up explains the pick that was already made — it
+      explicitly flagged "Outside standard criteria", still real, gradeable
+      bets, just not sharp enough to call a lock without saying so. Every one
+      of the 5 counts toward the Tracking Dashboard's win-rate math regardless;
+      the flag is transparency about how the pick was chosen, not an
+      exclusion.</p>
+      <p><strong>6. The write-up explains the pick that was already made. It
       never re-decides.</strong> Once a side is chosen by the math above, the
       AI matchup analysis is told which side that is and asked to build the
       strongest honest case <em>for</em> it from real facts (form,
-      head-to-head, injuries), plus genuine risks specific to that pick — it
+      head-to-head, injuries), plus genuine risks specific to that pick. It
       is never asked to independently guess who's favored, so it can't
       contradict the pick shown on the card. MMA gets no qualitative scoring
-      at all (see step 2) — Sherdog/UFC.com research is shown for context,
+      at all (see step 2); Sherdog/UFC.com research is shown for context,
       but an MMA pick, underdog or favorite, is chosen purely on the price
-      math in steps 1–3, and the "Market &amp; Price Case" section always
+      math in steps 1-3, and the "Market &amp; Price Case" section always
       stays visible for MMA specifically so that reasoning is never hidden
       behind the AI's fighter-facts write-up.</p>
     </details>
 
     <details>
       <summary>Pixel's Picks' sharp standard</summary>
-      <p>Pixel's Picks always hands back 5 locks, priced between −250 and +250,
-      graded 50 or higher whenever enough real edges clear that bar. On a
-      quiet slate where fewer than 5 do, the rest fill in from the next-best
-      prices available and are flagged "Outside standard criteria" — still
-      real, gradeable bets, just not sharp enough to call a lock without
-      saying so, and excluded from the Tracking Dashboard's win-rate math.
-      Generated once daily at 2am ET — the same 5 locks stay up all day,
-      regardless of how the market moves afterward.</p>
+      <p>Pixel's Picks always hands back exactly 5 locks, minimum and maximum,
+      priced between −250 and +250, graded 50 or higher whenever enough real
+      edges clear that bar. On a quiet slate where fewer than 5 do, the rest
+      fill in from the next-best prices available and are flagged "Outside
+      standard criteria", still real, gradeable bets, just not sharp enough
+      to call a lock without saying so. All 5 are tracked and count toward the
+      Tracking Dashboard's win-rate math regardless of the flag. Generated
+      once daily at 2am ET. The same 5 locks stay up all day, regardless of
+      how the market moves afterward.</p>
     </details>
   </div>
 </aside>
@@ -453,8 +455,8 @@
   </div>
   <div class="guide-body">
     <p>Pixel Pick prices every game on the board against the market's own
-    no-vig consensus — the same math a sharp bettor would do by hand, run
-    across every book at once — and surfaces the real edges: Full Slate for
+    no-vig consensus (the same math a sharp bettor would do by hand, run
+    across every book at once) and surfaces the real edges: Full Slate for
     every market on every game, Pixel's Picks for the sharpest 5 locks,
     Parlay Builder for hand-built tickets, and Play of the Day for one
     highest-conviction pick, posted automatically each morning. Every
@@ -520,7 +522,7 @@
       <div class="learning-section-head">
         <h3>Filter by Sport</h3>
       </div>
-      <p class="filter-hint">Unchecked sports are excluded from every figure below — the calendar, the graph, and the totals up top. Everything's included by default.</p>
+      <p class="filter-hint">Unchecked sports are excluded from every figure below: the calendar, the graph, and the totals up top. Everything's included by default.</p>
       <div id="trackerSportFilter" class="check-grid"></div>
     </section>
 
@@ -593,16 +595,30 @@
       <div id="recommendations" class="learning-recs"></div>
     </section>
 
-    <!-- Server-Tracked Pixel's Picks + Play of the Day -->
+    <!-- Server-Tracked: Full Slate / Pixel's Picks / Play of the Day -->
     <section class="learning-section">
-      <h3>Pixel's Picks <span class="stats-source">Server-tracked, generated automatically at 2am ET</span></h3>
+      <h3>Tracked Picks <span class="stats-source">Server-tracked, generated automatically at 2am ET</span></h3>
       <p class="filter-hint">
-        A second, independent history from everything above — the worker itself
-        locks in Pixel's Picks (5 highest-conviction plays) and Play of the Day
-        (one pick, -200 to +150 odds) each day at 2am ET, whether or not anyone
-        has the app open, and never changes them afterward. Expand a day to see
-        all 6 and their results. Flagged (non-standard) picks are shown but
-        excluded from the totals below.
+        A second, independent history from everything above, locked in by the
+        worker itself each day at 2am ET, whether or not anyone has the app
+        open, and never changed afterward. Every pick counts toward its
+        tracker's totals below, flagged or not (a flagged pick just means it
+        was a thin-day fallback, not that it's excluded). Flat 1-unit stake
+        per pick either way, no bankroll cap. The point is whether the picks
+        themselves are profitable.
+      </p>
+      <div id="trackerTabs" class="perf-period-tabs" role="group" aria-label="Which tracker to show">
+        <button class="perf-period-btn" data-tracker="fullslate" type="button">Full Slate</button>
+        <button class="perf-period-btn is-active" data-tracker="top5" type="button">Pixel's Picks</button>
+        <button class="perf-period-btn" data-tracker="potd" type="button">Play of the Day</button>
+      </div>
+      <p class="filter-hint">
+        <strong>Full Slate</strong> tracks one pick per game, every sport, every
+        day. No odds band or score floor, a complete daily record of the
+        algorithm's own lean. <strong>Pixel's Picks</strong> is exactly 5
+        picks/day, min and max. <strong>Play of the Day</strong> is the single
+        most promising, real-value pick across the whole slate, −200 to +150
+        odds.
       </p>
       <div id="top5Summary" class="learning-grid">
         <div class="metric-card">
@@ -635,29 +651,32 @@
 
     <!-- Calibration & Audit -->
     <section class="learning-section">
-      <h3>Calibration &amp; Audit <span class="stats-source">Reporting only — nothing here changes the algorithm automatically</span></h3>
+      <h3>Calibration &amp; Audit <span class="stats-source">Reporting only, nothing here changes the algorithm automatically</span></h3>
       <p class="filter-hint">
-        How well the Top 5's own confidence scores and closing-line value have
-        tracked reality. Findings, not automatic adjustments — the algorithm
-        stays exactly as it is; use this to decide manually whether to change
-        anything.
+        How well Pixel's Picks' own confidence scores and closing-line value
+        have tracked reality. Always scoped to Pixel's Picks specifically,
+        regardless of which tab is selected above, since Full Slate and Play
+        of the Day don't have a tunable "standard" to audit. Findings, not
+        automatic adjustments; the algorithm stays exactly as it is. Use
+        this to decide manually whether to change anything.
       </p>
       <div id="calibrationReport" class="learning-recs"></div>
     </section>
 
     <!-- Algorithm Health -->
     <section class="learning-section">
-      <h3>Algorithm Health <span class="stats-source">Automatic — reviews every Monday, 7am ET</span></h3>
+      <h3>Algorithm Health <span class="stats-source">Automatic, reviews every Monday, 7am ET</span></h3>
       <p class="filter-hint">
-        Unlike Calibration &amp; Audit above, this section acts on its own: a
-        sport + bet-type segment whose actual results fall significantly
-        short of what its own no-vig fair probability predicted gets
-        auto-paused — excluded from Pixel's Picks and Play of the Day until
-        it recovers or you resume it below. If overall performance is weak,
-        one threshold (EV floor, Kelly floor, or score floor) can tighten by
-        one step — never below the shipped default. Anything bigger than a
-        threshold nudge stays a written proposal for you to act on by hand,
-        never applied automatically.
+        Also always scoped to Pixel's Picks' own selection criteria,
+        regardless of the tab selected above. Unlike Calibration &amp; Audit
+        above, this section acts on its own: a sport + bet-type segment whose
+        actual results fall significantly short of what its own no-vig fair
+        probability predicted gets auto-paused (excluded from Pixel's Picks
+        and Play of the Day) until it recovers or you resume it below. If
+        overall performance is weak, one threshold (EV floor, Kelly floor, or
+        score floor) can tighten by one step, never below the shipped
+        default. Anything bigger than a threshold nudge stays a written
+        proposal for you to act on by hand, never applied automatically.
       </p>
       <div id="algoHealthConfig" class="learning-table"></div>
       <div id="algoHealthPaused" class="learning-recs"></div>

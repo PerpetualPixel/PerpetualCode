@@ -57,6 +57,13 @@ import {
   TUNABLE_BOUNDS,
   HEALTH_WINDOW_DAYS,
 } from './algo-health.js';
+import {
+  runFullSlateBatch,
+  runFullSlateClvSnapshot,
+  runFullSlateGrading,
+  getAllFullSlateTracked,
+  resetFullSlateTracking,
+} from './full-slate-tracking.js';
 
 // Each sport is a separate billed call: 3 markets x 1 region = 3 credits apiece.
 // Three is the ceiling the app's league picker enforces, repeated here because
@@ -491,38 +498,38 @@ export default {
       ctx.waitUntil(refreshMlbLeagueStats(env, ctx));
     }
 
-    // 2am ET: the day's locked Pixel's Picks — same engine, same sharp
-    // standard and EV/Kelly floor as always, just run once server-side
-    // instead of live per-request so the board never changes after the
-    // fact (the client's Pixel's Picks tab now renders this same set — see
-    // docs/app.js's loadPixelPicks()). runTop5Batch is itself idempotent
-    // per ET day (checks its own manifest key), so a retried or overlapping
-    // tick can't double-generate.
+    // 2am ET: Pixel's Picks, Full Slate tracking, and Play of the Day all
+    // lock in for the day here (TOP5_BATCH_HOUR === POTD_HOUR ===
+    // FULL_SLATE_BATCH_HOUR, all 2). All three need the same full-slate
+    // event fetch — fetched exactly once and shared as a single promise
+    // into each batch's own injectable fetchFullSlate parameter, rather
+    // than three independent fetch cycles (three real Odds-API-credit
+    // charges, and the same race-prone subrequest-stampede risk the MMA
+    // schedule bug earlier had) for the same data. Each batch is itself
+    // idempotent per ET day (checks its own manifest/KV key), so a retried
+    // or overlapping tick can't double-generate any of the three.
     if (etHour(now) === TOP5_BATCH_HOUR) {
-      ctx.waitUntil(runTop5Batch(env, ctx, now));
+      const sharedSlate = fetchFullSlateEvents(env, ctx);
+      const fetchFullSlate = () => sharedSlate;
+      ctx.waitUntil(runTop5Batch(env, ctx, now, { fetchFullSlate }));
+      ctx.waitUntil(runFullSlateBatch(env, ctx, now, { fetchFullSlate }));
+      ctx.waitUntil(
+        runPotdDaily(env, ctx, now, { fetchFullSlate }),
+      );
     }
 
     // Every hour: refresh the closing-line snapshot for whatever's still
     // pending and not yet underway, and grade whatever now has a completed
-    // score. Both are safe to run every tick — CLV only touches games that
-    // haven't started, grading only touches picks still pending — so
-    // there's no "already ran today" gate needed the way the 6am batch has.
-    // Same reasoning applies to Play of the Day's own CLV/grading below.
+    // score. Safe to run every tick for all three trackers — CLV only
+    // touches games that haven't started, grading only touches picks still
+    // pending — so there's no "already ran today" gate needed the way the
+    // 2am batch has.
     ctx.waitUntil(runClvSnapshot(env, ctx, now));
     ctx.waitUntil(runGrading(env, ctx, now));
     ctx.waitUntil(runPotdClvSnapshot(env, ctx, now));
     ctx.waitUntil(runPotdGrading(env, ctx, now));
-
-    // 2am ET: the single Play of the Day pick — scans the same full slate
-    // the Top 5 batch does (fetchFullSlateEvents), restricted to a
-    // moneyline-friendly -200..+150 band. runPotdDaily is itself idempotent
-    // per ET day (checks its own KV key), so a retried or overlapping tick
-    // can't double-generate.
-    if (etHour(now) === POTD_HOUR) {
-      ctx.waitUntil(
-        runPotdDaily(env, ctx, now, { fetchFullSlate: () => fetchFullSlateEvents(env, ctx) }),
-      );
-    }
+    ctx.waitUntil(runFullSlateClvSnapshot(env, ctx, now));
+    ctx.waitUntil(runFullSlateGrading(env, ctx, now));
 
     // Monday 7am ET: the weekly algorithm health review (worker/src/
     // algo-health.js) — looks at the last HEALTH_WINDOW_DAYS of graded
@@ -756,13 +763,36 @@ export default {
       }
     }
 
-    // Explicit, user-triggered wipe of the server-side Top 5 tracking
-    // history — the counterpart to the client's local "Archive & Reset"
-    // button. Never run on a schedule; only ever hit by that button.
+    // Every Full Slate pick still in KV (up to 90 days) — one pick per
+    // game, every sport, no filtering. For the Tracking Dashboard's Full
+    // Slate tracker tab. Read-only, KV only, no odds credit.
+    if (pathname === '/full-slate-history' && request.method === 'GET') {
+      try {
+        const picks = await getAllFullSlateTracked(env);
+        return json(
+          { picks },
+          { headers: { ...cors, 'Cache-Control': 'public, max-age=300' } },
+        );
+      } catch (error) {
+        return json({ picks: [], reason: String(error).slice(0, 120) }, { headers: cors });
+      }
+    }
+
+    // Explicit, user-triggered wipe of every server-side tracker (Pixel's
+    // Picks and Full Slate — Play of the Day keeps its own separate history
+    // by design) — the counterpart to the client's local "Archive & Reset
+    // All Tracking" button. Never run on a schedule; only ever hit by that
+    // button.
     if (pathname === '/top5-reset' && request.method === 'POST') {
       try {
-        const result = await resetAllTracking(env);
-        return json({ ...result }, { headers: cors });
+        const [top5Result, fullSlateResult] = await Promise.all([
+          resetAllTracking(env),
+          resetFullSlateTracking(env),
+        ]);
+        return json(
+          { deleted: top5Result.deleted + fullSlateResult.deleted, top5: top5Result, fullSlate: fullSlateResult },
+          { headers: cors },
+        );
       } catch (error) {
         return json({ error: String(error).slice(0, 120) }, { status: 500, headers: cors });
       }

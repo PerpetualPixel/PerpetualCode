@@ -188,6 +188,7 @@ RULES — read carefully, these are not optional:
 4. If the facts above are thin or say "no data" / "unknown" for something, say so plainly rather than working around the gap with invented detail — but still build the strongest honest case for "${pick}" available from what's given, even a modest one.
 5. Do not mention betting odds, spreads, moneylines, implied probability, vig, or market pricing anywhere in your answer — this is a team/player analysis, not a price analysis.
 6. No markdown: no "#" headings, no "**bold**", no bullet points in Part 1. Start Part 1 directly with its first sentence — the app already shows its own title above this text, so a heading here would just be repeated as literal text.
+7. Never use an em dash (—) anywhere in your answer, Part 1 or the JSON. Use a period, comma, or parentheses instead.
 
 Write your response in two parts, in this order.
 

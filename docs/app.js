@@ -393,7 +393,7 @@ function renderMlbStartingPitchers(d) {
     .filter(({ pitcher }) => pitcher && d.pitcherOutings[pitcher.playerId] !== undefined)
     .map(({ pitcher }) => `
       <div class="pitcher-outings-block">
-        <h5>${esc(pitcher.name)} — Past 5 Outings</h5>
+        <h5>${esc(pitcher.name)}: Past 5 Outings</h5>
         ${renderMlbPitcherOutings(d.pitcherOutings[pitcher.playerId])}
       </div>`)
     .join('');
@@ -632,6 +632,7 @@ const el = {
   confidenceAnalysis: document.getElementById('confidenceAnalysis'),
   sportAnalysis: document.getElementById('sportAnalysis'),
   recommendations: document.getElementById('recommendations'),
+  trackerTabs: document.getElementById('trackerTabs'),
   top5TotalPicks: document.getElementById('top5TotalPicks'),
   top5GradedPicks: document.getElementById('top5GradedPicks'),
   top5WinRate: document.getElementById('top5WinRate'),
@@ -681,6 +682,14 @@ const state = {
     ? loadJSON(CALENDAR_METRIC_KEY, 'dollars')
     : 'dollars',
   perfPeriod: 'week',
+  // Which of the three server-side trackers the Tracking Dashboard's
+  // Full Slate / Pixel's Picks / Play of the Day toggle currently shows —
+  // Calibration & Audit and Algorithm Health stay Pixel's-Picks-scoped
+  // regardless of this (see renderTrackerSection's own comment).
+  activeTracker: 'top5',
+  // All three trackers' full history, fetched once per dashboard open and
+  // re-rendered from on toggle — not re-fetched per click.
+  trackerPicks: { fullslate: [], top5: [], potd: [] },
   trackerExcludedSports: new Set(loadJSON(TRACKER_SPORT_FILTER_KEY, [])),
   // Today's server-side tracked Top 5 pick ids (see worker/src/tracking.js),
   // Full Slate's live/final game state — eventId -> the raw /scores event
@@ -897,7 +906,7 @@ async function refreshAllLeagues() {
   state.fetchedAt = Date.now();
 
   if (failed) {
-    setStatus(`Loaded ${allKeys.length - failed}/${allKeys.length} leagues — some odds may be missing`, 'error');
+    setStatus(`Loaded ${allKeys.length - failed}/${allKeys.length} leagues, some odds may be missing`, 'error');
   } else {
     setStatus(`${state.rawEvents.length} games loaded across ${allKeys.length} leagues`);
   }
@@ -1295,7 +1304,7 @@ function renderPick(pick) {
         <span class="price">${esc(formatAmerican(pick.american))}</span>
       </div>
 
-      ${flagged ? `<div class="pick-flag">⚠ Outside standard criteria — ${esc(pick.flagReason)}</div>` : ''}
+      ${flagged ? `<div class="pick-flag">⚠ Outside standard criteria: ${esc(pick.flagReason)}</div>` : ''}
 
       ${renderConfidence(pick)}
 
@@ -1331,7 +1340,7 @@ function renderDegradedPick(pick) {
         <span class="price">${esc(formatAmerican(pick.american))}</span>
       </div>
 
-      ${flagged ? `<div class="pick-flag">⚠ Outside standard criteria — ${esc(record.flagReason)}</div>` : ''}
+      ${flagged ? `<div class="pick-flag">⚠ Outside standard criteria: ${esc(record.flagReason)}</div>` : ''}
 
       <div class="confidence" style="--conf:${confidenceColor(pick.score, state.minScore)}">
         <div class="conf-track"><span class="conf-fill" style="width:${Math.round(pick.score)}%"></span></div>
@@ -1349,7 +1358,7 @@ function renderSlate(slate) {
 
   if (!slate.picks.length) {
     el.picks.innerHTML = `<p class="empty">No locks clear the sharp standard right
-      now — check back closer to game time, or see everything on Full Slate.</p>`;
+      now, check back closer to game time, or see everything on Full Slate.</p>`;
     return;
   }
   el.picks.innerHTML = slate.picks.map(renderPick).join('');
@@ -1488,7 +1497,7 @@ function renderHistoryBooks(leg) {
       const meta = SPORTSBOOKS[id];
       const offer = offers.get(id);
       if (!offer) {
-        return `<span class="h-book is-off">${esc(meta.name)} —</span>`;
+        return `<span class="h-book is-off">${esc(meta.name)}</span>`;
       }
       return `
         <a class="h-book" style="--book:${esc(meta.color)}"
@@ -1729,7 +1738,7 @@ function renderWeatherPills(weather) {
 
   const chips = pills.map((p) => `<span class="stat-pill">${esc(p)}</span>`).join('');
   const roofPill = weather.roof === 'retractable'
-    ? `<span class="stat-pill is-warn">Retractable roof — status unknown</span>`
+    ? `<span class="stat-pill is-warn">Retractable roof, status unknown</span>`
     : '';
   return `<div class="stats-pills">${chips}${roofPill}</div>`;
 }
@@ -1873,8 +1882,8 @@ function renderTennisFilterBody(filter) {
   const h2h = tennisHeadToHead(data, away, home, { filter });
 
   const formHtml = [
-    formAway.length ? `<p class="stats-fighter-label">${esc(away)} — Recent Form</p>${tennisFormTable(formAway)}` : '',
-    formHome.length ? `<p class="stats-fighter-label">${esc(home)} — Recent Form</p>${tennisFormTable(formHome)}` : '',
+    formAway.length ? `<p class="stats-fighter-label">${esc(away)}: Recent Form</p>${tennisFormTable(formAway)}` : '',
+    formHome.length ? `<p class="stats-fighter-label">${esc(home)}: Recent Form</p>${tennisFormTable(formHome)}` : '',
   ].filter(Boolean).join('');
 
   if (!formHtml && !h2h?.meetings.length) {
@@ -2163,7 +2172,7 @@ function renderMmaBreakdown(mmaContext, subjectName) {
     const fin = finishSummary(fighter);
     if (!fin) return '';
     return `
-      <p class="stats-fighter-label">${esc(fighter.name)} — Method of Victory (${fin.wins} wins)</p>
+      <p class="stats-fighter-label">${esc(fighter.name)}: Method of Victory (${fin.wins} wins)</p>
       ${statBar('KO/TKO', fin.knockout, fin.wins)}
       ${statBar('Submission', fin.submission, fin.wins)}
       ${statBar('Decision', fin.decision, fin.wins)}`;
@@ -2176,7 +2185,7 @@ function renderMmaBreakdown(mmaContext, subjectName) {
     if (!vuln) return '';
     const otherLosses = vuln.losses - vuln.koLosses - vuln.subLosses;
     return `
-      <p class="stats-fighter-label">${esc(fighter.name)} — Method of Defeat (${vuln.losses} losses)</p>
+      <p class="stats-fighter-label">${esc(fighter.name)}: Method of Defeat (${vuln.losses} losses)</p>
       ${statBar('KO/TKO', vuln.koLosses, vuln.losses)}
       ${statBar('Submission', vuln.subLosses, vuln.losses)}
       ${statBar('Decision/Other', otherLosses, vuln.losses)}`;
@@ -2189,7 +2198,7 @@ function renderMmaBreakdown(mmaContext, subjectName) {
     if (!rounds.length) return '';
     const total = rounds.reduce((n, r) => n + r.count, 0);
     return `
-      <p class="stats-fighter-label">${esc(fighter.name)} — Fights End By Round</p>
+      <p class="stats-fighter-label">${esc(fighter.name)}: Fights End By Round</p>
       ${rounds.map((r) => statBar(`Round ${r.round}`, r.count, total)).join('')}`;
   };
   const roundsAll = [roundsHtml(me), opponent ? roundsHtml(opponent) : ''].filter(Boolean).join('');
@@ -2200,7 +2209,7 @@ function renderMmaBreakdown(mmaContext, subjectName) {
     if (!byYear.length) return '';
     const max = Math.max(...byYear.map((a) => a.count));
     return `
-      <p class="stats-fighter-label">${esc(fighter.name)} — Activity by Year</p>
+      <p class="stats-fighter-label">${esc(fighter.name)}: Activity by Year</p>
       ${byYear.map((a) => statBar(String(a.year), a.count, max)).join('')}`;
   };
   const activityAll = [activityHtml(me), opponent ? activityHtml(opponent) : ''].filter(Boolean).join('');
@@ -2294,7 +2303,7 @@ async function openStatsDrawer(leg, opposite = null, { fullscreen = false } = {}
   const methodLabel = { SUB: 'Submission', TKO: 'TKO/KO', DEC: 'Decision' };
   const victoryList = (entries) =>
     (entries ?? [])
-      .map((v) => `<li><strong>${esc(methodLabel[v.method] ?? v.method)}</strong>${v.percentage != null ? ` — ${v.percentage}%` : ''}: ${esc(v.reasoning)}</li>`)
+      .map((v) => `<li><strong>${esc(methodLabel[v.method] ?? v.method)}</strong>${v.percentage != null ? ` (${v.percentage}%)` : ''}: ${esc(v.reasoning)}</li>`)
       .join('');
   const victoryMethodsHtml = victoryMethods
     ? `
@@ -2332,7 +2341,7 @@ async function openStatsDrawer(leg, opposite = null, { fullscreen = false } = {}
   const stakeHtml = stake ? `<div class="stake-line">${esc(stake)}</div>` : '';
   const isUnderdogPick = typeof leg.american === 'number' && leg.american > 0;
   const mmaMarketNote = isMma(leg.sportKey) && isUnderdogPick
-    ? `MMA picks are chosen on this price math alone — this app applies no fighter-quality or form scoring to MMA (the research below is for context, not scoring). An underdog pick like this one means the market itself disagrees with the favorite's price; it isn't a projection that this fighter is actually better.`
+    ? `MMA picks are chosen on this price math alone. This app applies no fighter-quality or form scoring to MMA (the research below is for context, not scoring). An underdog pick like this one means the market itself disagrees with the favorite's price; it isn't a projection that this fighter is actually better.`
     : null;
 
   const analysisSectionHtml = analysisText
@@ -2467,7 +2476,7 @@ function renderBankrollPanel() {
   el.bankrollShowUnits.classList.toggle('is-active', state.bankroll.displayMode === 'units');
 
   el.bankrollSubmitHint.textContent = state.bankroll.confirmed && state.bankroll.amount > 0
-    ? 'Applied — every "why" panel now shows a real $ or unit amount.'
+    ? 'Applied. Every "why" panel now shows a real $ or unit amount.'
     : 'Tap Submit to start seeing suggested stakes in real $ or units, not just %.';
 }
 
@@ -2987,7 +2996,7 @@ function renderSlateLeagueOptions() {
   el.slateLeagueSelect.innerHTML = LEAGUE_GROUPS
     .map((group) => {
       const count = groupGameCount(group);
-      const label = `${group.label} — ${count} game${count === 1 ? '' : 's'}`;
+      const label = `${group.label}: ${count} game${count === 1 ? '' : 's'}`;
       return `<option value="${esc(group.id)}" ${group.id === state.slateLeague ? 'selected' : ''}>${esc(label)}</option>`;
     })
     .join('');
@@ -3036,7 +3045,7 @@ function mmaClusters(games) {
   return [...byEvent.entries()]
     .map(([eventKey, cardGames]) => {
       const label = cardGames.length > 1
-        ? `${eventKey} — ${cardGames.length} fights`
+        ? `${eventKey}: ${cardGames.length} fights`
         : eventKey;
       return { eventKey, games: cardGames, label };
     })
@@ -3063,7 +3072,7 @@ function tennisClusters(games) {
   return [...byKey.entries()]
     .map(([eventKey, matches]) => {
       const title = state.catalogue.find((s) => s.key === eventKey)?.title ?? eventKey;
-      const label = `${title} — ${matches.length} match${matches.length === 1 ? '' : 'es'}`;
+      const label = `${title}: ${matches.length} match${matches.length === 1 ? '' : 'es'}`;
       return { eventKey, games: matches, label, title };
     })
     .sort((a, b) => {
@@ -3099,7 +3108,7 @@ function renderFullSlate() {
   const allGames = buildSlateGames(group.keys);
 
   if (!allGames.length) {
-    el.slateBody.innerHTML = `<p class="empty">Nothing on the board for ${esc(group.label)} right now — check back closer to game time.</p>`;
+    el.slateBody.innerHTML = `<p class="empty">Nothing on the board for ${esc(group.label)} right now. Check back closer to game time.</p>`;
     el.slateEventRow.hidden = true;
     return;
   }
@@ -3111,7 +3120,7 @@ function renderFullSlate() {
 
   if (clusters.length >= 2) {
     const totalGames = clusters.reduce((sum, c) => sum + c.games.length, 0);
-    const allLabel = group.id === 'mma' ? `All cards — ${totalGames} fights` : `All of ${group.label} — ${totalGames} matches`;
+    const allLabel = group.id === 'mma' ? `All cards: ${totalGames} fights` : `All of ${group.label}: ${totalGames} matches`;
     const options = [`<option value="all">${esc(allLabel)}</option>`]
       .concat(clusters.map((c) => {
         const value = c.eventKey;
@@ -3368,7 +3377,7 @@ let lastTrackedPixelPicksIdKey = null;
  */
 async function loadPixelPicks() {
   if (!CONFIG.WORKER_URL) {
-    el.picks.innerHTML = `<p class="empty">Pixel's Picks needs the odds worker — set WORKER_URL in config.js.</p>`;
+    el.picks.innerHTML = `<p class="empty">Pixel's Picks needs the odds worker. Set WORKER_URL in config.js.</p>`;
     el.pixelSortRow.hidden = true;
     return;
   }
@@ -3609,6 +3618,16 @@ el.perfPeriodTabs.addEventListener('click', (event) => {
   renderLearningDashboard();
 });
 
+el.trackerTabs?.addEventListener('click', (event) => {
+  const btn = event.target.closest('[data-tracker]');
+  if (!btn) return;
+  // All three trackers' history is already fetched (loadTrackerHistories,
+  // called once per dashboard open) — switching tabs re-renders from that
+  // cache, no re-fetch needed.
+  state.activeTracker = btn.dataset.tracker;
+  renderTrackerSection();
+});
+
 el.exportDataBtn.addEventListener('click', async () => {
   const csv = await exportData(new Date(0), new Date());
   const blob = new Blob([csv], { type: 'text/csv' });
@@ -3630,7 +3649,7 @@ el.exportDataBtn.addEventListener('click', async () => {
  */
 el.archiveResetBtn.addEventListener('click', async () => {
   const ok = confirm(
-    'This downloads a CSV of everything tracked so far, then permanently clears it — both on this device and the worker\'s own Top 5 history. This can\'t be undone. Continue?',
+    'This downloads a CSV of everything tracked so far, then permanently clears it: this device\'s local history and the worker\'s own Pixel\'s Picks and Full Slate tracking (Play of the Day\'s history is kept separately and isn\'t affected). This can\'t be undone. Continue?',
   );
   if (!ok) return;
 
@@ -3752,7 +3771,7 @@ function resolveParlayPool() {
 
 function renderParlayFilters() {
   el.parlayLeagueSelect.innerHTML = LEAGUE_GROUPS
-    .map((g) => `<option value="${esc(g.id)}" ${g.id === state.parlayLeague ? 'selected' : ''}>${esc(g.label)} — ${groupGameCount(g)} games</option>`)
+    .map((g) => `<option value="${esc(g.id)}" ${g.id === state.parlayLeague ? 'selected' : ''}>${esc(g.label)}: ${groupGameCount(g)} games</option>`)
     .join('');
   if (!state.parlayLeague) {
     state.parlayLeague = LEAGUE_GROUPS[0].id;
@@ -3766,7 +3785,7 @@ function renderParlayFilters() {
   if (clusters.length >= 2) {
     el.parlayEventFilterRow.hidden = false;
     const totalGames = clusters.reduce((sum, c) => sum + c.games.length, 0);
-    const allLabel = group.id === 'mma' ? `All cards — ${totalGames} fights` : `All of ${group.label} — ${totalGames} matches`;
+    const allLabel = group.id === 'mma' ? `All cards: ${totalGames} fights` : `All of ${group.label}: ${totalGames} matches`;
     el.parlayEventFilterSelect.innerHTML = [`<option value="all">${esc(allLabel)}</option>`]
       .concat(clusters.map((c) => `<option value="${esc(c.eventKey)}" ${c.eventKey === state.parlayEvent ? 'selected' : ''}>${esc(c.label)}</option>`))
       .join('');
@@ -3781,7 +3800,7 @@ function renderParlayFilters() {
   for (const c of pool) marketLabels.set(c.marketKey, c.marketLabel);
 
   if (!marketLabels.size) {
-    el.parlayMarketsList.innerHTML = `<p class="empty">No games in this pool yet — try a different league or event.</p>`;
+    el.parlayMarketsList.innerHTML = `<p class="empty">No games in this pool yet. Try a different league or event.</p>`;
     state.parlay.markets.clear();
     return;
   }
@@ -3818,7 +3837,7 @@ function renderParlayLeg(leg, index) {
       <button type="button" class="leg-lock-btn ${locked ? 'is-locked' : ''}"
               data-lock-leg="${esc(leg.id)}" aria-pressed="${locked}"
               aria-label="${locked ? 'Unlock this leg' : 'Lock this leg so it survives Generate'}"
-              title="${locked ? 'Locked — survives Generate' : 'Lock this leg'}">${locked ? '🔒' : '🔓'}</button>
+              title="${locked ? 'Locked, survives Generate' : 'Lock this leg'}">${locked ? '🔒' : '🔓'}</button>
       <div class="parlay-leg-body">${renderLeg(leg, index, true)}</div>
     </div>`;
 }
@@ -4046,7 +4065,7 @@ function renderPotdSection(section) {
 /** The single Play of the Day card. */
 function renderPotdCard(writeup, generatedAt, stale) {
   const staleNote = stale
-    ? `<p class="potd-stale">Today's pick hasn't posted yet — showing yesterday's.</p>`
+    ? `<p class="potd-stale">Today's pick hasn't posted yet. Showing yesterday's.</p>`
     : '';
   return `
     <article class="potd-card">
@@ -4086,7 +4105,7 @@ async function loadPotd({ force = false } = {}) {
 
   if (!CONFIG.WORKER_URL) {
     el.potdBody.innerHTML = `<p class="empty">
-      Play of the Day needs the odds worker — set WORKER_URL in config.js.</p>`;
+      Play of the Day needs the odds worker. Set WORKER_URL in config.js.</p>`;
     return;
   }
 
@@ -4451,7 +4470,7 @@ function meetsTrackingStandard(pick) {
   return pick.meetsStandard !== false;
 }
 
-/** Groups server-tracked picks by their own stored dateKey (not a pickId prefix — these ids are raw candidate ids, not date-prefixed like the client's). Each day's own record/ROI/net is computed from clean picks only — flagged ones still appear in the row list, just excluded from the day's own math same as the overall summary. */
+/** Groups server-tracked picks by their own stored dateKey (not a pickId prefix — these ids are raw candidate ids, not date-prefixed like the client's). Every pick counts toward its day's own record/ROI/net, flagged or not — flagged ones still show the "⚠ flagged" badge in the row for transparency, they just aren't excluded from the math (see renderTrackerSection's own comment on why). */
 function groupTop5ByDay(picks) {
   const byDay = new Map();
   for (const p of picks) {
@@ -4463,7 +4482,7 @@ function groupTop5ByDay(picks) {
     .map(([date, dayPicks]) => ({
       date,
       picks: dayPicks,
-      ...summarizePicks(dayPicks.filter(meetsTrackingStandard)),
+      ...summarizePicks(dayPicks),
     }));
 }
 
@@ -4481,7 +4500,7 @@ function renderTop5DayBlock(day) {
     const flagged = !meetsTrackingStandard(p);
     return `
       <div class="day-pick-row ${statusClass}">
-        <span class="pick-matchup">${esc(p.away)} @ ${esc(p.home)}${flagged ? ' <span class="pick-flag-inline" title="Outside standard criteria — excluded from the totals above">⚠ flagged</span>' : ''}</span>
+        <span class="pick-matchup">${esc(p.away)} @ ${esc(p.home)}${flagged ? ' <span class="pick-flag-inline" title="Outside standard criteria: a thin-day fallback pick, still counted in every total">⚠ flagged</span>' : ''}</span>
         <span class="pick-side">${esc(p.selection)}</span>
         <span class="pick-status">${statusLabel}</span>
         <span class="pick-payout">${esc(payoutLabel)}</span>
@@ -4514,26 +4533,73 @@ async function fetchPotdHistory() {
   }
 }
 
-/**
- * Pixel's Picks and Play of the Day, combined into one Tracking Dashboard
- * section and one daily history — both are server-locked once daily now
- * (2am ET), both return the same picks shape from their history endpoints
- * (dateKey/away/home/selection/status/result/suggested_stake/clv), so
- * concatenating before grouping by day naturally buckets each day's Pixel's
- * Picks together with that day's Play of the Day pick — reusing
- * groupTop5ByDay/renderTop5DayBlock/top5ClvPct/summarizePicks unchanged
- * rather than duplicating them. Overall metrics exclude flagged
- * (meetsStandard: false) picks per meetsTrackingStandard — Play of the Day
- * never flags (no padding concept), so its picks always count.
- */
-async function renderPixelPicksSection() {
-  const [top5Picks, potdPicks] = await Promise.all([fetchTop5History(), fetchPotdHistory()]);
-  const picks = [...top5Picks, ...potdPicks];
-  const clean = picks.filter(meetsTrackingStandard);
+/** Every Full Slate pick the worker has ever tracked (see worker/src/full-slate-tracking.js's getAllFullSlateTracked) — one pick per game, every sport, no filtering — up to 90 days. */
+async function fetchFullSlateHistory() {
+  if (!CONFIG.WORKER_URL) return [];
+  try {
+    const url = new URL('/full-slate-history', CONFIG.WORKER_URL);
+    const res = await fetch(url, { headers: { Accept: 'application/json' } });
+    if (!res.ok) return [];
+    const data = await res.json();
+    return data.picks ?? [];
+  } catch {
+    return [];
+  }
+}
 
-  const overall = summarizePicks(clean);
+const TRACKER_EMPTY_MESSAGES = {
+  fullslate: 'Nothing tracked yet. The worker locks in one pick per game, across every sport, at 2am ET.',
+  top5: 'Nothing tracked yet. The worker generates Pixel\'s Picks at 2am ET.',
+  potd: 'Nothing tracked yet. The worker generates Play of the Day at 2am ET.',
+};
+
+/**
+ * Fetches all three server-side trackers' full history once — Full Slate
+ * (worker/src/full-slate-tracking.js, one pick per game, every sport, no
+ * filtering), Pixel's Picks (worker/src/tracking.js, 5 locked picks/day),
+ * and Play of the Day (worker/src/potd.js, 1 pick/day). All three return the
+ * exact same record shape (dateKey/away/home/selection/status/result/
+ * suggested_stake/clv/meetsStandard), so the same groupTop5ByDay/
+ * renderTop5DayBlock/summarizePicks/top5ClvPct helpers work unchanged
+ * against any of them. Returns the Top5 array specifically, since
+ * Calibration & Audit stays Pixel's-Picks-scoped regardless of which
+ * tracker tab is active (see renderTrackerSection's own comment).
+ */
+async function loadTrackerHistories() {
+  const [fullSlate, top5, potd] = await Promise.all([
+    fetchFullSlateHistory(), fetchTop5History(), fetchPotdHistory(),
+  ]);
+  state.trackerPicks = { fullslate: fullSlate, top5, potd };
+  renderTrackerSection();
+  return top5;
+}
+
+/**
+ * Renders whichever of the three trackers state.activeTracker names into
+ * the dashboard's one shared set of metric cards + history container —
+ * three parallel DOM sections were considered and rejected in favor of this
+ * (matches how the existing Week/Month/Year performance toggle already
+ * re-renders one shared #perfGraph in place rather than keeping three).
+ *
+ * Every pick counts toward its tracker's own totals, flagged or not — this
+ * used to exclude Pixel's Picks' flagged (guaranteeCount() fallback)
+ * picks, but that's a deliberate reversal: all 5 daily picks are tracked
+ * "regardless of criteria." Full Slate and Play of the Day never flag
+ * picks in the first place (no padding concept for either), so this only
+ * actually changes Pixel's Picks' own numbers.
+ *
+ * Calibration & Audit (renderCalibrationReport) and Algorithm Health both
+ * stay scoped to Pixel's Picks specifically, regardless of which tab is
+ * active — both are about auditing/tuning Pixel's Picks' own selection
+ * criteria, which Full Slate deliberately has none of and Play of the Day
+ * has its own separate (untuned) −200/+150 band.
+ */
+function renderTrackerSection() {
+  const picks = state.trackerPicks[state.activeTracker] ?? [];
+
+  const overall = summarizePicks(picks);
   const winRate = overall.graded ? (overall.wins / overall.graded) * 100 : 0;
-  const clvValues = clean.map(top5ClvPct).filter((v) => v != null);
+  const clvValues = picks.map(top5ClvPct).filter((v) => v != null);
   const avgClv = clvValues.length ? clvValues.reduce((a, b) => a + b, 0) / clvValues.length : null;
 
   el.top5TotalPicks.textContent = overall.total;
@@ -4546,9 +4612,11 @@ async function renderPixelPicksSection() {
   const days = groupTop5ByDay(picks);
   el.top5DailyHistory.innerHTML = days.length
     ? days.map(renderTop5DayBlock).join('')
-    : `<p class="empty">Nothing tracked yet — the worker generates Pixel's Picks and Play of the Day at 2am ET.</p>`;
+    : `<p class="empty">${esc(TRACKER_EMPTY_MESSAGES[state.activeTracker])}</p>`;
 
-  return picks;
+  el.trackerTabs?.querySelectorAll('[data-tracker]').forEach((b) => {
+    b.classList.toggle('is-active', b.dataset.tracker === state.activeTracker);
+  });
 }
 
 /**
@@ -4565,7 +4633,7 @@ function renderCalibrationReport(picks) {
   // the picks that actually clear the standard.
   const graded = picks.filter(meetsTrackingStandard).filter((p) => p.status === 'won' || p.status === 'lost');
   if (graded.length < 5) {
-    el.calibrationReport.innerHTML = `<div class="rec-item">Not enough graded picks yet (${graded.length}) for a meaningful read — check back after a couple of weeks of tracking.</div>`;
+    el.calibrationReport.innerHTML = `<div class="rec-item">Not enough graded picks yet (${graded.length}) for a meaningful read. Check back after a couple of weeks of tracking.</div>`;
     return;
   }
 
@@ -4585,7 +4653,7 @@ function renderCalibrationReport(picks) {
     const actualWinRate = (withProb.filter((p) => p.status === 'won').length / withProb.length) * 100;
     const gap = actualWinRate - avgPredicted;
     const severity = Math.abs(gap) > 10 ? 'high' : Math.abs(gap) > 5 ? '' : 'low';
-    items.push(`<div class="rec-item ${severity}">Brier score ${brier.toFixed(3)} across ${withProb.length} graded picks. The model's own average predicted win probability is ${avgPredicted.toFixed(1)}%; actual win rate is ${actualWinRate.toFixed(1)}% — a ${Math.abs(gap).toFixed(1)}pp gap${gap < -5 ? ' (overconfident: real results are coming in below what the model expected)' : gap > 5 ? ' (underconfident: real results are beating what the model expected)' : ' (reasonably well calibrated)'}.</div>`);
+    items.push(`<div class="rec-item ${severity}">Brier score ${brier.toFixed(3)} across ${withProb.length} graded picks. The model's own average predicted win probability is ${avgPredicted.toFixed(1)}%; actual win rate is ${actualWinRate.toFixed(1)}%, a ${Math.abs(gap).toFixed(1)}pp gap${gap < -5 ? ' (overconfident: real results are coming in below what the model expected)' : gap > 5 ? ' (underconfident: real results are beating what the model expected)' : ' (reasonably well calibrated)'}.</div>`);
   }
 
   // CLV by sport — a sport consistently losing the close is worth flagging.
@@ -4601,9 +4669,9 @@ function renderCalibrationReport(picks) {
     if (values.length < 3) continue;
     const avg = values.reduce((a, b) => a + b, 0) / values.length;
     if (avg < -1) {
-      items.push(`<div class="rec-item high">${esc(label)} is losing the closing line on average (${formatSignedPct(avg)} CLV across ${values.length} picks) — the price we're taking is consistently worse than where the market settles, which is a red flag independent of win rate.</div>`);
+      items.push(`<div class="rec-item high">${esc(label)} is losing the closing line on average (${formatSignedPct(avg)} CLV across ${values.length} picks). The price we're taking is consistently worse than where the market settles, which is a red flag independent of win rate.</div>`);
     } else if (avg > 1) {
-      items.push(`<div class="rec-item low">${esc(label)} is consistently beating the closing line (${formatSignedPct(avg)} CLV across ${values.length} picks) — a real, structural edge in this market.</div>`);
+      items.push(`<div class="rec-item low">${esc(label)} is consistently beating the closing line (${formatSignedPct(avg)} CLV across ${values.length} picks), a real, structural edge in this market.</div>`);
     }
   }
 
@@ -4623,7 +4691,7 @@ function renderCalibrationReport(picks) {
   }).filter(Boolean);
 
   el.calibrationReport.innerHTML = [
-    items.length ? items.join('') : `<div class="rec-item">Nothing flagged yet — CLV and calibration look reasonable across every segment with enough sample size.</div>`,
+    items.length ? items.join('') : `<div class="rec-item">Nothing flagged yet. CLV and calibration look reasonable across every segment with enough sample size.</div>`,
     tierRows.length ? `<div class="learning-table" style="margin-top:12px">${tierRows.join('')}</div>` : '',
   ].join('');
 }
@@ -4804,8 +4872,8 @@ async function renderLearningDashboard() {
 
   el.recommendations.innerHTML = `<div class="rec-item">Every Pixel Picks board tracks automatically — $20/pick against the $1000 simulated bankroll. Tap "Check Results" any time to grade whatever's finished.</div>`;
 
-  const trackedPicks = await renderPixelPicksSection();
-  renderCalibrationReport(trackedPicks);
+  const top5Picks = await loadTrackerHistories();
+  renderCalibrationReport(top5Picks);
   await renderAlgoHealthSection();
 }
 

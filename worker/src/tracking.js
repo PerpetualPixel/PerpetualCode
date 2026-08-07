@@ -118,7 +118,15 @@ export async function fetchFullSlateEvents(env, ctx) {
   return events;
 }
 
-function pickRecordFrom(pick, dateKey, now) {
+/**
+ * Exported so worker/src/full-slate-tracking.js can reuse the exact same
+ * record shape — the specific field list here (pickId/dateKey/eventId/
+ * sportKey/marketKey/consensusProb/clv/meetsStandard/etc) is what every
+ * shared dashboard rendering helper (groupTop5ByDay, renderTop5DayBlock,
+ * summarizePicks, top5ClvPct) depends on; duplicating this mapping in a
+ * second file would risk the two trackers' records silently drifting apart.
+ */
+export function pickRecordFrom(pick, dateKey, now) {
   const leg = pick.legs[0];
   return {
     pickId: leg.id,

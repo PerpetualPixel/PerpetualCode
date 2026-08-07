@@ -161,10 +161,10 @@ export function evaluateSegment(stats, isPaused) {
   }
 
   if (stats.z <= PAUSE_Z && stats.roi < 0) {
-    return { action: 'pause', reason: `z=${stats.z.toFixed(2)}, ROI=${stats.roi.toFixed(1)}% over ${stats.n} picks — significantly below the segment's own no-vig expectation` };
+    return { action: 'pause', reason: `z=${stats.z.toFixed(2)}, ROI=${stats.roi.toFixed(1)}% over ${stats.n} picks, significantly below the segment's own no-vig expectation` };
   }
   if (stats.z <= WARN_Z) {
-    return { action: 'proposal', reason: `Underperforming but not yet at the pause bar: z=${stats.z.toFixed(2)} over ${stats.n} picks. Worth a manual look — e.g. is moneyline the right market for this segment, or would an alternate market fit better?` };
+    return { action: 'proposal', reason: `Underperforming but not yet at the pause bar: z=${stats.z.toFixed(2)} over ${stats.n} picks. Worth a manual look, e.g. is moneyline the right market for this segment, or would an alternate market fit better?` };
   }
   return { action: 'none' };
 }
@@ -190,7 +190,7 @@ export function evaluateGlobalTuning(overallStats, currentConfig) {
       param,
       before,
       after,
-      reason: `Overall z=${overallStats.z.toFixed(2)}, ROI=${overallStats.roi.toFixed(1)}% over ${overallStats.n} picks — tightening ${param} from ${before} to ${after}`,
+      reason: `Overall z=${overallStats.z.toFixed(2)}, ROI=${overallStats.roi.toFixed(1)}% over ${overallStats.n} picks, tightening ${param} from ${before} to ${after}`,
     };
   }
   return { action: 'none' }; // every tunable param already at its ceiling
