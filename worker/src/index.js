@@ -763,12 +763,18 @@ export default {
       }
     }
 
-    // Every Full Slate pick still in KV (up to 90 days) — one pick per
-    // game, every sport, no filtering. For the Tracking Dashboard's Full
-    // Slate tracker tab. Read-only, KV only, no odds credit.
+    // Every Full Slate pick still in KV (up to 90 days, or fewer via
+    // ?days=N) — one pick per game, every sport, no filtering. Used by both
+    // the Tracking Dashboard's Full Slate tab (full 90-day window) and the
+    // Full Slate board itself (?days=2, just enough to label a just-finished
+    // game whose odds have already dropped off the feed). Read-only, KV
+    // only, no odds credit.
     if (pathname === '/full-slate-history' && request.method === 'GET') {
       try {
-        const picks = await getAllFullSlateTracked(env);
+        const { searchParams } = new URL(request.url);
+        const daysParam = Number(searchParams.get('days'));
+        const days = Number.isFinite(daysParam) && daysParam > 0 ? Math.min(daysParam, 90) : 90;
+        const picks = await getAllFullSlateTracked(env, { days });
         return json(
           { picks },
           { headers: { ...cors, 'Cache-Control': 'public, max-age=300' } },

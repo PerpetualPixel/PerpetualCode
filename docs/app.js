@@ -697,6 +697,17 @@ const state = {
   // per sport-group (see refreshSlateScores) rather than on every render.
   slateScores: new Map(),
   slateScoresFetchedAt: new Map(), // group.id -> last fetch time, so switching leagues never gets throttled by an unrelated sport's recent fetch
+  // The server's own Full Slate tracked pick per game (see
+  // worker/src/full-slate-tracking.js) — eventId -> pick record. This is
+  // the authoritative record of "what did the algorithm actually pick and
+  // did it win," the same data the Tracking Dashboard's Full Slate tab
+  // shows, so a finished game's card and its tracked history entry are
+  // never two different answers. It also covers the gap live re-derivation
+  // can't: the odds feed drops a game's prices the moment it's decided, so
+  // a just-finished game often has no live candidate left to compute a pick
+  // from at all — the tracked record survives that.
+  slateTrackedPicks: new Map(),
+  slateTrackedPicksFetchedAt: 0,
   // Full Slate's Upcoming/Live/Finished toggle — defaults to Upcoming each
   // fresh load rather than persisting, since "what's live right now" isn't
   // something you'd want stuck from a prior session.
@@ -2850,6 +2861,35 @@ async function refreshSlateScores(group) {
 }
 
 /**
+ * The server's own tracked Full Slate pick per game (worker/src/
+ * full-slate-tracking.js), keyed by eventId — global rather than
+ * per-league since it's one small request either way. Refreshed at most
+ * once a minute, same throttle as refreshSlateScores. Only the last two
+ * ET days are requested: a game shown on the board is always today's (or,
+ * for MMA, within the next week and not yet tracked anyway), so this only
+ * ever needs to cover "finished a few minutes ago, might straddle
+ * midnight ET."
+ */
+async function refreshSlateTrackedPicks() {
+  if (!CONFIG.WORKER_URL) return false;
+  if (Date.now() - state.slateTrackedPicksFetchedAt < 60000) return false;
+  state.slateTrackedPicksFetchedAt = Date.now();
+  try {
+    const url = new URL('/full-slate-history', CONFIG.WORKER_URL);
+    url.searchParams.set('days', '2');
+    const res = await fetch(url, { headers: { Accept: 'application/json' } });
+    if (!res.ok) return false;
+    const data = await res.json();
+    for (const pick of data.picks ?? []) {
+      state.slateTrackedPicks.set(pick.eventId, pick);
+    }
+    return true;
+  } catch {
+    return false; // tracked picks are an enhancement; live re-derivation still covers most games
+  }
+}
+
+/**
  * One market cell. A real candidate renders as a clickable price, ringed
  * with a highlight when it grades higher than its market-mate (or when it's
  * the only side priced at all — nothing to compare against, but still the
@@ -3004,7 +3044,17 @@ function slateGameHtml(game) {
 
   const gameState = slateGameState(game);
   const scoreEvent = state.slateScores.get(game.eventId);
-  const outcome = slateGameOutcome(game, rec); // 'won' | 'lost' | null — only set once finished
+  // The odds feed drops a game's prices the moment it's decided, so a
+  // just-finished game is often "orphaned" (see buildSlateGames) with no
+  // live candidate left to name a pick from at all. The server's own
+  // tracked Full Slate pick (worker/src/full-slate-tracking.js) survives
+  // that — and once it's graded, it's the same record the Tracking
+  // Dashboard shows, so it's preferred over a live recompute even when one
+  // is still available, so this card and that history entry never disagree.
+  const trackedPick = state.slateTrackedPicks.get(game.eventId) ?? null;
+  const trackedOutcome = trackedPick?.status === 'won' ? 'won' : trackedPick?.status === 'lost' ? 'lost' : null;
+  const outcome = trackedOutcome ?? slateGameOutcome(game, rec); // 'won' | 'lost' | null — only set once finished
+  const mainPlaySelection = trackedPick?.selection ?? rec?.selection ?? null;
   const isFinished = gameState === 'finished';
   // The market grid only means anything pregame — once a game is live the
   // prices are stale and the algorithm's read was a pregame one, so it's
@@ -3039,11 +3089,11 @@ function slateGameHtml(game) {
   // once finished). Only a finished game ever has an outcome to tag —
   // slateGameOutcome() returns null for a live game, so the Won/Lost badge
   // simply never appears until there's an actual result to show.
-  const mainPlayHtml = hideMarkets && rec
+  const mainPlayHtml = hideMarkets && mainPlaySelection
     ? `<div class="slate-main-play">
         <span class="slate-main-play-label">Main play</span>
-        <span class="slate-main-play-selection">${esc(rec.selection)}</span>
-        ${outcome ? `<span class="slate-main-play-outcome is-${outcome}">${outcome === 'won' ? 'Won' : 'Lost'}</span>` : ''}
+        <span class="slate-main-play-selection">${esc(mainPlaySelection)}</span>
+        ${outcome ? `<span class="slate-main-play-outcome is-${outcome}">${outcome === 'won' ? '✅ Won' : '❌ Lost'}</span>` : ''}
       </div>`
     : '';
 
@@ -3195,6 +3245,11 @@ function renderFullSlate() {
   // user is still looking at this same league by the time they do, so a
   // slow response can't overwrite a board they've since navigated away from.
   refreshSlateScores(group).then((updated) => {
+    if (updated && (LEAGUE_GROUP_BY_ID.get(state.slateLeague) ?? LEAGUE_GROUPS[0]) === group) {
+      renderFullSlate();
+    }
+  });
+  refreshSlateTrackedPicks().then((updated) => {
     if (updated && (LEAGUE_GROUP_BY_ID.get(state.slateLeague) ?? LEAGUE_GROUPS[0]) === group) {
       renderFullSlate();
     }
