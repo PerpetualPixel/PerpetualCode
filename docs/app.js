@@ -582,6 +582,7 @@ const el = {
   learningPanel: document.getElementById('learningPanel'),
   learningPanelResize: document.getElementById('learningPanelResize'),
   learningPanelClose: document.getElementById('learningPanelClose'),
+  trackerRefreshBtn: document.getElementById('trackerRefreshBtn'),
   trackerTabs: document.getElementById('trackerTabs'),
   top5TotalPicks: document.getElementById('top5TotalPicks'),
   top5GradedPicks: document.getElementById('top5GradedPicks'),
@@ -3350,6 +3351,17 @@ el.aboutClose.addEventListener('click', () => setAboutOpen(false));
 el.learningPanelClose.addEventListener('click', () => {
   el.learningPanel.hidden = true;
   el.scrim.hidden = true;
+});
+
+el.trackerRefreshBtn?.addEventListener('click', async () => {
+  el.trackerRefreshBtn.disabled = true;
+  el.trackerRefreshBtn.style.opacity = '0.5';
+  try {
+    await loadTrackerHistories();
+  } finally {
+    el.trackerRefreshBtn.disabled = false;
+    el.trackerRefreshBtn.style.opacity = '1';
+  }
 });
 
 const learningToggle = document.getElementById('learningToggle');
