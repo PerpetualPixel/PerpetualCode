@@ -486,126 +486,16 @@
   </div>
 
   <div class="learning-content">
-    <!-- Performance Summary -->
-    <section class="learning-section">
-      <h3>Overall Performance</h3>
-      <div id="performanceSummary" class="learning-grid">
-        <div class="metric-card">
-          <div class="metric-label">Total Picks</div>
-          <div id="totalPicks" class="metric-value">0</div>
-        </div>
-        <div class="metric-card">
-          <div class="metric-label">Graded</div>
-          <div id="gradedPicks" class="metric-value">0</div>
-        </div>
-        <div class="metric-card">
-          <div class="metric-label">Win Rate</div>
-          <div id="winRate" class="metric-value">—</div>
-        </div>
-        <div class="metric-card">
-          <div class="metric-label">ROI</div>
-          <div id="avgRoi" class="metric-value">—</div>
-        </div>
-        <div class="metric-card">
-          <div class="metric-label">Net $</div>
-          <div id="netProfit" class="metric-value">—</div>
-        </div>
-        <div class="metric-card">
-          <div class="metric-label">Bankroll</div>
-          <div id="currentBankroll" class="metric-value">$1,000</div>
-        </div>
-      </div>
-    </section>
-
-    <!-- Sport Filter -->
-    <section class="learning-section">
-      <div class="learning-section-head">
-        <h3>Filter by Sport</h3>
-      </div>
-      <p class="filter-hint">Unchecked sports are excluded from every figure below: the calendar, the graph, and the totals up top. Everything's included by default.</p>
-      <div id="trackerSportFilter" class="check-grid"></div>
-    </section>
-
-    <!-- Calendar -->
-    <section class="learning-section">
-      <div class="learning-section-head">
-        <h3>Calendar</h3>
-        <button id="calendarMetricToggle" class="link-btn" type="button">$</button>
-      </div>
-      <div class="calendar-nav">
-        <button id="calendarPrevMonth" class="icon-btn" type="button" aria-label="Previous month">‹</button>
-        <span id="calendarMonthLabel" class="calendar-month-label"></span>
-        <button id="calendarNextMonth" class="icon-btn" type="button" aria-label="Next month">›</button>
-      </div>
-      <div class="calendar-weekday-row">
-        <span>S</span><span>M</span><span>T</span><span>W</span><span>T</span><span>F</span><span>S</span>
-      </div>
-      <div id="calendarGrid" class="calendar-grid"></div>
-    </section>
-
-    <!-- Performance graph -->
-    <section class="learning-section">
-      <div id="perfPeriodTabs" class="perf-period-tabs" role="group" aria-label="Performance period">
-        <button class="perf-period-btn is-active" data-period="week" type="button">Week</button>
-        <button class="perf-period-btn" data-period="month" type="button">Month</button>
-        <button class="perf-period-btn" data-period="year" type="button">Year</button>
-      </div>
-      <div id="perfPeriodLabel" class="perf-period-label"></div>
-      <div class="perf-stats-row">
-        <div class="perf-stat">
-          <div class="perf-stat-label">Profit</div>
-          <div id="perfProfit" class="perf-stat-value">—</div>
-        </div>
-        <div class="perf-stat">
-          <div class="perf-stat-label">ROI</div>
-          <div id="perfRoi" class="perf-stat-value">—</div>
-        </div>
-        <div class="perf-stat">
-          <div class="perf-stat-label">Record</div>
-          <div id="perfRecord" class="perf-stat-value">—</div>
-        </div>
-      </div>
-      <div id="perfGraph" class="perf-graph"></div>
-    </section>
-
-    <!-- Daily History -->
-    <section class="learning-section">
-      <div class="learning-section-head">
-        <h3>Daily History</h3>
-        <button id="checkResultsBtn" class="link-btn" type="button">Check Results</button>
-      </div>
-      <div id="dailyHistory" class="daily-history"></div>
-    </section>
-
-    <!-- By Confidence Level -->
-    <section class="learning-section">
-      <h3>Performance by Confidence</h3>
-      <div id="confidenceAnalysis" class="learning-table"></div>
-    </section>
-
-    <!-- By Sport -->
-    <section class="learning-section">
-      <h3>Performance by Sport</h3>
-      <div id="sportAnalysis" class="learning-table"></div>
-    </section>
-
-    <!-- Learning Recommendations -->
-    <section class="learning-section">
-      <h3>Tracking Insights</h3>
-      <div id="recommendations" class="learning-recs"></div>
-    </section>
-
     <!-- Server-Tracked: Full Slate / Pixel's Picks / Play of the Day -->
     <section class="learning-section">
       <h3>Tracked Picks <span class="stats-source">Server-tracked, generated automatically at 2am ET</span></h3>
       <p class="filter-hint">
-        A second, independent history from everything above, locked in by the
-        worker itself each day at 2am ET, whether or not anyone has the app
-        open, and never changed afterward. Every pick counts toward its
-        tracker's totals below, flagged or not (a flagged pick just means it
-        was a thin-day fallback, not that it's excluded). Flat 1-unit stake
-        per pick either way, no bankroll cap. The point is whether the picks
-        themselves are profitable.
+        Locked in by the worker itself each day at 2am ET, whether or not
+        anyone has the app open, and never changed afterward. Every pick
+        counts toward its tracker's totals below, flagged or not (a flagged
+        pick just means it was a thin-day fallback, not that it's excluded).
+        Flat 1-unit stake per pick either way, no bankroll cap. The point is
+        whether the picks themselves are profitable.
       </p>
       <div id="trackerTabs" class="perf-period-tabs" role="group" aria-label="Which tracker to show">
         <button class="perf-period-btn" data-tracker="fullslate" type="button">Full Slate</button>
@@ -684,10 +574,9 @@
       <button id="algoHealthResetBtn" class="action-btn" type="button">Reset Tuning to Defaults</button>
     </section>
 
-    <!-- Export / Reset -->
+    <!-- Reset -->
     <section class="learning-section">
-      <button id="exportDataBtn" class="action-btn">Export Pick History (CSV)</button>
-      <button id="archiveResetBtn" class="action-btn action-btn-danger">Archive &amp; Reset All Tracking</button>
+      <button id="archiveResetBtn" class="action-btn action-btn-danger">Reset All Tracking</button>
     </section>
   </div>
 </aside>

@@ -280,7 +280,7 @@ export function tennisInsights(data, subject, opponent, { now = Date.now(), surf
   if (daysIdle > 35) {
     bullets.push({
       tier: 'situational',
-      text: `${myName} has no recorded match since ${shortDate(lastMine[F.DAY])} (${daysIdle} days) — the form and ranking above predate that gap.`,
+      text: `${myName} has no recorded match since ${shortDate(lastMine[F.DAY])} (${daysIdle} days); the form and ranking above predate that gap.`,
     });
   }
 
@@ -290,7 +290,7 @@ export function tennisInsights(data, subject, opponent, { now = Date.now(), surf
   if (retirements) {
     bullets.push({
       tier: 'situational',
-      text: `${plural(retirements, 'match')} in their last ${Math.min(20, mine.length)} ended in a retirement or walkover — worth checking fitness news before betting.`,
+      text: `${plural(retirements, 'match')} in their last ${Math.min(20, mine.length)} ended in a retirement or walkover, worth checking fitness news before betting.`,
     });
   }
 
@@ -491,7 +491,7 @@ export function teamInsights(context, subject, { marketKey = 'h2h' } = {}) {
     bullets.push({
       tier: 'personnel',
       text: anyDraws
-        ? `Last 5 — ${myName} ${show(myTally)}.${theirTally ? ` ${theirName} ${show(theirTally)}.` : ''}`
+        ? `Last 5: ${myName} ${show(myTally)}.${theirTally ? ` ${theirName} ${show(theirTally)}.` : ''}`
         : `${myName} have won ${show(myTally)}.${theirTally ? ` ${theirName} ${show(theirTally)}.` : ''}`,
     });
   }
@@ -564,14 +564,14 @@ export function weatherInsights(weather) {
   if (weather.precipChance != null && weather.precipChance >= 30) {
     bullets.push({
       tier: 'environmental',
-      text: `${weather.precipChance}% chance of precipitation — worth checking closer to game time.`,
+      text: `${weather.precipChance}% chance of precipitation, worth checking closer to game time.`,
     });
   }
 
   if (weather.roof === 'retractable' && bullets.length) {
     bullets.push({
       tier: 'environmental',
-      text: `This venue has a retractable roof — whether it's actually open for this game is a team decision made day-of, not something this forecast can tell you.`,
+      text: `This venue has a retractable roof; whether it's actually open for this game is a team decision made day-of, not something this forecast can tell you.`,
     });
   }
 
@@ -717,7 +717,7 @@ export function mmaInsights(context, subjectName) {
     if (days > 365) {
       bullets.push({
         tier: 'situational',
-        text: `${me.name}'s last fight was ${last.date} (${Math.round(days / 30)} months ago) — ` +
+        text: `${me.name}'s last fight was ${last.date} (${Math.round(days / 30)} months ago); ` +
           `the record above predates that layoff.`,
       });
     }

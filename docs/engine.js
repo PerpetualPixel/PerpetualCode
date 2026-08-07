@@ -213,7 +213,7 @@ function describe(event, marketKey, outcome) {
     return `${name} ${point > 0 ? `+${point}` : point} (alt)`;
   }
   if (marketKey === 'totals') {
-    return `${name} ${point} — ${event.away_team} @ ${event.home_team}`;
+    return `${name} ${point} (${event.away_team} @ ${event.home_team})`;
   }
   return `${name}${point != null ? ` ${point}` : ''}`;
 }
@@ -409,13 +409,13 @@ export function explain(c) {
 
   const value =
     c.ev >= 0.005
-      ? `The market's own no-vig consensus makes this a ${(c.consensusProb * 100).toFixed(1)}% shot — fair value ${formatAmerican(c.fairAmerican)}. You're getting ${formatAmerican(c.american)} at ${c.book}, worth about ${evPct}% per dollar.`
-      : `Consensus fair value is ${formatAmerican(c.fairAmerican)} and the best price is ${formatAmerican(c.american)} at ${c.book} — priced close to fair (${evPct}% per dollar), so it's here on market quality rather than a pricing mistake.`;
+      ? `The market's own no-vig consensus makes this a ${(c.consensusProb * 100).toFixed(1)}% shot, fair value ${formatAmerican(c.fairAmerican)}. You're getting ${formatAmerican(c.american)} at ${c.book}, worth about ${evPct}% per dollar.`
+      : `Consensus fair value is ${formatAmerican(c.fairAmerican)} and the best price is ${formatAmerican(c.american)} at ${c.book}, priced close to fair (${evPct}% per dollar), so it's here on market quality rather than a pricing mistake.`;
 
   const context =
     c.disagreement < 0.015
       ? `${c.bookCount} books are on this exact number and the rest are tightly clustered (±${(c.disagreement * 100).toFixed(1)}%), which is what makes one book hanging a better price meaningful rather than noisy.`
-      : `${c.bookCount} books are on this number but they disagree by ±${(c.disagreement * 100).toFixed(1)}%, so the edge is real but softer — a smaller-stake spot.`;
+      : `${c.bookCount} books are on this number but they disagree by ±${(c.disagreement * 100).toFixed(1)}%, so the edge is real but softer, a smaller-stake spot.`;
 
   return [`${value} ${context}`];
 }
@@ -439,14 +439,14 @@ export function explainExtensive(c, { now = Date.now() } = {}) {
 
   bullets.push(
     c.ev >= 0.005
-      ? `No-vig consensus: ${(c.consensusProb * 100).toFixed(1)}% to win, which prices out to a fair value of ${formatAmerican(c.fairAmerican)}. The best available price is ${formatAmerican(c.american)} at ${c.book} — a gap worth about ${evPct}% of expected value per dollar staked.`
-      : `No-vig consensus: ${(c.consensusProb * 100).toFixed(1)}% to win, fair value ${formatAmerican(c.fairAmerican)}. The best price, ${formatAmerican(c.american)} at ${c.book}, sits close to that fair number (${evPct}% per dollar) — this pick is here on market quality and agreement, not a mispriced number.`,
+      ? `No-vig consensus: ${(c.consensusProb * 100).toFixed(1)}% to win, which prices out to a fair value of ${formatAmerican(c.fairAmerican)}. The best available price is ${formatAmerican(c.american)} at ${c.book}, a gap worth about ${evPct}% of expected value per dollar staked.`
+      : `No-vig consensus: ${(c.consensusProb * 100).toFixed(1)}% to win, fair value ${formatAmerican(c.fairAmerican)}. The best price, ${formatAmerican(c.american)} at ${c.book}, sits close to that fair number (${evPct}% per dollar); this pick is here on market quality and agreement, not a mispriced number.`,
   );
 
   bullets.push(
     c.disagreement < 0.015
-      ? `${c.bookCount} books quote this exact line, clustered within ±${(c.disagreement * 100).toFixed(1)}% of each other — a tight consensus, which is what makes the one book paying more than the rest meaningful instead of noise.`
-      : `${c.bookCount} books quote this line but disagree by ±${(c.disagreement * 100).toFixed(1)}%, a wider spread than a tight market shows — the edge is real but softer, and sized accordingly.`,
+      ? `${c.bookCount} books quote this exact line, clustered within ±${(c.disagreement * 100).toFixed(1)}% of each other, a tight consensus, which is what makes the one book paying more than the rest meaningful instead of noise.`
+      : `${c.bookCount} books quote this line but disagree by ±${(c.disagreement * 100).toFixed(1)}%, a wider spread than a tight market shows; the edge is real but softer, and sized accordingly.`,
   );
 
   if (c.shopGain > 0.001) {
@@ -457,8 +457,8 @@ export function explainExtensive(c, { now = Date.now() } = {}) {
 
   bullets.push(
     hoursStale < 1
-      ? `This price was last updated under an hour ago, ${hoursOut.toFixed(0)} hours before kickoff — a live, current number, not a stale one carried over from an earlier board.`
-      : `This price was last updated ${hoursStale.toFixed(0)} hours ago, ${hoursOut.toFixed(0)} hours before kickoff. ${hoursOut < 24 ? 'Still close enough to game time to trust.' : 'Worth a recheck closer to kickoff — lines move, and this one has room to before it does.'}`,
+      ? `This price was last updated under an hour ago, ${hoursOut.toFixed(0)} hours before kickoff, a live, current number, not a stale one carried over from an earlier board.`
+      : `This price was last updated ${hoursStale.toFixed(0)} hours ago, ${hoursOut.toFixed(0)} hours before kickoff. ${hoursOut < 24 ? 'Still close enough to game time to trust.' : 'Worth a recheck closer to kickoff; lines move, and this one has room to before it does.'}`,
   );
 
   return bullets;
@@ -604,7 +604,7 @@ function buildPick(anchor, pool, usedLegs = []) {
     american: paired.combined.american,
     score: (anchor.score + paired.partner.score) / 2,
     // Why the pairing exists, in the spec's own terms.
-    pairReason: `${formatAmerican(anchor.american)} is shorter than -150, so it's paired to bring the ticket to ${formatAmerican(paired.combined.american)} — closer to even money.`,
+    pairReason: `${formatAmerican(anchor.american)} is shorter than -150, so it's paired to bring the ticket to ${formatAmerican(paired.combined.american)}, closer to even money.`,
   };
 }
 

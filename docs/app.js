@@ -10,21 +10,7 @@ import { CONFIG } from './config.js';
 import { DEMO_EVENTS } from './demo.js';
 import { teamLogoUrl } from './team-logos.js';
 import { BUILD_INFO } from './version.js';
-import {
-  initializePickDatabase,
-  logPick,
-  logResult,
-  identifyPatterns,
-  exportData,
-  getPendingPicks,
-  getAllPicks,
-  summarizePicks,
-  groupPicksByDay,
-  gradePick,
-  clearAllPicks,
-  BANKROLL_INITIAL,
-  FLAT_UNIT_STAKE,
-} from './learning.js';
+import { summarizePicks, gradePick } from './learning.js';
 import {
   RULES,
   SPORTSBOOKS,
@@ -71,8 +57,6 @@ const SLATE_LEAGUE_KEY = 'pixelpick.slateLeague.v2';
 const PIXEL_SORT_KEY = 'pixelpick.sort.v1';
 const HISTORY_KEY = 'pixelpick.history.v2';
 const DAY_FILTER_KEY = 'pixelpick.dayFilter.v1';
-const CALENDAR_METRIC_KEY = 'pixelpick.calendarMetric.v1';
-const TRACKER_SPORT_FILTER_KEY = 'pixelpick.trackerSportFilter.v1';
 // The Tracking Dashboard's user-dragged width in px, or null for its default
 // (fills the viewport). Only ever set by actually dragging the resize
 // handle — there's no other UI that writes to this.
@@ -609,29 +593,6 @@ const el = {
   learningPanel: document.getElementById('learningPanel'),
   learningPanelResize: document.getElementById('learningPanelResize'),
   learningPanelClose: document.getElementById('learningPanelClose'),
-  totalPicks: document.getElementById('totalPicks'),
-  gradedPicks: document.getElementById('gradedPicks'),
-  winRate: document.getElementById('winRate'),
-  avgRoi: document.getElementById('avgRoi'),
-  currentBankroll: document.getElementById('currentBankroll'),
-  netProfit: document.getElementById('netProfit'),
-  trackerSportFilter: document.getElementById('trackerSportFilter'),
-  calendarMonthLabel: document.getElementById('calendarMonthLabel'),
-  calendarPrevMonth: document.getElementById('calendarPrevMonth'),
-  calendarNextMonth: document.getElementById('calendarNextMonth'),
-  calendarMetricToggle: document.getElementById('calendarMetricToggle'),
-  calendarGrid: document.getElementById('calendarGrid'),
-  perfPeriodTabs: document.getElementById('perfPeriodTabs'),
-  perfPeriodLabel: document.getElementById('perfPeriodLabel'),
-  perfProfit: document.getElementById('perfProfit'),
-  perfRoi: document.getElementById('perfRoi'),
-  perfRecord: document.getElementById('perfRecord'),
-  perfGraph: document.getElementById('perfGraph'),
-  dailyHistory: document.getElementById('dailyHistory'),
-  checkResultsBtn: document.getElementById('checkResultsBtn'),
-  confidenceAnalysis: document.getElementById('confidenceAnalysis'),
-  sportAnalysis: document.getElementById('sportAnalysis'),
-  recommendations: document.getElementById('recommendations'),
   trackerTabs: document.getElementById('trackerTabs'),
   top5TotalPicks: document.getElementById('top5TotalPicks'),
   top5GradedPicks: document.getElementById('top5GradedPicks'),
@@ -645,7 +606,6 @@ const el = {
   algoHealthPaused: document.getElementById('algoHealthPaused'),
   algoHealthLog: document.getElementById('algoHealthLog'),
   algoHealthResetBtn: document.getElementById('algoHealthResetBtn'),
-  exportDataBtn: document.getElementById('exportDataBtn'),
   archiveResetBtn: document.getElementById('archiveResetBtn'),
 };
 
@@ -671,17 +631,6 @@ const state = {
   dayFilter: ['today', 'tomorrow'].includes(loadJSON(DAY_FILTER_KEY, 'today'))
     ? loadJSON(DAY_FILTER_KEY, 'today')
     : 'today',
-  // Learning dashboard's calendar/graph — which month is on screen (also
-  // doubles as the range for the Month/Year performance-panel tabs, so
-  // paging the calendar moves the graph with it), which unit its cells and
-  // graph are shown in, and which sports (by League Group label, e.g. 'ATP')
-  // are excluded from every figure in the panel. Empty exclusion set means
-  // no filter — everything tracked counts, which is the default.
-  calendarMonth: new Date(new Date().getFullYear(), new Date().getMonth(), 1),
-  calendarMetric: ['dollars', 'units', 'roi'].includes(loadJSON(CALENDAR_METRIC_KEY, 'dollars'))
-    ? loadJSON(CALENDAR_METRIC_KEY, 'dollars')
-    : 'dollars',
-  perfPeriod: 'week',
   // Which of the three server-side trackers the Tracking Dashboard's
   // Full Slate / Pixel's Picks / Play of the Day toggle currently shows —
   // Calibration & Audit and Algorithm Health stay Pixel's-Picks-scoped
@@ -690,7 +639,6 @@ const state = {
   // All three trackers' full history, fetched once per dashboard open and
   // re-rendered from on toggle — not re-fetched per click.
   trackerPicks: { fullslate: [], top5: [], potd: [] },
-  trackerExcludedSports: new Set(loadJSON(TRACKER_SPORT_FILTER_KEY, [])),
   // Today's server-side tracked Top 5 pick ids (see worker/src/tracking.js),
   // Full Slate's live/final game state — eventId -> the raw /scores event
   // for it (has `completed` and `scores`). Refreshed at most once a minute
@@ -3491,30 +3439,7 @@ function renderPixelPicksBoard() {
   renderSlate({ picks: sortPicks(picks, state.pixelSort), poolSize: picks.length });
 }
 
-/** The shape trackNewPixelPicks()/logPick() expect — a minimal single-leg pick built from a stored tracked record rather than a live candidate. */
-function pixelRecordToTrackedPick(record) {
-  return {
-    score: record.score,
-    legs: [{
-      eventId: record.eventId,
-      sportKey: record.sportKey,
-      away: record.away,
-      home: record.home,
-      selection: record.selection,
-      outcomeName: record.outcomeName,
-      point: record.point,
-      marketKey: record.marketKey,
-      american: record.american,
-      decimal: record.decimal,
-      book: record.book,
-      consensusProb: record.consensusProb,
-      commenceMs: record.commenceMs,
-    }],
-  };
-}
-
 let pixelPicksRecords = [];
-let lastTrackedPixelPicksIdKey = null;
 
 /**
  * Pixel's Picks: the worker's own locked, server-generated set for today
@@ -3546,23 +3471,6 @@ async function loadPixelPicks() {
   }
 
   renderPixelPicksBoard();
-
-  // logPick()'s own stablePickId dedup already makes a repeat call with the
-  // same locked set a safe no-op, but skip it outright once today's set is
-  // already the last one this device tried to log — no reason to touch
-  // IndexedDB on every reload for a set that hasn't changed. Only the clean
-  // (meetsStandard) picks get tracked, per the sharp-standard rule the
-  // Tracking Dashboard's win-rate math also enforces. Tracked separately
-  // from state.history (a differently-shaped, persisted array for the
-  // History panel) rather than reusing it, so this can't corrupt that
-  // panel's own entry shape.
-  const idKey = pixelPicksRecords.map((r) => r.pickId).sort().join(',');
-  if (lastTrackedPixelPicksIdKey !== idKey) {
-    const trackable = pixelPicksRecords.filter((r) => r.meetsStandard !== false);
-    trackNewPixelPicks(trackable.map(pixelRecordToTrackedPick))
-      .then(() => { lastTrackedPixelPicksIdKey = idKey; })
-      .catch((err) => console.error('Pick tracking failed:', err));
-  }
 }
 
 // A delegated listener per container covers every "?" button inside it,
@@ -3722,52 +3630,6 @@ if (learningToggle) {
   learningToggle.addEventListener('click', () => openLearningDashboard());
 }
 
-el.checkResultsBtn.addEventListener('click', () => runResultCheck());
-
-el.trackerSportFilter.addEventListener('change', (event) => {
-  const box = event.target.closest('[data-tracker-sport]');
-  if (!box) return;
-  if (box.checked) state.trackerExcludedSports.delete(box.dataset.trackerSport);
-  else state.trackerExcludedSports.add(box.dataset.trackerSport);
-  saveJSON(TRACKER_SPORT_FILTER_KEY, [...state.trackerExcludedSports]);
-  renderLearningDashboard();
-});
-
-el.calendarPrevMonth.addEventListener('click', () => {
-  state.calendarMonth = new Date(state.calendarMonth.getFullYear(), state.calendarMonth.getMonth() - 1, 1);
-  renderLearningDashboard();
-});
-
-el.calendarNextMonth.addEventListener('click', () => {
-  state.calendarMonth = new Date(state.calendarMonth.getFullYear(), state.calendarMonth.getMonth() + 1, 1);
-  renderLearningDashboard();
-});
-
-el.calendarMetricToggle.addEventListener('click', () => {
-  const metrics = ['dollars', 'units', 'roi'];
-  state.calendarMetric = metrics[(metrics.indexOf(state.calendarMetric) + 1) % metrics.length];
-  saveJSON(CALENDAR_METRIC_KEY, state.calendarMetric);
-  renderLearningDashboard();
-});
-
-// Tapping a calendar day jumps to and expands that day's entry in Daily History below.
-el.calendarGrid.addEventListener('click', (event) => {
-  const cell = event.target.closest('[data-date]');
-  if (!cell) return;
-  const block = el.dailyHistory.querySelector(`[data-day-date="${cell.dataset.date}"]`);
-  if (!block) return;
-  block.open = true;
-  block.scrollIntoView({ behavior: 'smooth', block: 'center' });
-});
-
-el.perfPeriodTabs.addEventListener('click', (event) => {
-  const btn = event.target.closest('[data-period]');
-  if (!btn) return;
-  state.perfPeriod = btn.dataset.period;
-  [...el.perfPeriodTabs.children].forEach((b) => b.classList.toggle('is-active', b === btn));
-  renderLearningDashboard();
-});
-
 el.trackerTabs?.addEventListener('click', (event) => {
   const btn = event.target.closest('[data-tracker]');
   if (!btn) return;
@@ -3778,57 +3640,26 @@ el.trackerTabs?.addEventListener('click', (event) => {
   renderTrackerSection();
 });
 
-el.exportDataBtn.addEventListener('click', async () => {
-  const csv = await exportData(new Date(0), new Date());
-  const blob = new Blob([csv], { type: 'text/csv' });
-  const url = URL.createObjectURL(blob);
-  const a = document.createElement('a');
-  a.href = url;
-  a.download = `pixel-pick-history-${new Date().toISOString().split('T')[0]}.csv`;
-  a.click();
-  URL.revokeObjectURL(url);
-});
-
 /**
- * Explicit, user-triggered clean-slate action: archives (downloads a CSV of)
- * everything tracked so far, then clears this device's local history and
- * asks the worker to clear its own server-side Top 5 history too — both
- * tracking systems, one button, matching what was actually asked for rather
- * than only resetting one of the two independent histories this app now
- * keeps. Never runs on its own; only ever this click.
+ * Explicit, user-triggered clean-slate action: asks the worker to clear its
+ * own server-side Full Slate and Pixel's Picks tracking. Never runs on its
+ * own; only ever this click.
  */
 el.archiveResetBtn.addEventListener('click', async () => {
   const ok = confirm(
-    'This downloads a CSV of everything tracked so far, then permanently clears it: this device\'s local history and the worker\'s own Pixel\'s Picks and Full Slate tracking (Play of the Day\'s history is kept separately and isn\'t affected). This can\'t be undone. Continue?',
+    'This permanently clears the worker\'s own Pixel\'s Picks and Full Slate tracking (Play of the Day\'s history is kept separately and isn\'t affected). This can\'t be undone. Continue?',
   );
   if (!ok) return;
+  if (!CONFIG.WORKER_URL) return;
 
   el.archiveResetBtn.disabled = true;
-  el.archiveResetBtn.textContent = 'Archiving…';
+  el.archiveResetBtn.textContent = 'Resetting…';
   try {
-    const csv = await exportData(new Date(0), new Date());
-    const blob = new Blob([csv], { type: 'text/csv' });
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement('a');
-    a.href = url;
-    a.download = `pixel-pick-archive-${new Date().toISOString().split('T')[0]}.csv`;
-    a.click();
-    URL.revokeObjectURL(url);
-
-    await clearAllPicks();
-
-    if (CONFIG.WORKER_URL) {
-      try {
-        await fetch(new URL('/top5-reset', CONFIG.WORKER_URL), { method: 'POST' });
-      } catch {
-        /* Server-side reset is best-effort — the local reset above already succeeded either way. */
-      }
-    }
-
+    await fetch(new URL('/top5-reset', CONFIG.WORKER_URL), { method: 'POST' });
     await renderLearningDashboard();
   } finally {
     el.archiveResetBtn.disabled = false;
-    el.archiveResetBtn.textContent = 'Archive & Reset All Tracking';
+    el.archiveResetBtn.textContent = 'Reset All Tracking';
   }
 });
 
@@ -4303,75 +4134,8 @@ el.tabParlay.addEventListener('click', () => setActiveTab('parlay'));
 el.tabPotd.addEventListener('click', () => setActiveTab('potd'));
 
 /* ---------------------------------------------------------------- */
-/* Learning Dashboard                                                */
+/* Tracking Dashboard                                                */
 /* ---------------------------------------------------------------- */
-
-/**
- * Every Pixel Picks Generate tap logs its 8 picks here automatically — flat
- * $20 (1 unit) each against the $1000 simulated bankroll, regardless of
- * odds, exactly as flagged and unflagged locks alike. logPick() itself is
- * the dedup boundary: a pick already tracked today (same game, market, side)
- * is silently skipped, so tapping Generate again only ever adds picks that
- * weren't on an earlier board today.
- */
-async function trackNewPixelPicks(picks) {
-  let added = 0;
-  for (const pick of picks) {
-    const leg = pick.legs[0];
-    const recorded = await logPick({
-      eventId: leg.eventId,
-      sportKey: leg.sportKey,
-      away: leg.away,
-      home: leg.home,
-      side: leg.selection,
-      outcomeName: leg.outcomeName,
-      point: leg.point,
-      marketKey: leg.marketKey,
-      american: leg.american,
-      decimal: leg.decimal,
-      book: leg.book,
-      score: pick.score,
-      consensusProb: leg.consensusProb,
-      ev: leg.ev,
-      kelly: leg.kelly,
-      commenceMs: leg.commenceMs,
-    });
-    if (recorded) added++;
-  }
-  if (added && !el.learningPanel.hidden) await renderLearningDashboard();
-  return added;
-}
-
-/**
- * Fetch scores for every sport with a pending tracked pick and grade
- * whichever ones are now complete. Safe to call repeatedly — a graded pick's
- * status is no longer 'pending', so it just drops out of the next pass.
- */
-async function checkPendingResults() {
-  const pending = await getPendingPicks();
-  if (!pending.length || !CONFIG.WORKER_URL) return { checked: pending.length, graded: 0 };
-
-  const sportKeys = [...new Set(pending.map((p) => p.sport))];
-  let scoreEvents = [];
-  try {
-    const url = new URL('/scores', CONFIG.WORKER_URL);
-    url.searchParams.set('sports', sportKeys.join(','));
-    const res = await fetch(url, { headers: { Accept: 'application/json' } });
-    if (res.ok) scoreEvents = (await res.json()).events ?? [];
-  } catch (err) {
-    console.error('Score fetch failed:', err);
-  }
-
-  const byEventId = new Map(scoreEvents.map((e) => [e.id, e]));
-  let graded = 0;
-  for (const pick of pending) {
-    const outcome = gradePick(pick, byEventId.get(pick.eventId));
-    if (!outcome) continue;
-    await logResult(pick.pickId, outcome.won, outcome.payout);
-    graded++;
-  }
-  return { checked: pending.length, graded };
-}
 
 function formatSignedMoney(amount) {
   const sign = amount > 0 ? '+' : amount < 0 ? '−' : '';
@@ -4381,211 +4145,6 @@ function formatSignedMoney(amount) {
 function formatSignedPct(pct) {
   const sign = pct > 0 ? '+' : pct < 0 ? '−' : '';
   return `${sign}${Math.abs(pct).toFixed(1)}%`;
-}
-
-/** Zero-padded local YYYY-MM-DD — matches stablePickId's date component exactly (see learning.js). */
-function ymd(year, month, day) {
-  return `${year}-${String(month + 1).padStart(2, '0')}-${String(day).padStart(2, '0')}`;
-}
-
-/** Every tracked pick, minus whatever sports are unchecked in the tracker's sport filter. */
-async function trackerFilteredPicks() {
-  const all = await getAllPicks();
-  if (!state.trackerExcludedSports.size) return all;
-  return all.filter((p) => !state.trackerExcludedSports.has(sportGroupLabel(p.sport)));
-}
-
-/** A day's net/units/ROI in the calendar's current unit, or null if nothing graded that day. */
-function metricValueFor(day, metric) {
-  if (!day || !day.graded) return null;
-  if (metric === 'units') return day.net / FLAT_UNIT_STAKE;
-  if (metric === 'roi') return day.roi;
-  return day.net;
-}
-
-function formatMetricValue(value, metric) {
-  if (value == null) return '';
-  const sign = value > 0 ? '+' : value < 0 ? '−' : '';
-  const abs = Math.abs(value);
-  if (metric === 'units') return `${sign}${abs.toFixed(1)}u`;
-  if (metric === 'roi') return `${sign}${abs.toFixed(0)}%`;
-  return `${sign}$${abs.toFixed(0)}`;
-}
-
-/** One collapsible day: header shows record/ROI/net at a glance, body lists every pick graded or not. */
-function renderDayBlock(day) {
-  const dateLabel = new Date(`${day.date}T00:00:00`).toLocaleDateString(undefined, {
-    weekday: 'short', month: 'short', day: 'numeric',
-  });
-  const record = `${day.wins}-${day.losses}` + (day.pending ? ` · ${day.pending} pending` : '');
-  const trendClass = day.net > 0 ? 'positive' : day.net < 0 ? 'negative' : '';
-
-  const rows = day.picks.map((p) => {
-    const statusClass = p.status === 'won' ? 'status-won' : p.status === 'lost' ? 'status-lost' : 'status-pending';
-    const statusLabel = p.status === 'won' ? 'WIN' : p.status === 'lost' ? 'LOSS' : 'PENDING';
-    const payoutLabel = p.result ? formatSignedMoney(p.result.payout) : '—';
-    return `
-      <div class="day-pick-row ${statusClass}">
-        <span class="pick-matchup">${esc(p.team)}</span>
-        <span class="pick-side">${esc(p.side)} (${esc(formatAmerican(p.american))})</span>
-        <span class="pick-status">${statusLabel}</span>
-        <span class="pick-payout">${esc(payoutLabel)}</span>
-      </div>`;
-  }).join('');
-
-  return `
-    <details class="day-block" data-day-date="${esc(day.date)}">
-      <summary>
-        <span class="day-date">${esc(dateLabel)}</span>
-        <span class="day-record">${esc(record)}</span>
-        <span class="day-roi ${trendClass}">${day.graded ? esc(formatSignedPct(day.roi)) : '—'}</span>
-        <span class="day-net ${trendClass}">${day.graded ? esc(formatSignedMoney(day.net)) : '—'}</span>
-      </summary>
-      <div class="day-picks">${rows}</div>
-    </details>`;
-}
-
-/** Sport-filter checkboxes — one per League Group the app tracks picks for, all checked by default. Static, not derived from pick history, so a sport with zero picks so far still has a filter to toggle once it does. */
-function renderSportFilter() {
-  const sports = LEAGUE_GROUPS.map((g) => g.label).sort();
-
-  el.trackerSportFilter.innerHTML = sports
-    .map((sport) => {
-      const checked = !state.trackerExcludedSports.has(sport) ? 'checked' : '';
-      return `
-        <div class="filter-checkbox">
-          <input type="checkbox" id="tracker-sport-${esc(sport)}" data-tracker-sport="${esc(sport)}" ${checked}>
-          <label for="tracker-sport-${esc(sport)}">${esc(sport)}</label>
-        </div>`;
-    })
-    .join('');
-}
-
-/** Calendar grid for state.calendarMonth, colored/valued by state.calendarMetric, from the filtered picks pool. */
-function renderCalendar(filteredPicks) {
-  const dayList = groupPicksByDay(filteredPicks);
-  const byDate = new Map(dayList.map((d) => [d.date, d]));
-
-  const year = state.calendarMonth.getFullYear();
-  const month = state.calendarMonth.getMonth();
-  el.calendarMonthLabel.textContent = state.calendarMonth.toLocaleDateString(undefined, { month: 'long', year: 'numeric' });
-  el.calendarMetricToggle.textContent = { dollars: '$', units: 'Units', roi: 'ROI %' }[state.calendarMetric];
-
-  const firstWeekday = new Date(year, month, 1).getDay();
-  const daysInMonth = new Date(year, month + 1, 0).getDate();
-  const now = new Date();
-  const todayKey = ymd(now.getFullYear(), now.getMonth(), now.getDate());
-
-  let maxAbs = 1;
-  for (let d = 1; d <= daysInMonth; d++) {
-    const day = byDate.get(ymd(year, month, d));
-    if (day?.graded) maxAbs = Math.max(maxAbs, Math.abs(day.net));
-  }
-
-  let cells = '';
-  for (let i = 0; i < firstWeekday; i++) cells += `<div class="calendar-cell is-empty"></div>`;
-
-  for (let d = 1; d <= daysInMonth; d++) {
-    const key = ymd(year, month, d);
-    const day = byDate.get(key);
-    const value = metricValueFor(day, state.calendarMetric);
-    let cls = 'calendar-cell';
-    let style = '';
-    if (value != null) {
-      const alpha = (0.28 + 0.6 * (Math.abs(day.net) / maxAbs)).toFixed(2);
-      cls += value > 0 ? ' is-positive' : value < 0 ? ' is-negative' : ' is-flat';
-      const rgb = value > 0 ? '16,185,129' : value < 0 ? '239,68,68' : '148,163,184';
-      style = ` style="background: rgba(${rgb}, ${alpha})"`;
-    }
-    if (key === todayKey) cls += ' is-today';
-    const valueLabel = value != null
-      ? formatMetricValue(value, state.calendarMetric)
-      : (day?.pending ? `${day.pending}p` : '');
-    const title = day ? `${day.wins}-${day.losses}${day.pending ? ` · ${day.pending} pending` : ''}` : 'No picks';
-    cells += `
-      <div class="${cls}"${style} data-date="${esc(key)}" title="${esc(title)}">
-        <span class="calendar-daynum">${d}</span>
-        <span class="calendar-value">${esc(valueLabel)}</span>
-      </div>`;
-  }
-
-  el.calendarGrid.innerHTML = cells;
-}
-
-/** Date bounds + label for the Week/Month/Year performance tabs. Month/Year both key off the calendar's own month/year, so paging the calendar moves them too. */
-function periodRange(period) {
-  if (period === 'week') {
-    const now = new Date();
-    const end = new Date(now.getFullYear(), now.getMonth(), now.getDate());
-    const start = new Date(end);
-    start.setDate(start.getDate() - 6);
-    const fmt = (d) => d.toLocaleDateString(undefined, { month: 'short', day: 'numeric' });
-    return { start, end, label: `${fmt(start)} – ${fmt(end)}` };
-  }
-  if (period === 'year') {
-    const year = state.calendarMonth.getFullYear();
-    return { start: new Date(year, 0, 1), end: new Date(year, 11, 31), label: String(year) };
-  }
-  const start = new Date(state.calendarMonth.getFullYear(), state.calendarMonth.getMonth(), 1);
-  const end = new Date(state.calendarMonth.getFullYear(), state.calendarMonth.getMonth() + 1, 0);
-  return { start, end, label: state.calendarMonth.toLocaleDateString(undefined, { month: 'long', year: 'numeric' }) };
-}
-
-/** Profit/ROI/Record stat row plus the cumulative-net line graph for the selected Week/Month/Year period. */
-function renderPerformancePanel(filteredPicks) {
-  const { start, end, label } = periodRange(state.perfPeriod);
-  const startKey = ymd(start.getFullYear(), start.getMonth(), start.getDate());
-  const endKey = ymd(end.getFullYear(), end.getMonth(), end.getDate());
-
-  const inRange = groupPicksByDay(filteredPicks)
-    .filter((d) => d.date >= startKey && d.date <= endKey)
-    .sort((a, b) => a.date.localeCompare(b.date));
-
-  const summary = summarizePicks(inRange.flatMap((d) => d.picks));
-
-  el.perfPeriodLabel.textContent = label;
-  el.perfProfit.textContent = summary.graded ? formatSignedMoney(summary.net) : '—';
-  el.perfProfit.className = 'perf-stat-value' + (summary.net > 0 ? ' positive' : summary.net < 0 ? ' negative' : '');
-  el.perfRoi.textContent = summary.graded ? formatSignedPct(summary.roi) : '—';
-  el.perfRoi.className = 'perf-stat-value' + (summary.roi > 0 ? ' positive' : summary.roi < 0 ? ' negative' : '');
-  el.perfRecord.textContent = summary.graded ? `${summary.wins}-${summary.losses}` : '—';
-
-  renderPerfGraph(inRange);
-}
-
-/** A hand-rolled SVG line of cumulative net (in $ or units) across a day-summary list, day by day. */
-function renderPerfGraph(dayList) {
-  const graded = dayList.filter((d) => d.graded);
-  if (!graded.length) {
-    el.perfGraph.innerHTML = `<p class="empty">No graded picks in this period yet.</p>`;
-    return;
-  }
-
-  const unitDivisor = state.calendarMetric === 'units' ? FLAT_UNIT_STAKE : 1;
-  let cumulative = 0;
-  const points = graded.map((d) => {
-    cumulative += d.net;
-    return cumulative / unitDivisor;
-  });
-
-  const width = 300, height = 120, pad = 8;
-  const allValues = [0, ...points];
-  const minV = Math.min(...allValues), maxV = Math.max(...allValues);
-  const range = maxV - minV || 1;
-  const stepX = points.length > 1 ? (width - pad * 2) / (points.length - 1) : 0;
-  const toY = (v) => height - pad - ((v - minV) / range) * (height - pad * 2);
-
-  const path = points
-    .map((v, i) => `${i === 0 ? 'M' : 'L'}${(pad + i * stepX).toFixed(1)},${toY(v).toFixed(1)}`)
-    .join(' ');
-  const lineColor = points[points.length - 1] >= 0 ? 'var(--success)' : 'var(--danger)';
-  const zeroY = toY(0).toFixed(1);
-
-  el.perfGraph.innerHTML = `
-    <svg viewBox="0 0 ${width} ${height}" class="perf-graph-svg" preserveAspectRatio="none">
-      <line x1="0" y1="${zeroY}" x2="${width}" y2="${zeroY}" class="perf-graph-zero" />
-      <path d="${path}" fill="none" stroke="${lineColor}" stroke-width="2" />
-    </svg>`;
 }
 
 /** Every pick the worker's own 2am batch has ever tracked, across every day still in KV (up to 90). */
@@ -4727,9 +4286,7 @@ async function loadTrackerHistories() {
 /**
  * Renders whichever of the three trackers state.activeTracker names into
  * the dashboard's one shared set of metric cards + history container —
- * three parallel DOM sections were considered and rejected in favor of this
- * (matches how the existing Week/Month/Year performance toggle already
- * re-renders one shared #perfGraph in place rather than keeping three).
+ * three parallel DOM sections were considered and rejected in favor of this.
  *
  * Every pick counts toward its tracker's own totals, flagged or not — this
  * used to exclude Pixel's Picks' flagged (guaranteeCount() fallback)
@@ -4849,12 +4406,12 @@ function renderCalibrationReport(picks) {
 const ALGO_HEALTH_MARKET_LABELS = { h2h: 'Moneyline', spreads: 'Spread', totals: 'Total', alternate_spreads: 'Alt Spread' };
 
 /** "sportKey|marketKey" (worker/src/algo-health.js's segment key, sport half already
- * normalized — one virtual ATP/WTA segment regardless of which tournament) into a
- * readable label, e.g. "MMA — Moneyline". */
+ * normalized, one virtual ATP/WTA segment regardless of which tournament) into a
+ * readable label, e.g. "MMA: Moneyline". */
 function algoSegmentLabel(key) {
   const [sportKey, marketKey] = String(key ?? '').split('|');
   const sportLabel = sportKey === 'tennis_atp' ? 'ATP' : sportKey === 'tennis_wta' ? 'WTA' : sportGroupLabel(sportKey ?? '');
-  return `${sportLabel} — ${ALGO_HEALTH_MARKET_LABELS[marketKey] ?? marketKey}`;
+  return `${sportLabel}: ${ALGO_HEALTH_MARKET_LABELS[marketKey] ?? marketKey}`;
 }
 
 /** Current state of the weekly algorithm health review (see worker/src/algo-health.js). */
@@ -4930,10 +4487,10 @@ async function renderAlgoHealthSection() {
   el.algoHealthLog.innerHTML = logEntries.length
     ? logEntries.map((e) => {
         const meta = ALGO_HEALTH_ACTION_LABELS[e.action] ?? { label: e.action, cls: '' };
-        const segmentPart = e.segment ? `${esc(algoSegmentLabel(e.segment))} — ` : '';
+        const segmentPart = e.segment ? `${esc(algoSegmentLabel(e.segment))}: ` : '';
         return `<div class="rec-item ${meta.cls}"><strong>${esc(meta.label)}</strong> (${esc(e.week)}): ${segmentPart}${esc(e.reason ?? '')}</div>`;
       }).join('')
-    : `<div class="rec-item">No actions or proposals yet — the first weekly review runs the next Monday 7am ET after enough graded history accumulates.</div>`;
+    : `<div class="rec-item">No actions or proposals yet. The first weekly review runs the next Monday 7am ET after enough graded history accumulates.</div>`;
 }
 
 document.body.addEventListener('click', async (event) => {
@@ -4966,62 +4523,22 @@ el.algoHealthResetBtn?.addEventListener('click', async () => {
   }
 });
 
+/**
+ * Everything the Tracking Dashboard shows: the three server-tracked
+ * trackers (Full Slate / Pixel's Picks / Play of the Day), Calibration &
+ * Audit, and Algorithm Health. There used to also be a first, client-side
+ * IndexedDB-backed "Overall Performance" section here (Calendar, a Week/
+ * Month/Year graph, Confidence/Sport breakdowns) that mirrored a subset of
+ * Pixel's Picks into local storage with its own $20/$1000-bankroll
+ * accounting, a second, independent set of numbers for the same concept,
+ * built before Pixel's Picks moved fully server-side. It was removed: it
+ * disagreed with the server-tracked numbers below (it excluded flagged
+ * picks; the server tracker counts them, per the sharp-standard rule) and
+ * its data reset on every cleared browser/new device while the server
+ * data didn't. The server-tracked section is now the single source of
+ * truth for pick performance.
+ */
 async function renderLearningDashboard() {
-  const allPicks = await getAllPicks();
-  const filteredPicks = allPicks.filter((p) => !state.trackerExcludedSports.has(sportGroupLabel(p.sport)));
-  const overall = summarizePicks(filteredPicks);
-  const winRate = overall.graded ? (overall.wins / overall.graded) * 100 : 0;
-  const bankroll = BANKROLL_INITIAL + overall.net;
-  const days = groupPicksByDay(filteredPicks);
-  const patterns = await identifyPatterns(new Date(0), new Date());
-
-  el.totalPicks.textContent = overall.total;
-  el.gradedPicks.textContent = overall.graded;
-  el.winRate.textContent = overall.graded ? winRate.toFixed(1) + '%' : '—';
-  el.avgRoi.textContent = overall.graded ? formatSignedPct(overall.roi) : '—';
-  el.currentBankroll.textContent = '$' + bankroll.toFixed(0);
-  el.netProfit.textContent = overall.graded ? formatSignedMoney(overall.net) : '—';
-
-  renderSportFilter();
-  renderCalendar(filteredPicks);
-  renderPerformancePanel(filteredPicks);
-
-  el.dailyHistory.innerHTML = days.length
-    ? days.map(renderDayBlock).join('')
-    : `<p class="empty">No picks tracked yet — tap Generate on Pixel Picks.</p>`;
-
-  const emptyBreakdown = `<p class="empty">Not enough graded picks yet.</p>`;
-
-  if (patterns?.byConfidence && Object.keys(patterns.byConfidence).length) {
-    el.confidenceAnalysis.innerHTML = Object.entries(patterns.byConfidence)
-      .map(([level, data]) => `
-        <div class="learning-table-row">
-          <div class="label">${esc(level)} (${esc(data.range)})</div>
-          <div class="stat">${data.count}</div>
-          <div class="stat win-rate">${data.winRate.toFixed(1)}%</div>
-          <div class="stat roi">${data.avgRoi.toFixed(2)}%</div>
-        </div>`)
-      .join('');
-  } else {
-    el.confidenceAnalysis.innerHTML = emptyBreakdown;
-  }
-
-  if (patterns?.bySport && Object.keys(patterns.bySport).length) {
-    el.sportAnalysis.innerHTML = Object.entries(patterns.bySport)
-      .map(([sport, data]) => `
-        <div class="learning-table-row">
-          <div class="label">${esc(sport)}</div>
-          <div class="stat">${data.count}</div>
-          <div class="stat win-rate">${data.winRate.toFixed(1)}%</div>
-          <div class="stat roi">${data.avgRoi.toFixed(2)}%</div>
-        </div>`)
-      .join('');
-  } else {
-    el.sportAnalysis.innerHTML = emptyBreakdown;
-  }
-
-  el.recommendations.innerHTML = `<div class="rec-item">Every Pixel Picks board tracks automatically — $20/pick against the $1000 simulated bankroll. Tap "Check Results" any time to grade whatever's finished.</div>`;
-
   const top5Picks = await loadTrackerHistories();
   renderCalibrationReport(top5Picks);
   await renderAlgoHealthSection();
@@ -5104,25 +4621,11 @@ function initLearningPanelResize() {
   });
 }
 
-/** Renders from whatever's cached first (instant), then refreshes with any newly-graded results. */
 async function openLearningDashboard() {
   el.scrim.hidden = false;
   el.learningPanel.hidden = false;
   applyLearningPanelWidth();
   await renderLearningDashboard();
-  await runResultCheck();
-}
-
-async function runResultCheck() {
-  el.checkResultsBtn.disabled = true;
-  el.checkResultsBtn.textContent = 'Checking…';
-  try {
-    await checkPendingResults();
-    await renderLearningDashboard();
-  } finally {
-    el.checkResultsBtn.textContent = 'Check Results';
-    el.checkResultsBtn.disabled = false;
-  }
 }
 
 /* ---------------------------------------------------------------- */
@@ -5131,13 +4634,6 @@ async function runResultCheck() {
 
 (async function init() {
   if (!checkAuth()) return;
-
-  // Initialize pick database for learning system
-  try {
-    await initializePickDatabase();
-  } catch (err) {
-    console.error('Failed to initialize pick database:', err);
-  }
 
   el.logoutBtn.hidden = !(CONFIG.REQUIRE_AUTH && getToken());
   el.pixelSort.value = state.pixelSort;
@@ -5153,8 +4649,8 @@ async function runResultCheck() {
   await loadCatalogue();
   await refreshAllLeagues();
   el.slateStatus.textContent = state.rawEvents.length
-    ? `${state.rawEvents.length} games loaded across every league — pick one below.`
-    : 'Odds feed unavailable right now — try Refresh slate in a moment.';
+    ? `${state.rawEvents.length} games loaded across every league, pick one below.`
+    : 'Odds feed unavailable right now, try Refresh slate in a moment.';
 
   renderSlateLeagueOptions();
   renderFullSlate();
