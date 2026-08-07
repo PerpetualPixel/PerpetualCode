@@ -2330,7 +2330,12 @@ function slateCell(cand, opposite, { totalLabel, suppressRec = false, rank = nul
   // Once a game is live or finished, the recommended-side glow stops
   // meaning anything — it was a pregame read, not a live one — so it's
   // suppressed rather than left pointing at a bet that's already decided.
-  const recommended = !suppressRec && (opposite ? cand.score > opposite.score : true);
+  //
+  // The glow and the rank badge must always agree — a cell is "recommended"
+  // if and only if rankedGamePicks() assigned it a rank, rather than each
+  // being computed independently (which used to let a cell glow with no
+  // badge, or vice versa, whenever the two disagreed about which side won).
+  const recommended = !suppressRec && Boolean(rank);
   const idx = renderedSlateCells.push({ cand, opposite }) - 1;
   const label = totalLabel ? `${totalLabel}${formatAmerican(cand.american)}` : formatAmerican(cand.american);
   const badge = recommended && rank ? `<span class="slate-rank-badge">${rank}</span>` : '';
@@ -2341,24 +2346,45 @@ function slateCell(cand, opposite, { totalLabel, suppressRec = false, rank = nul
 }
 
 /**
- * Up to three ranked picks per game — the same recommended side per market
- * (spread/total/moneyline) slateCell() already glows, just ranked 1 (Main),
- * 2 (Secondary), 3 (Tertiary) by score. Rank 1 is always the same candidate
- * bestCandidateForGame() picks, since that's just the highest-scored of
- * these same three — so "the Main play" shown pregame and "the pick" a
- * finished game's outcome later gets graded against are never two
- * different answers to the same question.
+ * Up to three ranked picks per game — the recommended side per market
+ * (spread/total/moneyline), ranked 1 (Main), 2 (Secondary), 3 (Tertiary) by
+ * score. Rank 1 is always the same candidate bestCandidateForGame() picks,
+ * since that's just the highest-scored of these same three — so "the Main
+ * play" shown pregame and "the pick" a finished game's outcome later gets
+ * graded against are never two different answers to the same question.
+ *
+ * Moneyline and spread are both "team-sided" markets — independently
+ * letting each pick its own higher-scored side could recommend the
+ * underdog's moneyline and the favorite's spread on the same game, which
+ * reads as "the underdog wins outright" and "the favorite wins
+ * comfortably" at once. They can't both be the algorithm's actual read, so
+ * whichever team owns the single best-scoring candidate across those two
+ * markets combined is the team recommended on BOTH — using that team's own
+ * price on the market it didn't top, not its market-mate's higher score.
+ * Totals has no team to be consistent with, so it's ranked independently,
+ * exactly as before.
  */
 function rankedGamePicks(game) {
-  const picks = [];
-  for (const [away, home] of [
-    [game.spreads.away, game.spreads.home],
-    [game.totals.away, game.totals.home],
-    [game.h2h.away, game.h2h.home],
-  ]) {
-    if (away && home) picks.push(away.score > home.score ? away : home);
-    else if (away || home) picks.push(away || home);
-  }
+  const teamSided = [game.h2h.away, game.h2h.home, game.spreads.away, game.spreads.home].filter(Boolean);
+  const recommendedTeam = teamSided.length
+    ? teamSided.reduce((best, c) => (c.score > best.score ? c : best)).outcomeName
+    : null;
+
+  const pickTeamSided = (away, home) => {
+    if (!away || !home) return away || home || null;
+    if (!recommendedTeam) return away.score > home.score ? away : home;
+    return away.outcomeName === recommendedTeam ? away : home;
+  };
+  const pickIndependent = (away, home) => {
+    if (!away || !home) return away || home || null;
+    return away.score > home.score ? away : home;
+  };
+
+  const picks = [
+    pickTeamSided(game.spreads.away, game.spreads.home),
+    pickIndependent(game.totals.away, game.totals.home),
+    pickTeamSided(game.h2h.away, game.h2h.home),
+  ].filter(Boolean);
   picks.sort((a, b) => b.score - a.score);
 
   const ranks = new Map();
