@@ -1117,9 +1117,8 @@ function renderSlate(slate) {
   renderedLegs.length = 0;
 
   if (!slate.picks.length) {
-    el.picks.innerHTML = `<p class="empty">Nothing loaded yet — the board fills
-      in automatically once odds finish fetching. Give it a moment and tap
-      Generate again.</p>`;
+    el.picks.innerHTML = `<p class="empty">No locks clear the sharp standard right
+      now — check back closer to game time, or see everything on Full Slate.</p>`;
     return;
   }
   el.picks.innerHTML = slate.picks.map(renderPick).join('');
@@ -2782,6 +2781,27 @@ function dayFilteredCandidates() {
   return state.candidates.filter((c) => withinDayFilter(c.commenceMs, c.sportKey));
 }
 
+// How far into the next calendar day a fight still counts as "tonight's
+// card" for Pixel's Picks — a main event can start after midnight local
+// time and still be part of the same show that started at a normal hour.
+const MMA_NEXT_DAY_CUTOFF_HOUR = 6;
+
+/**
+ * MMA is exempt from the Today/Tomorrow toggle everywhere else in the app
+ * (Full Slate/Parlay Builder show every card in the next two weeks — a
+ * card sells tickets and gets previewed well before fight night) — but
+ * Pixel's Picks specifically should never surface a pick for a fight
+ * that isn't actually happening soon. Eligible if it starts on the
+ * currently-selected day (Today/Tomorrow, same as every other sport), or
+ * before MMA_NEXT_DAY_CUTOFF_HOUR the morning after (a late main event
+ * that started on-schedule but rolled past midnight).
+ */
+function isPixelPicksMmaFight(commenceMs) {
+  const [dayStart] = dayBounds(state.dayFilter);
+  const cutoff = dayStart + ONE_DAY_MS + MMA_NEXT_DAY_CUTOFF_HOUR * 60 * 60 * 1000;
+  return commenceMs >= dayStart && commenceMs < cutoff;
+}
+
 /**
  * Pixel's Picks: fully automatic, no button — every league is already
  * loaded (refreshAllLeagues ran at boot), so this just ranks the pool
@@ -2799,7 +2819,11 @@ async function generate() {
     await enrichTennisAltSpreads();
     updateClvSnapshots();
 
-    const slate = topPicks(dayFilteredCandidates(), {
+    const pool = dayFilteredCandidates().filter(
+      (c) => !isMmaSportKey(c.sportKey) || isPixelPicksMmaFight(c.commenceMs),
+    );
+
+    const slate = topPicks(pool, {
       count: CONFIG.TOP_PICKS_COUNT,
       oddsMin: state.oddsMin,
       oddsMax: state.oddsMax,
