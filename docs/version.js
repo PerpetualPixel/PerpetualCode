@@ -5,6 +5,6 @@
  * reflects what's live rather than going stale.
  */
 export const BUILD_INFO = {
-  commit: 'd53f7f7',
-  builtAt: '2026-08-07T10:24:46-04:00',
+  commit: '4ebb1ad',
+  builtAt: '2026-08-07T11:05:27-04:00',
 };
