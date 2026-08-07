@@ -37,6 +37,7 @@ const FIXED_SPORT_KEYS = [
   'basketball_wnba',
   'mma_mixed_martial_arts',
   'soccer_usa_mls',
+  'icehockey_nhl',
 ];
 
 /** ET calendar date (YYYY-MM-DD) for a given instant — the day boundary every tracked pick is keyed on. */
@@ -55,9 +56,9 @@ function etHour(ms) {
 }
 
 /**
- * Every raw sport key the client's own 8 League Groups cover: the six fixed
- * keys plus whatever tennis_atp_/tennis_wta_ tournaments the catalogue says
- * are live this week — the same "discover, don't hardcode" approach the
+ * Every raw sport key the client's own League Groups cover: the fixed keys
+ * plus whatever tennis_atp_/tennis_wta_ tournaments the catalogue says are
+ * live this week — the same "discover, don't hardcode" approach the
  * client's own populateTennisGroups() uses, so a tour switching tournaments
  * doesn't silently drop tennis from the batch.
  */

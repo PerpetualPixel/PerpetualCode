@@ -799,6 +799,15 @@ export function topPicks(
  * @param opts.minScore     confidence floor
  * @param opts.sportMarkets Map<sportKey, Set<marketKey>> — a sport absent
  *   from this map contributes no legs at all, not "any market for it."
+ * @param opts.lockedLegs   candidates from a previous ticket to pin as-is —
+ *   never re-filtered against oddsMin/oddsMax/minScore/sportMarkets, since
+ *   the whole point is that a leg the user already chose survives even if
+ *   they then move a slider. Only counted against for same-game/contradiction
+ *   checks on the legs generated to fill the remaining slots.
+ * @param opts.randomize    weighted-random draw instead of a strict score
+ *   sort, so pressing Generate again with identical criteria doesn't just
+ *   reproduce the same ticket every time
+ * @param opts.rng           injectable randomness, for tests
  */
 export function buildParlay(
   candidates,
@@ -808,6 +817,9 @@ export function buildParlay(
     oddsMax = RULES.MAX_AMERICAN,
     minScore = RULES.MIN_SCORE,
     sportMarkets = new Map(),
+    lockedLegs = [],
+    randomize = false,
+    rng = Math.random,
   } = {},
 ) {
   const eligible = candidates.filter((c) => {
@@ -817,13 +829,27 @@ export function buildParlay(
     return markets?.size ? markets.has(c.marketKey) : false;
   });
 
-  const sorted = [...eligible].sort((a, b) => b.score - a.score);
-  const legs = [];
-  for (const c of sorted) {
-    if (legs.length >= legCount) break;
-    if (legs.some((leg) => leg.eventId === c.eventId)) continue; // different games only
-    if (legs.some((leg) => contradicts(leg, c))) continue;
-    legs.push(c);
+  const lockedIds = new Set(lockedLegs.map((l) => l.id));
+  const legs = [...lockedLegs];
+  const candidatePool = eligible.filter((c) => !lockedIds.has(c.id));
+
+  if (randomize) {
+    const working = [...candidatePool];
+    while (legs.length < legCount && working.length) {
+      const idx = weightedPick(working, rng);
+      const [c] = working.splice(idx, 1);
+      if (legs.some((leg) => leg.eventId === c.eventId)) continue; // different games only
+      if (legs.some((leg) => contradicts(leg, c))) continue;
+      legs.push(c);
+    }
+  } else {
+    const sorted = candidatePool.sort((a, b) => b.score - a.score);
+    for (const c of sorted) {
+      if (legs.length >= legCount) break;
+      if (legs.some((leg) => leg.eventId === c.eventId)) continue; // different games only
+      if (legs.some((leg) => contradicts(leg, c))) continue;
+      legs.push(c);
+    }
   }
 
   if (legs.length < legCount) {

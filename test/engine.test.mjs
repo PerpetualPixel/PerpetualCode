@@ -730,6 +730,78 @@ test('buildParlay respects the odds range and confidence floor like topPicks', (
   assert.equal(narrowRange.legs.length, 0, 'no candidate here prices inside +200..+500');
 });
 
+test('buildParlay pins lockedLegs into the ticket and only fills the remaining slots', () => {
+  const candidates = analyze(
+    [
+      makeEvent('a', -140, 120, { ...SHARP, sport: 'americanfootball_nfl' }),
+      makeEvent('b', -140, 120, { ...SHARP, sport: 'basketball_nba' }),
+      makeEvent('c', -140, 120, { ...SHARP, sport: 'baseball_mlb' }),
+    ],
+    { now: NOW },
+  );
+  const sportMarkets = new Map([
+    ['americanfootball_nfl', new Set(['h2h'])],
+    ['basketball_nba', new Set(['h2h'])],
+    ['baseball_mlb', new Set(['h2h'])],
+  ]);
+
+  const locked = candidates.find((c) => c.sportKey === 'baseball_mlb' && c.american < 0);
+  const { legs, complete } = buildParlay(candidates, {
+    legCount: 2, oddsMin: -1000, oddsMax: 500, minScore: 0, sportMarkets, lockedLegs: [locked],
+  });
+  assert.equal(complete, true);
+  assert.equal(legs.length, 2);
+  assert.ok(legs.includes(locked), 'the locked leg itself must be one of the two legs, not just its game');
+});
+
+test('buildParlay never lets a generated leg contradict or double up a locked one', () => {
+  const candidates = analyze(
+    [makeEvent('g1', -140, 120, { ...SHARP, awayOutlier: 45, sport: 'basketball_nba' })],
+    { now: NOW },
+  );
+  const sportMarkets = new Map([['basketball_nba', new Set(['h2h'])]]);
+  const locked = candidates[0];
+
+  const { legs, complete } = buildParlay(candidates, {
+    legCount: 2, oddsMin: -1000, oddsMax: 500, minScore: 0, sportMarkets, lockedLegs: [locked],
+  });
+  // Only one other candidate exists and it's the locked leg's own market-mate
+  // (same game) — nothing legal can fill the second slot.
+  assert.equal(complete, false);
+  assert.equal(legs.length, 1);
+  assert.equal(legs[0], locked);
+});
+
+test('buildParlay with randomize can produce a different ticket across calls from the same pool', () => {
+  const candidates = analyze(
+    [
+      makeEvent('a', -140, 120, { ...SHARP, sport: 'americanfootball_nfl' }),
+      makeEvent('b', -140, 120, { ...SHARP, sport: 'basketball_nba' }),
+      makeEvent('c', -140, 120, { ...SHARP, sport: 'baseball_mlb' }),
+      makeEvent('d', -140, 120, { ...SHARP, sport: 'icehockey_nhl' }),
+    ],
+    { now: NOW },
+  );
+  const sportMarkets = new Map([
+    ['americanfootball_nfl', new Set(['h2h'])],
+    ['basketball_nba', new Set(['h2h'])],
+    ['baseball_mlb', new Set(['h2h'])],
+    ['icehockey_nhl', new Set(['h2h'])],
+  ]);
+  const opts = { legCount: 2, oddsMin: -1000, oddsMax: 500, minScore: 0, sportMarkets, randomize: true };
+
+  // Two fixed rng sequences, deliberately favoring opposite ends of the pool,
+  // must not always resolve to the identical pair of legs — that's the whole
+  // point of randomize:true over the plain score sort.
+  const low = buildParlay(candidates, { ...opts, rng: () => 0.01 });
+  const high = buildParlay(candidates, { ...opts, rng: () => 0.99 });
+  assert.equal(low.complete, true);
+  assert.equal(high.complete, true);
+  const lowIds = low.legs.map((l) => l.id).sort().join(',');
+  const highIds = high.legs.map((l) => l.id).sort().join(',');
+  assert.notEqual(lowIds, highIds);
+});
+
 /* ---------------------------------------------------------------- */
 /* Kelly Criterion staking                                             */
 /* ---------------------------------------------------------------- */

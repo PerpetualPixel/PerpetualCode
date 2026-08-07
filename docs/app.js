@@ -78,7 +78,7 @@ const RECOMMENDED_UNIT_PCT = 0.02;
 const HISTORY_LIMIT = 40;
 
 /**
- * The eight leagues the app always keeps loaded. Tennis has no single sport
+ * The leagues the app always keeps loaded. Tennis has no single sport
  * key — the Odds API keys it per tournament (tennis_atp_canadian_open this
  * week, something else next) — so ATP/WTA start with an empty key list and
  * get populated from the catalogue once it loads (see populateTennisGroups).
@@ -93,6 +93,7 @@ const LEAGUE_GROUPS = [
   { id: 'wnba', label: 'WNBA', keys: ['basketball_wnba'] },
   { id: 'mma', label: 'MMA', keys: ['mma_mixed_martial_arts'] },
   { id: 'mls', label: 'MLS', keys: ['soccer_usa_mls'] },
+  { id: 'nhl', label: 'NHL', keys: ['icehockey_nhl'] },
 ];
 const LEAGUE_GROUP_BY_ID = new Map(LEAGUE_GROUPS.map((g) => [g.id, g]));
 
@@ -544,6 +545,11 @@ const state = {
   // renders, since a saved key could refer to a market that pool no longer has.
   parlay: {
     markets: new Set(),
+    // Leg id -> candidate object, in-memory only (never persisted — a locked
+    // leg's price can go stale across sessions). Pinned into every
+    // subsequent buildParlay() call until explicitly unlocked or the
+    // league/event changes out from under it.
+    lockedLegs: new Map(),
     ...loadJSON(PARLAY_KEY, { oddsMin: -250, oddsMax: 250, minScore: 50, legCount: 3 }),
   },
   // Bankroll and unit size, purely local — never sent anywhere, only used to
@@ -3266,17 +3272,47 @@ function renderParlayFilters() {
     .join('');
 }
 
+// The most recently rendered parlay result — kept so the lock button's click
+// handler can re-render (toggling a lock's visual state) without having to
+// regenerate the ticket, and so it can look a leg candidate up by id when
+// locking it for the first time.
+let lastParlayResult = null;
+
+/** One leg plus its lock toggle — the lock stays outside renderLeg() itself since that's shared with Pixel Picks combos, which have no locking concept. */
+function renderParlayLeg(leg, index) {
+  const locked = state.parlay.lockedLegs.has(leg.id);
+  return `
+    <div class="parlay-leg">
+      <button type="button" class="leg-lock-btn ${locked ? 'is-locked' : ''}"
+              data-lock-leg="${esc(leg.id)}" aria-pressed="${locked}"
+              aria-label="${locked ? 'Unlock this leg' : 'Lock this leg so it survives Generate'}"
+              title="${locked ? 'Locked — survives Generate' : 'Lock this leg'}">${locked ? '🔒' : '🔓'}</button>
+      <div class="parlay-leg-body">${renderLeg(leg, index, true)}</div>
+    </div>`;
+}
+
 function renderParlayResult(result) {
+  lastParlayResult = result;
+  renderedLegs.length = 0;
+
   if (!result.complete) {
-    el.parlayResult.innerHTML = `<p class="empty">
-      Only ${result.legs.length} of ${state.parlay.legCount} leg${state.parlay.legCount === 1 ? '' : 's'}
-      available (${result.poolSize} candidate${result.poolSize === 1 ? '' : 's'} qualify). Toggle on more
-      markets, pick "All" for the event, or widen the range.</p>`;
+    // Locked legs still render even when the ticket can't complete, so
+    // locking one, then tightening a filter until nothing else qualifies,
+    // doesn't look like the lock silently vanished.
+    const lockedHtml = result.legs.length
+      ? result.legs.map((leg, i) => renderParlayLeg(leg, i)).join('')
+      : '';
+    el.parlayResult.innerHTML = `
+      ${lockedHtml}
+      <p class="empty">
+        Only ${result.legs.length} of ${state.parlay.legCount} leg${state.parlay.legCount === 1 ? '' : 's'}
+        available (${result.poolSize} candidate${result.poolSize === 1 ? '' : 's'} qualify). Toggle on more
+        markets, pick "All" for the event, or widen the range.</p>`;
+    if (result.legs.length) hydrateInsights(el.parlayResult);
     return;
   }
 
-  renderedLegs.length = 0;
-  const legsHtml = result.legs.map((leg, i) => renderLeg(leg, i, true)).join('');
+  const legsHtml = result.legs.map((leg, i) => renderParlayLeg(leg, i)).join('');
   const stake = suggestedParlayStake(result.legs, result.combined.decimal);
   const stakeMsg = formatStakeLine(stake);
 
@@ -3311,6 +3347,8 @@ function generateParlay() {
     oddsMin: state.parlay.oddsMin,
     oddsMax: state.parlay.oddsMax,
     minScore: state.parlay.minScore,
+    lockedLegs: [...state.parlay.lockedLegs.values()],
+    randomize: true,
     sportMarkets,
   });
   renderParlayResult(result);
@@ -3320,13 +3358,28 @@ el.parlayLeagueSelect.addEventListener('change', () => {
   state.parlayLeague = el.parlayLeagueSelect.value || null;
   state.parlayEvent = 'all';
   state.parlay.markets.clear();
+  state.parlay.lockedLegs.clear(); // a lock from the old league/event has no business surviving into a completely different pool
   renderParlayFilters();
 });
 
 el.parlayEventFilterSelect.addEventListener('change', () => {
   state.parlayEvent = el.parlayEventFilterSelect.value;
   state.parlay.markets.clear();
+  state.parlay.lockedLegs.clear();
   renderParlayFilters();
+});
+
+el.parlayResult.addEventListener('click', (event) => {
+  const btn = event.target.closest('[data-lock-leg]');
+  if (!btn || !lastParlayResult) return;
+  const id = btn.dataset.lockLeg;
+  if (state.parlay.lockedLegs.has(id)) {
+    state.parlay.lockedLegs.delete(id);
+  } else {
+    const leg = lastParlayResult.legs.find((l) => l.id === id);
+    if (leg) state.parlay.lockedLegs.set(id, leg);
+  }
+  renderParlayResult(lastParlayResult);
 });
 
 el.parlayMarketsList.addEventListener('change', (event) => {
@@ -3685,14 +3738,9 @@ function renderDayBlock(day) {
     </details>`;
 }
 
-/** Sport-filter checkboxes — one per League Group label that has ever had a tracked pick, all checked by default. */
-function renderSportFilter(allPicks) {
-  const sports = [...new Set(allPicks.map((p) => sportGroupLabel(p.sport)))].sort();
-
-  if (!sports.length) {
-    el.trackerSportFilter.innerHTML = '';
-    return;
-  }
+/** Sport-filter checkboxes — one per League Group the app tracks picks for, all checked by default. Static, not derived from pick history, so a sport with zero picks so far still has a filter to toggle once it does. */
+function renderSportFilter() {
+  const sports = LEAGUE_GROUPS.map((g) => g.label).sort();
 
   el.trackerSportFilter.innerHTML = sports
     .map((sport) => {
@@ -4027,7 +4075,7 @@ async function renderLearningDashboard() {
   el.currentBankroll.textContent = '$' + bankroll.toFixed(0);
   el.netProfit.textContent = overall.graded ? formatSignedMoney(overall.net) : '—';
 
-  renderSportFilter(allPicks);
+  renderSportFilter();
   renderCalendar(filteredPicks);
   renderPerformancePanel(filteredPicks);
 

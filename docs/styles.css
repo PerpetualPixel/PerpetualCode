@@ -580,8 +580,8 @@ input[type="range"] {
 input[type="range"]::-webkit-slider-thumb {
   -webkit-appearance: none;
   appearance: none;
-  width: 20px;
-  height: 20px;
+  width: 28px;
+  height: 28px;
   border-radius: 50%;
   background: var(--accent);
   border: 2px solid var(--surface);
@@ -590,8 +590,8 @@ input[type="range"]::-webkit-slider-thumb {
 }
 
 input[type="range"]::-moz-range-thumb {
-  width: 20px;
-  height: 20px;
+  width: 28px;
+  height: 28px;
   border-radius: 50%;
   background: var(--accent);
   border: 2px solid var(--surface);
@@ -601,6 +601,10 @@ input[type="range"]::-moz-range-thumb {
 
 input[type="range"]:focus-visible {
   box-shadow: 0 0 0 2px var(--accent-dim);
+}
+
+#parlayGenerate {
+  margin-top: 22px;
 }
 
 /* The one button. */
@@ -743,6 +747,39 @@ input[type="range"]:focus-visible {
 
 .leg { padding: 14px; }
 .leg + .leg { border-top: 1px dashed var(--line); }
+
+/* Parlay Builder's per-leg lock toggle wraps .leg rather than living inside
+   it — .leg is shared with Pixel Picks' combo cards, which have no locking
+   concept — so the dashed divider between legs moves to this wrapper. */
+.parlay-leg {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  padding: 0 14px;
+}
+.parlay-leg + .parlay-leg { border-top: 1px dashed var(--line); }
+.parlay-leg .leg { padding: 14px 0; flex: 1; min-width: 0; }
+
+.leg-lock-btn {
+  flex-shrink: 0;
+  width: 34px;
+  height: 34px;
+  margin-top: 14px;
+  border-radius: var(--radius);
+  border: 1px solid var(--line);
+  background: var(--surface-2);
+  color: var(--muted);
+  font-size: 1rem;
+  line-height: 1;
+  cursor: pointer;
+  transition: background 150ms ease, border-color 150ms ease, color 150ms ease;
+}
+.leg-lock-btn:hover { border-color: #36414d; }
+.leg-lock-btn.is-locked {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: #04140a;
+}
 
 .leg-selection {
   font-size: 1.1rem;
