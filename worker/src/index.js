@@ -13,49 +13,33 @@ import { QuotaManager } from './quota.js';
 import { fetchContext, hasContext } from './context.js';
 import { fetchWeather, hasVenue } from './weather.js';
 import { fetchMmaContext } from './mma.js';
-import { fetchBaseballContext } from './baseball.js';
 import { fetchTeamStats, fetchRecentSchedule } from './mlb-stats.js';
-import { getUfcEventDetails } from './ufc-events.js';
 import { currentPhase, runPotdPhase, getPotd, getPotdBySport } from './potd.js';
 import { getOrGenerateAnalysis } from './analysis.js';
+import {
+  UPSTREAM,
+  REGIONS,
+  DEFAULT_CACHE_SECONDS,
+  isAllowedSport,
+  ALLOWED_SPORTS,
+  fetchSport,
+  fetchScores,
+  fetchCatalogue,
+} from './odds.js';
+import {
+  runTop5Batch,
+  runClvSnapshot,
+  runGrading,
+  getTop5,
+  getAllTrackedPicks,
+  resetAllTracking,
+  TOP5_BATCH_HOUR,
+} from './tracking.js';
 
-const UPSTREAM = 'https://api.the-odds-api.com/v4';
-
-const ALLOWED_SPORTS = new Set([
-  'upcoming',
-  'americanfootball_nfl',
-  'americanfootball_ncaaf',
-  'basketball_nba',
-  'basketball_wnba',
-  'basketball_ncaab',
-  'baseball_mlb',
-  'icehockey_nhl',
-  'mma_mixed_martial_arts',
-  'soccer_epl',
-  'soccer_usa_mls',
-]);
-
-// Tennis is keyed per tournament (tennis_atp_canadian_open, and a different key
-// next week), so an exact allowlist would go stale every few days. Prefixes let
-// the tour through without opening the door to arbitrary sport keys.
-const ALLOWED_SPORT_PREFIXES = ['tennis_atp_', 'tennis_wta_'];
-
-function isAllowedSport(key) {
-  return (
-    ALLOWED_SPORTS.has(key) ||
-    ALLOWED_SPORT_PREFIXES.some((prefix) => key.startsWith(prefix))
-  );
-}
-
-const MARKETS = 'h2h,spreads,totals';
-const REGIONS = 'us';
 // Each sport is a separate billed call: 3 markets x 1 region = 3 credits apiece.
 // Three is the ceiling the app's league picker enforces, repeated here because
 // the browser is not where a spend limit belongs.
 const MAX_SPORTS_PER_REQUEST = 3;
-const DEFAULT_CACHE_SECONDS = 900;
-// The sports catalogue is free to fetch and changes on the order of days.
-const SPORTS_LIST_CACHE_SECONDS = 3600;
 const FREE_TIER_DAILY_LIMIT = 3;
 
 function corsHeaders(request, env) {
@@ -80,147 +64,6 @@ function json(body, { status = 200, headers = {} } = {}) {
     status,
     headers: { 'Content-Type': 'application/json', ...headers },
   });
-}
-
-async function enrichMmaEvents(events, ctx) {
-  if (!events || !Array.isArray(events)) return events;
-
-  const enriched = await Promise.all(
-    events.map(async (event) => {
-      const commenceMs = event.commence_time
-        ? new Date(event.commence_time).getTime()
-        : null;
-      const eventDetails = await getUfcEventDetails(
-        event.home_team,
-        event.away_team,
-        commenceMs,
-      );
-      return eventDetails ? { ...event, ufc_event: eventDetails } : event;
-    }),
-  );
-
-  return enriched;
-}
-
-async function enrichBaseballEvents(events, ctx) {
-  if (!events || !Array.isArray(events)) return events;
-
-  const enriched = await Promise.all(
-    events.map(async (event) => {
-      // Try to extract pitcher info from bookmaker data if available
-      // Odds API doesn't include pitchers, so we'll note that for manual future enhancement
-      const baseballContext = await fetchBaseballContext(
-        {
-          awayTeam: event.away_team,
-          homeTeam: event.home_team,
-          awayPitcher: null, // TODO: Pull from external source when available
-          homePitcher: null,
-        },
-        ctx,
-      );
-      return baseballContext
-        ? { ...event, baseball_context: baseballContext }
-        : event;
-    }),
-  );
-
-  return enriched;
-}
-
-async function fetchSport(sport, env, ctx) {
-  const url = new URL(`${UPSTREAM}/sports/${sport}/odds`);
-  url.searchParams.set('apiKey', (env.ODDS_API_KEY ?? '').trim());
-  url.searchParams.set('regions', REGIONS);
-  url.searchParams.set('markets', MARKETS);
-  url.searchParams.set('oddsFormat', 'american');
-  url.searchParams.set('dateFormat', 'iso');
-
-  const ttl = Number(env.CACHE_SECONDS ?? DEFAULT_CACHE_SECONDS);
-  const cacheKey = new Request(
-    `https://pixel-pick.cache/odds/${sport}?markets=${MARKETS}&regions=${REGIONS}`,
-  );
-  const cache = caches.default;
-
-  const cached = await cache.match(cacheKey);
-  if (cached) {
-    let events = await cached.json();
-    if (sport === 'mma_mixed_martial_arts') {
-      events = await enrichMmaEvents(events, ctx);
-    } else if (sport === 'baseball_mlb') {
-      events = await enrichBaseballEvents(events, ctx);
-    }
-    return { events, cached: true, quota: null };
-  }
-
-  const upstream = await fetch(url.toString());
-  if (!upstream.ok) {
-    const detail = await upstream.text();
-    return { error: { sport, status: upstream.status, detail: detail.slice(0, 300) } };
-  }
-
-  let events = await upstream.json();
-  const quota = {
-    remaining: upstream.headers.get('x-requests-remaining'),
-    used: upstream.headers.get('x-requests-used'),
-    lastCost: upstream.headers.get('x-requests-last'),
-  };
-
-  if (sport === 'mma_mixed_martial_arts') {
-    events = await enrichMmaEvents(events, ctx);
-  } else if (sport === 'baseball_mlb') {
-    events = await enrichBaseballEvents(events, ctx);
-  }
-
-  ctx.waitUntil(
-    cache.put(
-      cacheKey,
-      new Response(JSON.stringify(events), {
-        headers: { 'Content-Type': 'application/json', 'Cache-Control': `max-age=${ttl}` },
-      }),
-    ),
-  );
-
-  return { events, cached: false, quota };
-}
-
-/**
- * Completed/live scores for a sport, used to grade tracked picks client-side.
- * `daysFrom=3` is the widest lookback The Odds API's scores endpoint takes —
- * plenty, since picks are graded the same day or the next. Cached for 5
- * minutes regardless of CACHE_SECONDS: scores don't need odds-tap freshness,
- * and this keeps repeated "check results" taps from burning credits.
- */
-async function fetchScores(sport, env, ctx) {
-  const ttl = 300;
-  const cacheKey = new Request(`https://pixel-pick.cache/scores/${sport}`);
-  const cache = caches.default;
-
-  const cached = await cache.match(cacheKey);
-  if (cached) return { events: await cached.json(), cached: true };
-
-  const url = new URL(`${UPSTREAM}/sports/${sport}/scores`);
-  url.searchParams.set('apiKey', (env.ODDS_API_KEY ?? '').trim());
-  url.searchParams.set('daysFrom', '3');
-  url.searchParams.set('dateFormat', 'iso');
-
-  const upstream = await fetch(url.toString());
-  if (!upstream.ok) {
-    const detail = await upstream.text();
-    return { error: { sport, status: upstream.status, detail: detail.slice(0, 300) } };
-  }
-
-  const events = await upstream.json();
-
-  ctx.waitUntil(
-    cache.put(
-      cacheKey,
-      new Response(JSON.stringify(events), {
-        headers: { 'Content-Type': 'application/json', 'Cache-Control': `max-age=${ttl}` },
-      }),
-    ),
-  );
-
-  return { events, cached: false };
 }
 
 async function handleScores(request, env, ctx, cors) {
@@ -561,46 +404,14 @@ async function respondWithOdds(request, env, ctx, cors, quotaStatus) {
  * the credit budget — and it stays correct as tournaments come and go.
  */
 async function handleSports(env, ctx, cors) {
-  const cacheKey = new Request('https://pixel-pick.cache/sports');
-  const cache = caches.default;
-
-  const cached = await cache.match(cacheKey);
-  if (cached) {
-    return json({ sports: await cached.json(), cached: true }, { headers: cors });
-  }
-
-  const url = new URL(`${UPSTREAM}/sports`);
-  url.searchParams.set('apiKey', (env.ODDS_API_KEY ?? '').trim());
-
-  const upstream = await fetch(url.toString());
-  if (!upstream.ok) {
+  const { sports, cached, error } = await fetchCatalogue(env, ctx);
+  if (error) {
     return json(
-      { error: 'Could not load the sports catalogue', status: upstream.status },
+      { error: 'Could not load the sports catalogue', status: error.status },
       { status: 502, headers: cors },
     );
   }
-
-  const sports = (await upstream.json())
-    .filter((s) => s.active && !s.has_outrights && isAllowedSport(s.key))
-    .map(({ key, title, group }) => ({ key, title, group }));
-
-  // 'upcoming' is synthetic — it isn't in the catalogue but it is requestable,
-  // and it's the cheapest way to see what starts next across everything.
-  sports.unshift({ key: 'upcoming', title: 'Next up (all sports)', group: 'Any' });
-
-  ctx.waitUntil(
-    cache.put(
-      cacheKey,
-      new Response(JSON.stringify(sports), {
-        headers: {
-          'Content-Type': 'application/json',
-          'Cache-Control': `max-age=${SPORTS_LIST_CACHE_SECONDS}`,
-        },
-      }),
-    ),
-  );
-
-  return json({ sports, cached: false }, { headers: cors });
+  return json({ sports, cached: Boolean(cached) }, { headers: cors });
 }
 
 export { QuotaManager };
@@ -635,6 +446,23 @@ export default {
     if (etHour(now) === MORNING_PREWARM_HOUR) {
       ctx.waitUntil(fetchSport('upcoming', env, ctx));
     }
+
+    // 6am ET: the day's Top 5 tracked picks — same engine, same sharp
+    // standard and EV/Kelly floor Pixel Picks itself uses, just run once
+    // server-side instead of per-user. runTop5Batch is itself idempotent
+    // per ET day (checks its own manifest key), so a retried or overlapping
+    // tick can't double-generate.
+    if (etHour(now) === TOP5_BATCH_HOUR) {
+      ctx.waitUntil(runTop5Batch(env, ctx, now));
+    }
+
+    // Every hour: refresh the closing-line snapshot for whatever's still
+    // pending and not yet underway, and grade whatever now has a completed
+    // score. Both are safe to run every tick — CLV only touches games that
+    // haven't started, grading only touches picks still pending — so
+    // there's no "already ran today" gate needed the way the 6am batch has.
+    ctx.waitUntil(runClvSnapshot(env, ctx, now));
+    ctx.waitUntil(runGrading(env, ctx, now));
 
     const phase = currentPhase(now);
     if (!phase) return;
@@ -830,6 +658,50 @@ export default {
       }
     }
 
+    // Today's server-side tracked Top 5 — written by the scheduled() cron's
+    // 6am batch, updated by its hourly CLV/grading passes, read-only here.
+    // Independent of the client's own browser-local IndexedDB tracking (see
+    // docs/learning.js) — this is the one shared history that exists
+    // whether or not anyone has the app open.
+    if (pathname === '/top5' && request.method === 'GET') {
+      try {
+        const picks = await getTop5(env);
+        return json(
+          { picks },
+          { headers: { ...cors, 'Cache-Control': 'public, max-age=300' } },
+        );
+      } catch (error) {
+        return json({ picks: [], reason: String(error).slice(0, 120) }, { headers: cors });
+      }
+    }
+
+    // Every tracked pick still in KV (up to 90 days) — the raw material for
+    // the client's calibration/audit reporting view (Brier score, CLV
+    // correlation, segmented accuracy). Read-only, KV only, no odds credit.
+    if (pathname === '/top5-history' && request.method === 'GET') {
+      try {
+        const picks = await getAllTrackedPicks(env);
+        return json(
+          { picks },
+          { headers: { ...cors, 'Cache-Control': 'public, max-age=300' } },
+        );
+      } catch (error) {
+        return json({ picks: [], reason: String(error).slice(0, 120) }, { headers: cors });
+      }
+    }
+
+    // Explicit, user-triggered wipe of the server-side Top 5 tracking
+    // history — the counterpart to the client's local "Archive & Reset"
+    // button. Never run on a schedule; only ever hit by that button.
+    if (pathname === '/top5-reset' && request.method === 'POST') {
+      try {
+        const result = await resetAllTracking(env);
+        return json({ ...result }, { headers: cors });
+      } catch (error) {
+        return json({ error: String(error).slice(0, 120) }, { status: 500, headers: cors });
+      }
+    }
+
     // Tennis alternate-spread ladder for one match already on the board.
     // Costs a real odds credit (unlike /context and /mma-context) — app.js
     // calls this for only a small, score-ranked slice of the tennis matches
@@ -884,58 +756,6 @@ export default {
       }
     }
 
-    // Learning endpoints: archive picks and record outcomes
-    if (pathname === '/api/learning/archive-pick' && request.method === 'POST') {
-      try {
-        const pick = await request.json();
-        const pickId = `pick:${pick.eventId}:${pick.sportKey}`;
-        const archive = {
-          ...pick,
-          timestamp: Date.now(),
-        };
-        ctx.waitUntil(env.POTD_KV.put(pickId, JSON.stringify(archive), { expirationTtl: 86400 * 365 }));
-        return json({ archived: true }, { status: 201, headers: cors });
-      } catch (error) {
-        return json({ error: String(error).slice(0, 120) }, { status: 400, headers: cors });
-      }
-    }
-
-    if (pathname === '/api/learning/record-outcome' && request.method === 'POST') {
-      try {
-        const { eventId, sportKey, result } = await request.json();
-        if (!eventId || !sportKey || !result) {
-          return json({ error: 'eventId, sportKey, result required' }, { status: 400, headers: cors });
-        }
-        const pickId = `pick:${eventId}:${sportKey}`;
-        const archived = await env.POTD_KV.get(pickId);
-        if (!archived) {
-          return json({ error: 'Pick not found' }, { status: 404, headers: cors });
-        }
-        const pick = JSON.parse(archived);
-        pick.result = result;
-        pick.resolvedAt = Date.now();
-        ctx.waitUntil(env.POTD_KV.put(pickId, JSON.stringify(pick), { expirationTtl: 86400 * 365 }));
-        return json({ recorded: true }, { status: 200, headers: cors });
-      } catch (error) {
-        return json({ error: String(error).slice(0, 120) }, { status: 400, headers: cors });
-      }
-    }
-
-    if (pathname === '/api/learning/calibration' && request.method === 'GET') {
-      try {
-        // Placeholder: would need to scan picks from KV
-        return json(
-          {
-            note: 'Calibration requires picks database integration',
-            overallAccuracy: null,
-            sampleSize: 0,
-          },
-          { status: 200, headers: cors },
-        );
-      } catch (error) {
-        return json({ error: String(error).slice(0, 120) }, { status: 500, headers: cors });
-      }
-    }
 
     if (pathname === '/odds' || pathname === '/sports' || pathname === '/scores') {
       if (request.method !== 'GET') {

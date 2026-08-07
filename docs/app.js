@@ -20,6 +20,7 @@ import {
   summarizePicks,
   groupPicksByDay,
   gradePick,
+  clearAllPicks,
   BANKROLL_INITIAL,
   FLAT_UNIT_STAKE,
 } from './learning.js';
@@ -435,7 +436,16 @@ const el = {
   confidenceAnalysis: document.getElementById('confidenceAnalysis'),
   sportAnalysis: document.getElementById('sportAnalysis'),
   recommendations: document.getElementById('recommendations'),
+  top5TotalPicks: document.getElementById('top5TotalPicks'),
+  top5GradedPicks: document.getElementById('top5GradedPicks'),
+  top5WinRate: document.getElementById('top5WinRate'),
+  top5Roi: document.getElementById('top5Roi'),
+  top5NetProfit: document.getElementById('top5NetProfit'),
+  top5AvgClv: document.getElementById('top5AvgClv'),
+  top5DailyHistory: document.getElementById('top5DailyHistory'),
+  calibrationReport: document.getElementById('calibrationReport'),
   exportDataBtn: document.getElementById('exportDataBtn'),
+  archiveResetBtn: document.getElementById('archiveResetBtn'),
 };
 
 const state = {
@@ -482,6 +492,10 @@ const state = {
     : 'dollars',
   perfPeriod: 'week',
   trackerExcludedSports: new Set(loadJSON(TRACKER_SPORT_FILTER_KEY, [])),
+  // Today's server-side tracked Top 5 pick ids (see worker/src/tracking.js),
+  // fetched once at boot — just for badging matching Pixel Picks cards, not
+  // itself the source of truth for anything the client computes.
+  top5Ids: new Set(),
   // Research caches. Both are free to fetch — ESPN and a static archive — so
   // they never touch the odds credit budget.
   tennis: new Map(),   // 'atp' | 'wta' -> parsed archive
@@ -1118,12 +1132,20 @@ function renderPick(pick) {
   const lead = pick.legs[0];
   const sport = lead.sportTitle ?? lead.sportKey;
   const flagged = pick.meetsStandard === false;
+  // Badges whichever card matches one of today's server-tracked Top 5 —
+  // the same candidate id scheme (eventId+market+outcome+point) both the
+  // client and worker's own topPicks() call produce, so a straight id
+  // lookup is all this needs (see loadTop5Tags).
+  const isTop5 = !isCombo && state.top5Ids.has(lead.id);
 
   return `
     <article class="pick ${flagged ? 'is-outside-standard' : ''}">
       <div class="pick-head">
-        <span class="chip"><strong>${esc(sport)}</strong> ·
-          ${isCombo ? '2-leg combo' : 'Straight bet'}</span>
+        <span class="pick-head-left">
+          <span class="chip"><strong>${esc(sport)}</strong> ·
+            ${isCombo ? '2-leg combo' : 'Straight bet'}</span>
+          ${isTop5 ? '<span class="top5-badge">🏆 Top 5</span>' : ''}
+        </span>
         <span class="price">${esc(formatAmerican(pick.american))}</span>
       </div>
 
@@ -2837,6 +2859,49 @@ el.exportDataBtn.addEventListener('click', async () => {
   URL.revokeObjectURL(url);
 });
 
+/**
+ * Explicit, user-triggered clean-slate action: archives (downloads a CSV of)
+ * everything tracked so far, then clears this device's local history and
+ * asks the worker to clear its own server-side Top 5 history too — both
+ * tracking systems, one button, matching what was actually asked for rather
+ * than only resetting one of the two independent histories this app now
+ * keeps. Never runs on its own; only ever this click.
+ */
+el.archiveResetBtn.addEventListener('click', async () => {
+  const ok = confirm(
+    'This downloads a CSV of everything tracked so far, then permanently clears it — both on this device and the worker\'s own Top 5 history. This can\'t be undone. Continue?',
+  );
+  if (!ok) return;
+
+  el.archiveResetBtn.disabled = true;
+  el.archiveResetBtn.textContent = 'Archiving…';
+  try {
+    const csv = await exportData(new Date(0), new Date());
+    const blob = new Blob([csv], { type: 'text/csv' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `pixel-pick-archive-${new Date().toISOString().split('T')[0]}.csv`;
+    a.click();
+    URL.revokeObjectURL(url);
+
+    await clearAllPicks();
+
+    if (CONFIG.WORKER_URL) {
+      try {
+        await fetch(new URL('/top5-reset', CONFIG.WORKER_URL), { method: 'POST' });
+      } catch {
+        /* Server-side reset is best-effort — the local reset above already succeeded either way. */
+      }
+    }
+
+    await renderLearningDashboard();
+  } finally {
+    el.archiveResetBtn.disabled = false;
+    el.archiveResetBtn.textContent = 'Archive & Reset All Tracking';
+  }
+});
+
 el.scrim.addEventListener('click', () => {
   if (openAside) setAsideOpen(openAside.panel, openAside.toggle, false);
   el.statsPanel.hidden = true;
@@ -3595,6 +3660,184 @@ function renderPerfGraph(dayList) {
     </svg>`;
 }
 
+/**
+ * Today's server-tracked Top 5 pick ids (see worker/src/tracking.js) — a
+ * pure badge lookup, fetched once at boot. Never itself a source of truth
+ * for Pixel Picks; if the fetch fails, cards just render without the badge.
+ */
+async function loadTop5Tags() {
+  if (!CONFIG.WORKER_URL) return;
+  try {
+    const url = new URL('/top5', CONFIG.WORKER_URL);
+    const res = await fetch(url, { headers: { Accept: 'application/json' } });
+    if (!res.ok) return;
+    const data = await res.json();
+    state.top5Ids = new Set((data.picks ?? []).map((p) => p.pickId));
+  } catch {
+    /* Badge is a bonus; Pixel Picks itself never depends on this. */
+  }
+}
+
+/** Every pick the worker's own 6am batch has ever tracked, across every day still in KV (up to 90). */
+async function fetchTop5History() {
+  if (!CONFIG.WORKER_URL) return [];
+  try {
+    const url = new URL('/top5-history', CONFIG.WORKER_URL);
+    const res = await fetch(url, { headers: { Accept: 'application/json' } });
+    if (!res.ok) return [];
+    const data = await res.json();
+    return data.picks ?? [];
+  } catch {
+    return [];
+  }
+}
+
+/** CLV%, positive means the price beat the close (see docs/app.js's own clvFor() for the client-side equivalent this mirrors). */
+function top5ClvPct(pick) {
+  if (!pick.clv) return null;
+  return (impliedProb(pick.clv.closeAmerican) - impliedProb(pick.clv.openAmerican)) * 100;
+}
+
+/** Groups server-tracked picks by their own stored dateKey (not a pickId prefix — these ids are raw candidate ids, not date-prefixed like the client's). */
+function groupTop5ByDay(picks) {
+  const byDay = new Map();
+  for (const p of picks) {
+    if (!byDay.has(p.dateKey)) byDay.set(p.dateKey, []);
+    byDay.get(p.dateKey).push(p);
+  }
+  return [...byDay.entries()]
+    .sort((a, b) => b[0].localeCompare(a[0]))
+    .map(([date, dayPicks]) => ({ date, picks: dayPicks, ...summarizePicks(dayPicks) }));
+}
+
+function renderTop5DayBlock(day) {
+  const dateLabel = new Date(`${day.date}T00:00:00`).toLocaleDateString(undefined, {
+    weekday: 'short', month: 'short', day: 'numeric',
+  });
+  const record = `${day.wins}-${day.losses}` + (day.pending ? ` · ${day.pending} pending` : '');
+  const trendClass = day.net > 0 ? 'positive' : day.net < 0 ? 'negative' : '';
+
+  const rows = day.picks.map((p) => {
+    const statusClass = p.status === 'won' ? 'status-won' : p.status === 'lost' ? 'status-lost' : 'status-pending';
+    const statusLabel = p.status === 'won' ? 'WIN' : p.status === 'lost' ? 'LOSS' : 'PENDING';
+    const payoutLabel = p.result ? formatSignedMoney(p.result.payout) : '—';
+    return `
+      <div class="day-pick-row ${statusClass}">
+        <span class="pick-matchup">${esc(p.away)} @ ${esc(p.home)}</span>
+        <span class="pick-side">${esc(p.selection)}</span>
+        <span class="pick-status">${statusLabel}</span>
+        <span class="pick-payout">${esc(payoutLabel)}</span>
+      </div>`;
+  }).join('');
+
+  return `
+    <details class="day-block">
+      <summary>
+        <span class="day-date">${esc(dateLabel)}</span>
+        <span class="day-record">${esc(record)}</span>
+        <span class="day-roi ${trendClass}">${day.graded ? esc(formatSignedPct(day.roi)) : '—'}</span>
+        <span class="day-net ${trendClass}">${day.graded ? esc(formatSignedMoney(day.net)) : '—'}</span>
+      </summary>
+      <div class="day-picks">${rows}</div>
+    </details>`;
+}
+
+async function renderTop5Section() {
+  const picks = await fetchTop5History();
+  const overall = summarizePicks(picks);
+  const winRate = overall.graded ? (overall.wins / overall.graded) * 100 : 0;
+  const clvValues = picks.map(top5ClvPct).filter((v) => v != null);
+  const avgClv = clvValues.length ? clvValues.reduce((a, b) => a + b, 0) / clvValues.length : null;
+
+  el.top5TotalPicks.textContent = overall.total;
+  el.top5GradedPicks.textContent = overall.graded;
+  el.top5WinRate.textContent = overall.graded ? winRate.toFixed(1) + '%' : '—';
+  el.top5Roi.textContent = overall.graded ? formatSignedPct(overall.roi) : '—';
+  el.top5NetProfit.textContent = overall.graded ? formatSignedMoney(overall.net) : '—';
+  el.top5AvgClv.textContent = avgClv != null ? formatSignedPct(avgClv) : '—';
+
+  const days = groupTop5ByDay(picks);
+  el.top5DailyHistory.innerHTML = days.length
+    ? days.map(renderTop5DayBlock).join('')
+    : `<p class="empty">Nothing tracked yet — the worker generates its first Top 5 at 6am ET.</p>`;
+
+  return picks;
+}
+
+/**
+ * Reporting only, per the brief this was scoped to — never adjusts any
+ * threshold or weight itself. Computes a real Brier score (using each
+ * pick's stored consensusProb, the model's own probability estimate, not
+ * the 0-100 composite score) against actual outcome frequency, average CLV
+ * segmented by sport (a sport consistently losing the close is flagged),
+ * and win rate segmented by confidence tier and market type.
+ */
+function renderCalibrationReport(picks) {
+  const graded = picks.filter((p) => p.status === 'won' || p.status === 'lost');
+  if (graded.length < 5) {
+    el.calibrationReport.innerHTML = `<div class="rec-item">Not enough graded picks yet (${graded.length}) for a meaningful read — check back after a couple of weeks of tracking.</div>`;
+    return;
+  }
+
+  const items = [];
+
+  // Brier score: mean squared error between the model's own consensusProb
+  // and the actual 0/1 outcome. 0 is perfect, 0.25 is what always-guess-50%
+  // scores, higher is worse. Only picks with a stored consensusProb count —
+  // older records predating that field are skipped rather than guessed.
+  const withProb = graded.filter((p) => typeof p.consensusProb === 'number');
+  if (withProb.length) {
+    const brier = withProb.reduce((sum, p) => {
+      const outcome = p.status === 'won' ? 1 : 0;
+      return sum + (p.consensusProb - outcome) ** 2;
+    }, 0) / withProb.length;
+    const avgPredicted = withProb.reduce((s, p) => s + p.consensusProb, 0) / withProb.length * 100;
+    const actualWinRate = (withProb.filter((p) => p.status === 'won').length / withProb.length) * 100;
+    const gap = actualWinRate - avgPredicted;
+    const severity = Math.abs(gap) > 10 ? 'high' : Math.abs(gap) > 5 ? '' : 'low';
+    items.push(`<div class="rec-item ${severity}">Brier score ${brier.toFixed(3)} across ${withProb.length} graded picks. The model's own average predicted win probability is ${avgPredicted.toFixed(1)}%; actual win rate is ${actualWinRate.toFixed(1)}% — a ${Math.abs(gap).toFixed(1)}pp gap${gap < -5 ? ' (overconfident: real results are coming in below what the model expected)' : gap > 5 ? ' (underconfident: real results are beating what the model expected)' : ' (reasonably well calibrated)'}.</div>`);
+  }
+
+  // CLV by sport — a sport consistently losing the close is worth flagging.
+  const bySport = new Map();
+  for (const p of graded) {
+    const label = sportGroupLabel(p.sportKey);
+    const clv = top5ClvPct(p);
+    if (clv == null) continue;
+    if (!bySport.has(label)) bySport.set(label, []);
+    bySport.get(label).push(clv);
+  }
+  for (const [label, values] of bySport) {
+    if (values.length < 3) continue;
+    const avg = values.reduce((a, b) => a + b, 0) / values.length;
+    if (avg < -1) {
+      items.push(`<div class="rec-item high">${esc(label)} is losing the closing line on average (${formatSignedPct(avg)} CLV across ${values.length} picks) — the price we're taking is consistently worse than where the market settles, which is a red flag independent of win rate.</div>`);
+    } else if (avg > 1) {
+      items.push(`<div class="rec-item low">${esc(label)} is consistently beating the closing line (${formatSignedPct(avg)} CLV across ${values.length} picks) — a real, structural edge in this market.</div>`);
+    }
+  }
+
+  // Win rate by confidence tier.
+  const tiers = [
+    { label: 'Very High (80+)', test: (s) => s >= 80 },
+    { label: 'High (70-79)', test: (s) => s >= 70 && s < 80 },
+    { label: 'Medium (60-69)', test: (s) => s >= 60 && s < 70 },
+    { label: 'Low (50-59)', test: (s) => s >= 50 && s < 60 },
+  ];
+  const tierRows = tiers.map(({ label, test }) => {
+    const bucket = graded.filter((p) => test(p.score));
+    if (!bucket.length) return null;
+    const wins = bucket.filter((p) => p.status === 'won').length;
+    const rate = (wins / bucket.length) * 100;
+    return `<div class="learning-table-row"><div class="label">${esc(label)}</div><div class="stat">${bucket.length}</div><div class="stat win-rate">${rate.toFixed(1)}%</div></div>`;
+  }).filter(Boolean);
+
+  el.calibrationReport.innerHTML = [
+    items.length ? items.join('') : `<div class="rec-item">Nothing flagged yet — CLV and calibration look reasonable across every segment with enough sample size.</div>`,
+    tierRows.length ? `<div class="learning-table" style="margin-top:12px">${tierRows.join('')}</div>` : '',
+  ].join('');
+}
+
 async function renderLearningDashboard() {
   const allPicks = await getAllPicks();
   const filteredPicks = allPicks.filter((p) => !state.trackerExcludedSports.has(sportGroupLabel(p.sport)));
@@ -3650,6 +3893,9 @@ async function renderLearningDashboard() {
   }
 
   el.recommendations.innerHTML = `<div class="rec-item">Every Pixel Picks board tracks automatically — $20/pick against the $1000 simulated bankroll. Tap "Check Results" any time to grade whatever's finished.</div>`;
+
+  const top5Picks = await renderTop5Section();
+  renderCalibrationReport(top5Picks);
 }
 
 /** Renders from whatever's cached first (instant), then refreshes with any newly-graded results. */
@@ -3707,6 +3953,7 @@ async function runResultCheck() {
   renderFullSlate();
   updatePoolLine();
   el.generate.disabled = false;
+  loadTop5Tags(); // fire-and-forget — a badge lookup, never blocks the board
 
   setStatus(
     CONFIG.WORKER_URL

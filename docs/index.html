@@ -526,9 +526,59 @@
       <div id="recommendations" class="learning-recs"></div>
     </section>
 
-    <!-- Export Data -->
+    <!-- Server-Tracked Top 5 -->
+    <section class="learning-section">
+      <h3>Top 5 <span class="stats-source">Server-tracked, generated automatically every morning</span></h3>
+      <p class="filter-hint">
+        A second, independent history from everything above — the worker itself
+        picks and tracks its top 5 highest-conviction plays each day, whether or
+        not anyone has the app open. Same engine, same standard, no manual step.
+      </p>
+      <div id="top5Summary" class="learning-grid">
+        <div class="metric-card">
+          <div class="metric-label">Total Picks</div>
+          <div id="top5TotalPicks" class="metric-value">0</div>
+        </div>
+        <div class="metric-card">
+          <div class="metric-label">Graded</div>
+          <div id="top5GradedPicks" class="metric-value">0</div>
+        </div>
+        <div class="metric-card">
+          <div class="metric-label">Win Rate</div>
+          <div id="top5WinRate" class="metric-value">—</div>
+        </div>
+        <div class="metric-card">
+          <div class="metric-label">ROI</div>
+          <div id="top5Roi" class="metric-value">—</div>
+        </div>
+        <div class="metric-card">
+          <div class="metric-label">Net $</div>
+          <div id="top5NetProfit" class="metric-value">—</div>
+        </div>
+        <div class="metric-card">
+          <div class="metric-label">Avg CLV</div>
+          <div id="top5AvgClv" class="metric-value">—</div>
+        </div>
+      </div>
+      <div id="top5DailyHistory" class="daily-history"></div>
+    </section>
+
+    <!-- Calibration & Audit -->
+    <section class="learning-section">
+      <h3>Calibration &amp; Audit <span class="stats-source">Reporting only — nothing here changes the algorithm automatically</span></h3>
+      <p class="filter-hint">
+        How well the Top 5's own confidence scores and closing-line value have
+        tracked reality. Findings, not automatic adjustments — the algorithm
+        stays exactly as it is; use this to decide manually whether to change
+        anything.
+      </p>
+      <div id="calibrationReport" class="learning-recs"></div>
+    </section>
+
+    <!-- Export / Reset -->
     <section class="learning-section">
       <button id="exportDataBtn" class="action-btn">Export Pick History (CSV)</button>
+      <button id="archiveResetBtn" class="action-btn action-btn-danger">Archive &amp; Reset All Tracking</button>
     </section>
   </div>
 </aside>

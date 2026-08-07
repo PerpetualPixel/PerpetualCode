@@ -717,6 +717,13 @@ input[type="range"]:focus-visible {
   background: var(--surface-2);
 }
 
+.pick-head-left {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+
 .chip {
   font-family: var(--mono);
   font-size: 0.65rem;
@@ -2452,6 +2459,36 @@ input[type="range"]:focus-visible {
 
 .action-btn:active {
   transform: translateY(0);
+}
+
+.action-btn { width: 100%; margin-bottom: 8px; }
+.action-btn:last-child { margin-bottom: 0; }
+
+.action-btn-danger {
+  background: transparent;
+  color: var(--danger);
+  border: 1px solid var(--danger);
+}
+
+.action-btn-danger:hover {
+  background: rgba(239, 68, 68, 0.1);
+  box-shadow: none;
+}
+
+.top5-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  padding: 2px 7px;
+  border-radius: 999px;
+  background: rgba(74, 222, 128, 0.15);
+  border: 1px solid rgba(74, 222, 128, 0.4);
+  color: var(--accent);
+  font-family: var(--mono);
+  font-size: 0.62rem;
+  font-weight: 700;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
 }
 
 /* ================================================================ */

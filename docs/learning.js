@@ -436,3 +436,20 @@ export async function exportData(startDate, endDate) {
 
   return csv;
 }
+
+/**
+ * Wipes every tracked pick and result from this browser's local history —
+ * the explicit, user-triggered "Archive & Reset" action. Never called
+ * automatically; the caller is expected to have already exported/archived
+ * whatever it wants to keep (see exportData) before calling this.
+ */
+export async function clearAllPicks() {
+  if (!db) await initializePickDatabase();
+  return new Promise((resolve, reject) => {
+    const tx = db.transaction([PICKS_STORE_NAME, RESULTS_STORE_NAME], 'readwrite');
+    tx.objectStore(PICKS_STORE_NAME).clear();
+    tx.objectStore(RESULTS_STORE_NAME).clear();
+    tx.oncomplete = () => resolve();
+    tx.onerror = () => reject(tx.error);
+  });
+}
