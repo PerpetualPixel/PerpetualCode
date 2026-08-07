@@ -188,8 +188,11 @@ RULES — read carefully, these are not optional:
 3. Never invent a head-to-head record, injury, or prior-meeting detail. If the facts above don't mention something, do not mention it either — do not fill silence with a guess, and do not claim something did NOT happen just because it wasn't listed (absence of a fact is not evidence of its opposite).
 4. If the facts above are thin or say "no data" / "unknown" for something, say so plainly rather than working around the gap with invented detail.
 5. Do not mention betting odds, spreads, moneylines, implied probability, vig, or market pricing anywhere in your answer — this is a team/player analysis, not a price analysis.
+6. No markdown: no "#" headings, no "**bold**", no bullet points in Part 1. Start Part 1 directly with its first sentence — the app already shows its own title above this text, so a heading here would just be repeated as literal text.
 
-Write a 5-to-10-sentence analysis using only the facts above, in flowing prose, not a bulleted list. Take a clear position on which side has the edge and explain why — form, head-to-head history, injuries, or statistical tendencies, using only what's stated above.`;
+Write your response in two parts, in this order.
+
+PART 1 — Analysis (plain text, before the JSON described below): 5-to-10 sentences of flowing prose, not a bulleted list, using only the facts above. Take a clear position on which side has the edge and explain why — form, head-to-head history, injuries, or statistical tendencies. Also describe how you expect the matchup to actually unfold — pace, tempo, or the likely pattern of play — grounded only in what's stated above.`;
 
   if (isBaseball) {
     basePrompt += `
@@ -198,25 +201,34 @@ CRITICAL FOR BASEBALL:
 Explicitly consider pitcher matchup advantages, home/away pitcher performance splits, day vs. night game context, and team travel/time zone adjustments. These factors often outweigh pure team strength. Pay special attention to pitchers new to their team (adjustment period) and recent form (last 10 games ERA). Do NOT invent pitcher information — use only what is provided above.`;
   }
 
+  basePrompt += `
+
+PART 2 — Structured summary: after Part 1, on the very last line and ONLY the last line, output one JSON object (no other text on that line, and none of Part 1's prose repeated inside it) with this exact structure:
+{
+  "favoredSide": "<the exact name of whichever side — "${away}" or "${home}" ${totalLabel} — your analysis concludes has the edge, copied character-for-character from this prompt, or null if the facts are too thin to lean either way>",
+  "quickTake": ["<short reason 1 favoredSide has the edge>", "<short reason 2>", "<short reason 3>"],
+  "devilsAdvocate": ["<a genuine way the OTHER side could still win or cover>", "<a second genuine vulnerability or tactical path>"]${isMma ? ',\n  "victoryMethods": { ...see MMA requirement below... }' : ''}
+}
+
+- quickTake: exactly 3 short, punchy sentences (under ~18 words each) on why favoredSide has the edge — a form/statistical driver, a head-to-head or matchup factor, and a situational note — each traceable to a fact given above. If favoredSide is null, use quickTake to say plainly why it's too close to call instead.
+- devilsAdvocate: exactly 2 short sentences on how the side OTHER than favoredSide could genuinely win or cover — a real vulnerability in favoredSide or a real tactical path for the other side, not a token "anything can happen" disclaimer. This is the counter-argument, so it must name the other side's actual path, not restate why favoredSide is good.`;
+
   if (isMma) {
     basePrompt += `
 
-ADDITIONAL REQUIREMENT FOR MMA — after the main analysis, add victory-method reasoning to the trailing JSON object described below: a "victoryMethods" key alongside "favoredSide", structured as:
+ADDITIONAL REQUIREMENT FOR MMA — "victoryMethods" in the JSON above must give BOTH fighters' top 3 most likely methods of victory, each with your own numeric percentage likelihood (0-100) and a one-sentence reason:
 "victoryMethods": {
   "${away}": [
-    {"method": "SUB", "reasoning": "reason why this fighter might win by submission"},
-    {"method": "DEC", "reasoning": "reason why this fighter might win by decision"},
-    {"method": "TKO", "reasoning": "reason why this fighter might win by TKO"}
+    {"method": "SUB", "percentage": <0-100>, "reasoning": "reason why this fighter might win by submission"},
+    {"method": "TKO", "percentage": <0-100>, "reasoning": "reason why this fighter might win by TKO/KO"},
+    {"method": "DEC", "percentage": <0-100>, "reasoning": "reason why this fighter might win by decision"}
   ],
   "${home}": [ ...same structure... ]
 }
-The methods should be the TOP 3 most likely ways each fighter can win. Methods are: SUB (submission), DEC (decision), TKO (TKO/KO).`;
+Methods are: SUB (submission), TKO (TKO/KO), DEC (decision). Percentages are your own estimate of how likely each specific method is for that fighter — the three for one fighter do not need to sum to 100 (they're independent paths, not exhaustive of that fighter's full win chance). quickTake's reason 3 and devilsAdvocate's second sentence should each reference that side's single most likely method with its percentage (e.g., "Most likely via TKO (38%)").`;
   }
 
   basePrompt += `
-
-After your prose analysis, on the very last line and ONLY the last line, output one JSON object (no other text on that line) with this exact structure:
-{"favoredSide": "<the exact name of whichever side — "${away}" or "${home}" ${totalLabel} — your analysis above concludes has the edge, copied character-for-character from this prompt, or null if the facts are too thin to lean either way>"${isMma ? ', "victoryMethods": { ... as described above ... }' : ''}}
 
 This is a completely independent, honest read of the facts — you are not being told what any algorithm or price already picked, and you should not try to guess or hedge toward one; just say what the facts above actually support.`;
 
@@ -243,6 +255,43 @@ async function callClaude(prompt, env, { maxTokens = 600 } = {}) {
 }
 
 /**
+ * quickTake/devilsAdvocate as the model returns them: an array of short
+ * strings. Coerces anything else (missing, wrong type, non-string entries)
+ * to null rather than guessing — a missing TL;DR is an obviously-empty UI
+ * section; a fabricated one is a hallucination with extra steps. Caps the
+ * length so a runaway reply can't turn three bullets into thirty.
+ */
+function asStringBullets(value, maxItems) {
+  if (!Array.isArray(value)) return null;
+  const bullets = value.filter((b) => typeof b === 'string' && b.trim()).map((b) => b.trim());
+  return bullets.length ? bullets.slice(0, maxItems) : null;
+}
+
+/**
+ * MMA's victoryMethods, validated method-by-method: method must be one of
+ * the three real values, percentage must be a finite 0-100 number (clamped,
+ * or null if the model didn't give a usable one — never fabricated), and
+ * reasoning must be a real string. A fighter with no valid entries left
+ * after filtering is dropped rather than kept as an empty array.
+ */
+function sanitizeVictoryMethods(raw) {
+  const validMethods = new Set(['SUB', 'TKO', 'DEC']);
+  const out = {};
+  for (const [fighter, entries] of Object.entries(raw ?? {})) {
+    if (!Array.isArray(entries)) continue;
+    const cleaned = entries
+      .filter((e) => e && validMethods.has(e.method) && typeof e.reasoning === 'string' && e.reasoning.trim())
+      .map((e) => ({
+        method: e.method,
+        percentage: Number.isFinite(e.percentage) ? Math.max(0, Math.min(100, Math.round(e.percentage))) : null,
+        reasoning: e.reasoning.trim(),
+      }));
+    if (cleaned.length) out[fighter] = cleaned;
+  }
+  return Object.keys(out).length ? out : null;
+}
+
+/**
  * The cached analysis for one game today, generating and caching it on the
  * first request of the day if it doesn't exist yet. Returns null whenever
  * the feature can't produce a real answer — no API key configured, no
@@ -254,16 +303,15 @@ export async function getOrGenerateAnalysis(candidate, env, ctx, now = Date.now(
   if (!env.ANTHROPIC_API_KEY) return null;
 
   const dateKey = etDate(now);
-  // v4: the response envelope and anti-hallucination prompt changed
-  // materially (added favoredSide, explicit H2H-absence statements, stricter
-  // name-fidelity rules); v2's line-based trailing-JSON extraction missed
-  // replies where the model ran the JSON on without a preceding newline; and
-  // v3 still truncated every MMA reply mid-JSON because 500 max_tokens
-  // wasn't enough room for prose plus two fighters' worth of victory-method
-  // reasoning. All three leaked raw JSON text into the visible analysis in
-  // one way or another — versioned so already-cached v1/v2/v3 analyses are
-  // never served again, rather than living out their existing 2-day TTL.
-  const kvKey = `analysis:v4:${dateKey}:${candidate.eventId}`;
+  // v6 strips a leading markdown "# Heading" the model sometimes prepended
+  // to Part 1 despite being asked for plain prose — cosmetic (it rendered as
+  // literal "# " text, no markdown renderer here) but versioned anyway so
+  // today's analyses come back clean rather than waiting out the TTL. v5
+  // added quickTake/devilsAdvocate and MMA percentage likelihoods; v4 fixed
+  // the response envelope/anti-hallucination prompt, a trailing-JSON
+  // extraction bug, and an MMA token-truncation bug — see prior versions'
+  // history in git blame for detail.
+  const kvKey = `analysis:v6:${dateKey}:${candidate.eventId}`;
   const cached = await env.POTD_KV.get(kvKey);
   if (cached) return cached;
 
@@ -305,15 +353,16 @@ export async function getOrGenerateAnalysis(candidate, env, ctx, now = Date.now(
     isBaseball,
   });
 
-  // MMA's reply carries a lot more than prose + a one-line favoredSide: two
-  // fighters x 3 victory methods each, with a reasoning sentence apiece —
-  // 500 tokens (fine for every other sport) was cutting that off mid-JSON
-  // before it could close, which made every MMA analysis fail to parse and
-  // fall back to dumping the raw truncated text (JSON fragment included) on
-  // screen. This is the exact bug that produced it.
+  // MMA's reply carries a lot more than prose + favoredSide: two fighters x
+  // 3 victory methods each with a percentage and a reasoning sentence apiece,
+  // plus quickTake/devilsAdvocate on top — 500 tokens (fine for plain prose)
+  // was cutting MMA replies off mid-JSON before they could close, which made
+  // every MMA analysis fail to parse and fall back to dumping the raw
+  // truncated text (JSON fragment included) on screen. Every sport's reply
+  // grew with quickTake/devilsAdvocate too, hence the non-MMA bump as well.
   let text;
   try {
-    text = await callClaude(prompt, env, { maxTokens: isMma ? 1000 : 600 });
+    text = await callClaude(prompt, env, { maxTokens: isMma ? 1400 : 900 });
   } catch {
     return null;
   }
@@ -323,17 +372,19 @@ export async function getOrGenerateAnalysis(candidate, env, ctx, now = Date.now(
   // — but doesn't reliably put a newline before it (sometimes it runs on
   // straight from the last sentence of prose), so splitting on '\n' and
   // checking only the last line silently missed it about as often as it
-  // caught it, leaking the raw '{"favoredSide": ...}' text into the visible
-  // analysis. Searching backward for the last '{' that parses as valid JSON
-  // running all the way to the end of the reply works regardless of
-  // whitespace. favoredSide is the model's own independent read of which
-  // side the facts support, computed with no knowledge of what the app's
-  // price-based algorithm actually picked; the client compares the two
-  // itself and flags it plainly when they disagree, rather than the two
-  // silently contradicting each other on screen (the exact bug this
-  // whole structured-output pass exists to close off).
+  // caught it, leaking raw JSON text into the visible analysis. Searching
+  // backward for the last '{' that parses as valid JSON running all the way
+  // to the end of the reply works regardless of whitespace. favoredSide is
+  // the model's own independent read of which side the facts support,
+  // computed with no knowledge of what the app's price-based algorithm
+  // actually picked; the client compares the two itself and flags it
+  // plainly when they disagree, rather than the two silently contradicting
+  // each other on screen (the exact bug this whole structured-output pass
+  // exists to close off).
   let analysis = text;
   let favoredSide = null;
+  let quickTake = null;
+  let devilsAdvocate = null;
   let victoryMethods = null;
   const trimmed = text.trim();
   let searchFrom = trimmed.length;
@@ -351,7 +402,9 @@ export async function getOrGenerateAnalysis(candidate, env, ctx, now = Date.now(
       if (typeof parsed.favoredSide === 'string' && validSides.has(parsed.favoredSide)) {
         favoredSide = parsed.favoredSide;
       }
-      if (isMma && parsed.victoryMethods) victoryMethods = parsed.victoryMethods;
+      quickTake = asStringBullets(parsed.quickTake, 4);
+      devilsAdvocate = asStringBullets(parsed.devilsAdvocate, 3);
+      if (isMma && parsed.victoryMethods) victoryMethods = sanitizeVictoryMethods(parsed.victoryMethods);
       break;
     } catch {
       searchFrom = idx; // that '{' didn't lead to valid JSON — try an earlier one
@@ -371,7 +424,19 @@ export async function getOrGenerateAnalysis(candidate, env, ctx, now = Date.now(
     if (braceIdx !== -1) analysis = trimmed.slice(0, braceIdx).trim();
   }
 
-  const result = JSON.stringify({ analysis, favoredSide, ...(isMma ? { victoryMethods } : {}) });
+  // Rule 6 above asks the model to skip a leading markdown heading, but
+  // compliance isn't guaranteed — strip a leftover "# Title" or "## Title"
+  // first line defensively rather than showing it as literal "# " text
+  // (the app has no markdown renderer here, it's a plain <p>).
+  analysis = analysis.replace(/^#{1,3}\s+.+\n+/, '').trim();
+
+  const result = JSON.stringify({
+    analysis,
+    favoredSide,
+    quickTake,
+    devilsAdvocate,
+    ...(isMma ? { victoryMethods } : {}),
+  });
 
   ctx.waitUntil(env.POTD_KV.put(kvKey, result, { expirationTtl: 86400 * CACHE_TTL_DAYS }));
   return result;

@@ -1401,6 +1401,38 @@ input[type="range"]:focus-visible {
   line-height: 1.4;
 }
 
+.quick-take-list {
+  list-style: none;
+  margin: 0 0 12px;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.quick-take-list li {
+  position: relative;
+  padding: 7px 10px 7px 26px;
+  background: var(--surface-2);
+  border-radius: 6px;
+  font-size: 0.8rem;
+  font-weight: 500;
+  color: #e4e9f0;
+  line-height: 1.4;
+}
+
+.quick-take-list li::before {
+  content: '⚡';
+  position: absolute;
+  left: 8px;
+  top: 7px;
+  font-size: 0.75rem;
+}
+
+.devil-advocate .quick-take-list li::before {
+  content: '😈';
+}
+
 .stats-section.devil-advocate h3 { color: var(--warn); }
 .stats-section.devil-advocate {
   background: var(--surface-2);

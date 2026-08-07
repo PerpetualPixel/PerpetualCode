@@ -28,6 +28,16 @@ export const RULES = {
   // available, not a ranked list of everything — a 40 is not a pick, it's a coin
   // flip with extra steps.
   MIN_SCORE: 50,
+  // scoreCandidate()'s composite grade can clear MIN_SCORE on liquidity,
+  // agreement, and freshness alone even with almost no real edge — a 51%
+  // win read on a -117 line scores fine on "how clean is this number" while
+  // still being a -EV bet once the vig is paid. Pixel Picks opts into this
+  // as a hard floor (see topPicks' minEv) so scoring well isn't enough on
+  // its own; the price has to actually be worth taking.
+  MIN_EV_PCT: 0.015,
+  // Below this, suggestedStake()'s quarter-Kelly fraction is a rounding
+  // error, not a bet — the $1.48-on-$1000 pattern this exists to cut off.
+  MIN_KELLY_FRACTION: 0.0025,
 };
 
 const MARKET_LABELS = {
@@ -634,7 +644,7 @@ export function analyze(events, { now = Date.now() } = {}) {
 /* ------------------------------------------------------------------ */
 
 /**
- * The best `count` individual bets across every sport currently on the board,
+ * Up to `count` individual bets across every sport currently on the board,
  * ranked purely by grade — no per-sport quota, no auto-pairing short prices
  * into a combo. That combo behavior in generateSlate() suits a 1-2 pick board
  * where the app is choosing for you; here the point is the opposite — hand
@@ -644,7 +654,17 @@ export function analyze(events, { now = Date.now() } = {}) {
  * Odds range and confidence floor are both caller-supplied rather than fixed
  * at RULES' defaults, because the UI exposes both as adjustable controls: a
  * thin board (MMA on a quiet night, say) is a real state the user should be
- * able to widen into rather than stare at an empty list.
+ * able to widen into rather than stare at an empty list. minEv/minKelly are
+ * different in kind, not degree — they're opt-in (default: no floor, so
+ * existing callers are unaffected) but once set they're a hard rejection,
+ * never a "widen to see it" control: a candidate that clears the odds band
+ * and score floor by scoring well on liquidity/agreement/freshness alone can
+ * still have almost no real edge (a 51% read on -117 juice scores fine
+ * despite being -EV once the vig is paid), and no amount of widening the
+ * band makes that a bet worth taking. Below `count` real results back is the
+ * honest outcome on a day that doesn't have `count` genuine edges — this
+ * never pads the board out with one that doesn't clear the bar just to hit
+ * a number.
  */
 export function topPicks(
   candidates,
@@ -653,6 +673,15 @@ export function topPicks(
     oddsMin = RULES.MIN_AMERICAN,
     oddsMax = RULES.MAX_AMERICAN,
     minScore = RULES.MIN_SCORE,
+    // Opt-in, both default to "no floor" — existing callers (and the test
+    // suite) build fixtures that pass purely on score/odds-range and don't
+    // need to also clear a real edge threshold. Pixel Picks turns these on
+    // because a candidate can score above minScore on liquidity/agreement/
+    // freshness alone with almost no real EV (a 51% read on -117 juice, the
+    // exact "51/100 confidence on a -EV line" pattern that motivated this) —
+    // score is "how clean is this number," not "is this worth taking."
+    minEv = -Infinity,
+    minKelly = 0,
     exclude = new Set(),
     // Opt-in only — existing callers (and the test suite) rely on an empty
     // board being a real, visible state when nothing clears the bar. Pixel
@@ -666,7 +695,11 @@ export function topPicks(
   } = {},
 ) {
   const inRange = (a) => a >= oddsMin && a <= oddsMax;
-  const pool = candidates.filter((c) => inRange(c.american) && c.score >= minScore);
+  // A hard floor, unlike the odds band and score — a candidate that's
+  // genuinely not worth the stake should never surface, not even flagged as
+  // a non-standard fallback pick (see guaranteeCount below).
+  const clearsEdgeBar = (c) => c.ev > minEv && suggestedStake(c) >= minKelly;
+  const pool = candidates.filter((c) => inRange(c.american) && c.score >= minScore && clearsEdgeBar(c));
 
   const fresh = pool.filter((c) => !exclude.has(c.id));
   // Once everything in range has been shown this session, recycle rather than
@@ -708,10 +741,13 @@ export function topPicks(
   // board (odds range + confidence floor) can't fill it, the remaining slots
   // come from the full candidate pool — still real, gradeable prices, just
   // outside the sharp standard — and are flagged so the UI can say so rather
-  // than quietly passing them off as locks.
+  // than quietly passing them off as locks. clearsEdgeBar still applies here
+  // even though everything else relaxes: a demonstrably -EV or dust-sized
+  // edge isn't "non-standard," it's just a bad bet, and flagging it as a
+  // fallback lock wouldn't make it a better one.
   if (guaranteeCount && picks.length < count) {
     const fallbackSorted = [...candidates]
-      .filter((c) => !usedLegs.includes(c))
+      .filter((c) => !usedLegs.includes(c) && clearsEdgeBar(c))
       .sort((a, b) => sortKey(b) - sortKey(a));
 
     for (const c of fallbackSorted) {

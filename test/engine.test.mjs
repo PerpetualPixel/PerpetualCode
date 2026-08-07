@@ -559,6 +559,32 @@ test('topPicks respects a caller-supplied odds range and confidence floor', () =
   assert.deepEqual(strict.picks, []);
 });
 
+test('topPicks with minEv/minKelly rejects a score-clearing but -EV or dust-edge candidate', () => {
+  // A near-coin-flip line (-117 vs -108) with a small outlier still clears
+  // MIN_SCORE (50) on liquidity/agreement/freshness alone despite negative
+  // EV — this is the exact "51/100 confidence on -117 juice" pattern real
+  // users hit: the composite score says "clean number," not "worth taking."
+  const juicy = makeEvent('juicy', -117, -108, { ...SHARP, outlier: 10 });
+  const real = makeEvent('real', -140, 120, SHARP); // genuine ~9.7% EV edge
+  const candidates = analyze([juicy, real], { now: NOW });
+
+  // Without opting in, both still surface — existing callers are unaffected.
+  const unfiltered = topPicks(candidates, { oddsMin: -1000, oddsMax: 500, minScore: 0, count: 8 });
+  assert.ok(unfiltered.picks.some((p) => p.legs[0].eventId === 'juicy'));
+
+  // Opted in, the -EV score-clearer is rejected even though it clears
+  // MIN_SCORE; the genuine-edge candidate still comes through.
+  const filtered = topPicks(candidates, {
+    oddsMin: -1000, oddsMax: 500, minScore: 0, count: 8,
+    minEv: RULES.MIN_EV_PCT, minKelly: RULES.MIN_KELLY_FRACTION,
+  });
+  assert.ok(
+    !filtered.picks.some((p) => p.legs[0].eventId === 'juicy'),
+    'a -EV candidate must never surface once minEv is set, regardless of score',
+  );
+  assert.ok(filtered.picks.some((p) => p.legs[0].eventId === 'real'));
+});
+
 test('topPicks never shows both sides of the same game and market', () => {
   const candidates = analyze(
     [makeEvent('a', -140, 120, { ...SHARP, awayOutlier: 45 })],

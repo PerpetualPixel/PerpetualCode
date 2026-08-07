@@ -1866,6 +1866,8 @@ async function openStatsDrawer(leg, opposite = null, { fullscreen = false } = {}
   let analysisText = null;
   let victoryMethods = null;
   let favoredSide = null;
+  let quickTake = null;
+  let devilsAdvocate = null;
   try {
     const analysisPromise = matchupAnalysisFor(leg);
     if (isTennis(leg.sportKey)) {
@@ -1884,16 +1886,19 @@ async function openStatsDrawer(leg, opposite = null, { fullscreen = false } = {}
     }
     const analysis = await analysisPromise;
     // The worker always returns a JSON envelope now — {analysis,
-    // favoredSide, victoryMethods?} — favoredSide is the model's own
-    // independent read of which side the facts support, worked out with no
-    // knowledge of which side this card is actually highlighting. Compared
-    // against leg below so a disagreement is shown plainly instead of the
-    // title and the write-up silently contradicting each other.
+    // favoredSide, quickTake, devilsAdvocate, victoryMethods?} —
+    // favoredSide is the model's own independent read of which side the
+    // facts support, worked out with no knowledge of which side this card
+    // is actually highlighting. Compared against leg below so a
+    // disagreement is shown plainly instead of the title and the write-up
+    // silently contradicting each other.
     if (analysis) {
       try {
         const parsed = JSON.parse(analysis);
         analysisText = parsed.analysis ?? analysis;
         favoredSide = parsed.favoredSide ?? null;
+        quickTake = Array.isArray(parsed.quickTake) ? parsed.quickTake : null;
+        devilsAdvocate = Array.isArray(parsed.devilsAdvocate) ? parsed.devilsAdvocate : null;
         if (isMma(leg.sportKey) && parsed.victoryMethods) victoryMethods = parsed.victoryMethods;
       } catch {
         analysisText = analysis;
@@ -1911,7 +1916,11 @@ async function openStatsDrawer(leg, opposite = null, { fullscreen = false } = {}
     ? `<p class="analysis-disagree">⚠ This matchup read favors <strong>${esc(favoredSide)}</strong>, not ${esc(leg.outcomeName)} — the algorithm's price-based pick and this qualitative read don't agree here. Worth weighing both before betting.</p>`
     : '';
 
-  // Build victory methods HTML for MMA
+  const methodLabel = { SUB: 'Submission', TKO: 'TKO/KO', DEC: 'Decision' };
+  const victoryList = (entries) =>
+    (entries ?? [])
+      .map((v) => `<li><strong>${esc(methodLabel[v.method] ?? v.method)}</strong>${v.percentage != null ? ` — ${v.percentage}%` : ''}: ${esc(v.reasoning)}</li>`)
+      .join('');
   const victoryMethodsHtml = victoryMethods
     ? `
       <div class="stats-section victory-methods">
@@ -1919,22 +1928,20 @@ async function openStatsDrawer(leg, opposite = null, { fullscreen = false } = {}
         <div class="victory-fighters">
           <div class="victory-fighter">
             <div class="fighter-name">${esc(leg.away)}</div>
-            <ul class="victory-list">
-              ${(victoryMethods[leg.away] || [])
-                .map((v) => `<li><strong>${esc(v.method)}</strong>: ${esc(v.reasoning)}</li>`)
-                .join('')}
-            </ul>
+            <ul class="victory-list">${victoryList(victoryMethods[leg.away])}</ul>
           </div>
           <div class="victory-fighter">
             <div class="fighter-name">${esc(leg.home)}</div>
-            <ul class="victory-list">
-              ${(victoryMethods[leg.home] || [])
-                .map((v) => `<li><strong>${esc(v.method)}</strong>: ${esc(v.reasoning)}</li>`)
-                .join('')}
-            </ul>
+            <ul class="victory-list">${victoryList(victoryMethods[leg.home])}</ul>
           </div>
         </div>
       </div>`
+    : '';
+
+  // TL;DR bullets above the prose — the scannable "why this pick" summary
+  // for whichever side favoredSide names, before the deep-dive underneath.
+  const quickTakeHtml = quickTake?.length
+    ? `<ul class="quick-take-list">${quickTake.map((t) => `<li>${esc(t)}</li>`).join('')}</ul>`
     : '';
 
   // The AI-written matchup analysis replaces the quantitative price case
@@ -1946,6 +1953,7 @@ async function openStatsDrawer(leg, opposite = null, { fullscreen = false } = {}
       <div class="stats-section">
         <h3>Matchup Analysis <span class="stats-source">AI-written, once daily</span></h3>
         ${disagreementHtml}
+        ${quickTakeHtml}
         <p class="analysis-text">${esc(analysisText)}</p>
         ${victoryMethodsHtml}
         ${stake ? `<div class="stake-line">${esc(stake)}</div>` : ''}
@@ -1960,13 +1968,18 @@ async function openStatsDrawer(leg, opposite = null, { fullscreen = false } = {}
   // The other side of the same market, argued on its own terms — the board
   // highlights one side, but a market cutting both ways is exactly why a bet
   // has a price at all, and the case against the algorithm's lean deserves
-  // the same treatment as the case for it. Still the quantitative version —
-  // the AI analysis is scoped to the game overall, not a specific side, per
-  // the same design that lets one analysis serve every market on the event.
+  // the same treatment as the case for it. devilsAdvocate (qualitative, from
+  // the same AI read as favoredSide) leads when available; the quantitative
+  // price-case bullets always follow, since that math holds regardless of
+  // whether the AI analysis loaded.
+  const devilQuickTakeHtml = devilsAdvocate?.length
+    ? `<ul class="quick-take-list">${devilsAdvocate.map((t) => `<li>${esc(t)}</li>`).join('')}</ul>`
+    : '';
   const devilHtml = opposite
     ? `
       <div class="stats-section devil-advocate">
         <h3>Devil's Advocate — ${esc(opposite.selection)}</h3>
+        ${devilQuickTakeHtml}
         <ul>${explainExtensive(opposite).map((t) => `<li>${esc(t)}</li>`).join('')}</ul>
         ${devilStake ? `<div class="stake-line">${esc(devilStake)}</div>` : ''}
       </div>`
@@ -2621,9 +2634,12 @@ function dayFilteredCandidates() {
  * Pixel Picks: every league is already loaded (refreshAllLeagues ran at
  * boot), so Generate never fetches — it just re-ranks the pool that's
  * already sitting in state.candidates, scoped to the current day filter.
- * Always hands back exactly TOP_PICKS_COUNT picks; topPicks()'s
- * guaranteeCount fills any slots the sharp standard (-250/+250, confidence
- * floor) can't with the next-best candidates available, flagged as such.
+ * Up to TOP_PICKS_COUNT picks; topPicks()'s guaranteeCount fills any slots
+ * the sharp standard (-250/+250, confidence floor) can't with the next-best
+ * candidates available, flagged as such — but minEv/minKelly are a hard
+ * floor even in that fallback, so a thin day with too few real edges comes
+ * back with fewer than 8 rather than padding the board out with a bet
+ * that's demonstrably not worth taking.
  */
 async function generate() {
   el.generate.disabled = true;
@@ -2636,6 +2652,14 @@ async function generate() {
       oddsMin: state.oddsMin,
       oddsMax: state.oddsMax,
       minScore: state.minScore,
+      // A candidate can clear minScore on liquidity/agreement/freshness
+      // alone with almost no real edge — these are the hard "is this
+      // actually worth the stake" floors on top of that (see RULES in
+      // engine.js). Applied even to guaranteeCount's fallback slots: a -EV
+      // or dust-edge pick doesn't become a real lock just because the board
+      // is thin that day.
+      minEv: RULES.MIN_EV_PCT,
+      minKelly: RULES.MIN_KELLY_FRACTION,
       exclude: state.seen,
       guaranteeCount: true,
       preferredSportKeys: preferredRawKeys(),
