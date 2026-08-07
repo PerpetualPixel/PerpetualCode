@@ -1882,7 +1882,36 @@ function renderUfcStatComparison(me, opponent) {
  * challenge). ufc.com's own athlete pages carry the same core numbers with
  * no such wall.
  */
-function renderMmaBreakdown(mmaContext, subjectName) {
+function renderMmaMoneylines(leg) {
+  if (!leg || !leg.quotes?.length) return '';
+  // Show the best moneyline price available across all books
+  const sorted = [...leg.quotes].sort((a, b) => b.decimal - a.decimal);
+  const bestQuote = sorted[0];
+  if (!bestQuote) return '';
+
+  const bestBooks = {};
+  for (const q of leg.quotes) {
+    if (!bestBooks[q.american] || q.decimal > bestBooks[q.american].decimal) {
+      bestBooks[q.american] = q;
+    }
+  }
+  const uniquePrices = Object.values(bestBooks).sort((a, b) => b.decimal - a.decimal).slice(0, 3);
+
+  return `
+    <div class="stats-section">
+      <h3>Moneyline (${leg.away} vs ${leg.home})</h3>
+      <div style="display: flex; gap: 1.5rem; flex-wrap: wrap;">
+        ${uniquePrices.map(q => `
+          <div style="text-align: center;">
+            <div style="font-size: 0.85rem; color: #999; margin-bottom: 0.5rem;">${esc(q.book)}</div>
+            <div style="font-size: 1.5rem; font-weight: bold; font-family: monospace; color: #1a1a1a;">${esc(formatAmerican(q.american))}</div>
+            <div style="font-size: 0.75rem; color: #999; margin-top: 0.25rem;">${(impliedProb(q.american) * 100).toFixed(1)}% implied</div>
+          </div>`).join('')}
+      </div>
+    </div>`;
+}
+
+function renderMmaBreakdown(mmaContext, subjectName, leg = null) {
   const { me, opponent } = resolveMmaFighters(mmaContext, subjectName);
   if (!me) return '';
 
@@ -1890,6 +1919,10 @@ function renderMmaBreakdown(mmaContext, subjectName) {
 
   const photos = renderMmaPhotos(me, opponent);
   if (photos) sections.push(photos);
+
+  // Moneylines section — always shown when odds are available
+  const moneylineHtml = leg ? renderMmaMoneylines(leg) : '';
+  if (moneylineHtml) sections.push(moneylineHtml);
 
   // Record + last-five-fights strip — always shown when the data's there,
   // regardless of whether a photo actually rendered above for either side.
@@ -2053,7 +2086,7 @@ async function openStatsDrawer(leg, opposite = null, { fullscreen = false } = {}
       const mmaContext = await mmaContextFor(leg);
       bullets = buildInsights(leg, { mmaContext });
       const subject = leg.selection.replace(/ to win$/i, '').trim();
-      mmaBreakdownHtml = renderMmaBreakdown(mmaContext, subject);
+      mmaBreakdownHtml = renderMmaBreakdown(mmaContext, subject, leg);
     } else {
       const [context, w] = await Promise.all([eventContext(leg), weatherFor(leg)]);
       weather = w;
