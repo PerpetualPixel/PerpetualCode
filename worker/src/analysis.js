@@ -22,7 +22,7 @@
 
 import { fetchContext, hasContext } from './context.js';
 import { fetchMmaContext } from './mma.js';
-import { fetchBaseballContext } from './baseball.js';
+import { fetchStartingPitchers, fetchSituationalSplits } from './mlb-stats.js';
 import { tennisRecentForm, tennisHeadToHead } from '../../docs/insights.js';
 
 const MODEL = 'claude-haiku-4-5-20251001';
@@ -42,13 +42,26 @@ const isTennisSport = (sportKey) => String(sportKey ?? '').startsWith('tennis_')
 const isMmaSport = (sportKey) => sportKey === 'mma_mixed_martial_arts';
 const isBaseballSport = (sportKey) => sportKey === 'baseball_mlb';
 
-function isDayGame(commenceTimeStr) {
-  if (!commenceTimeStr) return false;
-  const date = new Date(commenceTimeStr);
-  const hour = date.getUTCHours();
-  // Before 5 PM UTC is typically a day game in US time zones
-  return hour < 17;
-}
+// Same team name -> ESPN abbreviation mapping as docs/app.js's own
+// MLB_ABBR_MAP (used there for the View Stats feature) — duplicated
+// server-side rather than shared, matching this codebase's established
+// convention of duplicating small parallel data across the worker/docs
+// boundary (see tracking.js/potd.js's own FLAT_UNIT_STAKE comments).
+// worker/src/mlb-stats.js's ESPN calls key off this abbreviation, not the
+// full team name The Odds API hands back.
+const MLB_ABBR_MAP = {
+  'Los Angeles Angels': 'laa', 'Baltimore Orioles': 'bal', 'Boston Red Sox': 'bos',
+  'New York Yankees': 'nyy', 'Tampa Bay Rays': 'tb', 'Toronto Blue Jays': 'tor',
+  'Chicago White Sox': 'chw', 'Cleveland Guardians': 'cle', 'Detroit Tigers': 'det',
+  'Kansas City Royals': 'kc', 'Minnesota Twins': 'min', 'Houston Astros': 'hou',
+  'Los Angeles Dodgers': 'lad', 'Oakland Athletics': 'ath', 'Athletics': 'ath',
+  'Seattle Mariners': 'sea', 'Arizona Diamondbacks': 'ari', 'Colorado Rockies': 'col',
+  'San Diego Padres': 'sd', 'San Francisco Giants': 'sf', 'Atlanta Braves': 'atl',
+  'Miami Marlins': 'mia', 'New York Mets': 'nym', 'Philadelphia Phillies': 'phi',
+  'Washington Nationals': 'wsh', 'Chicago Cubs': 'chc', 'Cincinnati Reds': 'cin',
+  'Milwaukee Brewers': 'mil', 'Pittsburgh Pirates': 'pit', 'St. Louis Cardinals': 'stl',
+};
+const mlbAbbr = (teamName) => MLB_ABBR_MAP[teamName] ?? null;
 
 // Module-scope: survives across requests in the same isolate, same pattern
 // potd.js already uses for this exact static asset.
@@ -107,40 +120,42 @@ function mmaFactSheet(mmaContext) {
   return lines.length ? lines.join('\n') : null;
 }
 
-function baseballFactSheet(baseballContext, awayTeam, homeTeam, isDay = false) {
-  if (!baseballContext) return null;
-  const { away, home, awayTeamStats, homeTeamStats } = baseballContext;
-
-  const pitcherInfo = (p, team, isHome) => {
-    if (!p) return null;
-    let info = `${team}: `;
-    if (p.name) info += `pitcher ${p.name}, `;
-    if (p.era) info += `ERA ${p.era.toFixed(2)}, `;
-    if (p.form) info += `form ${p.form}, `;
-    if (p.homeEra && p.awayEra) {
-      const splitNote = isHome
-        ? `home ERA ${p.homeEra.toFixed(2)}`
-        : `away ERA ${p.awayEra.toFixed(2)}`;
-      info += `${splitNote}, `;
-    }
-    if (p.newTeam) info += `new team (adjustment period), `;
-    return info.slice(0, -2) + '.';
+/**
+ * Real starting-pitcher lines (name, W-L, ERA, WHIP) and situational
+ * splits (season/last-10/home-away record) for both sides, from
+ * worker/src/mlb-stats.js's already-working ESPN calls — the same data
+ * source the live View Stats feature uses, not a separate/duplicated
+ * fetch path. `pitchers` is fetchStartingPitchers()'s own {away, home}
+ * shape; `awaySplits`/`homeSplits` are fetchSituationalSplits()'s own
+ * {season, lastTen, home, away} shape. Any side missing entirely (no
+ * probable starter posted yet, a team ESPN doesn't have current standings
+ * for) is just omitted rather than guessed.
+ */
+function baseballFactSheet({ pitchers, awaySplits, homeSplits }, awayTeam, homeTeam) {
+  const pitcherLine = (p, team) => {
+    if (!p?.name) return null;
+    const record = p.wins != null && p.losses != null ? `${p.wins}-${p.losses}` : 'record unknown';
+    const era = p.era != null ? `${p.era.toFixed(2)} ERA` : 'ERA unknown';
+    const whip = p.whip != null ? `, ${p.whip.toFixed(2)} WHIP` : '';
+    const throws = p.throws ? ` (throws ${p.throws})` : '';
+    return `${team} starter: ${p.name}${throws}, ${record}, ${era}${whip}.`;
   };
 
-  const teamContext = (stats, isHome) => {
-    if (!stats) return null;
-    const dayOrNight = isDay ? 'day' : 'night';
-    const winPct = isDay ? stats.dayWinPct : stats.nightWinPct;
-    const gameCount = isDay ? stats.dayGameCount : stats.nightGameCount;
-    if (gameCount < 3) return null; // Too few games for meaningful split
-    return `${dayOrNight.charAt(0).toUpperCase() + dayOrNight.slice(1)} game record: ${(winPct).toFixed(1)}% win rate (${gameCount} games).`;
+  const splitLine = (splits, team) => {
+    if (!splits) return null;
+    const parts = [];
+    if (splits.season) parts.push(`${splits.season} overall`);
+    if (splits.lastTen) parts.push(`${splits.lastTen} last 10`);
+    if (splits.home) parts.push(`${splits.home} at home`);
+    if (splits.away) parts.push(`${splits.away} on the road`);
+    return parts.length ? `${team}: ${parts.join(', ')}.` : null;
   };
 
   const lines = [
-    pitcherInfo(away, awayTeam, false),
-    pitcherInfo(home, homeTeam, true),
-    teamContext(awayTeamStats, isDay),
-    teamContext(homeTeamStats, isDay),
+    pitcherLine(pitchers?.away, awayTeam),
+    pitcherLine(pitchers?.home, homeTeam),
+    splitLine(awaySplits, awayTeam),
+    splitLine(homeSplits, homeTeam),
   ].filter(Boolean);
 
   return lines.length ? lines.join('\n') : null;
@@ -340,9 +355,14 @@ export async function getOrGenerateAnalysis(candidate, env, ctx, now = Date.now(
   // response envelope/anti-hallucination prompt, a trailing-JSON extraction
   // bug, and an MMA token-truncation bug — see prior versions' history in
   // git blame for detail.
+  // v8/v2: baseball's fact sheet moved off worker/src/baseball.js's
+  // fetchBaseballContext (stale ESPN host, always-null pitcher names — see
+  // git history) onto mlb-stats.js's already-working ESPN calls. Bumped so
+  // a null result cached under the old, broken path doesn't shadow the fix
+  // for the rest of its TTL.
   const kvKey = isPotd
-    ? `potd-analysis:v1:${dateKey}:${candidate.eventId}:${candidate.outcomeName}`
-    : `analysis:v7:${dateKey}:${candidate.eventId}:${candidate.outcomeName}`;
+    ? `potd-analysis:v2:${dateKey}:${candidate.eventId}:${candidate.outcomeName}`
+    : `analysis:v8:${dateKey}:${candidate.eventId}:${candidate.outcomeName}`;
   const cached = await env.POTD_KV.get(kvKey);
   if (cached) return cached;
 
@@ -357,12 +377,16 @@ export async function getOrGenerateAnalysis(candidate, env, ctx, now = Date.now(
       factSheet = mmaFactSheet(mmaContext);
     } else if (isBaseballSport(candidate.sportKey)) {
       isBaseball = true;
-      const dayGame = isDayGame(candidate.commence_time);
-      const baseballContext = await fetchBaseballContext(
-        { awayTeam: candidate.away, homeTeam: candidate.home, awayPitcher: null, homePitcher: null },
-        ctx,
-      );
-      factSheet = baseballFactSheet(baseballContext, candidate.away, candidate.home, dayGame);
+      const awayAbbr = mlbAbbr(candidate.away);
+      const homeAbbr = mlbAbbr(candidate.home);
+      if (awayAbbr && homeAbbr) {
+        const [pitchers, awaySplits, homeSplits] = await Promise.all([
+          fetchStartingPitchers(awayAbbr, homeAbbr, ctx),
+          fetchSituationalSplits(awayAbbr, ctx),
+          fetchSituationalSplits(homeAbbr, ctx),
+        ]);
+        factSheet = baseballFactSheet({ pitchers, awaySplits, homeSplits }, candidate.away, candidate.home);
+      }
     } else if (hasContext(candidate.sportKey)) {
       const context = await fetchContext(
         { sportKey: candidate.sportKey, home: candidate.home, away: candidate.away }, ctx,

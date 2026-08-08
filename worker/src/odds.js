@@ -8,7 +8,6 @@
  * scheduled() handler, so tracking.js can't import from index.js).
  */
 import { getUfcEventDetails, fetchMmaSchedule } from './ufc-events.js';
-import { fetchBaseballContext } from './baseball.js';
 
 export const UPSTREAM = 'https://api.the-odds-api.com/v4';
 
@@ -114,30 +113,6 @@ export async function enrichMmaEvents(events, ctx) {
   return enriched;
 }
 
-async function enrichBaseballEvents(events, ctx) {
-  if (!events || !Array.isArray(events)) return events;
-
-  const enriched = await Promise.all(
-    events.map(async (event) => {
-      // Odds API doesn't include pitchers, so we'll note that for manual future enhancement
-      const baseballContext = await fetchBaseballContext(
-        {
-          awayTeam: event.away_team,
-          homeTeam: event.home_team,
-          awayPitcher: null, // TODO: Pull from external source when available
-          homePitcher: null,
-        },
-        ctx,
-      );
-      return baseballContext
-        ? { ...event, baseball_context: baseballContext }
-        : event;
-    }),
-  );
-
-  return enriched;
-}
-
 /**
  * One league's odds, cached at the edge for env.CACHE_SECONDS (default 15
  * min) and shared across every caller hitting the same sport key — a
@@ -164,8 +139,6 @@ export async function fetchSport(sport, env, ctx) {
     let events = await cached.json();
     if (sport === 'mma_mixed_martial_arts') {
       events = await enrichMmaEvents(events, ctx);
-    } else if (sport === 'baseball_mlb') {
-      events = await enrichBaseballEvents(events, ctx);
     }
     return { events, cached: true, quota: null };
   }
@@ -185,8 +158,6 @@ export async function fetchSport(sport, env, ctx) {
 
   if (sport === 'mma_mixed_martial_arts') {
     events = await enrichMmaEvents(events, ctx);
-  } else if (sport === 'baseball_mlb') {
-    events = await enrichBaseballEvents(events, ctx);
   }
 
   ctx.waitUntil(
