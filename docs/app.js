@@ -1017,21 +1017,30 @@ function mmaContextFor(leg) {
 }
 
 /**
- * Kicks off mmaContextFor for every MMA game currently on the board, in the
- * background, well before any user clicks "More Info" — the whole point is
- * that by the time they do, the fetch (or its now-cached result) is already
- * sitting in state.context, so the drawer opens instantly instead of
- * waiting on a multi-second live Sherdog/ESPN research fetch. Called from
- * renderFullSlate whenever the MMA tab is showing.
+ * Kicks off mmaContextFor AND matchupAnalysisFor for every MMA game
+ * currently on the board, in the background, well before any user clicks
+ * "More Info" — the whole point is that by the time they do, both fetches
+ * (or their now-cached results) are already sitting in state.context, so
+ * the drawer opens instantly instead of waiting on a multi-second live
+ * Sherdog/ESPN research fetch plus a separate AI-written analysis call.
+ * The analysis call is the slower of the two in practice (confirmed live:
+ * a cold open-to-painted-content time over 6 seconds, dominated by this,
+ * not the research fetch alone) — prefetching only mmaContextFor and
+ * leaving this one out would have missed most of the actual wait. Uses
+ * bestCandidateForGame, the exact same candidate a real "More Info" click
+ * resolves to (see slateGameHtml's click handler), so the prefetched
+ * analysis cache key always matches what gets requested for real. Called
+ * from renderFullSlate whenever the MMA tab is showing.
  *
  * Deliberately throttled rather than firing all of them at once — a card
- * can have 50+ fights, and a burst of 50+ simultaneous requests hits the
- * worker (and Sherdog/ESPN behind it) all in the same instant for no real
- * benefit over spreading them out a little; nobody clicks "More Info"
- * faster than a small pool of requests can drain. mmaContextFor's own
- * cache means calling this again after a filter/sort change or a periodic
- * re-render (see renderFullSlate's own refreshSlateScores callback) never
- * re-fetches a game already fetched or in flight.
+ * can have 50+ fights, and a burst of 100+ simultaneous requests (two per
+ * fight) hits the worker (and Sherdog/ESPN/Anthropic behind it) all in the
+ * same instant for no real benefit over spreading them out a little;
+ * nobody clicks "More Info" faster than a small pool of requests can
+ * drain. Both target functions' own state.context cache means calling this
+ * again after a filter/sort change or a periodic re-render (see
+ * renderFullSlate's own refreshSlateScores callback) never re-fetches a
+ * game already fetched or in flight.
  */
 const MMA_PREFETCH_CONCURRENCY = 4;
 function prefetchMmaContext(games) {
@@ -1039,7 +1048,11 @@ function prefetchMmaContext(games) {
   const worker = async () => {
     while (queue.length) {
       const game = queue.shift();
-      await mmaContextFor(game);
+      const best = bestCandidateForGame(game);
+      await Promise.all([
+        mmaContextFor(game),
+        best ? matchupAnalysisFor(best) : Promise.resolve(),
+      ]);
     }
   };
   for (let i = 0; i < MMA_PREFETCH_CONCURRENCY; i++) worker();
