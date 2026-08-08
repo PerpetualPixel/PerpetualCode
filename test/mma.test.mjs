@@ -240,3 +240,156 @@ test('searchFighter never retries with a looser query when the full-name search 
   // attempt for either.
   assert.equal(fightfinderCalls, 2);
 });
+
+/* ---------------------------------------------------------------- */
+/* ESPN as the primary fighter-data source, Sherdog as fallback       */
+/* ---------------------------------------------------------------- */
+
+function makeEspnScoreboard(competitorPairs) {
+  return {
+    events: [{
+      name: 'UFC Fight Night: Test Card',
+      date: '2026-08-08T20:00:00Z',
+      competitions: competitorPairs.map(([a, b]) => ({
+        competitors: [
+          { id: a.id, athlete: { displayName: a.name } },
+          { id: b.id, athlete: { displayName: b.name } },
+        ],
+      })),
+    }],
+  };
+}
+
+function makeEspnAthlete({ id, name, wins, losses, draws, history = [] }) {
+  return {
+    athlete: {
+      id,
+      displayName: name,
+      fullName: name,
+      nickname: 'Test Nick',
+      links: [{ rel: ['overview', 'desktop', 'athlete'], href: `https://www.espn.com/mma/fighter/_/id/${id}/x` }],
+      headshot: { href: `https://a.espncdn.com/i/headshots/mma/players/full/${id}.png` },
+      statsSummary: { statistics: [{ name: 'wins-losses-draws', displayValue: `${wins}-${losses}-${draws}` }] },
+      displayHeight: `5' 10"`,
+      displayWeight: '155 lbs',
+      displayReach: `70"`,
+      stance: { text: 'Orthodox' },
+      weightClass: { text: 'Lightweight' },
+      association: { name: 'Test Gym' },
+      citizenship: 'United States',
+      age: 30,
+    },
+    eventsMap: Object.fromEntries(history.map((h, i) => [`e${i}`, h])),
+  };
+}
+
+test('fetchMmaContext resolves a fighter via ESPN when they are on ESPN\'s own UFC/PFL scoreboard, never touching Sherdog', async () => {
+  const sherdogQueries = [];
+  globalThis.caches = { default: { async match() { return null; }, async put() {} } };
+  globalThis.fetch = async (url) => {
+    const u = String(url);
+    if (u.includes('/stats/fightfinder')) {
+      sherdogQueries.push(decodeURIComponent(u.split('SearchTxt=')[1] ?? '').replace(/\+/g, ' '));
+      return { ok: true, text: async () => '<div>no results</div>' };
+    }
+    if (u.includes('/ufc/scoreboard')) {
+      return {
+        ok: true,
+        text: async () => JSON.stringify(makeEspnScoreboard([
+          [{ id: '111', name: 'Gigi Canuto' }, { id: '222', name: 'Carol Foro' }],
+        ])),
+      };
+    }
+    if (u.includes('/pfl/scoreboard')) {
+      return { ok: true, text: async () => JSON.stringify({ events: [] }) };
+    }
+    if (u.includes('/athletes/111')) {
+      return {
+        ok: true,
+        text: async () => JSON.stringify(makeEspnAthlete({
+          id: '111', name: 'Gigi Canuto', wins: 7, losses: 1, draws: 0,
+          history: [{
+            gameResult: 'W', name: 'LFA 224', gameDate: '2026-01-16T05:00:00Z',
+            opponent: { displayName: 'Janaina Silva' },
+            status: { result: { displayName: 'Submission (Rear Naked Choke)' }, period: 3, displayClock: '2:38' },
+          }],
+        })),
+      };
+    }
+    return { ok: false, status: 404, text: async () => '' };
+  };
+
+  const result = await fetchMmaContext({ fighterA: 'Gigi Canuto', fighterB: 'Carol Foro' }, ctx);
+  assert.equal(result.a?.name, 'Gigi Canuto');
+  assert.deepEqual(result.a?.record, { wins: 7, losses: 1, draws: 0 });
+  assert.equal(result.a?.history[0].opponent, 'Janaina Silva');
+  assert.equal(result.a?.history[0].category, 'submission');
+  assert.equal(result.a?.nickname, 'Test Nick');
+  // fighterA is on the mocked ESPN board and resolved directly there — it
+  // must never have fallen through to a Sherdog query.
+  assert.ok(!sherdogQueries.includes('Gigi Canuto'), 'ESPN resolved this fighter directly; Sherdog should never have been queried for them');
+});
+
+/**
+ * Regression test for a real incident: the first version of ESPN athlete
+ * resolution matched a fighter name against ANY fight anywhere on ESPN's
+ * 30-day UFC/PFL schedule, independently per side — so "Ty Miller" (the
+ * odds feed's name for one specific fight) matched "Juliana Miller," a
+ * completely different fighter on a wholly unrelated card, purely on a
+ * shared surname with no check that her actual opponent had anything to do
+ * with the real fight. resolveEspnAthleteIds now requires BOTH sides of a
+ * fight to plausibly match together, not either side independently.
+ */
+test('fetchMmaContext never cross-matches a fighter to an unrelated fight sharing only a surname', async () => {
+  globalThis.caches = { default: { async match() { return null; }, async put() {} } };
+  globalThis.fetch = async (url) => {
+    const u = String(url);
+    if (u.includes('/ufc/scoreboard')) {
+      return {
+        ok: true,
+        text: async () => JSON.stringify(makeEspnScoreboard([
+          // The real fight being looked up.
+          [{ id: '301', name: 'Ty Cole Miller' }, { id: '302', name: 'Billy Ray Goff' }],
+          // A wholly unrelated fight, elsewhere on the same 30-day board,
+          // whose one side happens to share the surname "Miller".
+          [{ id: '401', name: 'Juliana Miller' }, { id: '402', name: 'Ravena Oliveira' }],
+        ])),
+      };
+    }
+    if (u.includes('/pfl/scoreboard')) return { ok: true, text: async () => JSON.stringify({ events: [] }) };
+    if (u.includes('/athletes/301')) {
+      return { ok: true, text: async () => JSON.stringify(makeEspnAthlete({ id: '301', name: 'Ty Cole Miller', wins: 7, losses: 0, draws: 0 })) };
+    }
+    if (u.includes('/athletes/401')) {
+      return { ok: true, text: async () => JSON.stringify(makeEspnAthlete({ id: '401', name: 'Juliana Miller', wins: 4, losses: 2, draws: 0 })) };
+    }
+    return { ok: false, status: 404, text: async () => '' };
+  };
+
+  const result = await fetchMmaContext({ fighterA: 'Ty Miller', fighterB: 'Billy Goff' }, ctx);
+  assert.equal(result.a?.name, 'Ty Cole Miller', 'must resolve the real opponent-matched Miller, never the unrelated one');
+});
+
+test('fetchMmaContext falls back to Sherdog when a fighter is not on ESPN\'s UFC/PFL scoreboard', async () => {
+  globalThis.caches = { default: { async match() { return null; }, async put() {} } };
+  globalThis.fetch = async (url) => {
+    const u = String(url);
+    if (u.includes('/ufc/scoreboard') || u.includes('/pfl/scoreboard')) {
+      // ESPN's board has no fight involving this fighter at all (e.g. a
+      // regional-promotion-only prospect) — schedule resolves empty for them.
+      return { ok: true, text: async () => JSON.stringify({ events: [] }) };
+    }
+    if (u.includes('/stats/fightfinder')) {
+      const name = decodeURIComponent(u.split('SearchTxt=')[1] ?? '').replace(/\+/g, ' ');
+      if (name === 'Regional Prospect') return { ok: true, text: async () => makeSearchPage('Regional Prospect', '/fighter/Regional-Prospect-1') };
+      return { ok: true, text: async () => '<div>no results</div>' };
+    }
+    if (u.includes('/fighter/Regional-Prospect-1')) {
+      return { ok: true, text: async () => makeFighterPage({ name: 'Regional Prospect', record: '3-0-0', history: [] }) };
+    }
+    return { ok: false, status: 404, text: async () => '' };
+  };
+
+  const result = await fetchMmaContext({ fighterA: 'Regional Prospect', fighterB: 'irrelevant' }, ctx);
+  assert.equal(result.a?.name, 'Regional Prospect');
+});

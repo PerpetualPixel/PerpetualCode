@@ -988,8 +988,12 @@ function weatherFor(leg) {
 }
 
 /**
- * Sherdog-derived fighter research for one MMA matchup, via the worker. Free —
- * no odds credits — and cached by fighter pair, same pattern as eventContext.
+ * ESPN/Sherdog-derived fighter research for one MMA matchup, via the
+ * worker. Free — no odds credits — and cached by event id in
+ * state.context, so calling this again for a game already fetched (or
+ * still in flight) is a no-op that just returns the same promise —
+ * exactly what lets prefetchMmaContext below kick these off ahead of any
+ * click with no risk of double-fetching once the user actually opens one.
  */
 function mmaContextFor(leg) {
   const key = `mma:${leg.eventId}`;
@@ -1010,6 +1014,35 @@ function mmaContextFor(leg) {
     }
   }
   return state.context.get(key);
+}
+
+/**
+ * Kicks off mmaContextFor for every MMA game currently on the board, in the
+ * background, well before any user clicks "More Info" — the whole point is
+ * that by the time they do, the fetch (or its now-cached result) is already
+ * sitting in state.context, so the drawer opens instantly instead of
+ * waiting on a multi-second live Sherdog/ESPN research fetch. Called from
+ * renderFullSlate whenever the MMA tab is showing.
+ *
+ * Deliberately throttled rather than firing all of them at once — a card
+ * can have 50+ fights, and a burst of 50+ simultaneous requests hits the
+ * worker (and Sherdog/ESPN behind it) all in the same instant for no real
+ * benefit over spreading them out a little; nobody clicks "More Info"
+ * faster than a small pool of requests can drain. mmaContextFor's own
+ * cache means calling this again after a filter/sort change or a periodic
+ * re-render (see renderFullSlate's own refreshSlateScores callback) never
+ * re-fetches a game already fetched or in flight.
+ */
+const MMA_PREFETCH_CONCURRENCY = 4;
+function prefetchMmaContext(games) {
+  const queue = [...games];
+  const worker = async () => {
+    while (queue.length) {
+      const game = queue.shift();
+      await mmaContextFor(game);
+    }
+  };
+  for (let i = 0; i < MMA_PREFETCH_CONCURRENCY; i++) worker();
 }
 
 /**
@@ -3098,6 +3131,13 @@ function renderFullSlate() {
   // Upcoming/Live/Finished toggle — applied after event/card selection so
   // switching it never reshuffles the tournament/card dropdown itself.
   games = games.filter((g) => slateGameState(g) === state.slateGameFilter);
+
+  // Pre-fetch fighter research for every MMA game now on the board, ahead
+  // of any "More Info" click — see prefetchMmaContext's own comment. No-op
+  // for every other league (mmaContextFor is MMA-specific).
+  if (group.id === 'mma' && games.length) {
+    prefetchMmaContext(games);
+  }
 
   // Get sort preference (default to chronological)
   const sortMode = el.slateSortSelect?.value || 'time';

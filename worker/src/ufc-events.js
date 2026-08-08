@@ -137,9 +137,58 @@ function parseSchedule(data) {
       return {
         a: normalizeName(a?.athlete?.displayName),
         b: normalizeName(b?.athlete?.displayName),
+        // The competitor's own ESPN athlete id — same id space regardless of
+        // which promotion's scoreboard it came from (confirmed live: a PFL
+        // scoreboard competitor's id resolves fine through the UFC athlete
+        // endpoint too). Carried alongside the normalized names so a caller
+        // that already has this schedule fetched (resolveEspnAthleteId
+        // below) never needs a second network round trip just to find an id
+        // it already had in hand.
+        aId: a?.id ?? null,
+        bId: b?.id ?? null,
       };
     }),
   }));
+}
+
+/**
+ * Both fighters' ESPN athlete ids for one specific matchup, resolved
+ * against an already-fetched schedule (see fetchMmaSchedule) — the same
+ * namesLikelyMatch tolerance getUfcEventDetails uses for event-card
+ * matching, reused here because it's the identical problem: the odds feed's
+ * name and ESPN's own listed name for the same fight routinely differ in
+ * exactly the same ways (a shortened first name, a missing middle name).
+ *
+ * Deliberately takes BOTH names and only accepts a fight where BOTH sides
+ * plausibly match, not "the first fight anywhere on the 30-day schedule
+ * with a same-surname fighter." A single-name version of this shipped
+ * first and produced a confirmed live false positive: "Ty Miller" resolved
+ * to "Juliana Miller" — a completely different fighter on an unrelated
+ * card, matched purely on a shared surname with no cross-check that her
+ * actual opponent had anything to do with the real fight being looked up.
+ * Requiring the SAME fight's other side to also match (mirroring
+ * getUfcEventDetails's own already-proven pattern, `namesLikelyMatch(f.a,
+ * normA) && namesLikelyMatch(f.b, normB)`) closes that off: a same-surname
+ * collision would need two different fighters sharing a surname WITHIN one
+ * scheduled bout, which doesn't happen. Returns { aId: null, bId: null }
+ * when no scheduled fight has both sides plausibly matching.
+ */
+export function resolveEspnAthleteIds(fighterA, fighterB, schedule) {
+  const normA = normalizeName(fighterA);
+  const normB = normalizeName(fighterB);
+  if (!normA || !normB) return { aId: null, bId: null };
+
+  for (const event of schedule) {
+    for (const fight of event.fights) {
+      if (namesLikelyMatch(fight.a, normA) && namesLikelyMatch(fight.b, normB)) {
+        return { aId: fight.aId, bId: fight.bId };
+      }
+      if (namesLikelyMatch(fight.a, normB) && namesLikelyMatch(fight.b, normA)) {
+        return { aId: fight.bId, bId: fight.aId };
+      }
+    }
+  }
+  return { aId: null, bId: null };
 }
 
 /**

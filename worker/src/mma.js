@@ -27,6 +27,7 @@
 
 import { fetchUfcProfile } from './ufc.js';
 import { parseSherdogDate } from '../../docs/insights.js';
+import { fetchMmaSchedule, resolveEspnAthleteIds } from './ufc-events.js';
 
 const SHERDOG = 'https://www.sherdog.com';
 const SEARCH_TTL = 3600 * 6;   // a name resolves to the same fighter for months
@@ -330,7 +331,15 @@ export function computeCurrentStreak(history) {
 // record-at-the-time attached — each one costs a real extra fetch (the
 // opponent's own Sherdog page), so this is capped to the fights a reader is
 // actually likely to look at rather than a whole 30-fight veteran's career.
-const OPPONENT_RECORD_LOOKBACK = 10;
+// Lowered from 10: a Sherdog-fallback fighter with a long documented career
+// on both sides of a matchup, combined with the ESPN schedule fetch and
+// ufc.com lookups this same request already makes, could add up to a real
+// live "Too many subrequests by single Worker invocation" failure
+// (confirmed live: Yoel Romero vs Darren Till, both long-tenured veterans,
+// came back with no data at all rather than a partial result) — 5 keeps
+// the recent-form window that actually matters while leaving real headroom
+// under Cloudflare's per-invocation cap.
+const OPPONENT_RECORD_LOOKBACK = 5;
 
 /**
  * Reconstructs what an opponent's own record was heading into one specific
@@ -428,16 +437,168 @@ function deriveRecordFromHistory(history) {
 }
 
 /**
+ * ESPN's own fighter-profile API — the actual primary source now, tried
+ * before Sherdog (see fetchMmaContext below). Where Sherdog needs a fuzzy
+ * text search against an independently-curated database (real risk of
+ * matching the wrong same-name person, or missing a real name-variant
+ * mismatch entirely — see searchFighter's own comment), this fetches by a
+ * concrete athlete id already resolved from ESPN's own UFC/PFL scoreboard —
+ * the SAME roster the odds feed's fighter names come from, so there's no
+ * separate-database name-matching problem to have in the first place.
+ * Structured JSON, not scraped HTML: confirmed live, reachable from a
+ * Cloudflare Worker on the same site.web.api.espn.com host this app's MLB
+ * stats already use (unlike cdn.espn.com, which 404s on every MMA path
+ * tried when this app was first built — that's what sent this feature to
+ * Sherdog in the first place; ESPN did have the data, just not on the host
+ * this app checked at the time).
+ */
+const ESPN_MMA_ATHLETE_BASE = 'https://site.web.api.espn.com/apis/common/v3/sports/mma/ufc/athletes';
+const ESPN_TTL = 3600 * 6; // matches SEARCH_TTL/PROFILE_TTL's own window
+
+async function cachedJson(url, ttl, ctx) {
+  const cacheKey = new Request(`https://pixel-pick.cache/espn-mma/${encodeURIComponent(url)}`);
+  const cache = caches.default;
+
+  const hit = await cache.match(cacheKey);
+  if (hit) return hit.json();
+
+  try {
+    const response = await fetch(url, { headers: { Accept: 'application/json' } });
+    if (!response.ok) return null;
+    const body = await response.text();
+    ctx.waitUntil(
+      cache.put(cacheKey, new Response(body, {
+        headers: { 'Content-Type': 'application/json', 'Cache-Control': `max-age=${ttl}` },
+      })),
+    );
+    return JSON.parse(body);
+  } catch {
+    return null;
+  }
+}
+
+const ESPN_MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+/** ESPN's ISO gameDate to Sherdog's own "Mon / DD / YYYY" string — every
+ * downstream consumer (parseSherdogDate, the layoff check in mmaInsights)
+ * already reads that one format regardless of which source produced it. */
+function toSherdogDateFormat(isoString) {
+  if (!isoString) return null;
+  const d = new Date(isoString);
+  if (Number.isNaN(d.getTime())) return null;
+  return `${ESPN_MONTHS[d.getUTCMonth()]} / ${String(d.getUTCDate()).padStart(2, '0')} / ${d.getUTCFullYear()}`;
+}
+
+function parseEspnRecord(statsSummary) {
+  const stat = statsSummary?.statistics?.find((s) => s.name === 'wins-losses-draws');
+  const m = stat?.displayValue?.match(/^(\d+)-(\d+)-(\d+)$/);
+  return m ? { wins: Number(m[1]), losses: Number(m[2]), draws: Number(m[3]) } : null;
+}
+
+function mapEspnResult(gameResult) {
+  if (gameResult === 'W') return 'win';
+  if (gameResult === 'L') return 'loss';
+  if (gameResult === 'D') return 'draw';
+  return gameResult ? 'nc' : null;
+}
+
+/**
+ * Full fighter research bundle from ESPN, in the exact same shape
+ * fetchFighter (Sherdog) produces, so every downstream consumer
+ * (mmaFactSheet, buildInsights, docs/app.js's renderMmaBreakdown) works
+ * unchanged regardless of which source actually resolved this fighter.
+ * `opponentHref`/`opponentRecordAtTime` are the one gap versus Sherdog —
+ * ESPN's history doesn't carry a stable per-opponent id this app can chase
+ * for a second profile fetch, so that one enrichment simply doesn't appear
+ * for an ESPN-sourced fighter, same "field just isn't there" degradation
+ * every other optional field in this module already follows.
+ */
+async function fetchEspnFighter(athleteId, ctx) {
+  const data = await cachedJson(`${ESPN_MMA_ATHLETE_BASE}/${athleteId}?enable=history`, ESPN_TTL, ctx);
+  const athlete = data?.athlete;
+  if (!athlete) return null;
+
+  const history = Object.values(data.eventsMap ?? {})
+    .filter((e) => e.gameResult)
+    .map((e) => {
+      const method = e.status?.result?.displayName ?? null;
+      return {
+        result: mapEspnResult(e.gameResult),
+        opponent: e.opponent?.displayName ?? null,
+        opponentHref: null,
+        event: e.name ?? null,
+        date: toSherdogDateFormat(e.gameDate),
+        method,
+        category: method ? METHOD_CATEGORY(method) : null,
+        round: e.status?.period ?? null,
+        time: e.status?.displayClock ?? null,
+      };
+    })
+    .sort((x, y) => (parseSherdogDate(y.date) ?? 0) - (parseSherdogDate(x.date) ?? 0));
+
+  const bio = {
+    age: athlete.age ?? null,
+    height: athlete.displayHeight ?? null,
+    weight: athlete.displayWeight ?? null,
+    weightClass: athlete.weightClass?.text ?? null,
+    association: athlete.association?.name ?? null,
+    reach: athlete.displayReach ?? null,
+    stance: athlete.stance?.text ?? null,
+  };
+
+  return {
+    name: athlete.displayName ?? athlete.fullName,
+    profileUrl: athlete.links?.find((l) => l.rel?.includes('overview'))?.href ?? null,
+    record: parseEspnRecord(athlete.statsSummary) ?? deriveRecordFromHistory(history),
+    history,
+    bio: Object.values(bio).some((v) => v != null) ? bio : null,
+    photo: athlete.headshot?.href ?? null,
+    nickname: athlete.nickname ?? null,
+    nationality: athlete.citizenship ?? null,
+    location: null,
+    streak: computeCurrentStreak(history),
+  };
+}
+
+/**
+ * One side's research bundle, given an already-resolved ESPN athlete id for
+ * THIS specific fight (see resolveEspnAthleteIds — pair-scoped, not a
+ * blind single-name scan). Sherdog is the fallback only for whoever ESPN's
+ * UFC/PFL scoreboard doesn't have this exact matchup listed for at all — a
+ * non-UFC/PFL promotion fighter, or a fight ESPN's board has no plausible
+ * match for on either side.
+ */
+async function resolveFighter(name, espnAthleteId, ctx) {
+  if (espnAthleteId) {
+    const espnFighter = await fetchEspnFighter(espnAthleteId, ctx);
+    if (espnFighter) return espnFighter;
+  }
+  return fetchFighter(name, ctx);
+}
+
+/**
  * Research for one MMA matchup. Each side is resolved independently and a
  * miss on one side doesn't block the other — a pick can still carry research
- * on the fighter Sherdog does have, with nothing invented for the one it
- * doesn't.
+ * on the fighter that resolved, with nothing invented for the one that
+ * didn't.
  */
 export async function fetchMmaContext({ fighterA, fighterB }, ctx) {
   if (!fighterA || !fighterB) return null;
+
+  let schedule = [];
+  try {
+    schedule = await fetchMmaSchedule(ctx);
+  } catch {
+    schedule = [];
+  }
+  // Resolved together, not independently per side — see
+  // resolveEspnAthleteIds's own comment on why a single-name lookup is
+  // unsafe (it shipped, then produced a confirmed live cross-fight
+  // mismatch).
+  const { aId, bId } = resolveEspnAthleteIds(fighterA, fighterB, schedule);
+
   const [a, b, ufcA, ufcB] = await Promise.all([
-    fetchFighter(fighterA, ctx),
-    fetchFighter(fighterB, ctx),
+    resolveFighter(fighterA, aId, ctx),
+    resolveFighter(fighterB, bId, ctx),
     fetchUfcProfile(fighterA, ctx),
     fetchUfcProfile(fighterB, ctx),
   ]);
