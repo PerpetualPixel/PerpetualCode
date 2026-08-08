@@ -2763,6 +2763,9 @@ input[type="range"]:focus-visible {
   font-family: var(--mono);
 }
 
+.metric-value.positive { color: var(--success); }
+.metric-value.negative { color: var(--danger); }
+
 .learning-table {
   display: flex;
   flex-direction: column;

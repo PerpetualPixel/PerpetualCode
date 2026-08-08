@@ -3968,6 +3968,15 @@ function groupTop5ByDay(picks) {
     }));
 }
 
+/** Sets a metric card's text and colors it via the same .positive/.negative
+ * convention renderTop5DayBlock's own day-roi/day-net already use — null
+ * (nothing graded yet) stays the neutral em-dash with no color. */
+function setTrendMetric(node, value, formatFn) {
+  node.textContent = value != null ? formatFn(value) : '—';
+  node.classList.toggle('positive', value != null && value > 0);
+  node.classList.toggle('negative', value != null && value < 0);
+}
+
 function renderTop5DayBlock(day) {
   const dateLabel = new Date(`${day.date}T00:00:00`).toLocaleDateString(undefined, {
     weekday: 'short', month: 'short', day: 'numeric',
@@ -4085,9 +4094,9 @@ function renderTrackerSection() {
   el.top5TotalPicks.textContent = overall.total;
   el.top5GradedPicks.textContent = overall.graded;
   el.top5WinRate.textContent = overall.graded ? winRate.toFixed(1) + '%' : '—';
-  el.top5Roi.textContent = overall.graded ? formatSignedPct(overall.roi) : '—';
-  el.top5NetProfit.textContent = overall.graded ? formatSignedMoney(overall.net) : '—';
-  el.top5AvgClv.textContent = avgClv != null ? formatSignedPct(avgClv) : '—';
+  setTrendMetric(el.top5Roi, overall.graded ? overall.roi : null, formatSignedPct);
+  setTrendMetric(el.top5NetProfit, overall.graded ? overall.net : null, formatSignedMoney);
+  setTrendMetric(el.top5AvgClv, avgClv, formatSignedPct);
 
   const days = groupTop5ByDay(picks);
   el.top5DailyHistory.innerHTML = days.length
