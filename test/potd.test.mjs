@@ -190,9 +190,9 @@ test('the stored record carries a headline, price, and tracking fields', async (
   const record = JSON.parse(store.get('potd:2026-08-05'));
   assert.equal(record.date, '2026-08-05');
   assert.match(record.writeup.headline, /^a Home to win/);
-  const priceCase = record.writeup.sections.find((s) => s.title === 'The Market & Price Case');
-  assert.ok(priceCase);
-  assert.ok(priceCase.bullets.length >= 3);
+  // The quantitative price case is no longer a writeup section (it duplicated
+  // the dedicated book-price table) — confirm it's gone rather than present.
+  assert.equal(record.writeup.sections.find((s) => s.title === 'The Market & Price Case'), undefined);
 
   assert.equal(record.pick.status, 'pending');
   assert.equal(record.pick.suggested_stake, 20);

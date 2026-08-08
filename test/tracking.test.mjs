@@ -190,15 +190,50 @@ test('runTop5Batch never surfaces a -EV or dust-edge candidate, even to fill tow
   assert.equal(picks.length, 0, 'a -EV-only slate must produce zero tracked picks, not a padded 5');
 });
 
-test('runTop5Batch only runs once per ET day', async () => {
+test('runTop5Batch only skips once the board already has TOP5_COUNT picks', async () => {
   const { env } = makeKvStore();
-  const events = [makeEvent('a', { outlier: 35 })];
+  const events = Array.from({ length: 8 }, (_, i) => makeEvent(`g${i}`, { outlier: 35 }));
 
   const first = await runTop5Batch(env, ctx, NOW, { fetchFullSlate: async () => events });
   assert.equal(first.skipped, false);
+  assert.equal(first.count, TOP5_COUNT);
 
   const second = await runTop5Batch(env, ctx, NOW, { fetchFullSlate: async () => events });
   assert.equal(second.skipped, true);
+  assert.equal(second.reason, 'already generated today');
+});
+
+/**
+ * Regression test for a real incident: an earlier version of runTop5Batch
+ * locked in whatever it got on the very first call (checking only "does a
+ * manifest exist," not "does it have TOP5_COUNT picks"), so a degraded run
+ * that only found one qualifying game stayed stuck at 1 pick for the rest of
+ * the day with no way to recover short of manual intervention. It's now
+ * self-healing: short of TOP5_COUNT, a later call tops up around whatever's
+ * already stored instead of skipping, and never replaces an existing pick
+ * (which would discard its grading/CLV progress).
+ */
+test('runTop5Batch tops up a short board on a later call instead of staying stuck', async () => {
+  const { env } = makeKvStore();
+  const thinEvents = [makeEvent('g0', { outlier: 35 })];
+  const first = await runTop5Batch(env, ctx, NOW, { fetchFullSlate: async () => thinEvents });
+  assert.equal(first.skipped, false);
+  assert.ok(first.count < TOP5_COUNT, 'the thin slate should not have reached TOP5_COUNT');
+  const firstPickIds = (await getTop5(env, { dateKey: '2026-08-05' })).map((p) => p.pickId);
+
+  const fullEvents = Array.from({ length: 8 }, (_, i) => makeEvent(`g${i}`, { outlier: 35 }));
+  const second = await runTop5Batch(env, ctx, NOW, { fetchFullSlate: async () => fullEvents });
+  assert.equal(second.skipped, false);
+  assert.equal(second.count, TOP5_COUNT);
+
+  const picks = await getTop5(env, { dateKey: '2026-08-05' });
+  assert.equal(picks.length, TOP5_COUNT);
+  for (const id of firstPickIds) {
+    assert.ok(picks.some((p) => p.pickId === id), `original pick ${id} should be preserved, not replaced`);
+  }
+
+  const third = await runTop5Batch(env, ctx, NOW, { fetchFullSlate: async () => fullEvents });
+  assert.equal(third.skipped, true);
 });
 
 test('runTop5Batch excludes candidates from a segment the weekly algorithm health review has paused', async () => {

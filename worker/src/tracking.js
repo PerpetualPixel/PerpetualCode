@@ -193,15 +193,26 @@ export function pickRecordFrom(pick, dateKey, now) {
  * The 2am ET batch: pull the full slate, run the existing, unmodified
  * topPicks() with the exact same sharp standard (-250/+250, confidence
  * floor) and EV/Kelly edge floor Pixel's Picks itself enforces, and store
- * the result as the single locked "Pixel's Picks" board for the day — the
- * same set the client tab now renders (see docs/app.js's loadPixelPicks())
- * instead of recomputing live against drifting prices. guaranteeCount is on:
- * the board always shows at least 5, padding with flagged (meetsStandard:
- * false) picks on a thin day rather than shrinking — but minEv/minKelly stay
- * a hard floor even for the padding, so a -EV or dust-edge candidate never
- * fills a slot just to hit the count. Runs at most once per ET calendar day
- * (checked via the day's own manifest key), so a redeploy or a retried cron
- * tick can't silently re-pick a different set partway through the day.
+ * the result as the locked "Pixel's Picks" board for the day — the same set
+ * the client tab now renders (see docs/app.js's loadPixelPicks()) instead of
+ * recomputing live against drifting prices. guaranteeCount is on: the board
+ * always shows at least 5, padding with flagged (meetsStandard: false) picks
+ * on a thin day rather than shrinking — but minEv/minKelly stay a hard floor
+ * even for the padding, so a -EV or dust-edge candidate never fills a slot
+ * just to hit the count.
+ *
+ * Self-healing, not one-shot: this used to hard-skip the instant a manifest
+ * existed at all, which meant a degraded run (e.g. a partial/truncated
+ * full-slate fetch from a Cloudflare subrequest hiccup) could lock in fewer
+ * than TOP5_COUNT picks for the rest of the day with no way to recover — a
+ * real incident this exact code hit once already. Now it only skips once the
+ * board actually has TOP5_COUNT picks; short of that, it tops up around
+ * whatever's already stored (excluding those pickIds from the fresh
+ * candidate pool so nothing gets picked twice) rather than replacing it, so
+ * an already-tracked pick's grading/CLV state is never discarded. Cheap to
+ * call on every cron tick after the batch hour (see index.js's scheduled()):
+ * the manifest read is a single KV get, and the real full-slate fetch only
+ * happens when the board is actually short.
  */
 export async function runTop5Batch(
   env,
@@ -214,8 +225,11 @@ export async function runTop5Batch(
 ) {
   const dateKey = etDate(now);
   const manifestKey = `track:${dateKey}:top5`;
-  const existing = await env.POTD_KV.get(manifestKey);
-  if (existing) return { skipped: true, reason: 'already generated today', dateKey };
+  const existingRaw = await env.POTD_KV.get(manifestKey);
+  const existing = existingRaw ? JSON.parse(existingRaw) : null;
+  const existingPickIds = existing?.pickIds ?? [];
+  const needed = TOP5_COUNT - existingPickIds.length;
+  if (needed <= 0) return { skipped: true, reason: 'already generated today', dateKey };
 
   // The weekly algorithm health review (worker/src/algo-health.js) can
   // tighten these floors within pre-approved bounds, and can pause a
@@ -239,10 +253,11 @@ export async function runTop5Batch(
       if (isTennis(c.sportKey)) return isEligibleTennisMatch(c.commenceMs, now);
       return etDate(c.commenceMs) === dateKey;
     })
-    .filter((c) => !isSegmentPaused(c, pausedSegments));
+    .filter((c) => !isSegmentPaused(c, pausedSegments))
+    .filter((c) => !existingPickIds.includes(c.id));
 
   const slate = topPicks(candidates, {
-    count: TOP5_COUNT,
+    count: needed,
     oddsMin: CONFIG.ODDS_MIN_DEFAULT,
     oddsMax: CONFIG.ODDS_MAX_DEFAULT,
     minScore: algoConfig.MIN_SCORE,
@@ -251,10 +266,10 @@ export async function runTop5Batch(
     guaranteeCount: true,
   });
 
-  const pickIds = [];
+  const newPickIds = [];
   for (const pick of slate.picks) {
     const record = pickRecordFrom(pick, dateKey, now);
-    pickIds.push(record.pickId);
+    newPickIds.push(record.pickId);
     ctx.waitUntil(
       env.POTD_KV.put(`track:${dateKey}:pick:${record.pickId}`, JSON.stringify(record), {
         expirationTtl: KV_TTL_SECONDS,
@@ -262,13 +277,14 @@ export async function runTop5Batch(
     );
   }
 
+  const pickIds = [...existingPickIds, ...newPickIds];
   ctx.waitUntil(
     env.POTD_KV.put(manifestKey, JSON.stringify({ date: dateKey, generatedAt: now, pickIds }), {
       expirationTtl: KV_TTL_SECONDS,
     }),
   );
 
-  return { skipped: false, dateKey, count: pickIds.length, poolSize: slate.poolSize };
+  return { skipped: false, dateKey, count: pickIds.length, added: newPickIds.length, poolSize: slate.poolSize };
 }
 
 async function loadTrackedPicks(env, dateKey) {

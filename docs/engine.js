@@ -425,12 +425,12 @@ export function explain(c) {
 }
 
 /**
- * The extensive version of explain(), for Play of the Day's "Market & Price
- * Case" tier — every real signal scoreCandidate() actually weighs, each its
- * own sentence, rather than the compact card's single deliberately-terse
- * bullet. Verbalizes two numbers that are already computed for every
- * candidate but never stated anywhere on the compact card: the line-shopping
- * gain (shopGain) and how fresh the quote is relative to kickoff — both real
+ * The extensive version of explain(), for a pick card's "More Info" panel —
+ * every real signal scoreCandidate() actually weighs, each its own sentence,
+ * rather than the compact card's single deliberately-terse bullet.
+ * Verbalizes two numbers that are already computed for every candidate but
+ * never stated anywhere on the compact card: the line-shopping gain
+ * (shopGain) and how fresh the quote is relative to kickoff — both real
  * inputs to the grade, not new analysis invented for this tier.
  */
 export function explainExtensive(c, { now = Date.now() } = {}) {

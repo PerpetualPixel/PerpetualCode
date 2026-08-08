@@ -544,6 +544,16 @@ export default {
       ctx.waitUntil(
         runPotdDaily(env, ctx, now, { fetchFullSlate }),
       );
+    } else if (etHour(now) > TOP5_BATCH_HOUR) {
+      // Safety net for the rest of the day: runTop5Batch is self-healing
+      // (see its own comment) — it only skips once today's board actually
+      // has TOP5_COUNT picks, otherwise it tops up. Calling it on every tick
+      // costs almost nothing when the board is already full (one KV get,
+      // no fetch), and recovers on its own within 20 minutes if the 2am run
+      // ever comes up short again (degraded fetch, thin-day padding that
+      // still fell short, etc.) instead of staying stuck at a partial count
+      // for the rest of the day like the incident that motivated this.
+      ctx.waitUntil(runTop5Batch(env, ctx, now));
     }
 
     // Every tick (now every 20 min, not gated to the top of the hour): refresh
