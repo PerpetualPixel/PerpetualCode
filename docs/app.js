@@ -1762,7 +1762,7 @@ function renderMmaPhotos(me, opponent) {
   // color are the one visual key the whole drawer's color-coding hangs off.
   const side = (fighter, sideClass) => fighter ? `
     <div class="mma-photo-side ${sideClass}">
-      ${isUfcDebut(fighter) ? `<span class="mma-ufc-debut-badge">UFC Debut</span>` : ''}
+      <div class="mma-badge-slot">${isUfcDebut(fighter) ? `<span class="mma-ufc-debut-badge">UFC Debut</span>` : ''}</div>
       ${photoOf(fighter)
         ? `<img class="mma-photo" src="${esc(photoOf(fighter))}" alt="${esc(fighter.name)}" loading="lazy"
              onerror="this.outerHTML='<span class=&quot;mma-photo mma-photo-fallback&quot;>${initials(fighter.name)}</span>'">`
@@ -2341,6 +2341,19 @@ async function openStatsDrawer(leg, opposite = null, { fullscreen = false } = {}
       `</div>`
     : '';
 
+  // The closing recap, every sport, always last — so a user who's just read
+  // through a long analysis (or research bullets, or the price table) lands
+  // on a plain restatement of the actual pick rather than having to scroll
+  // back up to remember what "More Info" was even about. Deliberately just
+  // the selection, price, and stake (all already established above) — no
+  // new claim gets introduced this late in the card.
+  const mainPlayHtml = `
+    <div class="main-play-callout">
+      <div class="main-play-label">Main Play</div>
+      <div class="main-play-selection">${esc(leg.selection)} <span class="main-play-price">${esc(formatAmerican(leg.american))}</span></div>
+      ${stake ? `<div class="main-play-stake">${esc(stake)}</div>` : ''}
+    </div>`;
+
   const awayLogo = teamLogoUrl(leg.sportKey, leg.away);
   const homeLogo = teamLogoUrl(leg.sportKey, leg.home);
   el.statsDrawerBody.innerHTML =
@@ -2357,7 +2370,8 @@ async function openStatsDrawer(leg, opposite = null, { fullscreen = false } = {}
     mmaNoDataHtml +
     tennisBreakdownHtml +
     renderStatsResearch(bullets) +
-    renderPriceTable(leg);
+    renderPriceTable(leg) +
+    mainPlayHtml;
 }
 
 /**
