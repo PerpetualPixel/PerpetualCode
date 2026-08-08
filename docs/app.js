@@ -720,6 +720,14 @@ const state = {
   // fresh load rather than persisting, since "what's live right now" isn't
   // something you'd want stuck from a prior session.
   slateGameFilter: 'upcoming',
+  // Last-known UFC/PFL card name per MMA eventId, captured while the fight
+  // still has live odds (see buildSlateGames). A fight's market disappears
+  // from the odds feed the instant it starts — not just once it's finished
+  // — so without this, an in-progress fight that hasn't been graded yet
+  // would forget which card it belongs to the moment it goes live. Never
+  // cleared: a card name never changes once known, and this is keyed by
+  // eventId so it can't collide across fights.
+  mmaEventCache: new Map(),
   // Research caches. Both are free to fetch — ESPN and a static archive — so
   // they never touch the odds credit budget.
   tennis: new Map(),   // 'atp' | 'wta' -> parsed archive
@@ -2676,6 +2684,11 @@ function buildSlateGames(sportKeys) {
     .map((event) => {
       const commenceMs = new Date(event.commence_time).getTime();
       const cands = byEvent.get(event.id) ?? [];
+      // Remember this fight's card while it's still priced — its market
+      // (and this enrichment along with it) disappears from the odds feed
+      // the moment it starts, well before /scores can confirm it's
+      // finished, so this is the only chance to capture it.
+      if (event.ufc_event) state.mmaEventCache.set(event.id, event.ufc_event);
       return {
         eventId: event.id,
         sportKey: event.sport_key,
@@ -2690,11 +2703,11 @@ function buildSlateGames(sportKeys) {
     });
 
   // The odds feed drops an event the instant no book is pricing it any
-  // more — for a finished game that's immediate, so it's often gone from
-  // state.rawEvents entirely even though /scores still has its final
-  // result. Backfill those from whatever scores are already cached
+  // more — for MMA that's typically right when the fight starts, long
+  // before it's finished, so it's often gone from state.rawEvents while
+  // still live. Backfill those from whatever scores are already cached
   // (state.slateScores, populated by refreshSlateScores) as market-less
-  // games — no spread/total/ML, since the book pulled them — so a
+  // games — no spread/total/ML, since the book pulled them — so a live or
   // finished game still shows up with its score instead of vanishing.
   const oddsEventIds = new Set(oddsGames.map((g) => g.eventId));
   const orphanGames = [];
@@ -2709,7 +2722,10 @@ function buildSlateGames(sportKeys) {
       h2h: { away: null, home: null },
       spreads: { away: null, home: null },
       totals: { away: null, home: null },
-      ufc_event: undefined,
+      // Recover the card name from the cache above rather than hardcoding
+      // it lost — this is what keeps a fight grouped under its real UFC
+      // card once it goes live, instead of falling to UNKNOWN_MMA_CARD.
+      ufc_event: state.mmaEventCache.get(scoreEvent.id),
     });
   }
 
@@ -3029,20 +3045,28 @@ function renderSlateLeagueOptions() {
  * it, below the 3-book candidate floor) even though the fights themselves
  * were real and upcoming.
  */
-/** Fallback card name for a finished fight whose odds-feed enrichment (see
- * buildSlateGames' orphan backfill) is already gone along with its markets
- * — still worth showing, just not attached to a named card. */
-const UNKNOWN_MMA_CARD = 'Recently Finished';
+/** Fallback card name for a live or finished fight whose odds-feed
+ * enrichment (see buildSlateGames' orphan backfill) is gone along with its
+ * markets and wasn't recovered from state.mmaEventCache either (typically
+ * because the app never saw it while it was still pregame and priced, e.g.
+ * a fresh page load mid-event) — still worth showing, just not attached to
+ * a named card. */
+const UNKNOWN_MMA_CARD = 'Other Fights';
 
 function filterMmaGames(games) {
   const now = Date.now();
   const oneWeekMs = 9 * 24 * 60 * 60 * 1000;
 
   return games.filter((game) => {
-    // A finished orphan game already lost its card enrichment along with
-    // its markets when the odds feed dropped it — still real, still worth
-    // showing, just grouped under UNKNOWN_MMA_CARD instead of a named card.
-    if (slateGameState(game) === 'finished') return true;
+    // A fight that has already started — live or finished — is real
+    // regardless of whether its card enrichment survived losing its
+    // market. Gating this on 'finished' alone (the old behavior) meant an
+    // in-progress fight that hadn't been graded yet, or one /scores never
+    // reliably reports on (early prelims are the common case), vanished
+    // from the board entirely: not upcoming, not live, not finished.
+    // Confirmed live: two prelim fights on a currently-airing card were
+    // simply gone from every filter once their markets dropped.
+    if (game.commenceMs <= now) return true;
 
     // Must have event enrichment (live ESPN lookup or fallback date-based)
     if (!game.ufc_event?.event) return false;
