@@ -101,42 +101,65 @@ function isMmaSportKey(sportKey) {
   return LEAGUE_GROUP_BY_ID.get('mma').keys.includes(sportKey);
 }
 
-/** [start, end) timestamps for the local calendar day 'today' or 'tomorrow' falls on. */
-function dayBounds(which) {
-  const now = new Date();
-  const start = new Date(now.getFullYear(), now.getMonth(), now.getDate());
-  if (which === 'tomorrow') start.setDate(start.getDate() + 1);
-  return [start.getTime(), start.getTime() + ONE_DAY_MS];
+/** YYYY-MM-DD in America/New_York for a given instant — string comparison
+ * sidesteps DST-offset math entirely (the same convention this app's own
+ * worker-side etDate() already uses server-side), the only reliable way to
+ * determine "which ET calendar day" without a full timezone-aware date
+ * library. */
+function etDateString(ms) {
+  const fmt = new Intl.DateTimeFormat('en-US', {
+    timeZone: 'America/New_York', year: 'numeric', month: '2-digit', day: '2-digit',
+  });
+  const parts = Object.fromEntries(fmt.formatToParts(ms).map((p) => [p.type, p.value]));
+  return `${parts.year}-${parts.month}-${parts.day}`;
+}
+
+/** A plain Date for the ET calendar day 'today' or 'tomorrow' falls on —
+ * used only to render the "Tomorrow (Aug 9)" toggle label in the viewer's
+ * own locale. The actual Today/Tomorrow filtering (withinDayFilter) never
+ * uses this; it compares ET calendar-date strings directly. */
+function etDayLabelDate(which) {
+  const targetMs = Date.now() + (which === 'tomorrow' ? ONE_DAY_MS : 0);
+  const fmt = new Intl.DateTimeFormat('en-US', {
+    timeZone: 'America/New_York', year: 'numeric', month: '2-digit', day: '2-digit',
+  });
+  const parts = Object.fromEntries(fmt.formatToParts(targetMs).map((p) => [p.type, p.value]));
+  return new Date(+parts.year, +parts.month - 1, +parts.day);
 }
 
 /**
  * Whether a game belongs on the board under the current Today/Tomorrow
- * toggle. MMA is exempt — cards get announced and sell tickets weeks out, so
- * it keeps its own longer (~2 week) horizon via filterMmaGames instead of
- * being scoped to a single day like every other league. Tennis is exempt for
- * a related but different reason: a single round routinely spans two
- * calendar days (a full day session plus a night session, or matches simply
- * pushed by weather/court scheduling), and the Odds API only ever lists the
- * round that's actually been drawn — the next round's matchups don't exist
- * in the feed until the current one finishes — so there's no risk of this
- * leaking in a future round early. Confirmed live: the reigning ATP/WTA
- * Canadian Open round had 8 matches apiece, split 4-and-4 across today and
- * tomorrow by start time; the strict same-day filter was hiding exactly
- * half of a round that's really one contiguous slate.
+ * toggle, compared by real ET calendar date — not the viewer's own local
+ * timezone, and not a millisecond range that would need DST-offset math to
+ * get right. "Today" means the same thing for every user regardless of
+ * where they're browsing from, matching every other ET-day boundary this
+ * app already uses server-side.
  *
- * `isFinished` narrows that exemption: it only applies to a game that
- * HASN'T been played yet, where "which day does this really belong to" is
- * a genuine ambiguity. A finished game has no such ambiguity — it happened
- * on a specific day, full stop — so without this, a many-day-old completed
- * match (still returned by /scores' several-day lookback window) leaked
- * into "today's" Finished tab indefinitely. Confirmed live: the ATP
- * Canadian Open's Finished list showing results from well before the
- * current round.
+ * MMA is the one exception: cards are announced and sell tickets weeks out,
+ * so it keeps its own longer horizon rather than being scoped to a single
+ * day like every other league — but only for a fight that hasn't happened
+ * yet. `isFinished` narrows that: a finished fight has no ambiguity about
+ * which day it belongs to, so it still respects Today/Tomorrow once it's
+ * over (otherwise a many-day-old completed fight, still returned by
+ * /scores' several-day lookback, would leak into "today's" Finished tab
+ * indefinitely).
+ *
+ * Tennis used to get this same exemption, unconditionally — a single round
+ * routinely spans two calendar days, and the reasoning was that hiding
+ * "tomorrow's" half of a round that's really one contiguous slate was worse
+ * than showing it under the wrong toggle. In practice that meant Today and
+ * Tomorrow showed the exact same full set of tennis matches regardless of
+ * which was selected, defeating the point of the toggle entirely. Removed
+ * per explicit request: Today now genuinely means today's matches, Tomorrow
+ * means tomorrow's. A next-round matchup not yet drawn simply isn't in the
+ * odds feed yet — there's no "TBD" placeholder to manufacture for it, the
+ * same honest "no data yet" this app already prefers everywhere else over
+ * guessing.
  */
 function withinDayFilter(commenceMs, sportKey, isFinished = false) {
-  if (!isFinished && (isMmaSportKey(sportKey) || isTennis(sportKey))) return true;
-  const [start, end] = dayBounds(state.dayFilter);
-  return commenceMs >= start && commenceMs < end;
+  if (!isFinished && isMmaSportKey(sportKey)) return true;
+  const targetMs = Date.now() + (state.dayFilter === 'tomorrow' ? ONE_DAY_MS : 0);
+  return etDateString(commenceMs) === etDateString(targetMs);
 }
 
 /**
@@ -154,8 +177,8 @@ function sportGroupLabel(sportKey) {
 }
 
 function renderDayToggle() {
-  const [tomorrowStart] = dayBounds('tomorrow');
-  el.tomorrowDateLabel.textContent = `(${new Date(tomorrowStart).toLocaleDateString(undefined, { month: 'short', day: 'numeric' })})`;
+  const tomorrowDate = etDayLabelDate('tomorrow');
+  el.tomorrowDateLabel.textContent = `(${tomorrowDate.toLocaleDateString(undefined, { month: 'short', day: 'numeric' })})`;
   el.dayFilterToday.classList.toggle('is-active', state.dayFilter === 'today');
   el.dayFilterToday.setAttribute('aria-pressed', String(state.dayFilter === 'today'));
   el.dayFilterTomorrow.classList.toggle('is-active', state.dayFilter === 'tomorrow');
