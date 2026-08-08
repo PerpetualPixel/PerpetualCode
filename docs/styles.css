@@ -3187,13 +3187,78 @@ input[type="range"]:focus-visible {
   text-align: center;
 }
 
+/* Background tint, not just text color — a whole month needs to read as a
+   field of green/red at a glance, which a color change on 9px text alone
+   doesn't deliver. */
+.calendar-cell.is-positive { background: var(--accent-dim); border-color: var(--accent); }
 .calendar-cell.is-positive .calendar-value,
-.calendar-cell.is-positive .calendar-daynum { color: #e6fff5; }
+.calendar-cell.is-positive .calendar-daynum { color: var(--accent); }
+.calendar-cell.is-negative { background: rgba(239, 68, 68, 0.14); border-color: var(--danger); }
 .calendar-cell.is-negative .calendar-value,
-.calendar-cell.is-negative .calendar-daynum { color: #ffe9e9; }
+.calendar-cell.is-negative .calendar-daynum { color: var(--danger); }
+.calendar-cell.is-selected { outline: 2px solid var(--text); outline-offset: 1px; }
 
 @media (max-width: 420px) {
   .calendar-value { font-size: 8px; }
+}
+
+/* ================================================================ */
+/* Tracked Picks: sport filter, view toggle, calendar day detail,    */
+/* graph — the calendar grid itself reuses .calendar-* above.        */
+/* ================================================================ */
+
+.tracker-controls-row {
+  display: flex;
+  align-items: flex-end;
+  gap: 12px;
+  margin: 12px 0;
+  flex-wrap: wrap;
+}
+
+.tracker-sport-filter {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  font-size: 0.72rem;
+  color: var(--muted);
+}
+
+.tracker-sport-filter select {
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  color: var(--text);
+  font-family: var(--mono);
+  font-size: 0.78rem;
+  padding: 6px 8px;
+}
+
+.tracker-controls-row .perf-period-tabs {
+  flex: 1;
+  min-width: 200px;
+  margin-bottom: 0;
+}
+
+.tracker-calendar-view { margin-top: 8px; }
+
+.tracker-calendar-day-detail {
+  margin-top: 12px;
+}
+.tracker-calendar-day-detail:empty { margin-top: 0; }
+
+.tracker-graph-view { margin-top: 8px; }
+
+.tracker-graph-svg-wrap {
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  padding: 8px;
+}
+
+.tracker-graph-svg {
+  width: 100%;
+  height: auto;
+  display: block;
 }
 
 /* ================================================================ */

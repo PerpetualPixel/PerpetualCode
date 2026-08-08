@@ -592,6 +592,18 @@ const el = {
   top5NetProfit: document.getElementById('top5NetProfit'),
   top5AvgClv: document.getElementById('top5AvgClv'),
   top5DailyHistory: document.getElementById('top5DailyHistory'),
+  trackerSportFilter: document.getElementById('trackerSportFilter'),
+  trackerViewTabs: document.getElementById('trackerViewTabs'),
+  trackerCalendarView: document.getElementById('trackerCalendarView'),
+  trackerCalPrev: document.getElementById('trackerCalPrev'),
+  trackerCalNext: document.getElementById('trackerCalNext'),
+  trackerCalMonthLabel: document.getElementById('trackerCalMonthLabel'),
+  trackerCalendarWeekdays: document.getElementById('trackerCalendarWeekdays'),
+  trackerCalendarGrid: document.getElementById('trackerCalendarGrid'),
+  trackerCalendarDayDetail: document.getElementById('trackerCalendarDayDetail'),
+  trackerGraphView: document.getElementById('trackerGraphView'),
+  trackerGraphBucketTabs: document.getElementById('trackerGraphBucketTabs'),
+  trackerGraphSvgWrap: document.getElementById('trackerGraphSvgWrap'),
   calibrationReport: document.getElementById('calibrationReport'),
   algoHealthConfig: document.getElementById('algoHealthConfig'),
   algoHealthPaused: document.getElementById('algoHealthPaused'),
@@ -629,6 +641,26 @@ const state = {
   // All three trackers' full history, fetched once per dashboard open and
   // re-rendered from on toggle — not re-fetched per click.
   trackerPicks: { fullslate: [], top5: [], potd: [] },
+  // List/Calendar/Graph — which of the three views renders the currently
+  // active tracker's picks below the metric cards.
+  trackerView: 'list',
+  // 'all' or a raw sportKey (the exact key stored on each pick record) — a
+  // raw key rather than a League Group id since a pick's own sportKey is
+  // what's actually on the record; sportGroupLabel() maps it to a display
+  // label for the filter's own option text.
+  trackerSportFilter: 'all',
+  // First-of-month timestamp for whichever month the calendar view is
+  // currently showing — defaults to the current month, navigable independent
+  // of which tracker/sport is selected (switching tracker doesn't reset it).
+  trackerCalendarMonth: (() => {
+    const d = new Date();
+    return new Date(d.getFullYear(), d.getMonth(), 1).getTime();
+  })(),
+  // Which day (YYYY-MM-DD) is expanded in the calendar view's detail panel,
+  // if any — cleared whenever it clicks a day with no data left to show.
+  trackerCalendarSelectedDate: null,
+  // 'day' | 'week' | 'month' — the graph view's own time-bucket granularity.
+  trackerGraphBucket: 'day',
   // Today's server-side tracked Top 5 pick ids (see worker/src/tracking.js),
   // Full Slate's live/final game state — eventId -> the raw /scores event
   // for it (has `completed` and `scores`). Refreshed at most once a minute
@@ -3444,6 +3476,49 @@ el.trackerTabs?.addEventListener('click', (event) => {
   renderTrackerSection();
 });
 
+el.trackerSportFilter?.addEventListener('change', () => {
+  state.trackerSportFilter = el.trackerSportFilter.value;
+  // A day selected under one sport filter almost never has data under
+  // another — clearing avoids the detail panel silently showing a stale
+  // day's picks the filter no longer agrees are there.
+  state.trackerCalendarSelectedDate = null;
+  renderTrackerSection();
+});
+
+el.trackerViewTabs?.addEventListener('click', (event) => {
+  const btn = event.target.closest('[data-tracker-view]');
+  if (!btn) return;
+  state.trackerView = btn.dataset.trackerView;
+  renderTrackerSection();
+});
+
+el.trackerGraphBucketTabs?.addEventListener('click', (event) => {
+  const btn = event.target.closest('[data-graph-bucket]');
+  if (!btn) return;
+  state.trackerGraphBucket = btn.dataset.graphBucket;
+  renderTrackerSection();
+});
+
+el.trackerCalPrev?.addEventListener('click', () => {
+  const d = new Date(state.trackerCalendarMonth);
+  state.trackerCalendarMonth = new Date(d.getFullYear(), d.getMonth() - 1, 1).getTime();
+  renderTrackerSection();
+});
+
+el.trackerCalNext?.addEventListener('click', () => {
+  const d = new Date(state.trackerCalendarMonth);
+  state.trackerCalendarMonth = new Date(d.getFullYear(), d.getMonth() + 1, 1).getTime();
+  renderTrackerSection();
+});
+
+el.trackerCalendarGrid?.addEventListener('click', (event) => {
+  const cell = event.target.closest('[data-cal-date]');
+  if (!cell) return;
+  const clicked = cell.dataset.calDate;
+  state.trackerCalendarSelectedDate = state.trackerCalendarSelectedDate === clicked ? null : clicked;
+  renderTrackerSection();
+});
+
 /**
  * Explicit, user-triggered clean-slate action: asks the worker to clear its
  * own server-side Full Slate and Pixel's Picks tracking. Never runs on its
@@ -3995,7 +4070,7 @@ function setTrendMetric(node, value, formatFn) {
   node.classList.toggle('negative', value != null && value < 0);
 }
 
-function renderTop5DayBlock(day) {
+function renderTop5DayBlock(day, open = false) {
   const dateLabel = new Date(`${day.date}T00:00:00`).toLocaleDateString(undefined, {
     weekday: 'short', month: 'short', day: 'numeric',
   });
@@ -4017,7 +4092,7 @@ function renderTop5DayBlock(day) {
   }).join('');
 
   return `
-    <details class="day-block">
+    <details class="day-block" ${open ? 'open' : ''}>
       <summary>
         <span class="day-date">${esc(dateLabel)}</span>
         <span class="day-record">${esc(record)}</span>
@@ -4084,6 +4159,202 @@ async function loadTrackerHistories() {
 }
 
 /**
+ * Populates the sport filter <select> from whichever sports the active
+ * tracker's own picks actually cover — never a fixed list, so a tracker with
+ * no NHL picks yet simply doesn't offer an NHL option to filter into an
+ * empty view. Grouped by sportGroupLabel() rather than raw sportKey so every
+ * ATP/WTA tournament week collapses into one "ATP"/"WTA" option instead of a
+ * new option per tournament. Falls back to "All Sports" if the previously-
+ * selected filter's sport isn't present in this tracker's picks at all
+ * (e.g. switching from Full Slate, which has NHL, to Play of the Day, which
+ * that day didn't).
+ */
+function renderTrackerSportFilterOptions(allPicks) {
+  const labels = [...new Set(allPicks.map((p) => sportGroupLabel(p.sportKey)))].sort((a, b) => a.localeCompare(b));
+
+  if (state.trackerSportFilter !== 'all' && !labels.includes(state.trackerSportFilter)) {
+    state.trackerSportFilter = 'all';
+  }
+
+  el.trackerSportFilter.innerHTML = [
+    '<option value="all">All Sports</option>',
+    ...labels.map((label) => `<option value="${esc(label)}">${esc(label)}</option>`),
+  ].join('');
+  el.trackerSportFilter.value = state.trackerSportFilter;
+}
+
+/** `sportFilter` is a sportGroupLabel() string ("MLB", "ATP") or "all" — see renderTrackerSportFilterOptions. */
+function filterPicksBySport(picks, sportFilter) {
+  if (sportFilter === 'all') return picks;
+  return picks.filter((p) => sportGroupLabel(p.sportKey) === sportFilter);
+}
+
+/** Shows whichever of List/Calendar/Graph is active, hides the other two — and reflects it on the tab buttons themselves. */
+function renderTrackerViewTabs() {
+  el.trackerViewTabs?.querySelectorAll('[data-tracker-view]').forEach((b) => {
+    b.classList.toggle('is-active', b.dataset.trackerView === state.trackerView);
+  });
+  el.top5DailyHistory.hidden = state.trackerView !== 'list';
+  el.trackerCalendarView.hidden = state.trackerView !== 'calendar';
+  el.trackerGraphView.hidden = state.trackerView !== 'graph';
+}
+
+/**
+ * Month-grid calendar — one cell per calendar day, colored green (net
+ * profit that day), red (net loss), or neutral (nothing graded yet / no
+ * picks at all that day). Clicking a day with data toggles an expanded
+ * detail panel below the grid showing that day's actual picks, reusing
+ * renderTop5DayBlock (pre-opened, since the click itself is the "expand"
+ * action — a second collapsed <details> the user has to click again would
+ * be redundant).
+ */
+function renderTrackerCalendar(days) {
+  const byDate = new Map(days.map((d) => [d.date, d]));
+  const monthStart = new Date(state.trackerCalendarMonth);
+  const year = monthStart.getFullYear();
+  const month = monthStart.getMonth();
+  // Local date, not ET — this is purely a "which cell gets a highlight
+  // ring" visual, not a data-correctness boundary the way a pick's own
+  // dateKey (always ET) has to be.
+  const now = new Date();
+  const todayKey = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}`;
+
+  el.trackerCalMonthLabel.textContent = monthStart.toLocaleDateString(undefined, { month: 'long', year: 'numeric' });
+  el.trackerCalendarWeekdays.innerHTML = ['S', 'M', 'T', 'W', 'T', 'F', 'S']
+    .map((d) => `<span>${d}</span>`).join('');
+
+  const firstWeekday = new Date(year, month, 1).getDay();
+  const daysInMonth = new Date(year, month + 1, 0).getDate();
+
+  const cells = [];
+  for (let i = 0; i < firstWeekday; i++) cells.push(null);
+  for (let day = 1; day <= daysInMonth; day++) cells.push(day);
+  while (cells.length % 7 !== 0) cells.push(null);
+
+  el.trackerCalendarGrid.innerHTML = cells.map((day) => {
+    if (day == null) return '<div class="calendar-cell is-empty"></div>';
+    const dateKey = `${year}-${String(month + 1).padStart(2, '0')}-${String(day).padStart(2, '0')}`;
+    const entry = byDate.get(dateKey);
+    const trendCls = !entry || !entry.graded ? 'is-neutral' : entry.net > 0 ? 'is-positive' : entry.net < 0 ? 'is-negative' : 'is-neutral';
+    const todayCls = dateKey === todayKey ? ' is-today' : '';
+    const selectedCls = state.trackerCalendarSelectedDate === dateKey ? ' is-selected' : '';
+    const summary = !entry
+      ? ''
+      : entry.graded
+        ? esc(formatSignedMoney(entry.net))
+        : `${entry.pending} pend.`;
+    return `
+      <button type="button" class="calendar-cell ${trendCls}${todayCls}${selectedCls}" data-cal-date="${dateKey}" ${entry ? '' : 'disabled'}>
+        <span class="calendar-daynum">${day}</span>
+        ${summary ? `<span class="calendar-value">${summary}</span>` : ''}
+      </button>`;
+  }).join('');
+
+  const selectedEntry = state.trackerCalendarSelectedDate ? byDate.get(state.trackerCalendarSelectedDate) : null;
+  el.trackerCalendarDayDetail.innerHTML = selectedEntry ? renderTop5DayBlock(selectedEntry, true) : '';
+}
+
+/** YYYY-MM-DD -> the Monday of that ISO week, also YYYY-MM-DD — the bucket key renderTrackerGraph groups a "week" view by. */
+function isoWeekStart(dateStr) {
+  const d = new Date(`${dateStr}T00:00:00`);
+  const isoDay = (d.getDay() + 6) % 7; // 0=Monday..6=Sunday
+  d.setDate(d.getDate() - isoDay);
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+}
+
+/** Collapses day-level entries into day/week/month buckets, summing net $ and graded count per bucket — chronological (oldest first), the order a graph reads left-to-right. */
+function bucketTrackerDays(days, bucket) {
+  const chronological = [...days].sort((a, b) => a.date.localeCompare(b.date));
+  if (bucket === 'day') {
+    return chronological.map((d) => ({ label: d.date, net: d.net, graded: d.graded }));
+  }
+  const keyFor = bucket === 'week' ? isoWeekStart : (dateStr) => dateStr.slice(0, 7);
+  const byBucket = new Map();
+  for (const d of chronological) {
+    const key = keyFor(d.date);
+    if (!byBucket.has(key)) byBucket.set(key, { label: key, net: 0, graded: 0 });
+    const b = byBucket.get(key);
+    b.net += d.net;
+    b.graded += d.graded;
+  }
+  return [...byBucket.values()].sort((a, b) => a.label.localeCompare(b.label));
+}
+
+/** A bucket's label (a date or year-month string) formatted for the graph's x-axis. */
+function formatGraphLabel(label, bucket) {
+  if (bucket === 'month') {
+    const [y, m] = label.split('-').map(Number);
+    return new Date(y, m - 1, 1).toLocaleDateString(undefined, { month: 'short', year: '2-digit' });
+  }
+  return new Date(`${label}T00:00:00`).toLocaleDateString(undefined, { month: 'short', day: 'numeric' });
+}
+
+/**
+ * A hand-rolled SVG line chart of cumulative net $ over time — no charting
+ * library, same "plain div/SVG math" approach the rest of this app already
+ * uses for bars (statBar, compareRow) rather than pulling in a dependency
+ * for something this size. Each point's dot is colored by that bucket's OWN
+ * net (green/red), while the line itself is colored by where the running
+ * total ends up — the two read together as "which single day/week/month
+ * moved it" (the dots) vs. "how's the whole thing trending" (the line).
+ * Buckets with nothing graded yet are excluded entirely — a pending day
+ * plotted at $0 would misread as a wash instead of "no data yet."
+ */
+function renderTrackerGraph(days) {
+  el.trackerGraphBucketTabs?.querySelectorAll('[data-graph-bucket]').forEach((b) => {
+    b.classList.toggle('is-active', b.dataset.graphBucket === state.trackerGraphBucket);
+  });
+
+  const buckets = bucketTrackerDays(days.filter((d) => d.graded > 0), state.trackerGraphBucket);
+  if (!buckets.length) {
+    el.trackerGraphSvgWrap.innerHTML = '<p class="empty">Nothing graded yet — check back once today’s picks settle.</p>';
+    return;
+  }
+
+  let running = 0;
+  const series = buckets.map((b) => {
+    running += b.net;
+    return { ...b, cumulative: running };
+  });
+
+  const W = 720;
+  const H = 260;
+  const PAD_L = 60;
+  const PAD_R = 16;
+  const PAD_T = 16;
+  const PAD_B = 32;
+  const values = series.map((p) => p.cumulative);
+  const minV = Math.min(0, ...values);
+  const maxV = Math.max(0, ...values);
+  const range = maxV - minV || 1;
+
+  const xAt = (i) => PAD_L + (series.length === 1 ? (W - PAD_L - PAD_R) / 2 : (i / (series.length - 1)) * (W - PAD_L - PAD_R));
+  const yAt = (v) => PAD_T + (1 - (v - minV) / range) * (H - PAD_T - PAD_B);
+
+  const points = series.map((p, i) => `${xAt(i).toFixed(1)},${yAt(p.cumulative).toFixed(1)}`).join(' ');
+  const lineColor = series[series.length - 1].cumulative >= 0 ? '#4ade80' : '#ef4444';
+  const dots = series.map((p, i) => `<circle cx="${xAt(i).toFixed(1)}" cy="${yAt(p.cumulative).toFixed(1)}" r="3.5" fill="${p.net >= 0 ? '#4ade80' : '#ef4444'}" />`).join('');
+
+  const labelEvery = Math.max(1, Math.ceil(series.length / 8));
+  const xLabels = series.map((p, i) => (i % labelEvery === 0 || i === series.length - 1)
+    ? `<text x="${xAt(i).toFixed(1)}" y="${H - 8}" font-size="10" fill="var(--muted)" text-anchor="middle">${esc(formatGraphLabel(p.label, state.trackerGraphBucket))}</text>`
+    : '').join('');
+
+  const yTicks = [...new Set([minV, 0, maxV])];
+  const yGrid = yTicks.map((v) => `<line x1="${PAD_L}" y1="${yAt(v).toFixed(1)}" x2="${W - PAD_R}" y2="${yAt(v).toFixed(1)}" stroke="var(--line)" stroke-width="1" ${v !== 0 ? 'stroke-dasharray="3,3"' : ''} />`).join('');
+  const yLabels = yTicks.map((v) => `<text x="${PAD_L - 8}" y="${(yAt(v) + 3).toFixed(1)}" font-size="10" fill="var(--muted)" text-anchor="end">${esc(formatSignedMoney(v))}</text>`).join('');
+
+  el.trackerGraphSvgWrap.innerHTML = `
+    <svg viewBox="0 0 ${W} ${H}" class="tracker-graph-svg" preserveAspectRatio="xMidYMid meet">
+      ${yGrid}
+      <polyline points="${points}" fill="none" stroke="${lineColor}" stroke-width="2" />
+      ${dots}
+      ${xLabels}
+      ${yLabels}
+    </svg>`;
+}
+
+/**
  * Renders whichever of the three trackers state.activeTracker names into
  * the dashboard's one shared set of metric cards + history container —
  * three parallel DOM sections were considered and rejected in favor of this.
@@ -4102,7 +4373,9 @@ async function loadTrackerHistories() {
  * has its own separate (untuned) −200/+150 band.
  */
 function renderTrackerSection() {
-  const picks = state.trackerPicks[state.activeTracker] ?? [];
+  const allPicks = state.trackerPicks[state.activeTracker] ?? [];
+  renderTrackerSportFilterOptions(allPicks);
+  const picks = filterPicksBySport(allPicks, state.trackerSportFilter);
 
   const overall = summarizePicks(picks);
   const winRate = overall.graded ? (overall.wins / overall.graded) * 100 : 0;
@@ -4117,13 +4390,21 @@ function renderTrackerSection() {
   setTrendMetric(el.top5AvgClv, avgClv, formatSignedPct);
 
   const days = groupTop5ByDay(picks);
-  el.top5DailyHistory.innerHTML = days.length
-    ? days.map(renderTop5DayBlock).join('')
-    : `<p class="empty">${esc(TRACKER_EMPTY_MESSAGES[state.activeTracker])}</p>`;
 
   el.trackerTabs?.querySelectorAll('[data-tracker]').forEach((b) => {
     b.classList.toggle('is-active', b.dataset.tracker === state.activeTracker);
   });
+
+  renderTrackerViewTabs();
+  if (state.trackerView === 'list') {
+    el.top5DailyHistory.innerHTML = days.length
+      ? days.map((d) => renderTop5DayBlock(d)).join('')
+      : `<p class="empty">${esc(TRACKER_EMPTY_MESSAGES[state.activeTracker])}</p>`;
+  } else if (state.trackerView === 'calendar') {
+    renderTrackerCalendar(days);
+  } else if (state.trackerView === 'graph') {
+    renderTrackerGraph(days);
+  }
 }
 
 /**
