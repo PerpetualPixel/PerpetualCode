@@ -123,9 +123,18 @@ function dayBounds(which) {
  * Canadian Open round had 8 matches apiece, split 4-and-4 across today and
  * tomorrow by start time; the strict same-day filter was hiding exactly
  * half of a round that's really one contiguous slate.
+ *
+ * `isFinished` narrows that exemption: it only applies to a game that
+ * HASN'T been played yet, where "which day does this really belong to" is
+ * a genuine ambiguity. A finished game has no such ambiguity — it happened
+ * on a specific day, full stop — so without this, a many-day-old completed
+ * match (still returned by /scores' several-day lookback window) leaked
+ * into "today's" Finished tab indefinitely. Confirmed live: the ATP
+ * Canadian Open's Finished list showing results from well before the
+ * current round.
  */
-function withinDayFilter(commenceMs, sportKey) {
-  if (isMmaSportKey(sportKey) || isTennis(sportKey)) return true;
+function withinDayFilter(commenceMs, sportKey, isFinished = false) {
+  if (!isFinished && (isMmaSportKey(sportKey) || isTennis(sportKey))) return true;
   const [start, end] = dayBounds(state.dayFilter);
   return commenceMs >= start && commenceMs < end;
 }
@@ -2685,7 +2694,11 @@ function buildSlateGames(sportKeys) {
   }
 
   return oddsGames.concat(orphanGames)
-    .filter((g) => Number.isFinite(g.commenceMs) && withinDayFilter(g.commenceMs, g.sportKey))
+    .filter((g) => {
+      if (!Number.isFinite(g.commenceMs)) return false;
+      const isFinished = state.slateScores.get(g.eventId)?.completed === true;
+      return withinDayFilter(g.commenceMs, g.sportKey, isFinished);
+    })
     .sort((a, b) => a.commenceMs - b.commenceMs);
 }
 
