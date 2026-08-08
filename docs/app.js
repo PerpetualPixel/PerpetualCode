@@ -2729,10 +2729,38 @@ function buildSlateGames(sportKeys) {
     });
   }
 
-  return oddsGames.concat(orphanGames)
+  // The Odds API's /scores has no coverage at all for some MMA bouts —
+  // confirmed live: several early-prelim fights on a currently-airing card
+  // never appeared in /scores in any form, not even as "not completed," so
+  // the orphan backfill above had nothing to recover them from. The
+  // server's own Full Slate tracker grades every fight it ever tracked
+  // using ESPN as a fallback (see worker/src/ufc-events.js's
+  // fetchMmaResults/gradeMmaPickWithFallback), independent of whatever the
+  // Odds API's /scores does or doesn't carry — so state.slateTrackedPicks
+  // (from /full-slate-history) already has the true result for these fights
+  // well before /scores ever would. This tier only fires for an event
+  // neither of the above already covered.
+  const coveredEventIds = new Set([...oddsEventIds, ...orphanGames.map((g) => g.eventId)]);
+  const trackedOnlyGames = [];
+  for (const pick of state.slateTrackedPicks.values()) {
+    if (!keys.has(pick.sportKey) || coveredEventIds.has(pick.eventId)) continue;
+    trackedOnlyGames.push({
+      eventId: pick.eventId,
+      sportKey: pick.sportKey,
+      home: pick.home,
+      away: pick.away,
+      commenceMs: pick.commenceMs,
+      h2h: { away: null, home: null },
+      spreads: { away: null, home: null },
+      totals: { away: null, home: null },
+      ufc_event: state.mmaEventCache.get(pick.eventId),
+    });
+  }
+
+  return oddsGames.concat(orphanGames, trackedOnlyGames)
     .filter((g) => {
       if (!Number.isFinite(g.commenceMs)) return false;
-      const isFinished = state.slateScores.get(g.eventId)?.completed === true;
+      const isFinished = isGameFinished(g.eventId);
       return withinDayFilter(g.commenceMs, g.sportKey, isFinished);
     })
     .sort((a, b) => a.commenceMs - b.commenceMs);
@@ -2746,10 +2774,25 @@ function slateScoreFor(scoreEvent, teamName) {
   return Number.isFinite(value) ? value : null;
 }
 
-/** 'upcoming' | 'live' | 'finished' for a game, from whatever /scores data is currently cached. */
+/**
+ * Whether an eventId is finished, from either data source that can say so:
+ * the Odds API's /scores (completed:true) or the server's own tracked Full
+ * Slate pick once graded (won/lost — see worker/src/full-slate-tracking.js).
+ * The tracked pick is checked too, not just /scores, because it's graded
+ * via an ESPN fallback for MMA that covers fights /scores has no record of
+ * at all (see buildSlateGames' trackedOnlyGames tier) — a pick can only
+ * ever reach won/lost once the fight has actually concluded, so treating
+ * that as authoritative here can't misclassify a still-live fight.
+ */
+function isGameFinished(eventId) {
+  if (state.slateScores.get(eventId)?.completed === true) return true;
+  const status = state.slateTrackedPicks.get(eventId)?.status;
+  return status === 'won' || status === 'lost';
+}
+
+/** 'upcoming' | 'live' | 'finished' for a game, from whatever /scores and tracked-pick data is currently cached. */
 function slateGameState(game) {
-  const scoreEvent = state.slateScores.get(game.eventId);
-  if (scoreEvent?.completed) return 'finished';
+  if (isGameFinished(game.eventId)) return 'finished';
   if (game.commenceMs <= Date.now()) return 'live';
   return 'upcoming';
 }
