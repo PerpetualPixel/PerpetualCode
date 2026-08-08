@@ -247,6 +247,18 @@ export async function runTop5Batch(
   // window (see isEligibleMmaFight/isEligibleTennisMatch) since a late MMA
   // main event can roll past midnight and a tennis round routinely spans
   // two calendar days.
+  // A candidate's own id is always `${eventId}:${marketKey}|...` (see
+  // docs/engine.js's analyze()) — the event id is everything before the
+  // first colon. Topping up must exclude every candidate from a game that
+  // already has a stored pick, not just that exact leg: topPicks() below
+  // only ever protects against picking both sides of the same game within
+  // ONE of its own calls (its own usedLegs/contradicts check, scoped to a
+  // single invocation) — it has no memory of a previous call's picks. Without
+  // this, a topped-up board could legitimately contain "Team A to win" from
+  // the first run and "Team B to win" (the same game's other side) from a
+  // later top-up run — a real incident this exact gap produced live
+  // (Pittsburgh Pirates AND New York Mets both picked to win the same game).
+  const existingEventIds = new Set(existingPickIds.map((id) => id.split(':')[0]));
   const candidates = analyze(events, { now })
     .filter((c) => {
       if (isMma(c.sportKey)) return isEligibleMmaFight(c.commenceMs, now);
@@ -254,7 +266,7 @@ export async function runTop5Batch(
       return etDate(c.commenceMs) === dateKey;
     })
     .filter((c) => !isSegmentPaused(c, pausedSegments))
-    .filter((c) => !existingPickIds.includes(c.id));
+    .filter((c) => !existingEventIds.has(c.eventId));
 
   const slate = topPicks(candidates, {
     count: needed,
@@ -266,8 +278,21 @@ export async function runTop5Batch(
     guaranteeCount: true,
   });
 
+  // Belt-and-suspenders alongside the existingEventIds filter above: even
+  // though topPicks() can't return two same-event candidates from a single
+  // call, and the filter already stops it from seeing an event a prior call
+  // already used, a same-game clash between two picks WITHIN slate.picks
+  // itself would still be a real, visible contradiction on the board if it
+  // ever happened — so it's checked here directly against the actual
+  // eventIds, not assumed from the upstream filters holding. A leg whose
+  // game is already spoken for (by an existing pick or an earlier leg in
+  // this same slate) is dropped rather than written.
+  const usedEventIds = new Set(existingEventIds);
   const newPickIds = [];
   for (const pick of slate.picks) {
+    const eventId = pick.legs[0].eventId;
+    if (usedEventIds.has(eventId)) continue;
+    usedEventIds.add(eventId);
     const record = pickRecordFrom(pick, dateKey, now);
     newPickIds.push(record.pickId);
     ctx.waitUntil(

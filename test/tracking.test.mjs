@@ -236,6 +236,67 @@ test('runTop5Batch tops up a short board on a later call instead of staying stuc
   assert.equal(third.skipped, true);
 });
 
+/**
+ * Regression test for a real incident: the self-healing top-up above only
+ * excluded a fresh candidate pool by exact pickId, not by the game it
+ * belongs to — a later top-up call, seeing a fuller/different candidate set
+ * than the first call, could legitimately score the OTHER side of a game
+ * that already had a pick highest and add it as a second, contradictory
+ * pick. Live: "Pittsburgh Pirates to win" (from an earlier degraded run)
+ * and "New York Mets to win" (added by a later top-up on the same
+ * Mets @ Pirates game) both ended up locked in side by side. A board must
+ * never carry two picks for the same event.
+ */
+test('runTop5Batch never adds a pick for a game that already has one, even on a later top-up call', async () => {
+  const { env } = makeKvStore();
+  // First call: only "g0" is available, and it clears the bar on its HOME
+  // side (matching makeEvent's own outlier convention) — one pick locked in.
+  const firstEvents = [makeEvent('g0', { outlier: 35 })];
+  const first = await runTop5Batch(env, ctx, NOW, { fetchFullSlate: async () => firstEvents });
+  assert.equal(first.count, 1);
+  const lockedPick = (await getTop5(env, { dateKey: '2026-08-05' }))[0];
+  assert.match(lockedPick.pickId, /^g0:/);
+
+  // Second call (a later tick): a fuller slate where "g0" now shows a real
+  // edge on its AWAY side instead — simulating the odds having moved, or a
+  // fuller fetch surfacing a candidate the first call never saw. This must
+  // NOT be added alongside the already-locked g0 pick.
+  const awayEdgeG0 = {
+    id: 'g0',
+    sport_key: 'baseball_mlb',
+    sport_title: 'MLB',
+    commence_time: new Date(NOW + 6 * 3.6e6).toISOString(),
+    home_team: 'g0 Home',
+    away_team: 'g0 Away',
+    bookmakers: BOOKS.map((title, i) => ({
+      key: BOOK_KEYS[title],
+      title,
+      last_update: new Date(NOW - 600000).toISOString(),
+      markets: [{
+        key: 'h2h',
+        last_update: new Date(NOW - 600000).toISOString(),
+        outcomes: [
+          { name: 'g0 Home', price: 120 },
+          { name: 'g0 Away', price: -140 + (i === 0 ? 35 : 0) },
+        ],
+      }],
+    })),
+  };
+  const secondEvents = [
+    awayEdgeG0,
+    ...Array.from({ length: 7 }, (_, i) => makeEvent(`g${i + 1}`, { outlier: 35 })),
+  ];
+  const second = await runTop5Batch(env, ctx, NOW, { fetchFullSlate: async () => secondEvents });
+  assert.equal(second.skipped, false);
+
+  const picks = await getTop5(env, { dateKey: '2026-08-05' });
+  const g0Picks = picks.filter((p) => p.eventId === 'g0');
+  assert.equal(g0Picks.length, 1, 'only the original g0 pick should exist, never a second contradictory one');
+  assert.equal(g0Picks[0].pickId, lockedPick.pickId);
+  // No two picks on the whole board should ever share an eventId.
+  assert.equal(new Set(picks.map((p) => p.eventId)).size, picks.length);
+});
+
 test('runTop5Batch excludes candidates from a segment the weekly algorithm health review has paused', async () => {
   const { env } = makeKvStore();
   await env.POTD_KV.put('algo:paused', JSON.stringify([{ key: 'baseball_mlb|h2h', pausedAt: NOW, reason: 'test' }]));
