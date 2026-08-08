@@ -4910,4 +4910,37 @@ async function openLearningDashboard() {
       : 'Demo data — set WORKER_URL in config.js for live odds',
     CONFIG.WORKER_URL ? '' : 'demo',
   );
+
+  startSlateAutoRefresh();
 })();
+
+/**
+ * Keeps Full Slate's game states current without requiring the viewer to
+ * touch anything. Before this, refreshSlateScores/refreshSlateTrackedPicks
+ * only ran as a side effect of renderFullSlate, which itself only ran on a
+ * user action (switching league/day/tab) — so a board left open just sat
+ * there. A fight or game that finished minutes ago kept showing "● Live"
+ * forever (slateGameState falls back to 'live' once commence time has
+ * passed and no completed score has arrived) and never migrated to the
+ * Finished tab, since nothing ever re-fetched /scores to learn it had ended.
+ *
+ * 60s matches refreshSlateScores'/refreshSlateTrackedPicks' own per-group
+ * throttle (see their comments) — polling faster wouldn't get fresher data,
+ * since that throttle no-ops in between anyway. Only fires while the Full
+ * Slate tab is the one showing and the browser tab itself is in the
+ * foreground, so a backgrounded or unused tab isn't silently spending odds
+ * API credits.
+ */
+const SLATE_AUTO_REFRESH_MS = 60000;
+function startSlateAutoRefresh() {
+  const tick = () => {
+    if (document.visibilityState !== 'visible') return;
+    if (el.slateView.hidden) return;
+    if (!state.candidates.length && !state.rawEvents.length) return;
+    renderFullSlate();
+  };
+  setInterval(tick, SLATE_AUTO_REFRESH_MS);
+  // Catches the common "left it open in a background tab" case immediately
+  // on return, rather than waiting up to 60s for the next tick.
+  document.addEventListener('visibilitychange', tick);
+}
