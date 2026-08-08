@@ -3029,11 +3029,21 @@ function renderSlateLeagueOptions() {
  * it, below the 3-book candidate floor) even though the fights themselves
  * were real and upcoming.
  */
+/** Fallback card name for a finished fight whose odds-feed enrichment (see
+ * buildSlateGames' orphan backfill) is already gone along with its markets
+ * — still worth showing, just not attached to a named card. */
+const UNKNOWN_MMA_CARD = 'Recently Finished';
+
 function filterMmaGames(games) {
   const now = Date.now();
   const oneWeekMs = 9 * 24 * 60 * 60 * 1000;
 
   return games.filter((game) => {
+    // A finished orphan game already lost its card enrichment along with
+    // its markets when the odds feed dropped it — still real, still worth
+    // showing, just grouped under UNKNOWN_MMA_CARD instead of a named card.
+    if (slateGameState(game) === 'finished') return true;
+
     // Must have event enrichment (live ESPN lookup or fallback date-based)
     if (!game.ufc_event?.event) return false;
 
@@ -3057,7 +3067,7 @@ function mmaClusters(games) {
   // Group by UFC event name
   const byEvent = new Map();
   for (const game of filtered) {
-    const eventKey = game.ufc_event.event; // Already guaranteed to exist
+    const eventKey = game.ufc_event?.event ?? UNKNOWN_MMA_CARD;
     if (!byEvent.has(eventKey)) byEvent.set(eventKey, []);
     byEvent.get(eventKey).push(game);
   }
@@ -3216,7 +3226,7 @@ function renderFullSlate() {
     for (const game of games) {
       let eventName;
       if (group.id === 'mma') {
-        eventName = game.ufc_event?.event || 'Upcoming Event';
+        eventName = game.ufc_event?.event ?? UNKNOWN_MMA_CARD;
       } else if (group.id === 'atp' || group.id === 'wta') {
         eventName = state.catalogue.find((s) => s.key === game.sportKey)?.title ?? group.label;
       } else {
