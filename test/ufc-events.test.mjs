@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { getUfcEventDetails } from '../worker/src/ufc-events.js';
+import { getUfcEventDetails, fetchMmaResults, buildMmaScoreEvent, gradeMmaPickWithFallback } from '../worker/src/ufc-events.js';
 
 /**
  * getUfcEventDetails calls fetch() directly (module-scope, not injected —
@@ -240,4 +240,141 @@ test('card-window fallback never fires when ESPN omits a date on every event', a
   const commenceMs = Date.parse('2026-08-15T22:00:00Z');
   const result = await getUfcEventDetails('Unknown Fighter A', 'Unknown Fighter B', commenceMs, ctx);
   assert.equal(result.event, 'Card - 08/15');
+});
+
+/* ------------------------------------------------------------------ */
+/* fetchMmaResults / buildMmaScoreEvent / gradeMmaPickWithFallback     */
+/* ------------------------------------------------------------------ */
+
+/** A completed-fight ESPN competition — the shape fetchMmaResults reads
+ * status.type.completed and competitors[].winner from, unlike
+ * makeEspnEvent's schedule-only fixtures (no status/winner at all). */
+function makeCompletedEvent(name, fights) {
+  return {
+    name,
+    competitions: fights.map(([winnerName, loserName]) => ({
+      status: { type: { completed: true } },
+      competitors: [
+        { athlete: { displayName: winnerName }, winner: true },
+        { athlete: { displayName: loserName }, winner: false },
+      ],
+    })),
+  };
+}
+
+test('fetchMmaResults only includes completed fights, skipping ones still in progress', async () => {
+  globalThis.caches = { default: { async match() { return null; }, async put() {} } };
+  globalThis.fetch = async (url) => {
+    // Only the UFC scoreboard carries this card — PFL's returns nothing, so
+    // the count below reflects one promotion's card, not both doubled up.
+    const events = String(url).includes('/mma/ufc/')
+      ? [{
+          name: 'Card',
+          competitions: [
+            { status: { type: { completed: true } }, competitors: [{ athlete: { displayName: 'Winner' }, winner: true }, { athlete: { displayName: 'Loser' }, winner: false }] },
+            { status: { type: { completed: false } }, competitors: [{ athlete: { displayName: 'Still Fighting A' }, winner: false }, { athlete: { displayName: 'Still Fighting B' }, winner: false }] },
+          ],
+        }]
+      : [];
+    return { ok: true, text: async () => JSON.stringify({ events }) };
+  };
+  const results = await fetchMmaResults(ctx, Date.now());
+  assert.equal(results.length, 1);
+  assert.equal(results[0].aWon, true);
+});
+
+test('buildMmaScoreEvent builds a gradePick-compatible scoreEvent with the winner scored 1', async () => {
+  globalThis.caches = { default: { async match() { return null; }, async put() {} } };
+  globalThis.fetch = async () => ({
+    ok: true,
+    text: async () => JSON.stringify({ events: [makeCompletedEvent('Card', [['Bryan Battle', 'Dalton Rosta']])] }),
+  });
+  const results = await fetchMmaResults(ctx, Date.now());
+
+  const scoreEvent = buildMmaScoreEvent('Bryan Battle', 'Dalton Rosta', results);
+  assert.equal(scoreEvent.completed, true);
+  assert.deepEqual(scoreEvent.scores, [
+    { name: 'Bryan Battle', score: 1 },
+    { name: 'Dalton Rosta', score: 0 },
+  ]);
+
+  // Home/away reversed from how ESPN listed them — still resolves correctly,
+  // the winner's actual name gets the 1 regardless of home/away order.
+  const reversed = buildMmaScoreEvent('Dalton Rosta', 'Bryan Battle', results);
+  assert.deepEqual(reversed.scores, [
+    { name: 'Dalton Rosta', score: 0 },
+    { name: 'Bryan Battle', score: 1 },
+  ]);
+});
+
+test('buildMmaScoreEvent returns null when no ESPN fight matches either name', async () => {
+  const results = [{ a: 'bryan battle', b: 'dalton rosta', aWon: true, bWon: false }];
+  const scoreEvent = buildMmaScoreEvent('Unrelated Fighter', 'Another Unrelated Fighter', results);
+  assert.equal(scoreEvent, null);
+});
+
+test('buildMmaScoreEvent matches despite name spelling differences, same as getUfcEventDetails', async () => {
+  const results = [{ a: 'giovanna canuto', b: 'carol foro', aWon: false, bWon: true }];
+  // Odds API spells it "Gigi Canuto" (nickname-as-first-name) here.
+  const scoreEvent = buildMmaScoreEvent('Gigi Canuto', 'Carol Foro', results);
+  assert.deepEqual(scoreEvent.scores, [
+    { name: 'Gigi Canuto', score: 0 },
+    { name: 'Carol Foro', score: 1 },
+  ]);
+});
+
+test('gradeMmaPickWithFallback grades via ESPN when the primary scoreEvent has no result yet', () => {
+  const pick = {
+    home: 'Bryan Battle', away: 'Dalton Rosta',
+    outcomeName: 'Bryan Battle', marketKey: 'h2h', point: null,
+    decimal: 2.5, suggested_stake: 20,
+  };
+  const results = [{ a: 'bryan battle', b: 'dalton rosta', aWon: true, bWon: false }];
+
+  // Primary scoreEvent is undefined — exactly what happens when the Odds
+  // API's /scores hasn't posted this event at all yet.
+  const outcome = gradeMmaPickWithFallback(pick, undefined, results);
+  assert.equal(outcome.won, true);
+  assert.equal(outcome.payout, (pick.decimal - 1) * pick.suggested_stake);
+});
+
+test('gradeMmaPickWithFallback prefers the primary scoreEvent when it already has a real result', () => {
+  const pick = {
+    home: 'Bryan Battle', away: 'Dalton Rosta',
+    outcomeName: 'Bryan Battle', marketKey: 'h2h', point: null,
+    decimal: 2.5, suggested_stake: 20,
+  };
+  const primaryScoreEvent = {
+    completed: true,
+    scores: [{ name: 'Bryan Battle', score: 0 }, { name: 'Dalton Rosta', score: 1 }],
+  };
+  // ESPN's own fallback data disagrees (says Battle won) — the primary,
+  // already-real result wins; ESPN is only ever consulted when the primary
+  // source has nothing.
+  const results = [{ a: 'bryan battle', b: 'dalton rosta', aWon: true, bWon: false }];
+
+  const outcome = gradeMmaPickWithFallback(pick, primaryScoreEvent, results);
+  assert.equal(outcome.won, false);
+});
+
+test('gradeMmaPickWithFallback leaves a draw/no-contest pending, never forces a win or loss', () => {
+  const pick = {
+    home: 'Bryan Battle', away: 'Dalton Rosta',
+    outcomeName: 'Bryan Battle', marketKey: 'h2h', point: null,
+    decimal: 2.5, suggested_stake: 20,
+  };
+  // Neither side marked winner — a draw or no-contest.
+  const results = [{ a: 'bryan battle', b: 'dalton rosta', aWon: false, bWon: false }];
+  const outcome = gradeMmaPickWithFallback(pick, undefined, results);
+  assert.equal(outcome, null);
+});
+
+test('gradeMmaPickWithFallback returns null (stays pending) when neither source has this fight', () => {
+  const pick = {
+    home: 'Someone Unmatched', away: 'Someone Else Unmatched',
+    outcomeName: 'Someone Unmatched', marketKey: 'h2h', point: null,
+    decimal: 2.5, suggested_stake: 20,
+  };
+  const outcome = gradeMmaPickWithFallback(pick, undefined, []);
+  assert.equal(outcome, null);
 });

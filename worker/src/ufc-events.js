@@ -18,11 +18,15 @@
  * or vice versa — so both are fetched and merged into one lookup index.
  */
 
+import { gradePick } from '../../docs/learning.js';
+
 const ESPN_MMA_SCOREBOARDS = {
   ufc: 'https://site.web.api.espn.com/apis/site/v2/sports/mma/ufc/scoreboard',
   pfl: 'https://site.web.api.espn.com/apis/site/v2/sports/mma/pfl/scoreboard',
 };
 const SCHEDULE_TTL = 3600 * 6; // a card can still be adjusted; not worth caching longer
+const RESULTS_TTL = 300; // completed fights don't change, but this window also has to catch cards still airing
+const RESULTS_LOOKBACK_DAYS = 3; // matches worker/src/odds.js's own fetchScores daysFrom=3 convention
 
 /**
  * Folds accents before stripping non-alphanumerics (NFD-normalize, then drop
@@ -85,6 +89,20 @@ function dateRangeParam(now) {
   };
   const start = new Date(now);
   const end = new Date(now + 30 * 86400000);
+  return `${fmt(start)}-${fmt(end)}`;
+}
+
+/** The mirror of dateRangeParam, looking backward instead of forward — for
+ * results (recently completed fights) rather than the upcoming schedule. */
+function lookbackDateRangeParam(now, daysBack) {
+  const fmt = (d) => {
+    const y = d.getUTCFullYear();
+    const m = String(d.getUTCMonth() + 1).padStart(2, '0');
+    const day = String(d.getUTCDate()).padStart(2, '0');
+    return `${y}${m}${day}`;
+  };
+  const start = new Date(now - daysBack * 86400000);
+  const end = new Date(now);
   return `${fmt(start)}-${fmt(end)}`;
 }
 
@@ -230,4 +248,100 @@ export async function getUfcEventDetails(fighterA, fighterB, commenceMs, ctx, sc
     return { event: `Card - ${formatEventDate(commenceMs)}` };
   }
   return null;
+}
+
+/**
+ * Every completed fight from ESPN's UFC+PFL scoreboards over the last
+ * RESULTS_LOOKBACK_DAYS, each with both competitors' names and which one
+ * won — a fallback grading source for MMA specifically. The Odds API's own
+ * /scores endpoint routinely lags real fight results by hours for
+ * untelevised early-prelim bouts (confirmed live: every fight on a finished
+ * card still read completed:false hours after the card itself had aired,
+ * PFL Charlotte's entire 12-fight card included) while ESPN's scoreboard
+ * already carries the final result the moment the fight ends — this is what
+ * actually lets a pending pick get graded the same night instead of sitting
+ * pending indefinitely, waiting on a data source that may never post it for
+ * a thinly-covered bout.
+ */
+export async function fetchMmaResults(ctx, now = Date.now()) {
+  const dates = lookbackDateRangeParam(now, RESULTS_LOOKBACK_DAYS);
+  const results = await Promise.allSettled(
+    Object.values(ESPN_MMA_SCOREBOARDS).map((base) => cachedJson(`${base}?dates=${dates}`, RESULTS_TTL, ctx)),
+  );
+
+  const fights = [];
+  for (const r of results) {
+    if (r.status !== 'fulfilled') continue;
+    for (const event of r.value?.events ?? []) {
+      for (const c of event.competitions ?? []) {
+        if (!c.status?.type?.completed) continue;
+        const [a, b] = c.competitors ?? [];
+        const nameA = a?.athlete?.displayName;
+        const nameB = b?.athlete?.displayName;
+        if (!nameA || !nameB) continue;
+        fights.push({
+          a: normalizeName(nameA),
+          b: normalizeName(nameB),
+          aWon: a.winner === true,
+          bWon: b.winner === true,
+        });
+      }
+    }
+  }
+  return fights;
+}
+
+/**
+ * A gradePick()-compatible synthetic scoreEvent for one MMA pick, built from
+ * ESPN's completed-fight results (see fetchMmaResults) instead of The Odds
+ * API's /scores. Winner gets score 1, loser gets score 0 — gradePick()'s own
+ * h2h comparison (pickedScore > otherScore) resolves correctly off that
+ * alone, no MMA-specific grading logic needed. A draw or no-contest has
+ * neither side marked winner, which naturally becomes a 0-0 tie —
+ * gradePick() already treats an exact score tie on h2h as a push and leaves
+ * it pending, so a draw here correctly never gets forced into a win or a
+ * loss. Returns null (never fabricates a result) when no ESPN fight matches
+ * both names.
+ */
+export function buildMmaScoreEvent(homeTeam, awayTeam, results) {
+  const normHome = normalizeName(homeTeam);
+  const normAway = normalizeName(awayTeam);
+
+  const fight = results.find(
+    (f) => (namesLikelyMatch(f.a, normHome) && namesLikelyMatch(f.b, normAway))
+      || (namesLikelyMatch(f.a, normAway) && namesLikelyMatch(f.b, normHome)),
+  );
+  if (!fight) return null;
+
+  const homeIsA = namesLikelyMatch(fight.a, normHome);
+  const homeWon = homeIsA ? fight.aWon : fight.bWon;
+  const awayWon = homeIsA ? fight.bWon : fight.aWon;
+
+  return {
+    completed: true,
+    scores: [
+      { name: homeTeam, score: homeWon ? 1 : 0 },
+      { name: awayTeam, score: awayWon ? 1 : 0 },
+    ],
+  };
+}
+
+/**
+ * gradePick() with the ESPN fallback above layered on for MMA specifically —
+ * tries the primary /scores-based scoreEvent first (works fine for every
+ * non-MMA sport, and even most MMA fights once the Odds API eventually
+ * catches up), and only reaches for ESPN's own completed-fight data when
+ * that comes back empty. Shared by every grading pass (Full Slate, Pixel's
+ * Picks, Play of the Day) rather than duplicated three times — a bug in the
+ * fallback name-matching would otherwise need fixing in three places.
+ * `results` is the array fetchMmaResults returns; pass an empty array (not
+ * this whole function) for a non-MMA pick, so a pick from any other sport
+ * takes the exact same single gradePick() call it always has.
+ */
+export function gradeMmaPickWithFallback(pick, primaryScoreEvent, results) {
+  const direct = gradePick(pick, primaryScoreEvent);
+  if (direct) return direct;
+  if (!results?.length) return null;
+  const fallbackScoreEvent = buildMmaScoreEvent(pick.home, pick.away, results);
+  return fallbackScoreEvent ? gradePick(pick, fallbackScoreEvent) : null;
 }

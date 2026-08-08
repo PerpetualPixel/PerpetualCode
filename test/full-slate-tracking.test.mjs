@@ -250,6 +250,47 @@ test('runFullSlateGrading grades a completed pick won/lost via the shared gradeP
   assert.ok(graded.result.payout > 0);
 });
 
+test('runFullSlateGrading still grades a pending pick after the ET date has rolled over past its own dateKey (regression: a late card used to get silently orphaned)', async () => {
+  const { env } = makeKvStore();
+  // Generated at 8am ET Aug 5 against an MMA fight that doesn't commence
+  // until ~4am ET Aug 6 — a late card crossing the ET midnight boundary.
+  // isEligibleMmaFight allows this into today's (Aug 5) tracked batch since
+  // it starts before MMA_NEXT_DAY_CUTOFF_HOUR the next morning (a team-sport
+  // game can't reach this same scenario — those require same-ET-day
+  // commencement to be tracked at all). The pick is stored under dateKey
+  // "2026-08-05" (today's date at generation time).
+  const events = [makeEvent('late', { outlier: 35, hoursOut: 20, sport: 'mma_mixed_martial_arts', sportTitle: 'MMA' })];
+  await runFullSlateBatch(env, ctx, NOW, { fetchFullSlate: async () => events });
+
+  const [pick] = await getFullSlateTracked(env, { dateKey: '2026-08-05' });
+  const scoreEvents = [{
+    id: 'late',
+    completed: true,
+    scores: [
+      { name: 'late Home', score: pick.outcomeName === 'late Home' ? '5' : '2' },
+      { name: 'late Away', score: pick.outcomeName === 'late Away' ? '5' : '2' },
+    ],
+  }];
+
+  // Grade at 2pm ET Aug 6 — 30 hours after generation, well past the ET date
+  // rollover. Without checking yesterday's dateKey too, this "now" resolves
+  // to "2026-08-06" and the grading pass would never even look at the
+  // manifest the pick is actually stored under. fetchMmaResultsFn is stubbed
+  // to skip the real ESPN fallback fetch — the primary scoreEvent already
+  // has a real result, so the fallback is never actually reached; it just
+  // needs to not attempt a live network call in a unit test.
+  const gradeNow = NOW + 30 * 3.6e6;
+  const result = await runFullSlateGrading(env, ctx, gradeNow, {
+    fetchScoresFn: async () => ({ events: scoreEvents }),
+    fetchMmaResultsFn: async () => [],
+  });
+  assert.equal(result.graded, 1);
+
+  const [graded] = await getFullSlateTracked(env, { dateKey: '2026-08-05' });
+  assert.equal(graded.status, 'won');
+  assert.ok(graded.result.payout > 0);
+});
+
 test('getAllFullSlateTracked spans multiple days, resetFullSlateTracking clears every one', async () => {
   const { env } = makeKvStore();
   const day2Now = NOW + 86400000;

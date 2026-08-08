@@ -32,6 +32,7 @@ import { fetchWeather } from './weather.js';
 import { fetchMmaContext } from './mma.js';
 import { fetchSport, fetchScores } from './odds.js';
 import { getPausedSegments, isSegmentPaused } from './algo-health.js';
+import { fetchMmaResults, gradeMmaPickWithFallback } from './ufc-events.js';
 
 const ET_TZ = 'America/New_York';
 export const POTD_HOUR = 2; // 2am ET
@@ -305,31 +306,59 @@ export async function runPotdClvSnapshot(env, ctx, now = Date.now(), { fetchSpor
   return { updated: true };
 }
 
-/**
- * Grade today's pick once its game has a completed score, via the exact same
- * gradePick() the client's own "Check Results" button and the Top 5 batch's
- * runGrading both use. Runs every hourly tick, same reasoning as the Top 5
- * batch's own grading pass — idempotent, since it only ever touches a still-
- * pending pick.
- */
-export async function runPotdGrading(env, ctx, now = Date.now(), { fetchScoresFn = (s) => fetchScores(s, env, ctx) } = {}) {
-  const dateKey = etParts(now).date;
-  const raw = await env.POTD_KV.get(`potd:${dateKey}`);
-  if (!raw) return { graded: false };
-
-  const record = JSON.parse(raw);
-  const { pick } = record;
-  if (pick.status !== 'pending') return { graded: false };
-
+/** Grades one dateKey's POTD record if it exists and is still pending — the
+ * per-day worker runPotdGrading below calls once per day in its lookback
+ * window. Returns false without touching anything for a missing/already-
+ * graded/still-pending-with-no-result record, same idempotent shape as
+ * every other grading pass here. */
+async function gradePotdForDate(env, dateKey, pick, record, fetchScoresFn, fetchMmaResultsFn) {
   const { events } = await fetchScoresFn(pick.sportKey);
   const scoreEvent = (events ?? []).find((e) => e.id === pick.eventId);
-  const outcome = gradePick(pick, scoreEvent);
-  if (!outcome) return { graded: false };
+  const outcome = isMma(pick.sportKey)
+    ? gradeMmaPickWithFallback(pick, scoreEvent, await fetchMmaResultsFn())
+    : gradePick(pick, scoreEvent);
+  if (!outcome) return false;
 
   pick.status = outcome.won ? 'won' : 'lost';
   pick.result = { payout: outcome.payout, roiPercent: (outcome.payout / pick.suggested_stake) * 100 };
   await env.POTD_KV.put(`potd:${dateKey}`, JSON.stringify(record), { expirationTtl: KV_TTL_SECONDS });
-  return { graded: true };
+  return true;
+}
+
+// Same reasoning as tracking.js's own GRADING_LOOKBACK_DAYS: a late-night
+// pick's game can still be pending after the ET date has already rolled
+// over to tomorrow, and this used to only ever check today's `potd:` key —
+// once the date rolled, last night's still-pending pick was never looked at
+// again by any future tick.
+const GRADING_LOOKBACK_DAYS = 2;
+
+/**
+ * Grade whichever of the last GRADING_LOOKBACK_DAYS days' Play of the Day
+ * picks is still pending, via the exact same gradePick() the client's own
+ * "Check Results" button and the Top 5 batch's runGrading both use. Runs
+ * every tick, same reasoning as the Top 5 batch's own grading pass —
+ * idempotent, since it only ever touches a still-pending pick. When a
+ * pending pick is MMA, also falls back to ESPN's scoreboard (see
+ * worker/src/ufc-events.js's gradeMmaPickWithFallback) the same way Full
+ * Slate and Pixel's Picks grading do, for the same reason: the Odds API's
+ * /scores routinely lags real MMA results by hours.
+ */
+export async function runPotdGrading(env, ctx, now = Date.now(), { fetchScoresFn = (s) => fetchScores(s, env, ctx), fetchMmaResultsFn = () => fetchMmaResults(ctx, now) } = {}) {
+  const dateKeys = [...new Set(
+    Array.from({ length: GRADING_LOOKBACK_DAYS }, (_, i) => etDatePlusDays(now, -i)),
+  )];
+
+  let graded = false;
+  for (const dateKey of dateKeys) {
+    const raw = await env.POTD_KV.get(`potd:${dateKey}`);
+    if (!raw) continue;
+    const record = JSON.parse(raw);
+    if (record.pick.status !== 'pending') continue;
+    if (await gradePotdForDate(env, dateKey, record.pick, record, fetchScoresFn, fetchMmaResultsFn)) {
+      graded = true;
+    }
+  }
+  return { graded };
 }
 
 /** Today's Play of the Day, or yesterday's as a labelled fallback if today's

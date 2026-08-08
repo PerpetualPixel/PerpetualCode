@@ -25,6 +25,7 @@ import { gradePick } from '../../docs/learning.js';
 import { isMma } from '../../docs/insights.js';
 import { fetchSport, fetchScores } from './odds.js';
 import { pickRecordFrom, fetchFullSlateEvents } from './tracking.js';
+import { fetchMmaResults, gradeMmaPickWithFallback } from './ufc-events.js';
 
 export const FULL_SLATE_BATCH_HOUR = 2; // 2am ET — same run as Pixel's Picks/Play of the Day
 // Matches tracking.js's own FLAT_UNIT_STAKE — duplicated for the same reason
@@ -156,32 +157,55 @@ export async function runFullSlateClvSnapshot(
   return { checked: picks.length, updated };
 }
 
-/** Same continuous, idempotent hourly grading as tracking.js's own runGrading, keyed under slate: instead of track:. */
+// Same reasoning and value as tracking.js's own GRADING_LOOKBACK_DAYS —
+// duplicated for the same "don't import a private constant across worker
+// files" reason as MMA_NEXT_DAY_CUTOFF_HOUR above. Full Slate tracks every
+// MMA fight on the board (not just the ones that also clear Pixel's Picks'
+// sharp standard), so this bug bit it hardest: a whole late card's worth of
+// pending picks silently stopped being looked at the instant the ET date
+// rolled over mid-card.
+const GRADING_LOOKBACK_DAYS = 2;
+
+/**
+ * Same continuous, idempotent grading as tracking.js's own runGrading, keyed
+ * under slate: instead of track: — including the same ESPN fallback for MMA
+ * picks (see worker/src/ufc-events.js's gradeMmaPickWithFallback), since
+ * Full Slate tracks every MMA fight on the board, not just the ones that
+ * also happen to clear Pixel's Picks' own sharp standard. Also looks back
+ * GRADING_LOOKBACK_DAYS ET calendar days rather than just today's, so a
+ * pick from a card that crossed midnight never gets orphaned.
+ */
 export async function runFullSlateGrading(
   env,
   ctx,
   now = Date.now(),
-  { fetchScoresFn = (s) => fetchScores(s, env, ctx) } = {},
+  { fetchScoresFn = (s) => fetchScores(s, env, ctx), fetchMmaResultsFn = () => fetchMmaResults(ctx, now) } = {},
 ) {
-  const dateKey = etDate(now);
-  const { picks } = await loadFullSlateTracked(env, dateKey);
+  const dateKeys = [...new Set(
+    Array.from({ length: GRADING_LOOKBACK_DAYS }, (_, i) => etDate(now - i * 86400000)),
+  )];
+  const loaded = await Promise.all(dateKeys.map((dk) => loadFullSlateTracked(env, dk)));
+  const picks = loaded.flatMap((d) => d.picks);
   const pending = picks.filter((p) => p.status === 'pending');
   if (!pending.length) return { graded: 0, remaining: 0 };
 
   const sportsNeeded = [...new Set(pending.map((p) => p.sportKey))];
   const fetched = await Promise.all(sportsNeeded.map((s) => fetchScoresFn(s)));
   const scoreEventsBySport = new Map(sportsNeeded.map((s, i) => [s, fetched[i].events ?? []]));
+  const mmaResults = pending.some((p) => isMma(p.sportKey)) ? await fetchMmaResultsFn() : [];
 
   let graded = 0;
   for (const pick of pending) {
     const scoreEvent = (scoreEventsBySport.get(pick.sportKey) ?? []).find((e) => e.id === pick.eventId);
-    const outcome = gradePick(pick, scoreEvent);
+    const outcome = isMma(pick.sportKey)
+      ? gradeMmaPickWithFallback(pick, scoreEvent, mmaResults)
+      : gradePick(pick, scoreEvent);
     if (!outcome) continue;
     pick.status = outcome.won ? 'won' : 'lost';
     pick.result = { payout: outcome.payout, roiPercent: (outcome.payout / pick.suggested_stake) * 100 };
     graded++;
     ctx.waitUntil(
-      env.POTD_KV.put(`slate:${dateKey}:pick:${pick.pickId}`, JSON.stringify(pick), {
+      env.POTD_KV.put(`slate:${pick.dateKey}:pick:${pick.pickId}`, JSON.stringify(pick), {
         expirationTtl: KV_TTL_SECONDS,
       }),
     );

@@ -31,6 +31,7 @@ import { isMma } from '../../docs/insights.js';
 import { CONFIG } from '../../docs/config.js';
 import { fetchSport, fetchScores, fetchCatalogue } from './odds.js';
 import { getAlgoConfig, getPausedSegments, isSegmentPaused } from './algo-health.js';
+import { fetchMmaResults, gradeMmaPickWithFallback } from './ufc-events.js';
 
 export const TOP5_COUNT = 5;
 export const TOP5_BATCH_HOUR = 2; // 2am ET — same run as Play of the Day
@@ -294,43 +295,70 @@ export async function runClvSnapshot(
   return { checked: picks.length, updated };
 }
 
+// How many ET calendar days back grading looks for still-pending picks —
+// not just today's. A late MMA main event can still be "pending" well after
+// the ET date has rolled over to tomorrow (a 10pm ET start plus prelims can
+// run past 2am), and this pass used to only ever load today's dateKey's
+// manifest — the instant the date rolled, last night's still-pending picks
+// were silently never looked at again by any future tick, stuck pending
+// indefinitely even once a real result existed. 2 days (today + yesterday)
+// comfortably covers any single card crossing midnight; each pick record
+// already stores its own dateKey (see pickRecordFrom), so grading several
+// days' worth together and writing each graded pick back under its own
+// original dateKey is safe — nothing needs to move between days.
+const GRADING_LOOKBACK_DAYS = 2;
+
 /**
  * Grades whatever's pending and has a completed score available, via the
  * exact same gradePick() the client's own "Check Results" button already
- * uses. Deliberately runs on every hourly tick rather than being gated to a
- * single "11:59pm" instant — grading is idempotent (it only ever touches
- * still-pending picks) and strictly better run more often: a pick from an
- * early-afternoon game gets graded within the hour instead of sitting
- * "pending" until midnight for no reason. A late-finishing game just stays
- * pending until whichever hourly tick finds it complete, including the
- * final ones of the night — so this still covers the "grade by end of day"
- * intent, just without an artificial single deadline.
+ * uses. Deliberately runs on every tick (every 20 minutes — see
+ * worker/src/index.js's scheduled()) rather than being gated to a single
+ * "11:59pm" instant — grading is idempotent (it only ever touches still-
+ * pending picks) and strictly better run more often: a pick from an early-
+ * afternoon game gets graded within 20 minutes instead of sitting "pending"
+ * until midnight for no reason. Looks back GRADING_LOOKBACK_DAYS ET calendar
+ * days, not just today's, so a still-pending pick from a card that crossed
+ * midnight never gets orphaned by the date rolling over mid-card.
+ *
+ * MMA picks get a second look via ESPN's scoreboard (gradeMmaPickWithFallback,
+ * worker/src/ufc-events.js) when the Odds API's own /scores hasn't posted a
+ * result yet — confirmed live, that's routine for untelevised early-prelim
+ * bouts (a whole finished 12-fight card can still read completed:false hours
+ * later) while ESPN already has the final result the moment the fight ends.
+ * Only fetched when at least one pending pick is actually MMA, so every other
+ * sport's grading pass costs exactly what it always has.
  */
 export async function runGrading(
   env,
   ctx,
   now = Date.now(),
-  { fetchScoresFn = (s) => fetchScores(s, env, ctx) } = {},
+  { fetchScoresFn = (s) => fetchScores(s, env, ctx), fetchMmaResultsFn = () => fetchMmaResults(ctx, now) } = {},
 ) {
-  const dateKey = etDate(now);
-  const { picks } = await loadTrackedPicks(env, dateKey);
+  const dateKeys = [...new Set(
+    Array.from({ length: GRADING_LOOKBACK_DAYS }, (_, i) => etDate(now - i * 86400000)),
+  )];
+  const loaded = await Promise.all(dateKeys.map((dk) => loadTrackedPicks(env, dk)));
+  const picks = loaded.flatMap((d) => d.picks);
   const pending = picks.filter((p) => p.status === 'pending');
   if (!pending.length) return { graded: 0, remaining: 0 };
 
   const sportsNeeded = [...new Set(pending.map((p) => p.sportKey))];
   const fetched = await Promise.all(sportsNeeded.map((s) => fetchScoresFn(s)));
   const scoreEventsBySport = new Map(sportsNeeded.map((s, i) => [s, fetched[i].events ?? []]));
+  const mmaResults = pending.some((p) => isMma(p.sportKey)) ? await fetchMmaResultsFn() : [];
 
   let graded = 0;
   for (const pick of pending) {
     const scoreEvent = (scoreEventsBySport.get(pick.sportKey) ?? []).find((e) => e.id === pick.eventId);
-    const outcome = gradePick(pick, scoreEvent);
+    const outcome = isMma(pick.sportKey)
+      ? gradeMmaPickWithFallback(pick, scoreEvent, mmaResults)
+      : gradePick(pick, scoreEvent);
     if (!outcome) continue;
     pick.status = outcome.won ? 'won' : 'lost';
     pick.result = { payout: outcome.payout, roiPercent: (outcome.payout / pick.suggested_stake) * 100 };
     graded++;
     ctx.waitUntil(
-      env.POTD_KV.put(`track:${dateKey}:pick:${pick.pickId}`, JSON.stringify(pick), {
+      env.POTD_KV.put(`track:${pick.dateKey}:pick:${pick.pickId}`, JSON.stringify(pick), {
         expirationTtl: KV_TTL_SECONDS,
       }),
     );
