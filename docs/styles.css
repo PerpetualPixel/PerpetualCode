@@ -1727,6 +1727,14 @@ input[type="range"]:focus-visible {
   max-width: 140px;
 }
 
+/* Same red/blue fighter-A/fighter-B convention as .compare-fighter-a/-b and
+   .compare-bar-a/-b below — the photo border is the one visual key the rest
+   of the MMA breakdown's color-coded rows hang off. */
+.mma-photo-a .mma-photo { border-color: #f87171; border-width: 2px; }
+.mma-photo-b .mma-photo { border-color: #60a5fa; border-width: 2px; }
+.mma-photo-a .mma-photo-name { color: #f87171; }
+.mma-photo-b .mma-photo-name { color: #60a5fa; }
+
 .mma-photo {
   width: 96px;
   height: 96px;
@@ -1905,32 +1913,6 @@ input[type="range"]:focus-visible {
 .compare-bar-a { background: #f87171; height: 100%; }
 .compare-bar-b { background: #60a5fa; height: 100%; }
 
-.mma-bar-row {
-  display: grid;
-  grid-template-columns: 90px 1fr 28px;
-  align-items: center;
-  gap: 8px;
-  margin-bottom: 6px;
-  font-size: 0.75rem;
-}
-.mma-bar-label { color: var(--muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-.mma-bar-track {
-  height: 10px;
-  border-radius: 5px;
-  background: var(--surface-2);
-  overflow: hidden;
-}
-.mma-bar-fill {
-  display: block;
-  height: 100%;
-  background: var(--accent);
-  border-radius: 5px;
-}
-.mma-bar-count {
-  font-family: var(--mono);
-  color: var(--text);
-  text-align: right;
-}
 
 /* ---------------------------------------------------------------- */
 /* Wide screens — the layout above is written mobile-first (a single */
@@ -2803,6 +2785,19 @@ input[type="range"]:focus-visible {
 .learning-table-row .stat.win-rate {
   color: var(--success);
   font-weight: 600;
+}
+
+/* MMA Fighter Details (nickname/record/streak/nationality/location) reuses
+   .learning-table-row's card styling but not its 4-column numeric-table
+   layout — that left the label pinned far left and the value stranded near
+   the row's right edge, ~120px of unused grid track between them. Two
+   columns, label width fixed, value left-aligned right after it instead. */
+.learning-table-row.mma-detail-row {
+  grid-template-columns: 130px 1fr;
+}
+.learning-table-row.mma-detail-row .stat {
+  text-align: left;
+  color: var(--text);
 }
 
 .learning-table-row .stat.roi {

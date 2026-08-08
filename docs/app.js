@@ -1471,19 +1471,6 @@ function renderStatsResearch(bullets) {
   ].join('');
 }
 
-/** A labelled horizontal bar, its width the share of `total` — the same
- * lightweight div-width technique as the confidence meter, no charting
- * library needed for something this simple. */
-function statBar(label, count, total) {
-  const pct = total > 0 ? Math.round((count / total) * 100) : 0;
-  return `
-    <div class="mma-bar-row">
-      <span class="mma-bar-label">${esc(label)}</span>
-      <div class="mma-bar-track"><span class="mma-bar-fill" style="width:${pct}%"></span></div>
-      <span class="mma-bar-count">${count}</span>
-    </div>`;
-}
-
 /** Physical-attribute pills for one fighter, from Sherdog's bio box — only
  * the fields that actually parsed; reach and stance are frequently absent
  * on Sherdog and are simply not shown rather than guessed at. */
@@ -1509,7 +1496,7 @@ function renderMmaBio(fighter) {
 const MMA_STREAK_LABEL = { win: 'Win', loss: 'Loss', draw: 'Draw', nc: 'NC' };
 
 function mmaDetailRow(label, value) {
-  return `<div class="learning-table-row"><div class="label">${esc(label)}</div><div class="stat">${esc(value)}</div></div>`;
+  return `<div class="learning-table-row mma-detail-row"><div class="label">${esc(label)}</div><div class="stat">${esc(value)}</div></div>`;
 }
 
 /**
@@ -1578,32 +1565,6 @@ function renderMmaProfessionalBouts(fighter) {
       </table>
     </div>
     <p class="stats-source-note">*Opponent's record as of that fight, shown for the most recent ${MMA_OPPONENT_RECORD_LOOKBACK} bouts.</p>`;
-}
-
-/**
- * Striking/takedown accuracy and significant-strike-by-position bars, from
- * ufc.com's own athlete page — only ever populated for a fighter who's
- * actually competed in the UFC, null otherwise (a PFL/Bellator-only fighter
- * has no ufc.com profile at all, a real "no data" case, not an error).
- */
-function pctBar(label, pct) {
-  return `
-    <div class="mma-bar-row">
-      <span class="mma-bar-label">${esc(label)}</span>
-      <div class="mma-bar-track"><span class="mma-bar-fill" style="width:${pct}%"></span></div>
-      <span class="mma-bar-count">${pct}%</span>
-    </div>`;
-}
-
-function renderUfcCareerStats(fighter) {
-  const ufc = fighter?.ufc;
-  if (!ufc) return '';
-  const rows = [];
-  if (ufc.strikingAccuracy != null) rows.push(pctBar('Striking Acc.', ufc.strikingAccuracy));
-  if (ufc.takedownAccuracy != null) rows.push(pctBar('Takedown Acc.', ufc.takedownAccuracy));
-  for (const p of ufc.strikePosition ?? []) rows.push(pctBar(`Str. ${p.label}`, p.pct));
-  if (!rows.length) return '';
-  return `<p class="stats-fighter-label">${esc(fighter.name)}</p>${rows.join('')}`;
 }
 
 /* ------------------------------------------------------------------ */
@@ -1708,8 +1669,11 @@ function renderTennisBreakdown(data, away, home) {
 function renderMmaPhotos(me, opponent) {
   const initials = (name) => esc((name ?? '?').trim().charAt(0).toUpperCase());
   const photoOf = (fighter) => fighter?.ufc?.photo ?? fighter?.photo ?? null;
-  const side = (fighter) => fighter ? `
-    <div class="mma-photo-side">
+  // mma-photo-a/-b carry the same red/blue fighter-A/fighter-B convention
+  // every compareRow-based section below uses, so the photo border and name
+  // color are the one visual key the whole drawer's color-coding hangs off.
+  const side = (fighter, sideClass) => fighter ? `
+    <div class="mma-photo-side ${sideClass}">
       ${photoOf(fighter)
         ? `<img class="mma-photo" src="${esc(photoOf(fighter))}" alt="${esc(fighter.name)}" loading="lazy"
              onerror="this.outerHTML='<span class=&quot;mma-photo mma-photo-fallback&quot;>${initials(fighter.name)}</span>'">`
@@ -1720,9 +1684,9 @@ function renderMmaPhotos(me, opponent) {
   if (!photoOf(me) && !photoOf(opponent)) return '';
   return `
     <div class="mma-photo-row">
-      ${side(me)}
+      ${side(me, 'mma-photo-a')}
       ${opponent ? '<span class="mma-photo-vs">VS</span>' : ''}
-      ${side(opponent)}
+      ${side(opponent, 'mma-photo-b')}
     </div>`;
 }
 
@@ -1807,6 +1771,41 @@ function textCompareRow(label, aVal, bVal) {
     </div>`;
 }
 
+/** Red/blue name header (fighter A / fighter B, the same pairing every
+ * compareRow below uses) — shared by every dual-fighter section in the MMA
+ * breakdown so "which color is whose" only has to be learned once per
+ * drawer. Omitted when there's no resolved opponent to pair against. */
+function mmaCompareHeader(me, opponent) {
+  if (!opponent) return '';
+  return `
+    <div class="compare-header">
+      <span class="compare-fighter-a">${esc(me.name)}</span>
+      <span class="compare-fighter-b">${esc(opponent.name)}</span>
+    </div>`;
+}
+
+/**
+ * A titled group of compareRow()s — the condensed, color-coded replacement
+ * for what used to be two separate stacked per-fighter bar lists (one green
+ * block for `me`, a second green block for `opponent`, each repeating the
+ * fighter's name). One row per metric instead, `me` always red (fighter A)
+ * and `opponent` always blue (fighter B), matching the same pairing
+ * renderUfcStatComparison's Matchup Comparison tabs already use — so the
+ * whole drawer reads by one consistent color convention rather than each
+ * section inventing its own. `pairs` is `[label, meVal, oppVal, unit?]`;
+ * a still-real fighter with no opponent resolved just shows red bars with
+ * the b-side reading "—" (compareRow's own existing missing-data handling),
+ * rather than this needing a separate single-fighter layout to maintain.
+ */
+function mmaCompareSection(title, me, opponent, pairs, sourceLabel = null) {
+  if (!pairs.length) return '';
+  const rows = pairs.map(([label, a, b, unit]) => compareRow(label, a, b, unit)).join('');
+  const heading = sourceLabel
+    ? `${esc(title)} <span class="stats-source">${esc(sourceLabel)}</span>`
+    : esc(title);
+  return `<div class="stats-section mma-compare"><h3>${heading}</h3>${mmaCompareHeader(me, opponent)}${rows}</div>`;
+}
+
 const LAST_FIGHT_LABEL = { win: 'Win', loss: 'Loss', draw: 'Draw', nc: 'NC' };
 
 function fighterCountry(fighter) {
@@ -1877,10 +1876,7 @@ function renderUfcStatComparison(me, opponent) {
   return `
     <div class="stats-section mma-compare">
       <h3>Matchup Comparison <span class="stats-source">via UFC.com</span></h3>
-      <div class="compare-header">
-        <span class="compare-fighter-a">${esc(me.name)}</span>
-        <span class="compare-fighter-b">${esc(opponent.name)}</span>
-      </div>
+      ${mmaCompareHeader(me, opponent)}
       <div class="compare-tabs">${tabButtons}</div>
       <div id="mmaCompareBody">${MMA_COMPARE_TABS[0].build(me, opponent)}</div>
     </div>`;
@@ -1969,15 +1965,33 @@ function renderMmaBreakdown(mmaContext, subjectName, leg = null) {
       </div>`);
   }
 
-  const ufcMe = renderUfcCareerStats(me);
-  const ufcOpp = opponent ? renderUfcCareerStats(opponent) : '';
-  if (ufcMe || ufcOpp) {
-    sections.push(`
-      <div class="stats-section">
-        <h3>Career Stats <span class="stats-source">via UFC.com</span></h3>
-        ${ufcMe}${ufcOpp}
-      </div>`);
+  // Career rate stats (striking/takedown accuracy, significant-strike-by-
+  // position), from ufc.com's own athlete page — only ever populated for a
+  // fighter who's actually competed in the UFC. Matched by position label
+  // across both fighters (a PFL-only fighter's positions may not line up
+  // one-to-one with a UFC veteran's), same union approach Rounds/Activity
+  // below use for their own fighter-specific category lists.
+  const posLabels = [...new Set([
+    ...(me.ufc?.strikePosition ?? []).map((p) => p.label),
+    ...(opponent?.ufc?.strikePosition ?? []).map((p) => p.label),
+  ])];
+  const careerPairs = [];
+  if (me.ufc?.strikingAccuracy != null || opponent?.ufc?.strikingAccuracy != null) {
+    careerPairs.push(['Striking Acc.', me.ufc?.strikingAccuracy ?? 0, opponent?.ufc?.strikingAccuracy ?? 0, '%']);
   }
+  if (me.ufc?.takedownAccuracy != null || opponent?.ufc?.takedownAccuracy != null) {
+    careerPairs.push(['Takedown Acc.', me.ufc?.takedownAccuracy ?? 0, opponent?.ufc?.takedownAccuracy ?? 0, '%']);
+  }
+  for (const label of posLabels) {
+    careerPairs.push([
+      `Str. ${label}`,
+      (me.ufc?.strikePosition ?? []).find((p) => p.label === label)?.pct ?? 0,
+      (opponent?.ufc?.strikePosition ?? []).find((p) => p.label === label)?.pct ?? 0,
+      '%',
+    ]);
+  }
+  const careerHtml = mmaCompareSection('Career Stats', me, opponent, careerPairs, 'via UFC.com');
+  if (careerHtml) sections.push(careerHtml);
 
   const relPills = [`<span class="stat-pill">${esc(me.name)}: ${dataReliability(me.history)} (${me.history?.length ?? 0} fights on file)</span>`];
   if (opponent) {
@@ -1995,52 +2009,54 @@ function renderMmaBreakdown(mmaContext, subjectName, leg = null) {
       </div>`);
   }
 
-  const methodBars = (fighter) => {
-    const fin = finishSummary(fighter);
-    if (!fin) return '';
-    return `
-      <p class="stats-fighter-label">${esc(fighter.name)}: Method of Victory (${fin.wins} wins)</p>
-      ${statBar('KO/TKO', fin.knockout, fin.wins)}
-      ${statBar('Submission', fin.submission, fin.wins)}
-      ${statBar('Decision', fin.decision, fin.wins)}`;
-  };
-  const victoryHtml = [methodBars(me), opponent ? methodBars(opponent) : ''].filter(Boolean).join('');
-  if (victoryHtml) sections.push(`<div class="stats-section"><h3>Method of Victory</h3>${victoryHtml}</div>`);
+  // Method of Victory/Defeat, Fights End By Round, and Activity by Year all
+  // used to render as two separate stacked green blocks (one per fighter,
+  // each repeating "Fighter Name: Section Title"). Condensed to one row per
+  // metric via mmaCompareSection instead — same red/blue fighter-A/B
+  // convention as the photos and Matchup Comparison above, half the vertical
+  // space, and "whose bar is whose" no longer requires re-reading a label.
+  const finMe = finishSummary(me);
+  const finOpp = opponent ? finishSummary(opponent) : null;
+  const victoryHtml = mmaCompareSection('Method of Victory', me, opponent, (finMe || finOpp) ? [
+    ['KO/TKO', finMe?.knockout ?? 0, finOpp?.knockout ?? 0],
+    ['Submission', finMe?.submission ?? 0, finOpp?.submission ?? 0],
+    ['Decision', finMe?.decision ?? 0, finOpp?.decision ?? 0],
+  ] : []);
+  if (victoryHtml) sections.push(victoryHtml);
 
-  const defeatBars = (fighter) => {
-    const vuln = vulnerabilitySummary(fighter);
-    if (!vuln) return '';
-    const otherLosses = vuln.losses - vuln.koLosses - vuln.subLosses;
-    return `
-      <p class="stats-fighter-label">${esc(fighter.name)}: Method of Defeat (${vuln.losses} losses)</p>
-      ${statBar('KO/TKO', vuln.koLosses, vuln.losses)}
-      ${statBar('Submission', vuln.subLosses, vuln.losses)}
-      ${statBar('Decision/Other', otherLosses, vuln.losses)}`;
-  };
-  const defeatHtml = [defeatBars(me), opponent ? defeatBars(opponent) : ''].filter(Boolean).join('');
-  if (defeatHtml) sections.push(`<div class="stats-section"><h3>Method of Defeat</h3>${defeatHtml}</div>`);
+  const vulnMe = vulnerabilitySummary(me);
+  const vulnOpp = opponent ? vulnerabilitySummary(opponent) : null;
+  const defeatHtml = mmaCompareSection('Method of Defeat', me, opponent, (vulnMe || vulnOpp) ? [
+    ['KO/TKO', vulnMe?.koLosses ?? 0, vulnOpp?.koLosses ?? 0],
+    ['Submission', vulnMe?.subLosses ?? 0, vulnOpp?.subLosses ?? 0],
+    ['Decision/Other', vulnMe ? vulnMe.losses - vulnMe.koLosses - vulnMe.subLosses : 0, vulnOpp ? vulnOpp.losses - vulnOpp.koLosses - vulnOpp.subLosses : 0],
+  ] : []);
+  if (defeatHtml) sections.push(defeatHtml);
 
-  const roundsHtml = (fighter) => {
-    const { rounds } = fighterRoundsEnded(fighter.history);
-    if (!rounds.length) return '';
-    const total = rounds.reduce((n, r) => n + r.count, 0);
-    return `
-      <p class="stats-fighter-label">${esc(fighter.name)}: Fights End By Round</p>
-      ${rounds.map((r) => statBar(`Round ${r.round}`, r.count, total)).join('')}`;
-  };
-  const roundsAll = [roundsHtml(me), opponent ? roundsHtml(opponent) : ''].filter(Boolean).join('');
-  if (roundsAll) sections.push(`<div class="stats-section"><h3>Fights End By Round</h3>${roundsAll}</div>`);
+  // Rounds/years are fighter-specific category lists that don't necessarily
+  // line up (a 5-round main event fighter vs. a prelim fighter who's never
+  // seen round 4) — unioned and sorted so every round/year either fighter
+  // ever hit gets one shared row, rather than each fighter listing only its
+  // own categories the way the old stacked-block layout did.
+  const roundsMe = fighterRoundsEnded(me.history).rounds;
+  const roundsOpp = opponent ? fighterRoundsEnded(opponent.history).rounds : [];
+  const roundNumbers = [...new Set([...roundsMe.map((r) => r.round), ...roundsOpp.map((r) => r.round)])].sort((a, b) => a - b);
+  const roundsHtml = mmaCompareSection('Fights End By Round', me, opponent, roundNumbers.map((rnd) => [
+    `Round ${rnd}`,
+    roundsMe.find((r) => r.round === rnd)?.count ?? 0,
+    roundsOpp.find((r) => r.round === rnd)?.count ?? 0,
+  ]));
+  if (roundsHtml) sections.push(roundsHtml);
 
-  const activityHtml = (fighter) => {
-    const byYear = fighterActivityByYear(fighter.history);
-    if (!byYear.length) return '';
-    const max = Math.max(...byYear.map((a) => a.count));
-    return `
-      <p class="stats-fighter-label">${esc(fighter.name)}: Activity by Year</p>
-      ${byYear.map((a) => statBar(String(a.year), a.count, max)).join('')}`;
-  };
-  const activityAll = [activityHtml(me), opponent ? activityHtml(opponent) : ''].filter(Boolean).join('');
-  if (activityAll) sections.push(`<div class="stats-section"><h3>Activity by Year</h3>${activityAll}</div>`);
+  const yearsMe = fighterActivityByYear(me.history);
+  const yearsOpp = opponent ? fighterActivityByYear(opponent.history) : [];
+  const years = [...new Set([...yearsMe.map((y) => y.year), ...yearsOpp.map((y) => y.year)])].sort((a, b) => a - b);
+  const activityHtml = mmaCompareSection('Activity by Year', me, opponent, years.map((yr) => [
+    String(yr),
+    yearsMe.find((y) => y.year === yr)?.count ?? 0,
+    yearsOpp.find((y) => y.year === yr)?.count ?? 0,
+  ]));
+  if (activityHtml) sections.push(activityHtml);
 
   if (opponent) {
     const shared = commonOpponents(me, opponent);
