@@ -303,6 +303,29 @@ body {
   line-height: 1.6;
 }
 
+/* Same warn-toned callout treatment as .stats-section.devil-advocate
+   elsewhere in the app, adapted to .potd-section's own base spacing. */
+.potd-section.devil-advocate h3 { color: var(--warn); }
+.potd-section.devil-advocate {
+  background: var(--surface-2);
+  margin-left: -16px;
+  margin-right: -16px;
+  padding: 16px;
+  border-top-color: var(--warn);
+}
+
+/* The sharp-bettor write-up is the card's main "why" — a subtle accent
+   border sets it apart from the plainer quantitative sections around it. */
+.potd-section.potd-sharp-take {
+  border-top-color: var(--accent);
+}
+.potd-section.potd-sharp-take h3 {
+  color: var(--text);
+  font-size: 0.85rem;
+  text-transform: none;
+  letter-spacing: normal;
+}
+
 .potd-meta {
   margin: 18px 0 0;
   padding-top: 14px;

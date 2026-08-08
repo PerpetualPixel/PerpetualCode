@@ -33,6 +33,7 @@ import { fetchMmaContext } from './mma.js';
 import { fetchSport, fetchScores } from './odds.js';
 import { getPausedSegments, isSegmentPaused } from './algo-health.js';
 import { fetchMmaResults, gradeMmaPickWithFallback } from './ufc-events.js';
+import { getOrGenerateAnalysis } from './analysis.js';
 
 const ET_TZ = 'America/New_York';
 export const POTD_HOUR = 2; // 2am ET
@@ -182,7 +183,18 @@ async function researchFor(candidate, env, ctx) {
  * with a heading and nothing under it reads as a gap the analysis missed,
  * not as an honest "nothing sourced here."
  */
-function buildWriteup(candidate, research, now) {
+/**
+ * `analysis` is the parsed { analysis, quickTake, devilsAdvocate,
+ * victoryMethods? } object from getOrGenerateAnalysis(..., { isPotd: true }),
+ * or null when the feature isn't available (no API key, a failed model
+ * call, or no research context to ground it in) — Play of the Day still
+ * posts on schedule either way, just without the sharp-bettor write-up on
+ * top of its existing quantitative sections. `quotes` (every book's own
+ * price on this exact line) is carried through from the candidate
+ * unchanged so the client can render a real price-comparison table, the
+ * same per-book data every other pick card in this app already shows.
+ */
+function buildWriteup(candidate, research, now, analysis) {
   const priceBullets = explainExtensive(candidate, { now });
   const headline = `${candidate.selection} (${formatAmerican(candidate.american)})`;
   const matchup = `${candidate.away} @ ${candidate.home}`;
@@ -207,10 +219,16 @@ function buildWriteup(candidate, research, now) {
     sportTitle: candidate.sportTitle ?? candidate.sportKey,
     marketLabel: candidate.marketLabel,
     price: formatAmerican(candidate.american),
+    american: candidate.american,
     book: candidate.book,
+    quotes: candidate.quotes ?? [],
     score: Math.round(candidate.score),
     commenceMs: candidate.commenceMs,
     stake: suggestedStake(candidate),
+    analysis: analysis?.analysis ?? null,
+    reasons: analysis?.quickTake ?? null,
+    devilsAdvocate: analysis?.devilsAdvocate ?? null,
+    victoryMethods: analysis?.victoryMethods ?? null,
     sections: [
       { title: 'The Market & Price Case', bullets: priceBullets },
       ...(personnel.length ? [{ title: 'Primary Personnel & Direct Matchup', bullets: personnel }] : []),
@@ -222,7 +240,19 @@ function buildWriteup(candidate, research, now) {
 
 async function buildRecord(best, dateKey, now, env, ctx) {
   const research = await researchFor(best, env, ctx);
-  const writeup = buildWriteup(best, research, now);
+  // A sharp-bettor-voiced write-up on top of the existing quantitative
+  // sections — see buildWriteup's own comment. Never blocks posting: any
+  // failure here (no API key, a rate limit, a malformed reply) just leaves
+  // analysis null and Play of the Day goes up on schedule regardless,
+  // exactly like the same feature already behaves for every other pick.
+  let analysis = null;
+  try {
+    const raw = await getOrGenerateAnalysis(best, env, ctx, now, { isPotd: true });
+    if (raw) analysis = JSON.parse(raw);
+  } catch {
+    analysis = null;
+  }
+  const writeup = buildWriteup(best, research, now, analysis);
   return {
     date: dateKey,
     generatedAt: now,

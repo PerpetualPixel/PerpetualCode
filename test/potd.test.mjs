@@ -201,6 +201,25 @@ test('the stored record carries a headline, price, and tracking fields', async (
   assert.equal(record.pick.result, null);
 });
 
+test('the writeup carries american and quotes for the client\'s book price table, and degrades cleanly with no sharp-analysis fields when ANTHROPIC_API_KEY is unset', async () => {
+  const { env, store } = makeKvStore();
+  const events = [makeEvent('a', '2026-08-05T20:00:00Z')];
+  await runPotdDaily(env, ctx, NOW, { fetchFullSlate: async () => events });
+
+  const record = JSON.parse(store.get('potd:2026-08-05'));
+  // makeEvent's own bookmakers array (8 books) flows through to quotes.
+  assert.equal(record.writeup.american, record.pick.american);
+  assert.ok(Array.isArray(record.writeup.quotes));
+  assert.equal(record.writeup.quotes.length, 8);
+
+  // No ANTHROPIC_API_KEY in this test's env — getOrGenerateAnalysis returns
+  // null immediately, and buildRecord must still post the pick with the
+  // sharp-analysis fields simply absent, never throwing or blocking.
+  assert.equal(record.writeup.analysis, null);
+  assert.equal(record.writeup.reasons, null);
+  assert.equal(record.writeup.devilsAdvocate, null);
+});
+
 /* ---------------------------------------------------------------- */
 /* runPotdClvSnapshot                                                 */
 /* ---------------------------------------------------------------- */

@@ -171,8 +171,17 @@ function tennisFactSheet(data, awayName, homeName) {
   return lines.join('\n');
 }
 
-function buildPrompt({ away, home, sportTitle, factSheet, pick, isMma = false, isBaseball = false }) {
-  let basePrompt = `You are a sports analyst writing a short, strictly factual matchup breakdown for a sports app. Nobody reading this is asking about betting odds, point spreads, moneylines, or market pricing — only about the actual teams or players.
+function buildPrompt({ away, home, sportTitle, factSheet, pick, isMma = false, isBaseball = false, isPotd = false }) {
+  // Play of the Day is the single showcase pick across the whole day's
+  // slate, not one game write-up among many — the persona and depth step up
+  // accordingly (a sharp bettor's featured-pick column, not a routine game
+  // preview), and the JSON below asks for at least 5 reasons instead of 3
+  // for exactly that reason.
+  const persona = isPotd
+    ? `You are a sharp, highly experienced sports betting analyst with years of expertise specifically in ${sportTitle}, writing the daily "Play of the Day" breakdown — the single best value pick this app is featuring across its ENTIRE slate today, not just one game among many. Write with the voice and confidence of someone who has handicapped this sport professionally for years.`
+    : `You are a sports analyst writing a short, strictly factual matchup breakdown for a sports app.`;
+
+  let basePrompt = `${persona} Nobody reading this is asking about betting odds, point spreads, moneylines, or market pricing — only about the actual teams or players (this app shows the real sportsbook prices separately, in its own section).
 
 Matchup: ${away} at ${home} (${sportTitle})
 
@@ -192,7 +201,7 @@ RULES — read carefully, these are not optional:
 
 Write your response in two parts, in this order.
 
-PART 1 — Analysis (plain text, before the JSON described below): 5-to-10 sentences of flowing prose, not a bulleted list, using only the facts above. Explain why "${pick}" has the edge — form, head-to-head history, injuries, or statistical tendencies. Also describe how you expect the matchup to actually unfold — pace, tempo, or the likely pattern of play — grounded only in what's stated above.`;
+PART 1 — Analysis (plain text, before the JSON described below): ${isPotd ? '8-to-14' : '5-to-10'} sentences of flowing prose, not a bulleted list, using only the facts above. Explain why "${pick}" has the edge — form, head-to-head history, injuries, or statistical tendencies. Also describe how you expect the matchup to actually unfold — pace, tempo, or the likely pattern of play — grounded only in what's stated above.`;
 
   if (isBaseball) {
     basePrompt += `
@@ -205,11 +214,15 @@ Explicitly consider pitcher matchup advantages, home/away pitcher performance sp
 
 PART 2 — Structured summary: after Part 1, on the very last line and ONLY the last line, output one JSON object (no other text on that line, and none of Part 1's prose repeated inside it) with this exact structure:
 {
-  "quickTake": ["<short reason 1 "${pick}" has the edge>", "<short reason 2>", "<short reason 3>"],
+  "quickTake": [${isPotd ? '<at least 5 reasons, see below>' : '"<short reason 1 \'' + pick + '\' has the edge>", "<short reason 2>", "<short reason 3>"'}],
   "devilsAdvocate": ["<a genuine weakness or risk in "${pick}" that could cause it to lose>", "<a second genuine vulnerability or way this specific pick could fail>"]${isMma ? ',\n  "victoryMethods": { ...see MMA requirement below... }' : ''}
 }
+`;
 
-- quickTake: exactly 3 short, punchy sentences (under ~18 words each) on why "${pick}" has the edge — a form/statistical driver, a head-to-head or matchup factor, and a situational note — each traceable to a fact given above.
+  basePrompt += isPotd
+    ? `- quickTake: AT LEAST 5 substantive sentences (a full sentence each, not a fragment) on why "${pick}" is today's featured pick, each traceable to a fact given above. Vary the angle across the list rather than restating the same point five ways — draw from whichever of these actually apply here: recent form, head-to-head history, a statistical or stylistic tendency, an injury or availability factor, a situational note (rest, layoff, travel, surface, home/away split). At least ONE entry must be genuinely predictive, not just historical — a concrete claim about how you expect THIS specific matchup to play out (who controls the pace, which side's strength dictates the pattern of play, where the deciding edge shows up), not a restatement of a past record.
+- devilsAdvocate: exactly 2 short sentences on genuine weaknesses or risks in "${pick}" specifically — not a case for the other side winning, but honest reasons this exact pick could still lose (a real vulnerability, a matchup risk, a form concern), grounded only in the facts above. Not a token "anything can happen" disclaimer.`
+    : `- quickTake: exactly 3 short, punchy sentences (under ~18 words each) on why "${pick}" has the edge — a form/statistical driver, a head-to-head or matchup factor, and a situational note — each traceable to a fact given above.
 - devilsAdvocate: exactly 2 short sentences on genuine weaknesses or risks in "${pick}" specifically — not a case for the other side winning, but honest reasons this exact pick could still lose (a real vulnerability, a matchup risk, a form concern), grounded only in the facts above. Not a token "anything can happen" disclaimer.`;
 
   if (isMma) {
@@ -224,7 +237,7 @@ ADDITIONAL REQUIREMENT FOR MMA — "victoryMethods" in the JSON above must give 
   ],
   "${home}": [ ...same structure... ]
 }
-Methods are: SUB (submission), TKO (TKO/KO), DEC (decision). Percentages are your own estimate of how likely each specific method is for that fighter — the three for one fighter do not need to sum to 100 (they're independent paths, not exhaustive of that fighter's full win chance). quickTake's reason 3 should reference "${pick}"'s single most likely method with its percentage (e.g., "Most likely via TKO (38%)"), and devilsAdvocate's second sentence should reference the opponent's most likely method as the concrete way "${pick}" could lose.`;
+Methods are: SUB (submission), TKO (TKO/KO), DEC (decision). Percentages are your own estimate of how likely each specific method is for that fighter — the three for one fighter do not need to sum to 100 (they're independent paths, not exhaustive of that fighter's full win chance). One quickTake entry should reference "${pick}"'s single most likely method with its percentage (e.g., "Most likely via TKO (38%)"), and devilsAdvocate's second sentence should reference the opponent's most likely method as the concrete way "${pick}" could lose.`;
   }
 
   return basePrompt;
@@ -293,8 +306,18 @@ function sanitizeVictoryMethods(raw) {
  * research context available for this event, or the model call itself
  * failed — so the caller always has a clean signal to fall back to the
  * existing quantitative price case rather than showing a broken section.
+ *
+ * `isPotd` requests the richer Play of the Day variant (see buildPrompt): a
+ * sharp-bettor persona, a longer Part 1, and at least 5 quickTake reasons
+ * instead of 3 — Play of the Day is the one showcase pick across the whole
+ * slate, not a routine per-game preview, so it gets a fuller write-up. Kept
+ * in its own cache namespace (potd-analysis: vs analysis:) rather than
+ * sharing a key with the regular per-game analysis: the two are genuinely
+ * different text for the same event/pick, and a POTD game that also shows
+ * up on a regular Full Slate card must never silently swap one write-up in
+ * for the other depending on which code path asked first.
  */
-export async function getOrGenerateAnalysis(candidate, env, ctx, now = Date.now()) {
+export async function getOrGenerateAnalysis(candidate, env, ctx, now = Date.now(), { isPotd = false } = {}) {
   if (!env.ANTHROPIC_API_KEY) return null;
 
   const dateKey = etDate(now);
@@ -317,7 +340,9 @@ export async function getOrGenerateAnalysis(candidate, env, ctx, now = Date.now(
   // response envelope/anti-hallucination prompt, a trailing-JSON extraction
   // bug, and an MMA token-truncation bug — see prior versions' history in
   // git blame for detail.
-  const kvKey = `analysis:v7:${dateKey}:${candidate.eventId}:${candidate.outcomeName}`;
+  const kvKey = isPotd
+    ? `potd-analysis:v1:${dateKey}:${candidate.eventId}:${candidate.outcomeName}`
+    : `analysis:v7:${dateKey}:${candidate.eventId}:${candidate.outcomeName}`;
   const cached = await env.POTD_KV.get(kvKey);
   if (cached) return cached;
 
@@ -369,6 +394,7 @@ export async function getOrGenerateAnalysis(candidate, env, ctx, now = Date.now(
     pick,
     isMma,
     isBaseball,
+    isPotd,
   });
 
   // MMA's reply carries a lot more than prose: two fighters x 3 victory
@@ -378,9 +404,12 @@ export async function getOrGenerateAnalysis(candidate, env, ctx, now = Date.now(
   // every MMA analysis fail to parse and fall back to dumping the raw
   // truncated text (JSON fragment included) on screen. Every sport's reply
   // grew with quickTake/devilsAdvocate too, hence the non-MMA bump as well.
+  // POTD's own longer Part 1 (8-14 sentences) and 5+-item quickTake need
+  // more headroom again on top of that.
+  const maxTokens = isMma ? (isPotd ? 1800 : 1400) : (isPotd ? 1300 : 900);
   let text;
   try {
-    text = await callClaude(prompt, env, { maxTokens: isMma ? 1400 : 900 });
+    text = await callClaude(prompt, env, { maxTokens });
   } catch {
     return null;
   }
@@ -405,7 +434,7 @@ export async function getOrGenerateAnalysis(candidate, env, ctx, now = Date.now(
     try {
       const parsed = JSON.parse(trimmed.slice(idx));
       analysis = trimmed.slice(0, idx).trim();
-      quickTake = asStringBullets(parsed.quickTake, 4);
+      quickTake = asStringBullets(parsed.quickTake, isPotd ? 8 : 4);
       devilsAdvocate = asStringBullets(parsed.devilsAdvocate, 3);
       if (isMma && parsed.victoryMethods) victoryMethods = sanitizeVictoryMethods(parsed.victoryMethods);
       break;

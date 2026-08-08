@@ -3918,6 +3918,54 @@ function renderPotdSection(section) {
     </div>`;
 }
 
+/**
+ * The sharp-bettor-voiced write-up (worker/src/analysis.js's
+ * getOrGenerateAnalysis, { isPotd: true }) — at least 5 reason bullets plus
+ * flowing prose, on why this is today's single featured pick, not just the
+ * price/market case the quantitative sections below already cover. Absent
+ * entirely (not an empty section) whenever the feature isn't available (no
+ * ANTHROPIC_API_KEY, a failed model call) — Play of the Day still has its
+ * full quantitative write-up either way.
+ */
+function renderPotdSharpTake(writeup) {
+  if (!writeup.analysis && !writeup.reasons?.length) return '';
+  const reasonsHtml = writeup.reasons?.length
+    ? `<ul class="quick-take-list">${writeup.reasons.map((r) => `<li>${esc(r)}</li>`).join('')}</ul>`
+    : '';
+  return `
+    <div class="potd-section potd-sharp-take">
+      <h3>Why This Is Today's Play <span class="stats-source">Sharp analysis</span></h3>
+      ${reasonsHtml}
+      ${writeup.analysis ? `<p class="analysis-text">${esc(writeup.analysis)}</p>` : ''}
+    </div>`;
+}
+
+/** Genuine risk to the pick itself, from the same sharp write-up — see renderPotdSharpTake. Same absent-when-unavailable behavior. */
+function renderPotdDevilsAdvocate(writeup) {
+  if (!writeup.devilsAdvocate?.length) return '';
+  return `
+    <div class="potd-section devil-advocate">
+      <h3>Devil's Advocate</h3>
+      <ul class="quick-take-list">${writeup.devilsAdvocate.map((t) => `<li>${esc(t)}</li>`).join('')}</ul>
+    </div>`;
+}
+
+/**
+ * Every registered sportsbook's own price on this exact line — reuses
+ * renderBooks/bookOffers (docs/app.js's own MMA/Full Slate pick cards
+ * already render this identical table from the same candidate.quotes
+ * shape) rather than a POTD-specific rebuild, so "where's the best price"
+ * looks and behaves the same everywhere in the app.
+ */
+function renderPotdBooks(writeup) {
+  if (!writeup.quotes?.length) return '';
+  return `
+    <div class="potd-section">
+      <h3>Best Price Across Sportsbooks</h3>
+      ${renderBooks(writeup)}
+    </div>`;
+}
+
 /** The single Play of the Day card. */
 function renderPotdCard(writeup, generatedAt, stale) {
   const staleNote = stale
@@ -3935,7 +3983,10 @@ function renderPotdCard(writeup, generatedAt, stale) {
         ${esc(writeup.matchup)} · ${esc(potdDateTimeFmt.format(new Date(writeup.commenceMs)))}
       </p>
       ${renderPotdConfidence(writeup.score, writeup.stake)}
+      ${renderPotdBooks(writeup)}
+      ${renderPotdSharpTake(writeup)}
       ${writeup.sections.map(renderPotdSection).join('')}
+      ${renderPotdDevilsAdvocate(writeup)}
       <p class="potd-meta">
         Best price at ${esc(writeup.book)} · posted ${esc(potdDateTimeFmt.format(new Date(generatedAt)))}
       </p>
