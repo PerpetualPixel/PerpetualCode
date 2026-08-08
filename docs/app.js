@@ -1158,41 +1158,61 @@ function effectiveUnit() {
 }
 
 /**
- * A stake fraction (0–1) as display text. With no bankroll set, this is just
- * the %-of-bankroll figure the Kelly math produces — which is all the app
- * can say without knowing what "bankroll" means to this user. Once a
- * bankroll is set, it converts to a real dollar amount or, if a unit size is
- * also available (set or recommended), a unit count in the user's chosen
- * display mode.
+ * A stake fraction (0–1) as display text, or a { needsBankroll: true }
+ * marker when there's no bankroll to size against. A raw "X% of bankroll"
+ * figure with no bankroll amount behind it is nearly meaningless (it read
+ * as a flat "0.0%" for most real edges, since the underlying dollar/percent
+ * split only makes sense once there's an actual number to split) — the
+ * marker lets callers render a direct path to fixing that (see
+ * stakeLineHtml) instead of a confusing near-zero percentage. Once a
+ * bankroll is set and confirmed, this converts to a real dollar amount or,
+ * if a unit size is also available (set or recommended), a unit count in
+ * the user's chosen display mode.
  */
 function formatStakeLine(stake) {
   if (stake <= 0) return null;
-  const pct = `${(stake * 100).toFixed(1)}%`;
 
   // A dollar/unit figure only appears once the user has actually pressed
   // Submit on the Bankroll panel — typing a number into the field shouldn't,
   // by itself, start changing what every "why" panel recommends betting.
   if (!(state.bankroll.amount > 0) || !state.bankroll.confirmed) {
-    return `Suggested stake: ${pct} of bankroll (¼-Kelly)`;
+    return { needsBankroll: true };
   }
 
+  const pct = `${(stake * 100).toFixed(1)}%`;
   const dollars = state.bankroll.amount * stake;
   const unit = effectiveUnit();
   const dollarsText = `$${dollars.toFixed(2)}`;
   const unitsText = unit > 0 ? `${(dollars / unit).toFixed(2)}u` : null;
 
   const primary = state.bankroll.displayMode === 'units' && unitsText ? unitsText : dollarsText;
-  return `Suggested stake: ${primary} (${pct} · ¼-Kelly)`;
+  return { needsBankroll: false, text: `Suggested stake: ${primary} (${pct} · ¼-Kelly)` };
+}
+
+/**
+ * The one place every "why"/pick card turns a stake fraction into markup —
+ * a plain escaped stake line once a bankroll is set, or a clickable
+ * "Bankroll not set" button before that (opens the Bankroll panel directly
+ * via setBankrollOpen — see the delegated click listener on document.body)
+ * instead of a bare, confusing percentage with nothing to be a percent of.
+ */
+function stakeLineHtml(stake, className = 'stake-line') {
+  const result = formatStakeLine(stake);
+  if (!result) return '';
+  if (result.needsBankroll) {
+    return `<div class="${className}"><button type="button" class="stake-bankroll-cta" data-bankroll-cta>Bankroll not set</button></div>`;
+  }
+  return `<div class="${className}">${esc(result.text)}</div>`;
 }
 
 function stakeLine(pick) {
   const stake = suggestedParlayStake(pick.legs, americanToDecimal(pick.american));
-  return formatStakeLine(stake);
+  return stakeLineHtml(stake);
 }
 
 /** Same stake line, for a single raw candidate rather than an assembled pick. */
 function singleStakeLine(candidate) {
-  return formatStakeLine(suggestedStake(candidate));
+  return stakeLineHtml(suggestedStake(candidate));
 }
 
 function renderConfidence(pick) {
@@ -1216,7 +1236,7 @@ function renderConfidence(pick) {
         <span>Confidence <span class="conf-score">${Math.round(pick.score)}</span>/100</span>
         ${beatsLine}
       </div>
-      ${stake ? `<div class="stake-line">${esc(stake)}</div>` : ''}
+      ${stake}
     </div>`;
 }
 
@@ -2271,7 +2291,7 @@ async function openStatsDrawer(leg, opposite = null, { fullscreen = false } = {}
   // picked. So for MMA specifically, both sections always render — the AI's
   // fighter-facts read (when available) plus the real "why," never one
   // instead of the other.
-  const stakeHtml = stake ? `<div class="stake-line">${esc(stake)}</div>` : '';
+  const stakeHtml = stake;
   const isUnderdogPick = typeof leg.american === 'number' && leg.american > 0;
   const mmaMarketNote = isMma(leg.sportKey) && isUnderdogPick
     ? `MMA picks are chosen on this price math alone. This app applies no fighter-quality or form scoring to MMA (the research below is for context, not scoring). An underdog pick like this one means the market itself disagrees with the favorite's price; it isn't a projection that this fighter is actually better.`
@@ -2351,7 +2371,7 @@ async function openStatsDrawer(leg, opposite = null, { fullscreen = false } = {}
     <div class="main-play-callout">
       <div class="main-play-label">Main Play</div>
       <div class="main-play-selection">${esc(leg.selection)} <span class="main-play-price">${esc(formatAmerican(leg.american))}</span></div>
-      ${stake ? `<div class="main-play-stake">${esc(stake)}</div>` : ''}
+      ${stakeLineHtml(suggestedStake(leg), 'main-play-stake')}
     </div>`;
 
   const awayLogo = teamLogoUrl(leg.sportKey, leg.away);
@@ -2395,6 +2415,19 @@ document.body.addEventListener('click', (event) => {
   if (!button) return;
   const leg = renderedLegs[Number(button.dataset.moreStats)];
   if (leg) openStatsDrawer(leg, findOpposite(leg));
+});
+
+// A "Bankroll not set" stake line (see stakeLineHtml) can appear inside any
+// pick card, the stats drawer, or the Parlay Builder result — one delegated
+// listener on the body, same pattern as the other data-attribute buttons
+// here, covers all of them without needing a handler wired per container.
+// Jumps straight to the real Bankroll panel rather than just explaining
+// where it is, since setBankrollOpen already puts the user exactly where
+// they'd need to go next anyway.
+document.body.addEventListener('click', (event) => {
+  const button = event.target.closest('[data-bankroll-cta]');
+  if (!button) return;
+  setBankrollOpen(true);
 });
 
 document.body.addEventListener('click', (event) => {
@@ -3805,7 +3838,6 @@ function renderParlayResult(result) {
 
   const legsHtml = result.legs.map((leg, i) => renderParlayLeg(leg, i)).join('');
   const stake = suggestedParlayStake(result.legs, result.combined.decimal);
-  const stakeMsg = formatStakeLine(stake);
 
   el.parlayResult.innerHTML = `
     <article class="pick">
@@ -3813,7 +3845,7 @@ function renderParlayResult(result) {
         <span class="chip"><strong>${result.legs.length}-leg parlay</strong></span>
         <span class="price">${esc(formatAmerican(result.combined.american))}</span>
       </div>
-      ${stakeMsg ? `<div class="stake-line">${esc(stakeMsg)}</div>` : ''}
+      ${stakeLineHtml(stake)}
       ${legsHtml}
     </article>`;
   hydrateInsights(el.parlayResult);
@@ -3980,8 +4012,7 @@ const potdDateTimeFmt = new Intl.DateTimeFormat(undefined, {
  */
 function renderPotdConfidence(score, stake) {
   const color = confidenceColor(score, RULES.MIN_SCORE);
-  const stakeMsg = formatStakeLine(stake);
-  const stakeText = stakeMsg ? `<div class="stake-line">${esc(stakeMsg)}</div>` : '';
+  const stakeText = stakeLineHtml(stake);
   return `
     <div class="confidence" style="--conf:${color}">
       <div class="conf-track">
