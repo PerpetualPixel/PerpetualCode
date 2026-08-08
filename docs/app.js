@@ -204,8 +204,6 @@ function setDayFilter(which) {
 function renderSlateStateToggle() {
   el.slateStateUpcoming.classList.toggle('is-active', state.slateGameFilter === 'upcoming');
   el.slateStateUpcoming.setAttribute('aria-pressed', String(state.slateGameFilter === 'upcoming'));
-  el.slateStateLive.classList.toggle('is-active', state.slateGameFilter === 'live');
-  el.slateStateLive.setAttribute('aria-pressed', String(state.slateGameFilter === 'live'));
   el.slateStateFinished.classList.toggle('is-active', state.slateGameFilter === 'finished');
   el.slateStateFinished.setAttribute('aria-pressed', String(state.slateGameFilter === 'finished'));
 }
@@ -589,7 +587,6 @@ const el = {
   slateLeagueSelect: document.getElementById('slateLeagueSelect'),
   slateLoad: document.getElementById('slateLoad'),
   slateStateUpcoming: document.getElementById('slateStateUpcoming'),
-  slateStateLive: document.getElementById('slateStateLive'),
   slateStateFinished: document.getElementById('slateStateFinished'),
   slateEventRow: document.getElementById('slateEventRow'),
   slateEventLabel: document.getElementById('slateEventLabel'),
@@ -3224,9 +3221,12 @@ function renderFullSlate() {
     el.slateEventRow.hidden = true;
   }
 
-  // Upcoming/Live/Finished toggle — applied after event/card selection so
-  // switching it never reshuffles the tournament/card dropdown itself.
-  games = games.filter((g) => slateGameState(g) === state.slateGameFilter);
+  // Upcoming/Finished toggle — applied after event/card selection so
+  // switching it never reshuffles the tournament/card dropdown itself. A
+  // live game stays under "Upcoming" (its card already swaps in a Live
+  // badge + score in place of the pregame time/markets) rather than needing
+  // its own tab — only a truly finished game moves out.
+  games = games.filter((g) => (state.slateGameFilter === 'finished') === (slateGameState(g) === 'finished'));
 
   // Pre-fetch fighter research for every MMA game now on the board, ahead
   // of any "More Info" click — see prefetchMmaContext's own comment. No-op
@@ -3499,7 +3499,6 @@ el.dayFilterToday.addEventListener('click', () => setDayFilter('today'));
 el.dayFilterTomorrow.addEventListener('click', () => setDayFilter('tomorrow'));
 
 el.slateStateUpcoming.addEventListener('click', () => setSlateGameFilter('upcoming'));
-el.slateStateLive.addEventListener('click', () => setSlateGameFilter('live'));
 el.slateStateFinished.addEventListener('click', () => setSlateGameFilter('finished'));
 
 el.slateLoad.addEventListener('click', loadSlate);
