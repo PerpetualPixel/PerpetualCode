@@ -680,6 +680,25 @@ export function resolveMmaFighters(context, subjectName) {
   return { me, opponent };
 }
 
+/**
+ * True when this fighter is rostered for a UFC card (has a ufc.com athlete
+ * page — created at signing, not after the fight airs) but Sherdog's own
+ * fight history shows zero fights actually contested under the UFC banner
+ * yet, meaning the upcoming fight would be their first. Confirmed live
+ * against real UFC Fight Night cards: a fighter making their actual UFC
+ * debut already has a ufc.com profile by fight week while every fight in
+ * their Sherdog history to date is still PFL/Bellator/regional (event names
+ * for real UFC fights reliably start with "UFC" — "UFC 322 - ...", "UFC
+ * Fight Night 243 - ...", "UFC on ESPN 40 - ..." — so a plain prefix check
+ * is enough, no promotion field needed). A fighter with no ufc.com page at
+ * all (a PFL/Bellator-only fighter not on a UFC card) is never flagged —
+ * there's no UFC debut to speak of.
+ */
+export function isUfcDebut(fighter) {
+  if (!fighter?.ufc) return false;
+  return !(fighter.history ?? []).some((f) => (f.event ?? '').startsWith('UFC'));
+}
+
 export function mmaInsights(context, subjectName) {
   if (!context) return [];
 

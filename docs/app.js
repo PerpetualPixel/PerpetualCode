@@ -40,6 +40,7 @@ import {
   isTennis,
   isMma,
   resolveMmaFighters,
+  isUfcDebut,
   finishSummary,
   vulnerabilitySummary,
   fighterActivityByYear,
@@ -1674,6 +1675,7 @@ function renderMmaPhotos(me, opponent) {
   // color are the one visual key the whole drawer's color-coding hangs off.
   const side = (fighter, sideClass) => fighter ? `
     <div class="mma-photo-side ${sideClass}">
+      ${isUfcDebut(fighter) ? `<span class="mma-ufc-debut-badge">UFC Debut</span>` : ''}
       ${photoOf(fighter)
         ? `<img class="mma-photo" src="${esc(photoOf(fighter))}" alt="${esc(fighter.name)}" loading="lazy"
              onerror="this.outerHTML='<span class=&quot;mma-photo mma-photo-fallback&quot;>${initials(fighter.name)}</span>'">`

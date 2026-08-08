@@ -1735,6 +1735,19 @@ input[type="range"]:focus-visible {
 .mma-photo-a .mma-photo-name { color: #f87171; }
 .mma-photo-b .mma-photo-name { color: #60a5fa; }
 
+/* A soft text-shadow glow, not an outline/border/animation — reads as a
+   clean highlight rather than a decal. Sits above the photo as the first
+   child of .mma-photo-side, which already gives it the row's own 6px gap. */
+.mma-ufc-debut-badge {
+  font-family: var(--mono);
+  font-size: 0.66rem;
+  font-weight: 700;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+  color: #ffd75e;
+  text-shadow: 0 0 6px rgba(255, 215, 94, 0.75), 0 0 14px rgba(255, 215, 94, 0.4);
+}
+
 .mma-photo {
   width: 96px;
   height: 96px;
