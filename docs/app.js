@@ -113,10 +113,19 @@ function dayBounds(which) {
  * Whether a game belongs on the board under the current Today/Tomorrow
  * toggle. MMA is exempt — cards get announced and sell tickets weeks out, so
  * it keeps its own longer (~2 week) horizon via filterMmaGames instead of
- * being scoped to a single day like every other league.
+ * being scoped to a single day like every other league. Tennis is exempt for
+ * a related but different reason: a single round routinely spans two
+ * calendar days (a full day session plus a night session, or matches simply
+ * pushed by weather/court scheduling), and the Odds API only ever lists the
+ * round that's actually been drawn — the next round's matchups don't exist
+ * in the feed until the current one finishes — so there's no risk of this
+ * leaking in a future round early. Confirmed live: the reigning ATP/WTA
+ * Canadian Open round had 8 matches apiece, split 4-and-4 across today and
+ * tomorrow by start time; the strict same-day filter was hiding exactly
+ * half of a round that's really one contiguous slate.
  */
 function withinDayFilter(commenceMs, sportKey) {
-  if (isMmaSportKey(sportKey)) return true;
+  if (isMmaSportKey(sportKey) || isTennis(sportKey)) return true;
   const [start, end] = dayBounds(state.dayFilter);
   return commenceMs >= start && commenceMs < end;
 }

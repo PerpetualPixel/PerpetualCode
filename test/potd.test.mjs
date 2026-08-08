@@ -137,6 +137,15 @@ test('excludes games on other calendar dates', async () => {
   assert.equal(result.skipped, true);
 });
 
+test('includes a tennis match on tomorrow\'s date, unlike a team sport — a round spans two calendar days', async () => {
+  const { env } = makeKvStore();
+  const events = [
+    makeEvent('tomorrow-tennis', '2026-08-06T20:00:00Z', { sport: 'tennis_atp_canadian_open', sportTitle: 'ATP Canadian Open' }),
+  ];
+  const result = await runPotdDaily(env, ctx, NOW, { fetchFullSlate: async () => events });
+  assert.equal(result.skipped, false);
+});
+
 test('excludes a game that has already started', async () => {
   const { env } = makeKvStore();
   const events = [makeEvent('underway', '2026-08-05T06:00:00Z')]; // before NOW (7am UTC)

@@ -188,6 +188,24 @@ test('runFullSlateBatch honors MMA\'s today-or-early-tomorrow eligibility window
   assert.equal(result.gameCount, 1);
 });
 
+test('runFullSlateBatch honors tennis\'s today-or-tomorrow eligibility window (a round spanning two calendar days)', async () => {
+  const { env } = makeKvStore();
+  const events = [
+    // ~30h out — tomorrow's ET date, same session as the currently-drawn
+    // round (e.g. a night session match) — eligible.
+    makeEvent('tomorrow-tennis', { outlier: 30, hoursOut: 30, sport: 'tennis_atp_canadian_open', sportTitle: 'ATP Canadian Open' }),
+    // ~54h out — the day after tomorrow, a future round that doesn't exist
+    // in the feed yet in practice, but still shouldn't be picked up even if
+    // it did — not eligible.
+    makeEvent('future-tennis', { outlier: 30, hoursOut: 54, sport: 'tennis_atp_canadian_open', sportTitle: 'ATP Canadian Open' }),
+  ];
+  const result = await runFullSlateBatch(env, ctx, NOW, { fetchFullSlate: async () => events });
+  assert.equal(result.gameCount, 1);
+
+  const [pick] = await getFullSlateTracked(env, { dateKey: '2026-08-05' });
+  assert.equal(pick.eventId, 'tomorrow-tennis');
+});
+
 test('runFullSlateBatch stores picks with a flat unit stake', async () => {
   const { env } = makeKvStore();
   const events = [makeEvent('flat', { outlier: 35 })];

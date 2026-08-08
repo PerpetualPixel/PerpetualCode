@@ -27,7 +27,7 @@
  */
 import { analyze, topPicks } from '../../docs/engine.js';
 import { gradePick } from '../../docs/learning.js';
-import { isMma } from '../../docs/insights.js';
+import { isMma, isTennis } from '../../docs/insights.js';
 import { CONFIG } from '../../docs/config.js';
 import { fetchSport, fetchScores, fetchCatalogue } from './odds.js';
 import { getAlgoConfig, getPausedSegments, isSegmentPaused } from './algo-health.js';
@@ -91,6 +91,27 @@ function isEligibleMmaFight(commenceMs, now) {
   if (commenceDate === today) return true;
   const tomorrow = etDate(now + 86400000);
   return commenceDate === tomorrow && etHour(commenceMs) < MMA_NEXT_DAY_CUTOFF_HOUR;
+}
+
+/**
+ * A tennis round routinely spans two calendar days (a day session and a
+ * night session, or matches simply pushed by weather/court scheduling), and
+ * the Odds API only ever lists the round that's actually been drawn — the
+ * next round's matchups don't exist in the feed at all until the current
+ * one finishes — so there's no risk of this reaching into a future round
+ * early. Eligible if it starts today or tomorrow's ET date; no hour cutoff
+ * needed the way MMA's single-card-crossing-midnight case does, since
+ * tennis matches aren't one continuous show. Confirmed live: the Odds API's
+ * reigning ATP/WTA Canadian Open round split its matches roughly 4-and-4
+ * across today and tomorrow by start time — the plain same-ET-day check
+ * this replaces was excluding exactly half of what's really one round.
+ */
+function isEligibleTennisMatch(commenceMs, now) {
+  const today = etDate(now);
+  const commenceDate = etDate(commenceMs);
+  if (commenceDate === today) return true;
+  const tomorrow = etDate(now + 86400000);
+  return commenceDate === tomorrow;
 }
 
 /**
@@ -208,10 +229,16 @@ export async function runTop5Batch(
   // season line can go up in August) — without this, "today's locks" could
   // silently include a game that isn't happening for months. Restricted to
   // today's ET calendar date, same day boundary the pick itself is stored
-  // under; MMA keeps its own separate (today-or-early-tomorrow) window
-  // since a late main event can roll past midnight.
+  // under; MMA and tennis each keep their own separate today-or-tomorrow
+  // window (see isEligibleMmaFight/isEligibleTennisMatch) since a late MMA
+  // main event can roll past midnight and a tennis round routinely spans
+  // two calendar days.
   const candidates = analyze(events, { now })
-    .filter((c) => (isMma(c.sportKey) ? isEligibleMmaFight(c.commenceMs, now) : etDate(c.commenceMs) === dateKey))
+    .filter((c) => {
+      if (isMma(c.sportKey)) return isEligibleMmaFight(c.commenceMs, now);
+      if (isTennis(c.sportKey)) return isEligibleTennisMatch(c.commenceMs, now);
+      return etDate(c.commenceMs) === dateKey;
+    })
     .filter((c) => !isSegmentPaused(c, pausedSegments));
 
   const slate = topPicks(candidates, {

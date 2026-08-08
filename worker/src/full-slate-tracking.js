@@ -22,7 +22,7 @@
  */
 import { analyze } from '../../docs/engine.js';
 import { gradePick } from '../../docs/learning.js';
-import { isMma } from '../../docs/insights.js';
+import { isMma, isTennis } from '../../docs/insights.js';
 import { fetchSport, fetchScores } from './odds.js';
 import { pickRecordFrom, fetchFullSlateEvents } from './tracking.js';
 import { fetchMmaResults, gradeMmaPickWithFallback } from './ufc-events.js';
@@ -64,6 +64,23 @@ function isEligibleMmaFight(commenceMs, now) {
   return commenceDate === tomorrow && etHour(commenceMs) < MMA_NEXT_DAY_CUTOFF_HOUR;
 }
 
+// Matches tracking.js's own isEligibleTennisMatch — duplicated for the same
+// "never silently diverge from a private helper in another file" reason as
+// isEligibleMmaFight above. A tennis round routinely spans two calendar
+// days (day/night sessions, weather pushes), and the Odds API only ever
+// lists the round that's actually been drawn — no risk of reaching into a
+// future round early. Confirmed live: the Odds API's reigning ATP/WTA
+// Canadian Open round split roughly 4-and-4 across today and tomorrow by
+// start time; the plain same-ET-day check was excluding exactly half of
+// what's really one round from Full Slate tracking.
+function isEligibleTennisMatch(commenceMs, now) {
+  const today = etDate(now);
+  const commenceDate = etDate(commenceMs);
+  if (commenceDate === today) return true;
+  const tomorrow = etDate(now + 86400000);
+  return commenceDate === tomorrow;
+}
+
 /**
  * The 2am ET batch: pull the full slate (normally the exact same fetch
  * Pixel's Picks and Play of the Day share at the same hour — see
@@ -86,7 +103,11 @@ export async function runFullSlateBatch(
 
   const events = await fetchFullSlate();
   const candidates = analyze(events, { now })
-    .filter((c) => (isMma(c.sportKey) ? isEligibleMmaFight(c.commenceMs, now) : etDate(c.commenceMs) === dateKey));
+    .filter((c) => {
+      if (isMma(c.sportKey)) return isEligibleMmaFight(c.commenceMs, now);
+      if (isTennis(c.sportKey)) return isEligibleTennisMatch(c.commenceMs, now);
+      return etDate(c.commenceMs) === dateKey;
+    });
 
   // analyze() is already sorted by score descending, so the first candidate
   // seen for a given eventId is that game's best — one pick per game.

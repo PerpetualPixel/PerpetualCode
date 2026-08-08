@@ -145,6 +145,13 @@ test('runTop5Batch excludes a team-sport game on tomorrow\'s date too, not just 
   assert.equal(result.count, 0, 'nothing today qualifies, so no picks should be stored even though tomorrow has a real edge');
 });
 
+test('runTop5Batch includes a tennis match on tomorrow\'s date, unlike a team sport — a round spans two calendar days', async () => {
+  const { env } = makeKvStore();
+  const events = [makeEvent('tomorrow-tennis', { outlier: 40, hoursOut: 30, sport: 'tennis_atp_canadian_open', sportTitle: 'ATP Canadian Open' })];
+  const result = await runTop5Batch(env, ctx, NOW, { fetchFullSlate: async () => events });
+  assert.equal(result.count, 1, 'tomorrow is still the same drawn round for tennis, so it should be eligible');
+});
+
 test('runTop5Batch pads to 5 with flagged picks on a thin day, real picks stay unflagged', async () => {
   const { env } = makeKvStore();
   // Two real sharp edges (inside the -250/+250 band) plus one real-EV

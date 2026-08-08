@@ -88,6 +88,21 @@ function isExhibition(candidate) {
   return names.some((n) => EXHIBITION_PATTERN.test(n) || CAPTAIN_TEAM_PATTERN.test(n));
 }
 
+// Matches tracking.js's own isEligibleTennisMatch — a tennis round
+// routinely spans two calendar days (day/night sessions, weather pushes),
+// and the Odds API only ever lists the round that's actually been drawn, so
+// there's no risk of this reaching into a future round early. Play of the
+// Day only ever needs today's session eligible to consider tomorrow's too;
+// unlike Full Slate/Pixel's Picks it doesn't need MMA's own extension here
+// since that's an existing, separate, unrelated behavior this isn't scoped
+// to touch.
+function isEligibleTennisMatch(commenceMs, now) {
+  const today = etParts(now).date;
+  const commenceDate = etParts(commenceMs).date;
+  if (commenceDate === today) return true;
+  return commenceDate === etDatePlusDays(now, 1);
+}
+
 let tennisArchiveCache = null; // module-scope: survives across requests in the same isolate
 async function loadTennisArchive(sportKey) {
   const tour = /wta/i.test(sportKey) ? 'wta' : 'atp';
@@ -266,6 +281,7 @@ export async function runPotdDaily(env, ctx, now = Date.now(), { fetchFullSlate 
     if (c.american < POTD_MIN_AMERICAN || c.american > POTD_MAX_AMERICAN) return false;
     if (c.commenceMs <= now) return false;
     if (isSegmentPaused(c, pausedSegments)) return false;
+    if (isTennis(c.sportKey)) return isEligibleTennisMatch(c.commenceMs, now);
     return etParts(c.commenceMs).date === dateKey;
   });
 
