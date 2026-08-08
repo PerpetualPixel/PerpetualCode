@@ -1009,6 +1009,16 @@ input[type="range"]:focus-visible {
   color: var(--muted);
 }
 
+.mma-no-data p {
+  margin: 0;
+  padding: 8px 10px;
+  border-left: 2px solid var(--line);
+  background: color-mix(in srgb, var(--line) 15%, transparent);
+  font-size: 0.82rem;
+  line-height: 1.4;
+  color: var(--muted);
+}
+
 /* ---------------------------------------------------------------- */
 /* Sportsbook buttons                                                */
 /* ---------------------------------------------------------------- */

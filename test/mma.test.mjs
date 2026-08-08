@@ -172,3 +172,71 @@ test('fetchMmaContext: a history row beyond the lookback window has no opponentR
   assert.ok(history[0].opponentRecordAtTime !== undefined, 'within the lookback window');
   assert.equal(history[14].opponentRecordAtTime, undefined, 'beyond the lookback window: field simply absent');
 });
+
+/* ---------------------------------------------------------------- */
+/* searchFighter (via fetchMmaContext): tie-safety, full-name only    */
+/* ---------------------------------------------------------------- */
+
+/**
+ * Regression test for a tie-detection improvement that IS still in place
+ * (a surname-widened retry was tried and reverted — see searchFighter's own
+ * comment — but scoring the full-name query's own results without guessing
+ * on a tie is still a strict improvement over "first candidate to reach the
+ * threshold wins"). Two candidates scoring identically against the full
+ * query is real ambiguity this app has no further signal to resolve.
+ */
+test('searchFighter refuses to guess when the full-name query itself returns two equally-scoring candidates', async () => {
+  globalThis.caches = { default: { async match() { return null; }, async put() {} } };
+  globalThis.fetch = async (url) => {
+    const u = String(url);
+    if (u.includes('/stats/fightfinder')) {
+      const name = decodeURIComponent(u.split('SearchTxt=')[1] ?? '').replace(/\+/g, ' ');
+      if (name === 'Real Opponent') return { ok: true, text: async () => makeSearchPage('Real Opponent', '/fighter/Real-Opponent-1') };
+      // Two different fighters exactly matching the full query — an
+      // artificial but valid stand-in for two Sherdog entries that
+      // legitimately tie (e.g. a shared exact name).
+      return {
+        ok: true,
+        text: async () => `<div id="fightfinder_result">
+          <tr><td><a onclick="document.location='/fighter/Tied-One-1'"></a><a href="/fighter/Tied-One-1">${name}</a></td></tr>
+          <tr><td><a onclick="document.location='/fighter/Tied-Two-2'"></a><a href="/fighter/Tied-Two-2">${name}</a></td></tr>
+        </div>`,
+      };
+    }
+    if (u.includes('/fighter/Real-Opponent-1')) {
+      return { ok: true, text: async () => makeFighterPage({ name: 'Real Opponent', record: '5-0-0', history: [] }) };
+    }
+    return { ok: false, status: 404, text: async () => '' };
+  };
+
+  const result = await fetchMmaContext({ fighterA: 'Ambiguous Fighter', fighterB: 'Real Opponent' }, ctx);
+  assert.equal(result.a, null, 'an exact-score tie on the full-name query must never guess a specific fighter');
+  assert.equal(result.b?.name, 'Real Opponent');
+});
+
+/**
+ * Confirms the surname-widened retry stays gone: a full-name query that
+ * comes back empty must resolve to null, not silently try a second, looser
+ * search. Locks in the reversion in searchFighter's own comment (that retry
+ * produced a confirmed live false positive — "Carlos Diego Ferreira" matched
+ * to the unrelated "Alan Carlos Ferreira Rodrigues") so it can't quietly
+ * come back.
+ */
+test('searchFighter never retries with a looser query when the full-name search returns nothing', async () => {
+  let fightfinderCalls = 0;
+  globalThis.caches = { default: { async match() { return null; }, async put() {} } };
+  globalThis.fetch = async (url) => {
+    const u = String(url);
+    if (u.includes('/stats/fightfinder')) {
+      fightfinderCalls++;
+      return { ok: true, text: async () => '<div>no results</div>' };
+    }
+    return { ok: false, status: 404, text: async () => '' };
+  };
+
+  const result = await fetchMmaContext({ fighterA: 'Carlos Diego Ferreira', fighterB: 'Someone Else' }, ctx);
+  assert.equal(result, null);
+  // Exactly one fightfinder query per side (2 total) — no second, wider
+  // attempt for either.
+  assert.equal(fightfinderCalls, 2);
+});

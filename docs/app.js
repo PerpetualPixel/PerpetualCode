@@ -2144,6 +2144,7 @@ async function openStatsDrawer(leg, opposite = null, { fullscreen = false } = {}
   let bullets = [];
   let weather = null;
   let mmaBreakdownHtml = '';
+  let mmaSubjectName = null;
   let tennisBreakdownHtml = '';
   let analysisText = null;
   let victoryMethods = null;
@@ -2158,8 +2159,8 @@ async function openStatsDrawer(leg, opposite = null, { fullscreen = false } = {}
     } else if (isMma(leg.sportKey)) {
       const mmaContext = await mmaContextFor(leg);
       bullets = buildInsights(leg, { mmaContext });
-      const subject = leg.selection.replace(/ to win$/i, '').trim();
-      mmaBreakdownHtml = renderMmaBreakdown(mmaContext, subject, leg);
+      mmaSubjectName = leg.selection.replace(/ to win$/i, '').trim();
+      mmaBreakdownHtml = renderMmaBreakdown(mmaContext, mmaSubjectName, leg);
     } else {
       const [context, w] = await Promise.all([eventContext(leg), weatherFor(leg)]);
       weather = w;
@@ -2279,6 +2280,21 @@ async function openStatsDrawer(leg, opposite = null, { fullscreen = false } = {}
   // the user is looking at now.
   if (el.statsDrawer.hidden || el.statsDrawerTitle.textContent !== leg.selection) return;
 
+  // MMA is the one sport where the fighter-research panel can legitimately
+  // come back completely empty (renderMmaBreakdown returns '' when Sherdog
+  // has no confidently-matched profile for this fighter) — every other
+  // section on the card (price, book table, market case) still renders
+  // regardless, so a silent gap here reads as broken rather than as the
+  // genuine "no data on file yet" case it usually is (a UFC debut/new
+  // signee, or a name-variant Sherdog's own search never surfaced). Say so
+  // explicitly instead of leaving the space blank with no explanation.
+  const mmaNoDataHtml = isMma(leg.sportKey) && !mmaBreakdownHtml
+    ? `<div class="stats-section mma-no-data">` +
+      `<p>No fighter research on file for ${esc(mmaSubjectName ?? leg.selection)} yet — either they're new enough ` +
+      `that Sherdog has nothing indexed, or their name didn't match between sources. The price case above still stands on its own.</p>` +
+      `</div>`
+    : '';
+
   const awayLogo = teamLogoUrl(leg.sportKey, leg.away);
   const homeLogo = teamLogoUrl(leg.sportKey, leg.home);
   el.statsDrawerBody.innerHTML =
@@ -2292,6 +2308,7 @@ async function openStatsDrawer(leg, opposite = null, { fullscreen = false } = {}
     priceHtml +
     devilHtml +
     mmaBreakdownHtml +
+    mmaNoDataHtml +
     tennisBreakdownHtml +
     renderStatsResearch(bullets) +
     renderPriceTable(leg);

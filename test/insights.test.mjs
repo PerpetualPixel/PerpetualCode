@@ -8,6 +8,7 @@ import {
   tennisHeadToHead,
   teamInsights,
   mmaInsights,
+  resolveMmaFighters,
   fighterActivityByYear,
   fighterRoundsEnded,
   dataReliability,
@@ -373,6 +374,44 @@ test('one side missing from Sherdog does not block bullets for the side that res
   const text = mmaInsights(oneSided, 'Amanda Lemos').map((b) => b.text).join(' ');
   assert.match(text, /15-6-1/);
   assert.ok(!/undefined/.test(text));
+});
+
+/**
+ * Regression tests for a real gap: the odds feed and Sherdog routinely
+ * disagree on a fighter's exact name string (confirmed live across a full
+ * week of UFC/PFL cards — see worker/src/ufc-events.js's namesLikelyMatch,
+ * built after these exact cases broke event-card matching). resolveMmaFighters
+ * used to only try an exact fold match or word-boundary containment, which
+ * still misses a nickname used as a first name and a missing/extra MIDDLE
+ * name (containment only catches an extra word at either edge, not in the
+ * middle) — so even when the server successfully fetched Sherdog data for a
+ * fighter, the client could fail to attribute it back to the pick and the
+ * More Info panel would render as if there were no data at all. A surname
+ * match is now the last-resort tier, same fallback namesLikelyMatch already
+ * relies on — safe here specifically because there are only ever two known
+ * candidates (the exact two fighters already fetched for this one fight),
+ * not a search over every fighter on file.
+ */
+test('resolveMmaFighters falls back to a surname match for a nickname used as a first name', () => {
+  // MMA_CONTEXT.a is "Amanda Lemos" — the odds feed naming her by a nickname
+  // instead ("Gigi Lemos") shares no word with "Amanda", only the surname.
+  const { me, opponent } = resolveMmaFighters(MMA_CONTEXT, 'Gigi Lemos');
+  assert.equal(me?.name, 'Amanda Lemos');
+  assert.equal(opponent?.name, 'Alexia Thainara');
+});
+
+test('resolveMmaFighters falls back to a surname match for a missing/extra middle name', () => {
+  // "Amanda Maria Lemos" vs Sherdog's "Amanda Lemos" — the extra word sits in
+  // the MIDDLE, so word-boundary containment (checking only the edges) can't
+  // catch it, but the shared surname still can.
+  const { me } = resolveMmaFighters(MMA_CONTEXT, 'Amanda Maria Lemos');
+  assert.equal(me?.name, 'Amanda Lemos');
+});
+
+test('resolveMmaFighters still refuses to guess when there is no shared surname at all', () => {
+  const { me, opponent } = resolveMmaFighters(MMA_CONTEXT, 'Someone Else Entirely');
+  assert.equal(me, null);
+  assert.equal(opponent, null);
 });
 
 /* ---------------------------------------------------------------- */

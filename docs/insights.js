@@ -58,6 +58,12 @@ function containsWords(full, surname) {
   );
 }
 
+/** The last space-separated token of a folded name — the surname, for the common "First [Middle] Last" shape. */
+function lastToken(folded) {
+  const parts = folded.split(' ').filter(Boolean);
+  return parts[parts.length - 1] ?? '';
+}
+
 /**
  * Resolve an odds-feed player name to an index in the archive's player list.
  * Returns null rather than a guess when nothing lines up — a wrong player's
@@ -673,8 +679,24 @@ export function resolveMmaFighters(context, subjectName) {
   if (!context) return { me: null, opponent: null };
   const subjectFold = fold(subjectName);
   const candidates = [context.a, context.b].filter(Boolean);
+  // Exact fold match first, then word-boundary containment (catches a
+  // missing/extra middle name at either edge, e.g. "Carlos Diego Ferreira"
+  // vs "Diego Ferreira"). A surname-only match is the last resort, the same
+  // fallback worker/src/ufc-events.js's namesLikelyMatch already relies on
+  // for event-card matching — confirmed live there to catch real cases
+  // containsWords still misses: a nickname used as a first name ("Gigi" vs
+  // "Giovanna" Canuto) and a missing/extra MIDDLE name ("Billy Ray Goff" vs
+  // "Billy Goff", where the extra word breaks containment at both edges).
+  // Safe here specifically because there are only ever two known candidates
+  // (the exact two fighters already fetched for this one fight), not a
+  // search over every fighter on file — a same-surname false positive
+  // between the two people in one specific bout is a near-nonexistent case.
   const me = candidates.find((f) => fold(f.name) === subjectFold)
-    ?? candidates.find((f) => containsWords(subjectFold, fold(f.name)) || containsWords(fold(f.name), subjectFold));
+    ?? candidates.find((f) => containsWords(subjectFold, fold(f.name)) || containsWords(fold(f.name), subjectFold))
+    ?? candidates.find((f) => {
+      const folded = fold(f.name);
+      return lastToken(folded) && lastToken(folded) === lastToken(subjectFold);
+    });
   if (!me) return { me: null, opponent: null };
   const opponent = [context.a, context.b].find((f) => f && f !== me) ?? null;
   return { me, opponent };

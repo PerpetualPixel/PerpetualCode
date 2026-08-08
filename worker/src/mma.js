@@ -99,21 +99,53 @@ function scoreCandidate(candidateName, wanted) {
   return overlap ? 2 + overlap / bw.length : 0;
 }
 
+/**
+ * Best-scoring candidate against `wanted`, or null if there isn't a clear
+ * winner. Ties at the top score are treated the same as no match — if two
+ * different Sherdog fighters score identically against the query, this app
+ * has no further signal to pick the right one, and a wrong guess is worse
+ * than admitting no data (see this module's own file-level comment on
+ * failing toward empty, never fabricated).
+ */
+function pickBest(candidates, wanted) {
+  let best = null;
+  let bestCount = 0;
+  for (const c of candidates) {
+    const score = scoreCandidate(c.name, wanted);
+    if (score <= 0) continue;
+    if (!best || score > best.score) {
+      best = { ...c, score };
+      bestCount = 1;
+    } else if (score === best.score) {
+      bestCount++;
+    }
+  }
+  return best && best.score >= 2 && bestCount === 1 ? best : null;
+}
+
+/**
+ * Resolve a fighter name to a Sherdog search-result candidate, from the
+ * full-name query only.
+ *
+ * A surname-only retry was tried here and reverted: widening what Sherdog's
+ * search returns raises real cross-person collision risk that scoring alone
+ * doesn't catch — confirmed live, "Carlos Diego Ferreira" (a real UFC
+ * lightweight, whose full-name query returns zero Sherdog rows) matched
+ * "Alan Carlos Ferreira Rodrigues" via a surname-widened search: a
+ * completely different person who merely shares "Carlos" and "Ferreira" as
+ * words, uniquely (no tie) out-scoring every other same-surname candidate.
+ * pickBest's tie-check only catches an exact score tie, not a confidently
+ * wrong single winner — and a wrong fighter's stats attributed to the real
+ * one is strictly worse than admitting no data (this module's own governing
+ * rule, see the file-level comment above). Full-name-only is a real, if
+ * narrower, coverage gap for a genuine name-variant mismatch, but that gap
+ * is the honest "no data" case this app is designed to show rather than
+ * paper over with a guess.
+ */
 async function searchFighter(name, ctx) {
   const url = `${SHERDOG}/stats/fightfinder?SearchTxt=${encodeURIComponent(name)}`;
   const html = await cachedText(url, SEARCH_TTL, ctx);
-  if (!html) return null;
-
-  const candidates = parseSearchResults(html);
-  let best = null;
-  for (const c of candidates) {
-    const score = scoreCandidate(c.name, name);
-    if (score > 0 && (!best || score > best.score)) best = { ...c, score };
-  }
-  // A weak, ambiguous match (surname-only overlap on a common name) is worse
-  // than admitting no match — this app has no way to verify it picked the
-  // right person among fighters who share a name.
-  return best && best.score >= 2 ? best : null;
+  return html ? pickBest(parseSearchResults(html), name) : null;
 }
 
 /** win/loss/draw/nc totals from the fighter's own upcoming-fight record badge. */
