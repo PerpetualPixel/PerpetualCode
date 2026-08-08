@@ -2387,24 +2387,6 @@ input[type="range"]:focus-visible {
   justify-content: center;
 }
 
-/* 1 = Main play, 2 = Secondary, 3 = Tertiary — which of this game's up-to-
-   three recommended sides (one per market) this one ranks as, by score. */
-.slate-rank-badge {
-  position: absolute;
-  top: -8px;
-  left: -8px;
-  width: 18px;
-  height: 18px;
-  border-radius: 50%;
-  background: var(--accent);
-  color: #04140a;
-  font-size: 0.65rem;
-  font-weight: 800;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  box-shadow: 0 0 0 2px var(--surface);
-}
 .slate-cell:hover:not(.is-empty) {
   border-color: var(--accent);
   background: var(--accent-dim);
