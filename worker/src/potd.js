@@ -35,6 +35,8 @@ import { getPausedSegments, isSegmentPaused } from './algo-health.js';
 import { getLearningProfile, applyLearningToCandidates } from './daily-learning.js';
 import { fetchMmaResults, gradeMmaPickWithFallback } from './ufc-events.js';
 import { getOrGenerateAnalysis } from './analysis.js';
+import { hasSecondarySettlementSource } from '../../docs/tennis-tiers.js';
+import { settleTennisGameMarket } from './tennis-results.js';
 
 const ET_TZ = 'America/New_York';
 export const POTD_HOUR = 2; // 2am ET
@@ -373,12 +375,17 @@ export async function runPotdClvSnapshot(env, ctx, now = Date.now(), { fetchSpor
  * window. Returns false without touching anything for a missing/already-
  * graded/still-pending-with-no-result record, same idempotent shape as
  * every other grading pass here. */
-async function gradePotdForDate(env, dateKey, pick, record, fetchScoresFn, fetchMmaResultsFn) {
+async function gradePotdForDate(env, ctx, now, dateKey, pick, record, fetchScoresFn, fetchMmaResultsFn) {
   const { events } = await fetchScoresFn(pick.sportKey);
   const scoreEvent = (events ?? []).find((e) => e.id === pick.eventId);
-  const outcome = isMma(pick.sportKey)
-    ? gradeMmaPickWithFallback(pick, scoreEvent, await fetchMmaResultsFn())
-    : gradePick(pick, scoreEvent);
+  let outcome;
+  if (isMma(pick.sportKey)) {
+    outcome = gradeMmaPickWithFallback(pick, scoreEvent, await fetchMmaResultsFn());
+  } else if (isTennis(pick.sportKey) && hasSecondarySettlementSource(pick.sportKey, pick.marketKey)) {
+    outcome = (await settleTennisGameMarket(pick, scoreEvent, env, ctx, now)) ?? gradePick(pick, scoreEvent);
+  } else {
+    outcome = gradePick(pick, scoreEvent);
+  }
   if (!outcome) return false;
 
   pick.status = outcome.void ? 'void' : outcome.won ? 'won' : 'lost';
@@ -416,7 +423,7 @@ export async function runPotdGrading(env, ctx, now = Date.now(), { fetchScoresFn
     if (!raw) continue;
     const record = JSON.parse(raw);
     if (record.pick.status !== 'pending') continue;
-    if (await gradePotdForDate(env, dateKey, record.pick, record, fetchScoresFn, fetchMmaResultsFn)) {
+    if (await gradePotdForDate(env, ctx, now, dateKey, record.pick, record, fetchScoresFn, fetchMmaResultsFn)) {
       graded = true;
     }
   }

@@ -38,7 +38,9 @@ import {
   dedupeTennisEvents,
   isMarketAllowedForTier,
   tierLiquidityBlock,
+  hasSecondarySettlementSource,
 } from '../../docs/tennis-tiers.js';
+import { settleTennisGameMarket } from './tennis-results.js';
 
 export const TOP5_COUNT = 5;
 export const TOP5_BATCH_HOUR = 2; // 2am ET — same run as Play of the Day
@@ -473,9 +475,17 @@ export async function runGrading(
   let graded = 0;
   for (const pick of pending) {
     const scoreEvent = (scoreEventsBySport.get(pick.sportKey) ?? []).find((e) => e.id === pick.eventId);
-    const outcome = isMma(pick.sportKey)
-      ? gradeMmaPickWithFallback(pick, scoreEvent, mmaResults)
-      : gradePick(pick, scoreEvent);
+    let outcome;
+    if (isMma(pick.sportKey)) {
+      outcome = gradeMmaPickWithFallback(pick, scoreEvent, mmaResults);
+    } else if (isTennis(pick.sportKey) && hasSecondarySettlementSource(pick.sportKey, pick.marketKey)) {
+      // A metered second source can turn this specific void into a real
+      // grade (see worker/src/tennis-results.js) — null falls through to
+      // the same gradePick() void every other tennis spread/total gets.
+      outcome = (await settleTennisGameMarket(pick, scoreEvent, env, ctx, now)) ?? gradePick(pick, scoreEvent);
+    } else {
+      outcome = gradePick(pick, scoreEvent);
+    }
     if (!outcome) continue;
     // A void (push, walkover, or a market this feed can't settle — see
     // gradePick) is recorded as settled with the stake returned, so it stops

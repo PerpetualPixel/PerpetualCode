@@ -24,7 +24,7 @@ import {
   fetchStartingPitchers,
   fetchPitcherOutings,
 } from './mlb-stats.js';
-import { MLB_PROPS_BATCH_HOUR, runMlbPropsBatch, runMlbPropsGrading, getAllMlbPropsTracked } from './mlb-props.js';
+import { runMlbPropsScan, runMlbPropsGrading, getAllMlbPropsTracked } from './mlb-props.js';
 import { POTD_HOUR, runPotdDaily, runPotdClvSnapshot, runPotdGrading, getPotd, getPotdHistory } from './potd.js';
 import { getOrGenerateAnalysis } from './analysis.js';
 import {
@@ -520,19 +520,14 @@ export default {
       ctx.waitUntil(fetchSport('upcoming', env, ctx));
     }
 
-    // 1am ET: MLB starting-pitcher props (Outs Recorded, Strikeouts) — its
-    // own hour, an hour before the main 2am lock-in, and its own fresh
-    // fetchFullSlateEvents() call rather than sharing the 2am batches'
-    // promise. See worker/src/mlb-props.js's own header for why: this batch
-    // adds a real per-event Odds-API call for every MLB game on top of an
-    // ESPN schedule+summary lookup per game, and stacking that onto the same
-    // invocation as the 2am chain's full-slate fetch, three selection
-    // batches, and five analysis-prewarm model calls is exactly the kind of
-    // per-invocation subrequest load that already forced refreshMlbLeagueStats
-    // into its own hour below after hitting Cloudflare's cap live.
-    if (etHour(now) === MLB_PROPS_BATCH_HOUR && isTopOfHour(now)) {
-      ctx.waitUntil(runMlbPropsBatch(env, ctx, now, { fetchFullSlate: () => fetchFullSlateEvents(env, ctx) }));
-    }
+    // Every tick: MLB starting-pitcher props (Outs Recorded, Strikeouts).
+    // Not gated to one fixed hour — see worker/src/mlb-props.js's own header
+    // for why: sportsbooks don't reliably post pitcher-prop boards long
+    // before game time, so each game is scanned once it falls within a few
+    // hours of its own first pitch, whichever tick first notices. Cheap on
+    // every other tick — one cached KV read for the day's game list, no
+    // fetch, when nothing is currently in-window.
+    ctx.waitUntil(runMlbPropsScan(env, ctx, now, { fetchFullSlate: () => fetchFullSlateEvents(env, ctx) }));
     ctx.waitUntil(runMlbPropsGrading(env, ctx, now));
 
     // 3am ET: refresh the league-wide MLB batting/pitching snapshot "View
@@ -580,7 +575,7 @@ export default {
               // Props are a real selection surface (graded by genuine edges,
               // like Pixel's Picks/Play of the Day), not a raw-evidence
               // tracker like Full Slate — so, like those two, they both feed
-              // this review AND have runMlbPropsBatch read its weights back.
+              // this review AND have runMlbPropsScan read its weights back.
               const [top5, slate, mlbProps] = await Promise.all([
                 getAllTrackedPicks(env, { now, days: LEARN_WINDOW_DAYS }),
                 getAllFullSlateTracked(env, { now, days: LEARN_WINDOW_DAYS }),

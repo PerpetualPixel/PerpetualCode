@@ -59,6 +59,28 @@ function gradeTennis(pick, homeSets, awaySets) {
 }
 
 /**
+ * Whether a tennis match's free /scores entry shows a clean, decided result
+ * (not a retirement/walkover) — exported so worker/src/tennis-results.js
+ * can decide whether it's even worth spending a metered second-source API
+ * call on this match BEFORE making one: a spread/total on a retired match
+ * is unsettleable regardless of which data source is asked, so there's no
+ * reason to spend part of a tight daily budget finding that out twice.
+ * Returns null when the match isn't completed/parseable yet (stays pending).
+ */
+export function tennisMatchDecided(pick, scoreEvent) {
+  if (!scoreEvent?.completed || !Array.isArray(scoreEvent.scores)) return null;
+  const scoreFor = (teamName) => {
+    const entry = scoreEvent.scores.find((s) => s.name === teamName);
+    const value = entry ? Number(entry.score) : NaN;
+    return Number.isFinite(value) ? value : null;
+  };
+  const homeSets = scoreFor(pick.home);
+  const awaySets = scoreFor(pick.away);
+  if (homeSets == null || awaySets == null) return null;
+  return { decided: Math.max(homeSets, awaySets) >= 2, homeSets, awaySets };
+}
+
+/**
  * Decide the outcome of a tracked pick against the matching /scores event.
  *
  * Returns one of:

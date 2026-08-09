@@ -242,6 +242,22 @@ export function isSettleableTennisMarket(marketKey) {
   return marketKey === 'h2h';
 }
 
+/**
+ * Whether a tennis spreads/totals pick is worth attempting against the
+ * second, games-level results source (docs/tennis-results.js /
+ * worker/src/tennis-results.js) rather than accepting isSettleableTennisMarket's
+ * void outright. Deliberately narrower than "every tennis match": that
+ * source is metered at 50 requests/day on its free tier, so this is scoped
+ * to TIER_1 only (Slams, Masters 1000, WTA 1000) — the same tier
+ * TIER_MARKETS already treats as worth a full board for. TIER_2/Challenger
+ * stay moneyline-only regardless of what any settlement source can do,
+ * because that restriction is about thin-market risk, not settleability.
+ */
+export function hasSecondarySettlementSource(sportKey, marketKey) {
+  if (marketKey !== 'spreads' && marketKey !== 'totals') return false;
+  return tennisTier(sportKey) === TIER_1;
+}
+
 /** Whether one market is eligible to be TRACKED (i.e. bet and graded) at this tier. */
 export function isMarketAllowedForTier(marketKey, tier) {
   if (!tier) return true; // non-tennis — this policy doesn't apply

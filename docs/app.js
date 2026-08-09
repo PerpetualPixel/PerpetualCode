@@ -4769,7 +4769,7 @@ async function renderLearningDashboard() {
   await Promise.all([renderDailyLearningSection(), renderAlgoHealthSection(), renderMlbPropsSection()]);
 }
 
-/** worker/src/mlb-props.js's own tracked-pick history — pitcher outs/strikeouts picked and graded once daily, at 1am ET. */
+/** worker/src/mlb-props.js's own tracked-pick history — pitcher outs/strikeouts, each game scanned once 2-3 hours before its own first pitch. */
 async function fetchMlbProps() {
   if (!CONFIG.WORKER_URL) return null;
   try {
@@ -4805,7 +4805,7 @@ async function renderMlbPropsSection() {
         ROI ${summary.roi >= 0 ? '+' : ''}${summary.roi.toFixed(1)}% &middot;
         staked $${summary.staked.toFixed(0)}, net ${summary.net >= 0 ? '+' : ''}$${summary.net.toFixed(0)}
       </div>`
-    : `<div class="rec-item">No pitcher props tracked yet — the first batch runs at the next 1am ET tick, once per MLB game with a genuine edge.</div>`;
+    : `<div class="rec-item">No pitcher props tracked yet — each game is scanned once it's 2-3 hours from its own first pitch.</div>`;
 
   const byDate = [...picks].sort((a, b) => (b.dateKey ?? '').localeCompare(a.dateKey ?? '') || b.generatedAt - a.generatedAt);
   el.mlbPropsList.innerHTML = byDate.length

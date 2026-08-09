@@ -1,17 +1,21 @@
 /**
  * MLB starting-pitcher props — Outs Recorded and Strikeouts.
  *
- * Runs in its OWN cron hour (1am ET, MLB_PROPS_BATCH_HOUR below), one hour
- * before the main 2am lock-in (Pixel's Picks/Full Slate/Play of the Day).
- * Deliberately not folded into that same invocation: this batch makes one
- * ESPN schedule lookup, one ESPN boxscore-summary lookup, AND one real
- * Odds-API per-event odds call PER MLB GAME (~15/day in season) — on top of
- * what the 2am invocation already does (a full-slate fetch, three
- * selection batches, and five analysis-prewarm model calls), that's the
- * kind of per-invocation subrequest pressure that has already forced one
- * other MLB job (mlb-stats.js's refreshMlbLeagueStats) into its own
- * isolated hour after hitting Cloudflare's cap live. Giving this batch its
- * own hour sidesteps the same failure mode rather than rediscovering it.
+ * Timing: each game is scanned once it falls within MLB_PROPS_WINDOW_HOURS
+ * of its own first pitch, checked on every 20-minute cron tick (same
+ * cadence the grading functions below already run on) — not at one fixed
+ * hour. That replaced an original fixed-1am design: sportsbooks don't
+ * reliably post pitcher-prop boards long before game time (lineups and
+ * rotation news settle, lines firm up, in the hours right before first
+ * pitch), so a fixed early hour risked scanning a thin or entirely absent
+ * board, especially for night games. A per-game window is correct for both
+ * a 1pm ET day game and a 10pm ET night game, which no single fixed hour
+ * can be. It also naturally spreads each day's ~15 games' worth of ESPN and
+ * per-event Odds-API calls across many ticks instead of bunching them into
+ * one invocation, which independently reduces the per-invocation
+ * subrequest pressure the original design worked around by hour-isolation
+ * (see mlb-stats.js's refreshMlbLeagueStats for the precedent that forced
+ * that isolation in the first place).
  *
  * Cost, by design: ONE odds snapshot per game per day (~2 credits/game,
  * ~30 credits/day in season) — no intraday re-checks for line movement yet.
@@ -20,7 +24,9 @@
  * 20-minute grading/CLV cron ticks already project to blow well past a
  * 20,000-credit monthly plan on their own; adding a repeating intraday prop
  * snapshot on top of that unresolved problem would have compounded it
- * before it's even understood. Revisit once that's sized.
+ * before it's even understood. Revisit once that's sized. Moving the scan
+ * window later in the day doesn't change this cost — still exactly one
+ * per-event call per game, just made nearer to first pitch.
  *
  * Settlement: MLB's boxscore is the one player-level stat source already
  * proven reachable from this Worker (mlb-stats.js's own header note on
@@ -38,7 +44,6 @@ import { mlbAbbr } from './analysis.js';
 import { UPSTREAM, REGIONS } from './odds.js';
 import { getLearningProfile, applyLearningToCandidates } from './daily-learning.js';
 
-export const MLB_PROPS_BATCH_HOUR = 1; // 1am ET — see module header for why this isn't 2am
 const FLAT_UNIT_STAKE = 20; // matches every other tracker's own duplicated copy of docs/learning.js's constant
 const KV_TTL_SECONDS = 86400 * 90;
 const GRADING_LOOKBACK_DAYS = 2;
@@ -232,32 +237,60 @@ export async function getAllMlbPropsTracked(env, { now = Date.now(), days = 90 }
   return perDay.flatMap((d) => d.picks);
 }
 
+// Books don't reliably post pitcher-prop boards long before game time —
+// lineups/rotation news settles and lines firm up in the hours right before
+// first pitch, not overnight. A single fixed early hour (this used to be
+// 1am ET) risks pulling a thin or entirely absent board. Each game is
+// instead scanned once it falls inside this window before its own first
+// pitch — correct for both a 1pm ET day game and a 10pm ET night game,
+// which a single fixed hour can't be for both.
+const MLB_PROPS_WINDOW_HOURS = 3;
+
+function isWithinPropsWindow(commenceMs, now) {
+  const hoursUntil = (commenceMs - now) / 3.6e6;
+  return hoursUntil > 0 && hoursUntil <= MLB_PROPS_WINDOW_HOURS;
+}
+
+/** Today's MLB games, fetched and cached once per ET day rather than re-pulled on every 20-minute tick. */
+async function todaysMlbGamesCached(env, dateKey, fetchFullSlate) {
+  const cacheKey = `mlbprops:${dateKey}:games`;
+  const cached = await env.POTD_KV.get(cacheKey);
+  if (cached) return JSON.parse(cached);
+
+  const events = await fetchFullSlate();
+  const games = todaysMlbGames(events, dateKey);
+  await env.POTD_KV.put(cacheKey, JSON.stringify(games), { expirationTtl: 86400 });
+  return games;
+}
+
 /**
- * The 1am ET batch: one real edge-scan per MLB game, at real per-event
- * Odds-API cost (see module header). Idempotent per ET day via its own
- * manifest key, so a retried or overlapping tick can't double the spend.
+ * Runs on every 20-minute tick (unconditionally, same as the grading
+ * functions below) rather than at one fixed hour. Each MLB game is scanned
+ * exactly once — whichever tick first finds it inside MLB_PROPS_WINDOW_HOURS
+ * of its own first pitch — tracked via the day's manifest so a later tick
+ * never re-spends the same game's per-event Odds-API credit. Cheap when
+ * nothing is currently in-window: one KV read for the day's (cached) game
+ * list, no fetch, no per-event spend.
  */
-export async function runMlbPropsBatch(
+export async function runMlbPropsScan(
   env,
   ctx,
   now = Date.now(),
   { fetchFullSlate } = {},
 ) {
   const dateKey = etDate(now);
+  const games = await todaysMlbGamesCached(env, dateKey, fetchFullSlate);
+  if (!games.length) return { scanned: 0, gameCount: 0 };
+
   const manifestKey = `mlbprops:${dateKey}:manifest`;
-  const existing = await env.POTD_KV.get(manifestKey);
-  if (existing) return { skipped: true, reason: 'already generated today', dateKey };
+  const manifestRaw = await env.POTD_KV.get(manifestKey);
+  const manifest = manifestRaw ? JSON.parse(manifestRaw) : { date: dateKey, pickIds: [], processedEventIds: [] };
+  const processed = new Set(manifest.processedEventIds ?? []);
 
-  const events = await fetchFullSlate();
-  const games = todaysMlbGames(events, dateKey);
-  if (!games.length) {
-    await env.POTD_KV.put(manifestKey, JSON.stringify({ date: dateKey, generatedAt: now, pickIds: [] }), {
-      expirationTtl: KV_TTL_SECONDS,
-    });
-    return { skipped: false, dateKey, count: 0, reason: 'no MLB games today' };
-  }
+  const eligible = games.filter((g) => !processed.has(g.id) && isWithinPropsWindow(new Date(g.commence_time).getTime(), now));
+  if (!eligible.length) return { scanned: 0, gameCount: games.length };
 
-  const perGame = await Promise.all(games.map((g) => buildCandidatesForGame(g, env, ctx, now)));
+  const perGame = await Promise.all(eligible.map((g) => buildCandidatesForGame(g, env, ctx, now)));
   const rawCandidates = perGame.flat().map((c) => ({ ...c, ...scoreCandidate(c, { now }) }));
 
   const learningProfile = await getLearningProfile(env);
@@ -284,7 +317,7 @@ export async function runMlbPropsBatch(
     }
   }
 
-  const pickIds = [];
+  const newPickIds = [];
   for (const candidate of bestPerPlayerStat.values()) {
     // suggested_stake is the app's flat per-pick unit (FLAT_UNIT_STAKE,
     // matching every other tracker) — the Kelly/EV filter above decides
@@ -293,17 +326,23 @@ export async function runMlbPropsBatch(
     // app would size to if it ever moves off a flat unit (tennis-tiers.js's
     // own capStakeForTier is the same not-yet-wired policy for that market).
     const record = pickRecordFromMlbProp(candidate, dateKey, now);
-    pickIds.push(record.pickId);
+    newPickIds.push(record.pickId);
     ctx.waitUntil(env.POTD_KV.put(`mlbprops:${dateKey}:pick:${record.pickId}`, JSON.stringify(record), {
       expirationTtl: KV_TTL_SECONDS,
     }));
   }
 
-  ctx.waitUntil(env.POTD_KV.put(manifestKey, JSON.stringify({ date: dateKey, generatedAt: now, pickIds }), {
-    expirationTtl: KV_TTL_SECONDS,
-  }));
+  // Every eligible game is marked processed even if it produced zero
+  // qualifying candidates — "processed" means "scanned once," not "found an
+  // edge," so a quiet game isn't rescanned every tick for the rest of the day.
+  const updatedManifest = {
+    date: dateKey,
+    pickIds: [...manifest.pickIds, ...newPickIds],
+    processedEventIds: [...processed, ...eligible.map((g) => g.id)],
+  };
+  ctx.waitUntil(env.POTD_KV.put(manifestKey, JSON.stringify(updatedManifest), { expirationTtl: KV_TTL_SECONDS }));
 
-  return { skipped: false, dateKey, count: pickIds.length, gameCount: games.length };
+  return { scanned: eligible.length, gameCount: games.length, newPicks: newPickIds.length };
 }
 
 /**

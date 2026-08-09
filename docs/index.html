@@ -540,17 +540,18 @@
 
     <!-- MLB Pitcher Props -->
     <section class="learning-section">
-      <h3>MLB Pitcher Props <span class="stats-source">Automatic, one snapshot per game at 1am ET</span></h3>
+      <h3>MLB Pitcher Props <span class="stats-source">Automatic, scanned 2–3 hours before each game's first pitch</span></h3>
       <p class="filter-hint">
         Outs Recorded and Strikeouts for each game's two starting pitchers.
-        Every morning at 1am ET, before the day's main picks lock in, this
-        scans both props for every MLB game, de-vigs the market the same way
-        every other board on this app does, and tracks the one side (if any)
-        that clears a genuine edge — not every line priced, only real
-        mispricings. Settled against each pitcher's own final boxscore line;
-        a pitcher who's scratched or a game that's postponed voids rather
-        than grades. Currently one price check per game per day, not a
-        running line-movement tracker yet.
+        Rather than one fixed time for every game, each game is scanned once
+        it's a few hours from its own first pitch — early enough to act on,
+        late enough that lineups and prop boards have actually settled. This
+        de-vigs the market the same way every other board on this app does,
+        and tracks the one side (if any) that clears a genuine edge — not
+        every line priced, only real mispricings. Settled against each
+        pitcher's own final boxscore line; a pitcher who's scratched or a
+        game that's postponed voids rather than grades. Currently one price
+        check per game per day, not a running line-movement tracker yet.
       </p>
       <div id="mlbPropsSummary" class="learning-recs"></div>
       <div id="mlbPropsList" class="learning-recs"></div>

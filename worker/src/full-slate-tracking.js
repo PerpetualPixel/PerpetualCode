@@ -26,7 +26,8 @@ import { isMma, isTennis } from '../../docs/insights.js';
 import { fetchSport, fetchScores } from './odds.js';
 import { pickRecordFrom, fetchFullSlateEvents } from './tracking.js';
 import { fetchMmaResults, gradeMmaPickWithFallback } from './ufc-events.js';
-import { isSettleableTennisMarket } from '../../docs/tennis-tiers.js';
+import { isSettleableTennisMarket, hasSecondarySettlementSource } from '../../docs/tennis-tiers.js';
+import { settleTennisGameMarket } from './tennis-results.js';
 
 export const FULL_SLATE_BATCH_HOUR = 2; // 2am ET — same run as Pixel's Picks/Play of the Day
 // Matches tracking.js's own FLAT_UNIT_STAKE — duplicated for the same reason
@@ -114,16 +115,20 @@ export async function runFullSlateBatch(
   // seen for a given eventId is that game's best — one pick per game.
   //
   // Tennis is the one exception: its spreads and totals are priced in games
-  // while /scores reports sets, so they can never be settled (see
-  // docs/tennis-tiers.js's isSettleableTennisMarket). Taking a tennis
-  // match's top-scoring candidate would routinely store a spread and
-  // guarantee a void instead of a result, which defeats the point of
-  // tracking every match. Tennis therefore takes its best MONEYLINE
-  // candidate — so every ATP/WTA match on the board still gets exactly one
-  // pick, and that pick is one that can actually be graded.
+  // while the free /scores reports sets, so they can't be settled by that
+  // source alone (see docs/tennis-tiers.js's isSettleableTennisMarket). A
+  // TIER_1 match's spread/total is now attemptable through a second,
+  // metered source (worker/src/tennis-results.js) at grading time, so it's
+  // no longer a GUARANTEED void the way it is at TIER_2/Challenger — those
+  // stay moneyline-only here too, same as before, since a wasted candidate
+  // there would still just void. A TIER_1 spread/total that the second
+  // source can't ultimately settle still falls back to the existing void,
+  // same as it always has; this only ever adds a chance at a real grade; it
+  // never removes coverage a match already had.
   const bestPerGame = new Map();
   for (const c of candidates) {
-    if (isTennis(c.sportKey) && !isSettleableTennisMarket(c.marketKey)) continue;
+    const settleable = isSettleableTennisMarket(c.marketKey) || hasSecondarySettlementSource(c.sportKey, c.marketKey);
+    if (isTennis(c.sportKey) && !settleable) continue;
     if (!bestPerGame.has(c.eventId)) bestPerGame.set(c.eventId, c);
   }
 
@@ -229,9 +234,14 @@ export async function runFullSlateGrading(
   let graded = 0;
   for (const pick of pending) {
     const scoreEvent = (scoreEventsBySport.get(pick.sportKey) ?? []).find((e) => e.id === pick.eventId);
-    const outcome = isMma(pick.sportKey)
-      ? gradeMmaPickWithFallback(pick, scoreEvent, mmaResults)
-      : gradePick(pick, scoreEvent);
+    let outcome;
+    if (isMma(pick.sportKey)) {
+      outcome = gradeMmaPickWithFallback(pick, scoreEvent, mmaResults);
+    } else if (isTennis(pick.sportKey) && hasSecondarySettlementSource(pick.sportKey, pick.marketKey)) {
+      outcome = (await settleTennisGameMarket(pick, scoreEvent, env, ctx, now)) ?? gradePick(pick, scoreEvent);
+    } else {
+      outcome = gradePick(pick, scoreEvent);
+    }
     if (!outcome) continue;
     pick.status = outcome.void ? 'void' : outcome.won ? 'won' : 'lost';
     pick.result = { payout: outcome.payout, roiPercent: outcome.void ? 0 : (outcome.payout / pick.suggested_stake) * 100, voidReason: outcome.void ? outcome.reason : undefined };
