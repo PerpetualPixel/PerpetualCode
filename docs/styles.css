@@ -227,6 +227,24 @@ body {
   margin: 0 auto;
 }
 
+/* Below ~620px, the wordmark alone (icon + "PERPETUAL PICKS") is wide
+   enough that five action buttons have nowhere left to go on the same row
+   — .topbar-actions was getting squeezed into a ~85px sliver and its own
+   flex-wrap then stacked all five buttons into a cramped multi-row column
+   beside the wordmark instead of a normal row. Wrapping the topbar itself
+   drops the actions onto their own full-width row below the wordmark
+   instead — the standard mobile-header pattern. */
+@media (max-width: 620px) {
+  .topbar {
+    flex-wrap: wrap;
+    row-gap: 10px;
+  }
+  .topbar-actions {
+    flex: 1 1 100%;
+    justify-content: flex-start;
+  }
+}
+
 /* Width/centering only — .day-toggle-bar's other properties (display,
    padding, background, border) are defined with the rest of the Full Slate
    rules further down. Split out and placed here, before the responsive
