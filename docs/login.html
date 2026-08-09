@@ -556,6 +556,10 @@
         // Store token and redirect
         localStorage.setItem(AUTH_TOKEN_KEY, data.token);
         localStorage.setItem(AUTH_USER_KEY, JSON.stringify({ id: data.userId, email: data.email, username: data.username }));
+        // One-time flag for index.html's boot sequence — sessionStorage
+        // (not localStorage) so it only ever fires for this fresh login,
+        // never on a later page refresh/revisit within the same session.
+        sessionStorage.setItem('pp_show_welcome', data.username);
         showMessage('login-message', 'Logged in! Redirecting...', false);
 
         setTimeout(() => {

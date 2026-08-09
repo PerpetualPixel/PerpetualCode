@@ -584,6 +584,7 @@ const el = {
   pixelSort: document.getElementById('pixelSort'),
   scrim: document.getElementById('scrim'),
   accountLink: document.getElementById('accountLink'),
+  welcomeToast: document.getElementById('welcomeToast'),
   bankrollToggle: document.getElementById('bankrollToggle'),
   bankrollPanel: document.getElementById('bankrollPanel'),
   bankrollClose: document.getElementById('bankrollClose'),
@@ -5221,8 +5222,34 @@ async function openLearningDashboard() {
 /* Boot                                                              */
 /* ---------------------------------------------------------------- */
 
+/** Shows "Welcome, {username}" once, immediately after a fresh login —
+ * login.html sets this sessionStorage flag right before redirecting here,
+ * never on a plain page refresh/revisit (sessionStorage, not localStorage,
+ * and removed the instant it's read so it can't reappear even within the
+ * same tab/session). CSS handles the fade in/out entirely (see .welcome-
+ * toast.is-visible in styles.css) — this just triggers it and clears the
+ * flag. */
+function showWelcomeToastIfFresh() {
+  const username = sessionStorage.getItem('pp_show_welcome');
+  if (!username) return;
+  sessionStorage.removeItem('pp_show_welcome');
+
+  el.welcomeToast.textContent = `Welcome, ${username}`;
+  el.welcomeToast.hidden = false;
+  // Reflow before adding the class so the CSS animation reliably restarts
+  // even if this somehow ran twice in one page life.
+  void el.welcomeToast.offsetWidth;
+  el.welcomeToast.classList.add('is-visible');
+  el.welcomeToast.addEventListener('animationend', () => {
+    el.welcomeToast.hidden = true;
+    el.welcomeToast.classList.remove('is-visible');
+  }, { once: true });
+}
+
 (async function init() {
   if (!checkAuth()) return;
+
+  showWelcomeToastIfFresh();
 
   el.accountLink.hidden = !getToken();
   el.pixelSort.value = state.pixelSort;
