@@ -12,10 +12,19 @@ try {
   console.warn('Could not get git commit hash');
 }
 
-// Get current timestamp in EST format
+// Get current timestamp in Eastern Time (EST/EDT)
 const now = new Date();
-const estTime = new Date(now.toLocaleString('en-US', { timeZone: 'America/New_York' }));
-const builtAt = estTime.toISOString().replace('Z', '') + '-05:00'; // EST offset
+const builtAt = now.toLocaleString('en-US', {
+  timeZone: 'America/New_York',
+  year: 'numeric',
+  month: 'short',
+  day: 'numeric',
+  hour: 'numeric',
+  minute: '2-digit',
+  second: '2-digit',
+  hour12: true,
+  timeZoneName: 'short'
+});
 
 // Read current version
 const versionPath = path.join(__dirname, 'docs', 'version.js');
