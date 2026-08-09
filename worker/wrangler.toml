@@ -22,6 +22,14 @@ REQUIRE_AUTH = "false"
 # ODDS_API_KEY is NOT set here — it is a secret:
 #   wrangler secret put ODDS_API_KEY
 
+# OWNER_PASSPHRASE is also a secret, and gates GET/PUT /settings — the durable
+# bankroll/unit-size record (see src/settings.js). Until real per-user accounts
+# exist, this is the single stand-in credential proving "this is the owner":
+#   wrangler secret put OWNER_PASSPHRASE
+# Leaving it unset is safe and non-breaking: /settings answers 503 and the app
+# falls back to the localStorage-only behavior it had before sync existed.
+# It is NEVER set here as a plain var — that would publish it in the repo.
+
 # ANTHROPIC_API_KEY is likewise a secret, and optional: without it, /analysis
 # (the daily AI-written matchup breakdown — see src/analysis.js) returns null
 # and the app falls back to the existing quantitative price case. Set it the

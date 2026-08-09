@@ -42,10 +42,10 @@ import {
   runGrading,
   getTop5,
   getAllTrackedPicks,
-  resetAllTracking,
   fetchFullSlateEvents,
   TOP5_BATCH_HOUR,
 } from './tracking.js';
+import { authorize as authorizeSettings, getSettings, putSettings } from './settings.js';
 import {
   runAlgoHealthReview,
   getAlgoConfig,
@@ -62,7 +62,6 @@ import {
   runFullSlateClvSnapshot,
   runFullSlateGrading,
   getAllFullSlateTracked,
-  resetFullSlateTracking,
 } from './full-slate-tracking.js';
 
 // Each sport is a separate billed call: 3 markets x 1 region = 3 credits apiece.
@@ -81,8 +80,11 @@ function corsHeaders(request, env) {
 
   return {
     'Access-Control-Allow-Origin': allow,
-    'Access-Control-Allow-Methods': 'GET, POST, OPTIONS',
-    'Access-Control-Allow-Headers': 'Content-Type, Authorization',
+    // PUT and X-Owner-Key are for /settings (worker/src/settings.js) — a
+    // browser preflights both, so omitting either blocks the request before
+    // it ever reaches the route.
+    'Access-Control-Allow-Methods': 'GET, POST, PUT, OPTIONS',
+    'Access-Control-Allow-Headers': 'Content-Type, Authorization, X-Owner-Key',
     'Access-Control-Max-Age': '86400',
     Vary: 'Origin',
   };
@@ -825,21 +827,40 @@ export default {
       }
     }
 
-    // Explicit, user-triggered wipe of every server-side tracker (Pixel's
-    // Picks and Full Slate — Play of the Day keeps its own separate history
-    // by design) — the counterpart to the client's local "Archive & Reset
-    // All Tracking" button. Never run on a schedule; only ever hit by that
-    // button.
+    // DISABLED. This used to wipe every server-side tracker (Pixel's Picks
+    // and Full Slate) on an unauthenticated POST — meaning anyone who found
+    // the URL could destroy the entire performance record, and the "Reset
+    // All Tracking" button that called it was the only thing keeping it out
+    // of reach. The tracked record is the whole point of the app right now,
+    // so the endpoint is closed rather than merely unlinked from the UI.
+    //
+    // To genuinely reset: delete this block and redeploy. That friction is
+    // deliberate for an irreversible, once-in-a-blue-moon operation. When
+    // per-user accounts land, this should come back scoped to the calling
+    // user's own history instead of being global.
     if (pathname === '/top5-reset' && request.method === 'POST') {
+      return json(
+        { error: 'Tracking reset is disabled on this deployment' },
+        { status: 403, headers: cors },
+      );
+    }
+
+    // Durable bankroll/unit settings (see worker/src/settings.js). Both
+    // methods are gated on the owner passphrase — the bankroll is personal,
+    // and this site is publicly reachable, so an ungated GET would publish it
+    // to every visitor. A deployment with no OWNER_PASSPHRASE configured
+    // answers 503 here and the client stays on its local copy.
+    if (pathname === '/settings' && (request.method === 'GET' || request.method === 'PUT')) {
+      const auth = authorizeSettings(request, env);
+      if (!auth.ok) return json({ error: auth.error }, { status: auth.status, headers: cors });
+
       try {
-        const [top5Result, fullSlateResult] = await Promise.all([
-          resetAllTracking(env),
-          resetFullSlateTracking(env),
-        ]);
-        return json(
-          { deleted: top5Result.deleted + fullSlateResult.deleted, top5: top5Result, fullSlate: fullSlateResult },
-          { headers: cors },
-        );
+        if (request.method === 'GET') {
+          return json({ settings: await getSettings(env) }, { headers: { ...cors, 'Cache-Control': 'no-store' } });
+        }
+        const body = await request.json().catch(() => null);
+        if (!body) return json({ error: 'Expected a JSON body' }, { status: 400, headers: cors });
+        return json({ settings: await putSettings(env, body) }, { headers: { ...cors, 'Cache-Control': 'no-store' } });
       } catch (error) {
         return json({ error: String(error).slice(0, 120) }, { status: 500, headers: cors });
       }

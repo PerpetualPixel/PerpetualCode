@@ -563,6 +563,10 @@ const el = {
   bankrollShowUnits: document.getElementById('bankrollShowUnits'),
   bankrollSubmit: document.getElementById('bankrollSubmit'),
   bankrollSubmitHint: document.getElementById('bankrollSubmitHint'),
+  ownerKeyInput: document.getElementById('ownerKeyInput'),
+  ownerKeyConnect: document.getElementById('ownerKeyConnect'),
+  ownerKeyForget: document.getElementById('ownerKeyForget'),
+  ownerKeyStatus: document.getElementById('ownerKeyStatus'),
   guideToggle: document.getElementById('guideToggle'),
   guidePanel: document.getElementById('guidePanel'),
   guideClose: document.getElementById('guideClose'),
@@ -628,7 +632,6 @@ const el = {
   algoHealthPaused: document.getElementById('algoHealthPaused'),
   algoHealthLog: document.getElementById('algoHealthLog'),
   algoHealthResetBtn: document.getElementById('algoHealthResetBtn'),
-  archiveResetBtn: document.getElementById('archiveResetBtn'),
 };
 
 const state = {
@@ -2456,8 +2459,101 @@ document.body.addEventListener('click', (event) => {
 
 el.statsDrawerClose.addEventListener('click', () => setStatsDrawerOpen(false));
 
+/* ---------------------------------------------------------------- */
+/* Durable settings sync                                             */
+/* ---------------------------------------------------------------- */
+
+/**
+ * Bankroll/unit size used to live only in localStorage, so they died with a
+ * cleared cache and never followed the user to another device. They're now
+ * mirrored to the worker (see worker/src/settings.js), with localStorage
+ * kept as the offline/not-connected fallback — the local copy is always
+ * written, so nothing regresses when sync is unavailable.
+ *
+ * Identity is a single owner passphrase for now, held in localStorage and
+ * sent as X-Owner-Key. That's a deliberate interim: it's XSS-exposed the
+ * same way any browser-held token is, and it doesn't scale past one person.
+ * When real per-user accounts land, this key becomes a session token and
+ * settingsHeaders() is the only thing here that has to change.
+ */
+const OWNER_KEY_STORAGE = 'pixelpick.ownerKey.v1';
+
+function ownerKey() {
+  return loadJSON(OWNER_KEY_STORAGE, '') || '';
+}
+
+function settingsHeaders() {
+  const key = ownerKey();
+  return key ? { 'X-Owner-Key': key } : null;
+}
+
+/**
+ * Pull settings from the server and adopt them, if a key is configured.
+ * Server wins over the local copy: it's the record that survived whatever
+ * cleared this browser, and it's what another device already agreed on.
+ * Any failure leaves the local copy untouched rather than blanking a real
+ * bankroll over a transient network error.
+ */
+async function loadSettings() {
+  const headers = settingsHeaders();
+  if (!headers || !CONFIG.WORKER_URL) return { ok: false, reason: 'not-connected' };
+  try {
+    const res = await fetch(new URL('/settings', CONFIG.WORKER_URL), { headers });
+    if (!res.ok) return { ok: false, reason: res.status === 401 ? 'bad-key' : 'unavailable' };
+    const { settings } = await res.json();
+    if (settings?.bankroll) {
+      state.bankroll = { ...state.bankroll, ...settings.bankroll };
+      saveJSON(BANKROLL_KEY, state.bankroll); // keep the offline copy in step
+    }
+    return { ok: true, hadRecord: Boolean(settings) };
+  } catch {
+    return { ok: false, reason: 'unavailable' };
+  }
+}
+
+// Coalesces the burst of persistBankroll() calls a single Submit produces
+// (amount, unit, confirmed, and displayMode can all change at once) into one
+// PUT, and keeps a fast typist from firing a request per keystroke.
+let settingsPushTimer = null;
+let lastPushFailed = false;
+
+function pushSettingsSoon() {
+  const headers = settingsHeaders();
+  if (!headers || !CONFIG.WORKER_URL) return;
+  clearTimeout(settingsPushTimer);
+  settingsPushTimer = setTimeout(async () => {
+    try {
+      const res = await fetch(new URL('/settings', CONFIG.WORKER_URL), {
+        method: 'PUT',
+        headers: { ...headers, 'Content-Type': 'application/json' },
+        body: JSON.stringify({ bankroll: state.bankroll }),
+      });
+      lastPushFailed = !res.ok;
+    } catch {
+      lastPushFailed = true; // local copy already saved; surfaced in the panel
+    }
+    renderOwnerKeyStatus();
+  }, 600);
+}
+
+function renderOwnerKeyStatus(override) {
+  if (!el.ownerKeyStatus) return;
+  if (override) {
+    el.ownerKeyStatus.textContent = override;
+    return;
+  }
+  if (!ownerKey()) {
+    el.ownerKeyStatus.textContent = 'Not connected — saved on this device only.';
+    return;
+  }
+  el.ownerKeyStatus.textContent = lastPushFailed
+    ? 'Connected, but the last save didn\'t reach the server. Still saved locally.'
+    : 'Connected — changes sync automatically.';
+}
+
 function persistBankroll() {
-  saveJSON(BANKROLL_KEY, state.bankroll);
+  saveJSON(BANKROLL_KEY, state.bankroll); // always, so sync is never load-bearing
+  pushSettingsSoon();
 }
 
 function renderBankrollPanel() {
@@ -2475,6 +2571,8 @@ function renderBankrollPanel() {
   el.bankrollSubmitHint.textContent = state.bankroll.confirmed && state.bankroll.amount > 0
     ? 'Applied. Every "why" panel now shows a real $ or unit amount.'
     : 'Tap Submit to start seeing suggested stakes in real $ or units, not just %.';
+
+  renderOwnerKeyStatus();
 }
 
 /* ---------------------------------------------------------------- */
@@ -3674,29 +3772,6 @@ el.trackerCalendarGrid?.addEventListener('click', (event) => {
   renderTrackerSection();
 });
 
-/**
- * Explicit, user-triggered clean-slate action: asks the worker to clear its
- * own server-side Full Slate and Pixel's Picks tracking. Never runs on its
- * own; only ever this click.
- */
-el.archiveResetBtn.addEventListener('click', async () => {
-  const ok = confirm(
-    'This permanently clears the worker\'s own Pixel\'s Picks and Full Slate tracking (Play of the Day\'s history is kept separately and isn\'t affected). This can\'t be undone. Continue?',
-  );
-  if (!ok) return;
-  if (!CONFIG.WORKER_URL) return;
-
-  el.archiveResetBtn.disabled = true;
-  el.archiveResetBtn.textContent = 'Resetting…';
-  try {
-    await fetch(new URL('/top5-reset', CONFIG.WORKER_URL), { method: 'POST' });
-    await renderLearningDashboard();
-  } finally {
-    el.archiveResetBtn.disabled = false;
-    el.archiveResetBtn.textContent = 'Reset All Tracking';
-  }
-});
-
 el.scrim.addEventListener('click', () => {
   if (openAside) setAsideOpen(openAside.panel, openAside.toggle, false);
   el.statsPanel.hidden = true;
@@ -3777,6 +3852,49 @@ el.bankrollShowUnits.addEventListener('click', () => {
   persistBankroll();
   renderBankrollPanel();
   refreshStakeDisplays();
+});
+
+el.ownerKeyConnect.addEventListener('click', async () => {
+  const key = el.ownerKeyInput.value.trim();
+  if (!key) {
+    renderOwnerKeyStatus('Enter your owner passphrase first.');
+    return;
+  }
+  saveJSON(OWNER_KEY_STORAGE, key);
+  renderOwnerKeyStatus('Connecting…');
+
+  const result = await loadSettings();
+  if (!result.ok) {
+    // A bad key is kept out of storage entirely rather than left to fail on
+    // every future save — otherwise the panel would read "connected" while
+    // nothing ever syncs.
+    saveJSON(OWNER_KEY_STORAGE, '');
+    renderOwnerKeyStatus(
+      result.reason === 'bad-key'
+        ? 'That key was rejected. Bankroll is still saved on this device.'
+        : 'Couldn\'t reach the server. Bankroll is still saved on this device.',
+    );
+    return;
+  }
+
+  el.ownerKeyInput.value = '';
+  lastPushFailed = false;
+  // Nothing stored server-side yet on a first connect — push this device's
+  // current values up so the two sides agree immediately rather than after
+  // the next unrelated edit.
+  if (!result.hadRecord) pushSettingsSoon();
+  renderBankrollPanel();
+  refreshStakeDisplays();
+  renderOwnerKeyStatus(result.hadRecord ? 'Connected — loaded your saved bankroll.' : 'Connected — this device\'s bankroll is now synced.');
+});
+
+el.ownerKeyForget.addEventListener('click', () => {
+  saveJSON(OWNER_KEY_STORAGE, '');
+  el.ownerKeyInput.value = '';
+  lastPushFailed = false;
+  // Deliberately leaves state.bankroll and its localStorage copy alone —
+  // disconnecting shouldn't wipe the numbers off the device you're on.
+  renderOwnerKeyStatus('Disconnected — still saved on this device.');
 });
 
 /* ---------------------------------------------------------------- */
@@ -4679,6 +4797,16 @@ async function openLearningDashboard() {
   renderDayToggle();
   renderSlateStateToggle();
   initLearningPanelResize();
+
+  // Adopt server-side bankroll/unit settings before anything renders a stake,
+  // so a synced device doesn't briefly show figures from a stale local copy.
+  // Fire-and-forget on failure — the localStorage values already loaded into
+  // state.bankroll stand in, exactly as before sync existed.
+  loadSettings().then((result) => {
+    if (!result.ok) return;
+    renderBankrollPanel();
+    refreshStakeDisplays();
+  });
 
   el.slateStatus.textContent = 'Loading all leagues…';
   // Catalogue first — ATP/WTA can't resolve their tournament keys without it.

@@ -149,7 +149,8 @@
   <p class="history-note">
     Set your bankroll once, and every pick's suggested stake (already sized
     by ¼-Kelly against that pick's edge) converts to a real dollar amount or
-    a unit count. Stored on this device only; nothing here is sent anywhere.
+    a unit count. Saved to this device, and synced to the server as well
+    once you connect below, so it survives a cleared browser.
   </p>
 
   <div class="bankroll-field">
@@ -175,6 +176,22 @@
       <button type="button" id="bankrollShowUnits" class="toggle-btn">Units</button>
     </div>
     <p class="bankroll-hint">Applies next time you generate or open a pick.</p>
+  </div>
+
+  <div class="bankroll-field bankroll-sync">
+    <label for="ownerKeyInput">Sync key</label>
+    <input type="password" id="ownerKeyInput" autocomplete="off" spellcheck="false"
+           placeholder="Owner passphrase">
+    <div class="bankroll-display-toggle">
+      <button type="button" id="ownerKeyConnect" class="toggle-btn">Connect</button>
+      <button type="button" id="ownerKeyForget" class="toggle-btn">Forget</button>
+    </div>
+    <p id="ownerKeyStatus" class="bankroll-hint"></p>
+    <p class="bankroll-hint">
+      Without a key, your bankroll is saved on this device only. With it, the
+      same figures follow you to any browser. Accounts are coming — this is
+      the interim single-owner stand-in.
+    </p>
   </div>
 
   <p class="history-note">
@@ -522,10 +539,6 @@
       <button id="algoHealthResetBtn" class="action-btn" type="button">Reset Tuning to Defaults</button>
     </section>
 
-    <!-- Reset -->
-    <section class="learning-section">
-      <button id="archiveResetBtn" class="action-btn action-btn-danger">Reset All Tracking</button>
-    </section>
   </div>
 </aside>
 

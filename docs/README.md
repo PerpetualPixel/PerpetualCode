@@ -217,8 +217,19 @@ dollar amount; set a unit size too (or leave it blank to use the built-in 2%
 recommendation) and toggle "Show stakes as" to Units to see stakes the way
 most bettors actually track their own action — "1.5 units" rather than a raw
 dollar figure, which stays meaningful as the bankroll itself grows or
-shrinks. Everything here is local-only (`localStorage`, never sent
-anywhere) and display changes apply on the next Generate/Play-of-the-Day
+shrinks.
+
+These figures are saved to `localStorage` and, once you enter an owner
+passphrase under "Sync key," mirrored to the worker as well
+(`GET`/`PUT /settings`, backed by KV — see `worker/src/settings.js`), so they
+survive a cleared browser and follow you to another device. The local copy is
+always written, so sync is never load-bearing: with no key configured, or the
+worker unreachable, the app behaves exactly as it did before sync existed.
+The passphrase is an interim single-owner stand-in for real accounts — it
+gates reads as well as writes, since a bankroll shouldn't be readable by every
+visitor to a public site.
+
+Display changes apply on the next Generate/Play-of-the-Day
 view rather than live-patching whatever's already on screen — the same
 "applies on next tap" convention the Odds & Confidence range filter already
 uses, and for the same reason: it avoids a spurious re-fetch of a pick's
