@@ -6,6 +6,7 @@ import {
   generateJWT,
   verifyJWT,
 } from './auth-email.js';
+import { validateUsername } from './username-policy.js';
 
 function json(body, { status = 200, headers = {} } = {}) {
   return new Response(JSON.stringify(body), {
@@ -57,8 +58,6 @@ async function sendVerificationEmail(env, email, username, token) {
   });
 }
 
-const USERNAME_PATTERN = /^[a-zA-Z0-9_]{3,20}$/;
-
 export async function handleRegister(request, env) {
   try {
     const { email, password, username, notifyEmail } = await request.json();
@@ -71,11 +70,9 @@ export async function handleRegister(request, env) {
       return json({ error: 'password must be at least 8 characters' }, { status: 400 });
     }
 
-    if (!USERNAME_PATTERN.test(username)) {
-      return json(
-        { error: 'username must be 3-20 characters: letters, numbers, underscores only' },
-        { status: 400 },
-      );
+    const usernameCheck = validateUsername(username);
+    if (!usernameCheck.ok) {
+      return json({ error: usernameCheck.error }, { status: 400 });
     }
 
     // Check if email or username already registered
@@ -170,16 +167,21 @@ export async function handleVerifyEmail(request, env) {
 
 export async function handleLogin(request, env) {
   try {
-    const { email, password } = await request.json();
+    // `identifier` is whatever the user typed into the single sign-in
+    // field — either their email or their username. Matched against both
+    // columns rather than trying to guess which one it is client-side (an
+    // "is this shaped like an email" check would have to be kept in sync
+    // with whatever the username format allows, for no real benefit).
+    const { identifier, password } = await request.json();
 
-    if (!email || !password) {
-      return json({ error: 'email and password required' }, { status: 400 });
+    if (!identifier || !password) {
+      return json({ error: 'email/username and password required' }, { status: 400 });
     }
 
     const user = await env.DB.prepare(
-      'SELECT id, password_hash, email_verified, username FROM users WHERE email = ?',
+      'SELECT id, email, password_hash, email_verified, username FROM users WHERE email = ? OR username = ?',
     )
-      .bind(email)
+      .bind(identifier, identifier)
       .first();
 
     if (!user) {
@@ -196,9 +198,9 @@ export async function handleLogin(request, env) {
     }
 
     // Generate JWT token (30-day expiry)
-    const token = generateJWT({ userId: user.id, email }, jwtSecret());
+    const token = generateJWT({ userId: user.id, email: user.email }, jwtSecret());
 
-    return json({ token, userId: user.id, email, username: user.username });
+    return json({ token, userId: user.id, email: user.email, username: user.username });
   } catch (e) {
     console.error('Login error:', e);
     return json({ error: e.message }, { status: 500 });

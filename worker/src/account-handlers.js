@@ -1,5 +1,6 @@
 import { hashPassword, verifyPassword, generateVerificationToken } from './auth-email.js';
 import { verifyJWT, jwtSecret, EMAIL_LOGO_HTML } from './auth-handlers.js';
+import { validateUsername } from './username-policy.js';
 
 function json(body, { status = 200, headers = {} } = {}) {
   return new Response(JSON.stringify(body), {
@@ -16,19 +17,15 @@ function authenticate(request) {
   return verifyJWT(token, jwtSecret());
 }
 
-const USERNAME_PATTERN = /^[a-zA-Z0-9_]{3,20}$/;
-
 export async function handleUpdateUsername(request, env) {
   try {
     const payload = authenticate(request);
     if (!payload) return json({ error: 'unauthorized' }, { status: 401 });
 
     const { username } = await request.json();
-    if (!username || !USERNAME_PATTERN.test(username)) {
-      return json(
-        { error: 'username must be 3-20 characters: letters, numbers, underscores only' },
-        { status: 400 },
-      );
+    const usernameCheck = validateUsername(username);
+    if (!usernameCheck.ok) {
+      return json({ error: usernameCheck.error }, { status: 400 });
     }
 
     const existing = await env.DB.prepare('SELECT id FROM users WHERE username = ? AND id != ?')

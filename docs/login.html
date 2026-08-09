@@ -363,8 +363,8 @@
 
         <form id="login-input" onsubmit="handleLogin(event)">
           <div class="form-group">
-            <label for="login-email">Email</label>
-            <input type="email" id="login-email" placeholder="you@example.com" required>
+            <label for="login-email">Email or Username</label>
+            <input type="text" id="login-email" placeholder="you@example.com or username" required>
           </div>
 
           <div class="form-group">
@@ -393,9 +393,9 @@
         <form id="register-input" onsubmit="handleRegister(event)">
           <div class="form-group">
             <label for="register-username">Username</label>
-            <input type="text" id="register-username" placeholder="your_username" minlength="3" maxlength="20" pattern="[a-zA-Z0-9_]{3,20}" required>
+            <input type="text" id="register-username" placeholder="yourusername" minlength="3" maxlength="20" pattern="[a-zA-Z0-9]{3,20}" required>
             <small style="color: #5050aa; font-size: 11px; margin-top: 4px; display: block;">
-              3-20 characters: letters, numbers, underscores only
+              3-20 characters: letters and numbers only
             </small>
           </div>
 
@@ -527,7 +527,7 @@
 
     async function handleLogin(e) {
       e.preventDefault();
-      const email = document.getElementById('login-email').value;
+      const identifier = document.getElementById('login-email').value;
       const password = document.getElementById('login-password').value;
       const btn = e.target.querySelector('button');
       const originalText = btn.textContent;
@@ -539,7 +539,7 @@
         const res = await fetch(`${window.API_BASE}/api/auth/login`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ email, password }),
+          body: JSON.stringify({ identifier, password }),
         });
 
         const data = await res.json();
