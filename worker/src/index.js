@@ -536,6 +536,38 @@ export default {
       // still fell short, etc.) instead of staying stuck at a partial count
       // for the rest of the day like the incident that motivated this.
       ctx.waitUntil(runTop5Batch(env, ctx, now));
+
+      // Same safety net for Full Slate and Play of the Day — both are
+      // idempotent per ET day (an early "already generated" KV check), so
+      // calling them here is cheap (one KV get, no fetch) once they've
+      // succeeded. Added after a live incident where the 2am invocation's
+      // Top5 batch succeeded but Full Slate and POTD didn't (most likely a
+      // transient per-invocation subrequest/CPU-time limit, given a manual
+      // retry of both succeeded immediately with no code changes) — unlike
+      // Top5, neither had any retry at all, so a single bad 2am tick left
+      // both stuck empty/stale for the entire rest of the day.
+      ctx.waitUntil(runFullSlateBatch(env, ctx, now));
+      ctx.waitUntil(
+        runPotdDaily(env, ctx, now).then(async (result) => {
+          // Only notify if this tick is the one that actually generated
+          // today's pick for the first time — not on every skip once it
+          // already exists. (Top5/Picks notifications don't get this same
+          // retry-aware treatment yet: runTop5Batch's own "skipped" isn't a
+          // clean first-time signal the way POTD's is, since it can validly
+          // top up a partial board more than once — solving that without
+          // risking a duplicate "Pixel's Picks ready" email needs more
+          // thought than this fix, so it's left as a known gap.)
+          if (result && result.skipped === false) {
+            // runPotdDaily's own return only carries {pick}, not the
+            // AI writeup the primary 2am path notifies with — re-read the
+            // full stored record so a recovered pick's email looks the same
+            // either way.
+            return sendPotdNotifications(env, await getPotd(env, now)).catch((e) =>
+              console.error('Retried POTD notification failed:', e),
+            );
+          }
+        }),
+      );
     }
 
     // Every tick (now every 20 min, not gated to the top of the hour): refresh
