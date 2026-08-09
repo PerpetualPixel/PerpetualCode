@@ -14,7 +14,7 @@ function json(body, { status = 200, headers = {} } = {}) {
   });
 }
 
-function jwtSecret() {
+export function jwtSecret() {
   // TODO: In production, use a secret from environment variable (wrangler secret put JWT_SECRET)
   return 'perpetual-picks-dev-secret-change-in-production';
 }
@@ -48,34 +48,60 @@ async function sendVerificationEmail(env, email, token) {
   });
 }
 
+const USERNAME_PATTERN = /^[a-zA-Z0-9_]{3,20}$/;
+
 export async function handleRegister(request, env) {
   try {
-    const { email, password } = await request.json();
+    const { email, password, username, notifyEmail } = await request.json();
 
-    if (!email || !password) {
-      return json({ error: 'email and password required' }, { status: 400 });
+    if (!email || !password || !username) {
+      return json({ error: 'email, password, and username required' }, { status: 400 });
     }
 
     if (password.length < 8) {
       return json({ error: 'password must be at least 8 characters' }, { status: 400 });
     }
 
-    // Check if email already registered
-    const existing = await env.DB.prepare('SELECT id FROM users WHERE email = ?').bind(email).first();
-    if (existing) {
-      return json({ error: 'email already registered' }, { status: 409 });
+    if (!USERNAME_PATTERN.test(username)) {
+      return json(
+        { error: 'username must be 3-20 characters: letters, numbers, underscores only' },
+        { status: 400 },
+      );
     }
 
-    // Create new user
+    // Check if email or username already registered
+    const existing = await env.DB.prepare('SELECT id FROM users WHERE email = ? OR username = ?')
+      .bind(email, username)
+      .first();
+    if (existing) {
+      return json({ error: 'email or username already registered' }, { status: 409 });
+    }
+
+    // Create new user. The single "email me" signup checkbox covers both
+    // POTD and Pixel's Picks alerts together — Settings lets a user split
+    // them apart later. There is no SMS signup checkbox yet (disabled in the
+    // UI — see docs/login.html), so the *_sms columns stay at their DEFAULT
+    // 0 and are never set here.
     const id = generateId();
     const passwordHash = await hashPassword(password);
     const verificationToken = generateVerificationToken();
     const tokenExpires = Date.now() + 24 * 60 * 60 * 1000; // 24 hours
+    const notifyFlag = notifyEmail ? 1 : 0;
 
     await env.DB.prepare(
-      'INSERT INTO users (id, email, password_hash, email_verified, verification_token, verification_token_expires, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)',
+      `INSERT INTO users (
+        id, email, password_hash, username, email_verified,
+        verification_token, verification_token_expires,
+        notify_potd_email, notify_picks_email,
+        created_at, updated_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
     )
-      .bind(id, email, passwordHash, 0, verificationToken, tokenExpires, Date.now(), Date.now())
+      .bind(
+        id, email, passwordHash, username, 0,
+        verificationToken, tokenExpires,
+        notifyFlag, notifyFlag,
+        Date.now(), Date.now(),
+      )
       .run();
 
     // Send verification email
@@ -142,7 +168,7 @@ export async function handleLogin(request, env) {
     }
 
     const user = await env.DB.prepare(
-      'SELECT id, password_hash, email_verified FROM users WHERE email = ?',
+      'SELECT id, password_hash, email_verified, username FROM users WHERE email = ?',
     )
       .bind(email)
       .first();
@@ -163,7 +189,7 @@ export async function handleLogin(request, env) {
     // Generate JWT token (30-day expiry)
     const token = generateJWT({ userId: user.id, email }, jwtSecret());
 
-    return json({ token, userId: user.id, email });
+    return json({ token, userId: user.id, email, username: user.username });
   } catch (e) {
     console.error('Login error:', e);
     return json({ error: e.message }, { status: 500 });
@@ -180,7 +206,13 @@ export async function handleMe(request, env) {
       return json({ error: 'unauthorized' }, { status: 401 });
     }
 
-    const user = await env.DB.prepare('SELECT id, email, email_verified FROM users WHERE id = ?')
+    const user = await env.DB.prepare(
+      `SELECT id, email, email_verified, username, pending_email,
+              notify_potd_email, notify_picks_email,
+              notify_potd_sms, notify_picks_sms,
+              notify_tracking_report_email
+       FROM users WHERE id = ?`,
+    )
       .bind(payload.userId)
       .first();
 
@@ -188,7 +220,20 @@ export async function handleMe(request, env) {
       return json({ error: 'user not found' }, { status: 404 });
     }
 
-    return json({ id: user.id, email: user.email, verified: user.email_verified });
+    return json({
+      id: user.id,
+      email: user.email,
+      verified: Boolean(user.email_verified),
+      username: user.username,
+      pendingEmail: user.pending_email,
+      notifications: {
+        potdEmail: Boolean(user.notify_potd_email),
+        picksEmail: Boolean(user.notify_picks_email),
+        potdSms: Boolean(user.notify_potd_sms),
+        picksSms: Boolean(user.notify_picks_sms),
+        trackingReportEmail: Boolean(user.notify_tracking_report_email),
+      },
+    });
   } catch (e) {
     console.error('Me error:', e);
     return json({ error: e.message }, { status: 500 });

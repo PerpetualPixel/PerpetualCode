@@ -5,6 +5,13 @@ import {
   handleMe,
   verifyJWT,
 } from './auth-handlers.js';
+import {
+  handleUpdateUsername,
+  handleUpdatePassword,
+  handleRequestEmailChange,
+  handleConfirmEmailChange,
+  handleUpdateNotifications,
+} from './account-handlers.js';
 import { QuotaManager } from './quota.js';
 import { fetchContext, hasContext } from './context.js';
 import { fetchWeather, hasVenue } from './weather.js';
@@ -573,6 +580,31 @@ export default {
 
     if (pathname === '/api/auth/me' && request.method === 'GET') {
       const res = await handleMe(request, env);
+      return new Response(res.body, { status: res.status, headers: { ...cors, ...Object.fromEntries(res.headers) } });
+    }
+
+    if (pathname === '/api/account/username' && request.method === 'PUT') {
+      const res = await handleUpdateUsername(request, env);
+      return new Response(res.body, { status: res.status, headers: { ...cors, ...Object.fromEntries(res.headers) } });
+    }
+
+    if (pathname === '/api/account/password' && request.method === 'PUT') {
+      const res = await handleUpdatePassword(request, env);
+      return new Response(res.body, { status: res.status, headers: { ...cors, ...Object.fromEntries(res.headers) } });
+    }
+
+    if (pathname === '/api/account/email' && request.method === 'POST') {
+      const res = await handleRequestEmailChange(request, env);
+      return new Response(res.body, { status: res.status, headers: { ...cors, ...Object.fromEntries(res.headers) } });
+    }
+
+    if (pathname === '/api/account/email/confirm' && request.method === 'POST') {
+      const res = await handleConfirmEmailChange(request, env);
+      return new Response(res.body, { status: res.status, headers: { ...cors, ...Object.fromEntries(res.headers) } });
+    }
+
+    if (pathname === '/api/account/notifications' && request.method === 'PUT') {
+      const res = await handleUpdateNotifications(request, env);
       return new Response(res.body, { status: res.status, headers: { ...cors, ...Object.fromEntries(res.headers) } });
     }
 
