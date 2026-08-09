@@ -187,6 +187,19 @@ body {
   margin: 0 auto;
 }
 
+/* Width/centering only — .day-toggle-bar's other properties (display,
+   padding, background, border) are defined with the rest of the Full Slate
+   rules further down. Split out and placed here, before the responsive
+   max-width overrides below, so those overrides (min-width: 900px/1400px)
+   actually win the cascade the same way they already do for .topbar/
+   .top-tabs/#main — a single rule this far below those media queries would
+   otherwise always lose to them regardless of viewport, since source order
+   breaks the tie when specificity is equal. */
+.day-toggle-bar {
+  max-width: 620px;
+  margin: 0 auto;
+}
+
 .wordmark {
   margin: 0;
   font-family: var(--display);
@@ -3145,8 +3158,6 @@ input[type="range"]:focus-visible {
   align-items: center;
   gap: 10px;
   flex-wrap: wrap;
-  max-width: 620px;
-  margin: 0 auto;
   padding: 10px 20px;
   border-bottom: 1px solid var(--line);
   background: var(--surface-2);
