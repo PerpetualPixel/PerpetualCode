@@ -3659,6 +3659,7 @@ async function loadPixelPicks() {
     const res = await fetch(url, { headers: { Accept: 'application/json' } });
     const data = await res.json();
     pixelPicksRecords = data.picks ?? [];
+    updateNewIndicator(el.tabBoard, 'pp_picks_seen_date', pixelPicksRecords[0]?.dateKey ?? null);
   } catch (error) {
     el.picks.innerHTML = `<p class="empty">Couldn't reach the odds feed.
       ${esc(error.message)}</p>`;
@@ -4137,7 +4138,38 @@ function renderPotdCard(writeup, generatedAt, stale) {
     </article>`;
 }
 
+/**
+ * Pulses a top-tab (see .top-tab.has-new in styles.css) when the board it
+ * links to has content the user hasn't looked at yet — a new day's Play of
+ * the Day or Pixel's Picks, generated server-side, that they haven't opened
+ * this tab to see. `currentValue` is whatever uniquely identifies "today's"
+ * content (POTD's own `date`, or the first Pixel's Pick's `dateKey`); null
+ * means there's nothing to flag. Cleared by markTabSeen() below, called from
+ * setActiveTab the moment the user actually switches to that tab.
+ */
+function updateNewIndicator(tabEl, storageKey, currentValue) {
+  if (!currentValue) {
+    tabEl.classList.remove('has-new');
+    return;
+  }
+  const seen = loadJSON(storageKey, null);
+  tabEl.classList.toggle('has-new', seen !== currentValue);
+}
+
+function markTabSeen(storageKey, currentValue) {
+  if (!currentValue) return;
+  saveJSON(storageKey, currentValue);
+}
+
+let potdCurrentDate = null;
+
 function renderPotd(potd) {
+  // A stale fallback (yesterday's pick, shown because today's hasn't
+  // posted yet — see worker/src/potd.js's getPotd) isn't new content, so it
+  // never lights up the tab; only a genuine, freshly-posted day does.
+  potdCurrentDate = potd && !potd.stale ? potd.date : null;
+  updateNewIndicator(el.tabPotd, 'pp_potd_seen_date', potdCurrentDate);
+
   if (!potd) {
     el.potdBody.innerHTML = `<p class="empty">
       Nothing posted yet today. Play of the Day goes up once daily, around
@@ -4186,6 +4218,21 @@ function setActiveTab(tab) {
   // Pixel's Picks are both fixed daily sets locked server-side, with no
   // Today/Tomorrow of their own to choose.
   el.dayFilterBar.hidden = tab === 'potd' || tab === 'board';
+
+  // Viewing a tab is what "seen" means — clear its pulse the moment the
+  // user actually switches to it, using whatever date/dateKey that board's
+  // own loader last recorded (both load eagerly at boot, so this is already
+  // populated well before a click is possible in the common case). Only the
+  // tab actually being switched to clears — switching to Full Slate, say,
+  // must never silently mark Play of the Day as "seen" without it.
+  if (tab === 'potd') {
+    markTabSeen('pp_potd_seen_date', potdCurrentDate);
+    el.tabPotd.classList.remove('has-new');
+  }
+  if (tab === 'board') {
+    markTabSeen('pp_picks_seen_date', pixelPicksRecords[0]?.dateKey ?? null);
+    el.tabBoard.classList.remove('has-new');
+  }
 
   if (tab === 'potd') loadPotd();
   // Re-render from whatever's already loaded rather than re-fetching —
@@ -5208,6 +5255,7 @@ async function openLearningDashboard() {
   renderSlateLeagueOptions();
   renderFullSlate();
   await loadPixelPicks(); // Pixel's Picks is the worker's own 2am ET locked set, never re-picked client-side
+  await loadPotd(); // eager, not lazy-on-tab-click, so the "new pick" tab indicator can show before the user ever opens this tab
   refreshQualitativeSignals(); // fire-and-forget — enriches scores with form/H2H/injuries once loaded
 
   setStatus(

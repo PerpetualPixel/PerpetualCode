@@ -360,6 +360,33 @@ body {
 }
 .top-tab.is-active::after { opacity: 1; }
 
+/* A new day's Play of the Day / Pixel's Picks the user hasn't opened that
+   tab to see yet — see updateNewIndicator()/markTabSeen() in app.js. A
+   pulsing dot in the tab's corner rather than reusing .is-active's own
+   ::after underline, since a tab can be new and NOT currently active (the
+   whole point — it's flagging something on a tab you're not looking at). */
+.top-tab.has-new::before {
+  content: '';
+  position: absolute;
+  top: 6px;
+  right: 10px;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--magenta);
+  box-shadow: 0 0 8px 2px rgba(255, 0, 122, 0.7);
+  animation: tabNewPulse 1.6s ease-in-out infinite;
+}
+
+@keyframes tabNewPulse {
+  0%, 100% { transform: scale(1); opacity: 1; }
+  50% { transform: scale(1.4); opacity: 0.6; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .top-tab.has-new::before { animation: none; }
+}
+
 /* ---------------------------------------------------------------- */
 /* Play of the Day                                                    */
 /* ---------------------------------------------------------------- */
