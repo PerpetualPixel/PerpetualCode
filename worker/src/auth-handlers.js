@@ -35,14 +35,16 @@ async function sendVerificationEmail(env, email, token) {
       <div style="font-family: Arial, sans-serif; background: #05050A; color: #e0e0ff; padding: 20px;">
         <div style="max-width: 600px; margin: 0 auto; border: 1px solid #9d4edd; border-radius: 8px; padding: 30px; background: #0a0515;">
           <h2 style="color: #d946ef; margin-bottom: 20px;">Verify Your Email</h2>
-          <p>Welcome to PerpetualPicks! Click the link below to verify your email and complete your registration:</p>
-          <a href="${verifyUrl}" style="display: inline-block; background: linear-gradient(135deg, #d946ef 0%, #9d4edd 100%); color: #05050A; padding: 12px 24px; border-radius: 6px; text-decoration: none; font-weight: bold; margin: 20px 0;">Verify Email</a>
-          <p style="margin-top: 20px; color: #a0a0cc;">Or copy this link: <code style="background: #0f0f1a; padding: 4px 8px; border-radius: 4px;">${verifyUrl}</code></p>
-          <p style="margin-top: 30px; color: #7070aa; font-size: 12px;">This link expires in 24 hours.</p>
+          <p style="margin-bottom: 30px;">Welcome to PerpetualPicks! Click the button below to verify your email:</p>
+          <div style="text-align: center; margin: 30px 0;">
+            <a href="${verifyUrl}" style="display: inline-block; background: linear-gradient(135deg, #d946ef 0%, #9d4edd 100%); color: #05050A; padding: 14px 32px; border-radius: 8px; text-decoration: none; font-weight: bold; font-size: 16px; cursor: pointer;">Verify Email</a>
+          </div>
+          <p style="margin-top: 30px; color: #7070aa; font-size: 12px; text-align: center;">Link expires in 24 hours. If the button doesn't work, copy this link into your browser:</p>
+          <p style="text-align: center; color: #a0a0cc; font-size: 12px; word-break: break-all;">${verifyUrl}</p>
         </div>
       </div>
     `,
-    text: `Verify your email at: ${verifyUrl}\n\nThis link expires in 24 hours.`,
+    text: `Verify your email: ${verifyUrl}\n\nThis link expires in 24 hours.`,
   });
 }
 
