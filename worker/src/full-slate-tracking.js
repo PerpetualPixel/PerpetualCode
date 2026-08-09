@@ -26,6 +26,7 @@ import { isMma, isTennis } from '../../docs/insights.js';
 import { fetchSport, fetchScores } from './odds.js';
 import { pickRecordFrom, fetchFullSlateEvents } from './tracking.js';
 import { fetchMmaResults, gradeMmaPickWithFallback } from './ufc-events.js';
+import { isSettleableTennisMarket } from '../../docs/tennis-tiers.js';
 
 export const FULL_SLATE_BATCH_HOUR = 2; // 2am ET — same run as Pixel's Picks/Play of the Day
 // Matches tracking.js's own FLAT_UNIT_STAKE — duplicated for the same reason
@@ -111,8 +112,18 @@ export async function runFullSlateBatch(
 
   // analyze() is already sorted by score descending, so the first candidate
   // seen for a given eventId is that game's best — one pick per game.
+  //
+  // Tennis is the one exception: its spreads and totals are priced in games
+  // while /scores reports sets, so they can never be settled (see
+  // docs/tennis-tiers.js's isSettleableTennisMarket). Taking a tennis
+  // match's top-scoring candidate would routinely store a spread and
+  // guarantee a void instead of a result, which defeats the point of
+  // tracking every match. Tennis therefore takes its best MONEYLINE
+  // candidate — so every ATP/WTA match on the board still gets exactly one
+  // pick, and that pick is one that can actually be graded.
   const bestPerGame = new Map();
   for (const c of candidates) {
+    if (isTennis(c.sportKey) && !isSettleableTennisMarket(c.marketKey)) continue;
     if (!bestPerGame.has(c.eventId)) bestPerGame.set(c.eventId, c);
   }
 

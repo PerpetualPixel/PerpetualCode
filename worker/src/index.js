@@ -573,6 +573,42 @@ export default {
             runFullSlateBatch(env, ctx, now, { fetchFullSlate }),
             runPotdDaily(env, ctx, now, { fetchFullSlate }),
           ]);
+
+          // Warm each of the day's five Pixel's Picks write-ups now, so the
+          // board is complete the moment anyone opens it rather than the
+          // first visitor of the day paying a model call's latency per pick.
+          // Play of the Day already generates its own inside runPotdDaily.
+          //
+          // Runs after the batches (it reads what they just stored) and
+          // sequentially rather than in parallel — this invocation has
+          // already spent a full-slate fetch, and a burst of five model
+          // calls alongside it is exactly the per-invocation subrequest
+          // pressure that has bitten this cron before. Failures are
+          // swallowed per pick: an unwarmed analysis just falls back to the
+          // existing on-demand /analysis path, so this is strictly a
+          // latency optimization and can never cost the day's picks.
+          try {
+            for (const pick of await getTop5(env, { now })) {
+              await getOrGenerateAnalysis(
+                {
+                  eventId: pick.eventId,
+                  sportKey: pick.sportKey,
+                  sportTitle: '',
+                  home: pick.home,
+                  away: pick.away,
+                  // Must match the /analysis route's own candidate exactly —
+                  // eventId + outcomeName are the analysis cache key, so a
+                  // mismatch here would warm a key no client ever reads.
+                  outcomeName: pick.outcomeName,
+                },
+                env,
+                ctx,
+                now,
+              ).catch(() => null);
+            }
+          } catch {
+            /* prewarm is best-effort; the on-demand path still covers it */
+          }
         })(),
       );
     } else if (etHour(now) > TOP5_BATCH_HOUR) {

@@ -228,6 +228,20 @@ export const TIER_MARKETS = {
   [TIER_CHALLENGER]: new Set(['h2h']),
 };
 
+/**
+ * Whether a tennis market can be SETTLED at all with this pipeline —
+ * independent of tier, because it's a data constraint rather than a risk
+ * policy. Only the moneyline can: spreads and totals are priced in games
+ * while /scores reports sets, with no games-level result anywhere to settle
+ * them against (see gradeTennis in docs/learning.js). Tracking one would
+ * write a guaranteed void into the record instead of a real result, so
+ * every surface that picks one candidate per match should use this to reach
+ * for the moneyline rather than the highest-scoring unsettleable line.
+ */
+export function isSettleableTennisMarket(marketKey) {
+  return marketKey === 'h2h';
+}
+
 /** Whether one market is eligible to be TRACKED (i.e. bet and graded) at this tier. */
 export function isMarketAllowedForTier(marketKey, tier) {
   if (!tier) return true; // non-tennis — this policy doesn't apply
