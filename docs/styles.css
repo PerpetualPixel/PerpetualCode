@@ -2357,6 +2357,18 @@ input[type="range"]:focus-visible {
 
 .slate-league-select {
   flex: 1;
+  /* A bare `flex: 1` doesn't override a flex item's default min-width:auto,
+     which for a <select> resolves to its content's intrinsic min-content
+     width — normally invisible, but MMA's #slateEventSelect can carry a
+     genuinely long option ("UFC 330: Makhachev vs. Machado Garry: 12
+     fights"), and without this, that intrinsic width wins over flex-shrink
+     and the select refuses to shrink below it. On a narrow phone screen
+     that's wider than the viewport itself, which pushes the whole page
+     into a horizontal-overflow-driven zoomed-out render — confirmed
+     against a live MMA vs. tennis screenshot comparison, where MMA (long
+     event names) rendered visibly smaller than tennis (short ones) despite
+     an identical device width. min-width: 0 lets flex-shrink actually work. */
+  min-width: 0;
   background: var(--surface);
   border: 1px solid var(--line);
   border-radius: var(--radius);
@@ -2365,6 +2377,13 @@ input[type="range"]:focus-visible {
   font-size: 0.8rem;
   padding: 10px 12px;
   min-height: 42px;
+  /* Native <select> text-overflow support is inconsistent across browsers
+     once the box is actually constrained (some clip, some don't shrink the
+     rendered text at all) — these make the intent explicit where it is
+     honored, and are harmless where it isn't. */
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 .slate-league-select:disabled { opacity: 0.5; }
 
