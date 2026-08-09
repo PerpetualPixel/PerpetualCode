@@ -1802,6 +1802,13 @@ input[type="range"]:focus-visible {
 }
 .stats-table tr:last-child td { border-bottom: none; }
 .stats-table tr.is-best td { color: var(--accent); }
+.stats-table td a {
+  color: inherit;
+  text-decoration: underline;
+  text-decoration-color: var(--line);
+  text-underline-offset: 2px;
+}
+.stats-table td a:hover { text-decoration-color: currentColor; }
 
 .empty-inline {
   color: var(--muted);

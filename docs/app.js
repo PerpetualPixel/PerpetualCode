@@ -26,6 +26,7 @@ import {
   formatAmerican,
   confidenceColor,
   bookOffers,
+  bookIdFor,
   impliedProb,
   americanToDecimal,
   suggestedParlayStake,
@@ -1554,12 +1555,6 @@ function setStatsDrawerOpen(open) {
   setAsideOpen(el.statsDrawer, statsDrawerToggleStub, open, { focusEl: el.statsDrawerClose });
 }
 
-function renderStatsSkeleton() {
-  return `<div class="stats-skeleton">${
-    Array.from({ length: 6 }, () => '<div class="stats-skeleton-row"></div>').join('')
-  }</div>`;
-}
-
 /** Every book's price on this exact line, sorted best to worst, with the
  * implied probability that price carries — the same quotes already backing
  * the book buttons on the compact card, just as a full table instead of a
@@ -1567,12 +1562,21 @@ function renderStatsSkeleton() {
 function renderPriceTable(leg) {
   if (!leg.quotes?.length) return '';
   const sorted = [...leg.quotes].sort((a, b) => b.decimal - a.decimal);
-  const rows = sorted.map((q, i) => `
+  const rows = sorted.map((q, i) => {
+    // Only books in the SPORTSBOOKS registry get a homepage link — an
+    // unlisted book (one The Odds API prices but this app doesn't have a
+    // registry entry for) still shows its price, just as plain text.
+    const registryUrl = SPORTSBOOKS[bookIdFor(q.bookKey)]?.url;
+    const bookCell = registryUrl
+      ? `<a href="${esc(registryUrl)}" target="_blank" rel="noopener noreferrer">${esc(q.book)}</a>`
+      : esc(q.book);
+    return `
     <tr class="${i === 0 ? 'is-best' : ''}">
-      <td>${esc(q.book)}</td>
+      <td>${bookCell}</td>
       <td>${esc(formatAmerican(q.american))}</td>
       <td>${(impliedProb(q.american) * 100).toFixed(1)}%</td>
-    </tr>`).join('');
+    </tr>`;
+  }).join('');
 
   return `
     <div class="stats-section">
@@ -2243,17 +2247,40 @@ function renderMmaBreakdown(mmaContext, subjectName, leg = null) {
 }
 
 /**
- * Open the More Stats drawer for one leg: show a skeleton immediately, then
- * fill in the full breakdown once research resolves. Reuses the exact same
- * cached fetches (tennisArchive/mmaContextFor/eventContext/weatherFor) the
- * compact card's "why" panel already triggers — opening this for a leg
- * whose "why" panel is already open costs no extra network call.
+ * Open the More Stats drawer for one leg: paint the bet itself (selection,
+ * price, suggested stake) and the full book-by-book price table immediately,
+ * then fill in the slower research sections once they resolve. Reuses the
+ * exact same cached fetches (tennisArchive/mmaContextFor/eventContext/
+ * weatherFor) the compact card's "why" panel already triggers — opening this
+ * for a leg whose "why" panel is already open costs no extra network call.
  */
 async function openStatsDrawer(leg, opposite = null, { fullscreen = false } = {}) {
   el.statsDrawer.classList.toggle('is-fullscreen', fullscreen);
   el.statsDrawerTitle.textContent = leg.selection;
-  el.statsDrawerBody.innerHTML = renderStatsSkeleton();
   setStatsDrawerOpen(true);
+
+  const awayLogo = teamLogoUrl(leg.sportKey, leg.away);
+  const homeLogo = teamLogoUrl(leg.sportKey, leg.home);
+  const metaHtml = `<p class="stats-meta">` +
+    `<strong>` +
+    `${awayLogo ? `<img class="stats-meta-logo" src="${esc(awayLogo)}" alt="" loading="lazy">` : ''}${esc(leg.away)} @ ` +
+    `${homeLogo ? `<img class="stats-meta-logo" src="${esc(homeLogo)}" alt="" loading="lazy">` : ''}${esc(leg.home)}` +
+    `</strong> · ${esc(leg.marketLabel)} · ` +
+    `${esc(dateFmt.format(new Date(leg.commenceMs)))}</p>`;
+  const mainPlayHtml = `
+    <div class="main-play-callout">
+      <div class="main-play-label">Main Play</div>
+      <div class="main-play-selection">${esc(leg.selection)} <span class="main-play-price">${esc(formatAmerican(leg.american))}</span></div>
+      ${stakeLineHtml(suggestedStake(leg), 'main-play-stake')}
+    </div>`;
+
+  // Fast initial paint: the bet itself (selection, price, suggested stake)
+  // and every book's price on this exact line render immediately, with no
+  // wait on the network calls below — a market-cell click is "what can I
+  // bet, and where," and that shouldn't sit behind an AI writeup or a
+  // weather lookup. The slower research sections stream in on top of this
+  // once they resolve; see the final innerHTML replace below.
+  el.statsDrawerBody.innerHTML = metaHtml + mainPlayHtml + renderPriceTable(leg);
 
   const stake = singleStakeLine(leg);
 
@@ -2417,22 +2444,8 @@ async function openStatsDrawer(leg, opposite = null, { fullscreen = false } = {}
   // back up to remember what "More Info" was even about. Deliberately just
   // the selection, price, and stake (all already established above) — no
   // new claim gets introduced this late in the card.
-  const mainPlayHtml = `
-    <div class="main-play-callout">
-      <div class="main-play-label">Main Play</div>
-      <div class="main-play-selection">${esc(leg.selection)} <span class="main-play-price">${esc(formatAmerican(leg.american))}</span></div>
-      ${stakeLineHtml(suggestedStake(leg), 'main-play-stake')}
-    </div>`;
-
-  const awayLogo = teamLogoUrl(leg.sportKey, leg.away);
-  const homeLogo = teamLogoUrl(leg.sportKey, leg.home);
   el.statsDrawerBody.innerHTML =
-    `<p class="stats-meta">` +
-    `<strong>` +
-    `${awayLogo ? `<img class="stats-meta-logo" src="${esc(awayLogo)}" alt="" loading="lazy">` : ''}${esc(leg.away)} @ ` +
-    `${homeLogo ? `<img class="stats-meta-logo" src="${esc(homeLogo)}" alt="" loading="lazy">` : ''}${esc(leg.home)}` +
-    `</strong> · ${esc(leg.marketLabel)} · ` +
-    `${esc(dateFmt.format(new Date(leg.commenceMs)))}</p>` +
+    metaHtml +
     renderWeatherPills(weather) +
     priceHtml +
     devilHtml +
