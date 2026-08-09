@@ -2133,6 +2133,7 @@ input[type="range"]:focus-visible {
 @media (min-width: 900px) {
   .topbar,
   .top-tabs,
+  .day-toggle-bar,
   #main {
     max-width: 1400px;
   }
@@ -2157,12 +2158,17 @@ input[type="range"]:focus-visible {
 @media (min-width: 1400px) {
   .topbar,
   .top-tabs,
+  .day-toggle-bar,
   #main {
     max-width: 1760px;
   }
 
   .picks {
     grid-template-columns: repeat(auto-fill, minmax(380px, 1fr));
+  }
+
+  .slate-event-section {
+    grid-template-columns: repeat(auto-fill, minmax(480px, 1fr));
   }
 }
 
@@ -2222,6 +2228,7 @@ input[type="range"]:focus-visible {
 .slate-league-tokens {
   display: flex;
   flex-wrap: wrap;
+  justify-content: center;
   gap: 10px;
   margin: 14px 0 4px;
 }
@@ -2286,13 +2293,21 @@ input[type="range"]:focus-visible {
   gap: 0;
 }
 
-/* Chronological event grouping */
+/* Chronological event grouping. Each section is one header (e.g. "WTA
+   CANADIAN OPEN") plus every game card under it, all in one wrapper — the
+   grid therefore belongs here, not on .slate-body (which just stacks
+   sections vertically, one below another). Single column by default;
+   widened at the same breakpoints .picks already uses below. */
 .slate-event-section {
+  display: grid;
+  grid-template-columns: 1fr;
+  gap: 12px;
   margin-bottom: 24px;
   animation: slideInUp 0.5s ease-out;
 }
 
 .slate-event-header {
+  grid-column: 1 / -1;
   font-family: var(--mono);
   font-size: 0.9rem;
   font-weight: 700;
@@ -2325,7 +2340,6 @@ input[type="range"]:focus-visible {
   overflow: hidden;
   animation: slideInUp 0.4s ease-out;
   transition: transform 200ms cubic-bezier(0.34, 1.56, 0.64, 1), box-shadow 200ms ease;
-  margin-bottom: 12px;
   box-shadow: var(--shadow-sm);
 }
 .slate-game::before {
@@ -2588,8 +2602,11 @@ input[type="range"]:focus-visible {
      complaint: the name sat at the far left and the price columns sat at the
      far right with a huge dead gap between them. Multiple games side by side
      — the same pattern .picks already uses — fixes that and uses the wider
-     screen for more games visible at once, instead of one wider row. */
-  .slate-body {
+     screen for more games visible at once, instead of one wider row.
+     Targets .slate-event-section (the actual grid container — see its own
+     rule above) rather than .slate-body, which only ever stacks sections
+     vertically and was never a grid. */
+  .slate-event-section {
     grid-template-columns: repeat(auto-fill, minmax(460px, 1fr));
     align-items: start;
   }
@@ -3128,7 +3145,9 @@ input[type="range"]:focus-visible {
   align-items: center;
   gap: 10px;
   flex-wrap: wrap;
-  padding: 10px 16px;
+  max-width: 620px;
+  margin: 0 auto;
+  padding: 10px 20px;
   border-bottom: 1px solid var(--line);
   background: var(--surface-2);
 }
