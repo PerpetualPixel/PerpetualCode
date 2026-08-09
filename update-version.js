@@ -61,3 +61,32 @@ export const BUILD_INFO = {
 
 fs.writeFileSync(versionPath, versionContent);
 console.log(`✅ Updated version.js: v${currentVersion} (${commit}) @ ${builtAt}`);
+
+// Cache-bust the two entry points index.html loads directly (styles.css,
+// app.js) by stamping the same version onto their URL as a query string —
+// GitHub Pages serves both with no cache-busting otherwise, so a browser
+// that already cached an old copy can keep serving it after a deploy until
+// that cache happens to expire on its own. Changing the URL on every
+// version bump forces a fresh fetch instead. Idempotent: replaces any
+// previous ?v=... rather than appending a new one each run. Scoped to just
+// these two entry points rather than every module app.js imports — in
+// practice a change to any imported file (engine.js, config.js, etc.) ships
+// alongside an app.js change in the same commit, so busting app.js's own
+// cache key covers the real-world case without query-stringing every import
+// specifier individually.
+const indexPath = path.join(__dirname, 'docs', 'index.html');
+try {
+  let indexHtml = fs.readFileSync(indexPath, 'utf8');
+  indexHtml = indexHtml.replace(
+    /(href="styles\.css)(\?v=[^"]*)?(")/,
+    `$1?v=${currentVersion}$3`,
+  );
+  indexHtml = indexHtml.replace(
+    /(src="app\.js)(\?v=[^"]*)?(")/,
+    `$1?v=${currentVersion}$3`,
+  );
+  fs.writeFileSync(indexPath, indexHtml);
+  console.log(`✅ Cache-busted styles.css and app.js in index.html to ?v=${currentVersion}`);
+} catch (e) {
+  console.warn('Could not cache-bust index.html:', e.message);
+}
