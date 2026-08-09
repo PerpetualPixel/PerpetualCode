@@ -40,6 +40,31 @@ export const RULES = {
   MIN_KELLY_FRACTION: 0.0025,
 };
 
+/**
+ * A second, TIGHTER price ceiling for the low-variance markets added on top
+ * of this app's original team-market board (player props, MLS's BTTS/
+ * double-chance) — does not touch RULES.MIN_AMERICAN (-250), which stays
+ * "the hard price band from the spec" for h2h/spreads/totals/
+ * alternate_spreads exactly as before. Heavy juice on a bet whose entire
+ * pitch is being low-variance defeats the point of it: -140 or worse is
+ * paying too much to lay off risk on a market that's supposed to already be
+ * the safer play.
+ */
+export const LOW_VARIANCE_MAX_AMERICAN = -135;
+export const LOW_VARIANCE_MARKETS = new Set([
+  'btts', 'double_chance',
+  'pitcher_outs', 'pitcher_strikeouts',
+  'player_pass_completions', 'player_pass_attempts',
+  'player_points_rebounds_assists', 'player_rebounds_assists',
+  'player_shots_on_goal',
+]);
+
+/** True for every candidate EXCEPT a low-variance-market one priced worse than LOW_VARIANCE_MAX_AMERICAN. */
+export function clearsMaxJuice(candidate) {
+  if (!LOW_VARIANCE_MARKETS.has(candidate.marketKey)) return true;
+  return candidate.american >= LOW_VARIANCE_MAX_AMERICAN;
+}
+
 const MARKET_LABELS = {
   h2h: 'Moneyline',
   spreads: 'Spread',
@@ -54,6 +79,11 @@ const MARKET_LABELS = {
   // its own terms — more game-handicap points than the featured board offers
   // — just not what "sets" would imply.
   alternate_spreads: 'Alt Spread',
+  // Soccer-only, MLS's own low-variance alternative to a 3-way moneyline
+  // (see docs/soccer-markets.js) — both settle straight from the same free
+  // final score every other market here already uses, no new data source.
+  btts: 'Both Teams to Score',
+  double_chance: 'Double Chance',
 };
 
 /* ------------------------------------------------------------------ */

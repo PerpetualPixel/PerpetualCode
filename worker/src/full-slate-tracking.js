@@ -20,7 +20,7 @@
  * (every shared dashboard rendering helper depends on its exact field list),
  * so it's imported from tracking.js rather than re-implemented here.
  */
-import { analyze } from '../../docs/engine.js';
+import { analyze, clearsMaxJuice } from '../../docs/engine.js';
 import { gradePick } from '../../docs/learning.js';
 import { isMma, isTennis } from '../../docs/insights.js';
 import { fetchSport, fetchScores } from './odds.js';
@@ -129,6 +129,11 @@ export async function runFullSlateBatch(
   for (const c of candidates) {
     const settleable = isSettleableTennisMarket(c.marketKey) || hasSecondarySettlementSource(c.sportKey, c.marketKey);
     if (isTennis(c.sportKey) && !settleable) continue;
+    // Low-variance markets (player props, MLS's BTTS/double-chance) get
+    // their own tighter price ceiling (docs/engine.js's
+    // LOW_VARIANCE_MAX_AMERICAN) — an overpriced one simply isn't eligible
+    // to be this game's one pick, same as an unsettleable tennis line above.
+    if (!clearsMaxJuice(c)) continue;
     if (!bestPerGame.has(c.eventId)) bestPerGame.set(c.eventId, c);
   }
 

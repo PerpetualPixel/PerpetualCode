@@ -34,7 +34,7 @@
  * exists as a real feature while the equivalent NBA/NFL asks do not yet.
  */
 
-import { scoreCandidate, RULES, suggestedStake } from '../../docs/engine.js';
+import { scoreCandidate, RULES, suggestedStake, clearsMaxJuice } from '../../docs/engine.js';
 import {
   buildPitcherPropCandidates,
   gradePitcherProp,
@@ -303,6 +303,7 @@ export async function runMlbPropsScan(
   const cleared = adjusted.filter((c) => {
     if (c.ev <= RULES.MIN_EV_PCT) return false;
     if (suggestedStake(c) < RULES.MIN_KELLY_FRACTION) return false;
+    if (!clearsMaxJuice(c)) return false;
     return !propLiquidityBlock(c, now);
   });
 

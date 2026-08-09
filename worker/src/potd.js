@@ -24,7 +24,7 @@
  * written, nothing overwrites it.
  */
 
-import { analyze, RULES, formatAmerican, suggestedStake } from '../../docs/engine.js';
+import { analyze, RULES, formatAmerican, suggestedStake, clearsMaxJuice } from '../../docs/engine.js';
 import { buildInsights, insightsByTier, isTennis, isMma } from '../../docs/insights.js';
 import { gradePick } from '../../docs/learning.js';
 import { fetchContext, hasContext } from './context.js';
@@ -327,6 +327,10 @@ export async function runPotdDaily(env, ctx, now = Date.now(), { fetchFullSlate 
     if (c.score < RULES.MIN_SCORE) return false;
     if (isExhibition(c)) return false;
     if (c.american < POTD_MIN_AMERICAN || c.american > POTD_MAX_AMERICAN) return false;
+    // Low-variance markets (player props, MLS's BTTS/double-chance) get
+    // their own tighter price ceiling on top of POTD's own band — see
+    // docs/engine.js's LOW_VARIANCE_MAX_AMERICAN.
+    if (!clearsMaxJuice(c)) return false;
     if (c.commenceMs <= now) return false;
     if (isSegmentPaused(c, pausedSegments)) return false;
     if (isTennis(c.sportKey)) return isEligibleTennisMatch(c.commenceMs, now);

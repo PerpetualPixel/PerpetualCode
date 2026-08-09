@@ -25,11 +25,11 @@
  * single, server-side, always-on history that doesn't depend on anyone
  * having the app open.
  */
-import { analyze, topPicks } from '../../docs/engine.js';
+import { analyze, topPicks, clearsMaxJuice } from '../../docs/engine.js';
 import { gradePick } from '../../docs/learning.js';
 import { isMma, isTennis } from '../../docs/insights.js';
 import { CONFIG } from '../../docs/config.js';
-import { fetchSport, fetchScores, fetchCatalogue } from './odds.js';
+import { fetchSport, fetchScores, fetchCatalogue, UPSTREAM, REGIONS, DEFAULT_CACHE_SECONDS } from './odds.js';
 import { getAlgoConfig, getPausedSegments, isSegmentPaused } from './algo-health.js';
 import { getLearningProfile, applyLearningToCandidates } from './daily-learning.js';
 import { fetchMmaResults, gradeMmaPickWithFallback } from './ufc-events.js';
@@ -138,6 +138,65 @@ async function fullSlateSportKeys(env, ctx) {
   return [...FIXED_SPORT_KEYS, ...tennisKeys];
 }
 
+// MLS's low-variance alternative markets (docs/soccer-markets.js) — not
+// part of the shared MARKETS constant every other sport's featured pull
+// uses, since requesting them for every sport would spend credits on
+// markets no other sport prices. A second, small featured-endpoint call
+// scoped to MLS alone (2 markets x 1 region = 2 credits), merged onto the
+// matching MLS events by book before analyze() ever sees them — so BTTS/
+// double-chance flow through the exact same generic candidate-building and
+// selection pipeline every other market already does, no special-casing
+// needed downstream. fetchFullSlateEvents only runs ~1-2x/day in practice
+// (see its callers), so this stays negligible.
+const MLS_EXTRA_MARKETS = 'btts,double_chance';
+
+async function fetchMlsExtraMarkets(env, ctx) {
+  const ttl = Number(env.CACHE_SECONDS ?? DEFAULT_CACHE_SECONDS);
+  const cacheKey = new Request(`https://pixel-pick.cache/odds/soccer_usa_mls?markets=${MLS_EXTRA_MARKETS}&regions=${REGIONS}`);
+  const cache = caches.default;
+
+  const cached = await cache.match(cacheKey);
+  if (cached) return cached.json();
+
+  const url = new URL(`${UPSTREAM}/sports/soccer_usa_mls/odds`);
+  url.searchParams.set('apiKey', (env.ODDS_API_KEY ?? '').trim());
+  url.searchParams.set('regions', REGIONS);
+  url.searchParams.set('markets', MLS_EXTRA_MARKETS);
+  url.searchParams.set('oddsFormat', 'american');
+  url.searchParams.set('dateFormat', 'iso');
+
+  try {
+    const upstream = await fetch(url.toString());
+    if (!upstream.ok) return [];
+    const body = await upstream.text();
+    ctx.waitUntil(cache.put(cacheKey, new Response(body, {
+      headers: { 'Content-Type': 'application/json', 'Cache-Control': `max-age=${ttl}` },
+    })));
+    return JSON.parse(body);
+  } catch {
+    return [];
+  }
+}
+
+/** Merges each MLS event's extra-market bookmaker entries into the matching base event, by book key, appending rather than replacing that book's existing markets. */
+function mergeExtraMarkets(baseEvents, extraEvents) {
+  const extraById = new Map(extraEvents.map((e) => [e.id, e]));
+  for (const event of baseEvents) {
+    const extra = extraById.get(event.id);
+    if (!extra) continue;
+    for (const extraBook of extra.bookmakers ?? []) {
+      let book = event.bookmakers?.find((b) => b.key === extraBook.key);
+      if (!book) {
+        book = { key: extraBook.key, title: extraBook.title, last_update: extraBook.last_update, markets: [] };
+        event.bookmakers = event.bookmakers ?? [];
+        event.bookmakers.push(book);
+      }
+      book.markets.push(...(extraBook.markets ?? []));
+    }
+  }
+  return baseEvents;
+}
+
 /** Every event across the full slate, merged — sports that failed to fetch just contribute nothing rather than failing the whole batch. */
 export async function fetchFullSlateEvents(env, ctx) {
   const keys = await fullSlateSportKeys(env, ctx);
@@ -145,6 +204,9 @@ export async function fetchFullSlateEvents(env, ctx) {
   const events = [];
   for (const r of results) {
     if (r.events) events.push(...r.events);
+  }
+  if (keys.includes('soccer_usa_mls')) {
+    mergeExtraMarkets(events, await fetchMlsExtraMarkets(env, ctx));
   }
   // Collapse co-sanctioned / renamed tennis listings (Canadian Open ==
   // National Bank Open == ATP Montreal) to one event apiece. The existing
@@ -321,6 +383,10 @@ export async function runTop5Batch(
         if (!isMarketAllowedForTier(c.marketKey, tier)) return false;
         return !tierLiquidityBlock(c, tier, now);
       })
+      // Low-variance markets (player props, MLS's BTTS/double-chance) get
+      // their own tighter price ceiling — see docs/engine.js's
+      // LOW_VARIANCE_MAX_AMERICAN. Every other market is untouched.
+      .filter(clearsMaxJuice)
       .filter((c) => !existingEventIds.has(c.eventId)),
     learningProfile,
   );

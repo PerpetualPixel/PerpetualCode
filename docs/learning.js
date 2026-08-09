@@ -7,6 +7,8 @@
  * unmodified in both the browser and the Worker runtime.
  */
 
+import { gradeBtts, gradeDoubleChance } from './soccer-markets.js';
+
 /** A settled-but-not-a-bet outcome: stake returned, nothing won or lost. */
 function voidResult(reason) {
   return { void: true, reason, payout: 0 };
@@ -143,6 +145,8 @@ function gradeGeneric(pick, homeScore, awayScore) {
     if (total === point) return voidResult('push — total landed exactly on the number');
     return { won: pick.outcomeName === 'Over' ? total > point : total < point };
   }
+  if (pick.marketKey === 'btts') return gradeBtts(pick, homeScore, awayScore);
+  if (pick.marketKey === 'double_chance') return gradeDoubleChance(pick, homeScore, awayScore);
   return null; // unrecognized market — leave pending rather than guess
 }
 
