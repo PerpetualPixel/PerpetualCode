@@ -28,7 +28,7 @@
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Syne:wght@600;700;800&family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
-<link rel="stylesheet" href="styles.css?v=1.65">
+<link rel="stylesheet" href="styles.css?v=1.66">
 </head>
 <body>
 
@@ -642,21 +642,22 @@
         above, this section acts on its own: a sport + bet-type segment whose
         actual results fall significantly short of what its own no-vig fair
         probability predicted gets auto-paused (excluded from Pixel's Picks
-        and Play of the Day) until it recovers or you resume it below. If
-        overall performance is weak, one threshold (EV floor, Kelly floor, or
-        score floor) can tighten by one step, never below the shipped
+        and Play of the Day) until it recovers on its own or resumed by hand.
+        If overall performance is weak, one threshold (EV floor, Kelly floor,
+        or score floor) can tighten by one step, never below the shipped
         default. Anything bigger than a threshold nudge stays a written
-        proposal for you to act on by hand, never applied automatically.
+        proposal, never applied automatically. This panel is read-only —
+        every action here is a report of what the algorithm already did or
+        proposed, not a control for changing it.
       </p>
       <div id="algoHealthConfig" class="learning-table"></div>
       <div id="algoHealthPaused" class="learning-recs"></div>
       <div id="algoHealthLog" class="learning-recs"></div>
-      <button id="algoHealthResetBtn" class="action-btn" type="button">Reset Tuning to Defaults</button>
     </section>
 
   </div>
 </aside>
 
-<script type="module" src="app.js?v=1.65"></script>
+<script type="module" src="app.js?v=1.66"></script>
 </body>
 </html>

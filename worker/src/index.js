@@ -1013,7 +1013,17 @@ export default {
     // Manual early resume of one paused segment — the human-override
     // counterpart to the automatic, evidence-based resume the weekly review
     // does on its own. Body: {"key": "sportKey|marketKey"}.
+    // Both mutating algo-health routes are owner-only (same X-Owner-Key
+    // gate as /settings) — the Tracking Dashboard's UI no longer exposes
+    // either (removed: "Resume now" per paused segment, and "Reset Tuning
+    // to Defaults"), since the dashboard is meant to be view-only for every
+    // visitor. Left reachable by the owner directly (curl/a future admin
+    // tool) rather than removed outright — closing the UI button but
+    // leaving the route wide open would still let anyone who found the URL
+    // mutate the live algorithm tuning, which defeats the point.
     if (pathname === '/algo-health/resume' && request.method === 'POST') {
+      const auth = authorizeSettings(request, env);
+      if (!auth.ok) return json({ error: auth.error }, { status: auth.status, headers: cors });
       try {
         const body = await request.json().catch(() => ({}));
         if (!body.key) return json({ error: 'Missing "key"' }, { status: 400, headers: cors });
@@ -1026,9 +1036,10 @@ export default {
 
     // Manual full reset of the tuned config back to shipped defaults — does
     // not touch paused segments (those resume individually via the route
-    // above). Never run on a schedule; only ever hit by the dashboard's own
-    // "Reset to defaults" button.
+    // above). Never run on a schedule; only ever hit by the owner directly.
     if (pathname === '/algo-health/reset' && request.method === 'POST') {
+      const auth = authorizeSettings(request, env);
+      if (!auth.ok) return json({ error: auth.error }, { status: auth.status, headers: cors });
       try {
         const config = await resetAlgoConfigToDefaults(env);
         return json({ config }, { headers: cors });

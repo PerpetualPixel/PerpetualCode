@@ -674,7 +674,6 @@ const el = {
   algoHealthConfig: document.getElementById('algoHealthConfig'),
   algoHealthPaused: document.getElementById('algoHealthPaused'),
   algoHealthLog: document.getElementById('algoHealthLog'),
-  algoHealthResetBtn: document.getElementById('algoHealthResetBtn'),
 };
 
 const state = {
@@ -4873,7 +4872,6 @@ async function renderAlgoHealthSection() {
     ? paused.map((p) => `
       <div class="rec-item high">
         <strong>${esc(algoSegmentLabel(p.key))}</strong> paused since ${esc(new Date(p.pausedAt).toLocaleDateString())} — ${esc(p.reason ?? '')}
-        <button type="button" class="link-btn" data-algo-resume="${esc(p.key)}" style="margin-left:8px">Resume now</button>
       </div>`).join('')
     : `<div class="rec-item low">No segments currently paused.</div>`;
 
@@ -4887,35 +4885,6 @@ async function renderAlgoHealthSection() {
     : `<div class="rec-item">No actions or proposals yet. The first weekly review runs the next Monday 7am ET after enough graded history accumulates.</div>`;
 }
 
-document.body.addEventListener('click', async (event) => {
-  const button = event.target.closest('[data-algo-resume]');
-  if (!button || !CONFIG.WORKER_URL) return;
-  button.disabled = true;
-  try {
-    const url = new URL('/algo-health/resume', CONFIG.WORKER_URL);
-    await fetch(url, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ key: button.dataset.algoResume }),
-    });
-    await renderAlgoHealthSection();
-  } finally {
-    button.disabled = false;
-  }
-});
-
-el.algoHealthResetBtn?.addEventListener('click', async () => {
-  if (!CONFIG.WORKER_URL) return;
-  if (!confirm('Reset all algorithm tuning back to shipped defaults? Paused segments are not affected — resume those individually.')) return;
-  el.algoHealthResetBtn.disabled = true;
-  try {
-    const url = new URL('/algo-health/reset', CONFIG.WORKER_URL);
-    await fetch(url, { method: 'POST' });
-    await renderAlgoHealthSection();
-  } finally {
-    el.algoHealthResetBtn.disabled = false;
-  }
-});
 
 /**
  * Everything the Tracking Dashboard shows: the three server-tracked
