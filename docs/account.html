@@ -433,6 +433,12 @@
     async function loadAccount() {
       const res = await fetch(`${window.API_BASE}/api/auth/me`, { headers: authHeaders() });
       if (res.status === 401) {
+        // Token is dead (expired, or invalidated by "Sign Out Everywhere" /
+        // a password change elsewhere) — clear it before redirecting, or
+        // login.html's own "already logged in" check sees the stale token
+        // and immediately bounces straight back to index.html.
+        localStorage.removeItem(window.AUTH_TOKEN_KEY);
+        localStorage.removeItem(window.AUTH_USER_KEY);
         window.location.href = '/login.html';
         return null;
       }
