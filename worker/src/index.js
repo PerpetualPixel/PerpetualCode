@@ -1,14 +1,10 @@
 import {
-  generateTOTPSecret,
-  verifyTOTPToken,
-  getTOTPToken,
-  hashPassword,
-  verifyPassword,
-  generateId,
-  generateJWT,
+  handleRegister,
+  handleVerifyEmail,
+  handleLogin,
+  handleMe,
   verifyJWT,
-  getTOTPQRCode,
-} from './auth.js';
+} from './auth-handlers.js';
 import { QuotaManager } from './quota.js';
 import { fetchContext, hasContext } from './context.js';
 import { fetchWeather, hasVenue } from './weather.js';
@@ -189,149 +185,6 @@ async function fetchTennisAltSpread(sportKey, eventId, env, ctx) {
   return { event, cached: false };
 }
 
-function jwtSecret() {
-  // In production, use a secret from env.SECRET
-  return 'pixel-pick-dev-secret-change-in-production';
-}
-
-async function handleSignup(request, env) {
-  try {
-    const { email, password, phone } = await request.json();
-
-    if (!email || !password || !phone) {
-      return json({ error: 'email, password, and phone required' }, { status: 400 });
-    }
-
-    const user = await env.DB.prepare('SELECT id FROM users WHERE email = ?').bind(email).first();
-    if (user) {
-      return json({ error: 'Email already registered' }, { status: 409 });
-    }
-
-    const id = generateId();
-    const passwordHash = await hashPassword(password);
-    const totpSecret = generateTOTPSecret();
-
-    await env.DB.prepare(
-      'INSERT INTO users (id, email, password_hash, phone_number, totp_secret, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?)',
-    )
-      .bind(id, email, passwordHash, phone, totpSecret, Date.now(), Date.now())
-      .run();
-
-    const otpauth = getTOTPQRCode(email, totpSecret);
-
-    return json({ userId: id, qrCode: otpauth, totpSecret }, { status: 201 });
-  } catch (e) {
-    console.error('Signup error:', e);
-    return json({ error: e.message }, { status: 500 });
-  }
-}
-
-async function handleVerify2FA(request, env) {
-  try {
-    const { userId, totp } = await request.json();
-
-    if (!userId || !totp) {
-      return json({ error: 'userId and totp required' }, { status: 400 });
-    }
-
-    const user = await env.DB.prepare('SELECT totp_secret, verified FROM users WHERE id = ?')
-      .bind(userId)
-      .first();
-
-    if (!user) {
-      return json({ error: 'User not found' }, { status: 404 });
-    }
-
-    if (user.verified) {
-      return json({ error: 'User already verified' }, { status: 400 });
-    }
-
-    if (!verifyTOTPToken(user.totp_secret, totp)) {
-      return json({ error: 'Invalid TOTP code' }, { status: 401 });
-    }
-
-    await env.DB.prepare('UPDATE users SET verified = 1, updated_at = ? WHERE id = ?')
-      .bind(Date.now(), userId)
-      .run();
-
-    return json({ ok: true });
-  } catch (e) {
-    console.error('Verify 2FA error:', e);
-    return json({ error: e.message }, { status: 500 });
-  }
-}
-
-async function handleSignin(request, env) {
-  try {
-    const { email, password, totp } = await request.json();
-
-    if (!email || !password) {
-      return json({ error: 'email and password required' }, { status: 400 });
-    }
-
-    const user = await env.DB.prepare(
-      'SELECT id, password_hash, totp_secret, verified FROM users WHERE email = ?',
-    )
-      .bind(email)
-      .first();
-
-    if (!user) {
-      return json({ error: 'Invalid credentials' }, { status: 401 });
-    }
-
-    const pwValid = await verifyPassword(password, user.password_hash);
-    if (!pwValid) {
-      return json({ error: 'Invalid credentials' }, { status: 401 });
-    }
-
-    if (!user.verified) {
-      return json({ error: 'Email not verified', userId: user.id }, { status: 403 });
-    }
-
-    if (!totp) {
-      return json({ error: 'TOTP code required', userId: user.id, needsTOTP: true }, { status: 403 });
-    }
-
-    if (!verifyTOTPToken(user.totp_secret, totp)) {
-      return json({ error: 'Invalid TOTP code' }, { status: 401 });
-    }
-
-    const token = generateJWT(
-      { userId: user.id, email, exp: Math.floor(Date.now() / 1000) + 7 * 24 * 60 * 60 },
-      jwtSecret(),
-    );
-
-    return json({ token, userId: user.id });
-  } catch (e) {
-    console.error('Signin error:', e);
-    return json({ error: e.message }, { status: 500 });
-  }
-}
-
-async function handleMe(request, env) {
-  const auth = request.headers.get('Authorization') || '';
-  const token = auth.replace('Bearer ', '');
-  const payload = verifyJWT(token, jwtSecret());
-
-  if (!payload) {
-    return json({ error: 'Unauthorized' }, { status: 401 });
-  }
-
-  try {
-    const user = await env.DB.prepare('SELECT id, email, phone_number FROM users WHERE id = ?')
-      .bind(payload.userId)
-      .first();
-
-    if (!user) {
-      return json({ error: 'User not found' }, { status: 404 });
-    }
-
-    return json({ id: user.id, email: user.email, phone: user.phone_number });
-  } catch (e) {
-    console.error('Me error:', e);
-    return json({ error: e.message }, { status: 500 });
-  }
-}
 
 /** Sign-in is only enforced once REQUIRE_AUTH is switched on in wrangler.toml. */
 const authRequired = (env) => String(env.REQUIRE_AUTH ?? '') === 'true';
@@ -703,18 +556,18 @@ export default {
 
     const { pathname } = new URL(request.url);
 
-    if (pathname === '/api/auth/signup' && request.method === 'POST') {
-      const res = await handleSignup(request, env);
+    if (pathname === '/api/auth/register' && request.method === 'POST') {
+      const res = await handleRegister(request, env);
       return new Response(res.body, { status: res.status, headers: { ...cors, ...Object.fromEntries(res.headers) } });
     }
 
-    if (pathname === '/api/auth/verify-2fa' && request.method === 'POST') {
-      const res = await handleVerify2FA(request, env);
+    if (pathname === '/api/auth/verify-email' && request.method === 'POST') {
+      const res = await handleVerifyEmail(request, env);
       return new Response(res.body, { status: res.status, headers: { ...cors, ...Object.fromEntries(res.headers) } });
     }
 
-    if (pathname === '/api/auth/signin' && request.method === 'POST') {
-      const res = await handleSignin(request, env);
+    if (pathname === '/api/auth/login' && request.method === 'POST') {
+      const res = await handleLogin(request, env);
       return new Response(res.body, { status: res.status, headers: { ...cors, ...Object.fromEntries(res.headers) } });
     }
 

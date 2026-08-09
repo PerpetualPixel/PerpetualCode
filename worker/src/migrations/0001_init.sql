@@ -1,11 +1,11 @@
--- Users table
+-- Users table (email-based auth with verification)
 CREATE TABLE IF NOT EXISTS users (
   id TEXT PRIMARY KEY,
   email TEXT NOT NULL UNIQUE,
   password_hash TEXT NOT NULL,
-  phone_number TEXT NOT NULL UNIQUE,
-  totp_secret TEXT NOT NULL,
-  verified BOOLEAN DEFAULT FALSE,
+  email_verified INTEGER DEFAULT 0,
+  verification_token TEXT,
+  verification_token_expires INTEGER,
   created_at INTEGER NOT NULL,
   updated_at INTEGER NOT NULL
 );
