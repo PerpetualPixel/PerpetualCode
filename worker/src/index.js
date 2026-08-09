@@ -26,6 +26,7 @@ import {
 } from './mlb-stats.js';
 import { runMlbPropsScan, runMlbPropsGrading, getAllMlbPropsTracked } from './mlb-props.js';
 import { runNflPropsScan, runNflPropsGrading, getAllNflPropsTracked } from './nfl-props.js';
+import { runWnbaPropsScan, runWnbaPropsGrading, getAllWnbaPropsTracked } from './wnba-props.js';
 import { POTD_HOUR, runPotdDaily, runPotdClvSnapshot, runPotdGrading, getPotd, getPotdHistory } from './potd.js';
 import { getOrGenerateAnalysis } from './analysis.js';
 import {
@@ -536,6 +537,11 @@ export default {
     ctx.waitUntil(runNflPropsScan(env, ctx, now, { fetchFullSlate: () => fetchFullSlateEvents(env, ctx) }));
     ctx.waitUntil(runNflPropsGrading(env, ctx, now));
 
+    // Every tick: WNBA player props (PRA, Rebounds+Assists) — same per-game
+    // dynamic window, see worker/src/wnba-props.js.
+    ctx.waitUntil(runWnbaPropsScan(env, ctx, now, { fetchFullSlate: () => fetchFullSlateEvents(env, ctx) }));
+    ctx.waitUntil(runWnbaPropsGrading(env, ctx, now));
+
     // 3am ET: refresh the league-wide MLB batting/pitching snapshot "View
     // Stats" ranks every team against. Has to run standalone, with nothing
     // else in the same invocation — fetching all 30 teams alongside a live
@@ -583,13 +589,14 @@ export default {
               // tracker like Full Slate — so, like those two, they both feed
               // this review AND have their own runXPropsScan read its
               // weights back.
-              const [top5, slate, mlbProps, nflProps] = await Promise.all([
+              const [top5, slate, mlbProps, nflProps, wnbaProps] = await Promise.all([
                 getAllTrackedPicks(env, { now, days: LEARN_WINDOW_DAYS }),
                 getAllFullSlateTracked(env, { now, days: LEARN_WINDOW_DAYS }),
                 getAllMlbPropsTracked(env, { now, days: LEARN_WINDOW_DAYS }),
                 getAllNflPropsTracked(env, { now, days: LEARN_WINDOW_DAYS }),
+                getAllWnbaPropsTracked(env, { now, days: LEARN_WINDOW_DAYS }),
               ]);
-              return [...top5, ...slate, ...mlbProps, ...nflProps];
+              return [...top5, ...slate, ...mlbProps, ...nflProps, ...wnbaProps];
             },
           }).catch(() => null);
           await Promise.all([
@@ -937,6 +944,21 @@ export default {
         const daysParam = Number(searchParams.get('days'));
         const days = Number.isFinite(daysParam) && daysParam > 0 ? Math.min(daysParam, 90) : 90;
         const picks = await getAllNflPropsTracked(env, { days });
+        return json(
+          { picks },
+          { headers: { ...cors, 'Cache-Control': 'public, max-age=300' } },
+        );
+      } catch (error) {
+        return json({ picks: [], reason: String(error).slice(0, 120) }, { headers: cors });
+      }
+    }
+
+    if (pathname === '/wnba-props-history' && request.method === 'GET') {
+      try {
+        const { searchParams } = new URL(request.url);
+        const daysParam = Number(searchParams.get('days'));
+        const days = Number.isFinite(daysParam) && daysParam > 0 ? Math.min(daysParam, 90) : 90;
+        const picks = await getAllWnbaPropsTracked(env, { days });
         return json(
           { picks },
           { headers: { ...cors, 'Cache-Control': 'public, max-age=300' } },
