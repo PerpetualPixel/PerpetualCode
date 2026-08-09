@@ -3,6 +3,8 @@ import {
   handleVerifyEmail,
   handleLogin,
   handleMe,
+  handleForgotPassword,
+  handleResetPassword,
   verifyJWT,
   jwtSecret,
 } from './auth-handlers.js';
@@ -637,6 +639,16 @@ export default {
 
     if (pathname === '/api/auth/login' && request.method === 'POST') {
       const res = await handleLogin(request, env);
+      return new Response(res.body, { status: res.status, headers: { ...cors, ...Object.fromEntries(res.headers) } });
+    }
+
+    if (pathname === '/api/auth/forgot-password' && request.method === 'POST') {
+      const res = await handleForgotPassword(request, env);
+      return new Response(res.body, { status: res.status, headers: { ...cors, ...Object.fromEntries(res.headers) } });
+    }
+
+    if (pathname === '/api/auth/reset-password' && request.method === 'POST') {
+      const res = await handleResetPassword(request, env);
       return new Response(res.body, { status: res.status, headers: { ...cors, ...Object.fromEntries(res.headers) } });
     }
 

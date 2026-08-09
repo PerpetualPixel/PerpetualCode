@@ -356,7 +356,7 @@
       <div id="login-form" class="auth-section">
         <div class="logo">
           <img class="logo-mark" src="/assets/logo-full.png" alt="Perpetual Picks" width="220">
-          <div class="logo-sub">Sports Betting Engine</div>
+          <div class="logo-sub">Your Edge, Perpetually</div>
         </div>
 
         <div id="login-message"></div>
@@ -376,7 +376,61 @@
         </form>
 
         <div class="toggle-auth">
-          Don't have an account? <a onclick="toggleForms()">Create one</a>
+          <a onclick="toggleForms('forgot')">Forgot password?</a>
+        </div>
+        <div class="toggle-auth">
+          Don't have an account? <a onclick="toggleForms('register')">Create one</a>
+        </div>
+      </div>
+
+      <!-- Forgot Password Request Form (Hidden by default) -->
+      <div id="forgot-form" class="auth-section hidden">
+        <div class="logo">
+          <img class="logo-icon-mark" src="/assets/logo-icon-64.png" alt="" width="40">
+          <div class="logo-text">RESET PASSWORD</div>
+          <div class="logo-sub">We'll email you a link</div>
+        </div>
+
+        <div id="forgot-message"></div>
+
+        <form id="forgot-input" onsubmit="handleForgotPassword(event)">
+          <div class="form-group">
+            <label for="forgot-identifier">Email or Username</label>
+            <input type="text" id="forgot-identifier" placeholder="you@example.com or username" required>
+          </div>
+
+          <button type="submit" class="button">Send Reset Link</button>
+        </form>
+
+        <div class="toggle-auth">
+          Back to <a onclick="toggleForms('login')">login</a>
+        </div>
+      </div>
+
+      <!-- New Password Form (Hidden by default, shown via ?resetToken=) -->
+      <div id="reset-form" class="auth-section hidden">
+        <div class="logo">
+          <img class="logo-icon-mark" src="/assets/logo-icon-64.png" alt="" width="40">
+          <div class="logo-text">NEW PASSWORD</div>
+          <div class="logo-sub">Choose something you haven't used before</div>
+        </div>
+
+        <div id="reset-message"></div>
+
+        <form id="reset-input" onsubmit="handleResetPassword(event)">
+          <div class="form-group">
+            <label for="reset-password">New Password</label>
+            <input type="password" id="reset-password" placeholder="••••••••" minlength="8" required>
+            <small style="color: #5050aa; font-size: 11px; margin-top: 4px; display: block;">
+              Minimum 8 characters
+            </small>
+          </div>
+
+          <button type="submit" class="button">Set New Password</button>
+        </form>
+
+        <div class="toggle-auth">
+          Back to <a onclick="toggleForms('login')">login</a>
         </div>
       </div>
 
@@ -471,16 +525,16 @@
       el.innerHTML = message ? `<div class="${isError ? 'error' : 'success'}">${message}</div>` : '';
     }
 
-    function toggleForms(target = null) {
-      document.getElementById('login-form').classList.toggle('hidden');
-      document.getElementById('register-form').classList.toggle('hidden');
+    const AUTH_SECTION_IDS = ['login-form', 'register-form', 'verify-form', 'forgot-form', 'reset-form'];
 
-      if (target === 'login') {
-        document.getElementById('register-form').classList.add('hidden');
-        document.getElementById('login-form').classList.remove('hidden');
-      } else if (target === 'register') {
-        document.getElementById('login-form').classList.add('hidden');
-        document.getElementById('register-form').classList.remove('hidden');
+    // Shows exactly one auth section, hiding the rest — explicit rather
+    // than the old pairwise .toggle() (fine back when only login/register
+    // existed, broken once forgot/reset joined: toggling two classLists
+    // independently can't guarantee "exactly one visible" once there are
+    // more than two sections in play).
+    function toggleForms(target = 'login') {
+      for (const id of AUTH_SECTION_IDS) {
+        document.getElementById(id).classList.toggle('hidden', id !== `${target}-form`);
       }
     }
 
@@ -609,10 +663,97 @@
       }
     }
 
-    // Check if we're verifying email from URL param
+    async function handleForgotPassword(e) {
+      e.preventDefault();
+      const identifier = document.getElementById('forgot-identifier').value;
+      const btn = e.target.querySelector('button');
+      const originalText = btn.textContent;
+
+      try {
+        btn.disabled = true;
+        btn.innerHTML = '<span class="spinner"></span> Sending...';
+
+        const res = await fetch(`${window.API_BASE}/api/auth/forgot-password`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ identifier }),
+        });
+
+        const data = await res.json();
+
+        if (!res.ok) {
+          showMessage('forgot-message', data.error, true);
+          return;
+        }
+
+        // Same message whether or not an account matched — the worker
+        // deliberately doesn't distinguish (see handleForgotPassword's own
+        // comment), so the UI shouldn't either.
+        showMessage('forgot-message', data.message, false);
+        document.getElementById('forgot-input').reset();
+      } catch (err) {
+        showMessage('forgot-message', 'Connection failed: ' + err.message, true);
+      } finally {
+        btn.disabled = false;
+        btn.textContent = originalText;
+      }
+    }
+
+    // Populated by the ?resetToken= URL-param check below, read by
+    // handleResetPassword on submit — the reset form itself has no token
+    // field for the user to see or edit, it's just carried through.
+    let pendingResetToken = null;
+
+    async function handleResetPassword(e) {
+      e.preventDefault();
+      const newPassword = document.getElementById('reset-password').value;
+      const btn = e.target.querySelector('button');
+      const originalText = btn.textContent;
+
+      if (!pendingResetToken) {
+        showMessage('reset-message', 'Missing reset token — use the link from your email again.', true);
+        return;
+      }
+
+      try {
+        btn.disabled = true;
+        btn.innerHTML = '<span class="spinner"></span> Saving...';
+
+        const res = await fetch(`${window.API_BASE}/api/auth/reset-password`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ token: pendingResetToken, newPassword }),
+        });
+
+        const data = await res.json();
+
+        if (!res.ok) {
+          showMessage('reset-message', data.error, true);
+          return;
+        }
+
+        showMessage('reset-message', 'Password updated! Redirecting to login...', false);
+        pendingResetToken = null;
+        setTimeout(() => toggleForms('login'), 1500);
+      } catch (err) {
+        showMessage('reset-message', 'Connection failed: ' + err.message, true);
+      } finally {
+        btn.disabled = false;
+        btn.textContent = originalText;
+      }
+    }
+
+    // Check if we're verifying email, or resetting a password, from a URL param
     window.addEventListener('load', async () => {
       const params = new URLSearchParams(window.location.search);
       const token = params.get('token');
+      const resetToken = params.get('resetToken');
+
+      if (resetToken) {
+        pendingResetToken = resetToken;
+        toggleForms('reset');
+        window.history.replaceState({}, document.title, '/login.html');
+      }
 
       if (token) {
         // Auto-verify silently
@@ -626,28 +767,28 @@
           if (res.ok) {
             showMessage('verify-message', 'Email verified! Redirecting to login...', false);
             setTimeout(() => {
-              document.getElementById('verify-form').classList.add('hidden');
-              document.getElementById('login-form').classList.remove('hidden');
+              toggleForms('login');
               // Clear the token from URL
               window.history.replaceState({}, document.title, '/login.html');
             }, 2000);
           } else {
             const data = await res.json();
             showMessage('verify-message', data.error, true);
-            document.getElementById('verify-form').classList.remove('hidden');
-            document.getElementById('login-form').classList.add('hidden');
+            toggleForms('verify');
             document.getElementById('verify-token').value = token;
           }
         } catch (err) {
           showMessage('verify-message', 'Verification failed: ' + err.message, true);
-          document.getElementById('verify-form').classList.remove('hidden');
-          document.getElementById('login-form').classList.add('hidden');
+          toggleForms('verify');
         }
       }
 
-      // Check if already logged in
+      // Check if already logged in — but never steal the screen from an
+      // in-progress email verification or password reset even if this
+      // browser also happens to have an old session stored (e.g. a reset
+      // link opened on a device that's still logged in from before).
       const storedToken = localStorage.getItem(AUTH_TOKEN_KEY);
-      if (storedToken && !token) {
+      if (storedToken && !token && !resetToken) {
         window.location.href = '/index.html';
       }
     });
