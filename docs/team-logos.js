@@ -69,11 +69,23 @@ const NHL = {
   'vegas golden knights': 'vgk', 'washington capitals': 'wsh', 'winnipeg jets': 'wpg',
 };
 
+// Pulled live from ESPN's own /teams endpoint, not typed from memory —
+// includes the 2026-season expansion franchises (Golden State Valkyries,
+// Portland Fire, Toronto Tempo), which an older/remembered list would miss.
+const WNBA = {
+  'atlanta dream': 'atl', 'chicago sky': 'chi', 'connecticut sun': 'con',
+  'dallas wings': 'dal', 'golden state valkyries': 'gs', 'indiana fever': 'ind',
+  'las vegas aces': 'lv', 'los angeles sparks': 'la', 'minnesota lynx': 'min',
+  'new york liberty': 'ny', 'phoenix mercury': 'phx', 'portland fire': 'por',
+  'seattle storm': 'sea', 'toronto tempo': 'tor', 'washington mystics': 'wsh',
+};
+
 // The Odds API's sport_key -> ESPN's logo-path sport segment and this
 // module's abbreviation map.
 const LEAGUES = {
   americanfootball_nfl: { path: 'nfl', teams: NFL },
   basketball_nba: { path: 'nba', teams: NBA },
+  basketball_wnba: { path: 'wnba', teams: WNBA },
   baseball_mlb: { path: 'mlb', teams: MLB },
   icehockey_nhl: { path: 'nhl', teams: NHL },
 };
@@ -93,6 +105,19 @@ function fold(value) {
  * here (tennis, MMA, soccer) or the name didn't match — never a guessed or
  * generic placeholder image standing in for a real crest.
  */
+/**
+ * A team's ESPN abbreviation for one of the five leagues mapped above, or
+ * null when the sport isn't covered or the name didn't match. Exported so
+ * worker/src/*-props.js's ESPN schedule/boxscore lookups (which key off
+ * this abbreviation, not the full team name The Odds API hands back) reuse
+ * this one real, live-sourced map per league instead of retyping it.
+ */
+export function espnAbbr(sportKey, teamName) {
+  const league = LEAGUES[sportKey];
+  if (!league) return null;
+  return league.teams[fold(teamName)] ?? null;
+}
+
 export function teamLogoUrl(sportKey, teamName) {
   const league = LEAGUES[sportKey];
   if (!league) return null;

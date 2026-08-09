@@ -632,6 +632,8 @@ const el = {
   dailyLearnLog: document.getElementById('dailyLearnLog'),
   mlbPropsSummary: document.getElementById('mlbPropsSummary'),
   mlbPropsList: document.getElementById('mlbPropsList'),
+  nflPropsSummary: document.getElementById('nflPropsSummary'),
+  nflPropsList: document.getElementById('nflPropsList'),
   algoHealthConfig: document.getElementById('algoHealthConfig'),
   algoHealthPaused: document.getElementById('algoHealthPaused'),
   algoHealthLog: document.getElementById('algoHealthLog'),
@@ -4766,7 +4768,7 @@ el.algoHealthResetBtn?.addEventListener('click', async () => {
 async function renderLearningDashboard() {
   const top5Picks = await loadTrackerHistories();
   renderCalibrationReport(top5Picks);
-  await Promise.all([renderDailyLearningSection(), renderAlgoHealthSection(), renderMlbPropsSection()]);
+  await Promise.all([renderDailyLearningSection(), renderAlgoHealthSection(), renderMlbPropsSection(), renderNflPropsSection()]);
 }
 
 /** worker/src/mlb-props.js's own tracked-pick history — pitcher outs/strikeouts, each game scanned once 2-3 hours before its own first pitch. */
@@ -4809,6 +4811,54 @@ async function renderMlbPropsSection() {
 
   const byDate = [...picks].sort((a, b) => (b.dateKey ?? '').localeCompare(a.dateKey ?? '') || b.generatedAt - a.generatedAt);
   el.mlbPropsList.innerHTML = byDate.length
+    ? byDate.slice(0, 40).map((p) => {
+        const statusCls = p.status === 'won' ? 'low' : p.status === 'lost' ? 'high' : '';
+        const resultText = p.status === 'pending' ? 'pending'
+          : p.status === 'void' ? `void (${p.result?.voidReason ?? 'no action'})`
+          : `${p.status}${typeof p.result?.actual === 'number' ? ` — actual ${p.result.actual}` : ''}`;
+        return `<div class="rec-item ${statusCls}">
+          <strong>${esc(p.dateKey)}</strong> ${esc(p.selection)} (${formatAmerican(p.american)} at ${esc(p.book)}) — ${esc(resultText)}
+        </div>`;
+      }).join('')
+    : '';
+}
+
+/** worker/src/nfl-props.js's own tracked-pick history — QB pass completions/attempts, each game scanned once 2-3 hours before its own kickoff. */
+async function fetchNflProps() {
+  if (!CONFIG.WORKER_URL) return null;
+  try {
+    const url = new URL('/nfl-props-history', CONFIG.WORKER_URL);
+    url.searchParams.set('days', '30');
+    const res = await fetch(url, { headers: { Accept: 'application/json' } });
+    if (!res.ok) return null;
+    return await res.json();
+  } catch {
+    return null;
+  }
+}
+
+/** Renders the NFL QB Props section — same shape as renderMlbPropsSection. */
+async function renderNflPropsSection() {
+  if (!el.nflPropsSummary || !el.nflPropsList) return;
+  const data = await fetchNflProps();
+  if (!data) {
+    el.nflPropsSummary.innerHTML = `<p class="empty">Couldn't load NFL props data.</p>`;
+    el.nflPropsList.innerHTML = '';
+    return;
+  }
+
+  const picks = data.picks ?? [];
+  const summary = summarizePicks(picks);
+  el.nflPropsSummary.innerHTML = picks.length
+    ? `<div class="rec-item">
+        <strong>${summary.wins}-${summary.losses}</strong> (${summary.voided} void, ${summary.pending} pending) &middot;
+        ROI ${summary.roi >= 0 ? '+' : ''}${summary.roi.toFixed(1)}% &middot;
+        staked $${summary.staked.toFixed(0)}, net ${summary.net >= 0 ? '+' : ''}$${summary.net.toFixed(0)}
+      </div>`
+    : `<div class="rec-item">No QB props tracked yet — each game is scanned once it's 2-3 hours from its own kickoff.</div>`;
+
+  const byDate = [...picks].sort((a, b) => (b.dateKey ?? '').localeCompare(a.dateKey ?? '') || b.generatedAt - a.generatedAt);
+  el.nflPropsList.innerHTML = byDate.length
     ? byDate.slice(0, 40).map((p) => {
         const statusCls = p.status === 'won' ? 'low' : p.status === 'lost' ? 'high' : '';
         const resultText = p.status === 'pending' ? 'pending'
