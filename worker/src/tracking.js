@@ -157,6 +157,13 @@ export function pickRecordFrom(pick, dateKey, now) {
     sportKey: leg.sportKey,
     home: leg.home,
     away: leg.away,
+    // MMA-only card enrichment, carried from analyze()'s candidate (see
+    // docs/engine.js) — undefined for every non-MMA pick. Lets the client
+    // group a fight under its real UFC/PFL card even in a session that
+    // never saw it while still priced (see docs/app.js's buildSlateGames
+    // trackedOnlyGames tier), since the Odds API drops this enrichment
+    // along with the fight's market the moment it starts.
+    ufc_event: leg.ufc_event,
     marketKey: leg.marketKey,
     outcomeName: leg.outcomeName,
     point: leg.point ?? null,

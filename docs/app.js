@@ -2709,6 +2709,14 @@ function buildSlateGames(sportKeys) {
   // (state.slateScores, populated by refreshSlateScores) as market-less
   // games — no spread/total/ML, since the book pulled them — so a live or
   // finished game still shows up with its score instead of vanishing.
+  // The session cache (populated moments ago from a still-priced fight) is
+  // preferred when both exist, but the tracked pick's own ufc_event — set
+  // at 2am ET generation time and persisted server-side (see
+  // worker/src/tracking.js's pickRecordFrom) — is what makes a fight's
+  // real card recoverable even in a session that never saw it priced at
+  // all, e.g. a fresh page load mid-event.
+  const mmaCardFor = (eventId) => state.mmaEventCache.get(eventId) ?? state.slateTrackedPicks.get(eventId)?.ufc_event;
+
   const oddsEventIds = new Set(oddsGames.map((g) => g.eventId));
   const orphanGames = [];
   for (const scoreEvent of state.slateScores.values()) {
@@ -2725,7 +2733,7 @@ function buildSlateGames(sportKeys) {
       // Recover the card name from the cache above rather than hardcoding
       // it lost — this is what keeps a fight grouped under its real UFC
       // card once it goes live, instead of falling to UNKNOWN_MMA_CARD.
-      ufc_event: state.mmaEventCache.get(scoreEvent.id),
+      ufc_event: mmaCardFor(scoreEvent.id),
     });
   }
 
@@ -2753,7 +2761,7 @@ function buildSlateGames(sportKeys) {
       h2h: { away: null, home: null },
       spreads: { away: null, home: null },
       totals: { away: null, home: null },
-      ufc_event: state.mmaEventCache.get(pick.eventId),
+      ufc_event: mmaCardFor(pick.eventId),
     });
   }
 

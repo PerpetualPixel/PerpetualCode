@@ -300,6 +300,13 @@ export function buildCandidates(events, { now = Date.now() } = {}) {
         commenceMs,
         home: event.home_team,
         away: event.away_team,
+        // MMA-only card enrichment (see worker/src/odds.js's enrichMmaEvents)
+        // — carried through to the Full Slate tracked-pick record
+        // (worker/src/tracking.js's pickRecordFrom) so a fight's card name
+        // survives even after its odds/market (and this field along with
+        // it) disappear from the feed, which for MMA happens the moment it
+        // starts. undefined on every non-MMA event.
+        ufc_event: event.ufc_event,
         marketKey: entry.marketKey,
         marketLabel: MARKET_LABELS[entry.marketKey],
         // The outcome's own name and point straight from the API (a team
