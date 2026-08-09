@@ -584,6 +584,7 @@ const el = {
   pixelSort: document.getElementById('pixelSort'),
   scrim: document.getElementById('scrim'),
   logoutBtn: document.getElementById('logoutBtn'),
+  accountLink: document.getElementById('accountLink'),
   bankrollToggle: document.getElementById('bankrollToggle'),
   bankrollPanel: document.getElementById('bankrollPanel'),
   bankrollClose: document.getElementById('bankrollClose'),
@@ -5179,6 +5180,7 @@ async function openLearningDashboard() {
   if (!checkAuth()) return;
 
   el.logoutBtn.hidden = !getToken();
+  el.accountLink.hidden = !getToken();
   el.pixelSort.value = state.pixelSort;
 
   renderDayToggle();

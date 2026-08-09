@@ -1,0 +1,581 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>PerpetualPicks - Account Settings</title>
+  <style>
+    * {
+      margin: 0;
+      padding: 0;
+      box-sizing: border-box;
+    }
+
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+      background: linear-gradient(135deg, #05050A 0%, #0a0515 50%, #05050A 100%);
+      min-height: 100vh;
+      color: #e0e0ff;
+    }
+
+    .bg-grid {
+      position: fixed;
+      top: 0;
+      left: 0;
+      width: 100%;
+      height: 100%;
+      background-image:
+        linear-gradient(0deg, rgba(157, 78, 221, 0.03) 1px, transparent 1px),
+        linear-gradient(90deg, rgba(157, 78, 221, 0.03) 1px, transparent 1px);
+      background-size: 50px 50px;
+      z-index: 1;
+      pointer-events: none;
+    }
+
+    .container {
+      position: relative;
+      z-index: 10;
+      max-width: 640px;
+      margin: 0 auto;
+      padding: 32px 20px 64px;
+    }
+
+    .topbar {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      margin-bottom: 28px;
+    }
+
+    .back-link {
+      color: #a0a0cc;
+      text-decoration: none;
+      font-size: 13px;
+      font-weight: 600;
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+    }
+    .back-link:hover { color: #d946ef; }
+
+    .page-title {
+      font-size: 24px;
+      font-weight: 700;
+      background: linear-gradient(135deg, #d946ef 0%, #00d9ff 100%);
+      -webkit-background-clip: text;
+      -webkit-text-fill-color: transparent;
+      background-clip: text;
+      margin-bottom: 28px;
+    }
+
+    .card {
+      backdrop-filter: blur(20px);
+      background: rgba(10, 5, 21, 0.7);
+      border: 1px solid rgba(217, 70, 239, 0.2);
+      border-radius: 16px;
+      padding: 28px;
+      margin-bottom: 20px;
+    }
+
+    .card h2 {
+      font-size: 15px;
+      font-weight: 700;
+      text-transform: uppercase;
+      letter-spacing: 0.08em;
+      color: #d946ef;
+      margin-bottom: 18px;
+    }
+
+    .card p.card-desc {
+      color: #7070aa;
+      font-size: 12.5px;
+      margin: -12px 0 18px;
+      line-height: 1.5;
+    }
+
+    .form-group {
+      margin-bottom: 16px;
+    }
+
+    label {
+      display: block;
+      font-size: 12px;
+      font-weight: 500;
+      color: #a0a0cc;
+      margin-bottom: 6px;
+      text-transform: uppercase;
+      letter-spacing: 0.5px;
+    }
+
+    input[type="email"],
+    input[type="password"],
+    input[type="text"] {
+      width: 100%;
+      padding: 11px 14px;
+      background: rgba(255, 255, 255, 0.05);
+      border: 1px solid rgba(217, 70, 239, 0.2);
+      border-radius: 8px;
+      color: #e0e0ff;
+      font-size: 14px;
+      transition: all 0.3s ease;
+    }
+
+    input:focus {
+      outline: none;
+      background: rgba(255, 255, 255, 0.08);
+      border-color: rgba(217, 70, 239, 0.5);
+      box-shadow: 0 0 20px rgba(217, 70, 239, 0.2);
+    }
+
+    input::placeholder { color: #5050aa; }
+
+    input:disabled {
+      opacity: 0.5;
+      cursor: not-allowed;
+    }
+
+    .button {
+      padding: 10px 20px;
+      background: linear-gradient(135deg, #d946ef 0%, #9d4edd 100%);
+      border: none;
+      border-radius: 8px;
+      color: #05050A;
+      font-weight: 600;
+      font-size: 13px;
+      cursor: pointer;
+      transition: all 0.3s ease;
+      text-transform: uppercase;
+      letter-spacing: 0.5px;
+    }
+    .button:hover { transform: translateY(-2px); box-shadow: 0 6px 20px rgba(217, 70, 239, 0.4); }
+    .button:disabled { opacity: 0.5; cursor: not-allowed; transform: none; box-shadow: none; }
+
+    .error {
+      background: rgba(239, 68, 68, 0.1);
+      border: 1px solid rgba(239, 68, 68, 0.3);
+      color: #ff6b6b;
+      padding: 10px 14px;
+      border-radius: 8px;
+      font-size: 13px;
+      margin-bottom: 14px;
+    }
+
+    .success {
+      background: rgba(34, 197, 94, 0.1);
+      border: 1px solid rgba(34, 197, 94, 0.3);
+      color: #4ade80;
+      padding: 10px 14px;
+      border-radius: 8px;
+      font-size: 13px;
+      margin-bottom: 14px;
+    }
+
+    .pending-banner {
+      background: rgba(251, 191, 36, 0.1);
+      border: 1px solid rgba(251, 191, 36, 0.35);
+      color: #fbbf24;
+      padding: 10px 14px;
+      border-radius: 8px;
+      font-size: 12.5px;
+      margin-bottom: 14px;
+      line-height: 1.5;
+    }
+
+    .toggle-row {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 12px;
+      padding: 12px 0;
+      border-bottom: 1px solid rgba(217, 70, 239, 0.1);
+    }
+    .toggle-row:last-of-type { border-bottom: none; }
+
+    .toggle-label {
+      font-size: 13.5px;
+      font-weight: 500;
+      color: #e0e0ff;
+    }
+    .toggle-label small {
+      display: block;
+      color: #7070aa;
+      font-size: 11px;
+      font-weight: 400;
+      margin-top: 2px;
+    }
+
+    .switch {
+      position: relative;
+      flex: none;
+      width: 42px;
+      height: 24px;
+    }
+    .switch input { opacity: 0; width: 0; height: 0; }
+    .switch-track {
+      position: absolute;
+      inset: 0;
+      background: rgba(255, 255, 255, 0.1);
+      border: 1px solid rgba(217, 70, 239, 0.2);
+      border-radius: 999px;
+      cursor: pointer;
+      transition: all 0.25s ease;
+    }
+    .switch-track::before {
+      content: '';
+      position: absolute;
+      width: 16px;
+      height: 16px;
+      left: 3px;
+      top: 3px;
+      background: #a0a0cc;
+      border-radius: 50%;
+      transition: all 0.25s cubic-bezier(0.34, 1.56, 0.64, 1);
+    }
+    .switch input:checked + .switch-track {
+      background: linear-gradient(135deg, #d946ef 0%, #9d4edd 100%);
+      border-color: transparent;
+    }
+    .switch input:checked + .switch-track::before {
+      transform: translateX(18px);
+      background: #05050A;
+    }
+    .switch input:disabled + .switch-track {
+      cursor: not-allowed;
+      opacity: 0.4;
+    }
+
+    .coming-soon-tag {
+      display: inline-block;
+      margin-left: 6px;
+      padding: 1px 7px;
+      border-radius: 999px;
+      background: rgba(112, 112, 170, 0.15);
+      color: #7070aa;
+      font-size: 10px;
+      font-weight: 600;
+      text-transform: uppercase;
+      letter-spacing: 0.5px;
+    }
+
+    .spinner {
+      display: inline-block;
+      width: 14px;
+      height: 14px;
+      border: 2px solid rgba(217, 70, 239, 0.3);
+      border-top-color: #d946ef;
+      border-radius: 50%;
+      animation: spin 0.8s linear infinite;
+    }
+    @keyframes spin { to { transform: rotate(360deg); } }
+
+    .hidden { display: none !important; }
+
+    .skeleton {
+      color: #7070aa;
+      font-size: 13px;
+      text-align: center;
+      padding: 40px 0;
+    }
+  </style>
+</head>
+<body>
+  <div class="bg-grid"></div>
+
+  <div class="container">
+    <div class="topbar">
+      <a href="/index.html" class="back-link">&larr; Back to app</a>
+    </div>
+    <div class="page-title">Account Settings</div>
+
+    <div id="loading-state" class="skeleton">Loading account...</div>
+
+    <div id="settings-body" class="hidden">
+      <!-- Profile: username -->
+      <div class="card">
+        <h2>Username</h2>
+        <div id="username-message"></div>
+        <form id="username-form">
+          <div class="form-group">
+            <label for="username-input">Username</label>
+            <input type="text" id="username-input" minlength="3" maxlength="20" pattern="[a-zA-Z0-9_]{3,20}" required>
+          </div>
+          <button type="submit" class="button">Save Username</button>
+        </form>
+      </div>
+
+      <!-- Email -->
+      <div class="card">
+        <h2>Email</h2>
+        <div id="pending-email-banner"></div>
+        <div id="email-message"></div>
+        <form id="email-form">
+          <div class="form-group">
+            <label for="email-current">Current Email</label>
+            <input type="email" id="email-current" disabled>
+          </div>
+          <div class="form-group">
+            <label for="email-new">New Email</label>
+            <input type="email" id="email-new" placeholder="new@example.com" required>
+          </div>
+          <button type="submit" class="button">Request Email Change</button>
+        </form>
+      </div>
+
+      <!-- Password -->
+      <div class="card">
+        <h2>Password</h2>
+        <div id="password-message"></div>
+        <form id="password-form">
+          <div class="form-group">
+            <label for="password-current">Current Password</label>
+            <input type="password" id="password-current" placeholder="••••••••" required>
+          </div>
+          <div class="form-group">
+            <label for="password-new">New Password</label>
+            <input type="password" id="password-new" placeholder="••••••••" minlength="8" required>
+          </div>
+          <button type="submit" class="button">Change Password</button>
+        </form>
+      </div>
+
+      <!-- Notifications -->
+      <div class="card">
+        <h2>Notifications</h2>
+        <p class="card-desc">Get notified the moment Play of the Day and Pixel's Picks lock in for the day.</p>
+        <div id="notif-message"></div>
+
+        <div class="toggle-row">
+          <span class="toggle-label">Play of the Day &mdash; Email</span>
+          <label class="switch">
+            <input type="checkbox" id="notif-potd-email" data-field="potdEmail">
+            <span class="switch-track"></span>
+          </label>
+        </div>
+        <div class="toggle-row">
+          <span class="toggle-label">Pixel's Picks &mdash; Email</span>
+          <label class="switch">
+            <input type="checkbox" id="notif-picks-email" data-field="picksEmail">
+            <span class="switch-track"></span>
+          </label>
+        </div>
+        <div class="toggle-row">
+          <span class="toggle-label">Play of the Day &mdash; SMS<span class="coming-soon-tag">Coming soon</span></span>
+          <label class="switch">
+            <input type="checkbox" id="notif-potd-sms" disabled>
+            <span class="switch-track"></span>
+          </label>
+        </div>
+        <div class="toggle-row">
+          <span class="toggle-label">Pixel's Picks &mdash; SMS<span class="coming-soon-tag">Coming soon</span></span>
+          <label class="switch">
+            <input type="checkbox" id="notif-picks-sms" disabled>
+            <span class="switch-track"></span>
+          </label>
+        </div>
+        <div class="toggle-row">
+          <span class="toggle-label">Weekly Tracking Report &mdash; Email<small>A summary of the week's picks and performance, every Monday</small></span>
+          <label class="switch">
+            <input type="checkbox" id="notif-tracking-report" data-field="trackingReportEmail">
+            <span class="switch-track"></span>
+          </label>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <script>
+    window.API_BASE = 'https://pixel-pick-odds.mgbouldering.workers.dev';
+    window.AUTH_TOKEN_KEY = 'pp_auth_token';
+    window.AUTH_USER_KEY = 'pp_auth_user';
+
+    function getToken() {
+      return localStorage.getItem(window.AUTH_TOKEN_KEY);
+    }
+
+    function authHeaders() {
+      return { 'Content-Type': 'application/json', 'Authorization': `Bearer ${getToken()}` };
+    }
+
+    function showMessage(elementId, message, isError = false) {
+      const el = document.getElementById(elementId);
+      el.innerHTML = message ? `<div class="${isError ? 'error' : 'success'}">${message}</div>` : '';
+    }
+
+    async function loadAccount() {
+      const res = await fetch(`${window.API_BASE}/api/auth/me`, { headers: authHeaders() });
+      if (res.status === 401) {
+        window.location.href = '/login.html';
+        return null;
+      }
+      if (!res.ok) throw new Error('Failed to load account');
+      return res.json();
+    }
+
+    function renderPendingEmailBanner(pendingEmail) {
+      const el = document.getElementById('pending-email-banner');
+      if (!pendingEmail) {
+        el.innerHTML = '';
+        return;
+      }
+      el.innerHTML = `<div class="pending-banner">Verification pending for <strong>${pendingEmail}</strong> &mdash; check that inbox to confirm the change. Your current email stays active until then.</div>`;
+    }
+
+    function populateForm(data) {
+      document.getElementById('username-input').value = data.username || '';
+      document.getElementById('email-current').value = data.email;
+      renderPendingEmailBanner(data.pendingEmail);
+
+      document.getElementById('notif-potd-email').checked = !!data.notifications.potdEmail;
+      document.getElementById('notif-picks-email').checked = !!data.notifications.picksEmail;
+      document.getElementById('notif-potd-sms').checked = !!data.notifications.potdSms;
+      document.getElementById('notif-picks-sms').checked = !!data.notifications.picksSms;
+      document.getElementById('notif-tracking-report').checked = !!data.notifications.trackingReportEmail;
+    }
+
+    async function init() {
+      if (!getToken()) {
+        window.location.href = '/login.html';
+        return;
+      }
+
+      // Auto-confirm an email change if we arrived here via the confirmation
+      // link (?emailToken=...), same silent-auto-verify pattern login.html
+      // already uses for the original signup verification link.
+      const params = new URLSearchParams(window.location.search);
+      const emailToken = params.get('emailToken');
+      if (emailToken) {
+        try {
+          const res = await fetch(`${window.API_BASE}/api/account/email/confirm`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ token: emailToken }),
+          });
+          const data = await res.json();
+          if (res.ok) {
+            showMessage('email-message', 'Email updated successfully!', false);
+          } else {
+            showMessage('email-message', data.error, true);
+          }
+        } catch (err) {
+          showMessage('email-message', 'Confirmation failed: ' + err.message, true);
+        }
+        window.history.replaceState({}, document.title, '/account.html');
+      }
+
+      try {
+        const data = await loadAccount();
+        if (!data) return;
+        populateForm(data);
+        document.getElementById('loading-state').classList.add('hidden');
+        document.getElementById('settings-body').classList.remove('hidden');
+      } catch (err) {
+        document.getElementById('loading-state').textContent = 'Failed to load account: ' + err.message;
+      }
+    }
+
+    document.getElementById('username-form').addEventListener('submit', async (e) => {
+      e.preventDefault();
+      const btn = e.target.querySelector('button');
+      const original = btn.textContent;
+      const username = document.getElementById('username-input').value;
+      try {
+        btn.disabled = true;
+        btn.innerHTML = '<span class="spinner"></span> Saving...';
+        const res = await fetch(`${window.API_BASE}/api/account/username`, {
+          method: 'PUT',
+          headers: authHeaders(),
+          body: JSON.stringify({ username }),
+        });
+        const data = await res.json();
+        if (!res.ok) { showMessage('username-message', data.error, true); return; }
+        showMessage('username-message', 'Username updated!', false);
+      } catch (err) {
+        showMessage('username-message', 'Connection failed: ' + err.message, true);
+      } finally {
+        btn.disabled = false;
+        btn.textContent = original;
+      }
+    });
+
+    document.getElementById('email-form').addEventListener('submit', async (e) => {
+      e.preventDefault();
+      const btn = e.target.querySelector('button');
+      const original = btn.textContent;
+      const newEmail = document.getElementById('email-new').value;
+      try {
+        btn.disabled = true;
+        btn.innerHTML = '<span class="spinner"></span> Sending...';
+        const res = await fetch(`${window.API_BASE}/api/account/email`, {
+          method: 'POST',
+          headers: authHeaders(),
+          body: JSON.stringify({ newEmail }),
+        });
+        const data = await res.json();
+        if (!res.ok) { showMessage('email-message', data.error, true); return; }
+        showMessage('email-message', data.message, false);
+        renderPendingEmailBanner(newEmail);
+        document.getElementById('email-new').value = '';
+      } catch (err) {
+        showMessage('email-message', 'Connection failed: ' + err.message, true);
+      } finally {
+        btn.disabled = false;
+        btn.textContent = original;
+      }
+    });
+
+    document.getElementById('password-form').addEventListener('submit', async (e) => {
+      e.preventDefault();
+      const btn = e.target.querySelector('button');
+      const original = btn.textContent;
+      const currentPassword = document.getElementById('password-current').value;
+      const newPassword = document.getElementById('password-new').value;
+      try {
+        btn.disabled = true;
+        btn.innerHTML = '<span class="spinner"></span> Saving...';
+        const res = await fetch(`${window.API_BASE}/api/account/password`, {
+          method: 'PUT',
+          headers: authHeaders(),
+          body: JSON.stringify({ currentPassword, newPassword }),
+        });
+        const data = await res.json();
+        if (!res.ok) { showMessage('password-message', data.error, true); return; }
+        showMessage('password-message', 'Password updated!', false);
+        document.getElementById('password-form').reset();
+      } catch (err) {
+        showMessage('password-message', 'Connection failed: ' + err.message, true);
+      } finally {
+        btn.disabled = false;
+        btn.textContent = original;
+      }
+    });
+
+    // Notification toggles save immediately on change — no separate submit
+    // button, matches the instant feel of a settings switch rather than a form.
+    document.querySelectorAll('#settings-body input[data-field]').forEach((input) => {
+      input.addEventListener('change', async () => {
+        const field = input.dataset.field;
+        try {
+          const res = await fetch(`${window.API_BASE}/api/account/notifications`, {
+            method: 'PUT',
+            headers: authHeaders(),
+            body: JSON.stringify({ [field]: input.checked }),
+          });
+          const data = await res.json();
+          if (!res.ok) {
+            showMessage('notif-message', data.error, true);
+            input.checked = !input.checked; // revert on failure
+            return;
+          }
+          showMessage('notif-message', 'Saved.', false);
+          setTimeout(() => showMessage('notif-message', ''), 1500);
+        } catch (err) {
+          showMessage('notif-message', 'Connection failed: ' + err.message, true);
+          input.checked = !input.checked;
+        }
+      });
+    });
+
+    init();
+  </script>
+</body>
+</html>

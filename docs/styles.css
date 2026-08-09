@@ -232,6 +232,10 @@ body {
   display: inline-flex;
   align-items: center;
   gap: 6px;
+  /* Only matters for the <a id="accountLink"> instance — buttons ignore
+     text-decoration, but an anchor needs this to match the button styling
+     of every other topbar action instead of showing a default underline. */
+  text-decoration: none;
   background: var(--surface);
   backdrop-filter: blur(12px);
   -webkit-backdrop-filter: blur(12px);
