@@ -47,6 +47,37 @@
   --glow-magenta: 0 0 18px rgba(255, 0, 122, 0.45);
   --glow-laser: 0 0 16px rgba(0, 240, 255, 0.55);
   --card-border-gradient: linear-gradient(135deg, rgba(124, 58, 237, 0.7), rgba(255, 0, 122, 0.5), rgba(0, 240, 255, 0.6));
+  /* Solid, opaque — for anything that has to fully occlude the page behind
+     it (side panels, drawers, the More Info breakdown), as distinct from
+     --surface's translucent glass fill for cards sitting flat on the page.
+     Reusing --surface here was the bug: a fixed full-height panel at 3%
+     white opacity reads as barely-there, letting the slate cards behind it
+     bleed straight through and making its own text unreadable. */
+  --panel-bg: #0D0A18;
+}
+
+/* Visually hidden but still in the accessibility tree and still focusable —
+   for controls (the league <select>, now that its token row replaces it
+   visually) that need to keep working for keyboard/screen-reader use
+   without rendering on screen. Not the same as [hidden]/display:none,
+   which would also pull it out of the tab order.
+   !important is deliberate and standard for this exact utility (the same
+   pattern Bootstrap/WordPress/etc. use): sr-only has to reliably win
+   against a target element's OWN layout rules regardless of what they are
+   — found live here against `.slate-league-select`'s `flex: 1`, which
+   otherwise stretched the "hidden" select back out to visible width inside
+   its flex row despite `width: 1px`. */
+.sr-only {
+  position: absolute !important;
+  width: 1px !important;
+  height: 1px !important;
+  padding: 0 !important;
+  margin: -1px !important;
+  overflow: hidden !important;
+  clip: rect(0, 0, 0, 0) !important;
+  white-space: nowrap !important;
+  border: 0 !important;
+  flex: none !important;
 }
 
 
@@ -599,6 +630,19 @@ body {
 /* ================================================================ */
 /* Form Elements & Transitions                                      */
 /* ================================================================ */
+
+/* A native <select>'s OPEN option list is drawn by the browser/OS, not this
+   page, so it can't be reached by the glass/gradient treatment everything
+   else here gets. color-scheme tells the browser to draw that popup (and
+   other native chrome — date pickers, etc.) using its own dark palette
+   instead of the harsh default-white list that was fighting the rest of
+   this theme; the `option` rule below gets Chrome/Firefox the rest of the
+   way to something that actually matches, where they support styling it. */
+select { color-scheme: dark; }
+option {
+  background: var(--panel-bg);
+  color: var(--text);
+}
 
 select,
 input[type="text"],
@@ -1196,7 +1240,8 @@ input[type="range"]:focus-visible {
   right: 0;
   bottom: 0;
   width: min(88vw, 380px);
-  background: var(--surface);
+  background: var(--panel-bg);
+  box-shadow: -12px 0 40px rgba(0, 0, 0, 0.5);
   border-left: 1px solid var(--line);
   z-index: 30;
   display: flex;

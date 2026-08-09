@@ -71,8 +71,13 @@
   <div id="slateLeagueTokens" class="slate-league-tokens" role="group" aria-label="Quick league select"></div>
 
   <div class="slate-controls">
-    <label class="slate-league-label" for="slateLeagueSelect">League</label>
-    <select id="slateLeagueSelect" class="slate-league-select"></select>
+    <!-- The league tokens above are now the actual UI for this; this pair
+         stays functional (app.js still reads/writes it, and a token click
+         still just sets its value and fires 'change') but visually hidden
+         rather than shown twice — sr-only, not [hidden], so it's still
+         reachable by keyboard/screen reader as a fallback. -->
+    <label class="slate-league-label sr-only" for="slateLeagueSelect">League</label>
+    <select id="slateLeagueSelect" class="slate-league-select sr-only"></select>
     <button id="slateLoad" class="icon-btn slate-load-btn" type="button">Refresh slate</button>
   </div>
 
