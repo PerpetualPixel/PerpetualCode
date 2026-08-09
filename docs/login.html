@@ -258,6 +258,55 @@
       }
     }
 
+    .checkbox-group {
+      display: flex;
+      align-items: flex-start;
+      gap: 10px;
+      margin-bottom: 14px;
+    }
+
+    .checkbox-group input[type="checkbox"] {
+      margin-top: 2px;
+      width: 16px;
+      height: 16px;
+      flex: none;
+      accent-color: #d946ef;
+      cursor: pointer;
+    }
+
+    .checkbox-group input[type="checkbox"]:disabled {
+      cursor: not-allowed;
+      opacity: 0.5;
+    }
+
+    .checkbox-group label {
+      margin-bottom: 0;
+      text-transform: none;
+      letter-spacing: normal;
+      font-weight: 400;
+      font-size: 13px;
+      color: #c0c0e0;
+      cursor: pointer;
+    }
+
+    .checkbox-group.is-disabled label {
+      color: #606090;
+      cursor: not-allowed;
+    }
+
+    .coming-soon-tag {
+      display: inline-block;
+      margin-left: 6px;
+      padding: 1px 7px;
+      border-radius: 999px;
+      background: rgba(112, 112, 170, 0.15);
+      color: #7070aa;
+      font-size: 10px;
+      font-weight: 600;
+      text-transform: uppercase;
+      letter-spacing: 0.5px;
+    }
+
     .hidden {
       display: none !important;
     }
@@ -330,6 +379,14 @@
 
         <form id="register-input" onsubmit="handleRegister(event)">
           <div class="form-group">
+            <label for="register-username">Username</label>
+            <input type="text" id="register-username" placeholder="your_username" minlength="3" maxlength="20" pattern="[a-zA-Z0-9_]{3,20}" required>
+            <small style="color: #5050aa; font-size: 11px; margin-top: 4px; display: block;">
+              3-20 characters: letters, numbers, underscores only
+            </small>
+          </div>
+
+          <div class="form-group">
             <label for="register-email">Email</label>
             <input type="email" id="register-email" placeholder="you@example.com" required>
           </div>
@@ -340,6 +397,16 @@
             <small style="color: #5050aa; font-size: 11px; margin-top: 4px; display: block;">
               Minimum 8 characters
             </small>
+          </div>
+
+          <div class="checkbox-group">
+            <input type="checkbox" id="register-notify-email">
+            <label for="register-notify-email">Email me when Play of the Day and Pixel's Picks are ready</label>
+          </div>
+
+          <div class="checkbox-group is-disabled">
+            <input type="checkbox" id="register-notify-sms" disabled>
+            <label for="register-notify-sms">Text me when Play of the Day and Pixel's Picks are ready<span class="coming-soon-tag">Coming soon</span></label>
           </div>
 
           <button type="submit" class="button">Create Account</button>
@@ -405,8 +472,10 @@
 
     async function handleRegister(e) {
       e.preventDefault();
+      const username = document.getElementById('register-username').value;
       const email = document.getElementById('register-email').value;
       const password = document.getElementById('register-password').value;
+      const notifyEmail = document.getElementById('register-notify-email').checked;
       const btn = e.target.querySelector('button');
       const originalText = btn.textContent;
 
@@ -417,7 +486,7 @@
         const res = await fetch(`${window.API_BASE}/api/auth/register`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ email, password }),
+          body: JSON.stringify({ username, email, password, notifyEmail }),
         });
 
         const data = await res.json();
@@ -472,7 +541,7 @@
 
         // Store token and redirect
         localStorage.setItem(AUTH_TOKEN_KEY, data.token);
-        localStorage.setItem(AUTH_USER_KEY, JSON.stringify({ id: data.userId, email: data.email }));
+        localStorage.setItem(AUTH_USER_KEY, JSON.stringify({ id: data.userId, email: data.email, username: data.username }));
         showMessage('login-message', 'Logged in! Redirecting...', false);
 
         setTimeout(() => {
