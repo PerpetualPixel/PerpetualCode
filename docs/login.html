@@ -376,9 +376,14 @@
   </div>
 
   <script>
-    const API_BASE = 'https://pixel-pick-odds.mgbouldering.workers.dev';
-    const AUTH_TOKEN_KEY = 'pp_auth_token';
-    const AUTH_USER_KEY = 'pp_auth_user';
+    // Global constants
+    window.API_BASE = 'https://pixel-pick-odds.mgbouldering.workers.dev';
+    window.AUTH_TOKEN_KEY = 'pp_auth_token';
+    window.AUTH_USER_KEY = 'pp_auth_user';
+
+    const API_BASE = window.API_BASE;
+    const AUTH_TOKEN_KEY = window.AUTH_TOKEN_KEY;
+    const AUTH_USER_KEY = window.AUTH_USER_KEY;
 
     function showMessage(elementId, message, isError = false) {
       const el = document.getElementById(elementId);
@@ -409,7 +414,7 @@
         btn.disabled = true;
         btn.innerHTML = '<span class="spinner"></span> Creating...';
 
-        const res = await fetch(`${API_BASE}/api/auth/register`, {
+        const res = await fetch(`${window.API_BASE}/api/auth/register`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ email, password }),
@@ -448,7 +453,7 @@
         btn.disabled = true;
         btn.innerHTML = '<span class="spinner"></span> Signing in...';
 
-        const res = await fetch(`${API_BASE}/api/auth/login`, {
+        const res = await fetch(`${window.API_BASE}/api/auth/login`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ email, password }),
@@ -491,7 +496,7 @@
         btn.disabled = true;
         btn.innerHTML = '<span class="spinner"></span> Verifying...';
 
-        const res = await fetch(`${API_BASE}/api/auth/verify-email`, {
+        const res = await fetch(`${window.API_BASE}/api/auth/verify-email`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ token }),
@@ -525,7 +530,7 @@
       if (token) {
         // Auto-verify silently
         try {
-          const res = await fetch(`${API_BASE}/api/auth/verify-email`, {
+          const res = await fetch(`${window.API_BASE}/api/auth/verify-email`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ token }),
