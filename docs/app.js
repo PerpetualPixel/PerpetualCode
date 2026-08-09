@@ -1479,14 +1479,23 @@ function renderSlate(slate) {
  */
 let openAside = null; // { panel, toggle } or null
 
-function setAsideOpen(panel, toggle, open, { onOpen, focusEl } = {}) {
+function setAsideOpen(panel, toggle, open, { onOpen, focusEl, scrim = true } = {}) {
   if (open && openAside && openAside.panel !== panel) {
     openAside.panel.hidden = true;
     openAside.toggle.setAttribute('aria-expanded', 'false');
   }
   panel.hidden = !open;
   toggle.setAttribute('aria-expanded', String(open));
-  el.scrim.hidden = !open;
+  // The scrim is a full-viewport overlay (position: fixed, inset: 0), not
+  // just a backdrop behind the panel's own width — with it shown, it sits
+  // above the rest of the page at a higher z-index than everything except
+  // the panel itself, silently swallowing clicks anywhere on screen. Fine
+  // for a true modal (Bankroll/Guide/About/Tracking), wrong for the More
+  // Stats drawer: clicking a different Full Slate market cell while the
+  // drawer is already open is the expected way to browse it, not a mistake
+  // to block. scrim: false (passed by setStatsDrawerOpen) keeps the rest of
+  // the page fully clickable while that drawer is open.
+  el.scrim.hidden = !(open && scrim);
   openAside = open ? { panel, toggle } : null;
   if (open) {
     onOpen?.();
@@ -1552,7 +1561,7 @@ function setAboutOpen(open) {
 const statsDrawerToggleStub = { setAttribute() {} };
 
 function setStatsDrawerOpen(open) {
-  setAsideOpen(el.statsDrawer, statsDrawerToggleStub, open, { focusEl: el.statsDrawerClose });
+  setAsideOpen(el.statsDrawer, statsDrawerToggleStub, open, { focusEl: el.statsDrawerClose, scrim: false });
 }
 
 /** Every book's price on this exact line, sorted best to worst, with the
