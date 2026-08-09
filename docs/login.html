@@ -518,14 +518,39 @@
     }
 
     // Check if we're verifying email from URL param
-    window.addEventListener('load', () => {
+    window.addEventListener('load', async () => {
       const params = new URLSearchParams(window.location.search);
       const token = params.get('token');
 
       if (token) {
-        document.getElementById('verify-form').classList.remove('hidden');
-        document.getElementById('login-form').classList.add('hidden');
-        document.getElementById('verify-token').value = token;
+        // Auto-verify silently
+        try {
+          const res = await fetch(`${API_BASE}/api/auth/verify-email`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ token }),
+          });
+
+          if (res.ok) {
+            showMessage('verify-message', 'Email verified! Redirecting to login...', false);
+            setTimeout(() => {
+              document.getElementById('verify-form').classList.add('hidden');
+              document.getElementById('login-form').classList.remove('hidden');
+              // Clear the token from URL
+              window.history.replaceState({}, document.title, '/login.html');
+            }, 2000);
+          } else {
+            const data = await res.json();
+            showMessage('verify-message', data.error, true);
+            document.getElementById('verify-form').classList.remove('hidden');
+            document.getElementById('login-form').classList.add('hidden');
+            document.getElementById('verify-token').value = token;
+          }
+        } catch (err) {
+          showMessage('verify-message', 'Verification failed: ' + err.message, true);
+          document.getElementById('verify-form').classList.remove('hidden');
+          document.getElementById('login-form').classList.add('hidden');
+        }
       }
 
       // Check if already logged in
