@@ -101,7 +101,11 @@ function segmentKey(sportKey, marketKey) {
  */
 export function segmentStats(picks) {
   const graded = (picks ?? []).filter(
-    (p) => p && p.status !== 'pending' && p.meetsStandard !== false && typeof p.consensusProb === 'number',
+    // Voids (push, walkover, unsettleable market — see docs/learning.js's
+    // gradePick) are settled but were never money at risk and have no
+    // win/loss to test against expectation, so they'd only dilute the z-test.
+    (p) => p && p.status !== 'pending' && p.status !== 'void'
+      && p.meetsStandard !== false && typeof p.consensusProb === 'number',
   );
 
   const n = graded.length;

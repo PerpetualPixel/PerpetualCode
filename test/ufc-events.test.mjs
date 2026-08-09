@@ -357,7 +357,7 @@ test('gradeMmaPickWithFallback prefers the primary scoreEvent when it already ha
   assert.equal(outcome.won, false);
 });
 
-test('gradeMmaPickWithFallback leaves a draw/no-contest pending, never forces a win or loss', () => {
+test('gradeMmaPickWithFallback voids a draw/no-contest, never forces a win or loss', () => {
   const pick = {
     home: 'Bryan Battle', away: 'Dalton Rosta',
     outcomeName: 'Bryan Battle', marketKey: 'h2h', point: null,
@@ -366,7 +366,13 @@ test('gradeMmaPickWithFallback leaves a draw/no-contest pending, never forces a 
   // Neither side marked winner — a draw or no-contest.
   const results = [{ a: 'bryan battle', b: 'dalton rosta', aWon: false, bWon: false }];
   const outcome = gradeMmaPickWithFallback(pick, undefined, results);
-  assert.equal(outcome, null);
+  // This used to stay pending forever. A draw on a two-way moneyline is a
+  // push at every sportsbook, so it now settles as a void with the stake
+  // returned — which still satisfies this test's actual point: no win or
+  // loss is ever invented from a result that had neither.
+  assert.equal(outcome.void, true);
+  assert.equal(outcome.payout, 0);
+  assert.equal(outcome.won, undefined);
 });
 
 test('gradeMmaPickWithFallback returns null (stays pending) when neither source has this fight', () => {

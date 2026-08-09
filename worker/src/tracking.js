@@ -33,6 +33,12 @@ import { fetchSport, fetchScores, fetchCatalogue } from './odds.js';
 import { getAlgoConfig, getPausedSegments, isSegmentPaused } from './algo-health.js';
 import { getLearningProfile, applyLearningToCandidates } from './daily-learning.js';
 import { fetchMmaResults, gradeMmaPickWithFallback } from './ufc-events.js';
+import {
+  tennisTier,
+  dedupeTennisEvents,
+  isMarketAllowedForTier,
+  tierLiquidityBlock,
+} from '../../docs/tennis-tiers.js';
 
 export const TOP5_COUNT = 5;
 export const TOP5_BATCH_HOUR = 2; // 2am ET — same run as Play of the Day
@@ -138,7 +144,11 @@ export async function fetchFullSlateEvents(env, ctx) {
   for (const r of results) {
     if (r.events) events.push(...r.events);
   }
-  return events;
+  // Collapse co-sanctioned / renamed tennis listings (Canadian Open ==
+  // National Bank Open == ATP Montreal) to one event apiece. The existing
+  // by-event-id dedupe elsewhere can't catch these: the same match arrives
+  // under DIFFERENT ids when it's listed under two names.
+  return dedupeTennisEvents(events);
 }
 
 /**
@@ -181,6 +191,11 @@ export function pickRecordFrom(pick, dateKey, now) {
     // record shows what the engine said AND what the learner did to it.
     rawScore: leg.rawScore ?? null,
     learnWeight: leg.learnWeight ?? null,
+    // Operational tier (docs/tennis-tiers.js) — TIER_1 / TIER_2 /
+    // TIER_CHALLENGER for tennis, null for every other sport. Stored so the
+    // tracked record can be sliced by tier later without re-deriving it from
+    // a sport key whose tournament may no longer be in the catalogue.
+    tier: tennisTier(leg.sportKey) ?? null,
     // The model's own estimated win probability (already computed by
     // scoreCandidate() as the no-vig consensus, excluding the best-price
     // book so the price we're grading doesn't vote on its own fairness) —
@@ -294,6 +309,16 @@ export async function runTop5Batch(
         return etDate(c.commenceMs) === dateKey;
       })
       .filter((c) => !isSegmentPaused(c, pausedSegments))
+      // Tennis tier policy (docs/tennis-tiers.js): lower-tier events are
+      // moneyline-only, and must clear a book-count / line-dispersion /
+      // staleness check before they're eligible at all. Non-tennis
+      // candidates pass through untouched.
+      .filter((c) => {
+        const tier = tennisTier(c.sportKey);
+        if (!tier) return true;
+        if (!isMarketAllowedForTier(c.marketKey, tier)) return false;
+        return !tierLiquidityBlock(c, tier, now);
+      })
       .filter((c) => !existingEventIds.has(c.eventId)),
     learningProfile,
   );
@@ -452,8 +477,17 @@ export async function runGrading(
       ? gradeMmaPickWithFallback(pick, scoreEvent, mmaResults)
       : gradePick(pick, scoreEvent);
     if (!outcome) continue;
-    pick.status = outcome.won ? 'won' : 'lost';
-    pick.result = { payout: outcome.payout, roiPercent: (outcome.payout / pick.suggested_stake) * 100 };
+    // A void (push, walkover, or a market this feed can't settle — see
+    // gradePick) is recorded as settled with the stake returned, so it stops
+    // being pending instead of sitting unresolved forever, and is excluded
+    // from win rate and ROI by summarizePicks.
+    pick.status = outcome.void ? 'void' : outcome.won ? 'won' : 'lost';
+    pick.result = {
+      payout: outcome.payout,
+      roiPercent: outcome.void ? 0 : (outcome.payout / pick.suggested_stake) * 100,
+      voidReason: outcome.void ? outcome.reason : undefined,
+      retired: outcome.retired ?? undefined,
+    };
     graded++;
     ctx.waitUntil(
       env.POTD_KV.put(`track:${pick.dateKey}:pick:${pick.pickId}`, JSON.stringify(pick), {

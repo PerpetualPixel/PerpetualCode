@@ -381,8 +381,8 @@ async function gradePotdForDate(env, dateKey, pick, record, fetchScoresFn, fetch
     : gradePick(pick, scoreEvent);
   if (!outcome) return false;
 
-  pick.status = outcome.won ? 'won' : 'lost';
-  pick.result = { payout: outcome.payout, roiPercent: (outcome.payout / pick.suggested_stake) * 100 };
+  pick.status = outcome.void ? 'void' : outcome.won ? 'won' : 'lost';
+  pick.result = { payout: outcome.payout, roiPercent: outcome.void ? 0 : (outcome.payout / pick.suggested_stake) * 100, voidReason: outcome.void ? outcome.reason : undefined };
   await env.POTD_KV.put(`potd:${dateKey}`, JSON.stringify(record), { expirationTtl: KV_TTL_SECONDS });
   return true;
 }

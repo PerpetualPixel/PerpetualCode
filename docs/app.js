@@ -2884,7 +2884,7 @@ function slateGameOutcome(game, rec) {
     { home: game.home, away: game.away, outcomeName: rec.outcomeName, point: rec.point, marketKey: rec.marketKey, decimal: rec.decimal, suggested_stake: 1 },
     scoreEvent,
   );
-  return outcome ? (outcome.won ? 'won' : 'lost') : null;
+  return outcome ? (outcome.void ? 'void' : outcome.won ? 'won' : 'lost') : null;
 }
 
 /**

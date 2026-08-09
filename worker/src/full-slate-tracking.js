@@ -222,8 +222,8 @@ export async function runFullSlateGrading(
       ? gradeMmaPickWithFallback(pick, scoreEvent, mmaResults)
       : gradePick(pick, scoreEvent);
     if (!outcome) continue;
-    pick.status = outcome.won ? 'won' : 'lost';
-    pick.result = { payout: outcome.payout, roiPercent: (outcome.payout / pick.suggested_stake) * 100 };
+    pick.status = outcome.void ? 'void' : outcome.won ? 'won' : 'lost';
+    pick.result = { payout: outcome.payout, roiPercent: outcome.void ? 0 : (outcome.payout / pick.suggested_stake) * 100, voidReason: outcome.void ? outcome.reason : undefined };
     graded++;
     ctx.waitUntil(
       env.POTD_KV.put(`slate:${pick.dateKey}:pick:${pick.pickId}`, JSON.stringify(pick), {
