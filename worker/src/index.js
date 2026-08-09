@@ -12,6 +12,7 @@ import {
   handleConfirmEmailChange,
   handleUpdateNotifications,
 } from './account-handlers.js';
+import { sendPotdNotifications, sendPicksNotifications } from './notifications.js';
 import { QuotaManager } from './quota.js';
 import { fetchContext, hasContext } from './context.js';
 import { fetchWeather, hasVenue } from './weather.js';
@@ -472,6 +473,21 @@ export default {
             runPotdDaily(env, ctx, now, { fetchFullSlate }),
           ]);
 
+          // Today's board now exists — notify whoever opted in (see
+          // worker/src/account-handlers.js's handleUpdateNotifications).
+          // Best-effort: notifications.js swallows individual send failures
+          // itself, and this whole step is wrapped so a D1 hiccup here can
+          // never cost the day's picks either.
+          const top5Picks = await getTop5(env, { now });
+          try {
+            await Promise.all([
+              sendPotdNotifications(env, await getPotd(env, now)),
+              sendPicksNotifications(env, top5Picks),
+            ]);
+          } catch (e) {
+            console.error('Notification send failed:', e);
+          }
+
           // Warm each of the day's five Pixel's Picks write-ups now, so the
           // board is complete the moment anyone opens it rather than the
           // first visitor of the day paying a model call's latency per pick.
@@ -486,7 +502,7 @@ export default {
           // existing on-demand /analysis path, so this is strictly a
           // latency optimization and can never cost the day's picks.
           try {
-            for (const pick of await getTop5(env, { now })) {
+            for (const pick of top5Picks) {
               await getOrGenerateAnalysis(
                 {
                   eventId: pick.eventId,
