@@ -386,6 +386,26 @@
         <h2>Session</h2>
         <button type="button" id="signout-btn" class="button" style="background: transparent; color: #ff6b6b; border: 1px solid #ff6b6b; box-shadow: none;">Sign Out</button>
       </div>
+
+      <!-- Danger zone: permanent account deletion -->
+      <div class="card" style="border-color: rgba(239, 68, 68, 0.35);">
+        <h2 style="color: #ff6b6b;">Delete Account</h2>
+        <p class="card-desc">Permanently deletes your account, notification preferences, saved bankroll, and any bug reports you've submitted. This cannot be undone.</p>
+        <div id="delete-message"></div>
+        <form id="delete-form">
+          <div class="form-group">
+            <label for="delete-password">Confirm Your Password</label>
+            <input type="password" id="delete-password" placeholder="••••••••" required>
+          </div>
+          <button type="submit" class="button" style="background: transparent; color: #ff6b6b; border: 1px solid #ff6b6b; box-shadow: none;">Permanently Delete My Account</button>
+        </form>
+      </div>
+
+      <p style="text-align: center; margin-top: 8px;">
+        <a href="/terms.html" style="color: #7070aa; font-size: 12px;">Terms of Service</a>
+        <span style="color: #40406a;"> · </span>
+        <a href="/privacy.html" style="color: #7070aa; font-size: 12px;">Privacy Policy</a>
+      </p>
     </div>
   </div>
 
@@ -579,6 +599,34 @@
           input.checked = !input.checked;
         }
       });
+    });
+
+    document.getElementById('delete-form').addEventListener('submit', async (e) => {
+      e.preventDefault();
+      if (!confirm('This permanently deletes your account and everything saved to it. There is no undo. Continue?')) return;
+      const btn = e.target.querySelector('button');
+      const original = btn.textContent;
+      const currentPassword = document.getElementById('delete-password').value;
+      try {
+        btn.disabled = true;
+        btn.innerHTML = '<span class="spinner"></span> Deleting...';
+        const res = await fetch(`${window.API_BASE}/api/account`, {
+          method: 'DELETE',
+          headers: authHeaders(),
+          body: JSON.stringify({ currentPassword }),
+        });
+        const data = await res.json();
+        if (!res.ok) { showMessage('delete-message', data.error, true); return; }
+        localStorage.removeItem(window.AUTH_TOKEN_KEY);
+        localStorage.removeItem(window.AUTH_USER_KEY);
+        alert('Your account has been deleted.');
+        window.location.href = '/login.html';
+      } catch (err) {
+        showMessage('delete-message', 'Connection failed: ' + err.message, true);
+      } finally {
+        btn.disabled = false;
+        btn.textContent = original;
+      }
     });
 
     document.getElementById('signout-btn').addEventListener('click', () => {

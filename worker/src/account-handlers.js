@@ -217,3 +217,49 @@ export async function handleUpdateNotifications(request, env) {
     return json({ error: e.message }, { status: 500 });
   }
 }
+
+/**
+ * Permanent self-service account deletion. Requires the current password
+ * (a JWT alone isn't enough — a stolen/leftover session on a shared device
+ * shouldn't be able to destroy the account). Removes everything this app
+ * stores about the person: the users row, their bug reports (those rows
+ * carry a copy of their email/username), and their KV settings record.
+ * The shared pick-tracking history is untouched — it was never per-user.
+ */
+export async function handleDeleteAccount(request, env) {
+  try {
+    const payload = authenticate(request, env);
+    if (!payload) return json({ error: 'unauthorized' }, { status: 401 });
+
+    const { currentPassword } = await request.json();
+    if (!currentPassword) {
+      return json({ error: 'currentPassword required to delete your account' }, { status: 400 });
+    }
+
+    const user = await env.DB.prepare('SELECT password_hash FROM users WHERE id = ?')
+      .bind(payload.userId)
+      .first();
+    if (!user) return json({ error: 'user not found' }, { status: 404 });
+
+    const valid = await verifyPassword(currentPassword, user.password_hash);
+    if (!valid) return json({ error: 'password is incorrect' }, { status: 401 });
+
+    await env.DB.prepare('DELETE FROM bug_reports WHERE user_id = ?').bind(payload.userId).run();
+    await env.DB.prepare('DELETE FROM users WHERE id = ?').bind(payload.userId).run();
+    // Per-account bankroll/settings record lives in KV, keyed by userId —
+    // see worker/src/settings.js's settingsKey().
+    try {
+      await env.POTD_KV.delete(`settings:${payload.userId}`);
+    } catch (kvErr) {
+      // The account row is already gone (the part that matters for being
+      // able to sign in / be emailed) — an orphaned settings blob is
+      // unreachable without it, so log rather than fail the deletion.
+      console.error('Settings KV cleanup failed during account deletion:', kvErr);
+    }
+
+    return json({ message: 'account deleted' });
+  } catch (e) {
+    console.error('Delete account error:', e);
+    return json({ error: e.message }, { status: 500 });
+  }
+}

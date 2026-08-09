@@ -14,6 +14,7 @@ import {
   handleRequestEmailChange,
   handleConfirmEmailChange,
   handleUpdateNotifications,
+  handleDeleteAccount,
 } from './account-handlers.js';
 import { sendPotdNotifications, sendPicksNotifications } from './notifications.js';
 import { sendWeeklyTrackingReport } from './weekly-report.js';
@@ -102,7 +103,10 @@ function corsHeaders(request, env) {
     // PUT and X-Owner-Key are for /settings (worker/src/settings.js) — a
     // browser preflights both, so omitting either blocks the request before
     // it ever reaches the route.
-    'Access-Control-Allow-Methods': 'GET, POST, PUT, OPTIONS',
+    // DELETE is for /api/account (self-service account deletion) — a
+    // browser preflights it, so omitting it here blocks the request before
+    // it ever reaches the route, same reasoning as PUT below.
+    'Access-Control-Allow-Methods': 'GET, POST, PUT, DELETE, OPTIONS',
     'Access-Control-Allow-Headers': 'Content-Type, Authorization, X-Owner-Key',
     'Access-Control-Max-Age': '86400',
     Vary: 'Origin',
@@ -726,6 +730,11 @@ export default {
 
     if (pathname === '/api/report-bug' && request.method === 'POST') {
       const res = await handleReportBug(request, env);
+      return new Response(res.body, { status: res.status, headers: { ...cors, ...Object.fromEntries(res.headers) } });
+    }
+
+    if (pathname === '/api/account' && request.method === 'DELETE') {
+      const res = await handleDeleteAccount(request, env);
       return new Response(res.body, { status: res.status, headers: { ...cors, ...Object.fromEntries(res.headers) } });
     }
 
