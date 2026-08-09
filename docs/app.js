@@ -5240,10 +5240,18 @@ function showWelcomeToastIfFresh() {
   // even if this somehow ran twice in one page life.
   void el.welcomeToast.offsetWidth;
   el.welcomeToast.classList.add('is-visible');
-  el.welcomeToast.addEventListener('animationend', () => {
+
+  // animationend is the normal path, but a backgrounded tab pauses CSS
+  // animations entirely (confirmed directly: document.visibilityState
+  // stayed 'hidden' and the event never fired) — a plain timer as a
+  // fallback means the toast can't get stuck showing indefinitely even in
+  // that edge case, just slightly outlasting the animation's own 3.6s.
+  const hide = () => {
     el.welcomeToast.hidden = true;
     el.welcomeToast.classList.remove('is-visible');
-  }, { once: true });
+  };
+  el.welcomeToast.addEventListener('animationend', hide, { once: true });
+  setTimeout(hide, 4200);
 }
 
 (async function init() {
