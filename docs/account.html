@@ -380,6 +380,12 @@
           </label>
         </div>
       </div>
+
+      <!-- Sign out -->
+      <div class="card">
+        <h2>Session</h2>
+        <button type="button" id="signout-btn" class="button" style="background: transparent; color: #ff6b6b; border: 1px solid #ff6b6b; box-shadow: none;">Sign Out</button>
+      </div>
     </div>
   </div>
 
@@ -573,6 +579,13 @@
           input.checked = !input.checked;
         }
       });
+    });
+
+    document.getElementById('signout-btn').addEventListener('click', () => {
+      if (!confirm('Are you sure you want to sign out?')) return;
+      localStorage.removeItem(window.AUTH_TOKEN_KEY);
+      localStorage.removeItem(window.AUTH_USER_KEY);
+      window.location.href = 'https://perpetualpicks.com/login.html';
     });
 
     init();
