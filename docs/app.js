@@ -583,7 +583,6 @@ const el = {
   pixelSortRow: document.getElementById('pixelSortRow'),
   pixelSort: document.getElementById('pixelSort'),
   scrim: document.getElementById('scrim'),
-  logoutBtn: document.getElementById('logoutBtn'),
   accountLink: document.getElementById('accountLink'),
   bankrollToggle: document.getElementById('bankrollToggle'),
   bankrollPanel: document.getElementById('bankrollPanel'),
@@ -3919,7 +3918,6 @@ el.pixelSort.addEventListener('change', () => {
   }
 });
 
-el.logoutBtn.addEventListener('click', signOut);
 
 document.addEventListener('keydown', (e) => {
   if (e.key !== 'Escape') return;
@@ -5226,7 +5224,6 @@ async function openLearningDashboard() {
 (async function init() {
   if (!checkAuth()) return;
 
-  el.logoutBtn.hidden = !getToken();
   el.accountLink.hidden = !getToken();
   el.pixelSort.value = state.pixelSort;
 

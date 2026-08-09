@@ -1,4 +1,5 @@
 import { formatAmerican } from '../../docs/engine.js';
+import { EMAIL_LOGO_HTML } from './auth-handlers.js';
 
 /**
  * Email notifications for users opted into Play of the Day / Pixel's Picks
@@ -40,11 +41,13 @@ async function sendBatch(env, users, buildEmail) {
   await Promise.all(Array.from({ length: SEND_CONCURRENCY }, worker));
 }
 
-function emailShell(title, bodyHtml) {
+function emailShell(username, title, bodyHtml) {
   return `
     <div style="font-family: Arial, sans-serif; background: #05050A; color: #e0e0ff; padding: 20px;">
       <div style="max-width: 600px; margin: 0 auto; border: 1px solid #9d4edd; border-radius: 8px; padding: 30px; background: #0a0515;">
-        <h2 style="color: #d946ef; margin-bottom: 20px;">${title}</h2>
+        ${EMAIL_LOGO_HTML}
+        <h2 style="color: #d946ef; margin-bottom: 8px;">${title}</h2>
+        <p style="color: #7070aa; font-size: 13px; margin-bottom: 20px;">Hi ${username},</p>
         ${bodyHtml}
         <div style="text-align: center; margin: 30px 0 0;">
           <a href="https://perpetualpicks.com/index.html" style="display: inline-block; background: linear-gradient(135deg, #d946ef 0%, #9d4edd 100%); color: #05050A; padding: 12px 28px; border-radius: 8px; text-decoration: none; font-weight: bold;">Open PerpetualPicks</a>
@@ -70,11 +73,11 @@ export async function sendPotdNotifications(env, record) {
     to: user.email,
     from: FROM,
     subject: `Play of the Day: ${pick.selection} (${price})`,
-    html: emailShell('Play of the Day is Ready', `
+    html: emailShell(user.username, 'Play of the Day is Ready', `
       <p style="margin-bottom: 8px; font-size: 18px; font-weight: bold;">${headline}</p>
       <p style="margin-bottom: 20px; color: #a0a0cc;">${matchup} &middot; ${pick.selection} <span style="color: #00d9ff;">${price}</span></p>
     `),
-    text: `Play of the Day: ${pick.selection} (${price})\n${matchup}\n\nOpen: https://perpetualpicks.com/index.html`,
+    text: `Hi ${user.username}, Play of the Day: ${pick.selection} (${price})\n${matchup}\n\nOpen: https://perpetualpicks.com/index.html`,
   }));
 }
 
@@ -91,9 +94,9 @@ export async function sendPicksNotifications(env, picks) {
     to: user.email,
     from: FROM,
     subject: `Pixel's Picks: ${picks.length} lock${picks.length === 1 ? '' : 's'} are in`,
-    html: emailShell("Pixel's Picks Are Ready", `
+    html: emailShell(user.username, "Pixel's Picks Are Ready", `
       <ul style="margin: 0 0 20px; padding-left: 20px; color: #e0e0ff; line-height: 1.7;">${rows}</ul>
     `),
-    text: `Pixel's Picks (${picks.length}):\n${picks.map((p) => `${p.away} @ ${p.home} — ${p.selection} (${formatAmerican(p.american)})`).join('\n')}\n\nOpen: https://perpetualpicks.com/index.html`,
+    text: `Hi ${user.username}, Pixel's Picks (${picks.length}):\n${picks.map((p) => `${p.away} @ ${p.home} — ${p.selection} (${formatAmerican(p.american)})`).join('\n')}\n\nOpen: https://perpetualpicks.com/index.html`,
   }));
 }

@@ -2,6 +2,7 @@ import { summarizePicks } from '../../docs/learning.js';
 import { getAllTrackedPicks } from './tracking.js';
 import { getAllFullSlateTracked } from './full-slate-tracking.js';
 import { getPotdHistory } from './potd.js';
+import { EMAIL_LOGO_HTML } from './auth-handlers.js';
 
 /**
  * The optional weekly tracking-dashboard digest (off by default — see
@@ -54,11 +55,15 @@ export async function sendWeeklyTrackingReport(env, now = Date.now()) {
     ['Play of the Day', summarizePicks(potdHistory)],
   ];
 
-  const html = `
+  const rowsHtml = sections.map(([label, s]) => summaryRowHtml(label, s)).join('');
+  const rowsText = sections.map(([label, s]) => summaryRowText(label, s)).join('\n');
+
+  const buildHtml = (username) => `
     <div style="font-family: Arial, sans-serif; background: #05050A; color: #e0e0ff; padding: 20px;">
       <div style="max-width: 600px; margin: 0 auto; border: 1px solid #9d4edd; border-radius: 8px; padding: 30px; background: #0a0515;">
+        ${EMAIL_LOGO_HTML}
         <h2 style="color: #d946ef; margin-bottom: 8px;">Your Weekly Tracking Report</h2>
-        <p style="color: #7070aa; font-size: 13px; margin-bottom: 24px;">Last ${REPORT_WINDOW_DAYS} days across every board.</p>
+        <p style="color: #7070aa; font-size: 13px; margin-bottom: 24px;">Hi ${username} — last ${REPORT_WINDOW_DAYS} days across every board.</p>
         <table style="width: 100%; border-collapse: collapse; font-size: 14px;">
           <thead>
             <tr>
@@ -67,7 +72,7 @@ export async function sendWeeklyTrackingReport(env, now = Date.now()) {
               <th style="text-align:left; padding:8px 12px; color:#a0a0cc; font-size:11px; text-transform:uppercase; letter-spacing:0.05em;">ROI</th>
             </tr>
           </thead>
-          <tbody>${sections.map(([label, s]) => summaryRowHtml(label, s)).join('')}</tbody>
+          <tbody>${rowsHtml}</tbody>
         </table>
         <div style="text-align: center; margin: 28px 0 0;">
           <a href="https://perpetualpicks.com/index.html" style="display: inline-block; background: linear-gradient(135deg, #d946ef 0%, #9d4edd 100%); color: #05050A; padding: 12px 28px; border-radius: 8px; text-decoration: none; font-weight: bold;">Open Tracking Dashboard</a>
@@ -78,8 +83,9 @@ export async function sendWeeklyTrackingReport(env, now = Date.now()) {
       </div>
     </div>`;
 
-  const text = `Your Weekly Tracking Report — last ${REPORT_WINDOW_DAYS} days\n\n` +
-    sections.map(([label, s]) => summaryRowText(label, s)).join('\n') +
+  const buildText = (username) =>
+    `Hi ${username}, your Weekly Tracking Report — last ${REPORT_WINDOW_DAYS} days\n\n` +
+    rowsText +
     `\n\nOpen: https://perpetualpicks.com/index.html`;
 
   const queue = [...users];
@@ -91,8 +97,8 @@ export async function sendWeeklyTrackingReport(env, now = Date.now()) {
           to: user.email,
           from: FROM,
           subject: 'Your Weekly PerpetualPicks Tracking Report',
-          html,
-          text,
+          html: buildHtml(user.username),
+          text: buildText(user.username),
         });
       } catch (e) {
         console.error(`Weekly report send failed for ${user.email}:`, e);

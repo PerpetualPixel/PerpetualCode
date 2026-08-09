@@ -5,22 +5,35 @@
 <title>Perpetual Picks</title>
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <meta name="theme-color" content="#05050A">
-<meta name="description" content="One button. Sharp picks.">
+<meta name="description" content="Continuous edge across every slate.">
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
 <meta name="apple-mobile-web-app-title" content="Perpetual Picks">
+<!-- Link-preview card (iMessage, Slack, etc.) -->
+<meta property="og:type" content="website">
+<meta property="og:url" content="https://perpetualpicks.com/">
+<meta property="og:title" content="Perpetual Picks">
+<meta property="og:description" content="Continuous edge across every slate.">
+<meta property="og:image" content="https://perpetualpicks.com/assets/og-image.png">
+<meta property="og:image:width" content="1200">
+<meta property="og:image:height" content="630">
+<meta name="twitter:card" content="summary_large_image">
+<meta name="twitter:title" content="Perpetual Picks">
+<meta name="twitter:description" content="Continuous edge across every slate.">
+<meta name="twitter:image" content="https://perpetualpicks.com/assets/og-image.png">
 <link rel="manifest" href="manifest.webmanifest">
-<link rel="apple-touch-icon" href="icon.svg">
+<link rel="apple-touch-icon" href="assets/logo-icon-180.png">
+<link rel="icon" href="assets/logo-icon-64.png" type="image/png">
 <link rel="icon" href="icon.svg" type="image/svg+xml">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Syne:wght@600;700;800&family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
-<link rel="stylesheet" href="styles.css?v=1.62">
+<link rel="stylesheet" href="styles.css?v=1.63">
 </head>
 <body>
 
 <header class="topbar">
-  <h1 class="wordmark">PERPETUAL<span>PICKS</span></h1>
+  <h1 class="wordmark"><img src="assets/logo-icon-64.png" alt="" class="wordmark-icon" width="26" height="26">PERPETUAL<span>PICKS</span></h1>
   <div class="topbar-actions">
     <button id="guideToggle" class="icon-btn" aria-expanded="false" aria-controls="guidePanel">
       Guide
@@ -35,7 +48,6 @@
       Tracking
     </button>
     <a id="accountLink" href="/account.html" class="icon-btn" hidden>Account</a>
-    <button id="logoutBtn" class="icon-btn" hidden>Sign out</button>
   </div>
 </header>
 
@@ -643,6 +655,6 @@
   </div>
 </aside>
 
-<script type="module" src="app.js?v=1.62"></script>
+<script type="module" src="app.js?v=1.63"></script>
 </body>
 </html>

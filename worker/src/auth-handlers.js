@@ -19,8 +19,16 @@ export function jwtSecret() {
   return 'perpetual-picks-dev-secret-change-in-production';
 }
 
+// Every outbound email leads with the same logo header — kept as one
+// constant, exported so account-handlers.js/notifications.js/weekly-
+// report.js reuse it too, rather than four slightly-drifted copies.
+export const EMAIL_LOGO_HTML = `
+  <div style="text-align: center; margin-bottom: 20px;">
+    <img src="https://perpetualpicks.com/assets/logo-email.png" alt="Perpetual Picks" width="180" style="max-width: 100%; height: auto;">
+  </div>`;
+
 // Send verification email using Cloudflare Email Service
-async function sendVerificationEmail(env, email, token) {
+async function sendVerificationEmail(env, email, username, token) {
   if (!env.EMAIL) {
     throw new Error('Email service not configured');
   }
@@ -34,8 +42,9 @@ async function sendVerificationEmail(env, email, token) {
     html: `
       <div style="font-family: Arial, sans-serif; background: #05050A; color: #e0e0ff; padding: 20px;">
         <div style="max-width: 600px; margin: 0 auto; border: 1px solid #9d4edd; border-radius: 8px; padding: 30px; background: #0a0515;">
+          ${EMAIL_LOGO_HTML}
           <h2 style="color: #d946ef; margin-bottom: 20px;">Verify Your Email</h2>
-          <p style="margin-bottom: 30px;">Welcome to PerpetualPicks! Click the button below to verify your email:</p>
+          <p style="margin-bottom: 30px;">Hi ${username}, welcome to PerpetualPicks! Click the button below to verify your email:</p>
           <div style="text-align: center; margin: 30px 0;">
             <a href="${verifyUrl}" style="display: inline-block; background: linear-gradient(135deg, #d946ef 0%, #9d4edd 100%); color: #05050A; padding: 14px 32px; border-radius: 8px; text-decoration: none; font-weight: bold; font-size: 16px; cursor: pointer;">Verify Email</a>
           </div>
@@ -44,7 +53,7 @@ async function sendVerificationEmail(env, email, token) {
         </div>
       </div>
     `,
-    text: `Verify your email: ${verifyUrl}\n\nThis link expires in 24 hours.`,
+    text: `Hi ${username}, verify your email: ${verifyUrl}\n\nThis link expires in 24 hours.`,
   });
 }
 
@@ -106,7 +115,7 @@ export async function handleRegister(request, env) {
 
     // Send verification email
     try {
-      await sendVerificationEmail(env, email, verificationToken);
+      await sendVerificationEmail(env, email, username, verificationToken);
     } catch (emailErr) {
       console.error('Email send failed:', emailErr);
       // Don't fail registration if email fails — user can request resend

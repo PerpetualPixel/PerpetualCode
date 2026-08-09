@@ -202,12 +202,19 @@ body {
 
 .wordmark {
   margin: 0;
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
   font-family: var(--display);
   font-size: 1.15rem;
   font-weight: 800;
   letter-spacing: 0.1em;
   color: var(--text);
   animation: slideInDown 0.5s ease-out;
+}
+.wordmark-icon {
+  display: block;
+  filter: drop-shadow(0 0 6px rgba(255, 0, 122, 0.4));
 }
 .wordmark span {
   /* Violet -> magenta gradient text, the wordmark's own signature glow. */

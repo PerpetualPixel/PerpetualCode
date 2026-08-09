@@ -1,5 +1,5 @@
 import { hashPassword, verifyPassword, generateVerificationToken } from './auth-email.js';
-import { verifyJWT, jwtSecret } from './auth-handlers.js';
+import { verifyJWT, jwtSecret, EMAIL_LOGO_HTML } from './auth-handlers.js';
 
 function json(body, { status = 200, headers = {} } = {}) {
   return new Response(JSON.stringify(body), {
@@ -87,7 +87,7 @@ export async function handleUpdatePassword(request, env) {
   }
 }
 
-async function sendEmailChangeVerification(env, newEmail, token) {
+async function sendEmailChangeVerification(env, newEmail, username, token) {
   if (!env.EMAIL) throw new Error('Email service not configured');
 
   const confirmUrl = `https://perpetualpicks.com/account.html?emailToken=${token}`;
@@ -99,8 +99,9 @@ async function sendEmailChangeVerification(env, newEmail, token) {
     html: `
       <div style="font-family: Arial, sans-serif; background: #05050A; color: #e0e0ff; padding: 20px;">
         <div style="max-width: 600px; margin: 0 auto; border: 1px solid #9d4edd; border-radius: 8px; padding: 30px; background: #0a0515;">
+          ${EMAIL_LOGO_HTML}
           <h2 style="color: #d946ef; margin-bottom: 20px;">Confirm Your New Email</h2>
-          <p style="margin-bottom: 30px;">You requested to change your PerpetualPicks account email to this address. Click below to confirm:</p>
+          <p style="margin-bottom: 30px;">Hi ${username}, you requested to change your PerpetualPicks account email to this address. Click below to confirm:</p>
           <div style="text-align: center; margin: 30px 0;">
             <a href="${confirmUrl}" style="display: inline-block; background: linear-gradient(135deg, #d946ef 0%, #9d4edd 100%); color: #05050A; padding: 14px 32px; border-radius: 8px; text-decoration: none; font-weight: bold; font-size: 16px;">Confirm New Email</a>
           </div>
@@ -109,7 +110,7 @@ async function sendEmailChangeVerification(env, newEmail, token) {
         </div>
       </div>
     `,
-    text: `Confirm your new email: ${confirmUrl}\n\nThis link expires in 24 hours. If you didn't request this, ignore this email.`,
+    text: `Hi ${username}, confirm your new email: ${confirmUrl}\n\nThis link expires in 24 hours. If you didn't request this, ignore this email.`,
   });
 }
 
@@ -126,6 +127,10 @@ export async function handleRequestEmailChange(request, env) {
       .first();
     if (taken) return json({ error: 'email already in use' }, { status: 409 });
 
+    const self = await env.DB.prepare('SELECT username FROM users WHERE id = ?')
+      .bind(payload.userId)
+      .first();
+
     const token = generateVerificationToken();
     const expires = Date.now() + 24 * 60 * 60 * 1000;
 
@@ -141,7 +146,7 @@ export async function handleRequestEmailChange(request, env) {
     // surface as a raw 500 — the row stays there either way, so resending is
     // just calling this endpoint again with the same newEmail.
     try {
-      await sendEmailChangeVerification(env, newEmail, token);
+      await sendEmailChangeVerification(env, newEmail, self?.username ?? 'there', token);
     } catch (emailErr) {
       console.error('Email change verification send failed:', emailErr);
     }
