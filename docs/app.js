@@ -82,6 +82,14 @@ const LEAGUE_GROUPS = [
   { id: 'mma', label: 'MMA', keys: ['mma_mixed_martial_arts'] },
   { id: 'mls', label: 'MLS', keys: ['soccer_usa_mls'] },
   { id: 'nhl', label: 'NHL', keys: ['icehockey_nhl'] },
+  // Placeholders only — both leagues are off-season. offSeason:true keeps
+  // refreshAllLeagues() from fetching either key at all (see that function)
+  // and renderFullSlate() from attempting any live score/pick refresh for
+  // them, so onboarding these now costs zero real requests. Flip this off
+  // (and give NCAAB its own Power-4-style conference filter, mirroring
+  // docs/ncaaf-conferences.js) once each season actually starts.
+  { id: 'nba', label: 'NBA', keys: ['basketball_nba'], offSeason: true },
+  { id: 'ncaab', label: 'NCAAB', keys: ['basketball_ncaab'], offSeason: true },
 ];
 const LEAGUE_GROUP_BY_ID = new Map(LEAGUE_GROUPS.map((g) => [g.id, g]));
 
@@ -902,7 +910,10 @@ async function refreshAllLeagues() {
   }
 
   populateTennisGroups();
-  const allKeys = [...new Set(LEAGUE_GROUPS.flatMap((g) => g.keys))];
+  // offSeason groups (NBA/NCAAB placeholders — see LEAGUE_GROUPS) are
+  // deliberately excluded here: no live fetch for either until someone
+  // flips that flag off once the season actually starts.
+  const allKeys = [...new Set(LEAGUE_GROUPS.filter((g) => !g.offSeason).flatMap((g) => g.keys))];
   const results = await Promise.allSettled(allKeys.map((key) => fetchSingleLeague(key)));
   const failed = results.filter((r) => r.status === 'rejected').length;
 
@@ -3138,10 +3149,13 @@ function groupGameCount(group) {
 }
 
 /**
- * The eight fixed league groups, each with its live game count. Every group
- * is always "loaded" in the sense that refreshAllLeagues() already asked for
- * it on boot — a count of 0 just means nothing's on the board right now
- * (MMA between fight weeks, say), not that the league needs fetching.
+ * The fixed league groups, each with its live game count — except NBA/
+ * NCAAB, which show "off-season" instead (see LEAGUE_GROUPS' offSeason
+ * flag): those two are never fetched at all, so a live count would always
+ * read 0 regardless of the real season state. Every other group is always
+ * "loaded" in the sense that refreshAllLeagues() already asked for it on
+ * boot — a count of 0 for one of those just means nothing's on the board
+ * right now (MMA between fight weeks, say), not that it needs fetching.
  */
 function renderSlateLeagueOptions() {
   el.slateLeagueSelect.disabled = false;
@@ -3149,8 +3163,13 @@ function renderSlateLeagueOptions() {
 
   el.slateLeagueSelect.innerHTML = LEAGUE_GROUPS
     .map((group) => {
-      const count = groupGameCount(group);
-      const label = `${group.label}: ${count} game${count === 1 ? '' : 's'}`;
+      let label;
+      if (group.offSeason) {
+        label = `${group.label}: off-season`;
+      } else {
+        const count = groupGameCount(group);
+        label = `${group.label}: ${count} game${count === 1 ? '' : 's'}`;
+      }
       return `<option value="${esc(group.id)}" ${group.id === state.slateLeague ? 'selected' : ''}>${esc(label)}</option>`;
     })
     .join('');
@@ -3271,6 +3290,17 @@ function renderFullSlate() {
   renderedSlateGames.length = 0;
 
   const group = LEAGUE_GROUP_BY_ID.get(state.slateLeague) ?? LEAGUE_GROUPS[0];
+
+  // NBA/NCAAB are onboarded as placeholders only (see LEAGUE_GROUPS) — no
+  // live fetch happens for either, in-season or not, until someone
+  // explicitly wires them into refreshAllLeagues()'s fetch list. Short-
+  // circuit before any of the refresh calls below so selecting the tab
+  // never triggers a request for a league that isn't actually tracked yet.
+  if (group.offSeason) {
+    el.slateBody.innerHTML = `<p class="empty">${esc(group.label)} is coming soon — tracking starts once the season is underway.</p>`;
+    el.slateEventRow.hidden = true;
+    return;
+  }
 
   // Fire-and-forget: renders now with whatever's already cached (nothing on
   // first load), then repaints once fresh scores land — but only if the
