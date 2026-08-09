@@ -1597,6 +1597,55 @@ input[type="range"]:focus-visible {
 }
 .bankroll-submit .generate-label { font-size: 0.85rem; }
 
+/* ---------------------------------------------------------------- */
+/* Report a Bug / Suggestion (About panel)                           */
+/* ---------------------------------------------------------------- */
+
+.report-bug-section {
+  margin: 20px 0;
+  padding-top: 20px;
+  border-top: 1px solid var(--line);
+}
+
+.report-bug-form {
+  margin-top: 14px;
+}
+
+.report-bug-type {
+  display: flex;
+  gap: 18px;
+  margin-bottom: 12px;
+  font-size: 0.8rem;
+  color: var(--muted);
+}
+.report-bug-type label {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  cursor: pointer;
+}
+.report-bug-type input[type="radio"] {
+  accent-color: var(--accent);
+}
+
+.report-bug-form textarea {
+  width: 100%;
+  background: var(--surface-2);
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  color: var(--text);
+  font-family: var(--sans);
+  font-size: 0.85rem;
+  padding: 11px 12px;
+  box-sizing: border-box;
+  resize: vertical;
+  margin-bottom: 10px;
+}
+.report-bug-form textarea:focus {
+  outline: none;
+  border-color: var(--accent);
+}
+
 .bankroll-display-toggle {
   display: flex;
   gap: 8px;

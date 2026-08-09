@@ -28,7 +28,7 @@
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Syne:wght@600;700;800&family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
-<link rel="stylesheet" href="styles.css?v=1.68">
+<link rel="stylesheet" href="styles.css?v=1.69">
 </head>
 <body>
 
@@ -401,6 +401,21 @@
     highest-conviction pick, posted automatically each morning. Every
     tracked pick is graded against its actual result, win or lose, so the
     Tracking Dashboard reflects real performance, not a marketing number.</p>
+    <div class="report-bug-section">
+      <button type="button" id="reportBugToggle" class="action-btn" aria-expanded="false" aria-controls="reportBugForm">
+        Report a Bug / Suggestion
+      </button>
+      <div id="reportBugForm" class="report-bug-form" hidden>
+        <div class="report-bug-type" role="radiogroup" aria-label="Report type">
+          <label><input type="radio" name="reportBugType" value="bug" checked> Bug</label>
+          <label><input type="radio" name="reportBugType" value="suggestion"> Suggestion</label>
+        </div>
+        <textarea id="reportBugMessage" placeholder="What happened, or what would you like to see?" maxlength="4000" rows="5"></textarea>
+        <button type="button" id="reportBugSubmit" class="action-btn">Submit</button>
+        <p id="reportBugStatus" class="bankroll-hint"></p>
+      </div>
+    </div>
+
     <p class="about-footer">
       Created by Perpetual Pixel<br>
       <span id="aboutVersion" class="about-version"></span>
@@ -643,6 +658,6 @@
   </div>
 </aside>
 
-<script type="module" src="app.js?v=1.68"></script>
+<script type="module" src="app.js?v=1.69"></script>
 </body>
 </html>

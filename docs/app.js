@@ -603,6 +603,11 @@ const el = {
   aboutPanel: document.getElementById('aboutPanel'),
   aboutClose: document.getElementById('aboutClose'),
   aboutVersion: document.getElementById('aboutVersion'),
+  reportBugToggle: document.getElementById('reportBugToggle'),
+  reportBugForm: document.getElementById('reportBugForm'),
+  reportBugMessage: document.getElementById('reportBugMessage'),
+  reportBugSubmit: document.getElementById('reportBugSubmit'),
+  reportBugStatus: document.getElementById('reportBugStatus'),
   statsDrawer: document.getElementById('statsDrawer'),
   statsDrawerTitle: document.getElementById('statsDrawerTitle'),
   statsDrawerClose: document.getElementById('statsDrawerClose'),
@@ -3808,6 +3813,48 @@ el.guideClose.addEventListener('click', () => setGuideOpen(false));
 
 el.aboutToggle.addEventListener('click', () => setAboutOpen(el.aboutPanel.hidden));
 el.aboutClose.addEventListener('click', () => setAboutOpen(false));
+
+el.reportBugToggle.addEventListener('click', () => {
+  const open = el.reportBugForm.hidden;
+  el.reportBugForm.hidden = !open;
+  el.reportBugToggle.setAttribute('aria-expanded', String(open));
+  if (open) el.reportBugMessage.focus();
+});
+
+el.reportBugSubmit.addEventListener('click', async () => {
+  const message = el.reportBugMessage.value.trim();
+  if (!message) {
+    el.reportBugStatus.textContent = 'Enter a description first.';
+    return;
+  }
+  const type = document.querySelector('input[name="reportBugType"]:checked')?.value ?? 'bug';
+  const token = getToken();
+  if (!token || !CONFIG.WORKER_URL) {
+    el.reportBugStatus.textContent = 'Couldn\'t submit — try reloading the page.';
+    return;
+  }
+
+  el.reportBugSubmit.disabled = true;
+  el.reportBugStatus.textContent = 'Submitting…';
+  try {
+    const res = await fetch(new URL('/api/report-bug', CONFIG.WORKER_URL), {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+      body: JSON.stringify({ message, type }),
+    });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) {
+      el.reportBugStatus.textContent = data.error ?? 'Something went wrong — try again in a moment.';
+      return;
+    }
+    el.reportBugStatus.textContent = `Thanks — submitted as Ticket #${data.ticketId}.`;
+    el.reportBugMessage.value = '';
+  } catch {
+    el.reportBugStatus.textContent = 'Couldn\'t reach the server — try again in a moment.';
+  } finally {
+    el.reportBugSubmit.disabled = false;
+  }
+});
 
 el.learningPanelClose.addEventListener('click', () => {
   el.learningPanel.hidden = true;

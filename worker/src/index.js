@@ -15,6 +15,7 @@ import {
 } from './account-handlers.js';
 import { sendPotdNotifications, sendPicksNotifications } from './notifications.js';
 import { sendWeeklyTrackingReport } from './weekly-report.js';
+import { handleReportBug } from './bug-reports.js';
 import { QuotaManager } from './quota.js';
 import { fetchContext, hasContext } from './context.js';
 import { fetchWeather, hasVenue } from './weather.js';
@@ -666,6 +667,11 @@ export default {
 
     if (pathname === '/api/account/notifications' && request.method === 'PUT') {
       const res = await handleUpdateNotifications(request, env);
+      return new Response(res.body, { status: res.status, headers: { ...cors, ...Object.fromEntries(res.headers) } });
+    }
+
+    if (pathname === '/api/report-bug' && request.method === 'POST') {
+      const res = await handleReportBug(request, env);
       return new Response(res.body, { status: res.status, headers: { ...cors, ...Object.fromEntries(res.headers) } });
     }
 
