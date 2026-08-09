@@ -81,13 +81,24 @@ const LEAGUE_GROUPS = [
   { id: 'wnba', label: 'WNBA', keys: ['basketball_wnba'] },
   { id: 'mma', label: 'MMA', keys: ['mma_mixed_martial_arts'] },
   { id: 'mls', label: 'MLS', keys: ['soccer_usa_mls'] },
-  { id: 'nhl', label: 'NHL', keys: ['icehockey_nhl'] },
-  // Placeholders only — both leagues are off-season. offSeason:true keeps
-  // refreshAllLeagues() from fetching either key at all (see that function)
-  // and renderFullSlate() from attempting any live score/pick refresh for
-  // them, so onboarding these now costs zero real requests. Flip this off
-  // (and give NCAAB its own Power-4-style conference filter, mirroring
-  // docs/ncaaf-conferences.js) once each season actually starts.
+  // offSeason:true here only affects THIS client-side Full Slate browsing
+  // tab (refreshAllLeagues() skips the key, renderFullSlate() shows "coming
+  // soon" instead of fetching) — unlike NBA/NCAAB below, NHL is still
+  // tracked year-round server-side (FIXED_SPORT_KEYS in worker/src/
+  // tracking.js, and the NHL Shots on Goal prop pipeline), and that side is
+  // untouched: it already finds zero games during the off-season and
+  // correctly does nothing, at negligible cost, by the same "0 games -> 0
+  // picks, no error" handling every sport gets. This flag just stops the
+  // dashboard tab itself from looking "live" when there's nothing to show.
+  // Flip back once the season starts.
+  { id: 'nhl', label: 'NHL', keys: ['icehockey_nhl'], offSeason: true },
+  // Placeholders only — both leagues are off-season AND have never been
+  // wired into server-side tracking at all (unlike NHL above). offSeason:true
+  // keeps refreshAllLeagues() from fetching either key at all (see that
+  // function) and renderFullSlate() from attempting any live score/pick
+  // refresh for them, so onboarding these now costs zero real requests.
+  // Flip this off (and give NCAAB its own Power-4-style conference filter,
+  // mirroring docs/ncaaf-conferences.js) once each season actually starts.
   { id: 'nba', label: 'NBA', keys: ['basketball_nba'], offSeason: true },
   { id: 'ncaab', label: 'NCAAB', keys: ['basketball_ncaab'], offSeason: true },
 ];
