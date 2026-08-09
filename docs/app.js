@@ -628,6 +628,8 @@ const el = {
   trackerGraphBucketTabs: document.getElementById('trackerGraphBucketTabs'),
   trackerGraphSvgWrap: document.getElementById('trackerGraphSvgWrap'),
   calibrationReport: document.getElementById('calibrationReport'),
+  dailyLearnWeights: document.getElementById('dailyLearnWeights'),
+  dailyLearnLog: document.getElementById('dailyLearnLog'),
   algoHealthConfig: document.getElementById('algoHealthConfig'),
   algoHealthPaused: document.getElementById('algoHealthPaused'),
   algoHealthLog: document.getElementById('algoHealthLog'),
@@ -4570,6 +4572,71 @@ function algoSegmentLabel(key) {
   return `${sportLabel}: ${ALGO_HEALTH_MARKET_LABELS[marketKey] ?? marketKey}`;
 }
 
+const ODDS_BAND_LABELS = {
+  heavyfav: 'Heavy favorites (−180 and shorter)',
+  fav: 'Favorites (−179 to −120)',
+  close: 'Near-pickem (−119 to +119)',
+  dog: 'Underdogs (+120 and longer)',
+};
+
+/** "seg:sport|market" or "odds:band" (worker/src/daily-learning.js's feature keys) into a readable label. */
+function learnFeatureLabel(key) {
+  const k = String(key ?? '');
+  if (k.startsWith('odds:')) return ODDS_BAND_LABELS[k.slice(5)] ?? k;
+  if (k.startsWith('seg:')) return algoSegmentLabel(k.slice(4));
+  return k;
+}
+
+/** Current daily-learning weight profile + report log (see worker/src/daily-learning.js). */
+async function fetchDailyLearning() {
+  if (!CONFIG.WORKER_URL) return null;
+  try {
+    const res = await fetch(new URL('/learning', CONFIG.WORKER_URL), { headers: { Accept: 'application/json' } });
+    if (!res.ok) return null;
+    return await res.json();
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Renders the Daily Learning section: the active reliability weights (what
+ * today's selection is being adjusted by, with the evidence behind each),
+ * and the day-by-day report log — the plain-English account of what the
+ * review saw each morning and what it changed.
+ */
+async function renderDailyLearningSection() {
+  const data = await fetchDailyLearning();
+  if (!data) {
+    el.dailyLearnWeights.innerHTML = `<p class="empty">Couldn't load daily learning data.</p>`;
+    el.dailyLearnLog.innerHTML = '';
+    return;
+  }
+
+  const weights = data.profile?.weights ?? {};
+  const evidence = data.profile?.evidence ?? {};
+  const entries = Object.entries(weights).sort(([, a], [, b]) => a - b);
+
+  el.dailyLearnWeights.innerHTML = entries.length
+    ? entries.map(([key, w]) => {
+        const stats = evidence[key];
+        const why = stats
+          ? ` — ${stats.wins}/${stats.n} vs ${stats.expectedWins.toFixed(1)} expected${typeof stats.avgClvPts === 'number' ? `, CLV ${stats.avgClvPts >= 0 ? '+' : ''}${stats.avgClvPts.toFixed(2)}pts` : ''}`
+          : '';
+        return `<div class="rec-item ${w < 1 ? 'high' : 'low'}"><strong>x${w.toFixed(3)}</strong> ${esc(learnFeatureLabel(key))}${esc(why)}</div>`;
+      }).join('')
+    : `<div class="rec-item low">No active adjustments — either every segment is performing within its expected range, or there isn't enough graded evidence yet (15 graded picks per segment before anything moves).</div>`;
+
+  const log = (data.log ?? []).slice(0, 14);
+  el.dailyLearnLog.innerHTML = log.length
+    ? log.map((e) => `
+      <div class="rec-item">
+        <strong>${esc(e.dateKey)}</strong>
+        ${(e.report ?? []).map((line) => `<div>${esc(line)}</div>`).join('')}
+      </div>`).join('')
+    : `<div class="rec-item">No reviews yet — the first one runs at the next 2am ET batch and reports here every morning after.</div>`;
+}
+
 /** Current state of the weekly algorithm health review (see worker/src/algo-health.js). */
 async function fetchAlgoHealth() {
   if (!CONFIG.WORKER_URL) return null;
@@ -4697,7 +4764,7 @@ el.algoHealthResetBtn?.addEventListener('click', async () => {
 async function renderLearningDashboard() {
   const top5Picks = await loadTrackerHistories();
   renderCalibrationReport(top5Picks);
-  await renderAlgoHealthSection();
+  await Promise.all([renderDailyLearningSection(), renderAlgoHealthSection()]);
 }
 
 /** Applies the user's last-dragged width, if any — otherwise the panel keeps its CSS default (fills the viewport). */

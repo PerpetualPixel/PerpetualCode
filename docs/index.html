@@ -518,6 +518,26 @@
       <div id="calibrationReport" class="learning-recs"></div>
     </section>
 
+    <!-- Daily Learning -->
+    <section class="learning-section">
+      <h3>Daily Learning <span class="stats-source">Automatic, reviews every morning before the day's picks lock in</span></h3>
+      <p class="filter-hint">
+        The self-correction loop. Every morning at the 2am ET batch, before
+        any picks are chosen, the app reviews its trailing 30 days of graded
+        results — both actual wins vs. what its own probabilities predicted,
+        and closing-line value — for every sport + bet-type segment and odds
+        band. A segment that's been misfiring gets a bounded score penalty
+        (down to x0.85) so it needs a visibly better number to make the
+        board; one that's been sharp gets a small nudge (capped at x1.05).
+        Small samples barely move the needle by design, adjustments apply
+        only to the <em>next</em> day's selection, and the Full Slate record
+        is never adjusted — it keeps measuring the raw engine so the evidence
+        this learns from stays unbiased.
+      </p>
+      <div id="dailyLearnWeights" class="learning-recs"></div>
+      <div id="dailyLearnLog" class="learning-recs"></div>
+    </section>
+
     <!-- Algorithm Health -->
     <section class="learning-section">
       <h3>Algorithm Health <span class="stats-source">Automatic, reviews every Monday, 7am ET</span></h3>

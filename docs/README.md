@@ -235,6 +235,30 @@ view rather than live-patching whatever's already on screen — the same
 uses, and for the same reason: it avoids a spurious re-fetch of a pick's
 research bullets just to update a stake string.
 
+## Daily Learning
+
+The self-correction loop (`worker/src/daily-learning.js`), reported in the
+Tracking panel's "Daily Learning" section. Every morning at the 2am ET batch,
+before any picks are chosen, the review digests the trailing 30 days of
+graded results — actual wins vs. what each pick's own no-vig probability
+predicted (a z-test), plus closing-line value, the fastest honest tell that
+a perceived edge is illusory — for every sport + bet-type segment and odds
+band. Each feature gets a bounded reliability weight (x0.85 to x1.05, shrunk
+toward 1.0 on small samples) that multiplies into candidate scores at that
+morning's Pixel's Picks and Play of the Day selection: a misfiring segment
+needs a visibly better number to make the board, a sharp one gets a small
+nudge.
+
+Three properties keep it honest. Adjustments apply only to the *next* day's
+selection — nothing is re-graded or touched intraday, so the tracked record
+is never skewed. The Full Slate tracker never has weights applied — it keeps
+recording the raw engine so tomorrow's learning draws from unbiased
+evidence rather than from a record already filtered by yesterday's lessons.
+And every adjusted pick stores both its raw and adjusted score, so whether
+the learning layer is actually helping is itself measurable. Each morning's
+review writes a plain-English report (what yesterday did, what changed and
+why) to the same panel.
+
 ## Guide
 
 A plain-language reference for a new bettor, opened from the Guide button in

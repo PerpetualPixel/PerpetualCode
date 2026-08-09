@@ -31,6 +31,7 @@ import { isMma, isTennis } from '../../docs/insights.js';
 import { CONFIG } from '../../docs/config.js';
 import { fetchSport, fetchScores, fetchCatalogue } from './odds.js';
 import { getAlgoConfig, getPausedSegments, isSegmentPaused } from './algo-health.js';
+import { getLearningProfile, applyLearningToCandidates } from './daily-learning.js';
 import { fetchMmaResults, gradeMmaPickWithFallback } from './ufc-events.js';
 
 export const TOP5_COUNT = 5;
@@ -172,6 +173,14 @@ export function pickRecordFrom(pick, dateKey, now) {
     decimal: leg.decimal,
     book: leg.book,
     score: pick.score,
+    // Daily-learning provenance (worker/src/daily-learning.js): when a
+    // learned reliability weight adjusted this candidate's score before
+    // selection, rawScore is the engine's unadjusted grade and learnWeight
+    // the multiplier applied. Both null when no learning touched it. Stored
+    // so "did the learning layer actually help" stays measurable — the
+    // record shows what the engine said AND what the learner did to it.
+    rawScore: leg.rawScore ?? null,
+    learnWeight: leg.learnWeight ?? null,
     // The model's own estimated win probability (already computed by
     // scoreCandidate() as the no-vig consensus, excluding the best-price
     // book so the price we're grading doesn't vote on its own fairness) —
@@ -243,7 +252,18 @@ export async function runTop5Batch(
   // sport+bet-type segment entirely, based on that segment's real graded
   // history — both read fresh here so a Monday-morning review takes effect
   // on the very next batch, not just future ones.
-  const [algoConfig, pausedSegments] = await Promise.all([getAlgoConfig(env), getPausedSegments(env)]);
+  const [algoConfig, pausedSegments, learningProfile] = await Promise.all([
+    getAlgoConfig(env),
+    getPausedSegments(env),
+    // The daily learning review's reliability weights (worker/src/
+    // daily-learning.js), refreshed each morning before this batch runs —
+    // multiplied into candidate scores below so a segment or odds band
+    // that's been misfiring needs a visibly better number to make the
+    // board. The Full Slate tracker deliberately does NOT read this: it
+    // keeps recording the unadjusted engine so tomorrow's learning is
+    // drawn from unbiased evidence.
+    getLearningProfile(env),
+  ]);
 
   const events = await fetchFullSlate();
   // Team sports post odds for games weeks or months out (an NFL regular-
@@ -266,14 +286,17 @@ export async function runTop5Batch(
   // later top-up run — a real incident this exact gap produced live
   // (Pittsburgh Pirates AND New York Mets both picked to win the same game).
   const existingEventIds = new Set(existingPickIds.map((id) => id.split(':')[0]));
-  const candidates = analyze(events, { now })
-    .filter((c) => {
-      if (isMma(c.sportKey)) return isEligibleMmaFight(c.commenceMs, now);
-      if (isTennis(c.sportKey)) return isEligibleTennisMatch(c.commenceMs, now);
-      return etDate(c.commenceMs) === dateKey;
-    })
-    .filter((c) => !isSegmentPaused(c, pausedSegments))
-    .filter((c) => !existingEventIds.has(c.eventId));
+  const candidates = applyLearningToCandidates(
+    analyze(events, { now })
+      .filter((c) => {
+        if (isMma(c.sportKey)) return isEligibleMmaFight(c.commenceMs, now);
+        if (isTennis(c.sportKey)) return isEligibleTennisMatch(c.commenceMs, now);
+        return etDate(c.commenceMs) === dateKey;
+      })
+      .filter((c) => !isSegmentPaused(c, pausedSegments))
+      .filter((c) => !existingEventIds.has(c.eventId)),
+    learningProfile,
+  );
 
   const slate = topPicks(candidates, {
     count: needed,

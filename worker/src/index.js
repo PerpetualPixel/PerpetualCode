@@ -63,6 +63,12 @@ import {
   runFullSlateGrading,
   getAllFullSlateTracked,
 } from './full-slate-tracking.js';
+import {
+  runDailyLearning,
+  getLearningProfile,
+  getLearningLog,
+  LEARN_WINDOW_DAYS,
+} from './daily-learning.js';
 
 // Each sport is a separate billed call: 3 markets x 1 region = 3 credits apiece.
 // Three is the ceiling the app's league picker enforces, repeated here because
@@ -541,10 +547,33 @@ export default {
     if (etHour(now) === TOP5_BATCH_HOUR && isTopOfHour(now)) {
       const sharedSlate = fetchFullSlateEvents(env, ctx);
       const fetchFullSlate = () => sharedSlate;
-      ctx.waitUntil(runTop5Batch(env, ctx, now, { fetchFullSlate }));
-      ctx.waitUntil(runFullSlateBatch(env, ctx, now, { fetchFullSlate }));
+      // Learn first, then pick: the daily learning review (worker/src/
+      // daily-learning.js) digests yesterday's graded results into today's
+      // reliability weights, and MUST finish before the selection batches
+      // read the profile — otherwise today's picks would be chosen under
+      // yesterday's lessons. The Full Slate batch is deliberately inside
+      // the same chain but never reads the profile: it records the raw,
+      // unadjusted engine so tomorrow's learning stays unbiased. Learning
+      // failures fall through to the batches (catch → null) rather than
+      // costing the day's picks; runDailyLearning is idempotent per ET
+      // date, so the 2am hour's extra ticks can't double-learn.
       ctx.waitUntil(
-        runPotdDaily(env, ctx, now, { fetchFullSlate }),
+        (async () => {
+          await runDailyLearning(env, ctx, now, {
+            getPicks: async () => {
+              const [top5, slate] = await Promise.all([
+                getAllTrackedPicks(env, { now, days: LEARN_WINDOW_DAYS }),
+                getAllFullSlateTracked(env, { now, days: LEARN_WINDOW_DAYS }),
+              ]);
+              return [...top5, ...slate];
+            },
+          }).catch(() => null);
+          await Promise.all([
+            runTop5Batch(env, ctx, now, { fetchFullSlate }),
+            runFullSlateBatch(env, ctx, now, { fetchFullSlate }),
+            runPotdDaily(env, ctx, now, { fetchFullSlate }),
+          ]);
+        })(),
       );
     } else if (etHour(now) > TOP5_BATCH_HOUR) {
       // Safety net for the rest of the day: runTop5Batch is self-healing
@@ -870,6 +899,22 @@ export default {
     // algo-health.js) — tuned config vs. shipped defaults, currently paused
     // segments, and the recent action/proposal log — for the Tracking
     // Dashboard's Algorithm Health panel. Read-only, KV only.
+    // The daily learning review's current weight profile and day-by-day
+    // report log (worker/src/daily-learning.js) — read by the Tracking
+    // panel's "Daily Learning" section. Read-only; the review itself only
+    // ever runs from the 2am scheduled gate.
+    if (pathname === '/learning' && request.method === 'GET') {
+      try {
+        const [profile, log] = await Promise.all([getLearningProfile(env), getLearningLog(env)]);
+        return json(
+          { profile, log, windowDays: LEARN_WINDOW_DAYS },
+          { headers: { ...cors, 'Cache-Control': 'public, max-age=300' } },
+        );
+      } catch (error) {
+        return json({ error: String(error).slice(0, 120) }, { status: 500, headers: cors });
+      }
+    }
+
     if (pathname === '/algo-health' && request.method === 'GET') {
       try {
         const [config, paused, log] = await Promise.all([

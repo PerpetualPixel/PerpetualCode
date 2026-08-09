@@ -32,6 +32,7 @@ import { fetchWeather } from './weather.js';
 import { fetchMmaContext } from './mma.js';
 import { fetchSport, fetchScores } from './odds.js';
 import { getPausedSegments, isSegmentPaused } from './algo-health.js';
+import { getLearningProfile, applyLearningToCandidates } from './daily-learning.js';
 import { fetchMmaResults, gradeMmaPickWithFallback } from './ufc-events.js';
 import { getOrGenerateAnalysis } from './analysis.js';
 
@@ -271,6 +272,11 @@ async function buildRecord(best, dateKey, now, env, ctx) {
       american: best.american,
       decimal: best.decimal,
       score: best.score,
+      // Same daily-learning provenance the Top 5 records carry (see
+      // tracking.js's pickRecordFrom) — null when no learned weight
+      // adjusted this candidate's score before selection.
+      rawScore: best.rawScore ?? null,
+      learnWeight: best.learnWeight ?? null,
       home: best.home,
       away: best.away,
       commenceMs: best.commenceMs,
@@ -304,10 +310,17 @@ export async function runPotdDaily(env, ctx, now = Date.now(), { fetchFullSlate 
   // algo-health.js, on evidence from Pixel's Picks' own graded history)
   // shouldn't be able to become the single Play of the Day pick either —
   // benching it for one surface but not the other would be inconsistent.
-  const pausedSegments = await getPausedSegments(env);
+  // The daily learning review's reliability weights apply here for the same
+  // reason: the day's single highest-conviction pick shouldn't come from a
+  // segment the evidence says has been misfiring when a nearly-as-good
+  // candidate from a reliable one exists.
+  const [pausedSegments, learningProfile] = await Promise.all([
+    getPausedSegments(env),
+    getLearningProfile(env),
+  ]);
 
   const events = await fetchFullSlate();
-  const candidates = analyze(events, { now });
+  const candidates = applyLearningToCandidates(analyze(events, { now }), learningProfile);
   const eligible = candidates.filter((c) => {
     if (c.score < RULES.MIN_SCORE) return false;
     if (isExhibition(c)) return false;
