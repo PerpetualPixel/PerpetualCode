@@ -49,7 +49,7 @@ const isBaseballSport = (sportKey) => sportKey === 'baseball_mlb';
 // boundary (see tracking.js/potd.js's own FLAT_UNIT_STAKE comments).
 // worker/src/mlb-stats.js's ESPN calls key off this abbreviation, not the
 // full team name The Odds API hands back.
-const MLB_ABBR_MAP = {
+export const MLB_ABBR_MAP = {
   'Los Angeles Angels': 'laa', 'Baltimore Orioles': 'bal', 'Boston Red Sox': 'bos',
   'New York Yankees': 'nyy', 'Tampa Bay Rays': 'tb', 'Toronto Blue Jays': 'tor',
   'Chicago White Sox': 'chw', 'Cleveland Guardians': 'cle', 'Detroit Tigers': 'det',
@@ -61,7 +61,7 @@ const MLB_ABBR_MAP = {
   'Washington Nationals': 'wsh', 'Chicago Cubs': 'chc', 'Cincinnati Reds': 'cin',
   'Milwaukee Brewers': 'mil', 'Pittsburgh Pirates': 'pit', 'St. Louis Cardinals': 'stl',
 };
-const mlbAbbr = (teamName) => MLB_ABBR_MAP[teamName] ?? null;
+export const mlbAbbr = (teamName) => MLB_ABBR_MAP[teamName] ?? null;
 
 // Module-scope: survives across requests in the same isolate, same pattern
 // potd.js already uses for this exact static asset.

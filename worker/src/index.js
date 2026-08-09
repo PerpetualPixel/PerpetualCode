@@ -24,6 +24,7 @@ import {
   fetchStartingPitchers,
   fetchPitcherOutings,
 } from './mlb-stats.js';
+import { MLB_PROPS_BATCH_HOUR, runMlbPropsBatch, runMlbPropsGrading, getAllMlbPropsTracked } from './mlb-props.js';
 import { POTD_HOUR, runPotdDaily, runPotdClvSnapshot, runPotdGrading, getPotd, getPotdHistory } from './potd.js';
 import { getOrGenerateAnalysis } from './analysis.js';
 import {
@@ -519,6 +520,21 @@ export default {
       ctx.waitUntil(fetchSport('upcoming', env, ctx));
     }
 
+    // 1am ET: MLB starting-pitcher props (Outs Recorded, Strikeouts) — its
+    // own hour, an hour before the main 2am lock-in, and its own fresh
+    // fetchFullSlateEvents() call rather than sharing the 2am batches'
+    // promise. See worker/src/mlb-props.js's own header for why: this batch
+    // adds a real per-event Odds-API call for every MLB game on top of an
+    // ESPN schedule+summary lookup per game, and stacking that onto the same
+    // invocation as the 2am chain's full-slate fetch, three selection
+    // batches, and five analysis-prewarm model calls is exactly the kind of
+    // per-invocation subrequest load that already forced refreshMlbLeagueStats
+    // into its own hour below after hitting Cloudflare's cap live.
+    if (etHour(now) === MLB_PROPS_BATCH_HOUR && isTopOfHour(now)) {
+      ctx.waitUntil(runMlbPropsBatch(env, ctx, now, { fetchFullSlate: () => fetchFullSlateEvents(env, ctx) }));
+    }
+    ctx.waitUntil(runMlbPropsGrading(env, ctx, now));
+
     // 3am ET: refresh the league-wide MLB batting/pitching snapshot "View
     // Stats" ranks every team against. Has to run standalone, with nothing
     // else in the same invocation — fetching all 30 teams alongside a live
@@ -561,11 +577,16 @@ export default {
         (async () => {
           await runDailyLearning(env, ctx, now, {
             getPicks: async () => {
-              const [top5, slate] = await Promise.all([
+              // Props are a real selection surface (graded by genuine edges,
+              // like Pixel's Picks/Play of the Day), not a raw-evidence
+              // tracker like Full Slate — so, like those two, they both feed
+              // this review AND have runMlbPropsBatch read its weights back.
+              const [top5, slate, mlbProps] = await Promise.all([
                 getAllTrackedPicks(env, { now, days: LEARN_WINDOW_DAYS }),
                 getAllFullSlateTracked(env, { now, days: LEARN_WINDOW_DAYS }),
+                getAllMlbPropsTracked(env, { now, days: LEARN_WINDOW_DAYS }),
               ]);
-              return [...top5, ...slate];
+              return [...top5, ...slate, ...mlbProps];
             },
           }).catch(() => null);
           await Promise.all([
@@ -883,6 +904,21 @@ export default {
         const daysParam = Number(searchParams.get('days'));
         const days = Number.isFinite(daysParam) && daysParam > 0 ? Math.min(daysParam, 90) : 90;
         const picks = await getAllFullSlateTracked(env, { days });
+        return json(
+          { picks },
+          { headers: { ...cors, 'Cache-Control': 'public, max-age=300' } },
+        );
+      } catch (error) {
+        return json({ picks: [], reason: String(error).slice(0, 120) }, { headers: cors });
+      }
+    }
+
+    if (pathname === '/mlb-props-history' && request.method === 'GET') {
+      try {
+        const { searchParams } = new URL(request.url);
+        const daysParam = Number(searchParams.get('days'));
+        const days = Number.isFinite(daysParam) && daysParam > 0 ? Math.min(daysParam, 90) : 90;
+        const picks = await getAllMlbPropsTracked(env, { days });
         return json(
           { picks },
           { headers: { ...cors, 'Cache-Control': 'public, max-age=300' } },

@@ -630,6 +630,8 @@ const el = {
   calibrationReport: document.getElementById('calibrationReport'),
   dailyLearnWeights: document.getElementById('dailyLearnWeights'),
   dailyLearnLog: document.getElementById('dailyLearnLog'),
+  mlbPropsSummary: document.getElementById('mlbPropsSummary'),
+  mlbPropsList: document.getElementById('mlbPropsList'),
   algoHealthConfig: document.getElementById('algoHealthConfig'),
   algoHealthPaused: document.getElementById('algoHealthPaused'),
   algoHealthLog: document.getElementById('algoHealthLog'),
@@ -4764,7 +4766,59 @@ el.algoHealthResetBtn?.addEventListener('click', async () => {
 async function renderLearningDashboard() {
   const top5Picks = await loadTrackerHistories();
   renderCalibrationReport(top5Picks);
-  await Promise.all([renderDailyLearningSection(), renderAlgoHealthSection()]);
+  await Promise.all([renderDailyLearningSection(), renderAlgoHealthSection(), renderMlbPropsSection()]);
+}
+
+/** worker/src/mlb-props.js's own tracked-pick history — pitcher outs/strikeouts picked and graded once daily, at 1am ET. */
+async function fetchMlbProps() {
+  if (!CONFIG.WORKER_URL) return null;
+  try {
+    const url = new URL('/mlb-props-history', CONFIG.WORKER_URL);
+    url.searchParams.set('days', '30');
+    const res = await fetch(url, { headers: { Accept: 'application/json' } });
+    if (!res.ok) return null;
+    return await res.json();
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Renders the MLB Pitcher Props section: the same W-L/ROI summary math
+ * every other tracked board uses (summarizePicks, from docs/learning.js),
+ * plus a day-by-day list of what was picked and how it graded.
+ */
+async function renderMlbPropsSection() {
+  if (!el.mlbPropsSummary || !el.mlbPropsList) return;
+  const data = await fetchMlbProps();
+  if (!data) {
+    el.mlbPropsSummary.innerHTML = `<p class="empty">Couldn't load MLB props data.</p>`;
+    el.mlbPropsList.innerHTML = '';
+    return;
+  }
+
+  const picks = data.picks ?? [];
+  const summary = summarizePicks(picks);
+  el.mlbPropsSummary.innerHTML = picks.length
+    ? `<div class="rec-item">
+        <strong>${summary.wins}-${summary.losses}</strong> (${summary.voided} void, ${summary.pending} pending) &middot;
+        ROI ${summary.roi >= 0 ? '+' : ''}${summary.roi.toFixed(1)}% &middot;
+        staked $${summary.staked.toFixed(0)}, net ${summary.net >= 0 ? '+' : ''}$${summary.net.toFixed(0)}
+      </div>`
+    : `<div class="rec-item">No pitcher props tracked yet — the first batch runs at the next 1am ET tick, once per MLB game with a genuine edge.</div>`;
+
+  const byDate = [...picks].sort((a, b) => (b.dateKey ?? '').localeCompare(a.dateKey ?? '') || b.generatedAt - a.generatedAt);
+  el.mlbPropsList.innerHTML = byDate.length
+    ? byDate.slice(0, 40).map((p) => {
+        const statusCls = p.status === 'won' ? 'low' : p.status === 'lost' ? 'high' : '';
+        const resultText = p.status === 'pending' ? 'pending'
+          : p.status === 'void' ? `void (${p.result?.voidReason ?? 'no action'})`
+          : `${p.status}${typeof p.result?.actual === 'number' ? ` — actual ${p.result.actual}` : ''}`;
+        return `<div class="rec-item ${statusCls}">
+          <strong>${esc(p.dateKey)}</strong> ${esc(p.selection)} (${formatAmerican(p.american)} at ${esc(p.book)}) — ${esc(resultText)}
+        </div>`;
+      }).join('')
+    : '';
 }
 
 /** Applies the user's last-dragged width, if any — otherwise the panel keeps its CSS default (fills the viewport). */
