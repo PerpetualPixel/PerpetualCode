@@ -1,5 +1,5 @@
-import { hashPassword, verifyPassword, generateVerificationToken } from './auth-email.js';
-import { verifyJWT, jwtSecret, EMAIL_LOGO_HTML } from './auth-handlers.js';
+import { hashPassword, verifyPassword, generateVerificationToken, generateJWT } from './auth-email.js';
+import { authenticateRequest, jwtSecret, EMAIL_LOGO_HTML } from './auth-handlers.js';
 import { validateUsername } from './username-policy.js';
 
 function json(body, { status = 200, headers = {} } = {}) {
@@ -9,17 +9,14 @@ function json(body, { status = 200, headers = {} } = {}) {
   });
 }
 
-/** Every account-settings endpoint requires a valid JWT — returns the
- * decoded payload, or null if the request isn't authenticated. */
-function authenticate(request, env) {
-  const auth = request.headers.get('Authorization') || '';
-  const token = auth.replace('Bearer ', '');
-  return verifyJWT(token, jwtSecret(env));
-}
+// Every account-settings endpoint authenticates through the shared
+// epoch-checked helper (see auth-handlers.js's authenticateRequest) so
+// "Sign Out Everywhere" and password changes revoke access here too.
+const authenticate = authenticateRequest;
 
 export async function handleUpdateUsername(request, env) {
   try {
-    const payload = authenticate(request, env);
+    const payload = await authenticate(request, env);
     if (!payload) return json({ error: 'unauthorized' }, { status: 401 });
 
     const { username } = await request.json();
@@ -48,7 +45,7 @@ export async function handleUpdateUsername(request, env) {
 
 export async function handleUpdatePassword(request, env) {
   try {
-    const payload = authenticate(request, env);
+    const payload = await authenticate(request, env);
     if (!payload) return json({ error: 'unauthorized' }, { status: 401 });
 
     const { currentPassword, newPassword } = await request.json();
@@ -59,7 +56,7 @@ export async function handleUpdatePassword(request, env) {
       return json({ error: 'newPassword must be at least 8 characters' }, { status: 400 });
     }
 
-    const user = await env.DB.prepare('SELECT password_hash FROM users WHERE id = ?')
+    const user = await env.DB.prepare('SELECT password_hash, email, session_epoch FROM users WHERE id = ?')
       .bind(payload.userId)
       .first();
     if (!user) return json({ error: 'user not found' }, { status: 404 });
@@ -69,17 +66,50 @@ export async function handleUpdatePassword(request, env) {
       return json({ error: 'current password is incorrect' }, { status: 401 });
     }
 
+    // Changing the password revokes every other outstanding session by
+    // bumping session_epoch (see auth-handlers.js's authenticateRequest) —
+    // the standard "someone may have had my old password" behavior. The
+    // response carries a fresh token stamped with the NEW epoch so the one
+    // session that legitimately made this change survives; the client
+    // swaps it into storage (see account.html's password form handler).
+    const newEpoch = (user.session_epoch ?? 0) + 1;
     const newHash = await hashPassword(newPassword);
-    await env.DB.prepare('UPDATE users SET password_hash = ?, updated_at = ? WHERE id = ?')
-      .bind(newHash, Date.now(), payload.userId)
+    await env.DB.prepare('UPDATE users SET password_hash = ?, session_epoch = ?, updated_at = ? WHERE id = ?')
+      .bind(newHash, newEpoch, Date.now(), payload.userId)
       .run();
 
-    // Note: existing JWTs issued before this change stay valid until they
-    // naturally expire (30 days) — there's no token-revocation list. Not a
-    // concern for this app's current scale; worth revisiting if it ever is.
-    return json({ message: 'password updated' });
+    const freshToken = generateJWT(
+      { userId: payload.userId, email: user.email, epoch: newEpoch },
+      jwtSecret(env),
+    );
+
+    return json({ message: 'password updated — other devices have been signed out', token: freshToken });
   } catch (e) {
     console.error('Update password error:', e);
+    return json({ error: e.message }, { status: 500 });
+  }
+}
+
+/**
+ * "Sign Out Everywhere": bumps session_epoch, instantly invalidating every
+ * outstanding token for this account — including the one making this
+ * request, which is the point (the client clears its own storage and
+ * returns to login).
+ */
+export async function handleLogoutAll(request, env) {
+  try {
+    const payload = await authenticate(request, env);
+    if (!payload) return json({ error: 'unauthorized' }, { status: 401 });
+
+    await env.DB.prepare(
+      'UPDATE users SET session_epoch = COALESCE(session_epoch, 0) + 1, updated_at = ? WHERE id = ?',
+    )
+      .bind(Date.now(), payload.userId)
+      .run();
+
+    return json({ message: 'signed out everywhere' });
+  } catch (e) {
+    console.error('Logout-all error:', e);
     return json({ error: e.message }, { status: 500 });
   }
 }
@@ -113,7 +143,7 @@ async function sendEmailChangeVerification(env, newEmail, username, token) {
 
 export async function handleRequestEmailChange(request, env) {
   try {
-    const payload = authenticate(request, env);
+    const payload = await authenticate(request, env);
     if (!payload) return json({ error: 'unauthorized' }, { status: 401 });
 
     const { newEmail } = await request.json();
@@ -187,7 +217,7 @@ export async function handleConfirmEmailChange(request, env) {
 
 export async function handleUpdateNotifications(request, env) {
   try {
-    const payload = authenticate(request, env);
+    const payload = await authenticate(request, env);
     if (!payload) return json({ error: 'unauthorized' }, { status: 401 });
 
     const body = await request.json();
@@ -228,7 +258,7 @@ export async function handleUpdateNotifications(request, env) {
  */
 export async function handleDeleteAccount(request, env) {
   try {
-    const payload = authenticate(request, env);
+    const payload = await authenticate(request, env);
     if (!payload) return json({ error: 'unauthorized' }, { status: 401 });
 
     const { currentPassword } = await request.json();

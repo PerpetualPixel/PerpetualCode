@@ -5,8 +5,7 @@ import {
   handleMe,
   handleForgotPassword,
   handleResetPassword,
-  verifyJWT,
-  jwtSecret,
+  authenticateRequest,
 } from './auth-handlers.js';
 import {
   handleUpdateUsername,
@@ -15,6 +14,7 @@ import {
   handleConfirmEmailChange,
   handleUpdateNotifications,
   handleDeleteAccount,
+  handleLogoutAll,
 } from './account-handlers.js';
 import { sendPotdNotifications, sendPicksNotifications } from './notifications.js';
 import { sendWeeklyTrackingReport } from './weekly-report.js';
@@ -213,9 +213,7 @@ async function handleOdds(request, env, ctx) {
     return respondWithOdds(request, env, ctx, cors, null);
   }
 
-  const auth = request.headers.get('Authorization') || '';
-  const token = auth.replace('Bearer ', '');
-  const payload = verifyJWT(token, jwtSecret(env));
+  const payload = await authenticateRequest(request, env);
 
   if (!payload) {
     return json({ error: 'Unauthorized' }, { status: 401, headers: cors });
@@ -738,6 +736,11 @@ export default {
       return new Response(res.body, { status: res.status, headers: { ...cors, ...Object.fromEntries(res.headers) } });
     }
 
+    if (pathname === '/api/account/logout-all' && request.method === 'POST') {
+      const res = await handleLogoutAll(request, env);
+      return new Response(res.body, { status: res.status, headers: { ...cors, ...Object.fromEntries(res.headers) } });
+    }
+
     if (pathname === '/context') {
       if (request.method !== 'GET') {
         return json({ error: 'Method not allowed' }, { status: 405, headers: cors });
@@ -1032,8 +1035,7 @@ export default {
     // bankroll is personal, and this site is publicly reachable, so an
     // unauthenticated GET would publish it to every visitor.
     if (pathname === '/settings' && (request.method === 'GET' || request.method === 'PUT')) {
-      const auth = request.headers.get('Authorization') || '';
-      const payload = verifyJWT(auth.replace('Bearer ', ''), jwtSecret(env));
+      const payload = await authenticateRequest(request, env);
       if (!payload) return json({ error: 'unauthorized' }, { status: 401, headers: cors });
 
       try {

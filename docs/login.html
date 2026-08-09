@@ -342,6 +342,7 @@
       to { transform: rotate(360deg); }
     }
   </style>
+  <script src="https://challenges.cloudflare.com/turnstile/v0/api.js" async defer></script>
 </head>
 <body>
   <div class="bg-grid"></div>
@@ -481,6 +482,8 @@
             <label for="register-notify-sms">Text me when Play of the Day and Pixel's Picks are ready<span class="coming-soon-tag">Coming soon</span></label>
           </div>
 
+          <div class="cf-turnstile" data-sitekey="0x4AAAAAAELYZU9_G_O_LO_M" data-action="signup" data-theme="dark" style="margin-bottom: 16px;"></div>
+
           <button type="submit" class="button">Create Account</button>
           <p style="color: #7070aa; font-size: 11px; margin-top: 12px; text-align: center; line-height: 1.5;">
             By creating an account you confirm you are 21 or older and agree to the
@@ -554,8 +557,17 @@
       const email = document.getElementById('register-email').value;
       const password = document.getElementById('register-password').value;
       const notifyEmail = document.getElementById('register-notify-email').checked;
-      const btn = e.target.querySelector('button');
+      // The Turnstile widget injects this hidden input into the form once
+      // the challenge passes; the server re-verifies it (tokens are
+      // single-use and mean nothing until siteverify confirms them).
+      const turnstileToken = e.target.querySelector('[name="cf-turnstile-response"]')?.value ?? '';
+      const btn = e.target.querySelector('button[type="submit"]');
       const originalText = btn.textContent;
+
+      if (!turnstileToken) {
+        showMessage('register-message', 'Please complete the verification challenge first.', true);
+        return;
+      }
 
       try {
         btn.disabled = true;
@@ -564,13 +576,17 @@
         const res = await fetch(`${window.API_BASE}/api/auth/register`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ username, email, password, notifyEmail }),
+          body: JSON.stringify({ username, email, password, notifyEmail, turnstileToken }),
         });
 
         const data = await res.json();
 
         if (!res.ok) {
           showMessage('register-message', data.error, true);
+          // Tokens are single-use — this one was just consumed (or
+          // rejected) by the failed attempt, so the widget must issue a
+          // fresh one before a retry can succeed.
+          window.turnstile?.reset();
           return;
         }
 
@@ -583,6 +599,7 @@
         }, 2000);
       } catch (err) {
         showMessage('register-message', 'Connection failed: ' + err.message, true);
+        window.turnstile?.reset(); // token may have been consumed by the failed request
       } finally {
         btn.disabled = false;
         btn.textContent = originalText;

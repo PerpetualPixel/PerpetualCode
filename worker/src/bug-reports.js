@@ -1,4 +1,4 @@
-import { verifyJWT, jwtSecret, EMAIL_LOGO_HTML } from './auth-handlers.js';
+import { authenticateRequest, EMAIL_LOGO_HTML } from './auth-handlers.js';
 
 function json(body, { status = 200, headers = {} } = {}) {
   return new Response(JSON.stringify(body), {
@@ -46,8 +46,7 @@ async function notifyBugReportInbox(env, report) {
 
 export async function handleReportBug(request, env) {
   try {
-    const auth = request.headers.get('Authorization') || '';
-    const payload = verifyJWT(auth.replace('Bearer ', ''), jwtSecret(env));
+    const payload = await authenticateRequest(request, env);
     if (!payload) return json({ error: 'unauthorized' }, { status: 401 });
 
     const body = await request.json().catch(() => null);

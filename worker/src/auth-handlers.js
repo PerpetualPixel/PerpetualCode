@@ -28,6 +28,39 @@ export function jwtSecret(env) {
   return secret;
 }
 
+/**
+ * The one authentication check every protected endpoint should use.
+ * Verifies the JWT signature/expiry, then confirms the token's session
+ * epoch still matches the account's current one in D1 — a mismatch means
+ * "Sign Out Everywhere" was used (or the password was changed/reset)
+ * after this token was issued, so it's dead regardless of its expiry.
+ * The same lookup also kills tokens belonging to deleted accounts
+ * immediately, instead of letting them pass signature checks for up to
+ * 30 days.
+ *
+ * A token with no epoch field (issued before session_epoch existed)
+ * counts as epoch 0, matching the column's DEFAULT — so the migration
+ * itself logs nobody out; only an actual bump does.
+ *
+ * Returns the decoded payload, or null when the request isn't (or is no
+ * longer) authenticated.
+ */
+export async function authenticateRequest(request, env) {
+  const auth = request.headers.get('Authorization') || '';
+  const payload = verifyJWT(auth.replace('Bearer ', ''), jwtSecret(env));
+  if (!payload) return null;
+
+  const row = await env.DB.prepare('SELECT session_epoch FROM users WHERE id = ?')
+    .bind(payload.userId)
+    .first();
+  if (!row) return null; // account deleted — token dies with it
+
+  const tokenEpoch = payload.epoch ?? 0;
+  if (tokenEpoch !== (row.session_epoch ?? 0)) return null;
+
+  return payload;
+}
+
 // Every outbound email leads with the same logo header — kept as one
 // constant, exported so account-handlers.js/notifications.js/weekly-
 // report.js reuse it too, rather than four slightly-drifted copies.
@@ -66,9 +99,57 @@ async function sendVerificationEmail(env, email, username, token) {
   });
 }
 
+/**
+ * Server-side Turnstile verification for registration — the browser widget
+ * (docs/login.html's register form) only produces a token; nothing counts
+ * until siteverify confirms it here. Requires success, the exact 'signup'
+ * action the widget was rendered with, and a production hostname
+ * (deliberately excluding the localhost/127.0.0.1 the widget itself allows
+ * for local dev — a token minted on localhost must never pass in
+ * production). Fails closed on any siteverify error: registration is the
+ * one surface bots target, so "verifier unreachable" means "no signups
+ * this instant," not "bots welcome."
+ */
+const TURNSTILE_EXPECTED_ACTION = 'signup';
+const TURNSTILE_EXPECTED_HOSTNAMES = new Set(['perpetualpicks.com', 'www.perpetualpicks.com']);
+
+async function verifyTurnstile(env, token, remoteip) {
+  if (!env.TURNSTILE_SECRET) {
+    throw new Error('TURNSTILE_SECRET is not configured — run: wrangler secret put TURNSTILE_SECRET');
+  }
+  if (typeof token !== 'string' || token.length === 0 || token.length > 2048) return false;
+
+  try {
+    const res = await fetch('https://challenges.cloudflare.com/turnstile/v0/siteverify', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+      signal: AbortSignal.timeout(10000),
+      body: new URLSearchParams({
+        secret: env.TURNSTILE_SECRET,
+        response: token,
+        ...(remoteip ? { remoteip } : {}),
+      }),
+    });
+    if (!res.ok) return false;
+    const result = await res.json();
+    return (
+      result.success === true &&
+      result.action === TURNSTILE_EXPECTED_ACTION &&
+      TURNSTILE_EXPECTED_HOSTNAMES.has(result.hostname)
+    );
+  } catch {
+    return false;
+  }
+}
+
 export async function handleRegister(request, env) {
   try {
-    const { email, password, username, notifyEmail } = await request.json();
+    const { email, password, username, notifyEmail, turnstileToken } = await request.json();
+
+    const human = await verifyTurnstile(env, turnstileToken, request.headers.get('CF-Connecting-IP'));
+    if (!human) {
+      return json({ error: 'verification challenge failed — refresh the page and try again' }, { status: 403 });
+    }
 
     if (!email || !password || !username) {
       return json({ error: 'email, password, and username required' }, { status: 400 });
@@ -187,7 +268,7 @@ export async function handleLogin(request, env) {
     }
 
     const user = await env.DB.prepare(
-      'SELECT id, email, password_hash, email_verified, username FROM users WHERE email = ? OR username = ?',
+      'SELECT id, email, password_hash, email_verified, username, session_epoch FROM users WHERE email = ? OR username = ?',
     )
       .bind(identifier, identifier)
       .first();
@@ -221,8 +302,12 @@ export async function handleLogin(request, env) {
       }
     }
 
-    // Generate JWT token (30-day expiry)
-    const token = generateJWT({ userId: user.id, email: user.email }, jwtSecret(env));
+    // Generate JWT token (30-day expiry), stamped with the account's
+    // current session epoch — see authenticateRequest above.
+    const token = generateJWT(
+      { userId: user.id, email: user.email, epoch: user.session_epoch ?? 0 },
+      jwtSecret(env),
+    );
 
     return json({ token, userId: user.id, email: user.email, username: user.username });
   } catch (e) {
@@ -323,10 +408,14 @@ export async function handleResetPassword(request, env) {
       return json({ error: 'token expired' }, { status: 401 });
     }
 
+    // session_epoch bump: a forgot-password reset usually means the old
+    // password may be compromised — every outstanding session dies with
+    // it, not just the password (see authenticateRequest).
     const newHash = await hashPassword(newPassword);
     await env.DB.prepare(
       `UPDATE users SET password_hash = ?, password_reset_token = NULL,
-       password_reset_token_expires = NULL, updated_at = ? WHERE id = ?`,
+       password_reset_token_expires = NULL,
+       session_epoch = COALESCE(session_epoch, 0) + 1, updated_at = ? WHERE id = ?`,
     )
       .bind(newHash, Date.now(), user.id)
       .run();
@@ -340,10 +429,7 @@ export async function handleResetPassword(request, env) {
 
 export async function handleMe(request, env) {
   try {
-    const auth = request.headers.get('Authorization') || '';
-    const token = auth.replace('Bearer ', '');
-    const payload = verifyJWT(token, jwtSecret(env));
-
+    const payload = await authenticateRequest(request, env);
     if (!payload) {
       return json({ error: 'unauthorized' }, { status: 401 });
     }

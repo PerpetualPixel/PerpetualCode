@@ -384,7 +384,10 @@
       <!-- Sign out -->
       <div class="card">
         <h2>Session</h2>
+        <div id="session-message"></div>
         <button type="button" id="signout-btn" class="button" style="background: transparent; color: #ff6b6b; border: 1px solid #ff6b6b; box-shadow: none;">Sign Out</button>
+        <button type="button" id="signout-all-btn" class="button" style="background: transparent; color: #fbbf24; border: 1px solid #fbbf24; box-shadow: none; margin-left: 10px;">Sign Out Everywhere</button>
+        <p class="card-desc" style="margin: 12px 0 0;">"Sign Out Everywhere" ends your session on every device at once — use it if you've signed in somewhere you no longer trust.</p>
       </div>
 
       <!-- Danger zone: permanent account deletion -->
@@ -565,7 +568,11 @@
         });
         const data = await res.json();
         if (!res.ok) { showMessage('password-message', data.error, true); return; }
-        showMessage('password-message', 'Password updated!', false);
+        // The server revoked every session (epoch bump) and handed this one
+        // a fresh token — swap it in so THIS session keeps working while
+        // all others are signed out.
+        if (data.token) localStorage.setItem(window.AUTH_TOKEN_KEY, data.token);
+        showMessage('password-message', 'Password updated — other devices have been signed out.', false);
         document.getElementById('password-form').reset();
       } catch (err) {
         showMessage('password-message', 'Connection failed: ' + err.message, true);
@@ -627,6 +634,27 @@
         btn.disabled = false;
         btn.textContent = original;
       }
+    });
+
+    document.getElementById('signout-all-btn').addEventListener('click', async () => {
+      if (!confirm('Sign out on every device, including this one?')) return;
+      try {
+        const res = await fetch(`${window.API_BASE}/api/account/logout-all`, {
+          method: 'POST',
+          headers: authHeaders(),
+        });
+        if (!res.ok) {
+          const data = await res.json().catch(() => ({}));
+          showMessage('session-message', data.error ?? 'Something went wrong — try again.', true);
+          return;
+        }
+      } catch (err) {
+        showMessage('session-message', 'Connection failed: ' + err.message, true);
+        return;
+      }
+      localStorage.removeItem(window.AUTH_TOKEN_KEY);
+      localStorage.removeItem(window.AUTH_USER_KEY);
+      window.location.href = '/login.html';
     });
 
     document.getElementById('signout-btn').addEventListener('click', () => {
