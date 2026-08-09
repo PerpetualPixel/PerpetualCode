@@ -2258,12 +2258,20 @@ function renderMmaBreakdown(mmaContext, subjectName, leg = null) {
 /**
  * Open the More Stats drawer for one leg: paint the bet itself (selection,
  * price, suggested stake) and the full book-by-book price table immediately,
- * then fill in the slower research sections once they resolve. Reuses the
- * exact same cached fetches (tennisArchive/mmaContextFor/eventContext/
- * weatherFor) the compact card's "why" panel already triggers — opening this
- * for a leg whose "why" panel is already open costs no extra network call.
+ * then — unless oddsOnly is set — fill in the slower research sections once
+ * they resolve. Reuses the exact same cached fetches (tennisArchive/
+ * mmaContextFor/eventContext/weatherFor) the compact card's "why" panel
+ * already triggers — opening this for a leg whose "why" panel is already
+ * open costs no extra network call.
+ *
+ * oddsOnly (used by Full Slate's market cells — see the data-slate-cell
+ * click handler below) skips all of that entirely: no analysis, no research,
+ * no network calls beyond what's already in `leg`. Just the bet and the
+ * book table for that exact selection, nothing else. "More Info" (fullscreen)
+ * and Pixel's Picks' own "why" drawer (data-more-stats) don't pass this —
+ * they're the deliberate deep-dive entry points and keep full research.
  */
-async function openStatsDrawer(leg, opposite = null, { fullscreen = false } = {}) {
+async function openStatsDrawer(leg, opposite = null, { fullscreen = false, oddsOnly = false } = {}) {
   el.statsDrawer.classList.toggle('is-fullscreen', fullscreen);
   el.statsDrawerTitle.textContent = leg.selection;
   setStatsDrawerOpen(true);
@@ -2287,9 +2295,11 @@ async function openStatsDrawer(leg, opposite = null, { fullscreen = false } = {}
   // and every book's price on this exact line render immediately, with no
   // wait on the network calls below — a market-cell click is "what can I
   // bet, and where," and that shouldn't sit behind an AI writeup or a
-  // weather lookup. The slower research sections stream in on top of this
-  // once they resolve; see the final innerHTML replace below.
+  // weather lookup. For oddsOnly this is the entire drawer; otherwise the
+  // slower research sections stream in on top of it once they resolve — see
+  // the final innerHTML replace below.
   el.statsDrawerBody.innerHTML = metaHtml + mainPlayHtml + renderPriceTable(leg);
+  if (oddsOnly) return;
 
   const stake = singleStakeLine(leg);
 
@@ -3744,7 +3754,7 @@ el.slateBody.addEventListener('click', (event) => {
   const button = event.target.closest('[data-slate-cell]');
   if (!button) return;
   const entry = renderedSlateCells[Number(button.dataset.slateCell)];
-  if (entry) openStatsDrawer(entry.cand, entry.opposite);
+  if (entry) openStatsDrawer(entry.cand, entry.opposite, { oddsOnly: true });
 });
 
 el.statsBody.addEventListener('click', async (event) => {
