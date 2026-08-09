@@ -13,6 +13,7 @@ import {
   handleUpdateNotifications,
 } from './account-handlers.js';
 import { sendPotdNotifications, sendPicksNotifications } from './notifications.js';
+import { sendWeeklyTrackingReport } from './weekly-report.js';
 import { QuotaManager } from './quota.js';
 import { fetchContext, hasContext } from './context.js';
 import { fetchWeather, hasVenue } from './weather.js';
@@ -566,6 +567,17 @@ export default {
         runAlgoHealthReview(env, ctx, now, {
           getPicks: () => getAllTrackedPicks(env, { now, days: HEALTH_WINDOW_DAYS }),
         }),
+      );
+
+      // Same Monday-morning slot for the optional weekly tracking-dashboard
+      // email digest (off by default — see account-handlers.js's
+      // notify_tracking_report_email toggle). Independent ctx.waitUntil, not
+      // folded into runAlgoHealthReview above: a report-send failure
+      // shouldn't affect the health review, and vice versa.
+      ctx.waitUntil(
+        sendWeeklyTrackingReport(env, now).catch((e) =>
+          console.error('Weekly tracking report failed:', e),
+        ),
       );
     }
   },
