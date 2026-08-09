@@ -47,7 +47,7 @@ async function notifyBugReportInbox(env, report) {
 export async function handleReportBug(request, env) {
   try {
     const auth = request.headers.get('Authorization') || '';
-    const payload = verifyJWT(auth.replace('Bearer ', ''), jwtSecret());
+    const payload = verifyJWT(auth.replace('Bearer ', ''), jwtSecret(env));
     if (!payload) return json({ error: 'unauthorized' }, { status: 401 });
 
     const body = await request.json().catch(() => null);

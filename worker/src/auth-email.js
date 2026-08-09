@@ -6,18 +6,77 @@ export function generateVerificationToken() {
   return crypto.randomBytes(32).toString('hex');
 }
 
-// Hash password using SHA-256 (simple, though bcrypt would be better for production)
+/**
+ * Password hashing: salted PBKDF2-SHA256 via Web Crypto, stored as
+ * `pbkdf2$<iterations>$<saltHex>$<hashHex>`. Iterations are stored in the
+ * record itself so they can be raised later without breaking existing
+ * hashes — verification always uses the stored count, hashing always uses
+ * the current constant.
+ *
+ * Accounts created before this used a single unsalted SHA-256 hex digest
+ * (no `$` separators — that's the format discriminator). verifyPassword
+ * still accepts those, and handleLogin transparently re-hashes a legacy
+ * account into this format on its next successful sign-in (see
+ * passwordNeedsRehash below) — so old hashes age out on their own without
+ * a forced reset for anyone.
+ */
+const PBKDF2_ITERATIONS = 100000;
+
+async function pbkdf2Hex(password, salt, iterations) {
+  const key = await crypto.subtle.importKey(
+    'raw',
+    new TextEncoder().encode(password),
+    'PBKDF2',
+    false,
+    ['deriveBits'],
+  );
+  const bits = await crypto.subtle.deriveBits(
+    { name: 'PBKDF2', hash: 'SHA-256', salt, iterations },
+    key,
+    256,
+  );
+  return Buffer.from(bits).toString('hex');
+}
+
 export async function hashPassword(password) {
-  const encoder = new TextEncoder();
-  const data = encoder.encode(password);
-  const hashBuffer = await crypto.subtle.digest('SHA-256', data);
+  const salt = crypto.randomBytes(16);
+  const hashHex = await pbkdf2Hex(password, salt, PBKDF2_ITERATIONS);
+  return `pbkdf2$${PBKDF2_ITERATIONS}$${salt.toString('hex')}$${hashHex}`;
+}
+
+/** The pre-PBKDF2 format: one unsalted SHA-256 hex digest. Kept only so
+ * existing accounts can still sign in; never used for new hashes. */
+async function legacySha256Hex(password) {
+  const hashBuffer = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(password));
   return Buffer.from(hashBuffer).toString('hex');
 }
 
-// Verify password against hash
-export async function verifyPassword(password, hash) {
-  const newHash = await hashPassword(password);
-  return newHash === hash;
+function timingSafeHexEqual(aHex, bHex) {
+  const a = Buffer.from(String(aHex), 'hex');
+  const b = Buffer.from(String(bHex), 'hex');
+  if (a.length !== b.length || a.length === 0) return false;
+  return crypto.timingSafeEqual(a, b);
+}
+
+// Verify password against a stored hash of either format
+export async function verifyPassword(password, stored) {
+  const record = String(stored ?? '');
+  if (record.startsWith('pbkdf2$')) {
+    const [, iterStr, saltHex, hashHex] = record.split('$');
+    const iterations = Number(iterStr);
+    if (!Number.isFinite(iterations) || iterations < 1 || !saltHex || !hashHex) return false;
+    const derivedHex = await pbkdf2Hex(password, Buffer.from(saltHex, 'hex'), iterations);
+    return timingSafeHexEqual(derivedHex, hashHex);
+  }
+  return timingSafeHexEqual(await legacySha256Hex(password), record);
+}
+
+/** True when a stored hash is still the legacy unsalted format (or an older
+ * iteration count) and should be upgraded on next successful login. */
+export function passwordNeedsRehash(stored) {
+  const record = String(stored ?? '');
+  if (!record.startsWith('pbkdf2$')) return true;
+  return Number(record.split('$')[1]) < PBKDF2_ITERATIONS;
 }
 
 // Generate random ID

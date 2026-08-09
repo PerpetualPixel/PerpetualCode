@@ -47,6 +47,16 @@ migrations_dir = "src/migrations"
 [[send_email]]
 name = "EMAIL"
 
+# NOTE: auth rate limiting is handled by the QuotaManager Durable Object
+# (see quota.js's handleRateLimit), NOT the [[ratelimits]] binding — that
+# binding was tried and its counters didn't accumulate across separate
+# requests here (verified live), which defeats brute-force protection.
+
+# Workers Logs — without this, a production exception leaves no trail at all
+# beyond a user noticing something broke.
+[observability]
+enabled = true
+
 # Durable Objects for quota enforcement
 [[durable_objects.bindings]]
 name = "QUOTA_MANAGER"

@@ -211,7 +211,7 @@ async function handleOdds(request, env, ctx) {
 
   const auth = request.headers.get('Authorization') || '';
   const token = auth.replace('Bearer ', '');
-  const payload = verifyJWT(token, jwtSecret());
+  const payload = verifyJWT(token, jwtSecret(env));
 
   if (!payload) {
     return json({ error: 'Unauthorized' }, { status: 401, headers: cors });
@@ -627,6 +627,48 @@ export default {
 
     const { pathname } = new URL(request.url);
 
+    // Per-IP throttle (10/min) on every credential-adjacent endpoint:
+    // login brute-forcing, reset-email spam toward a victim's inbox, and
+    // scripted account creation all get cut off at the same gate.
+    // Report-bug shares the mechanism under its own key prefix, so its
+    // budget is independent. Backed by the QuotaManager Durable Object
+    // (one instance per key via idFromName) rather than the platform's
+    // [[ratelimits]] binding — see quota.js's handleRateLimit for why the
+    // binding didn't actually work for this. Fails open if the DO call
+    // errors — a rate-limiter outage should degrade to "no throttle,"
+    // never to "nobody can log in."
+    const rateLimited = async (key) => {
+      try {
+        const id = env.QUOTA_MANAGER.idFromName(`ratelimit:${key}`);
+        const obj = env.QUOTA_MANAGER.get(id);
+        const res = await obj.fetch(
+          new Request('http://quota/ratelimit', {
+            method: 'POST',
+            body: JSON.stringify({ key, limit: 10 }),
+          }),
+        );
+        const { allowed } = await res.json();
+        return !allowed;
+      } catch (e) {
+        console.error('Rate limiter error (failing open):', e);
+        return false;
+      }
+    };
+    const AUTH_LIMITED_PATHS = new Set([
+      '/api/auth/register',
+      '/api/auth/login',
+      '/api/auth/forgot-password',
+      '/api/auth/reset-password',
+      '/api/auth/verify-email',
+    ]);
+    if (request.method === 'POST' && (AUTH_LIMITED_PATHS.has(pathname) || pathname === '/api/report-bug')) {
+      const ip = request.headers.get('CF-Connecting-IP') ?? 'unknown';
+      const prefix = pathname === '/api/report-bug' ? 'bug' : 'auth';
+      if (await rateLimited(`${prefix}:${ip}`)) {
+        return json({ error: 'Too many attempts — try again in a minute.' }, { status: 429, headers: cors });
+      }
+    }
+
     if (pathname === '/api/auth/register' && request.method === 'POST') {
       const res = await handleRegister(request, env);
       return new Response(res.body, { status: res.status, headers: { ...cors, ...Object.fromEntries(res.headers) } });
@@ -982,7 +1024,7 @@ export default {
     // unauthenticated GET would publish it to every visitor.
     if (pathname === '/settings' && (request.method === 'GET' || request.method === 'PUT')) {
       const auth = request.headers.get('Authorization') || '';
-      const payload = verifyJWT(auth.replace('Bearer ', ''), jwtSecret());
+      const payload = verifyJWT(auth.replace('Bearer ', ''), jwtSecret(env));
       if (!payload) return json({ error: 'unauthorized' }, { status: 401, headers: cors });
 
       try {

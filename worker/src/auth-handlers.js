@@ -2,6 +2,7 @@ import {
   generateVerificationToken,
   hashPassword,
   verifyPassword,
+  passwordNeedsRehash,
   generateId,
   generateJWT,
   verifyJWT,
@@ -15,9 +16,16 @@ function json(body, { status = 200, headers = {} } = {}) {
   });
 }
 
-export function jwtSecret() {
-  // TODO: In production, use a secret from environment variable (wrangler secret put JWT_SECRET)
-  return 'perpetual-picks-dev-secret-change-in-production';
+export function jwtSecret(env) {
+  // Set via `wrangler secret put JWT_SECRET`. Throwing on a missing secret
+  // (rather than falling back to some hardcoded default) is deliberate:
+  // this file lives in a public GitHub repo, so any string written here is
+  // effectively published — a fallback would let anyone who reads the repo
+  // forge a valid session token for any account. Better for auth to fail
+  // loudly on a misconfigured deploy than to silently run forgeable.
+  const secret = env?.JWT_SECRET;
+  if (!secret) throw new Error('JWT_SECRET is not configured — run: wrangler secret put JWT_SECRET');
+  return secret;
 }
 
 // Every outbound email leads with the same logo header — kept as one
@@ -197,8 +205,24 @@ export async function handleLogin(request, env) {
       return json({ error: 'please verify your email first', needsVerification: true }, { status: 403 });
     }
 
+    // Transparent hash upgrade: an account still on the legacy unsalted
+    // SHA-256 format (or an outdated PBKDF2 iteration count) gets re-hashed
+    // under the current scheme now, while the plaintext password is briefly
+    // in hand — the only moment that's possible. Best-effort: a failure
+    // here must never block a valid login, the old hash still works.
+    if (passwordNeedsRehash(user.password_hash)) {
+      try {
+        const upgraded = await hashPassword(password);
+        await env.DB.prepare('UPDATE users SET password_hash = ?, updated_at = ? WHERE id = ?')
+          .bind(upgraded, Date.now(), user.id)
+          .run();
+      } catch (rehashErr) {
+        console.error('Password rehash failed (login still succeeds):', rehashErr);
+      }
+    }
+
     // Generate JWT token (30-day expiry)
-    const token = generateJWT({ userId: user.id, email: user.email }, jwtSecret());
+    const token = generateJWT({ userId: user.id, email: user.email }, jwtSecret(env));
 
     return json({ token, userId: user.id, email: user.email, username: user.username });
   } catch (e) {
@@ -318,7 +342,7 @@ export async function handleMe(request, env) {
   try {
     const auth = request.headers.get('Authorization') || '';
     const token = auth.replace('Bearer ', '');
-    const payload = verifyJWT(token, jwtSecret());
+    const payload = verifyJWT(token, jwtSecret(env));
 
     if (!payload) {
       return json({ error: 'unauthorized' }, { status: 401 });

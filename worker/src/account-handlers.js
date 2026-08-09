@@ -11,15 +11,15 @@ function json(body, { status = 200, headers = {} } = {}) {
 
 /** Every account-settings endpoint requires a valid JWT — returns the
  * decoded payload, or null if the request isn't authenticated. */
-function authenticate(request) {
+function authenticate(request, env) {
   const auth = request.headers.get('Authorization') || '';
   const token = auth.replace('Bearer ', '');
-  return verifyJWT(token, jwtSecret());
+  return verifyJWT(token, jwtSecret(env));
 }
 
 export async function handleUpdateUsername(request, env) {
   try {
-    const payload = authenticate(request);
+    const payload = authenticate(request, env);
     if (!payload) return json({ error: 'unauthorized' }, { status: 401 });
 
     const { username } = await request.json();
@@ -48,7 +48,7 @@ export async function handleUpdateUsername(request, env) {
 
 export async function handleUpdatePassword(request, env) {
   try {
-    const payload = authenticate(request);
+    const payload = authenticate(request, env);
     if (!payload) return json({ error: 'unauthorized' }, { status: 401 });
 
     const { currentPassword, newPassword } = await request.json();
@@ -113,7 +113,7 @@ async function sendEmailChangeVerification(env, newEmail, username, token) {
 
 export async function handleRequestEmailChange(request, env) {
   try {
-    const payload = authenticate(request);
+    const payload = authenticate(request, env);
     if (!payload) return json({ error: 'unauthorized' }, { status: 401 });
 
     const { newEmail } = await request.json();
@@ -187,7 +187,7 @@ export async function handleConfirmEmailChange(request, env) {
 
 export async function handleUpdateNotifications(request, env) {
   try {
-    const payload = authenticate(request);
+    const payload = authenticate(request, env);
     if (!payload) return json({ error: 'unauthorized' }, { status: 401 });
 
     const body = await request.json();
