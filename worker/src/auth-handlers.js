@@ -25,7 +25,7 @@ async function sendVerificationEmail(env, email, token) {
     throw new Error('Email service not configured');
   }
 
-  const verifyUrl = `https://perpetualpicks.com/verify-email?token=${token}`;
+  const verifyUrl = `https://perpetualpicks.com/login.html?token=${token}`;
 
   await env.EMAIL.send({
     to: email,
