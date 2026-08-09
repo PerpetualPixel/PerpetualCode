@@ -1585,16 +1585,6 @@ input[type="range"]:focus-visible {
   border-color: var(--accent);
 }
 
-/* The sync section sits below a divider — it's account plumbing, visually
-   distinct from the bankroll figures themselves. */
-.bankroll-sync {
-  border-top: 1px solid var(--line);
-  padding-top: 18px;
-}
-.bankroll-sync .bankroll-display-toggle {
-  margin-top: 8px;
-}
-
 .bankroll-hint {
   margin: 6px 0 0;
   font-size: 0.7rem;

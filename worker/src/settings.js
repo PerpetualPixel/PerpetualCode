@@ -1,30 +1,23 @@
 /**
- * Durable user settings — today, bankroll and unit size.
+ * Durable per-account settings — today, bankroll and unit size.
  *
  * These lived in the browser's localStorage, which meant they died with a
  * cleared cache and never followed the user to a second device. They're
  * stored in KV instead, with the client keeping its localStorage copy purely
- * as an offline/unauthenticated fallback (see docs/app.js's loadSettings).
+ * as an offline fallback (see docs/app.js's loadSettings).
  *
- * ── Identity, and the road to real accounts ──────────────────────────────
- * This app has no user accounts yet: REQUIRE_AUTH is "false" and the D1
- * database in wrangler.toml is still unprovisioned. But the site is publicly
- * reachable, so a single globally-readable settings record would mean every
- * visitor sharing — and overwriting — one bankroll. Until real accounts
- * exist, access is gated on a single owner passphrase (the OWNER_PASSPHRASE
- * secret), which acts as a stand-in session token: hold it and you read and
- * write the owner's settings, don't and you get nothing at all.
+ * ── Identity ───────────────────────────────────────────────────────────
+ * One record per authenticated account, keyed by the D1 user id (see
+ * worker/src/index.js's /settings route: identity is payload.userId from
+ * the request's JWT). settingsKey() is the only place that identity -> KV
+ * key mapping lives. The stored value is an extensible object with a
+ * `version` field, not two bare numbers, so adding displayName/preferences
+ * later is additive.
  *
- * The intended end state is per-user profiles (own tracking, own bankroll,
- * own display name). Everything here is shaped so that becomes a localized
- * change rather than a rewrite:
- *   - settingsKey() is the ONLY place the identity -> KV key mapping lives.
- *     Real accounts replace `settings:owner` with `settings:user:<id>`.
- *   - The stored value is an extensible object with a `version` field, not
- *     two bare numbers, so adding displayName/preferences later is additive.
- *   - authorize() is the ONLY place the credential check lives. Real accounts
- *     swap the passphrase compare for a session-token lookup; no caller
- *     changes.
+ * authorize() below (a single owner-passphrase check, X-Owner-Key) predates
+ * accounts and is no longer used by /settings — it's kept for the two
+ * algo-health admin routes (/algo-health/resume, /algo-health/reset), which
+ * are genuinely single-owner actions rather than per-user settings.
  */
 
 /** Bumped only on a breaking shape change; readers tolerate older records. */

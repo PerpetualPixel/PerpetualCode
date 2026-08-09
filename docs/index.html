@@ -28,7 +28,7 @@
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Syne:wght@600;700;800&family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
-<link rel="stylesheet" href="styles.css?v=1.66">
+<link rel="stylesheet" href="styles.css?v=1.67">
 </head>
 <body>
 
@@ -174,8 +174,8 @@
   <p class="history-note">
     Set your bankroll once, and every pick's suggested stake (already sized
     by ¼-Kelly against that pick's edge) converts to a real dollar amount or
-    a unit count. Saved to this device, and synced to the server as well
-    once you connect below, so it survives a cleared browser.
+    a unit count. Saved to your account automatically, so it follows you to
+    any device you sign in on.
   </p>
 
   <div class="bankroll-field">
@@ -193,6 +193,7 @@
     <span class="generate-label">Submit</span>
   </button>
   <p id="bankrollSubmitHint" class="bankroll-hint"></p>
+  <p id="bankrollSyncStatus" class="bankroll-hint"></p>
 
   <div class="bankroll-field">
     <span class="bankroll-label-static">Show stakes as</span>
@@ -201,22 +202,6 @@
       <button type="button" id="bankrollShowUnits" class="toggle-btn">Units</button>
     </div>
     <p class="bankroll-hint">Applies next time you generate or open a pick.</p>
-  </div>
-
-  <div class="bankroll-field bankroll-sync">
-    <label for="ownerKeyInput">Sync key</label>
-    <input type="password" id="ownerKeyInput" autocomplete="off" spellcheck="false"
-           placeholder="Owner passphrase">
-    <div class="bankroll-display-toggle">
-      <button type="button" id="ownerKeyConnect" class="toggle-btn">Connect</button>
-      <button type="button" id="ownerKeyForget" class="toggle-btn">Forget</button>
-    </div>
-    <p id="ownerKeyStatus" class="bankroll-hint"></p>
-    <p class="bankroll-hint">
-      Without a key, your bankroll is saved on this device only. With it, the
-      same figures follow you to any browser. Accounts are coming — this is
-      the interim single-owner stand-in.
-    </p>
   </div>
 
   <p class="history-note">
@@ -302,7 +287,7 @@
     </details>
 
     <details>
-      <summary>The four tabs</summary>
+      <summary>The three tabs</summary>
       <p><strong>Full Slate</strong> shows every game in a league with a price
       on it, nothing hidden by odds or confidence, with a glowing ring
       around whichever side the algorithm leans toward on each market. Tap
@@ -658,6 +643,6 @@
   </div>
 </aside>
 
-<script type="module" src="app.js?v=1.66"></script>
+<script type="module" src="app.js?v=1.67"></script>
 </body>
 </html>

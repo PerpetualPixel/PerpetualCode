@@ -595,10 +595,7 @@ const el = {
   bankrollShowUnits: document.getElementById('bankrollShowUnits'),
   bankrollSubmit: document.getElementById('bankrollSubmit'),
   bankrollSubmitHint: document.getElementById('bankrollSubmitHint'),
-  ownerKeyInput: document.getElementById('ownerKeyInput'),
-  ownerKeyConnect: document.getElementById('ownerKeyConnect'),
-  ownerKeyForget: document.getElementById('ownerKeyForget'),
-  ownerKeyStatus: document.getElementById('ownerKeyStatus'),
+  bankrollSyncStatus: document.getElementById('bankrollSyncStatus'),
   guideToggle: document.getElementById('guideToggle'),
   guidePanel: document.getElementById('guidePanel'),
   guideClose: document.getElementById('guideClose'),
@@ -2547,34 +2544,25 @@ el.statsDrawerClose.addEventListener('click', () => setStatsDrawerOpen(false));
 
 /**
  * Bankroll/unit size used to live only in localStorage, so they died with a
- * cleared cache and never followed the user to another device. They're now
- * mirrored to the worker (see worker/src/settings.js), with localStorage
- * kept as the offline/not-connected fallback — the local copy is always
- * written, so nothing regresses when sync is unavailable.
- *
- * Identity is a single owner passphrase for now, held in localStorage and
- * sent as X-Owner-Key. That's a deliberate interim: it's XSS-exposed the
- * same way any browser-held token is, and it doesn't scale past one person.
- * When real per-user accounts land, this key becomes a session token and
- * settingsHeaders() is the only thing here that has to change.
+ * cleared cache and never followed the user to another device. They're
+ * mirrored to the worker (see worker/src/settings.js), one record per
+ * account, keyed by the same JWT every other authenticated request already
+ * uses — no separate connect step, since the app requires login to reach
+ * this panel at all. localStorage stays as the offline fallback: the local
+ * copy is always written first, so a transient network error never loses a
+ * real bankroll, it just doesn't sync that one change until the next.
  */
-const OWNER_KEY_STORAGE = 'pixelpick.ownerKey.v1';
-
-function ownerKey() {
-  return loadJSON(OWNER_KEY_STORAGE, '') || '';
-}
-
 function settingsHeaders() {
-  const key = ownerKey();
-  return key ? { 'X-Owner-Key': key } : null;
+  const token = getToken();
+  return token ? { Authorization: `Bearer ${token}` } : null;
 }
 
 /**
- * Pull settings from the server and adopt them, if a key is configured.
- * Server wins over the local copy: it's the record that survived whatever
- * cleared this browser, and it's what another device already agreed on.
- * Any failure leaves the local copy untouched rather than blanking a real
- * bankroll over a transient network error.
+ * Pull settings from the server and adopt them. Server wins over the local
+ * copy: it's the record that survived whatever cleared this browser, and
+ * it's what another device already agreed on. Any failure leaves the local
+ * copy untouched rather than blanking a real bankroll over a transient
+ * network error.
  */
 async function loadSettings() {
   const headers = settingsHeaders();
@@ -2614,23 +2602,19 @@ function pushSettingsSoon() {
     } catch {
       lastPushFailed = true; // local copy already saved; surfaced in the panel
     }
-    renderOwnerKeyStatus();
+    renderSyncStatus();
   }, 600);
 }
 
-function renderOwnerKeyStatus(override) {
-  if (!el.ownerKeyStatus) return;
+function renderSyncStatus(override) {
+  if (!el.bankrollSyncStatus) return;
   if (override) {
-    el.ownerKeyStatus.textContent = override;
+    el.bankrollSyncStatus.textContent = override;
     return;
   }
-  if (!ownerKey()) {
-    el.ownerKeyStatus.textContent = 'Not connected — saved on this device only.';
-    return;
-  }
-  el.ownerKeyStatus.textContent = lastPushFailed
-    ? 'Connected, but the last save didn\'t reach the server. Still saved locally.'
-    : 'Connected — changes sync automatically.';
+  el.bankrollSyncStatus.textContent = lastPushFailed
+    ? 'Saved on this device — the last sync to your account didn\'t go through. Will retry on the next change.'
+    : 'Synced to your account.';
 }
 
 function persistBankroll() {
@@ -2654,7 +2638,7 @@ function renderBankrollPanel() {
     ? 'Applied. Every "why" panel now shows a real $ or unit amount.'
     : 'Tap Submit to start seeing suggested stakes in real $ or units, not just %.';
 
-  renderOwnerKeyStatus();
+  renderSyncStatus();
 }
 
 /* ---------------------------------------------------------------- */
@@ -3978,49 +3962,6 @@ el.bankrollShowUnits.addEventListener('click', () => {
   persistBankroll();
   renderBankrollPanel();
   refreshStakeDisplays();
-});
-
-el.ownerKeyConnect.addEventListener('click', async () => {
-  const key = el.ownerKeyInput.value.trim();
-  if (!key) {
-    renderOwnerKeyStatus('Enter your owner passphrase first.');
-    return;
-  }
-  saveJSON(OWNER_KEY_STORAGE, key);
-  renderOwnerKeyStatus('Connecting…');
-
-  const result = await loadSettings();
-  if (!result.ok) {
-    // A bad key is kept out of storage entirely rather than left to fail on
-    // every future save — otherwise the panel would read "connected" while
-    // nothing ever syncs.
-    saveJSON(OWNER_KEY_STORAGE, '');
-    renderOwnerKeyStatus(
-      result.reason === 'bad-key'
-        ? 'That key was rejected. Bankroll is still saved on this device.'
-        : 'Couldn\'t reach the server. Bankroll is still saved on this device.',
-    );
-    return;
-  }
-
-  el.ownerKeyInput.value = '';
-  lastPushFailed = false;
-  // Nothing stored server-side yet on a first connect — push this device's
-  // current values up so the two sides agree immediately rather than after
-  // the next unrelated edit.
-  if (!result.hadRecord) pushSettingsSoon();
-  renderBankrollPanel();
-  refreshStakeDisplays();
-  renderOwnerKeyStatus(result.hadRecord ? 'Connected — loaded your saved bankroll.' : 'Connected — this device\'s bankroll is now synced.');
-});
-
-el.ownerKeyForget.addEventListener('click', () => {
-  saveJSON(OWNER_KEY_STORAGE, '');
-  el.ownerKeyInput.value = '';
-  lastPushFailed = false;
-  // Deliberately leaves state.bankroll and its localStorage copy alone —
-  // disconnecting shouldn't wipe the numbers off the device you're on.
-  renderOwnerKeyStatus('Disconnected — still saved on this device.');
 });
 
 /* ---------------------------------------------------------------- */

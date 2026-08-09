@@ -4,6 +4,7 @@ import {
   handleLogin,
   handleMe,
   verifyJWT,
+  jwtSecret,
 } from './auth-handlers.js';
 import {
   handleUpdateUsername,
@@ -953,22 +954,26 @@ export default {
       );
     }
 
-    // Durable bankroll/unit settings (see worker/src/settings.js). Both
-    // methods are gated on the owner passphrase — the bankroll is personal,
-    // and this site is publicly reachable, so an ungated GET would publish it
-    // to every visitor. A deployment with no OWNER_PASSPHRASE configured
-    // answers 503 here and the client stays on its local copy.
+    // Durable bankroll/unit settings (see worker/src/settings.js) — one
+    // record per authenticated account now, keyed by the JWT's userId
+    // rather than the old single hardcoded "owner" identity. settings.js's
+    // own header comment anticipated exactly this migration: settingsKey()
+    // is the only place the identity->KV-key mapping lives, so passing a
+    // real per-user identity here is the entire change on that side. The
+    // bankroll is personal, and this site is publicly reachable, so an
+    // unauthenticated GET would publish it to every visitor.
     if (pathname === '/settings' && (request.method === 'GET' || request.method === 'PUT')) {
-      const auth = authorizeSettings(request, env);
-      if (!auth.ok) return json({ error: auth.error }, { status: auth.status, headers: cors });
+      const auth = request.headers.get('Authorization') || '';
+      const payload = verifyJWT(auth.replace('Bearer ', ''), jwtSecret());
+      if (!payload) return json({ error: 'unauthorized' }, { status: 401, headers: cors });
 
       try {
         if (request.method === 'GET') {
-          return json({ settings: await getSettings(env) }, { headers: { ...cors, 'Cache-Control': 'no-store' } });
+          return json({ settings: await getSettings(env, payload.userId) }, { headers: { ...cors, 'Cache-Control': 'no-store' } });
         }
         const body = await request.json().catch(() => null);
         if (!body) return json({ error: 'Expected a JSON body' }, { status: 400, headers: cors });
-        return json({ settings: await putSettings(env, body) }, { headers: { ...cors, 'Cache-Control': 'no-store' } });
+        return json({ settings: await putSettings(env, body, payload.userId) }, { headers: { ...cors, 'Cache-Control': 'no-store' } });
       } catch (error) {
         return json({ error: String(error).slice(0, 120) }, { status: 500, headers: cors });
       }
