@@ -6,6 +6,11 @@
  * in engine.js so it can be tested without a browser.
  */
 
+// Enforce custom domain — redirect old GitHub URL to perpetualpicks.com
+if (!window.location.hostname.includes('perpetualpicks.com')) {
+  window.location.href = 'https://perpetualpicks.com' + window.location.pathname + window.location.search;
+}
+
 // Auth check — redirect to login if not authenticated
 (() => {
   const token = localStorage.getItem('pp_auth_token');
