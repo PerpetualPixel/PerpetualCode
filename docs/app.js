@@ -11,24 +11,6 @@ if (!window.location.hostname.includes('perpetualpicks.com')) {
   window.location.href = 'https://perpetualpicks.com' + window.location.pathname + window.location.search;
 }
 
-// Auth check — redirect to login if not authenticated
-(() => {
-  const token = localStorage.getItem('pp_auth_token');
-  if (!token) {
-    window.location.href = '/login.html';
-    return;
-  }
-})();
-
-// Show logout button and wire it up
-document.addEventListener('DOMContentLoaded', () => {
-  const logoutBtn = document.getElementById('logoutBtn');
-  if (logoutBtn) {
-    logoutBtn.hidden = false;
-    logoutBtn.addEventListener('click', () => window.logout());
-  }
-});
-
 import { CONFIG } from './config.js';
 import { DEMO_EVENTS } from './demo.js';
 import { teamLogoUrl } from './team-logos.js';
@@ -847,20 +829,22 @@ function saveJSON(key, value) {
 /* ---------------------------------------------------------------- */
 
 function getToken() {
-  return localStorage.getItem('pixelpick_token');
+  return localStorage.getItem('pp_auth_token');
 }
 
 function signOut() {
-  localStorage.removeItem('pixelpick_token');
-  localStorage.removeItem('pixelpick_user_id');
-  window.location.href = 'auth.html';
+  if (!confirm('Are you sure you want to sign out?')) return;
+  localStorage.removeItem('pp_auth_token');
+  localStorage.removeItem('pp_auth_user');
+  window.location.href = 'https://perpetualpicks.com/login.html';
 }
 
-/** Returns false when the page is being redirected to sign-in. */
+/** Returns false when the page is being redirected to sign-in. Page access
+ * always requires a token, independent of CONFIG.REQUIRE_AUTH (which only
+ * gates the /odds worker endpoint, a separate concern). */
 function checkAuth() {
-  if (!CONFIG.REQUIRE_AUTH) return true;
   if (getToken()) return true;
-  window.location.href = 'auth.html';
+  window.location.href = 'https://perpetualpicks.com/login.html';
   return false;
 }
 
@@ -5158,7 +5142,7 @@ async function openLearningDashboard() {
 (async function init() {
   if (!checkAuth()) return;
 
-  el.logoutBtn.hidden = !(CONFIG.REQUIRE_AUTH && getToken());
+  el.logoutBtn.hidden = !getToken();
   el.pixelSort.value = state.pixelSort;
 
   renderDayToggle();
