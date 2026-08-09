@@ -93,6 +93,12 @@ const LEAGUE_GROUPS = [
 ];
 const LEAGUE_GROUP_BY_ID = new Map(LEAGUE_GROUPS.map((g) => [g.id, g]));
 
+/** One glyph per league group, for the glowing quick-select token row (renderSlateLeagueOptions) — purely decorative, the underlying select is still the source of truth. */
+const LEAGUE_ICONS = {
+  mlb: '⚾', nfl: '🏈', ncaa: '🎓', atp: '🎾', wta: '🎾',
+  wnba: '🏀', mma: '🥊', mls: '⚽', nhl: '🏒', nba: '🏀', ncaab: '🎓',
+};
+
 /** Fill ATP/WTA's key lists from whatever tennis tournaments are currently live in the catalogue. */
 function populateTennisGroups() {
   const atp = LEAGUE_GROUP_BY_ID.get('atp');
@@ -594,6 +600,7 @@ const el = {
   slateView: document.getElementById('slateView'),
   slateStatus: document.getElementById('slateStatus'),
   slateLeagueSelect: document.getElementById('slateLeagueSelect'),
+  slateLeagueTokens: document.getElementById('slateLeagueTokens'),
   slateLoad: document.getElementById('slateLoad'),
   slateStateUpcoming: document.getElementById('slateStateUpcoming'),
   slateStateFinished: document.getElementById('slateStateFinished'),
@@ -3173,6 +3180,16 @@ function renderSlateLeagueOptions() {
       return `<option value="${esc(group.id)}" ${group.id === state.slateLeague ? 'selected' : ''}>${esc(label)}</option>`;
     })
     .join('');
+
+  if (el.slateLeagueTokens) {
+    el.slateLeagueTokens.innerHTML = LEAGUE_GROUPS
+      .map((group) => `
+        <button type="button" class="league-token ${group.id === state.slateLeague ? 'is-active' : ''} ${group.offSeason ? 'is-off-season' : ''}"
+                data-league-token="${esc(group.id)}" title="${esc(group.label)}" aria-label="${esc(group.label)}">
+          <span class="league-token-icon" aria-hidden="true">${LEAGUE_ICONS[group.id] ?? '●'}</span>
+        </button>`)
+      .join('');
+  }
 }
 
 /**
@@ -3638,7 +3655,22 @@ el.slateLeagueSelect.addEventListener('change', () => {
   state.slateLeague = el.slateLeagueSelect.value || null;
   state.slateEvent = 'all'; // a card filter from the old league means nothing for a new one
   saveJSON(SLATE_LEAGUE_KEY, state.slateLeague);
+  // Re-render the token row too, so its active-glow token switches in step
+  // with the select — found live: without this, the just-clicked token kept
+  // showing whichever league was active before, until some later unrelated
+  // refresh happened to redraw the row.
+  renderSlateLeagueOptions();
   renderFullSlate();
+});
+// The glowing icon tokens are a second way to trigger the exact same
+// selection — set the select's value and dispatch a real 'change' so the
+// listener above is the only place that ever runs the actual state update,
+// rather than duplicating it here.
+el.slateLeagueTokens?.addEventListener('click', (event) => {
+  const token = event.target.closest('[data-league-token]');
+  if (!token) return;
+  el.slateLeagueSelect.value = token.dataset.leagueToken;
+  el.slateLeagueSelect.dispatchEvent(new Event('change'));
 });
 el.slateEventSelect.addEventListener('change', () => {
   state.slateEvent = el.slateEventSelect.value;

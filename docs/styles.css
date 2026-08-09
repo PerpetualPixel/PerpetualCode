@@ -1,24 +1,54 @@
-/* Pixel Pick — deliberately spare. One button should be the loudest thing here. */
+/*
+ * Perpetual Picks — "Cyber-Mesh Neon."
+ *
+ * A near-black glass-and-glow system built on top of the same CSS custom
+ * properties every component already reads — --bg/--surface/--accent/etc.
+ * changed meaning here (surfaces are translucent glass now, not flat
+ * panels; --mono is Inter, not a monospace stack), but their NAMES and
+ * where they're used are untouched, so this is a visual re-theme, not a
+ * layout rewrite. --magenta and --laser are the two new glow accents the
+ * old palette didn't have a place for.
+ *
+ * Semantic colors are the one deliberate exception: win/loss (--success/
+ * --danger) stay green/red rather than being pulled into the neon palette.
+ * A magenta "loss" would compete visually with the magenta "edge" glow
+ * elsewhere on the same card — the brand palette is for accent and
+ * signal-of-interest, not for repurposing an outcome color people already
+ * read at a glance.
+ */
 
 :root {
-  --bg: #0b0d10;
-  --surface: #14181d;
-  --surface-2: #1c2229;
-  --line: #262e37;
-  --text: #eef2f6;
-  --muted: #8b97a5;
-  --accent: #4ade80;
-  --accent-dim: #14361f;
+  --bg: #05050A;                 /* Near-Pitch Black */
+  --surface: rgba(255, 255, 255, 0.03);   /* glass fill */
+  --surface-2: rgba(255, 255, 255, 0.06); /* glass fill, one step brighter (hover/active) */
+  --line: rgba(124, 58, 237, 0.28);       /* violet-tinted hairline instead of flat gray */
+  --text: #F3F1FA;
+  --muted: #9C98B8;
+  --accent: #7C3AED;             /* Violet — primary */
+  --accent-dim: rgba(124, 58, 237, 0.16);
+  /* Text/icon color for anything sitting on a SOLID --accent fill (buttons,
+     active toggle pills). White, not near-black: the old palette's near-
+     black-on-light-green pairing (#04140a on #4ade80) had good contrast,
+     but violet is a mid-dark color, not a light one — dark-on-dark would
+     fail contrast here, so this flips to light-on-dark instead. */
+  --on-accent: #ffffff;
+  --magenta: #FF007A;            /* Neon Magenta — glow accent */
+  --laser: #00F0FF;              /* Laser Blue — glow accent, "this is a real edge" signal */
   --warn: #fbbf24;
-  --radius: 8px; /* Rounded for modern card design */
-  --mono: ui-monospace, "SF Mono", "JetBrains Mono", Menlo, monospace;
-  --sans: -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif;
-  /* Professional sportsbook colors */
+  --radius: 14px;
+  --mono: 'Inter', 'Inter Fallback', -apple-system, sans-serif; /* name kept for the ~150 call sites already using var(--mono) for data/stats; value now points at the spec's actual "data/stats" font instead of a monospace stack */
+  --sans: 'Inter', 'Inter Fallback', -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif;
+  --display: 'Syne', 'Inter', sans-serif; /* headings/logo only */
   --success: #10b981;
   --danger: #ef4444;
-  --shadow: 0 4px 16px rgba(0, 0, 0, 0.4);
-  --shadow-sm: 0 2px 8px rgba(0, 0, 0, 0.2);
+  --shadow: 0 8px 28px rgba(0, 0, 0, 0.55);
+  --shadow-sm: 0 2px 10px rgba(0, 0, 0, 0.35);
+  --glow-violet: 0 0 18px rgba(124, 58, 237, 0.45);
+  --glow-magenta: 0 0 18px rgba(255, 0, 122, 0.45);
+  --glow-laser: 0 0 16px rgba(0, 240, 255, 0.55);
+  --card-border-gradient: linear-gradient(135deg, rgba(124, 58, 237, 0.7), rgba(255, 0, 122, 0.5), rgba(0, 240, 255, 0.6));
 }
+
 
 * { box-sizing: border-box; }
 
@@ -38,8 +68,8 @@ html { -webkit-text-size-adjust: 100%; }
 }
 
 @keyframes buttonGlow {
-  0%, 100% { box-shadow: 0 0 0 0 rgba(74, 222, 128, 0.4); }
-  50% { box-shadow: 0 0 0 8px rgba(74, 222, 128, 0); }
+  0%, 100% { box-shadow: 0 0 0 0 rgba(124, 58, 237, 0.4); }
+  50% { box-shadow: 0 0 0 8px rgba(124, 58, 237, 0); }
 }
 
 @keyframes slideInDown {
@@ -86,9 +116,22 @@ html { -webkit-text-size-adjust: 100%; }
 
 body {
   margin: 0;
-  background: var(--bg);
+  /* "Cyber-Mesh": near-pitch-black base with two very faint radial glows
+     (violet upper-left, laser blue lower-right) and a hairline grid — all
+     subtle enough to read as texture, not decoration competing with the
+     actual dashboard content sitting on top of it. Fixed attachment so it
+     doesn't visibly scroll/repeat with a long page. */
+  background-color: var(--bg);
+  background-image:
+    radial-gradient(ellipse 900px 600px at 8% -10%, rgba(124, 58, 237, 0.16), transparent 60%),
+    radial-gradient(ellipse 800px 600px at 95% 15%, rgba(0, 240, 255, 0.08), transparent 55%),
+    linear-gradient(rgba(124, 58, 237, 0.05) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(124, 58, 237, 0.05) 1px, transparent 1px);
+  background-size: auto, auto, 42px 42px, 42px 42px;
+  background-attachment: fixed;
   color: var(--text);
   font-family: var(--sans);
+  font-variant-numeric: tabular-nums; /* keeps odds/scores columns aligned even though --mono is Inter, not monospace, now */
   line-height: 1.5;
   /* Respect the iPhone notch and home indicator. */
   padding: env(safe-area-inset-top) env(safe-area-inset-right)
@@ -115,53 +158,64 @@ body {
 
 .wordmark {
   margin: 0;
-  font-family: var(--mono);
-  font-size: 1.05rem;
-  font-weight: 700;
-  letter-spacing: 0.16em;
+  font-family: var(--display);
+  font-size: 1.15rem;
+  font-weight: 800;
+  letter-spacing: 0.1em;
+  color: var(--text);
   animation: slideInDown 0.5s ease-out;
 }
 .wordmark span {
-  color: var(--accent);
+  /* Violet -> magenta gradient text, the wordmark's own signature glow. */
+  background: linear-gradient(90deg, var(--accent), var(--magenta));
+  -webkit-background-clip: text;
+  background-clip: text;
+  -webkit-text-fill-color: transparent;
+  filter: drop-shadow(0 0 10px rgba(255, 0, 122, 0.45));
   animation: logoPulse 3s ease-in-out infinite;
   display: inline-block;
-  transition: color 300ms ease;
 }
 
 .topbar-actions { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; justify-content: flex-end; }
 
+/* Utility links (Guide/About/Bankroll/Tracking) — subtle, futuristic text
+   style: understated glass chip, uppercase micro-tracking, a violet glow
+   only on hover rather than a loud persistent border. This rule used to be
+   split into two fragments (a stray, selector-less declaration block sat
+   between :hover and :active below) that happened to still render via
+   inherited/default values — folded back into one rule while restyling. */
 .icon-btn {
   display: inline-flex;
   align-items: center;
   gap: 6px;
   background: var(--surface);
+  backdrop-filter: blur(12px);
+  -webkit-backdrop-filter: blur(12px);
   border: 1px solid var(--line);
   border-radius: var(--radius);
   color: var(--muted);
-  font-family: var(--mono);
-  transition: all 200ms cubic-bezier(0.34, 1.56, 0.64, 1);
-  cursor: pointer;
-  animation: slideInDown 0.6s ease-out 0.1s both;
-}
-.icon-btn:hover {
-  background: var(--surface-2);
-  border-color: var(--accent);
-  color: var(--accent);
-  transform: translateY(-2px);
-  box-shadow: var(--shadow);
-}
-.icon-btn:active {
-  transform: translateY(0px) scale(0.96);
-}
-  font-size: 0.75rem;
-  letter-spacing: 0.06em;
+  font-family: var(--sans);
+  font-size: 0.72rem;
+  font-weight: 600;
+  letter-spacing: 0.08em;
   text-transform: uppercase;
   padding: 9px 12px;
   cursor: pointer;
   /* Comfortable thumb target on a phone. */
   min-height: 40px;
+  transition: all 200ms cubic-bezier(0.34, 1.56, 0.64, 1);
+  animation: slideInDown 0.6s ease-out 0.1s both;
 }
-.icon-btn:hover { color: var(--text); border-color: #36414d; }
+.icon-btn:hover {
+  background: var(--surface-2);
+  border-color: var(--accent);
+  color: var(--text);
+  transform: translateY(-2px);
+  box-shadow: var(--glow-violet);
+}
+.icon-btn:active {
+  transform: translateY(0px) scale(0.96);
+}
 
 /* Every drawer/overlay's ✕ — bigger and glowing by default (not just on
    hover) so it's easy to spot at a glance instead of blending into the
@@ -179,18 +233,18 @@ body {
   background: var(--accent-dim);
   border: 1px solid var(--accent);
   color: var(--accent);
-  box-shadow: 0 0 0 3px rgba(74, 222, 128, 0.15), 0 0 16px 3px rgba(74, 222, 128, 0.4);
+  box-shadow: 0 0 0 3px rgba(124, 58, 237, 0.15), 0 0 16px 3px rgba(124, 58, 237, 0.4);
 }
 .overlay-close-btn:hover {
   background: var(--accent);
-  color: #04140a;
+  color: var(--on-accent);
   border-color: var(--accent);
-  box-shadow: 0 0 0 4px rgba(74, 222, 128, 0.22), 0 0 22px 5px rgba(74, 222, 128, 0.55);
+  box-shadow: 0 0 0 4px rgba(124, 58, 237, 0.22), 0 0 22px 5px rgba(124, 58, 237, 0.55);
 }
 
 .badge {
   background: var(--accent);
-  color: #04140a;
+  color: var(--on-accent);
   border-radius: 999px;
   font-size: 0.68rem;
   font-weight: 700;
@@ -211,33 +265,52 @@ body {
   padding: 0 20px 14px;
 }
 
+/* Ghost tabs with a magenta underline glow on the active one, replacing the
+   old solid-fill pill — reads as a signal light under the label rather than
+   a button, closer to a HUD than a form control. */
 .top-tab {
+  position: relative;
   flex: 1;
-  background: var(--surface);
-  border: 1px solid var(--line);
+  background: transparent;
+  border: 1px solid transparent;
   border-radius: var(--radius);
   color: var(--muted);
-  font-family: var(--mono);
+  font-family: var(--sans);
   font-size: 0.75rem;
-  letter-spacing: 0.06em;
+  font-weight: 600;
+  letter-spacing: 0.08em;
   text-transform: uppercase;
   padding: 12px;
   min-height: 42px;
   cursor: pointer;
   transition: all 200ms cubic-bezier(0.34, 1.56, 0.64, 1);
 }
+.top-tab::after {
+  content: '';
+  position: absolute;
+  left: 20%;
+  right: 20%;
+  bottom: 4px;
+  height: 2px;
+  background: var(--magenta);
+  border-radius: 2px;
+  opacity: 0;
+  box-shadow: 0 0 10px 1px rgba(255, 0, 122, 0.7);
+  transition: opacity 200ms ease;
+}
 .top-tab:hover {
   color: var(--text);
-  border-color: #36414d;
-  transform: translateY(-1px);
+  background: var(--surface);
+  border-color: var(--line);
 }
 .top-tab.is-active {
-  color: #04140a;
-  background: var(--accent);
-  border-color: var(--accent);
+  color: var(--text);
+  background: var(--accent-dim);
+  border-color: var(--line);
   font-weight: 700;
   animation: bounceIn 0.4s ease-out;
 }
+.top-tab.is-active::after { opacity: 1; }
 
 /* ---------------------------------------------------------------- */
 /* Play of the Day                                                    */
@@ -246,10 +319,15 @@ body {
 .potd { margin-top: 22px; }
 
 .potd-card {
-  background: var(--surface);
-  border: 1px solid var(--line);
+  background:
+    linear-gradient(rgba(8, 6, 20, 0.55), rgba(8, 6, 20, 0.55)) padding-box,
+    var(--card-border-gradient) border-box;
+  border: 1px solid transparent;
   border-radius: var(--radius);
+  backdrop-filter: blur(20px);
+  -webkit-backdrop-filter: blur(20px);
   padding: 18px;
+  box-shadow: var(--shadow-sm);
 }
 
 .potd-head {
@@ -388,7 +466,7 @@ body {
   min-height: 42px;
   cursor: pointer;
 }
-.filter-tab:hover { color: var(--text); border-color: #36414d; }
+.filter-tab:hover { color: var(--text); border-color: rgba(124, 58, 237, 0.55); }
 .filter-tab[aria-expanded="true"] {
   color: var(--text);
   border-color: var(--accent);
@@ -534,7 +612,7 @@ select:hover,
 input[type="text"]:hover,
 input[type="number"]:hover,
 textarea:hover {
-  border-color: #36414d;
+  border-color: rgba(124, 58, 237, 0.55);
 }
 
 select:focus,
@@ -543,7 +621,7 @@ input[type="number"]:focus,
 textarea:focus {
   border-color: var(--accent);
   outline: none;
-  box-shadow: 0 0 0 3px rgba(74, 222, 128, 0.1);
+  box-shadow: 0 0 0 3px rgba(124, 58, 237, 0.1);
 }
 
 input[type="range"] {
@@ -588,7 +666,7 @@ input[type="range"]:focus-visible {
   display: block;
   width: 100%;
   background: var(--accent);
-  color: #04140a;
+  color: var(--on-accent);
   border: none;
   border-radius: var(--radius);
   padding: 22px 20px;
@@ -601,11 +679,11 @@ input[type="range"]:focus-visible {
 .generate:hover:not(:disabled) {
   transform: translateY(-2px);
   filter: brightness(1.1);
-  box-shadow: 0 12px 24px rgba(74, 222, 128, 0.25);
+  box-shadow: 0 12px 24px rgba(124, 58, 237, 0.25);
 }
 .generate:active:not(:disabled) {
   transform: translateY(1px) scale(0.98);
-  box-shadow: 0 4px 12px rgba(74, 222, 128, 0.15);
+  box-shadow: 0 4px 12px rgba(124, 58, 237, 0.15);
 }
 .generate:disabled {
   opacity: 0.4;
@@ -665,17 +743,20 @@ input[type="range"]:focus-visible {
 .picks { margin-top: 22px; display: grid; gap: 16px; align-items: start; }
 
 .pick {
-  background: var(--surface);
-  border: 1px solid var(--line);
+  background:
+    linear-gradient(rgba(8, 6, 20, 0.55), rgba(8, 6, 20, 0.55)) padding-box,
+    var(--card-border-gradient) border-box;
+  border: 1px solid transparent;
   border-radius: var(--radius);
+  backdrop-filter: blur(20px);
+  -webkit-backdrop-filter: blur(20px);
   overflow: hidden;
   animation: rise 220ms ease both;
-  transition: all 200ms cubic-bezier(0.34, 1.56, 0.64, 1);
+  transition: transform 200ms cubic-bezier(0.34, 1.56, 0.64, 1), box-shadow 200ms ease;
   box-shadow: var(--shadow-sm);
 }
 .pick:hover {
-  border-color: var(--accent);
-  box-shadow: var(--shadow);
+  box-shadow: var(--shadow), var(--glow-violet);
 }
 
 @keyframes rise {
@@ -814,22 +895,30 @@ input[type="range"]:focus-visible {
   font-weight: 700;
   cursor: pointer;
 }
-.why-btn[aria-expanded="true"] { background: var(--accent); color: #04140a; }
+.why-btn[aria-expanded="true"] { background: var(--accent); color: var(--on-accent); }
 
 .stats-btn {
   margin-left: auto;
   background: var(--surface-2);
-  border: 1px solid var(--line);
+  border: 1px solid rgba(0, 240, 255, 0.35);
   border-radius: var(--radius);
   color: var(--muted);
-  font-family: var(--mono);
+  font-family: var(--sans);
   font-size: 0.68rem;
+  font-weight: 600;
   letter-spacing: 0.06em;
   text-transform: uppercase;
   padding: 7px 10px;
   cursor: pointer;
+  transition: all 180ms ease;
 }
-.stats-btn:hover { color: var(--text); border-color: #36414d; }
+.stats-btn:hover,
+.stats-btn:focus-visible,
+.stats-btn:active {
+  color: var(--laser);
+  border-color: var(--laser);
+  box-shadow: var(--glow-laser);
+}
 
 .grade {
   font-family: var(--mono);
@@ -979,7 +1068,7 @@ input[type="range"]:focus-visible {
   border: 1px solid var(--accent);
   border-radius: var(--radius);
   background: var(--accent-dim);
-  box-shadow: 0 0 18px rgba(74, 222, 128, 0.18);
+  box-shadow: 0 0 18px rgba(124, 58, 237, 0.18);
 }
 
 .main-play-label {
@@ -1042,7 +1131,7 @@ input[type="range"]:focus-visible {
   letter-spacing: 0.04em;
   text-align: center;
 }
-.book-btn:hover { border-color: #36414d; border-left-color: var(--book, var(--accent)); }
+.book-btn:hover { border-color: rgba(124, 58, 237, 0.55); border-left-color: var(--book, var(--accent)); }
 .book-btn .book-price {
   font-size: 0.8rem;
   font-weight: 700;
@@ -1236,7 +1325,7 @@ input[type="range"]:focus-visible {
   color: inherit;
   font: inherit;
 }
-.history-entry:hover { border-color: #36414d; }
+.history-entry:hover { border-color: rgba(124, 58, 237, 0.55); }
 .history-entry:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
 
 .history-item {
@@ -1400,7 +1489,7 @@ input[type="range"]:focus-visible {
 }
 .toggle-btn:hover { color: var(--text); }
 .toggle-btn.is-active {
-  color: #04140a;
+  color: var(--on-accent);
   background: var(--accent);
   border-color: var(--accent);
   font-weight: 700;
@@ -1693,9 +1782,9 @@ input[type="range"]:focus-visible {
   padding: 7px 12px;
   cursor: pointer;
 }
-.surface-btn:hover { color: var(--text); border-color: #36414d; }
+.surface-btn:hover { color: var(--text); border-color: rgba(124, 58, 237, 0.55); }
 .surface-btn.is-active {
-  color: #04140a;
+  color: var(--on-accent);
   background: var(--accent);
   border-color: var(--accent);
   font-weight: 700;
@@ -1934,9 +2023,9 @@ input[type="range"]:focus-visible {
   padding: 6px 10px;
   cursor: pointer;
 }
-.compare-tab-btn:hover { color: var(--text); border-color: #36414d; }
+.compare-tab-btn:hover { color: var(--text); border-color: rgba(124, 58, 237, 0.55); }
 .compare-tab-btn.is-active {
-  color: #04140a;
+  color: var(--on-accent);
   background: var(--accent);
   border-color: var(--accent);
   font-weight: 700;
@@ -2073,6 +2162,70 @@ input[type="range"]:focus-visible {
 }
 .slate-league-select:disabled { opacity: 0.5; }
 
+/* Glowing geometric tokens — the primary, visual way to switch sports feeds.
+   The select above is kept as the accessible/keyboard/screen-reader source
+   of truth (and still works standalone); clicking a token just sets its
+   value and fires the same 'change' event, so there is exactly one place
+   that actually changes state (see app.js). */
+.slate-league-tokens {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  margin: 14px 0 4px;
+}
+
+.league-token {
+  position: relative;
+  width: 44px;
+  height: 44px;
+  border-radius: 12px;
+  background: var(--surface);
+  backdrop-filter: blur(12px);
+  -webkit-backdrop-filter: blur(12px);
+  border: 1px solid var(--line);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  transition: all 180ms cubic-bezier(0.34, 1.56, 0.64, 1);
+}
+.league-token-icon {
+  font-size: 1.15rem;
+  line-height: 1;
+  filter: grayscale(0.4);
+  transition: filter 180ms ease;
+}
+.league-token:hover {
+  border-color: var(--accent);
+  transform: translateY(-2px);
+  box-shadow: var(--glow-violet);
+}
+.league-token:hover .league-token-icon { filter: grayscale(0); }
+
+.league-token.is-active {
+  border-color: transparent;
+  background:
+    linear-gradient(rgba(8, 6, 20, 0.7), rgba(8, 6, 20, 0.7)) padding-box,
+    var(--card-border-gradient) border-box;
+  border: 1px solid transparent;
+  box-shadow: var(--glow-magenta);
+}
+.league-token.is-active .league-token-icon { filter: grayscale(0); }
+
+/* Off-season placeholders (NBA/NCAAB) read as dormant, not broken — no
+   glow, no hover lift, just a dimmer token sitting in the row until the
+   season actually starts. */
+.league-token.is-off-season {
+  opacity: 0.45;
+}
+.league-token.is-off-season .league-token-icon { filter: grayscale(1); }
+.league-token.is-off-season:hover {
+  border-color: var(--line);
+  transform: none;
+  box-shadow: none;
+}
+.league-token.is-off-season:hover .league-token-icon { filter: grayscale(1); }
+
 .slate-load-btn { white-space: nowrap; }
 
 .slate-body {
@@ -2100,37 +2253,59 @@ input[type="range"]:focus-visible {
   animation: slideInDown 0.4s ease-out;
 }
 
+/* Glassmorphism surface + glowing gradient border (violet/magenta/laser),
+   via the standard dual-background-clip trick: a flat near-black fill
+   clipped to the padding-box, sitting under a gradient clipped to the
+   border-box, with the real border made transparent so the gradient shows
+   through only in that 1px ring. The win/loss/live accent bar this card
+   used to carry as `border-left` moved to its own ::before overlay below —
+   keeping it a real border-left here would have fought with the gradient-
+   border trick, which needs all four sides' border-width equal to work. */
 .slate-game {
-  background: var(--surface);
-  border: 1px solid var(--line);
-  border-left: 4px solid var(--accent);
+  position: relative;
+  background:
+    linear-gradient(rgba(8, 6, 20, 0.55), rgba(8, 6, 20, 0.55)) padding-box,
+    var(--card-border-gradient) border-box;
+  border: 1px solid transparent;
   border-radius: var(--radius);
+  backdrop-filter: blur(20px);
+  -webkit-backdrop-filter: blur(20px);
   overflow: hidden;
   animation: slideInUp 0.4s ease-out;
-  transition: all 200ms cubic-bezier(0.34, 1.56, 0.64, 1);
+  transition: transform 200ms cubic-bezier(0.34, 1.56, 0.64, 1), box-shadow 200ms ease;
   margin-bottom: 12px;
   box-shadow: var(--shadow-sm);
 }
+.slate-game::before {
+  content: '';
+  position: absolute;
+  z-index: 1;
+  left: 0;
+  top: 0;
+  bottom: 0;
+  width: 4px;
+  background: var(--accent);
+}
 .slate-game:hover {
-  border-left-color: var(--success);
-  background: var(--surface-2);
   transform: translateY(-3px);
-  box-shadow: var(--shadow);
+  box-shadow: var(--shadow), var(--glow-violet);
 }
 
-/* Once a game is finished, the border itself says whether the algorithm's
-   own pregame pick won or lost — no need to open the card to find out. */
-.slate-game.pick-won {
-  border-color: var(--success);
-  border-left-color: var(--success);
+/* Once a game is finished, the accent bar itself says whether the
+   algorithm's own pregame pick won or lost — no need to open the card to
+   find out. */
+.slate-game.pick-won::before {
+  background: var(--success);
+  box-shadow: 0 0 12px 1px rgba(16, 185, 129, 0.6);
 }
-.slate-game.pick-lost {
-  border-color: var(--danger);
-  border-left-color: var(--danger);
+.slate-game.pick-lost::before {
+  background: var(--danger);
+  box-shadow: 0 0 12px 1px rgba(239, 68, 68, 0.6);
 }
 
-.slate-game.is-live {
-  border-left-color: var(--danger);
+.slate-game.is-live::before {
+  background: var(--danger);
+  box-shadow: 0 0 12px 1px rgba(239, 68, 68, 0.6);
 }
 
 .slate-live-badge {
@@ -2186,7 +2361,7 @@ input[type="range"]:focus-visible {
   background: var(--accent);
   border: 2px solid var(--accent);
   border-radius: var(--radius);
-  color: var(--bg);
+  color: var(--on-accent);
   font-family: var(--mono);
   font-size: 0.75rem;
   letter-spacing: 0.06em;
@@ -2295,6 +2470,9 @@ input[type="range"]:focus-visible {
   color: var(--muted);
 }
 
+/* Odds tokens. Neutral glass by default — the violet/magenta/laser palette
+   is reserved for signal, not decoration, so a plain price stays plain (see
+   .is-rec below for the one case that isn't). */
 .slate-cell {
   position: relative;
   display: block;
@@ -2319,9 +2497,9 @@ input[type="range"]:focus-visible {
 .slate-cell:hover:not(.is-empty) {
   border-color: var(--accent);
   background: var(--accent-dim);
-  color: var(--accent);
+  color: var(--text);
   transform: scale(1.02);
-  box-shadow: 0 6px 16px rgba(74, 222, 128, 0.2);
+  box-shadow: var(--glow-violet);
 }
 .slate-cell:active:not(.is-empty) {
   transform: scale(0.98);
@@ -2334,19 +2512,23 @@ input[type="range"]:focus-visible {
   cursor: default;
 }
 
+/* The one case that ISN'T neutral: the algorithm's recommended side of this
+   market — where it's identified a genuine edge — gets a dynamic, animated
+   laser-blue glow so it reads at a glance across a whole slate of games,
+   distinct from every plain price around it. */
 .slate-cell.is-rec {
-  background: var(--accent-dim);
-  border-color: var(--accent);
-  color: var(--accent);
-  box-shadow: 0 4px 12px rgba(74, 222, 128, 0.2);
+  background: rgba(0, 240, 255, 0.08);
+  border-color: var(--laser);
+  color: var(--laser);
+  animation: edgePulse 2.2s ease-in-out infinite;
 }
 
-/* The algorithm's recommended side of this market — a glowing ring, not just
-   a color change, so it reads at a glance across a whole slate of games. */
-.slate-cell.is-rec {
-  border-color: var(--accent);
-  box-shadow: 0 0 0 2px var(--accent-dim), 0 0 10px 1px rgba(74, 222, 128, 0.55);
-  color: var(--accent);
+@keyframes edgePulse {
+  0%, 100% { box-shadow: 0 0 0 2px rgba(0, 240, 255, 0.12), 0 0 10px 1px rgba(0, 240, 255, 0.45); }
+  50%      { box-shadow: 0 0 0 2px rgba(0, 240, 255, 0.22), 0 0 18px 4px rgba(0, 240, 255, 0.75); }
+}
+@media (prefers-reduced-motion: reduce) {
+  .slate-cell.is-rec { animation: none; box-shadow: 0 0 0 2px rgba(0, 240, 255, 0.18), 0 0 14px 2px rgba(0, 240, 255, 0.6); }
 }
 
 @media (min-width: 900px) {
@@ -2499,7 +2681,7 @@ input[type="range"]:focus-visible {
 }
 
 .stat-rank.good {
-  background: rgba(74, 222, 128, 0.2);
+  background: rgba(124, 58, 237, 0.2);
   color: var(--accent);
 }
 
@@ -2816,7 +2998,7 @@ input[type="range"]:focus-visible {
 .action-btn {
   padding: 10px 16px;
   background: var(--accent);
-  color: var(--bg);
+  color: var(--on-accent);
   border: none;
   border-radius: var(--radius);
   font-weight: 600;
@@ -2828,7 +3010,7 @@ input[type="range"]:focus-visible {
 .action-btn:hover {
   background: #22c55e;
   transform: translateY(-1px);
-  box-shadow: 0 4px 12px rgba(74, 222, 128, 0.2);
+  box-shadow: 0 4px 12px rgba(124, 58, 237, 0.2);
 }
 
 .action-btn:active {
@@ -2855,8 +3037,8 @@ input[type="range"]:focus-visible {
   gap: 3px;
   padding: 2px 7px;
   border-radius: 999px;
-  background: rgba(74, 222, 128, 0.15);
-  border: 1px solid rgba(74, 222, 128, 0.4);
+  background: rgba(124, 58, 237, 0.15);
+  border: 1px solid rgba(124, 58, 237, 0.4);
   color: var(--accent);
   font-family: var(--mono);
   font-size: 0.62rem;
@@ -2925,12 +3107,12 @@ input[type="range"]:focus-visible {
   transition: all 150ms ease;
 }
 
-.day-toggle-btn:hover { color: var(--text); border-color: #36414d; }
+.day-toggle-btn:hover { color: var(--text); border-color: rgba(124, 58, 237, 0.55); }
 
 .day-toggle-btn.is-active {
   background: var(--accent);
   border-color: var(--accent);
-  color: var(--bg);
+  color: var(--on-accent);
 }
 
 .day-toggle-hint {
@@ -3254,12 +3436,12 @@ input[type="range"]:focus-visible {
   transition: all 150ms ease;
 }
 
-.perf-period-btn:hover { color: var(--text); border-color: #36414d; }
+.perf-period-btn:hover { color: var(--text); border-color: rgba(124, 58, 237, 0.55); }
 
 .perf-period-btn.is-active {
   background: var(--accent);
   border-color: var(--accent);
-  color: var(--bg);
+  color: var(--on-accent);
 }
 
 .perf-period-label {

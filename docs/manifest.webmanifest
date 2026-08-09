@@ -1,13 +1,13 @@
 {
-  "name": "Pixel Pick",
-  "short_name": "Pixel Pick",
+  "name": "Perpetual Picks",
+  "short_name": "Perpetual Picks",
   "description": "One button. Sharp picks.",
   "start_url": "./",
   "scope": "./",
   "display": "standalone",
   "orientation": "portrait",
-  "background_color": "#0b0d10",
-  "theme_color": "#0b0d10",
+  "background_color": "#05050A",
+  "theme_color": "#05050A",
   "icons": [
     {
       "src": "icon.svg",
