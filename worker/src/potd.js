@@ -25,6 +25,7 @@
  */
 
 import { analyze, RULES, formatAmerican, suggestedStake, clearsMaxJuice } from '../../docs/engine.js';
+import { isPower4Matchup } from '../../docs/ncaaf-conferences.js';
 import { buildInsights, insightsByTier, isTennis, isMma } from '../../docs/insights.js';
 import { gradePick } from '../../docs/learning.js';
 import { fetchContext, hasContext } from './context.js';
@@ -331,6 +332,9 @@ export async function runPotdDaily(env, ctx, now = Date.now(), { fetchFullSlate 
     // their own tighter price ceiling on top of POTD's own band — see
     // docs/engine.js's LOW_VARIANCE_MAX_AMERICAN.
     if (!clearsMaxJuice(c)) return false;
+    // NCAAF: only Power 4 vs. Power 4 matchups — see docs/ncaaf-conferences.js
+    // and tracking.js's own identical filter for the full reasoning.
+    if (c.sportKey === 'americanfootball_ncaaf' && !isPower4Matchup(c.home, c.away)) return false;
     if (c.commenceMs <= now) return false;
     if (isSegmentPaused(c, pausedSegments)) return false;
     if (isTennis(c.sportKey)) return isEligibleTennisMatch(c.commenceMs, now);

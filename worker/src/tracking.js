@@ -26,6 +26,7 @@
  * having the app open.
  */
 import { analyze, topPicks, clearsMaxJuice } from '../../docs/engine.js';
+import { isPower4Matchup } from '../../docs/ncaaf-conferences.js';
 import { gradePick } from '../../docs/learning.js';
 import { isMma, isTennis } from '../../docs/insights.js';
 import { CONFIG } from '../../docs/config.js';
@@ -387,6 +388,13 @@ export async function runTop5Batch(
       // their own tighter price ceiling — see docs/engine.js's
       // LOW_VARIANCE_MAX_AMERICAN. Every other market is untouched.
       .filter(clearsMaxJuice)
+      // NCAAF: only Power 4 vs. Power 4 matchups (docs/ncaaf-conferences.js)
+      // are eligible here — a Power 4 team's early-season buy game against a
+      // Group-of-5/FCS opponent is exactly the lopsided, high-variance game
+      // this app's low-variance framing exists to avoid. Every other sport
+      // passes through untouched. Full Slate deliberately does NOT apply
+      // this (see its own comment) — it stays the unfiltered raw record.
+      .filter((c) => c.sportKey !== 'americanfootball_ncaaf' || isPower4Matchup(c.home, c.away))
       .filter((c) => !existingEventIds.has(c.eventId)),
     learningProfile,
   );
