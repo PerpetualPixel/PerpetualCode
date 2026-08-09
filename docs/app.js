@@ -6,6 +6,24 @@
  * in engine.js so it can be tested without a browser.
  */
 
+// Auth check — redirect to login if not authenticated
+(() => {
+  const token = localStorage.getItem('pp_auth_token');
+  if (!token) {
+    window.location.href = '/login.html';
+    return;
+  }
+})();
+
+// Show logout button and wire it up
+document.addEventListener('DOMContentLoaded', () => {
+  const logoutBtn = document.getElementById('logoutBtn');
+  if (logoutBtn) {
+    logoutBtn.hidden = false;
+    logoutBtn.addEventListener('click', () => window.logout());
+  }
+});
+
 import { CONFIG } from './config.js';
 import { DEMO_EVENTS } from './demo.js';
 import { teamLogoUrl } from './team-logos.js';

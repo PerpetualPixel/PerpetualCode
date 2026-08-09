@@ -559,6 +559,13 @@
         window.location.href = '/index.html';
       }
     });
+
+    // Add logout handler (called from app.js)
+    window.logout = function() {
+      localStorage.removeItem(AUTH_TOKEN_KEY);
+      localStorage.removeItem('pp_auth_user');
+      window.location.href = '/login.html';
+    };
   </script>
 </body>
 </html>
