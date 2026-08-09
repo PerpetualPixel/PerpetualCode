@@ -2447,23 +2447,27 @@ async function openStatsDrawer(leg, opposite = null, { fullscreen = false } = {}
       `</div>`
     : '';
 
-  // The closing recap, every sport, always last — so a user who's just read
-  // through a long analysis (or research bullets, or the price table) lands
-  // on a plain restatement of the actual pick rather than having to scroll
-  // back up to remember what "More Info" was even about. Deliberately just
-  // the selection, price, and stake (all already established above) — no
-  // new claim gets introduced this late in the card.
+  // The bet itself — Main Play plus every book's price on this exact line —
+  // stays pinned at the top, exactly matching the fast initial paint above
+  // (same metaHtml + mainPlayHtml + renderPriceTable(leg) trio), so nothing
+  // reflows or gets pushed down once research resolves. That research
+  // (matchup analysis, Devil's Advocate, MMA/tennis breakdown, form bullets)
+  // is real value, but it's supplementary reading, not what someone clicking
+  // a market cell is primarily asking for — "what can I bet, and where."
+  // Previously this all rendered ABOVE the price table, so once the AI
+  // writeup and research finished loading, the actual sportsbook odds ended
+  // up buried at the bottom of a long scroll behind a wall of prose.
   el.statsDrawerBody.innerHTML =
     metaHtml +
+    mainPlayHtml +
+    renderPriceTable(leg) +
     renderWeatherPills(weather) +
     priceHtml +
     devilHtml +
     mmaBreakdownHtml +
     mmaNoDataHtml +
     tennisBreakdownHtml +
-    renderStatsResearch(bullets) +
-    renderPriceTable(leg) +
-    mainPlayHtml;
+    renderStatsResearch(bullets);
 }
 
 /**
