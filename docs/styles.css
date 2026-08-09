@@ -2466,7 +2466,14 @@ input[type="range"]:focus-visible {
 .slate-header-row,
 .slate-team-row {
   display: grid;
-  grid-template-columns: 1fr 84px 96px 76px;
+  /* minmax(0, 1fr), not plain 1fr — a bare 1fr track's minimum width
+     defaults to its content's min-content size (a classic CSS Grid
+     "blowout"), so a long team name + win% can force this column wider
+     than its fair share regardless of .slate-team's own overflow:hidden/
+     text-overflow:ellipsis, pushing the text into the market cells beside
+     it instead of truncating. minmax(0, 1fr) lets the track actually
+     shrink to 0, so those child rules can do their job. */
+  grid-template-columns: minmax(0, 1fr) 84px 96px 76px;
   align-items: center;
   gap: 8px;
   padding: 8px 14px;
@@ -2635,7 +2642,7 @@ input[type="range"]:focus-visible {
 @media (max-width: 420px) {
   .slate-header-row,
   .slate-team-row {
-    grid-template-columns: 1fr 58px 72px 54px;
+    grid-template-columns: minmax(0, 1fr) 58px 72px 54px;
     gap: 5px;
     padding-left: 10px;
     padding-right: 10px;
