@@ -816,91 +816,6 @@ export function topPicks(
 }
 
 /* ------------------------------------------------------------------ */
-/* Parlay builder                                                      */
-/* ------------------------------------------------------------------ */
-
-/**
- * Build one parlay ticket from candidates filtered by sport, market type,
- * odds range, and confidence floor — the manual-control counterpart to
- * topPicks()'s automatic ranking. A user toggling "UFC: moneylines only" and
- * "NFL: spreads only" is choosing exactly which markets are eligible per
- * sport; `sportMarkets` encodes that directly rather than approximating it
- * with a single global market filter.
- *
- * Legs always come from different games, the same rule generateSlate's combo
- * pairing already enforces — combineLegs() multiplies decimal odds assuming
- * independence, which is only true across separate events. Two markets on
- * one game (a team to cover and the same game's total, say) are correlated
- * and would make the combined price wrong, not just optimistic.
- *
- * @param candidates        scored candidates from analyze()
- * @param opts.legCount     how many legs the ticket needs (default 2)
- * @param opts.oddsMin/oddsMax   per-leg odds range
- * @param opts.minScore     confidence floor
- * @param opts.sportMarkets Map<sportKey, Set<marketKey>> — a sport absent
- *   from this map contributes no legs at all, not "any market for it."
- * @param opts.lockedLegs   candidates from a previous ticket to pin as-is —
- *   never re-filtered against oddsMin/oddsMax/minScore/sportMarkets, since
- *   the whole point is that a leg the user already chose survives even if
- *   they then move a slider. Only counted against for same-game/contradiction
- *   checks on the legs generated to fill the remaining slots.
- * @param opts.randomize    weighted-random draw instead of a strict score
- *   sort, so pressing Generate again with identical criteria doesn't just
- *   reproduce the same ticket every time
- * @param opts.rng           injectable randomness, for tests
- */
-export function buildParlay(
-  candidates,
-  {
-    legCount = 2,
-    oddsMin = RULES.MIN_AMERICAN,
-    oddsMax = RULES.MAX_AMERICAN,
-    minScore = RULES.MIN_SCORE,
-    sportMarkets = new Map(),
-    lockedLegs = [],
-    randomize = false,
-    rng = Math.random,
-  } = {},
-) {
-  const eligible = candidates.filter((c) => {
-    if (c.american < oddsMin || c.american > oddsMax) return false;
-    if (c.score < minScore) return false;
-    const markets = sportMarkets.get(c.sportKey);
-    return markets?.size ? markets.has(c.marketKey) : false;
-  });
-
-  const lockedIds = new Set(lockedLegs.map((l) => l.id));
-  const legs = [...lockedLegs];
-  const candidatePool = eligible.filter((c) => !lockedIds.has(c.id));
-
-  if (randomize) {
-    const working = [...candidatePool];
-    while (legs.length < legCount && working.length) {
-      const idx = weightedPick(working, rng);
-      const [c] = working.splice(idx, 1);
-      if (legs.some((leg) => leg.eventId === c.eventId)) continue; // different games only
-      if (legs.some((leg) => contradicts(leg, c))) continue;
-      legs.push(c);
-    }
-  } else {
-    const sorted = candidatePool.sort((a, b) => b.score - a.score);
-    for (const c of sorted) {
-      if (legs.length >= legCount) break;
-      if (legs.some((leg) => leg.eventId === c.eventId)) continue; // different games only
-      if (legs.some((leg) => contradicts(leg, c))) continue;
-      legs.push(c);
-    }
-  }
-
-  if (legs.length < legCount) {
-    return { legs, combined: null, poolSize: eligible.length, complete: false };
-  }
-
-  const combined = combineLegs(legs.map((l) => l.american));
-  return { legs, combined, poolSize: eligible.length, complete: true };
-}
-
-/* ------------------------------------------------------------------ */
 /* Bankroll staking (Kelly Criterion)                                  */
 /* ------------------------------------------------------------------ */
 
@@ -946,7 +861,7 @@ export function suggestedStake(candidate, { fraction = KELLY.FRACTION } = {}) {
 /**
  * Suggested stake for a completed parlay ticket. Legs are assumed
  * independent — the same assumption combineLegs() already makes when
- * multiplying their decimal odds, and buildParlay() enforces it structurally
+ * multiplying their decimal odds, and findPartner() enforces it structurally
  * by refusing two legs from the same game — so the ticket's true win
  * probability is just the product of each leg's own consensus probability.
  */

@@ -42,9 +42,6 @@
   <button id="tabBoard" class="top-tab" role="tab" aria-selected="false" aria-controls="boardView">
     Pixel's Picks
   </button>
-  <button id="tabParlay" class="top-tab" role="tab" aria-selected="false" aria-controls="parlayView">
-    Parlay Builder
-  </button>
   <button id="tabPotd" class="top-tab" role="tab" aria-selected="false" aria-controls="potdView">
     Play of the Day
   </button>
@@ -99,7 +96,7 @@
 </section>
 
 <section id="boardView" role="tabpanel" aria-labelledby="tabBoard" hidden>
-  <p class="filter-hint parlay-intro">
+  <p class="filter-hint tab-intro">
     5 locks, generated automatically once a day and never re-picked after:
     sharp range −250/+250, positive EV, and a real Kelly edge required, drawn
     from every league and every sportsbook. Nothing here ever pads out with a
@@ -125,70 +122,6 @@
     21+. For entertainment only, nothing here is financial advice.
     <a href="https://www.1800gambler.net/" target="_blank" rel="noopener">1-800-GAMBLER</a>
   </p>
-</section>
-
-<section id="parlayView" role="tabpanel" aria-labelledby="tabParlay" hidden>
-  <p class="filter-hint parlay-intro">
-    Pick a league, narrow to one event if you want, toggle markets, set your
-    own range and leg count, and build a ticket by hand instead of taking the
-    automatic top-8.
-  </p>
-
-  <div class="slate-controls">
-    <label class="slate-league-label" for="parlayLeagueSelect">League</label>
-    <select id="parlayLeagueSelect" class="slate-league-select"></select>
-  </div>
-
-  <div class="slate-controls" id="parlayEventFilterRow" hidden>
-    <label class="slate-league-label" for="parlayEventFilterSelect">Event</label>
-    <select id="parlayEventFilterSelect" class="slate-league-select"></select>
-  </div>
-
-  <!-- Advanced Parlay Builder Controls -->
-  <div class="parlay-filters">
-    <div class="filter-section">
-      <h3>Markets</h3>
-      <div id="parlayMarketsList" class="filter-grid"></div>
-    </div>
-  </div>
-
-  <div class="slider-row">
-    <div class="slider-label">
-      <span>Favorite limit</span>
-      <span id="parlayOddsMinLabel" class="slider-value">−250</span>
-    </div>
-    <input type="range" id="parlayOddsMinSlider" min="-1000" max="-100" step="5" value="-250">
-  </div>
-
-  <div class="slider-row">
-    <div class="slider-label">
-      <span>Underdog limit</span>
-      <span id="parlayOddsMaxLabel" class="slider-value">+250</span>
-    </div>
-    <input type="range" id="parlayOddsMaxSlider" min="100" max="1000" step="5" value="250">
-  </div>
-
-  <div class="slider-row">
-    <div class="slider-label">
-      <span>Confidence floor</span>
-      <span id="parlayConfidenceLabel" class="slider-value">≥ 50</span>
-    </div>
-    <input type="range" id="parlayConfidenceSlider" min="0" max="100" step="1" value="50">
-  </div>
-
-  <div class="slider-row">
-    <div class="slider-label">
-      <span>Legs</span>
-      <span id="parlayLegCountLabel" class="slider-value">3</span>
-    </div>
-    <input type="range" id="parlayLegCountSlider" min="2" max="15" step="1" value="3">
-  </div>
-
-  <button id="parlayGenerate" class="generate">
-    <span class="generate-label">Generate Parlay</span>
-  </button>
-
-  <section id="parlayResult" class="parlay-result" aria-live="polite"></section>
 </section>
 
 <section id="potdView" role="tabpanel" aria-labelledby="tabPotd" hidden>
@@ -336,9 +269,6 @@
       range −250/+250, ranked purely by edge, generated once daily at 2am ET
       and locked in for the day. Nothing to press, and nothing changes
       after it's posted.
-      <strong>Parlay Builder</strong> is manual: pick a league (and an event
-      within it, if you want), toggle the markets you want, set your own odds
-      range, confidence floor, and leg count, and build a ticket by hand.
       <strong>Play of the Day</strong> is one pick, chosen once a day and the
       same for everyone, with a full written breakdown instead of the compact
       card.</p>
@@ -390,7 +320,7 @@
       event can run past midnight) since fight cards don't follow the same
       daily schedule as league games.</p>
       <p><strong>5. The best-graded picks are selected.</strong> Full Slate
-      and Parlay Builder rank live by score. Pixel's Picks is different: once
+      ranks live by score. Pixel's Picks is different: once
       a day at 2am ET, the server locks in the 5 best picks that clear every
       filter above and posts them for the whole day. Reloading the page
       later never changes them, and nothing about the picks reacts to price
@@ -440,7 +370,7 @@
     no-vig consensus (the same math a sharp bettor would do by hand, run
     across every book at once) and surfaces the real edges: Full Slate for
     every market on every game, Pixel's Picks for the sharpest 5 locks,
-    Parlay Builder for hand-built tickets, and Play of the Day for one
+    and Play of the Day for one
     highest-conviction pick, posted automatically each morning. Every
     tracked pick is graded against its actual result, win or lose, so the
     Tracking Dashboard reflects real performance, not a marketing number.</p>

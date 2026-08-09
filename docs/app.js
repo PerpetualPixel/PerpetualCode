@@ -16,7 +16,6 @@ import {
   SPORTSBOOKS,
   analyze,
   topPicks,
-  buildParlay,
   explain,
   explainExtensive,
   formatAmerican,
@@ -52,7 +51,6 @@ import {
   tennisHeadToHead,
 } from './insights.js';
 
-const PARLAY_KEY = 'pixelpick.parlay.v2';
 const BANKROLL_KEY = 'pixelpick.bankroll.v1';
 const SLATE_LEAGUE_KEY = 'pixelpick.slateLeague.v2';
 const PIXEL_SORT_KEY = 'pixelpick.sort.v1';
@@ -198,7 +196,6 @@ function setDayFilter(which) {
     // re-rank into, so switching the toggle doesn't touch it.
     refreshQualitativeSignals(); // fire-and-forget — re-enriches the newly-visible day
   }
-  renderParlayFilters();
 }
 
 function renderSlateStateToggle() {
@@ -602,22 +599,6 @@ const el = {
   boardView: document.getElementById('boardView'),
   potdView: document.getElementById('potdView'),
   potdBody: document.getElementById('potdBody'),
-  tabParlay: document.getElementById('tabParlay'),
-  parlayView: document.getElementById('parlayView'),
-  parlayLeagueSelect: document.getElementById('parlayLeagueSelect'),
-  parlayEventFilterRow: document.getElementById('parlayEventFilterRow'),
-  parlayEventFilterSelect: document.getElementById('parlayEventFilterSelect'),
-  parlayMarketsList: document.getElementById('parlayMarketsList'),
-  parlayOddsMinSlider: document.getElementById('parlayOddsMinSlider'),
-  parlayOddsMinLabel: document.getElementById('parlayOddsMinLabel'),
-  parlayOddsMaxSlider: document.getElementById('parlayOddsMaxSlider'),
-  parlayOddsMaxLabel: document.getElementById('parlayOddsMaxLabel'),
-  parlayConfidenceSlider: document.getElementById('parlayConfidenceSlider'),
-  parlayConfidenceLabel: document.getElementById('parlayConfidenceLabel'),
-  parlayLegCountSlider: document.getElementById('parlayLegCountSlider'),
-  parlayLegCountLabel: document.getElementById('parlayLegCountLabel'),
-  parlayGenerate: document.getElementById('parlayGenerate'),
-  parlayResult: document.getElementById('parlayResult'),
   learningPanel: document.getElementById('learningPanel'),
   learningPanelResize: document.getElementById('learningPanelResize'),
   learningPanelClose: document.getElementById('learningPanelClose'),
@@ -663,9 +644,9 @@ const state = {
   isDemo: false,
   // The requestable catalogue, from the worker's free /sports endpoint.
   catalogue: [],
-  // Which calendar day Full Slate, Pixel Picks, and Parlay Builder all pull
-  // from — 'today' or 'tomorrow'. Shared globally rather than per-tab: it's
-  // one "which day am I looking at" question, not three. MMA ignores this
+  // Which calendar day Full Slate and Pixel Picks both pull from — 'today'
+  // or 'tomorrow'. Shared globally rather than per-tab: it's one "which day
+  // am I looking at" question, not two. MMA ignores this
   // entirely (see withinDayFilter/isMmaSportKey) since cards are announced
   // and worth showing weeks ahead of a single day toggle.
   dayFilter: ['today', 'tomorrow'].includes(loadJSON(DAY_FILTER_KEY, 'today'))
@@ -740,27 +721,15 @@ const state = {
   oddsMin: CONFIG.ODDS_MIN_DEFAULT,
   oddsMax: CONFIG.ODDS_MAX_DEFAULT,
   minScore: CONFIG.MIN_SCORE_DEFAULT,
-  // Parlay Builder's own filters — deliberately separate from Pixel Picks'
-  // fixed oddsMin/oddsMax/minScore above, since a manually-built parlay leg
-  // can reasonably want a different range. `markets` (a Set of market keys —
-  // h2h/spreads/totals) is never persisted: it's re-derived from whatever the
-  // currently-chosen league/event pool actually offers each time the tab
-  // renders, since a saved key could refer to a market that pool no longer has.
-  parlay: {
-    markets: new Set(),
-    // Leg id -> candidate object, in-memory only (never persisted — a locked
-    // leg's price can go stale across sessions). Pinned into every
-    // subsequent buildParlay() call until explicitly unlocked or the
-    // league/event changes out from under it.
-    lockedLegs: new Map(),
-    ...loadJSON(PARLAY_KEY, { oddsMin: -250, oddsMax: 250, minScore: 50, legCount: 3 }),
-  },
-  // Bankroll and unit size, purely local — never sent anywhere, only used to
-  // turn a stake's %-of-bankroll figure into a dollar amount or unit count.
-  // amount/unit of 0 means "unset"; unset amount falls back to showing the
-  // plain percentage everywhere a stake is displayed. `confirmed` gates that
-  // conversion on having actually pressed Submit — typing a number into the
-  // field alone shouldn't start changing what every "why" panel recommends.
+  // Bankroll and unit size. Persisted server-side (see loadSettings/
+  // saveSettings) with this localStorage copy as the offline/unauthenticated
+  // fallback, so it survives a cleared browser or a switch to another device.
+  // Only used to turn a stake's %-of-bankroll figure into a dollar amount or
+  // unit count. amount/unit of 0 means "unset"; unset amount falls back to
+  // showing the plain percentage everywhere a stake is displayed. `confirmed`
+  // gates that conversion on having actually pressed Submit — typing a number
+  // into the field alone shouldn't start changing what every "why" panel
+  // recommends.
   bankroll: loadJSON(BANKROLL_KEY, { amount: 0, unit: 0, displayMode: 'dollars', confirmed: false }),
   // Which league group the Full Slate tab is currently showing — one of
   // LEAGUE_GROUPS' ids, not a raw sport key. Re-validated on boot since a
@@ -774,11 +743,6 @@ const state = {
   // night's slate, not future sessions. Shared by MMA cards and tennis
   // tournaments, whichever group is active.
   slateEvent: 'all',
-  // Parlay Builder's own league/event pickers — deliberately separate state
-  // from the Full Slate tab's, so building a parlay never disturbs what's on
-  // screen there.
-  parlayLeague: null,
-  parlayEvent: 'all',
   // The last slate Pixel Picks generated, kept around so changing the sort
   // order just re-renders the same picks instead of re-rolling the board.
   lastPixelSlate: null,
@@ -910,8 +874,8 @@ async function loadCatalogue() {
 /**
  * Fetch every key in every league group and merge the results into
  * state.rawEvents/state.candidates (fetchSingleLeague dedupes by event id).
- * This is the app's one and only fetch orchestration now — Full Slate, Pixel
- * Picks, and Parlay Builder all read from the same always-loaded pool rather
+ * This is the app's one and only fetch orchestration now — Full Slate and
+ * Pixel Picks both read from the same always-loaded pool rather
  * than each pulling their own subset, which is what used to make Pixel
  * Picks' Generate silently blow away whatever Full Slate had loaded.
  */
@@ -1256,7 +1220,7 @@ function renderConfidence(pick) {
   const color = confidenceColor(pick.score, state.minScore);
   const stake = stakeLine(pick);
   // percentile is only meaningful against the live pool topPicks() itself
-  // ranked against (Parlay Builder) — Pixel's Picks is a locked, server-
+  // ranked against — Pixel's Picks is a locked, server-
   // picked set with no "board" of its own left to compare against by the
   // time it's rendered, so this line is omitted rather than showing a
   // meaningless "beats 0%".
@@ -2455,7 +2419,7 @@ document.body.addEventListener('click', (event) => {
 });
 
 // A "Bankroll not set" stake line (see stakeLineHtml) can appear inside any
-// pick card, the stats drawer, or the Parlay Builder result — one delegated
+// pick card or the stats drawer — one delegated
 // listener on the body, same pattern as the other data-attribute buttons
 // here, covers all of them without needing a handler wired per container.
 // Jumps straight to the real Bankroll panel rather than just explaining
@@ -3508,7 +3472,7 @@ function toggleWhyPanel(event) {
 
 /**
  * A leg renders collapsed to its banner (selection + matchup) by default —
- * the full price/why/books breakdown was pushing a whole parlay or a Pixel
+ * the full price/why/books breakdown was pushing a whole Pixel
  * Picks board past a single screen. Tapping the banner reveals it.
  */
 function toggleLegBanner(event) {
@@ -3520,12 +3484,10 @@ function toggleLegBanner(event) {
   detail.hidden = open;
 }
 
-// One delegated listener per container that can render a "?" why-button —
-// the Board's picks list and the Parlay Builder's result both use renderLeg.
+// Delegated listener on the Board's picks list, the one container that
+// renders a "?" why-button via renderLeg.
 el.picks.addEventListener('click', toggleWhyPanel);
-el.parlayResult.addEventListener('click', toggleWhyPanel);
 el.picks.addEventListener('click', toggleLegBanner);
-el.parlayResult.addEventListener('click', toggleLegBanner);
 
 el.dayFilterToday.addEventListener('click', () => setDayFilter('today'));
 el.dayFilterTomorrow.addEventListener('click', () => setDayFilter('tomorrow'));
@@ -3761,250 +3723,6 @@ document.addEventListener('keydown', (e) => {
   if (openAside) setAsideOpen(openAside.panel, openAside.toggle, false);
 });
 
-/* ---------------------------------------------------------------- */
-/* Parlay Builder                                                     */
-/* ---------------------------------------------------------------- */
-
-/** sportKey -> { title, markets: Map<marketKey, label> }, from whatever the
- * Board tab currently has loaded. This is the only source of sports/markets
- * the builder can offer — it never fetches anything of its own. */
-function persistParlayFilters() {
-  saveJSON(PARLAY_KEY, {
-    oddsMin: state.parlay.oddsMin,
-    oddsMax: state.parlay.oddsMax,
-    minScore: state.parlay.minScore,
-    legCount: state.parlay.legCount,
-  });
-}
-
-function renderParlaySliders() {
-  el.parlayOddsMinSlider.value = String(state.parlay.oddsMin);
-  el.parlayOddsMaxSlider.value = String(state.parlay.oddsMax);
-  el.parlayConfidenceSlider.value = String(state.parlay.minScore);
-  el.parlayLegCountSlider.value = String(state.parlay.legCount);
-
-  el.parlayOddsMinLabel.textContent = formatAmerican(state.parlay.oddsMin);
-  el.parlayOddsMaxLabel.textContent = formatAmerican(state.parlay.oddsMax);
-  el.parlayConfidenceLabel.textContent = `≥ ${Math.round(state.parlay.minScore)}`;
-  el.parlayLegCountLabel.textContent = String(state.parlay.legCount);
-}
-
-/**
- * The candidate pool a parlay may draw from: every market on every game
- * under the chosen league group, narrowed further to one tournament/card if
- * the event filter isn't 'all'. Mirrors Full Slate's League → Event pattern
- * exactly, just resolved to a candidate list instead of a rendered board.
- */
-function resolveParlayPool() {
-  const group = LEAGUE_GROUP_BY_ID.get(state.parlayLeague);
-  if (!group) return [];
-
-  const allGames = buildSlateGames(group.keys);
-  const clusters = eventClustersFor(group.id, allGames);
-  const games = clusters.length && state.parlayEvent !== 'all'
-    ? (clusters.find((c) => c.eventKey === state.parlayEvent)?.games ?? [])
-    : allGames;
-
-  const eventIds = new Set(games.map((g) => g.eventId));
-  return state.candidates.filter((c) => eventIds.has(c.eventId));
-}
-
-function renderParlayFilters() {
-  el.parlayLeagueSelect.innerHTML = LEAGUE_GROUPS
-    .map((g) => `<option value="${esc(g.id)}" ${g.id === state.parlayLeague ? 'selected' : ''}>${esc(g.label)}: ${groupGameCount(g)} games</option>`)
-    .join('');
-  if (!state.parlayLeague) {
-    state.parlayLeague = LEAGUE_GROUPS[0].id;
-    el.parlayLeagueSelect.value = state.parlayLeague;
-  }
-
-  const group = LEAGUE_GROUP_BY_ID.get(state.parlayLeague);
-  const allGames = group ? buildSlateGames(group.keys) : [];
-  const clusters = group ? eventClustersFor(group.id, allGames) : [];
-
-  if (clusters.length >= 2) {
-    el.parlayEventFilterRow.hidden = false;
-    const totalGames = clusters.reduce((sum, c) => sum + c.games.length, 0);
-    const allLabel = group.id === 'mma' ? `All cards: ${totalGames} fights` : `All of ${group.label}: ${totalGames} matches`;
-    el.parlayEventFilterSelect.innerHTML = [`<option value="all">${esc(allLabel)}</option>`]
-      .concat(clusters.map((c) => `<option value="${esc(c.eventKey)}" ${c.eventKey === state.parlayEvent ? 'selected' : ''}>${esc(c.label)}</option>`))
-      .join('');
-  } else {
-    el.parlayEventFilterRow.hidden = true;
-    state.parlayEvent = 'all';
-  }
-
-  const pool = resolveParlayPool();
-
-  const marketLabels = new Map();
-  for (const c of pool) marketLabels.set(c.marketKey, c.marketLabel);
-
-  if (!marketLabels.size) {
-    el.parlayMarketsList.innerHTML = `<p class="empty">No games in this pool yet. Try a different league or event.</p>`;
-    state.parlay.markets.clear();
-    return;
-  }
-
-  // Nothing checked yet (first render for this pool) defaults to every
-  // market on, so Generate works immediately without extra taps.
-  if (!state.parlay.markets.size) {
-    for (const key of marketLabels.keys()) state.parlay.markets.add(key);
-  }
-
-  el.parlayMarketsList.innerHTML = [...marketLabels.entries()]
-    .map(([key, label]) => {
-      const checked = state.parlay.markets.has(key) ? 'checked' : '';
-      return `
-        <div class="filter-checkbox">
-          <input type="checkbox" id="market-${esc(key)}" data-parlay-market="${esc(key)}" ${checked}>
-          <label for="market-${esc(key)}">${esc(label)}</label>
-        </div>`;
-    })
-    .join('');
-}
-
-// The most recently rendered parlay result — kept so the lock button's click
-// handler can re-render (toggling a lock's visual state) without having to
-// regenerate the ticket, and so it can look a leg candidate up by id when
-// locking it for the first time.
-let lastParlayResult = null;
-
-/** One leg plus its lock toggle — the lock stays outside renderLeg() itself since that's shared with Pixel Picks combos, which have no locking concept. */
-function renderParlayLeg(leg, index) {
-  const locked = state.parlay.lockedLegs.has(leg.id);
-  return `
-    <div class="parlay-leg">
-      <button type="button" class="leg-lock-btn ${locked ? 'is-locked' : ''}"
-              data-lock-leg="${esc(leg.id)}" aria-pressed="${locked}"
-              aria-label="${locked ? 'Unlock this leg' : 'Lock this leg so it survives Generate'}"
-              title="${locked ? 'Locked, survives Generate' : 'Lock this leg'}">${locked ? '🔒' : '🔓'}</button>
-      <div class="parlay-leg-body">${renderLeg(leg, index, true)}</div>
-    </div>`;
-}
-
-function renderParlayResult(result) {
-  lastParlayResult = result;
-  renderedLegs.length = 0;
-
-  if (!result.complete) {
-    // Locked legs still render even when the ticket can't complete, so
-    // locking one, then tightening a filter until nothing else qualifies,
-    // doesn't look like the lock silently vanished.
-    const lockedHtml = result.legs.length
-      ? result.legs.map((leg, i) => renderParlayLeg(leg, i)).join('')
-      : '';
-    el.parlayResult.innerHTML = `
-      ${lockedHtml}
-      <p class="empty">
-        Only ${result.legs.length} of ${state.parlay.legCount} leg${state.parlay.legCount === 1 ? '' : 's'}
-        available (${result.poolSize} candidate${result.poolSize === 1 ? '' : 's'} qualify). Toggle on more
-        markets, pick "All" for the event, or widen the range.</p>`;
-    if (result.legs.length) hydrateInsights(el.parlayResult);
-    return;
-  }
-
-  const legsHtml = result.legs.map((leg, i) => renderParlayLeg(leg, i)).join('');
-  const stake = suggestedParlayStake(result.legs, result.combined.decimal);
-
-  el.parlayResult.innerHTML = `
-    <article class="pick">
-      <div class="pick-head">
-        <span class="chip"><strong>${result.legs.length}-leg parlay</strong></span>
-        <span class="price">${esc(formatAmerican(result.combined.american))}</span>
-      </div>
-      ${stakeLineHtml(stake)}
-      ${legsHtml}
-    </article>`;
-  hydrateInsights(el.parlayResult);
-}
-
-function generateParlay() {
-  const pool = resolveParlayPool();
-  if (!pool.length) {
-    el.parlayResult.innerHTML = `<p class="empty">Nothing loaded for this league/event yet.</p>`;
-    return;
-  }
-  if (!state.parlay.markets.size) {
-    el.parlayResult.innerHTML = `<p class="empty">Toggle on at least one market first.</p>`;
-    return;
-  }
-
-  const sportKeysInPool = new Set(pool.map((c) => c.sportKey));
-  const sportMarkets = new Map([...sportKeysInPool].map((key) => [key, state.parlay.markets]));
-
-  const result = buildParlay(pool, {
-    legCount: state.parlay.legCount,
-    oddsMin: state.parlay.oddsMin,
-    oddsMax: state.parlay.oddsMax,
-    minScore: state.parlay.minScore,
-    lockedLegs: [...state.parlay.lockedLegs.values()],
-    randomize: true,
-    sportMarkets,
-  });
-  renderParlayResult(result);
-}
-
-el.parlayLeagueSelect.addEventListener('change', () => {
-  state.parlayLeague = el.parlayLeagueSelect.value || null;
-  state.parlayEvent = 'all';
-  state.parlay.markets.clear();
-  state.parlay.lockedLegs.clear(); // a lock from the old league/event has no business surviving into a completely different pool
-  renderParlayFilters();
-});
-
-el.parlayEventFilterSelect.addEventListener('change', () => {
-  state.parlayEvent = el.parlayEventFilterSelect.value;
-  state.parlay.markets.clear();
-  state.parlay.lockedLegs.clear();
-  renderParlayFilters();
-});
-
-el.parlayResult.addEventListener('click', (event) => {
-  const btn = event.target.closest('[data-lock-leg]');
-  if (!btn || !lastParlayResult) return;
-  const id = btn.dataset.lockLeg;
-  if (state.parlay.lockedLegs.has(id)) {
-    state.parlay.lockedLegs.delete(id);
-  } else {
-    const leg = lastParlayResult.legs.find((l) => l.id === id);
-    if (leg) state.parlay.lockedLegs.set(id, leg);
-  }
-  renderParlayResult(lastParlayResult);
-});
-
-el.parlayMarketsList.addEventListener('change', (event) => {
-  const checkbox = event.target.closest('[data-parlay-market]');
-  if (checkbox) {
-    if (checkbox.checked) state.parlay.markets.add(checkbox.dataset.parlayMarket);
-    else state.parlay.markets.delete(checkbox.dataset.parlayMarket);
-  }
-});
-
-el.parlayOddsMinSlider.addEventListener('input', () => {
-  state.parlay.oddsMin = Number(el.parlayOddsMinSlider.value);
-  renderParlaySliders();
-});
-el.parlayOddsMinSlider.addEventListener('change', persistParlayFilters);
-
-el.parlayOddsMaxSlider.addEventListener('input', () => {
-  state.parlay.oddsMax = Number(el.parlayOddsMaxSlider.value);
-  renderParlaySliders();
-});
-el.parlayOddsMaxSlider.addEventListener('change', persistParlayFilters);
-
-el.parlayConfidenceSlider.addEventListener('input', () => {
-  state.parlay.minScore = Number(el.parlayConfidenceSlider.value);
-  renderParlaySliders();
-});
-el.parlayConfidenceSlider.addEventListener('change', persistParlayFilters);
-
-el.parlayLegCountSlider.addEventListener('input', () => {
-  state.parlay.legCount = Number(el.parlayLegCountSlider.value);
-  renderParlaySliders();
-});
-el.parlayLegCountSlider.addEventListener('change', persistParlayFilters);
-
-el.parlayGenerate.addEventListener('click', generateParlay);
 
 /**
  * Re-renders whatever's already on screen with fresh "Suggested stake"
@@ -4017,7 +3735,6 @@ function refreshStakeDisplays() {
   if (state.lastPixelSlate) {
     renderSlate({ ...state.lastPixelSlate, picks: sortPicks(state.lastPixelSlate.picks, state.pixelSort) });
   }
-  if (lastParlayResult) renderParlayResult(lastParlayResult);
 }
 
 el.bankrollAmount.addEventListener('change', () => {
@@ -4210,8 +3927,8 @@ async function loadPotd({ force = false } = {}) {
 }
 
 function setActiveTab(tab) {
-  const views = { slate: el.slateView, board: el.boardView, parlay: el.parlayView, potd: el.potdView };
-  const tabs = { slate: el.tabSlate, board: el.tabBoard, parlay: el.tabParlay, potd: el.tabPotd };
+  const views = { slate: el.slateView, board: el.boardView, potd: el.potdView };
+  const tabs = { slate: el.tabSlate, board: el.tabBoard, potd: el.tabPotd };
 
   for (const [name, view] of Object.entries(views)) {
     const active = name === tab;
@@ -4220,13 +3937,12 @@ function setActiveTab(tab) {
     tabs[name].setAttribute('aria-selected', String(active));
   }
 
-  // The day toggle applies to Full Slate/Parlay only — Play of the Day and
+  // The day toggle applies to Full Slate only — Play of the Day and
   // Pixel's Picks are both fixed daily sets locked server-side, with no
   // Today/Tomorrow of their own to choose.
   el.dayFilterBar.hidden = tab === 'potd' || tab === 'board';
 
   if (tab === 'potd') loadPotd();
-  if (tab === 'parlay') renderParlayFilters();
   // Re-render from whatever's already loaded rather than re-fetching —
   // everything loads once at boot (refreshAllLeagues), so switching tabs is
   // never itself a billed call.
@@ -4238,7 +3954,6 @@ function setActiveTab(tab) {
 
 el.tabSlate.addEventListener('click', () => setActiveTab('slate'));
 el.tabBoard.addEventListener('click', () => setActiveTab('board'));
-el.tabParlay.addEventListener('click', () => setActiveTab('parlay'));
 el.tabPotd.addEventListener('click', () => setActiveTab('potd'));
 
 /* ---------------------------------------------------------------- */
@@ -4961,7 +4676,6 @@ async function openLearningDashboard() {
   el.logoutBtn.hidden = !(CONFIG.REQUIRE_AUTH && getToken());
   el.pixelSort.value = state.pixelSort;
 
-  renderParlaySliders();
   renderDayToggle();
   renderSlateStateToggle();
   initLearningPanelResize();

@@ -106,7 +106,7 @@ of the History panel once at least one leg has closed.
 
 ## More Stats
 
-Every leg, on every surface (Board, Parlay Builder, and their history
+Every leg, on every surface (Board and its history
 entries), has a "More Stats" button next to its "?" — a side drawer with the
 full breakdown instead of the compact card's single price bullet and
 tier-flattened bullet list:
@@ -134,25 +134,6 @@ keyed by event/venue. A section is omitted entirely when it has nothing
 real behind it (an individual sport's "Supporting Cast," a domed venue's
 weather) — same rule as the compact card and Play of the Day: a gap in the
 data is a shorter drawer, never an invented placeholder.
-
-## Parlay Builder
-
-A third tab, separate from both the automatic top-8 and Play of the Day: pick
-your own legs by hand. Toggle on the sports you want (from whatever's already
-loaded on the Board — it never fetches anything of its own), and for each,
-which market types are eligible — "UFC: moneylines only," "NFL: spreads
-only." Set your own odds range, confidence floor, and leg count, then
-Generate builds one ticket from the highest-graded candidates that clear
-every filter (`buildParlay()` in `engine.js`).
-
-Legs always come from different games, the same rule `generateSlate()`'s
-combo-pairing already enforces — `combineLegs()` multiplies decimal odds
-assuming independence, which is only true across separate events. A team to
-cover and that same game's total are correlated bets; combining them as if
-independent would misstate the true parlay price, not just be optimistic
-about it. If a ticket can't fill every leg from what's toggled on, it says
-exactly how many legs are missing and how many candidates qualify, rather
-than padding it with something that fails the filter.
 
 ## Play of the Day
 
@@ -212,7 +193,7 @@ presenting them, matching how honest each surface gets to be about depth.
 
 ## Suggested stake (Kelly Criterion)
 
-Every pick — on the Board, in a Parlay Builder ticket, and on Play of the
+Every pick — on the Board and on Play of the
 Day — carries a suggested stake as a % of bankroll, using quarter-Kelly
 against the pick's own no-vig consensus (`kellyFraction()` /
 `suggestedStake()` / `suggestedParlayStake()` in `engine.js`). Full Kelly
@@ -225,7 +206,7 @@ what the raw formula says, as protection against the estimate being wrong in
 one particular market's favor, not a claim that the math itself is wrong. A
 parlay's stake uses the product of its legs' individual probabilities — the
 same independence assumption `combineLegs()` already makes when multiplying
-their decimal odds, and `buildParlay()` enforces structurally by refusing two
+their decimal odds, and `findPartner()` enforces structurally by refusing two
 legs from the same game.
 
 ### Bankroll and units
@@ -237,7 +218,7 @@ recommendation) and toggle "Show stakes as" to Units to see stakes the way
 most bettors actually track their own action — "1.5 units" rather than a raw
 dollar figure, which stays meaningful as the bankroll itself grows or
 shrinks. Everything here is local-only (`localStorage`, never sent
-anywhere) and display changes apply on the next Generate/parlay/Play-of-the-Day
+anywhere) and display changes apply on the next Generate/Play-of-the-Day
 view rather than live-patching whatever's already on screen — the same
 "applies on next tap" convention the Odds & Confidence range filter already
 uses, and for the same reason: it avoids a spurious re-fetch of a pick's

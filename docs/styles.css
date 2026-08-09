@@ -339,52 +339,7 @@ body {
 /* Parlay Builder                                                     */
 /* ---------------------------------------------------------------- */
 
-.parlay-intro { margin: 0 0 18px; }
-
-.parlay-sports {
-  display: grid;
-  gap: 2px;
-  margin-bottom: 22px;
-}
-
-.parlay-sport {
-  background: var(--surface);
-  border: 1px solid var(--line);
-  border-radius: var(--radius);
-  padding: 4px 14px;
-  margin-bottom: 6px;
-}
-
-.parlay-market-row {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 8px;
-  padding: 2px 0 12px 26px;
-}
-
-.check-pill {
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
-  background: var(--surface-2);
-  border: 1px solid var(--line);
-  border-radius: 999px;
-  padding: 6px 12px;
-  font-size: 0.75rem;
-  cursor: pointer;
-}
-.check-pill input {
-  width: 14px;
-  height: 14px;
-  accent-color: var(--accent);
-  cursor: pointer;
-}
-.check-pill:has(input:checked) {
-  border-color: var(--accent);
-  color: var(--text);
-}
-
-.parlay-result { margin-top: 22px; }
+.tab-intro { margin: 0 0 18px; }
 
 /* ---------------------------------------------------------------- */
 /* Main                                                              */
@@ -628,10 +583,6 @@ input[type="range"]:focus-visible {
   box-shadow: 0 0 0 2px var(--accent-dim);
 }
 
-#parlayGenerate {
-  margin-top: 22px;
-}
-
 /* The one button. */
 .generate {
   display: block;
@@ -773,39 +724,6 @@ input[type="range"]:focus-visible {
 .leg { padding: 14px; }
 .leg + .leg { border-top: 1px dashed var(--line); }
 
-/* Parlay Builder's per-leg lock toggle wraps .leg rather than living inside
-   it — .leg is shared with Pixel Picks' combo cards, which have no locking
-   concept — so the dashed divider between legs moves to this wrapper. */
-.parlay-leg {
-  display: flex;
-  align-items: flex-start;
-  gap: 8px;
-  padding: 0 14px;
-}
-.parlay-leg + .parlay-leg { border-top: 1px dashed var(--line); }
-.parlay-leg .leg { padding: 14px 0; flex: 1; min-width: 0; }
-
-.leg-lock-btn {
-  flex-shrink: 0;
-  width: 34px;
-  height: 34px;
-  margin-top: 14px;
-  border-radius: var(--radius);
-  border: 1px solid var(--line);
-  background: var(--surface-2);
-  color: var(--muted);
-  font-size: 1rem;
-  line-height: 1;
-  cursor: pointer;
-  transition: background 150ms ease, border-color 150ms ease, color 150ms ease;
-}
-.leg-lock-btn:hover { border-color: #36414d; }
-.leg-lock-btn.is-locked {
-  background: var(--accent);
-  border-color: var(--accent);
-  color: #04140a;
-}
-
 .leg-selection {
   font-size: 1.1rem;
   font-weight: 650;
@@ -820,7 +738,7 @@ input[type="range"]:focus-visible {
 }
 
 /* The collapsed-by-default banner every leg shows — tapping it reveals the
-   full price/why/books breakdown below. Condenses a multi-leg parlay or a
+   full price/why/books breakdown below. Condenses a multi-leg combo or a
    whole Pixel Picks board down to one line of scannable banners per bet. */
 .leg-banner {
   display: flex;
@@ -2071,10 +1989,9 @@ input[type="range"]:focus-visible {
     align-items: start;
   }
 
-  /* A single-column read (Play of the Day, the Parlay ticket) stays
-     capped for readability — it's prose, not a grid of cards. */
-  .potd-card,
-  .parlay-result {
+  /* A single-column read (Play of the Day) stays capped for readability —
+     it's prose, not a grid of cards. */
+  .potd-card {
     max-width: 720px;
   }
 
@@ -2722,73 +2639,6 @@ input[type="range"]:focus-visible {
   .stats-divider {
     display: none;
   }
-}
-
-/* Parlay Builder Filters */
-.parlay-filters {
-  display: flex;
-  flex-direction: column;
-  gap: 16px;
-  margin-bottom: 16px;
-  padding: 12px;
-  background: var(--surface-2);
-  border-radius: var(--radius);
-}
-
-.filter-section {
-  display: flex;
-  flex-direction: column;
-  gap: 8px;
-}
-
-.filter-section h3 {
-  margin: 0;
-  font-size: 0.85rem;
-  font-weight: 600;
-  text-transform: uppercase;
-  letter-spacing: 0.5px;
-  color: var(--accent);
-}
-
-.filter-grid {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 6px;
-}
-
-.filter-checkbox {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  padding: 6px 10px;
-  background: var(--surface);
-  border: 1px solid var(--line);
-  border-radius: var(--radius);
-  cursor: pointer;
-  font-size: 0.8rem;
-  transition: all 150ms ease;
-  user-select: none;
-}
-
-.filter-checkbox:hover {
-  border-color: var(--accent);
-  background: var(--surface-2);
-}
-
-.filter-checkbox input[type="checkbox"] {
-  margin: 0;
-  cursor: pointer;
-}
-
-.filter-checkbox input[type="checkbox"]:checked + label {
-  color: var(--accent);
-  font-weight: 600;
-}
-
-.filter-checkbox label {
-  margin: 0;
-  cursor: pointer;
-  flex: 1;
 }
 
 /* ================================================================ */
