@@ -1742,6 +1742,20 @@ input[type="range"]:focus-visible {
   color: var(--text) !important;
 }
 
+/* Perpetual Pixel's own intro in the About panel — set apart from the
+   plain technical explainer paragraphs below it. */
+.about-intro {
+  color: var(--text) !important;
+  padding: 12px 14px;
+  border-radius: 10px;
+  background: var(--surface);
+  border-left: 3px solid var(--accent);
+}
+.about-intro + .about-intro {
+  margin-top: 10px !important;
+  border-top: none;
+}
+
 .about-version {
   display: inline-block;
   margin-top: 4px;

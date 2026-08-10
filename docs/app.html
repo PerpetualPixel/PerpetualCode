@@ -17,7 +17,7 @@
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Syne:wght@600;700;800&family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
-<link rel="stylesheet" href="styles.css?v=1.86">
+<link rel="stylesheet" href="styles.css?v=1.87">
 </head>
 <body>
 
@@ -125,11 +125,13 @@
 
 <section id="boardView" role="tabpanel" aria-labelledby="tabBoard" hidden>
   <p class="filter-hint tab-intro">
-    5 locks, generated automatically once a day and never re-picked after:
-    sharp range −250/+250, positive EV, and a real Kelly edge required, drawn
-    from every league and every sportsbook. Nothing here ever pads out with a
-    bet that isn't actually worth taking. Every game regardless of price
-    lives on the Full Slate tab.
+    5 locks: sharp range −250/+250, positive EV, and a real Kelly edge
+    required, drawn from every league and every sportsbook. Each slot locks
+    individually, closer to its own game's start time — before that you'll
+    see the algorithm's current <strong>LEAN</strong>, which can still
+    change; once <strong>FINAL</strong>, a pick is never re-picked. Nothing
+    here ever pads out with a bet that isn't actually worth taking. Every
+    game regardless of price lives on the Full Slate tab.
   </p>
   <div id="status" class="status" role="status" aria-live="polite">Loading the board…</div>
 
@@ -298,12 +300,14 @@
       around whichever side the algorithm leans toward on each market. Tap
       any price to see the case for it, and the case against it.
       <strong>Pixel's Picks</strong> is fully automatic: 5 locks, sharp
-      range −250/+250, ranked purely by edge, generated once daily at 2am ET
-      and locked in for the day. Nothing to press, and nothing changes
-      after it's posted.
-      <strong>Play of the Day</strong> is one pick, chosen once a day and the
-      same for everyone, with a full written breakdown instead of the compact
-      card.</p>
+      range −250/+250, ranked purely by edge. Each slot locks individually,
+      closer to its own game's start time, rather than all at once —
+      before that you'll see a LEAN badge (the algorithm's current best
+      guess, still subject to change); FINAL means it's locked for good and
+      nothing changes after.
+      <strong>Play of the Day</strong> is one pick for the whole day, the
+      same for everyone, chosen the same way, with a full written breakdown
+      instead of the compact card.</p>
     </details>
 
     <!--
@@ -351,13 +355,17 @@
       window (today, or before 6am ET the next morning, since a late main
       event can run past midnight) since fight cards don't follow the same
       daily schedule as league games.</p>
-      <p><strong>5. The best-graded picks are selected.</strong> Full Slate
-      ranks live by score. Pixel's Picks is different: once
-      a day at 2am ET, the server locks in the 5 best picks that clear every
-      filter above and posts them for the whole day. Reloading the page
-      later never changes them, and nothing about the picks reacts to price
-      movement afterward. On a quiet day where fewer than 5 real edges clear
-      the bar, the rest are filled from the next-best available prices and
+      <p><strong>5. The best-graded picks are selected, one game at a
+      time.</strong> Full Slate ranks live by score. Pixel's Picks is
+      different: each slot locks individually, once that game is close
+      enough to its own start (an hour or two out, depending on the sport)
+      to trust the numbers — not one batch for the whole day. Before a slot
+      locks it shows a LEAN badge (the current best candidate, which can
+      still lose its spot to something better as later games' own windows
+      open); once FINAL, reloading the page never changes it, and nothing
+      about it reacts to price movement afterward. On a quiet day where
+      fewer than 5 real edges clear the bar by the time nothing's left to
+      wait for, the rest are filled from the next-best available prices and
       explicitly flagged "Outside standard criteria", still real, gradeable
       bets, just not sharp enough to call a lock without saying so. Every one
       of the 5 counts toward the Tracking Dashboard's win-rate math regardless;
@@ -385,9 +393,11 @@
       fill in from the next-best prices available and are flagged "Outside
       standard criteria", still real, gradeable bets, just not sharp enough
       to call a lock without saying so. All 5 are tracked and count toward the
-      Tracking Dashboard's win-rate math regardless of the flag. Generated
-      once daily at 2am ET. The same 5 locks stay up all day, regardless of
-      how the market moves afterward.</p>
+      Tracking Dashboard's win-rate math regardless of the flag. Each slot
+      locks individually, closer to its own game's start time rather than
+      all at once — see it leaning before that, marked LEAN. Once a slot is
+      FINAL, it stays up unchanged regardless of how the market moves
+      afterward.</p>
     </details>
   </div>
 </aside>
@@ -398,14 +408,34 @@
     <button id="aboutClose" class="icon-btn overlay-close-btn" aria-label="Close about">✕</button>
   </div>
   <div class="guide-body">
-    <p>Pixel Pick prices every game on the board against the market's own
-    no-vig consensus (the same math a sharp bettor would do by hand, run
-    across every book at once) and surfaces the real edges: Full Slate for
-    every market on every game, Pixel's Picks for the sharpest 5 locks,
-    and Play of the Day for one
-    highest-conviction pick, posted automatically each morning. Every
-    tracked pick is graded against its actual result, win or lose, so the
-    Tracking Dashboard reflects real performance, not a marketing number.</p>
+    <p class="about-intro">
+      Hey — I'm Perpetual Pixel. IT technician by day, sports gambler
+      pretty much every hour I'm not doing that. I built this because I was
+      sick of the same thing you probably are: group chats full of "hot
+      picks" from guys who never once show you their real record, and paid
+      tout services that vanish the moment a cold streak hits. So I built
+      the tool I actually wanted for myself — something that runs the same
+      cold, no-vig math a sharp bettor does by hand, on every book, for
+      every game, and then tracks its own results in the open. Every pick,
+      win or lose, stays on the board. Nothing gets quietly deleted on a
+      bad week.
+    </p>
+    <p class="about-intro">
+      I'm not selling a system, and I'm not promising you'll get rich. I'm
+      still putting my own money on these same numbers. If this saves you
+      from a bad bet, or helps you find a real edge you'd have missed
+      otherwise, that's the whole point — I built the thing I wanted to
+      exist, and I figured other people chasing an honest edge could use it
+      too.
+    </p>
+    <p>Under the hood: Pixel Pick prices every game on the board against
+    the market's own no-vig consensus and surfaces the real edges — Full
+    Slate for every market on every game, Pixel's Picks for the sharpest 5
+    locks, and Play of the Day for one highest-conviction pick, each one
+    locked closer to its own game's start time so the numbers stay fresh.
+    Every tracked pick is graded against its actual result, win or lose, so
+    the Tracking Dashboard reflects real performance, not a marketing
+    number.</p>
     <div class="report-bug-section">
       <button type="button" id="reportBugToggle" class="action-btn" aria-expanded="false" aria-controls="reportBugForm">
         Report a Bug / Suggestion
@@ -450,10 +480,11 @@
   <div class="learning-content">
     <!-- Server-Tracked: Full Slate / Pixel's Picks / Play of the Day -->
     <section class="learning-section">
-      <h3>Tracked Picks <span class="stats-source">Server-tracked, generated automatically at 2am ET</span></h3>
+      <h3>Tracked Picks <span class="stats-source">Server-tracked, each pick locked closer to its own game</span></h3>
       <p class="filter-hint">
-        Locked in by the worker itself each day at 2am ET, whether or not
-        anyone has the app open, and never changed afterward. Every pick
+        Locked in by the worker itself, whether or not anyone has the app
+        open, each one closer to its own game's start time rather than all
+        at once — and never changed afterward, once locked. Every pick
         counts toward its tracker's totals below, flagged or not (a flagged
         pick just means it was a thin-day fallback, not that it's excluded).
         Flat 1-unit stake per pick either way, no bankroll cap. The point is
@@ -663,6 +694,6 @@
   </div>
 </aside>
 
-<script type="module" src="app.js?v=1.86"></script>
+<script type="module" src="app.js?v=1.87"></script>
 </body>
 </html>
