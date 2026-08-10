@@ -103,25 +103,33 @@ function isEligibleMmaFight(commenceMs, now) {
   return commenceDate === tomorrow && etHour(commenceMs) < MMA_NEXT_DAY_CUTOFF_HOUR;
 }
 
+// How far into the next calendar day a tennis match still counts as part of
+// tonight's round for Pixel's Picks — same idea and same value as MMA's own
+// MMA_NEXT_DAY_CUTOFF_HOUR above, for the same reason: a night session match
+// can roll past midnight ET and still be part of the round already
+// underway. Deliberately NOT the "eligible all day tomorrow" window this
+// used to be — that let a match scheduled for a completely ordinary
+// tomorrow-afternoon start time (e.g. 3pm ET the next day) onto a board
+// that's supposed to be today's picks, which read as a real bug even though
+// the Odds API genuinely does split some rounds across two calendar days.
+const TENNIS_NEXT_DAY_CUTOFF_HOUR = 6;
+
 /**
- * A tennis round routinely spans two calendar days (a day session and a
- * night session, or matches simply pushed by weather/court scheduling), and
- * the Odds API only ever lists the round that's actually been drawn — the
- * next round's matchups don't exist in the feed at all until the current
- * one finishes — so there's no risk of this reaching into a future round
- * early. Eligible if it starts today or tomorrow's ET date; no hour cutoff
- * needed the way MMA's single-card-crossing-midnight case does, since
- * tennis matches aren't one continuous show. Confirmed live: the Odds API's
- * reigning ATP/WTA Canadian Open round split its matches roughly 4-and-4
- * across today and tomorrow by start time — the plain same-ET-day check
- * this replaces was excluding exactly half of what's really one round.
+ * A tennis round can still be running past midnight ET (a night session
+ * pushed late, or simply a late start), and the Odds API only ever lists
+ * the round that's actually been drawn — the next round's matchups don't
+ * exist in the feed at all until the current one finishes — so there's no
+ * risk of this reaching into a future round early. Eligible if it starts
+ * today, or before TENNIS_NEXT_DAY_CUTOFF_HOUR tomorrow morning (a match
+ * that rolled just past midnight); NOT eligible for an ordinary tomorrow-
+ * afternoon start, which belongs on tomorrow's board, not today's.
  */
 function isEligibleTennisMatch(commenceMs, now) {
   const today = etDate(now);
   const commenceDate = etDate(commenceMs);
   if (commenceDate === today) return true;
   const tomorrow = etDate(now + 86400000);
-  return commenceDate === tomorrow;
+  return commenceDate === tomorrow && etHour(commenceMs) < TENNIS_NEXT_DAY_CUTOFF_HOUR;
 }
 
 /**

@@ -66,21 +66,29 @@ function isEligibleMmaFight(commenceMs, now) {
   return commenceDate === tomorrow && etHour(commenceMs) < MMA_NEXT_DAY_CUTOFF_HOUR;
 }
 
-// Matches tracking.js's own isEligibleTennisMatch — duplicated for the same
-// "never silently diverge from a private helper in another file" reason as
-// isEligibleMmaFight above. A tennis round routinely spans two calendar
-// days (day/night sessions, weather pushes), and the Odds API only ever
-// lists the round that's actually been drawn — no risk of reaching into a
-// future round early. Confirmed live: the Odds API's reigning ATP/WTA
-// Canadian Open round split roughly 4-and-4 across today and tomorrow by
-// start time; the plain same-ET-day check was excluding exactly half of
-// what's really one round from Full Slate tracking.
+// Matches tracking.js's own TENNIS_NEXT_DAY_CUTOFF_HOUR/isEligibleTennisMatch
+// — duplicated for the same "never silently diverge from a private helper
+// in another file" reason as isEligibleMmaFight above.
+const TENNIS_NEXT_DAY_CUTOFF_HOUR = 6;
+
+/**
+ * A tennis round can still be running past midnight ET (a night session
+ * pushed late, or simply a late start), and the Odds API only ever lists
+ * the round that's actually been drawn — no risk of reaching into a future
+ * round early. Eligible if it starts today, or before
+ * TENNIS_NEXT_DAY_CUTOFF_HOUR tomorrow morning (a match that rolled just
+ * past midnight); NOT eligible for an ordinary tomorrow-afternoon start,
+ * which belongs on tomorrow's Full Slate, not today's. Confirmed live: the
+ * previous "eligible all day tomorrow" version let a completely ordinary
+ * next-day match onto today's Full Slate — a real bug report, not just a
+ * theoretical one.
+ */
 function isEligibleTennisMatch(commenceMs, now) {
   const today = etDate(now);
   const commenceDate = etDate(commenceMs);
   if (commenceDate === today) return true;
   const tomorrow = etDate(now + 86400000);
-  return commenceDate === tomorrow;
+  return commenceDate === tomorrow && etHour(commenceMs) < TENNIS_NEXT_DAY_CUTOFF_HOUR;
 }
 
 /**
