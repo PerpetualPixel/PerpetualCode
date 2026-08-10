@@ -1,665 +1,325 @@
-<!doctype html>
+<!DOCTYPE html>
 <html lang="en">
 <head>
-<meta charset="utf-8">
-<title>Perpetual Picks</title>
-<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
-<meta name="theme-color" content="#05050A">
-<meta name="description" content="Continuous edge across every slate.">
-<meta name="apple-mobile-web-app-capable" content="yes">
-<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
-<meta name="apple-mobile-web-app-title" content="Perpetual Picks">
-<!-- Link-preview card (iMessage, Slack, etc.) -->
-<meta property="og:type" content="website">
-<meta property="og:url" content="https://perpetualpicks.com/">
-<meta property="og:title" content="Perpetual Picks">
-<meta property="og:description" content="Continuous edge across every slate.">
-<meta property="og:image" content="https://perpetualpicks.com/assets/og-image.png">
-<meta property="og:image:width" content="1200">
-<meta property="og:image:height" content="630">
-<meta name="twitter:card" content="summary_large_image">
-<meta name="twitter:title" content="Perpetual Picks">
-<meta name="twitter:description" content="Continuous edge across every slate.">
-<meta name="twitter:image" content="https://perpetualpicks.com/assets/og-image.png">
-<link rel="manifest" href="manifest.webmanifest">
-<link rel="apple-touch-icon" href="assets/logo-icon-180.png">
-<link rel="icon" href="assets/logo-icon-64.png" type="image/png">
-<link rel="icon" href="icon.svg" type="image/svg+xml">
-<link rel="preconnect" href="https://fonts.googleapis.com">
-<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-<link href="https://fonts.googleapis.com/css2?family=Syne:wght@600;700;800&family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
-<link rel="stylesheet" href="styles.css?v=1.78">
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Perpetual Picks - Your Edge, Perpetually</title>
+  <meta name="description" content="Data-driven picks across every major sport, tracked in the open. See what Perpetual Picks does before you sign up.">
+  <meta name="theme-color" content="#05050A">
+  <link rel="manifest" href="manifest.webmanifest">
+  <link rel="apple-touch-icon" href="assets/logo-icon-180.png">
+  <link rel="icon" href="assets/logo-icon-64.png" type="image/png">
+  <link rel="icon" href="icon.svg" type="image/svg+xml">
+  <!-- Link-preview card (iMessage, Slack, etc.) -->
+  <meta property="og:type" content="website">
+  <meta property="og:url" content="https://perpetualpicks.com/">
+  <meta property="og:title" content="Perpetual Picks">
+  <meta property="og:description" content="Continuous edge across every slate.">
+  <meta property="og:image" content="https://perpetualpicks.com/assets/og-image.png">
+  <meta property="og:image:width" content="1200">
+  <meta property="og:image:height" content="630">
+  <meta name="twitter:card" content="summary_large_image">
+  <meta name="twitter:title" content="Perpetual Picks">
+  <meta name="twitter:description" content="Continuous edge across every slate.">
+  <meta name="twitter:image" content="https://perpetualpicks.com/assets/og-image.png">
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+      background: #05050A;
+      color: #e0e0ff;
+      line-height: 1.6;
+      overflow-x: hidden;
+    }
+
+    a { color: inherit; }
+
+    /* Background texture — same grid + glow-orb treatment as login.html,
+       so this page reads as the same site rather than a bolted-on splash. */
+    .bg-grid {
+      position: fixed;
+      inset: 0;
+      background-image:
+        linear-gradient(0deg, rgba(157, 78, 221, 0.03) 1px, transparent 1px),
+        linear-gradient(90deg, rgba(157, 78, 221, 0.03) 1px, transparent 1px);
+      background-size: 50px 50px;
+      z-index: 0;
+      pointer-events: none;
+    }
+    .glow-orbs { position: fixed; inset: 0; z-index: 0; pointer-events: none; overflow: hidden; }
+    .orb { position: absolute; border-radius: 50%; filter: blur(90px); opacity: 0.18; }
+    .orb-1 { width: 420px; height: 420px; background: #d946ef; top: -140px; left: -120px; animation: float 22s infinite ease-in-out; }
+    .orb-2 { width: 380px; height: 380px; background: #00d9ff; top: 20%; right: -160px; animation: float 18s infinite ease-in-out 3s; }
+    .orb-3 { width: 320px; height: 320px; background: #7C3AED; bottom: -120px; left: 30%; animation: float 26s infinite ease-in-out 6s; }
+    @keyframes float { 0%, 100% { transform: translate(0, 0); } 50% { transform: translate(30px, -30px); } }
+
+    .wrap { position: relative; z-index: 10; max-width: 1080px; margin: 0 auto; padding: 0 24px; }
+
+    /* ---------------- Nav ---------------- */
+    nav.topnav {
+      display: flex; align-items: center; justify-content: space-between;
+      padding: 22px 0;
+    }
+    .brand { display: flex; align-items: center; gap: 10px; }
+    .brand img { width: 30px; height: 30px; }
+    .brand-word {
+      font-size: 18px; font-weight: 800; letter-spacing: 0.02em;
+      background: linear-gradient(135deg, #d946ef 0%, #00d9ff 100%);
+      -webkit-background-clip: text; -webkit-text-fill-color: transparent; background-clip: text;
+    }
+    .nav-signin {
+      color: #c8c8e8; text-decoration: none; font-size: 14px; font-weight: 600;
+      padding: 9px 18px; border: 1px solid rgba(217, 70, 239, 0.3); border-radius: 8px;
+      transition: all 0.2s ease;
+    }
+    .nav-signin:hover { border-color: #d946ef; color: #fff; background: rgba(217, 70, 239, 0.08); }
+
+    /* ---------------- Hero ---------------- */
+    .hero { padding: 64px 0 40px; text-align: center; }
+    .hero-eyebrow {
+      display: inline-block; font-size: 12px; font-weight: 700; letter-spacing: 0.12em;
+      text-transform: uppercase; color: #00d9ff; margin-bottom: 18px;
+      padding: 6px 14px; border: 1px solid rgba(0, 217, 255, 0.3); border-radius: 999px;
+      background: rgba(0, 217, 255, 0.06);
+    }
+    h1.hero-title {
+      font-size: clamp(34px, 6vw, 58px); font-weight: 800; line-height: 1.1; letter-spacing: -0.01em;
+      margin-bottom: 20px;
+    }
+    h1.hero-title .grad {
+      background: linear-gradient(135deg, #d946ef 0%, #9d4edd 45%, #00d9ff 100%);
+      -webkit-background-clip: text; -webkit-text-fill-color: transparent; background-clip: text;
+    }
+    .hero-sub {
+      max-width: 560px; margin: 0 auto 34px; font-size: 17px; color: #a0a0cc;
+    }
+    .hero-ctas { display: flex; gap: 14px; justify-content: center; flex-wrap: wrap; margin-bottom: 14px; }
+    .btn {
+      display: inline-flex; align-items: center; justify-content: center;
+      padding: 14px 30px; border-radius: 10px; font-size: 15px; font-weight: 700;
+      text-decoration: none; cursor: pointer; transition: all 0.2s ease; letter-spacing: 0.01em;
+    }
+    .btn-primary {
+      background: linear-gradient(135deg, #d946ef 0%, #9d4edd 100%); color: #05050A;
+      box-shadow: 0 8px 26px rgba(217, 70, 239, 0.35);
+    }
+    .btn-primary:hover { transform: translateY(-2px); box-shadow: 0 10px 32px rgba(217, 70, 239, 0.5); }
+    .btn-ghost {
+      background: rgba(255, 255, 255, 0.04); color: #e0e0ff; border: 1px solid rgba(217, 70, 239, 0.25);
+    }
+    .btn-ghost:hover { border-color: #00d9ff; background: rgba(0, 217, 255, 0.06); }
+    .hero-note { font-size: 12.5px; color: #6a6a94; }
+
+    /* ---------------- Sample pick card (illustrative mock, not real data) ---------------- */
+    .demo-frame { max-width: 460px; margin: 56px auto 0; position: relative; }
+    .demo-label {
+      text-align: center; font-size: 11px; color: #6a6a94; letter-spacing: 0.08em;
+      text-transform: uppercase; margin-bottom: 12px;
+    }
+    .pick-card {
+      background: rgba(255, 255, 255, 0.03);
+      border-radius: 16px;
+      padding: 1px;
+      background-image: linear-gradient(135deg, rgba(124, 58, 237, 0.7), rgba(255, 0, 122, 0.5), rgba(0, 240, 255, 0.6));
+      box-shadow: 0 10px 40px rgba(0, 0, 0, 0.5);
+      text-align: left;
+    }
+    .pick-card-inner {
+      background: #0a0616;
+      border-radius: 15px;
+      padding: 22px;
+    }
+    .pick-card-top { display: flex; align-items: center; justify-content: space-between; margin-bottom: 14px; }
+    .pick-league {
+      display: inline-flex; align-items: center; gap: 6px; font-size: 12px; font-weight: 700;
+      color: #a0a0cc; text-transform: uppercase; letter-spacing: 0.06em;
+    }
+    .pick-confidence {
+      font-size: 11px; font-weight: 700; color: #00d9ff; background: rgba(0, 217, 255, 0.1);
+      border: 1px solid rgba(0, 217, 255, 0.3); padding: 3px 10px; border-radius: 999px;
+    }
+    .pick-matchup { font-size: 15px; font-weight: 600; color: #f3f1fa; margin-bottom: 4px; }
+    .pick-selection { font-size: 20px; font-weight: 800; color: #fff; margin-bottom: 14px; }
+    .pick-selection span { color: #d946ef; }
+    .pick-stats { display: flex; gap: 22px; margin-bottom: 16px; }
+    .pick-stat-label { font-size: 10.5px; color: #6a6a94; text-transform: uppercase; letter-spacing: 0.06em; margin-bottom: 3px; }
+    .pick-stat-value { font-size: 16px; font-weight: 700; color: #e0e0ff; }
+    .pick-stat-value.up { color: #4ade80; }
+    .pick-why {
+      font-size: 12.5px; color: #9c98b8; line-height: 1.6; padding-top: 14px;
+      border-top: 1px solid rgba(217, 70, 239, 0.12);
+    }
+    .pick-why strong { color: #c8c8e8; }
+
+    /* ---------------- Features ---------------- */
+    .features { padding: 84px 0 20px; }
+    .section-title {
+      text-align: center; font-size: clamp(24px, 4vw, 32px); font-weight: 800; margin-bottom: 12px;
+    }
+    .section-sub { text-align: center; color: #8a86ac; font-size: 15px; max-width: 480px; margin: 0 auto 48px; }
+    .feature-grid {
+      display: grid; grid-template-columns: repeat(auto-fit, minmax(230px, 1fr)); gap: 18px;
+    }
+    .feature-card {
+      background: rgba(255, 255, 255, 0.03); border: 1px solid rgba(217, 70, 239, 0.15);
+      border-radius: 14px; padding: 26px 22px; transition: all 0.2s ease;
+    }
+    .feature-card:hover { border-color: rgba(217, 70, 239, 0.4); background: rgba(255, 255, 255, 0.05); }
+    .feature-icon { font-size: 26px; margin-bottom: 14px; }
+    .feature-title { font-size: 15.5px; font-weight: 700; color: #f3f1fa; margin-bottom: 8px; }
+    .feature-desc { font-size: 13.5px; color: #8a86ac; line-height: 1.6; }
+
+    /* ---------------- Sport strip ---------------- */
+    .sport-strip {
+      display: flex; flex-wrap: wrap; justify-content: center; gap: 10px;
+      margin: 44px 0 0;
+    }
+    .sport-chip {
+      font-size: 13px; font-weight: 600; color: #c8c8e8;
+      background: rgba(255, 255, 255, 0.04); border: 1px solid rgba(255, 255, 255, 0.08);
+      padding: 8px 16px; border-radius: 999px; display: inline-flex; align-items: center; gap: 7px;
+    }
+
+    /* ---------------- Closing CTA ---------------- */
+    .closing {
+      margin: 96px 0 60px; padding: 52px 32px; text-align: center; border-radius: 20px;
+      background: linear-gradient(135deg, rgba(217, 70, 239, 0.1), rgba(0, 217, 255, 0.08));
+      border: 1px solid rgba(217, 70, 239, 0.2);
+    }
+    .closing h2 { font-size: clamp(22px, 4vw, 30px); font-weight: 800; margin-bottom: 12px; }
+    .closing p { color: #a0a0cc; font-size: 15px; margin-bottom: 28px; }
+
+    /* ---------------- Footer ---------------- */
+    footer { padding: 32px 0 48px; text-align: center; }
+    .footer-links { font-size: 12px; color: #7070aa; margin-bottom: 10px; }
+    .footer-links a { color: #7070aa; text-decoration: none; }
+    .footer-links a:hover { color: #d946ef; }
+    .footer-disclaimer { font-size: 11px; color: #55527a; max-width: 560px; margin: 0 auto; line-height: 1.6; }
+
+    @media (max-width: 520px) {
+      .pick-stats { gap: 16px; flex-wrap: wrap; }
+      .hero { padding: 44px 0 30px; }
+    }
+  </style>
 </head>
 <body>
+  <div class="bg-grid"></div>
+  <div class="glow-orbs"><div class="orb orb-1"></div><div class="orb orb-2"></div><div class="orb orb-3"></div></div>
 
-<div id="welcomeToast" class="welcome-toast" hidden role="status" aria-live="polite"></div>
-
-<header class="topbar">
-  <h1 class="wordmark"><img src="assets/logo-icon-64.png" alt="" class="wordmark-icon" width="26" height="26">PERPETUAL<span>PICKS</span></h1>
-  <div class="topbar-actions">
-    <button id="guideToggle" class="icon-btn" aria-expanded="false" aria-controls="guidePanel">
-      Guide
-    </button>
-    <button id="aboutToggle" class="icon-btn" aria-expanded="false" aria-controls="aboutPanel">
-      About
-    </button>
-    <button id="bankrollToggle" class="icon-btn" aria-expanded="false" aria-controls="bankrollPanel">
-      Bankroll
-    </button>
-    <button id="learningToggle" class="icon-btn" aria-expanded="false" aria-controls="learningPanel">
-      Tracking
-    </button>
-    <a id="accountLink" href="/account.html" class="icon-btn" hidden>Account</a>
-  </div>
-</header>
-
-<nav class="top-tabs" role="tablist" aria-label="Sections">
-  <button id="tabSlate" class="top-tab is-active" role="tab" aria-selected="true" aria-controls="slateView">
-    Full Slate
-  </button>
-  <button id="tabBoard" class="top-tab" role="tab" aria-selected="false" aria-controls="boardView">
-    Pixel's Picks
-  </button>
-  <button id="tabPotd" class="top-tab" role="tab" aria-selected="false" aria-controls="potdView">
-    Play of the Day
-  </button>
-</nav>
-
-<div id="dayFilterBar" class="day-toggle-bar">
-  <span class="day-toggle-label">Showing</span>
-  <div class="day-toggle" role="group" aria-label="Which day's games to show">
-    <button id="dayFilterToday" class="day-toggle-btn is-active" type="button" aria-pressed="true">Today</button>
-    <button id="dayFilterTomorrow" class="day-toggle-btn" type="button" aria-pressed="false">
-      Tomorrow <span id="tomorrowDateLabel"></span>
-    </button>
-  </div>
-  <span class="day-toggle-hint">MMA always shows every card in the next week, regardless of this toggle.</span>
-</div>
-
-<main id="main">
-<section id="slateView" role="tabpanel" aria-labelledby="tabSlate">
-  <div id="slateStatus" class="status" role="status" aria-live="polite">
-    Every game, every market. Nothing here is filtered by odds or confidence.
-    That's what the Pixel's Picks tab is for.
-  </div>
-
-  <div id="slateLeagueTokens" class="slate-league-tokens" role="group" aria-label="Quick league select"></div>
-
-  <div class="slate-controls">
-    <!-- The league tokens above are now the actual UI for this; this pair
-         stays functional (app.js still reads/writes it, and a token click
-         still just sets its value and fires 'change') but visually hidden
-         rather than shown twice — sr-only, not [hidden], so it's still
-         reachable by keyboard/screen reader as a fallback. -->
-    <label class="slate-league-label sr-only" for="slateLeagueSelect">League</label>
-    <select id="slateLeagueSelect" class="slate-league-select sr-only"></select>
-    <button id="slateLoad" class="icon-btn slate-load-btn" type="button">Refresh slate</button>
-  </div>
-
-  <div class="slate-controls">
-    <span class="slate-league-label">Status</span>
-    <div class="day-toggle" role="group" aria-label="Which games to show">
-      <button id="slateStateUpcoming" class="day-toggle-btn is-active" type="button" aria-pressed="true">Upcoming</button>
-      <button id="slateStateFinished" class="day-toggle-btn" type="button" aria-pressed="false">Finished</button>
-    </div>
-  </div>
-
-  <div class="slate-controls" id="slateEventRow" hidden>
-    <label class="slate-league-label" id="slateEventLabel" for="slateEventSelect">Event</label>
-    <select id="slateEventSelect" class="slate-league-select"></select>
-    <label class="slate-league-label" for="slateSortSelect">Sort</label>
-    <select id="slateSortSelect" class="slate-league-select">
-      <option value="time">Chronological</option>
-      <option value="confidence">Highest Confidence</option>
-      <option value="both">Confidence + Time</option>
-    </select>
-  </div>
-
-  <section id="slateBody" class="slate-body" aria-live="polite">
-    <p class="empty">Loading odds…</p>
-  </section>
-</section>
-
-<section id="boardView" role="tabpanel" aria-labelledby="tabBoard" hidden>
-  <p class="filter-hint tab-intro">
-    5 locks, generated automatically once a day and never re-picked after:
-    sharp range −250/+250, positive EV, and a real Kelly edge required, drawn
-    from every league and every sportsbook. Nothing here ever pads out with a
-    bet that isn't actually worth taking. Every game regardless of price
-    lives on the Full Slate tab.
-  </p>
-  <div id="status" class="status" role="status" aria-live="polite">Loading the board…</div>
-
-  <div class="sort-row" hidden id="pixelSortRow">
-    <label class="sort-label" for="pixelSort">Sort</label>
-    <select id="pixelSort" class="sort-select">
-      <option value="confidence">Confidence, high to low</option>
-      <option value="odds-asc">Odds, favorite to underdog</option>
-      <option value="odds-desc">Odds, underdog to favorite</option>
-      <option value="chrono">Soonest game first</option>
-    </select>
-  </div>
-
-  <section id="picks" class="picks" aria-live="polite"></section>
-
-  <p class="disclaimer">
-    Odds move. Always confirm the number at the book before you bet.
-    21+. For entertainment only, nothing here is financial advice.
-    <a href="https://www.1800gambler.net/" target="_blank" rel="noopener">1-800-GAMBLER</a>
-    &middot; <a href="/terms.html">Terms</a>
-    &middot; <a href="/privacy.html">Privacy</a>
-  </p>
-</section>
-
-<section id="potdView" role="tabpanel" aria-labelledby="tabPotd" hidden>
-  <div id="potdBody" class="potd"></div>
-</section>
-</main>
-
-<div id="scrim" class="scrim" hidden></div>
-
-<aside id="statsPanel" class="stats-panel" aria-label="Team statistics" hidden>
-  <div class="stats-head">
-    <button id="statsClose" class="icon-btn overlay-close-btn" aria-label="Close stats">✕</button>
-    <h2 id="statsTitle">Team Stats</h2>
-  </div>
-  <div id="statsBody" class="stats-body">
-    <!-- Stats content rendered here -->
-  </div>
-</aside>
-
-<aside id="bankrollPanel" class="history" aria-label="Bankroll settings" hidden>
-  <div class="history-head">
-    <h2>Bankroll</h2>
-    <button id="bankrollClose" class="icon-btn overlay-close-btn" aria-label="Close bankroll settings">✕</button>
-  </div>
-  <p class="history-note">
-    Set your bankroll once, and every pick's suggested stake (already sized
-    by ¼-Kelly against that pick's edge) converts to a real dollar amount or
-    a unit count. Saved to your account automatically, so it follows you to
-    any device you sign in on.
-  </p>
-
-  <div class="bankroll-field">
-    <label for="bankrollAmount">Bankroll ($)</label>
-    <input type="number" id="bankrollAmount" min="0" step="1" inputmode="decimal" placeholder="e.g. 1000">
-  </div>
-
-  <div class="bankroll-field">
-    <label for="bankrollUnit">Unit size ($)</label>
-    <input type="number" id="bankrollUnit" min="0" step="1" inputmode="decimal" placeholder="e.g. 20">
-    <p id="bankrollUnitHint" class="bankroll-hint"></p>
-  </div>
-
-  <button type="button" id="bankrollSubmit" class="generate bankroll-submit">
-    <span class="generate-label">Submit</span>
-  </button>
-  <p id="bankrollSubmitHint" class="bankroll-hint"></p>
-  <p id="bankrollSyncStatus" class="bankroll-hint"></p>
-
-  <div class="bankroll-field">
-    <span class="bankroll-label-static">Show stakes as</span>
-    <div class="bankroll-display-toggle">
-      <button type="button" id="bankrollShowDollars" class="toggle-btn">Dollars</button>
-      <button type="button" id="bankrollShowUnits" class="toggle-btn">Units</button>
-    </div>
-    <p class="bankroll-hint">Applies next time you generate or open a pick.</p>
-  </div>
-
-  <p class="history-note">
-    A unit is a fixed slice of your bankroll: betting "1.5 units" instead of
-    a raw dollar figure keeps stakes proportional as your bankroll changes,
-    and is how most bettors size and track plays. 1–2% of bankroll per unit is
-    the standard range; leave Unit size blank to use the 2% recommendation
-    automatically.
-  </p>
-</aside>
-
-<aside id="guidePanel" class="history" aria-label="App guide" hidden>
-  <div class="history-head">
-    <h2>Guide</h2>
-    <button id="guideClose" class="icon-btn overlay-close-btn" aria-label="Close guide">✕</button>
-  </div>
-  <div class="guide-body">
-    <details open>
-      <summary>American odds, in plain terms</summary>
-      <p>A minus number (like <strong>-150</strong>) is the favorite: bet $150
-      to win $100. A plus number (like <strong>+150</strong>) is the underdog:
-      bet $100 to win $150. The bigger the minus number, the more likely that
-      side is thought to win, and the less it pays out if it does.</p>
-    </details>
-
-    <details>
-      <summary>What "Confidence" means</summary>
-      <p>Every price gets graded 0–100. It isn't a guess at who wins, it's how
-      good the <em>price</em> is relative to what the betting market itself
-      thinks is fair, once you strip out the sportsbook's own fee. A higher
-      confidence means a bigger gap between what you're being offered and what
-      the market's own consensus says the bet is actually worth.</p>
-      <p>"Beats X% of the board" shows where that grade ranks against every
-      other bet available right now, useful when you're choosing between a
-      few decent-looking picks.</p>
-    </details>
-
-    <details>
-      <summary>No-vig fair value and expected value (EV)</summary>
-      <p>Sportsbooks build a small fee into every price, the "vig." Strip it
-      out across enough books and you get a consensus for what a bet is
-      actually worth, fee-free. If the best price you can find beats that fair
-      value, you have positive expected value: over many bets like this you'd
-      expect to come out ahead, even though any single bet can still lose.</p>
-    </details>
-
-    <details>
-      <summary>Why every pick shows several sportsbooks</summary>
-      <p>The same bet is often priced slightly differently at different books.
-      "Line shopping" (checking several and taking the best number) costs
-      nothing extra and is one of the most reliable ways to improve results
-      over time. Every pick shows a button per sportsbook; greyed-out ones
-      simply aren't offering that exact line.</p>
-    </details>
-
-    <details>
-      <summary>Suggested stake, and what "¼-Kelly" means</summary>
-      <p>The Kelly Criterion is a formula for how much of your bankroll to risk
-      based on how big the edge is. Betting the <em>full</em> amount it
-      suggests produces wild bankroll swings, so this app uses a quarter of
-      that number instead: smoother, and still scaled to the size of the
-      edge. A bigger suggested stake means a bigger edge, not just a bigger
-      favorite.</p>
-      <p>Set a bankroll and a unit size under the Bankroll button to see that
-      suggestion as a recommended number of units to bet instead of just a
-      percentage.</p>
-    </details>
-
-    <details>
-      <summary>Bankroll and units</summary>
-      <p>A "unit" is a fixed slice of your bankroll (usually 1-2%) used as
-      your basic betting increment instead of raw dollars. Betting "1.5 units"
-      instead of "$30" keeps stakes proportional as your bankroll grows or
-      shrinks, and it's how most bettors track their own results.</p>
-    </details>
-
-    <details>
-      <summary>Closing Line Value (CLV)</summary>
-      <p>The single best long-run signal that you're actually finding good
-      bets, separate from whether any one of them won: did you get a better
-      price than the market eventually settled on? The Tracking Dashboard's
-      server-tracked picks show an Avg CLV figure for exactly this.</p>
-    </details>
-
-    <details>
-      <summary>The three tabs</summary>
-      <p><strong>Full Slate</strong> shows every game in a league with a price
-      on it, nothing hidden by odds or confidence, with a glowing ring
-      around whichever side the algorithm leans toward on each market. Tap
-      any price to see the case for it, and the case against it.
-      <strong>Pixel's Picks</strong> is fully automatic: 5 locks, sharp
-      range −250/+250, ranked purely by edge, generated once daily at 2am ET
-      and locked in for the day. Nothing to press, and nothing changes
-      after it's posted.
-      <strong>Play of the Day</strong> is one pick, chosen once a day and the
-      same for everyone, with a full written breakdown instead of the compact
-      card.</p>
-    </details>
-
-    <!--
-      IMPORTANT: this block documents the actual pick pipeline in
-      docs/engine.js (scoreCandidate/analyze/topPicks), docs/qualitative.js,
-      worker/src/tracking.js (runTop5Batch), and worker/src/analysis.js.
-      Keep it in sync any time that pipeline changes — a stale explanation
-      here is worse than none, since a reader has no way to tell it's out of
-      date.
-    -->
-    <details>
-      <summary>How picks are made, step by step</summary>
-      <p><strong>1. Every priced game becomes a candidate.</strong> For each
-      league, every market (moneyline, spread, total) on every live
-      sportsbook quote is pulled in, nothing is excluded up front by odds or
-      "gut feel." Each book's own price is stripped of its built-in fee
-      (de-vigged) to get that book's honest read, then every book <em>except</em>
-      the one offering the best price is combined into a consensus fair
-      value. Excluding the best price keeps it from inflating its own
-      benchmark, which would make every bet look artificially profitable.</p>
-      <p><strong>2. Each candidate is graded 0–100.</strong> The best available
-      price is compared against that consensus to get its real expected value
-      (EV), the dominant factor (45% of the grade). The rest is
-      confidence that the edge is real rather than a fluke of a thin or stale
-      market: how many books agree (18%), how tightly they agree (15%), how
-      much better the best price is than the field average, "line shopping"
-      gain (14%), and how fresh the quote is relative to kickoff (8%). For
-      team sports only (never MMA, see below), a small, capped adjustment
-      from recent form, head-to-head history, and injury news can nudge the
-      grade up to about 8 points either way; it can sharpen a close call but
-      can't manufacture an edge that isn't there in the price.</p>
-      <p><strong>3. Long-shot and heavy-favorite prices are filtered out.</strong>
-      Only prices between −250 and +150 are considered at all. Anything more
-      extreme is excluded regardless of how good its grade looks, since the
-      Kelly math and win-rate assumptions this app runs on stop being
-      reliable that far from even money. A pick also has to clear a minimum
-      real edge (at least 1.5% EV) and a minimum suggested stake (a
-      rounding-error-sized edge doesn't count even if the score looks
-      decent). Scoring well on liquidity and freshness alone isn't enough;
-      the price itself has to actually be worth taking.</p>
-      <p><strong>4. Only today's games are eligible.</strong> A team-sport
-      game has to be happening today (same ET calendar date) to be
-      considered. A real edge on an NFL line for a game months out never
-      gets to compete with tonight's board. MMA gets its own version of this
-      window (today, or before 6am ET the next morning, since a late main
-      event can run past midnight) since fight cards don't follow the same
-      daily schedule as league games.</p>
-      <p><strong>5. The best-graded picks are selected.</strong> Full Slate
-      ranks live by score. Pixel's Picks is different: once
-      a day at 2am ET, the server locks in the 5 best picks that clear every
-      filter above and posts them for the whole day. Reloading the page
-      later never changes them, and nothing about the picks reacts to price
-      movement afterward. On a quiet day where fewer than 5 real edges clear
-      the bar, the rest are filled from the next-best available prices and
-      explicitly flagged "Outside standard criteria", still real, gradeable
-      bets, just not sharp enough to call a lock without saying so. Every one
-      of the 5 counts toward the Tracking Dashboard's win-rate math regardless;
-      the flag is transparency about how the pick was chosen, not an
-      exclusion.</p>
-      <p><strong>6. The write-up explains the pick that was already made. It
-      never re-decides.</strong> Once a side is chosen by the math above, the
-      AI matchup analysis is told which side that is and asked to build the
-      strongest honest case <em>for</em> it from real facts (form,
-      head-to-head, injuries), plus genuine risks specific to that pick. It
-      is never asked to independently guess who's favored, so it can't
-      contradict the pick shown on the card. MMA gets no qualitative scoring
-      at all (see step 2); Sherdog/UFC.com research is shown for context,
-      but an MMA pick, underdog or favorite, is chosen purely on the price
-      math in steps 1-3, and the "Market &amp; Price Case" section always
-      stays visible for MMA specifically so that reasoning is never hidden
-      behind the AI's fighter-facts write-up.</p>
-    </details>
-
-    <details>
-      <summary>Pixel's Picks' sharp standard</summary>
-      <p>Pixel's Picks always hands back exactly 5 locks, minimum and maximum,
-      priced between −250 and +250, graded 50 or higher whenever enough real
-      edges clear that bar. On a quiet slate where fewer than 5 do, the rest
-      fill in from the next-best prices available and are flagged "Outside
-      standard criteria", still real, gradeable bets, just not sharp enough
-      to call a lock without saying so. All 5 are tracked and count toward the
-      Tracking Dashboard's win-rate math regardless of the flag. Generated
-      once daily at 2am ET. The same 5 locks stay up all day, regardless of
-      how the market moves afterward.</p>
-    </details>
-  </div>
-</aside>
-
-<aside id="aboutPanel" class="history" aria-label="About Pixel Pick" hidden>
-  <div class="history-head">
-    <h2>About</h2>
-    <button id="aboutClose" class="icon-btn overlay-close-btn" aria-label="Close about">✕</button>
-  </div>
-  <div class="guide-body">
-    <p>Pixel Pick prices every game on the board against the market's own
-    no-vig consensus (the same math a sharp bettor would do by hand, run
-    across every book at once) and surfaces the real edges: Full Slate for
-    every market on every game, Pixel's Picks for the sharpest 5 locks,
-    and Play of the Day for one
-    highest-conviction pick, posted automatically each morning. Every
-    tracked pick is graded against its actual result, win or lose, so the
-    Tracking Dashboard reflects real performance, not a marketing number.</p>
-    <div class="report-bug-section">
-      <button type="button" id="reportBugToggle" class="action-btn" aria-expanded="false" aria-controls="reportBugForm">
-        Report a Bug / Suggestion
-      </button>
-      <div id="reportBugForm" class="report-bug-form" hidden>
-        <div class="report-bug-type" role="radiogroup" aria-label="Report type">
-          <label><input type="radio" name="reportBugType" value="bug" checked> Bug</label>
-          <label><input type="radio" name="reportBugType" value="suggestion"> Suggestion</label>
-        </div>
-        <textarea id="reportBugMessage" placeholder="What happened, or what would you like to see?" maxlength="4000" rows="5"></textarea>
-        <button type="button" id="reportBugSubmit" class="action-btn">Submit</button>
-        <p id="reportBugStatus" class="bankroll-hint"></p>
+  <div class="wrap">
+    <nav class="topnav">
+      <div class="brand">
+        <img src="assets/logo-icon-64.png" alt="Perpetual Picks">
+        <span class="brand-word">PERPETUAL PICKS</span>
       </div>
-    </div>
+      <a href="/login.html" class="nav-signin">Sign In</a>
+    </nav>
 
-    <p class="about-footer">
-      Created by Perpetual Pixel<br>
-      <span id="aboutVersion" class="about-version"></span>
-    </p>
-  </div>
-</aside>
-
-<aside id="statsDrawer" class="history stats-drawer" aria-label="More stats" hidden>
-  <div class="history-head">
-    <h2 id="statsDrawerTitle">More Stats</h2>
-    <button id="statsDrawerClose" class="icon-btn overlay-close-btn" aria-label="Close more stats">✕</button>
-  </div>
-  <div id="statsDrawerBody" class="stats-body"></div>
-</aside>
-
-<aside id="learningPanel" class="history" aria-label="Tracking dashboard" hidden>
-  <div id="learningPanelResize" class="panel-resize-handle" role="separator" aria-orientation="vertical"
-       aria-label="Resize dashboard width" title="Resize (double-click to reset)"></div>
-  <div class="history-head">
-    <h2>Tracking Dashboard</h2>
-    <div class="history-head-actions">
-      <button id="trackerRefreshBtn" class="icon-btn" aria-label="Refresh tracker data" title="Refresh tracker data">↻</button>
-      <button id="learningPanelClose" class="icon-btn overlay-close-btn" aria-label="Close tracking">✕</button>
-    </div>
-  </div>
-
-  <div class="learning-content">
-    <!-- Server-Tracked: Full Slate / Pixel's Picks / Play of the Day -->
-    <section class="learning-section">
-      <h3>Tracked Picks <span class="stats-source">Server-tracked, generated automatically at 2am ET</span></h3>
-      <p class="filter-hint">
-        Locked in by the worker itself each day at 2am ET, whether or not
-        anyone has the app open, and never changed afterward. Every pick
-        counts toward its tracker's totals below, flagged or not (a flagged
-        pick just means it was a thin-day fallback, not that it's excluded).
-        Flat 1-unit stake per pick either way, no bankroll cap. The point is
-        whether the picks themselves are profitable.
+    <section class="hero">
+      <span class="hero-eyebrow">Data-driven sports picks</span>
+      <h1 class="hero-title">Your Edge, <span class="grad">Perpetually</span></h1>
+      <p class="hero-sub">
+        Perpetual Picks scans every slate across MLB, NFL, NBA, NHL, MMA,
+        tennis and more — then surfaces the plays the numbers actually
+        favor, with a transparent, publicly tracked record so you can judge
+        the results for yourself.
       </p>
-      <div id="trackerTabs" class="perf-period-tabs" role="group" aria-label="Which tracker to show">
-        <button class="perf-period-btn" data-tracker="fullslate" type="button">Full Slate</button>
-        <button class="perf-period-btn is-active" data-tracker="top5" type="button">Pixel's Picks</button>
-        <button class="perf-period-btn" data-tracker="potd" type="button">Play of the Day</button>
+      <div class="hero-ctas">
+        <a href="/login.html?form=register" class="btn btn-primary">Join Now — It's Free</a>
+        <a href="/login.html" class="btn btn-ghost">Sign In</a>
       </div>
-      <p class="filter-hint">
-        <strong>Full Slate</strong> tracks one pick per game, every sport, every
-        day. No odds band or score floor, a complete daily record of the
-        algorithm's own lean. <strong>Pixel's Picks</strong> is exactly 5
-        picks/day, min and max. <strong>Play of the Day</strong> is the single
-        most promising, real-value pick across the whole slate, −200 to +150
-        odds.
-      </p>
-      <div id="top5Summary" class="learning-grid">
-        <div class="metric-card">
-          <div class="metric-label">Total Picks</div>
-          <div id="top5TotalPicks" class="metric-value">0</div>
-        </div>
-        <div class="metric-card">
-          <div class="metric-label">Graded</div>
-          <div id="top5GradedPicks" class="metric-value">0</div>
-        </div>
-        <div class="metric-card">
-          <div class="metric-label">Win Rate</div>
-          <div id="top5WinRate" class="metric-value">—</div>
-        </div>
-        <div class="metric-card">
-          <div class="metric-label">ROI</div>
-          <div id="top5Roi" class="metric-value">—</div>
-        </div>
-        <div class="metric-card">
-          <div class="metric-label">Net $</div>
-          <div id="top5NetProfit" class="metric-value">—</div>
-        </div>
-        <div class="metric-card">
-          <div class="metric-label">Avg CLV</div>
-          <div id="top5AvgClv" class="metric-value">—</div>
-        </div>
-      </div>
+      <p class="hero-note">No credit card required. 21+ — for entertainment and informational purposes only.</p>
 
-      <div class="tracker-controls-row">
-        <label class="tracker-sport-filter">
-          <span>Sport</span>
-          <select id="trackerSportFilter"><option value="all">All Sports</option></select>
-        </label>
-        <div id="trackerViewTabs" class="perf-period-tabs" role="group" aria-label="Which view to show">
-          <button class="perf-period-btn is-active" data-tracker-view="list" type="button">List</button>
-          <button class="perf-period-btn" data-tracker-view="calendar" type="button">Calendar</button>
-          <button class="perf-period-btn" data-tracker-view="graph" type="button">Graph</button>
+      <div class="demo-frame">
+        <p class="demo-label">Sample pick card — illustrative only</p>
+        <div class="pick-card">
+          <div class="pick-card-inner">
+            <div class="pick-card-top">
+              <span class="pick-league">⚾ MLB &middot; Play of the Day</span>
+              <span class="pick-confidence">High Confidence</span>
+            </div>
+            <div class="pick-matchup">Dodgers @ Braves &middot; 7:10 PM ET</div>
+            <div class="pick-selection">Dodgers <span>-1.5</span></div>
+            <div class="pick-stats">
+              <div>
+                <div class="pick-stat-label">Odds</div>
+                <div class="pick-stat-value">-118</div>
+              </div>
+              <div>
+                <div class="pick-stat-label">Model Edge</div>
+                <div class="pick-stat-value up">+7.2%</div>
+              </div>
+              <div>
+                <div class="pick-stat-label">Win Rate (30d)</div>
+                <div class="pick-stat-value">63%</div>
+              </div>
+            </div>
+            <p class="pick-why"><strong>Why:</strong> Bullpen fatigue on the road side plus a
+            starting-pitcher matchup the model has favored all season line up
+            with the market's number, creating separation from the closing line.</p>
+          </div>
         </div>
-      </div>
-
-      <div id="top5DailyHistory" class="daily-history"></div>
-
-      <div id="trackerCalendarView" class="tracker-calendar-view" hidden>
-        <div class="calendar-nav">
-          <button id="trackerCalPrev" type="button" class="icon-btn" aria-label="Previous month">‹</button>
-          <span id="trackerCalMonthLabel" class="calendar-month-label"></span>
-          <button id="trackerCalNext" type="button" class="icon-btn" aria-label="Next month">›</button>
-        </div>
-        <div id="trackerCalendarWeekdays" class="calendar-weekday-row"></div>
-        <div id="trackerCalendarGrid" class="calendar-grid"></div>
-        <div id="trackerCalendarDayDetail" class="tracker-calendar-day-detail"></div>
-      </div>
-
-      <div id="trackerGraphView" class="tracker-graph-view" hidden>
-        <div id="trackerGraphBucketTabs" class="perf-period-tabs" role="group" aria-label="Graph time bucket">
-          <button class="perf-period-btn is-active" data-graph-bucket="day" type="button">Day</button>
-          <button class="perf-period-btn" data-graph-bucket="week" type="button">Week</button>
-          <button class="perf-period-btn" data-graph-bucket="month" type="button">Month</button>
-        </div>
-        <div id="trackerGraphSvgWrap" class="tracker-graph-svg-wrap"></div>
       </div>
     </section>
 
-    <!-- Calibration & Audit -->
-    <section class="learning-section">
-      <h3>Calibration &amp; Audit <span class="stats-source">Reporting only, nothing here changes the algorithm automatically</span></h3>
-      <p class="filter-hint">
-        How well Pixel's Picks' own confidence scores and closing-line value
-        have tracked reality. Always scoped to Pixel's Picks specifically,
-        regardless of which tab is selected above, since Full Slate and Play
-        of the Day don't have a tunable "standard" to audit. Findings, not
-        automatic adjustments; the algorithm stays exactly as it is. Use
-        this to decide manually whether to change anything.
-      </p>
-      <div id="calibrationReport" class="learning-recs"></div>
+    <section class="features">
+      <h2 class="section-title">Built for people who track their own results</h2>
+      <p class="section-sub">Every pick, every sport, every outcome — logged in the open, not cherry-picked after the fact.</p>
+      <div class="feature-grid">
+        <div class="feature-card">
+          <div class="feature-icon">🎯</div>
+          <div class="feature-title">Play of the Day</div>
+          <div class="feature-desc">One standout pick surfaced daily from the model's highest-conviction reads across the entire slate.</div>
+        </div>
+        <div class="feature-card">
+          <div class="feature-icon">📋</div>
+          <div class="feature-title">Full Slate Coverage</div>
+          <div class="feature-desc">Every game, not just the marquee matchups — see the model's read on the full board, league by league.</div>
+        </div>
+        <div class="feature-card">
+          <div class="feature-icon">📈</div>
+          <div class="feature-title">Transparent Tracking</div>
+          <div class="feature-desc">A public, view-only history of every pick and how it actually graded — wins and losses both, no editing after the fact.</div>
+        </div>
+        <div class="feature-card">
+          <div class="feature-icon">🌐</div>
+          <div class="feature-title">Multi-Sport Coverage</div>
+          <div class="feature-desc">MLB, NFL, NBA, WNBA, NHL, MMA, MLS, and ATP/WTA tennis, all in one place.</div>
+        </div>
+      </div>
+
+      <div class="sport-strip">
+        <span class="sport-chip">⚾ MLB</span>
+        <span class="sport-chip">🏈 NFL</span>
+        <span class="sport-chip">🏀 NBA / WNBA</span>
+        <span class="sport-chip">🏒 NHL</span>
+        <span class="sport-chip">🥊 MMA</span>
+        <span class="sport-chip">⚽ MLS</span>
+        <span class="sport-chip">🎾 ATP / WTA</span>
+        <span class="sport-chip">🎓 NCAA</span>
+      </div>
     </section>
 
-    <!-- Daily Learning -->
-    <section class="learning-section">
-      <h3>Daily Learning <span class="stats-source">Automatic, reviews every morning before the day's picks lock in</span></h3>
-      <p class="filter-hint">
-        The self-correction loop. Every morning at the 2am ET batch, before
-        any picks are chosen, the app reviews its trailing 30 days of graded
-        results — both actual wins vs. what its own probabilities predicted,
-        and closing-line value — for every sport + bet-type segment and odds
-        band. A segment that's been misfiring gets a bounded score penalty
-        (down to x0.85) so it needs a visibly better number to make the
-        board; one that's been sharp gets a small nudge (capped at x1.05).
-        Small samples barely move the needle by design, adjustments apply
-        only to the <em>next</em> day's selection, and the Full Slate record
-        is never adjusted — it keeps measuring the raw engine so the evidence
-        this learns from stays unbiased.
-      </p>
-      <div id="dailyLearnWeights" class="learning-recs"></div>
-      <div id="dailyLearnLog" class="learning-recs"></div>
+    <section class="closing">
+      <h2>Ready to see today's board?</h2>
+      <p>Create a free account and get today's full slate in under a minute.</p>
+      <a href="/login.html?form=register" class="btn btn-primary">Join Now — It's Free</a>
     </section>
 
-    <!-- MLB Pitcher Props -->
-    <section class="learning-section">
-      <h3>MLB Pitcher Props <span class="stats-source">Automatic, scanned 2–3 hours before each game's first pitch</span></h3>
-      <p class="filter-hint">
-        Outs Recorded and Strikeouts for each game's two starting pitchers.
-        Rather than one fixed time for every game, each game is scanned once
-        it's a few hours from its own first pitch — early enough to act on,
-        late enough that lineups and prop boards have actually settled. This
-        de-vigs the market the same way every other board on this app does,
-        and tracks the one side (if any) that clears a genuine edge — not
-        every line priced, only real mispricings. Settled against each
-        pitcher's own final boxscore line; a pitcher who's scratched or a
-        game that's postponed voids rather than grades. Currently one price
-        check per game per day, not a running line-movement tracker yet.
+    <footer>
+      <p class="footer-links">
+        <a href="/terms.html">Terms of Service</a> &middot;
+        <a href="/privacy.html">Privacy Policy</a> &middot;
+        <a href="/login.html">Sign In</a>
       </p>
-      <div id="mlbPropsSummary" class="learning-recs"></div>
-      <div id="mlbPropsList" class="learning-recs"></div>
-    </section>
-
-    <!-- NFL QB Props -->
-    <section class="learning-section">
-      <h3>NFL QB Props <span class="stats-source">Automatic, scanned 2–3 hours before each game's kickoff</span></h3>
-      <p class="filter-hint">
-        Pass Completions and Pass Attempts for each game's starting
-        quarterback(s), scanned the same way MLB Pitcher Props are — a few
-        hours before kickoff rather than one fixed time. De-vigs the market
-        the same way every other board on this app does, and tracks the one
-        side (if any) that clears a genuine edge. Settled against the
-        quarterback's own final boxscore passing line; a QB who doesn't
-        play voids rather than grades.
+      <p class="footer-disclaimer">
+        Perpetual Picks is for entertainment and informational purposes only. It does not place,
+        facilitate, or broker wagers, and nothing on this site is gambling or financial advice.
+        Must be 21+. If you or someone you know has a gambling problem, call 1-800-GAMBLER or
+        visit <a href="https://www.ncpgambling.org/" target="_blank" rel="noopener">ncpgambling.org</a>.
       </p>
-      <div id="nflPropsSummary" class="learning-recs"></div>
-      <div id="nflPropsList" class="learning-recs"></div>
-    </section>
-
-    <!-- WNBA Player Props -->
-    <section class="learning-section">
-      <h3>WNBA Player Props <span class="stats-source">Automatic, scanned 2–3 hours before each game's tip-off</span></h3>
-      <p class="filter-hint">
-        Points + Rebounds + Assists (PRA) and Rebounds + Assists, scanned the
-        same way MLB Pitcher Props and NFL QB Props are. De-vigs the market
-        the same way every other board on this app does, and tracks the one
-        side (if any) that clears a genuine edge. Settled against the
-        player's own final boxscore line; a player who doesn't play voids
-        rather than grades. No minutes-played eligibility filter — no
-        reliable pregame minutes-projection source exists to gate on, so
-        this tracks the raw market instead of a fabricated proxy for one.
-      </p>
-      <div id="wnbaPropsSummary" class="learning-recs"></div>
-      <div id="wnbaPropsList" class="learning-recs"></div>
-    </section>
-
-    <!-- NHL Player Props -->
-    <section class="learning-section">
-      <h3>NHL Player Props <span class="stats-source">Automatic, scanned 2–3 hours before each game's puck drop</span></h3>
-      <p class="filter-hint">
-        Shots on Goal, scanned the same way the other player-prop boards on
-        this page are. De-vigs the market the same way every other board on
-        this app does, and tracks the one side (if any) that clears a
-        genuine edge. Settled against the skater's own final boxscore line;
-        a skater who doesn't play voids rather than grades. No 1st-line/1st-
-        power-play-unit eligibility filter — that requires line-combination
-        data (who's playing which forward line or power-play unit tonight)
-        that isn't available from any free source, so this tracks the raw
-        market instead of a filter it can't actually apply.
-      </p>
-      <div id="nhlPropsSummary" class="learning-recs"></div>
-      <div id="nhlPropsList" class="learning-recs"></div>
-    </section>
-
-    <!-- Algorithm Health -->
-    <section class="learning-section">
-      <h3>Algorithm Health <span class="stats-source">Automatic, reviews every Monday, 7am ET</span></h3>
-      <p class="filter-hint">
-        Also always scoped to Pixel's Picks' own selection criteria,
-        regardless of the tab selected above. Unlike Calibration &amp; Audit
-        above, this section acts on its own: a sport + bet-type segment whose
-        actual results fall significantly short of what its own no-vig fair
-        probability predicted gets auto-paused (excluded from Pixel's Picks
-        and Play of the Day) until it recovers on its own or resumed by hand.
-        If overall performance is weak, one threshold (EV floor, Kelly floor,
-        or score floor) can tighten by one step, never below the shipped
-        default. Anything bigger than a threshold nudge stays a written
-        proposal, never applied automatically. This panel is read-only —
-        every action here is a report of what the algorithm already did or
-        proposed, not a control for changing it.
-      </p>
-      <div id="algoHealthConfig" class="learning-table"></div>
-      <div id="algoHealthPaused" class="learning-recs"></div>
-      <div id="algoHealthLog" class="learning-recs"></div>
-    </section>
-
+    </footer>
   </div>
-</aside>
-
-<script type="module" src="app.js?v=1.78"></script>
 </body>
 </html>

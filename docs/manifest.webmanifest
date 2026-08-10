@@ -2,7 +2,7 @@
   "name": "Perpetual Picks",
   "short_name": "Perpetual Picks",
   "description": "Continuous edge across every slate.",
-  "start_url": "./",
+  "start_url": "app.html",
   "scope": "./",
   "display": "standalone",
   "orientation": "portrait",

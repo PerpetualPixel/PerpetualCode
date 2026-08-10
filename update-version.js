@@ -62,7 +62,7 @@ export const BUILD_INFO = {
 fs.writeFileSync(versionPath, versionContent);
 console.log(`✅ Updated version.js: v${currentVersion} (${commit}) @ ${builtAt}`);
 
-// Cache-bust the two entry points index.html loads directly (styles.css,
+// Cache-bust the two entry points app.html loads directly (styles.css,
 // app.js) by stamping the same version onto their URL as a query string —
 // GitHub Pages serves both with no cache-busting otherwise, so a browser
 // that already cached an old copy can keep serving it after a deploy until
@@ -74,19 +74,23 @@ console.log(`✅ Updated version.js: v${currentVersion} (${commit}) @ ${builtAt}
 // alongside an app.js change in the same commit, so busting app.js's own
 // cache key covers the real-world case without query-stringing every import
 // specifier individually.
-const indexPath = path.join(__dirname, 'docs', 'index.html');
+//
+// index.html is the public landing page (self-contained, no styles.css/
+// app.js of its own) — app.html is the actual gated app shell those two
+// entry points belong to, so that's what gets cache-busted here.
+const appShellPath = path.join(__dirname, 'docs', 'app.html');
 try {
-  let indexHtml = fs.readFileSync(indexPath, 'utf8');
-  indexHtml = indexHtml.replace(
+  let appHtml = fs.readFileSync(appShellPath, 'utf8');
+  appHtml = appHtml.replace(
     /(href="styles\.css)(\?v=[^"]*)?(")/,
     `$1?v=${currentVersion}$3`,
   );
-  indexHtml = indexHtml.replace(
+  appHtml = appHtml.replace(
     /(src="app\.js)(\?v=[^"]*)?(")/,
     `$1?v=${currentVersion}$3`,
   );
-  fs.writeFileSync(indexPath, indexHtml);
-  console.log(`✅ Cache-busted styles.css and app.js in index.html to ?v=${currentVersion}`);
+  fs.writeFileSync(appShellPath, appHtml);
+  console.log(`✅ Cache-busted styles.css and app.js in app.html to ?v=${currentVersion}`);
 } catch (e) {
-  console.warn('Could not cache-bust index.html:', e.message);
+  console.warn('Could not cache-bust app.html:', e.message);
 }

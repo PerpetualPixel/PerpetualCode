@@ -283,7 +283,7 @@
 
   <div class="container">
     <div class="topbar">
-      <a href="/index.html" class="back-link">&larr; Back to app</a>
+      <a href="/app.html" class="back-link">&larr; Back to app</a>
     </div>
     <div class="page-title"><img src="/assets/logo-icon-32.png" alt="" width="24" height="24" style="vertical-align: -3px; margin-right: 8px;">Account Settings</div>
 
@@ -436,7 +436,7 @@
         // Token is dead (expired, or invalidated by "Sign Out Everywhere" /
         // a password change elsewhere) — clear it before redirecting, or
         // login.html's own "already logged in" check sees the stale token
-        // and immediately bounces straight back to index.html.
+        // and immediately bounces straight back to app.html.
         localStorage.removeItem(window.AUTH_TOKEN_KEY);
         localStorage.removeItem(window.AUTH_USER_KEY);
         window.location.href = '/login.html';

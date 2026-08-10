@@ -595,7 +595,7 @@
 
         // Redirect to login after 2 seconds
         setTimeout(() => {
-          window.location.href = '/index.html';
+          window.location.href = '/app.html';
         }, 2000);
       } catch (err) {
         showMessage('register-message', 'Connection failed: ' + err.message, true);
@@ -637,14 +637,14 @@
         // Store token and redirect
         localStorage.setItem(AUTH_TOKEN_KEY, data.token);
         localStorage.setItem(AUTH_USER_KEY, JSON.stringify({ id: data.userId, email: data.email, username: data.username }));
-        // One-time flag for index.html's boot sequence — sessionStorage
+        // One-time flag for app.html's boot sequence — sessionStorage
         // (not localStorage) so it only ever fires for this fresh login,
         // never on a later page refresh/revisit within the same session.
         sessionStorage.setItem('pp_show_welcome', data.username);
         showMessage('login-message', 'Logged in! Redirecting...', false);
 
         setTimeout(() => {
-          window.location.href = '/index.html';
+          window.location.href = '/app.html';
         }, 1000);
       } catch (err) {
         showMessage('login-message', 'Connection failed: ' + err.message, true);
@@ -816,7 +816,15 @@
       // link opened on a device that's still logged in from before).
       const storedToken = localStorage.getItem(AUTH_TOKEN_KEY);
       if (storedToken && !token && !resetToken) {
-        window.location.href = '/index.html';
+        window.location.href = '/app.html';
+        return;
+      }
+
+      // Landing page's "Join Now" button links here with ?form=register so
+      // visitors land straight on the signup form instead of having to
+      // find the "Create one" link themselves.
+      if (params.get('form') === 'register') {
+        toggleForms('register');
       }
     });
 
