@@ -552,7 +552,7 @@ export function teamInsights(context, subject, { marketKey = 'h2h' } = {}) {
  * Day's write-up presents both under one combined heading; the tags stay
  * separate because they answer different questions.
  */
-export function weatherInsights(weather) {
+export function weatherInsights(weather, sportKey = null) {
   if (!weather) return [];
 
   const bullets = [];
@@ -564,7 +564,10 @@ export function weatherInsights(weather) {
   }
 
   if (parts.length) {
-    bullets.push({ tier: 'environmental', text: `Forecast at kickoff: ${parts.join(', ')}.` });
+    // MLB starts at first pitch, not kickoff — every other sport this
+    // function fires for (NFL) does kick off.
+    const startMoment = sportKey === 'baseball_mlb' ? 'first pitch' : 'kickoff';
+    bullets.push({ tier: 'environmental', text: `Forecast at ${startMoment}: ${parts.join(', ')}.` });
   }
 
   if (weather.precipChance != null && weather.precipChance >= 30) {
@@ -882,7 +885,7 @@ export function buildInsights(leg, { tennisData = null, context = null, mmaConte
   const bullets = subject ? teamInsights(context, subject, { marketKey: leg.marketKey }) : [];
   // Weather applies to the game, not to whichever side the bet names — worth
   // showing on a total exactly as much as a moneyline or spread.
-  return [...bullets, ...weatherInsights(weather)];
+  return [...bullets, ...weatherInsights(weather, leg.sportKey)];
 }
 
 /** Flattens tagged bullets to plain text, in original order — what the
