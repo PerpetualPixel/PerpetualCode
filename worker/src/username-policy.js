@@ -38,7 +38,8 @@ const BLOCKED_TERMS = [
   // Ableist slurs
   'retard', 'retarded',
   // Severe general profanity / sexual terms inappropriate for a public handle
-  'cunt', 'whore', 'slut',
+  'cunt', 'whore', 'slut', 'fuck', 'dick', 'cock', 'penis', 'pussy',
+  'vagina', 'asshole', 'bastard', 'bitch', 'motherfucker',
   // Nazi/hate-group references
   'hitler', 'nazi', 'kkk',
   // Illegal-activity-adjacent terms with no legitimate reason to appear in a username
