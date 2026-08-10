@@ -23,6 +23,7 @@ import {
   markTop5PickIdsNotified,
 } from './notifications.js';
 import { sendWeeklyTrackingReport } from './weekly-report.js';
+import { sendDailyOnboardingReport } from './onboarding-report.js';
 import { handleReportBug } from './bug-reports.js';
 import { QuotaManager } from './quota.js';
 import { fetchContext, hasContext } from './context.js';
@@ -335,6 +336,7 @@ const MORNING_PREWARM_HOUR = 4; // 4am ET
 const MLB_LEAGUE_STATS_HOUR = 3; // 3am ET
 const ALGO_HEALTH_HOUR = 7; // Monday 7am ET
 const ALGO_HEALTH_WEEKDAY = 1; // Monday (0=Sunday per Intl's 'short' weekday index below)
+const ADMIN_REPORT_HOUR = 20; // 8pm ET daily — owner-only onboarding digest
 // How close to its own commence time an already-locked, not-yet-emailed
 // Pixel's Picks slot can get before waiting any longer for the rest of the
 // board risks missing the 1-hour notice floor — see the scheduled()
@@ -640,6 +642,18 @@ export default {
       ctx.waitUntil(
         sendWeeklyTrackingReport(env, now).catch((e) =>
           console.error('Weekly tracking report failed:', e),
+        ),
+      );
+    }
+
+    // 8pm ET daily: the owner-only new-signups digest (worker/src/
+    // onboarding-report.js) — who onboarded today, plus running totals for
+    // the week and month. Independent ctx.waitUntil, same as the weekly
+    // report above, so a send failure here can never affect anything else.
+    if (etHour(now) === ADMIN_REPORT_HOUR && isTopOfHour(now)) {
+      ctx.waitUntil(
+        sendDailyOnboardingReport(env, now).catch((e) =>
+          console.error('Daily onboarding report failed:', e),
         ),
       );
     }
