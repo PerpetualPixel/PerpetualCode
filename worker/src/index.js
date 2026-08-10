@@ -16,7 +16,12 @@ import {
   handleDeleteAccount,
   handleLogoutAll,
 } from './account-handlers.js';
-import { sendPotdNotifications, sendPicksNotifications } from './notifications.js';
+import {
+  sendPotdNotifications,
+  sendPicksNotifications,
+  getNotifiedTop5PickIds,
+  markTop5PickIdsNotified,
+} from './notifications.js';
 import { sendWeeklyTrackingReport } from './weekly-report.js';
 import { handleReportBug } from './bug-reports.js';
 import { QuotaManager } from './quota.js';
@@ -330,6 +335,12 @@ const MORNING_PREWARM_HOUR = 4; // 4am ET
 const MLB_LEAGUE_STATS_HOUR = 3; // 3am ET
 const ALGO_HEALTH_HOUR = 7; // Monday 7am ET
 const ALGO_HEALTH_WEEKDAY = 1; // Monday (0=Sunday per Intl's 'short' weekday index below)
+// How close to its own commence time an already-locked, not-yet-emailed
+// Pixel's Picks slot can get before waiting any longer for the rest of the
+// board risks missing the 1-hour notice floor — see the scheduled()
+// notification block's own comment and tracking.js's PICK_LEAD_HOURS for
+// why this specific value pairs with those lead times.
+const NOTIFY_URGENCY_HOURS = 2;
 
 /** ET wall-clock hour for a given instant — same self-correcting-across-DST
  * approach as potd.js's own etParts, kept local since this is the only other
@@ -481,10 +492,11 @@ export default {
           }).catch(() => null);
 
           // Top5's own "did it just become complete this tick" is the
-          // clean first-time signal for its notification — compare the
-          // count before and after this tick's batch call, since
-          // runTop5Batch's "skipped" isn't that signal (it validly no-ops
-          // on every tick once full, not just the first).
+          // clean first-time signal for the ideal, single "board's
+          // complete" email — compare the count before and after this
+          // tick's batch call, since runTop5Batch's "skipped" isn't that
+          // signal (it validly no-ops on every tick once full, not just
+          // the first).
           const top5Before = await getTop5(env, { now });
           const wasComplete = top5Before.length >= TOP5_COUNT;
 
@@ -495,16 +507,47 @@ export default {
           ]);
 
           // Notify whoever opted in (see worker/src/account-handlers.js's
-          // handleUpdateNotifications) the moment each board actually
-          // becomes final — not on every tick that merely topped it up or
-          // left it unchanged. Best-effort: notifications.js swallows
-          // individual send failures itself, and this whole step is
-          // wrapped so a D1 hiccup here can never cost the day's picks.
+          // handleUpdateNotifications). Best-effort: notifications.js
+          // swallows individual send failures itself, and this whole step
+          // is wrapped so a D1 hiccup here can never cost the day's picks.
+          //
+          // Ideally this is exactly two emails a day total: one Play of
+          // the Day, one Pixel's Picks once all 5 lock together. But since
+          // each of the 5 slots now locks on its own per-game timeline
+          // (tracking.js's PICK_LEAD_HOURS) rather than all at once, an
+          // early slot's game can start well before a later slot's window
+          // even opens — waiting for the full board in that case would
+          // mean whoever opted in never hears about a pick before it's too
+          // late to act on. NOTIFY_URGENCY_HOURS is the release valve: any
+          // already-locked, not-yet-emailed pick within that window of its
+          // own commence time goes out immediately in its own smaller
+          // email instead of waiting on the rest of the board — sized
+          // (2h) together with PICK_LEAD_HOURS so that in the worst case
+          // (a lock landing as late as the hourly check cadence allows)
+          // there's still at least an hour of notice, and in the common
+          // case (most locks land promptly after their window opens)
+          // there's enough runway left to bundle into the one ideal email
+          // instead.
           const top5Picks = await getTop5(env, { now });
+          const isNowComplete = top5Picks.length >= TOP5_COUNT;
           try {
             const sends = [];
             if (potdResult?.skipped === false) sends.push(sendPotdNotifications(env, await getPotd(env, now)));
-            if (!wasComplete && top5Picks.length >= TOP5_COUNT) sends.push(sendPicksNotifications(env, top5Picks));
+
+            if (!wasComplete && isNowComplete) {
+              sends.push(sendPicksNotifications(env, top5Picks, { isFinal: true }));
+              ctx.waitUntil(markTop5PickIdsNotified(env, now, top5Picks.map((p) => p.pickId)));
+            } else if (!isNowComplete) {
+              const notified = await getNotifiedTop5PickIds(env, now);
+              const urgent = top5Picks.filter(
+                (p) => !notified.has(p.pickId) && p.commenceMs - now <= NOTIFY_URGENCY_HOURS * 3600000,
+              );
+              if (urgent.length) {
+                sends.push(sendPicksNotifications(env, urgent, { isFinal: false }));
+                ctx.waitUntil(markTop5PickIdsNotified(env, now, urgent.map((p) => p.pickId)));
+              }
+            }
+
             await Promise.all(sends);
           } catch (e) {
             console.error('Notification send failed:', e);

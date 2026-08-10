@@ -75,7 +75,7 @@ export async function sendWeeklyTrackingReport(env, now = Date.now()) {
           <tbody>${rowsHtml}</tbody>
         </table>
         <div style="text-align: center; margin: 28px 0 0;">
-          <a href="https://perpetualpicks.com/index.html" style="display: inline-block; background: linear-gradient(135deg, #d946ef 0%, #9d4edd 100%); color: #05050A; padding: 12px 28px; border-radius: 8px; text-decoration: none; font-weight: bold;">Open Tracking Dashboard</a>
+          <a href="https://perpetualpicks.com/app.html" style="display: inline-block; background: linear-gradient(135deg, #d946ef 0%, #9d4edd 100%); color: #05050A; padding: 12px 28px; border-radius: 8px; text-decoration: none; font-weight: bold;">Open Tracking Dashboard</a>
         </div>
         <p style="margin-top: 24px; color: #7070aa; font-size: 11px; text-align: center;">
           Turn this off any time at <a href="https://perpetualpicks.com/account.html" style="color: #7070aa;">perpetualpicks.com/account.html</a>
@@ -86,7 +86,7 @@ export async function sendWeeklyTrackingReport(env, now = Date.now()) {
   const buildText = (username) =>
     `Hi ${username}, your Weekly Tracking Report — last ${REPORT_WINDOW_DAYS} days\n\n` +
     rowsText +
-    `\n\nOpen: https://perpetualpicks.com/index.html`;
+    `\n\nOpen: https://perpetualpicks.com/app.html`;
 
   const queue = [...users];
   const worker = async () => {

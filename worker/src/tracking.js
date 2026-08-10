@@ -137,31 +137,37 @@ function isEligibleTennisMatch(commenceMs, now) {
  * the whole slate. Team sports wait for roughly the point where the pieces
  * that actually move a sharp line (starting lineup/pitcher, late injury
  * news, weather) are meaningfully known; individual sports (tennis, MMA)
- * have no comparable "lineup" concept, so their price is about as final an
- * hour out as it is a day out — no lock delay needed there. Every value
- * here is a judgment call, not a measured optimum, and deliberately errs
- * toward "enough runway left to actually fetch research and post the pick"
- * over squeezing the absolute latest possible information — a lock 30
- * minutes before an NFL game's actual inactive-list release is useless if
- * there's no time left to build and publish the write-up.
+ * have no comparable "lineup" concept, so their price would be about as
+ * final an hour out as it is a day out on data grounds alone — but every
+ * value here has a SECOND floor on top of that: index.js's notification
+ * logic promises opted-in users at least an hour's email notice before a
+ * locked pick's game starts, and checks run hourly, so a lock can land
+ * anywhere up to ~1h after its own window opens before the next tick
+ * catches it. Every lead time here is set so that even in that worst case
+ * (lead_hours − 1h of tick slack), there's still comfortable daylight
+ * above the 2h "notify now, waiting further risks missing the 1h floor"
+ * threshold (see NOTIFY_URGENCY_HOURS in index.js) — which is also what
+ * makes bundling every locked pick into one "board's complete" email the
+ * common case rather than the exception. Every value here is a judgment
+ * call, not a measured optimum.
  */
 const PICK_LEAD_HOURS = {
-  baseball_mlb: 2.5,
-  americanfootball_nfl: 2,
-  americanfootball_ncaaf: 2,
-  basketball_wnba: 2,
-  icehockey_nhl: 2,
-  soccer_usa_mls: 1, // official lineups post ~1h before kickoff — the standard soccer convention
-  mma_mixed_martial_arts: 0, // no per-fight lineup factor; weigh-ins are the day before, not hours before
+  baseball_mlb: 3,
+  americanfootball_nfl: 3,
+  americanfootball_ncaaf: 3,
+  basketball_wnba: 3,
+  icehockey_nhl: 3,
+  soccer_usa_mls: 2.5,
+  mma_mixed_martial_arts: 2.5,
 };
 // Any sport not listed above — a conservative default rather than no wait at all.
-const DEFAULT_LEAD_HOURS = 1;
+const DEFAULT_LEAD_HOURS = 2.5;
 
 function leadHoursFor(sportKey) {
-  // No lineup-style factor for tennis, and recent-form/injury news doesn't
-  // meaningfully firm up hour-by-hour the way a starting lineup does — see
-  // PICK_LEAD_HOURS's own comment.
-  if (isTennis(sportKey)) return 0;
+  // Tennis has no lineup-style factor to wait on for data-quality reasons,
+  // but still needs the same notification-safety floor as everything else
+  // — see PICK_LEAD_HOURS's own comment.
+  if (isTennis(sportKey)) return 2.5;
   return PICK_LEAD_HOURS[sportKey] ?? DEFAULT_LEAD_HOURS;
 }
 
