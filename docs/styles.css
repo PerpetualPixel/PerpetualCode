@@ -342,6 +342,11 @@ body {
   align-items: center;
   justify-content: center;
   font-size: 1.15rem;
+  /* Without this the ✕ inherits the page's line-height: 1.6, which pads
+     the line box unevenly around the glyph — flexbox centers that padded
+     box, not the glyph's own ink, so the X reads as off-center inside the
+     circle even though the button itself is centered correctly. */
+  line-height: 1;
   border-radius: 50%;
   background: var(--accent-dim);
   border: 1px solid var(--accent);
@@ -1752,6 +1757,22 @@ input[type="range"]:focus-visible {
 
 .stats-drawer { width: min(92vw, 420px); }
 
+/* Full screen on desktop by default — matching .stats-drawer.is-fullscreen
+   (still kept for its two-class specificity, so an explicit fullscreen
+   open always wins regardless of viewport). A fixed 420px sidebar reads
+   fine on a phone (92vw is already close to the full screen there) but
+   leaves the matchup analysis cramped into a narrow strip on a desktop-
+   width screen with plenty of room to spare. Below this breakpoint the
+   min(92vw, 420px) rule above still applies untouched — mobile keeps its
+   current sizing. */
+@media (min-width: 768px) {
+  .stats-drawer {
+    width: 100%;
+    max-width: none;
+    border-left: none;
+  }
+}
+
 .stats-body {
   padding: 4px 16px 24px;
   overflow-y: auto;
@@ -1797,6 +1818,54 @@ input[type="range"]:focus-visible {
   border-top: 1px solid var(--line);
 }
 .stats-section:first-of-type { margin-top: 0; padding-top: 0; border-top: none; }
+
+/* Fills the gap under the price table while the slower research (AI
+   writeup, form bullets, weather) is still loading — see openStatsDrawer's
+   comment for why that section can lag a few seconds behind everything
+   above it. */
+.stats-loading {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 16px;
+  padding: 48px 20px;
+  margin-top: 20px;
+  border-top: 1px solid var(--line);
+}
+.stats-loading-spinner {
+  width: 36px;
+  height: 36px;
+  animation: stats-loading-spin 1.1s linear infinite;
+  filter: drop-shadow(0 0 10px rgba(217, 70, 239, 0.45));
+}
+@keyframes stats-loading-spin {
+  to { transform: rotate(360deg); }
+}
+.stats-loading-text {
+  margin: 0;
+  font-family: var(--mono);
+  font-size: 0.8rem;
+  font-weight: 600;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: var(--muted);
+}
+/* Dots light up left to right, then reset — steps() keeps each one a crisp
+   on/off instead of a fade, closer to the "video game loading" look asked
+   for than a smooth opacity tween would read. */
+.stats-loading-dots span {
+  opacity: 0;
+  animation: stats-loading-dot 1.2s steps(1) infinite;
+}
+.stats-loading-dots span:nth-child(1) { animation-delay: 0s; }
+.stats-loading-dots span:nth-child(2) { animation-delay: 0.25s; }
+.stats-loading-dots span:nth-child(3) { animation-delay: 0.5s; }
+@keyframes stats-loading-dot {
+  0% { opacity: 0; }
+  20%, 75% { opacity: 1; }
+  90% { opacity: 0; }
+}
 
 .stats-section h3 {
   margin: 0 0 10px;

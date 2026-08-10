@@ -2303,6 +2303,18 @@ async function openStatsDrawer(leg, opposite = null, { fullscreen = false, oddsO
   el.statsDrawerBody.innerHTML = metaHtml + mainPlayHtml + renderPriceTable(leg);
   if (oddsOnly) return;
 
+  // The research below (AI writeup, form bullets, weather) is the slow
+  // part — a few seconds, not instant — and used to just leave a silent gap
+  // under the price table until it resolved. This placeholder fills that gap
+  // so "still loading" reads as loading rather than as the section being
+  // missing; the final innerHTML replace below (once everything resolves)
+  // overwrites it same as it overwrites this whole body already.
+  el.statsDrawerBody.insertAdjacentHTML('beforeend', `
+    <div class="stats-loading">
+      <img src="assets/logo-icon-64.png" alt="" class="stats-loading-spinner">
+      <p class="stats-loading-text">Loading<span class="stats-loading-dots"><span>.</span><span>.</span><span>.</span></span></p>
+    </div>`);
+
   const stake = singleStakeLine(leg);
 
   let bullets = [];
