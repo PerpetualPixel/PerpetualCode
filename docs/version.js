@@ -9,7 +9,7 @@
  * commit. Stays below 1.0 until the app is actually considered a 1.0.
  */
 export const BUILD_INFO = {
-  version: '1.77',
-  commit: '13d64eb',
-  builtAt: 'Aug 9, 2026, 8:40:13 PM EDT',
+  version: '1.78',
+  commit: '5859018',
+  builtAt: 'Aug 9, 2026, 8:45:11 PM EDT',
 };
