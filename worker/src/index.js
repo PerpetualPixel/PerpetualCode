@@ -1176,6 +1176,21 @@ export default {
       }
     }
 
+    // Manual send of the daily onboarding digest (worker/src/
+    // onboarding-report.js) — lets the owner trigger/test it on demand
+    // instead of waiting for the 8pm ET cron gate. Same owner-only
+    // X-Owner-Key gate as /settings and the algo-health admin routes above.
+    if (pathname === '/admin/onboarding-report' && request.method === 'POST') {
+      const auth = authorizeSettings(request, env);
+      if (!auth.ok) return json({ error: auth.error }, { status: auth.status, headers: cors });
+      try {
+        await sendDailyOnboardingReport(env, Date.now());
+        return json({ sent: true }, { headers: cors });
+      } catch (error) {
+        return json({ error: String(error).slice(0, 120) }, { status: 500, headers: cors });
+      }
+    }
+
     // Tennis alternate-spread ladder for one match already on the board.
     // Costs a real odds credit (unlike /context and /mma-context) — app.js
     // calls this for only a small, score-ranked slice of the tennis matches
