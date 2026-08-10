@@ -2661,6 +2661,15 @@ input[type="range"]:focus-visible {
   transition: all 200ms ease;
 }
 
+/* Tighter than the default .lean-badge margin (sized for the roomier
+   Pixel's Picks/Play of the Day cards) — Full Slate packs many cards per
+   screen, so this needs to sit close to the time row above it. */
+.slate-game .lean-badge {
+  margin: 8px 14px 0;
+  font-size: 0.62rem;
+  padding: 3px 8px;
+}
+
 .slate-event-label {
   flex: 1 1 auto;
   font-family: var(--sans);

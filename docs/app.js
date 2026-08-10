@@ -3201,12 +3201,23 @@ function slateGameHtml(game) {
       </div>`
     : '';
 
+  // Whether the server's own Full Slate tracker (worker/src/
+  // full-slate-tracking.js) has locked this game's pick in yet — see
+  // tracking.js's isPickWindowOpen: a game locks once IT is close enough
+  // to its own start, not all at once. Until then, the recommended-side
+  // glow above is just this session's live read of the current odds — a
+  // lean, not the final record. Skipped once finished: the Won/Lost badge
+  // already tells that story, and lean-vs-final stopped mattering the
+  // moment the game ended.
+  const leanBadgeHtml = hasAnyPrice && !isFinished ? renderLeanBadge(trackedPick != null) : '';
+
   return `
     <article class="${cardClass}" ${isMlb ? `data-game-index="${idx}"` : ''}>
       <div class="slate-game-time">
         ${timeHtml}
         ${infoButtonHtml}
       </div>
+      ${leanBadgeHtml}
       ${hideMarkets ? '' : `
       <div class="slate-header-row">
         <span></span><span>Spread</span><span>O/U</span><span>ML</span>
