@@ -24,12 +24,11 @@ import { analyze, clearsMaxJuice } from '../../docs/engine.js';
 import { gradePick } from '../../docs/learning.js';
 import { isMma, isTennis } from '../../docs/insights.js';
 import { fetchSport, fetchScores } from './odds.js';
-import { pickRecordFrom, fetchFullSlateEvents } from './tracking.js';
+import { pickRecordFrom, fetchFullSlateEvents, isPickWindowOpen } from './tracking.js';
 import { fetchMmaResults, gradeMmaPickWithFallback } from './ufc-events.js';
 import { isSettleableTennisMarket, hasSecondarySettlementSource } from '../../docs/tennis-tiers.js';
 import { settleTennisGameMarket } from './tennis-results.js';
 
-export const FULL_SLATE_BATCH_HOUR = 2; // 2am ET — same run as Pixel's Picks/Play of the Day
 // Matches tracking.js's own FLAT_UNIT_STAKE — duplicated for the same reason
 // that file already duplicates it from docs/learning.js: keeps this file's
 // own "safe to run in the Worker" boundary obvious without importing a
@@ -92,13 +91,25 @@ function isEligibleTennisMatch(commenceMs, now) {
 }
 
 /**
- * The 2am ET batch: pull the full slate (normally the exact same fetch
- * Pixel's Picks and Play of the Day share at the same hour — see
- * worker/src/index.js's scheduled()), restrict to today's eligible games
- * (same day-boundary rule tracking.js's runTop5Batch uses), pick the single
- * best-scoring candidate per game, and store all of them — no odds band, no
- * score floor, no algorithm-health pause filter. Runs at most once per ET
- * calendar day (checked via the day's own manifest key).
+ * Runs hourly (see index.js's scheduled()), all day — not a single 2am
+ * batch anymore. Pulls the full slate (normally the exact same fetch
+ * Pixel's Picks and Play of the Day share — see worker/src/index.js's
+ * scheduled()), restricts to today's eligible games not already tracked,
+ * and — unlike Pixel's Picks/Play of the Day — locks each one in the
+ * moment its own game reaches its own reasonable pre-game lock time (see
+ * tracking.js's isPickWindowOpen/PICK_LEAD_HOURS), rather than waiting for
+ * anything else: there's no "best of the day" comparison here, every game
+ * gets exactly one tracked pick regardless of how it stacks up against any
+ * other game today, so there's nothing to wait on. No odds band, no score
+ * floor, no algorithm-health pause filter — the point is a complete daily
+ * record of what the algorithm's own lean was on every game, not a curated
+ * shortlist.
+ *
+ * Self-healing top-up, same pattern as tracking.js's own runTop5Batch: only
+ * adds games not already in the manifest, so an already-tracked game's
+ * grading/CLV state is never touched. Cheap to call every tick regardless —
+ * the manifest read is a single KV get, and a tick with nothing newly
+ * eligible just writes back the same pickIds it already had.
  */
 export async function runFullSlateBatch(
   env,
@@ -108,8 +119,10 @@ export async function runFullSlateBatch(
 ) {
   const dateKey = etDate(now);
   const manifestKey = `slate:${dateKey}:manifest`;
-  const existing = await env.POTD_KV.get(manifestKey);
-  if (existing) return { skipped: true, reason: 'already generated today', dateKey };
+  const existingRaw = await env.POTD_KV.get(manifestKey);
+  const existing = existingRaw ? JSON.parse(existingRaw) : null;
+  const existingPickIds = existing?.pickIds ?? [];
+  const existingEventIds = new Set(existingPickIds.map((id) => id.split(':')[0]));
 
   const events = await fetchFullSlate();
   const candidates = analyze(events, { now })
@@ -117,7 +130,9 @@ export async function runFullSlateBatch(
       if (isMma(c.sportKey)) return isEligibleMmaFight(c.commenceMs, now);
       if (isTennis(c.sportKey)) return isEligibleTennisMatch(c.commenceMs, now);
       return etDate(c.commenceMs) === dateKey;
-    });
+    })
+    .filter((c) => isPickWindowOpen(c, now))
+    .filter((c) => !existingEventIds.has(c.eventId));
 
   // analyze() is already sorted by score descending, so the first candidate
   // seen for a given eventId is that game's best — one pick per game.
@@ -145,11 +160,11 @@ export async function runFullSlateBatch(
     if (!bestPerGame.has(c.eventId)) bestPerGame.set(c.eventId, c);
   }
 
-  const pickIds = [];
+  const newPickIds = [];
   for (const candidate of bestPerGame.values()) {
     const wrapped = { legs: [candidate], score: candidate.score, meetsStandard: true, flagReason: null };
     const record = pickRecordFrom(wrapped, dateKey, now);
-    pickIds.push(record.pickId);
+    newPickIds.push(record.pickId);
     ctx.waitUntil(
       env.POTD_KV.put(`slate:${dateKey}:pick:${record.pickId}`, JSON.stringify(record), {
         expirationTtl: KV_TTL_SECONDS,
@@ -157,13 +172,16 @@ export async function runFullSlateBatch(
     );
   }
 
+  const pickIds = [...existingPickIds, ...newPickIds];
   ctx.waitUntil(
-    env.POTD_KV.put(manifestKey, JSON.stringify({ date: dateKey, generatedAt: now, pickIds }), {
+    env.POTD_KV.put(manifestKey, JSON.stringify({
+      date: dateKey, generatedAt: existing?.generatedAt ?? now, lastUpdatedAt: now, pickIds,
+    }), {
       expirationTtl: KV_TTL_SECONDS,
     }),
   );
 
-  return { skipped: false, dateKey, count: pickIds.length, gameCount: bestPerGame.size };
+  return { skipped: false, dateKey, count: pickIds.length, added: newPickIds.length };
 }
 
 async function loadFullSlateTracked(env, dateKey) {

@@ -44,7 +44,6 @@ import {
 import { settleTennisGameMarket } from './tennis-results.js';
 
 export const TOP5_COUNT = 5;
-export const TOP5_BATCH_HOUR = 2; // 2am ET — same run as Play of the Day
 // Matches docs/learning.js's own FLAT_UNIT_STAKE — duplicated rather than
 // imported because that module's exported constant sits alongside
 // IndexedDB-touching functions this file never calls; importing just the
@@ -130,6 +129,54 @@ function isEligibleTennisMatch(commenceMs, now) {
   if (commenceDate === today) return true;
   const tomorrow = etDate(now + 86400000);
   return commenceDate === tomorrow && etHour(commenceMs) < TENNIS_NEXT_DAY_CUTOFF_HOUR;
+}
+
+/**
+ * How long before a game's own commence time its pick is worth locking in
+ * for tracked history — a sport-tuned lead time, not one global hour for
+ * the whole slate. Team sports wait for roughly the point where the pieces
+ * that actually move a sharp line (starting lineup/pitcher, late injury
+ * news, weather) are meaningfully known; individual sports (tennis, MMA)
+ * have no comparable "lineup" concept, so their price is about as final an
+ * hour out as it is a day out — no lock delay needed there. Every value
+ * here is a judgment call, not a measured optimum, and deliberately errs
+ * toward "enough runway left to actually fetch research and post the pick"
+ * over squeezing the absolute latest possible information — a lock 30
+ * minutes before an NFL game's actual inactive-list release is useless if
+ * there's no time left to build and publish the write-up.
+ */
+const PICK_LEAD_HOURS = {
+  baseball_mlb: 2.5,
+  americanfootball_nfl: 2,
+  americanfootball_ncaaf: 2,
+  basketball_wnba: 2,
+  icehockey_nhl: 2,
+  soccer_usa_mls: 1, // official lineups post ~1h before kickoff — the standard soccer convention
+  mma_mixed_martial_arts: 0, // no per-fight lineup factor; weigh-ins are the day before, not hours before
+};
+// Any sport not listed above — a conservative default rather than no wait at all.
+const DEFAULT_LEAD_HOURS = 1;
+
+function leadHoursFor(sportKey) {
+  // No lineup-style factor for tennis, and recent-form/injury news doesn't
+  // meaningfully firm up hour-by-hour the way a starting lineup does — see
+  // PICK_LEAD_HOURS's own comment.
+  if (isTennis(sportKey)) return 0;
+  return PICK_LEAD_HOURS[sportKey] ?? DEFAULT_LEAD_HOURS;
+}
+
+/**
+ * Whether a candidate's own game is now close enough to lock its pick in
+ * for tracked history (Full Slate) or to be eligible to claim a Pixel's
+ * Picks/Play of the Day slot (see runTop5Batch/potd.js's runPotdDaily) —
+ * see PICK_LEAD_HOURS for the per-sport reasoning. This is checked in
+ * ADDITION to (not instead of) each tracker's existing "is this today's
+ * game" eligibility window — a candidate must be both today's (or
+ * tomorrow-early, for tennis/MMA's own carve-outs) AND past its own lead
+ * time before it's lockable.
+ */
+export function isPickWindowOpen(candidate, now) {
+  return now >= candidate.commenceMs - leadHoursFor(candidate.sportKey) * 3600000;
 }
 
 /**
@@ -294,16 +341,50 @@ export function pickRecordFrom(pick, dateKey, now) {
 }
 
 /**
- * The 2am ET batch: pull the full slate, run the existing, unmodified
- * topPicks() with the exact same sharp standard (-250/+250, confidence
- * floor) and EV/Kelly edge floor Pixel's Picks itself enforces, and store
- * the result as the locked "Pixel's Picks" board for the day — the same set
- * the client tab now renders (see docs/app.js's loadPixelPicks()) instead of
- * recomputing live against drifting prices. guaranteeCount is on: the board
- * always shows at least 5, padding with flagged (meetsStandard: false) picks
- * on a thin day rather than shrinking — but minEv/minKelly stay a hard floor
- * even for the padding, so a -EV or dust-edge candidate never fills a slot
- * just to hit the count.
+ * Snapshots every newly-lockable, structurally-eligible candidate into
+ * today's Top5 accumulation pool — same mechanism and same reasoning as
+ * potd.js's updatePotdPool: an early game's odds vanish once it starts,
+ * long before an evening game's own window even opens, so comparing the
+ * whole day's candidates fairly means freezing each one's data the moment
+ * it becomes trustworthy rather than re-reading live prices later. Stores
+ * the raw candidate (score/EV/Kelly/odds-band filtering happens once, at
+ * final-selection time in runTop5Batch, against the pool — not here).
+ */
+async function updateTop5Pool(env, ctx, dateKey, lockable, now) {
+  const poolKey = `track:${dateKey}:pool`;
+  const raw = await env.POTD_KV.get(poolKey);
+  const pool = raw ? JSON.parse(raw) : { date: dateKey, entries: [] };
+  const known = new Set(pool.entries.map((e) => e.id));
+  const fresh = lockable.filter((c) => !known.has(c.id));
+  if (!fresh.length) return pool;
+  pool.entries.push(...fresh.map((c) => ({ ...c, capturedAt: now })));
+  ctx.waitUntil(env.POTD_KV.put(poolKey, JSON.stringify(pool), { expirationTtl: KV_TTL_SECONDS }));
+  return pool;
+}
+
+/**
+ * Runs hourly (see index.js's scheduled()), all day — not a single 2am
+ * batch anymore. Every structurally-eligible candidate (day window, segment
+ * not paused, tennis tier, max-juice, NCAAF Power 4) whose own game has
+ * reached its own reasonable pre-game lock time (isPickWindowOpen/
+ * PICK_LEAD_HOURS) gets captured into today's pool the moment it's first
+ * seen (see updateTop5Pool). The 5 real slots aren't filled from that pool
+ * immediately, though — same reasoning as Play of the Day's own pool (see
+ * potd.js's runPotdDaily): locking a slot the instant something clears the
+ * bar would bias toward an early-afternoon game over a stronger evening one
+ * whose window just hasn't opened yet. Instead this waits until
+ * stillUpcoming goes false (every one of today's eligible games has had its
+ * own window open, so the pool is as complete as it's going to get), then
+ * runs the existing, unmodified topPicks() — same sharp standard (-250/+250,
+ * confidence floor) and EV/Kelly edge floor as always — against whatever in
+ * the pool is still actionable (hasn't started), filling as many of the
+ * remaining slots as genuinely qualify. guaranteeCount only kicks in at
+ * that same final moment, padding with a flagged (meetsStandard: false)
+ * pick rather than shrinking below 5 on a thin day — never on an
+ * intermediate tick, where padding would burn a slot a later game might
+ * have earned instead. Once posted, a pick doesn't move even if the market
+ * does — it's an editorial call made at a point in time, not a live-
+ * repriced one.
  *
  * Self-healing, not one-shot: this used to hard-skip the instant a manifest
  * existed at all, which meant a degraded run (e.g. a partial/truncated
@@ -314,9 +395,8 @@ export function pickRecordFrom(pick, dateKey, now) {
  * whatever's already stored (excluding those pickIds from the fresh
  * candidate pool so nothing gets picked twice) rather than replacing it, so
  * an already-tracked pick's grading/CLV state is never discarded. Cheap to
- * call on every cron tick after the batch hour (see index.js's scheduled()):
- * the manifest read is a single KV get, and the real full-slate fetch only
- * happens when the board is actually short.
+ * call every tick regardless: the manifest read is a single KV get, and the
+ * real full-slate fetch only happens when the board is actually short.
  */
 export async function runTop5Batch(
   env,
@@ -374,7 +454,7 @@ export async function runTop5Batch(
   // later top-up run — a real incident this exact gap produced live
   // (Pittsburgh Pirates AND New York Mets both picked to win the same game).
   const existingEventIds = new Set(existingPickIds.map((id) => id.split(':')[0]));
-  const candidates = applyLearningToCandidates(
+  const eligibleToday = applyLearningToCandidates(
     analyze(events, { now })
       .filter((c) => {
         if (isMma(c.sportKey)) return isEligibleMmaFight(c.commenceMs, now);
@@ -407,7 +487,27 @@ export async function runTop5Batch(
     learningProfile,
   );
 
-  const slate = topPicks(candidates, {
+  // Split by whether each candidate's own game has reached its lock time —
+  // see this function's own comment for why only "lockable" candidates get
+  // captured into the pool this tick, and why the real slots wait for
+  // stillUpcoming to go false before drawing from it.
+  const lockable = eligibleToday.filter((c) => isPickWindowOpen(c, now));
+  const stillUpcoming = eligibleToday.some((c) => !isPickWindowOpen(c, now));
+  await updateTop5Pool(env, ctx, dateKey, lockable, now);
+
+  if (stillUpcoming) {
+    return { skipped: true, reason: "still comparing today's games", dateKey, added: 0 };
+  }
+
+  const poolRaw = await env.POTD_KV.get(`track:${dateKey}:pool`);
+  const pool = poolRaw ? JSON.parse(poolRaw).entries : [];
+  // Already-locked events are excluded same as the live eligibility filter
+  // above (existingEventIds) — a pool entry can predate today's most recent
+  // lock. Anything whose game has since started can't be posted anymore;
+  // it stays in the pool's own history, just never becomes a real pick.
+  const stillActionable = pool.filter((c) => c.commenceMs > now && !existingEventIds.has(c.eventId));
+
+  const slate = topPicks(stillActionable, {
     count: needed,
     oddsMin: CONFIG.ODDS_MIN_DEFAULT,
     oddsMax: CONFIG.ODDS_MAX_DEFAULT,
@@ -594,6 +694,43 @@ export async function runGrading(
 export async function getTop5(env, { now = Date.now(), dateKey } = {}) {
   const { picks } = await loadTrackedPicks(env, dateKey ?? etDate(now));
   return picks;
+}
+
+/**
+ * "Which way the app is leaning" for whatever Top5 slots aren't locked yet
+ * — computed entirely from today's pool (see updateTop5Pool), so this is a
+ * cheap KV read plus local scoring, never a live Odds-API fetch; safe to
+ * call on every page load, unlike the real batch itself. Returns [] once
+ * all 5 slots are locked (nothing left to lean on) or before anything's
+ * entered the pool yet. guaranteeCount is deliberately off here — a lean
+ * should only ever show a genuine qualifier, never the padding that's only
+ * appropriate once the real, final selection has nothing left to wait for.
+ */
+export async function getTop5Leaning(env, { now = Date.now(), dateKey } = {}) {
+  const dk = dateKey ?? etDate(now);
+  const { pickIds } = await loadTrackedPicks(env, dk);
+  const needed = TOP5_COUNT - pickIds.length;
+  if (needed <= 0) return [];
+
+  const [algoConfig, poolRaw] = await Promise.all([
+    getAlgoConfig(env),
+    env.POTD_KV.get(`track:${dk}:pool`),
+  ]);
+  const pool = poolRaw ? JSON.parse(poolRaw).entries : [];
+  const existingEventIds = new Set(pickIds.map((id) => id.split(':')[0]));
+  const stillActionable = pool.filter((c) => c.commenceMs > now && !existingEventIds.has(c.eventId));
+
+  const slate = topPicks(stillActionable, {
+    count: needed,
+    oddsMin: CONFIG.ODDS_MIN_DEFAULT,
+    oddsMax: CONFIG.ODDS_MAX_DEFAULT,
+    minScore: algoConfig.MIN_SCORE,
+    minEv: algoConfig.MIN_EV_PCT,
+    minKelly: algoConfig.MIN_KELLY_FRACTION,
+    guaranteeCount: false,
+  });
+
+  return slate.picks.map((pick) => pickRecordFrom(pick, dk, now));
 }
 
 /**

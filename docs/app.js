@@ -586,6 +586,8 @@ const el = {
   scrim: document.getElementById('scrim'),
   accountLink: document.getElementById('accountLink'),
   welcomeToast: document.getElementById('welcomeToast'),
+  whatsNewHint: document.getElementById('whatsNewHint'),
+  whatsNewHintClose: document.getElementById('whatsNewHintClose'),
   bankrollToggle: document.getElementById('bankrollToggle'),
   bankrollPanel: document.getElementById('bankrollPanel'),
   bankrollClose: document.getElementById('bankrollClose'),
@@ -1269,6 +1271,21 @@ function singleStakeLine(candidate) {
   return stakeLineHtml(suggestedStake(candidate));
 }
 
+/**
+ * Whether a Pixel's Picks/Play of the Day pick is the app's locked, final
+ * call for the day or still just a live lean — see worker/src/tracking.js's
+ * PICK_LEAD_HOURS: a game's slot doesn't lock until it's close enough to
+ * its own start, so a slot can show the current best candidate well before
+ * that, clearly marked as subject to change. Shared between
+ * renderPick (Pixel's Picks) and renderPotdCard (Play of the Day) so the
+ * two surfaces read the same way.
+ */
+function renderLeanBadge(isLean) {
+  return isLean
+    ? `<div class="lean-badge is-lean"><span class="lean-dot"></span>LEAN &mdash; not the final pick yet</div>`
+    : `<div class="lean-badge is-final"><span class="lean-dot"></span>FINAL</div>`;
+}
+
 function renderConfidence(pick) {
   const color = confidenceColor(pick.score, state.minScore);
   const stake = stakeLine(pick);
@@ -1414,6 +1431,8 @@ function renderPick(pick) {
         <span class="price">${esc(formatAmerican(pick.american))}</span>
       </div>
 
+      ${renderLeanBadge(pick.isLean === true)}
+
       ${flagged ? `<div class="pick-flag">⚠ Outside standard criteria: ${esc(pick.flagReason)}</div>` : ''}
 
       ${renderConfidence(pick)}
@@ -1449,6 +1468,8 @@ function renderDegradedPick(pick) {
         </span>
         <span class="price">${esc(formatAmerican(pick.american))}</span>
       </div>
+
+      ${renderLeanBadge(false)}
 
       ${flagged ? `<div class="pick-flag">⚠ Outside standard criteria: ${esc(record.flagReason)}</div>` : ''}
 
@@ -3614,6 +3635,7 @@ function pixelPickFromRecord(record) {
       percentile: null,
       meetsStandard: record.meetsStandard,
       flagReason: record.flagReason,
+      isLean: record.isLean === true,
     };
   }
   return {
@@ -3625,6 +3647,7 @@ function pixelPickFromRecord(record) {
     score: record.score,
     meetsStandard: record.meetsStandard,
     flagReason: record.flagReason,
+    isLean: record.isLean === true,
   };
 }
 
@@ -3659,7 +3682,16 @@ async function loadPixelPicks() {
     const url = new URL('/top5', CONFIG.WORKER_URL);
     const res = await fetch(url, { headers: { Accept: 'application/json' } });
     const data = await res.json();
-    pixelPicksRecords = data.picks ?? [];
+    // Locked picks first, then whichever remaining slots are still just a
+    // lean (see worker/src/tracking.js's getTop5Leaning) — tagged so
+    // pixelPickFromRecord/renderPick can show the LEAN badge instead of
+    // treating them as final. A lean re-fetch always replaces the array
+    // wholesale rather than patching in place, since which candidate is
+    // currently leading can change entirely between loads.
+    pixelPicksRecords = [
+      ...(data.picks ?? []),
+      ...(data.leaning ?? []).map((r) => ({ ...r, isLean: true })),
+    ];
     updateNewIndicator(el.tabBoard, 'pp_picks_seen_date', pixelPicksRecords[0]?.dateKey ?? null);
   } catch (error) {
     el.picks.innerHTML = `<p class="empty">Couldn't reach the odds feed.
@@ -4121,6 +4153,7 @@ function renderPotdCard(writeup, generatedAt, stale) {
         <span class="chip"><strong>${esc(writeup.sportTitle)}</strong> · ${esc(writeup.marketLabel)}</span>
         <span class="price">${esc(writeup.price)}</span>
       </div>
+      ${renderLeanBadge(false)}
       ${staleNote}
       <h2 class="potd-headline">${esc(writeup.headline)}</h2>
       <p class="potd-matchup">
@@ -4133,6 +4166,34 @@ function renderPotdCard(writeup, generatedAt, stale) {
       ${renderPotdDevilsAdvocate(writeup)}
       <p class="potd-meta">
         Best price at ${esc(writeup.book)} · posted ${esc(potdDateTimeFmt.format(new Date(generatedAt)))}
+      </p>
+    </article>`;
+}
+
+/**
+ * A lighter preview card for when today's Play of the Day hasn't locked
+ * yet — the current pool leader (worker/src/potd.js's getPotdLeaning),
+ * shown so a visitor can see which way the app is leaning at any time, not
+ * just after it locks. No AI write-up, sections, or full book table: those
+ * are real cost (a model call, ESPN/context fetches) worth spending once on
+ * the actual final pick, not on a preview that might still change before
+ * this game's own lock time arrives.
+ */
+function renderPotdLeanCard(lean) {
+  return `
+    <article class="potd-card potd-card-lean">
+      <div class="potd-head">
+        <span class="chip"><strong>${esc(lean.sportTitle ?? lean.sportKey)}</strong></span>
+        <span class="price">${esc(formatAmerican(lean.american))}</span>
+      </div>
+      ${renderLeanBadge(true)}
+      <h2 class="potd-headline">${esc(lean.selection)}</h2>
+      <p class="potd-matchup">
+        ${esc(lean.away)} @ ${esc(lean.home)} · ${esc(potdDateTimeFmt.format(new Date(lean.commenceMs)))}
+      </p>
+      ${renderPotdConfidence(lean.score, null)}
+      <p class="potd-meta">
+        Best price at ${esc(lean.book)} — the algorithm's current leader; not locked in until closer to game time.
       </p>
     </article>`;
 }
@@ -4162,22 +4223,26 @@ function markTabSeen(storageKey, currentValue) {
 
 let potdCurrentDate = null;
 
-function renderPotd(potd) {
+function renderPotd(potd, leaning) {
   // A stale fallback (yesterday's pick, shown because today's hasn't
   // posted yet — see worker/src/potd.js's getPotd) isn't new content, so it
   // never lights up the tab; only a genuine, freshly-posted day does.
   potdCurrentDate = potd && !potd.stale ? potd.date : null;
   updateNewIndicator(el.tabPotd, 'pp_potd_seen_date', potdCurrentDate);
 
-  if (!potd) {
-    el.potdBody.innerHTML = `<p class="empty">
-      Nothing posted yet today. Play of the Day goes up once daily, around
-      2am ET. Check back soon.</p>`;
+  if (potd) {
+    const { writeup, generatedAt, stale } = potd;
+    el.potdBody.innerHTML = renderPotdCard(writeup, generatedAt, stale);
     return;
   }
 
-  const { writeup, generatedAt, stale } = potd;
-  el.potdBody.innerHTML = renderPotdCard(writeup, generatedAt, stale);
+  if (leaning) {
+    el.potdBody.innerHTML = renderPotdLeanCard(leaning);
+    return;
+  }
+
+  el.potdBody.innerHTML = `<p class="empty">
+    Nothing to show yet — check back once today's slate is underway.</p>`;
 }
 
 let potdLoaded = false;
@@ -4195,7 +4260,7 @@ async function loadPotd({ force = false } = {}) {
   try {
     const res = await fetch(new URL('/potd', CONFIG.WORKER_URL), { headers: { Accept: 'application/json' } });
     const data = await res.json();
-    renderPotd(data.potd ?? null);
+    renderPotd(data.potd ?? null, data.leaning ?? null);
   } catch {
     potdLoaded = false; // a network hiccup shouldn't permanently give up
     el.potdBody.innerHTML = `<p class="empty">Couldn't reach the odds feed.</p>`;
@@ -5224,10 +5289,30 @@ function showWelcomeToastIfFresh() {
   setTimeout(hide, 4200);
 }
 
+// Versioned so a future, meaningfully different change can show its own
+// hint again even to someone who already dismissed this one — bump the
+// suffix, don't reuse the key.
+const WHATS_NEW_LEAN_FINAL_KEY = 'pp_seen_hint_lean_final_v1';
+
+/** One-time explainer for the Pixel's Picks/Play of the Day lock-timing
+ * change (see renderLeanBadge) — localStorage, not sessionStorage, since
+ * this should show once ever per browser, not once per session the way the
+ * welcome toast does. Persists (doesn't auto-hide) until dismissed. */
+function showWhatsNewHintIfFresh() {
+  if (localStorage.getItem(WHATS_NEW_LEAN_FINAL_KEY)) return;
+  el.whatsNewHint.hidden = false;
+}
+
+el.whatsNewHintClose.addEventListener('click', () => {
+  localStorage.setItem(WHATS_NEW_LEAN_FINAL_KEY, '1');
+  el.whatsNewHint.hidden = true;
+});
+
 (async function init() {
   if (!checkAuth()) return;
 
   showWelcomeToastIfFresh();
+  showWhatsNewHintIfFresh();
 
   el.accountLink.hidden = !getToken();
   el.pixelSort.value = state.pixelSort;

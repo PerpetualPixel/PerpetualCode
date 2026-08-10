@@ -17,7 +17,7 @@
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Syne:wght@600;700;800&family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
-<link rel="stylesheet" href="styles.css?v=1.85">
+<link rel="stylesheet" href="styles.css?v=1.86">
 </head>
 <body>
 
@@ -53,6 +53,20 @@
     Play of the Day
   </button>
 </nav>
+
+<div id="whatsNewHint" class="whats-new-hint" hidden role="status">
+  <div class="whats-new-hint-body">
+    <p class="whats-new-hint-title">What's new: picks now lock throughout the day</p>
+    <p class="whats-new-hint-text">
+      Pixel's Picks and Play of the Day used to post all at once at 2am. Now each pick locks
+      individually, closer to its own game's start time, so the numbers are fresher. Before a
+      slot locks you'll see a <span class="whats-new-badge is-lean">LEAN</span> badge — the
+      algorithm's current best guess, which can still change — and
+      <span class="whats-new-badge is-final">FINAL</span> once it's locked in for good.
+    </p>
+  </div>
+  <button type="button" id="whatsNewHintClose" class="icon-btn overlay-close-btn" aria-label="Dismiss">✕</button>
+</div>
 
 <div id="dayFilterBar" class="day-toggle-bar">
   <span class="day-toggle-label">Showing</span>
@@ -649,6 +663,6 @@
   </div>
 </aside>
 
-<script type="module" src="app.js?v=1.85"></script>
+<script type="module" src="app.js?v=1.86"></script>
 </body>
 </html>

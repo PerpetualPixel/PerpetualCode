@@ -2,10 +2,17 @@
  * Play of the Day — one editorially-selected pick, posted once daily, the
  * same for every user that day.
  *
- * Timing: generated once, at POTD_HOUR (2am ET). Because that's so early in
- * the ET calendar day, a single run already covers essentially the whole
- * day's slate — including an early-morning tennis match — so there's no need
- * for the old two-phase "morning vs. the evening before" split.
+ * Timing: NOT a single 2am batch anymore. Runs hourly, all day (see
+ * index.js's scheduled()), accumulating a pool of candidates as each one's
+ * own game reaches its own reasonable pre-game lock time (tracking.js's
+ * isPickWindowOpen/PICK_LEAD_HOURS) — see updatePotdPool's own comment for
+ * why a pool is necessary at all rather than just picking the best
+ * currently-lockable candidate: an early game's odds vanish once it
+ * starts, long before an evening game's own window has even opened, so
+ * "wait and compare the whole day fairly" requires freezing each
+ * candidate's data the moment it becomes trustworthy, not re-reading live
+ * prices later. POTD_HOUR (2am ET) still matters — it's when the daily
+ * learning review digests yesterday's results, which today's locks read.
  *
  * Odds: restricted to POTD_MIN_AMERICAN..POTD_MAX_AMERICAN, a narrower band
  * than the rest of the app's general sharp-price rules (RULES.MIN_AMERICAN/
@@ -38,9 +45,10 @@ import { fetchMmaResults, gradeMmaPickWithFallback } from './ufc-events.js';
 import { getOrGenerateAnalysis } from './analysis.js';
 import { hasSecondarySettlementSource } from '../../docs/tennis-tiers.js';
 import { settleTennisGameMarket } from './tennis-results.js';
+import { isPickWindowOpen } from './tracking.js';
 
 const ET_TZ = 'America/New_York';
-export const POTD_HOUR = 2; // 2am ET
+export const POTD_HOUR = 2; // 2am ET — when the daily learning review runs, not when picks lock anymore
 const POTD_MIN_AMERICAN = -200;
 const POTD_MAX_AMERICAN = 150;
 // Matches docs/learning.js's own FLAT_UNIT_STAKE — duplicated rather than
@@ -303,12 +311,50 @@ async function buildRecord(best, dateKey, now, env, ctx) {
 }
 
 /**
- * The one daily selection: pull the full slate, filter to today's still-
- * upcoming, non-exhibition, in-band (-200..+150) candidates, take the single
- * best-graded one, build its write-up and tracking record, and store it —
- * unless today's KV entry already exists, in which case there's nothing to
- * do (either an earlier tick this same ET day already ran, or a retried
- * cron tick fired twice).
+ * Snapshots every newly-lockable, qualifying candidate into today's
+ * accumulation pool — called every tick with whatever's currently eligible
+ * and window-open; only candidates not already in the pool get added, and
+ * each one is frozen at capture time (the live odds feed may no longer
+ * have it, e.g. once its game starts, by the time the pool is actually
+ * used to pick a winner). Nothing is ever removed from the pool — an
+ * entry whose game has since started just gets filtered out at selection
+ * time (see runPotdDaily), not deleted, so the pool stays a true record of
+ * everything that was actually available today.
+ */
+async function updatePotdPool(env, ctx, dateKey, lockable, now) {
+  const poolKey = `potd-pool:${dateKey}`;
+  const raw = await env.POTD_KV.get(poolKey);
+  const pool = raw ? JSON.parse(raw) : { date: dateKey, entries: [] };
+  const known = new Set(pool.entries.map((e) => e.id));
+  const fresh = lockable.filter((c) => !known.has(c.id));
+  if (!fresh.length) return pool;
+  pool.entries.push(...fresh.map((c) => ({ ...c, capturedAt: now })));
+  ctx.waitUntil(env.POTD_KV.put(poolKey, JSON.stringify(pool), { expirationTtl: KV_TTL_SECONDS }));
+  return pool;
+}
+
+/**
+ * Runs hourly, all day (see index.js's scheduled()) — not a single 2am
+ * batch anymore. Filters today's still-upcoming, non-exhibition, in-band
+ * (-200..+150) candidates same as before, but only candidates whose own
+ * game has reached its own reasonable pre-game lock time (tracking.js's
+ * isPickWindowOpen) get captured into today's pool (see updatePotdPool).
+ *
+ * The actual winner isn't picked the moment something qualifies — that
+ * would bias toward whichever early game happens to clear the bar first,
+ * exactly the "might miss a genuinely better evening game" problem a pool
+ * exists to avoid. Instead this waits until stillUpcoming goes false (every
+ * one of today's eligible games has had its own window open, so the pool
+ * is as complete as it's going to get), then picks the best pool entry
+ * that's STILL ACTIONABLE — hasn't started yet. An entry that was
+ * genuinely the day's best but has since started (this only happens on a
+ * day where nothing later ever beat it, and by the time nothing's left to
+ * wait for, its own game has already gone) is skipped in favor of the best
+ * among what's still postable; it stays visible in the pool's own history
+ * either way, just never becomes the actual Play of the Day.
+ *
+ * Skips (no-op) once today's KV entry already exists — either an earlier
+ * tick already locked it, or a retried cron tick fired twice.
  */
 export async function runPotdDaily(env, ctx, now = Date.now(), { fetchFullSlate }) {
   const dateKey = etParts(now).date;
@@ -332,7 +378,7 @@ export async function runPotdDaily(env, ctx, now = Date.now(), { fetchFullSlate 
 
   const events = await fetchFullSlate();
   const candidates = applyLearningToCandidates(analyze(events, { now }), learningProfile);
-  const eligible = candidates.filter((c) => {
+  const eligibleToday = candidates.filter((c) => {
     if (c.score < RULES.MIN_SCORE) return false;
     if (isExhibition(c)) return false;
     if (c.american < POTD_MIN_AMERICAN || c.american > POTD_MAX_AMERICAN) return false;
@@ -349,11 +395,22 @@ export async function runPotdDaily(env, ctx, now = Date.now(), { fetchFullSlate 
     return etParts(c.commenceMs).date === dateKey;
   });
 
-  if (!eligible.length) {
-    return { skipped: true, reason: 'no qualifying candidate in odds band today', dateKey };
+  const lockable = eligibleToday.filter((c) => isPickWindowOpen(c, now));
+  const stillUpcoming = eligibleToday.some((c) => !isPickWindowOpen(c, now));
+  await updatePotdPool(env, ctx, dateKey, lockable, now);
+
+  if (stillUpcoming) {
+    return { skipped: true, reason: "still comparing today's games", dateKey };
   }
 
-  const best = eligible.reduce((a, b) => (b.score > a.score ? b : a));
+  const poolRaw = await env.POTD_KV.get(`potd-pool:${dateKey}`);
+  const pool = poolRaw ? JSON.parse(poolRaw).entries : [];
+  const stillActionable = pool.filter((c) => c.commenceMs > now);
+  if (!stillActionable.length) {
+    return { skipped: true, reason: 'no qualifying candidate remained actionable today', dateKey };
+  }
+
+  const best = stillActionable.reduce((a, b) => (b.score > a.score ? b : a));
   const record = await buildRecord(best, dateKey, now, env, ctx);
   // A day's pick, once posted, doesn't move even if the market does — it's
   // an editorial call made at a point in time, not a live-repriced candidate.
@@ -508,6 +565,48 @@ export async function getPotd(env, now = Date.now()) {
   if (yesterdayRaw) return { ...JSON.parse(yesterdayRaw), stale: true };
 
   return null;
+}
+
+/**
+ * "Which way the app is leaning" for today's Play of the Day before it's
+ * locked — computed entirely from today's pool (see updatePotdPool), so
+ * this is a cheap KV read plus local comparison, never a live Odds-API
+ * fetch or a model call: no write-up is generated for a lean, since that's
+ * real cost worth spending once on the actual final pick, not on every
+ * page load of a preview that might still change before it locks. Returns
+ * null once today's pick is already locked (nothing left to lean on) or
+ * before anything's entered the pool yet.
+ */
+export async function getPotdLeaning(env, now = Date.now()) {
+  const dateKey = etParts(now).date;
+  const existing = await env.POTD_KV.get(`potd:${dateKey}`);
+  if (existing) return null;
+
+  const poolRaw = await env.POTD_KV.get(`potd-pool:${dateKey}`);
+  const pool = poolRaw ? JSON.parse(poolRaw).entries : [];
+  const stillActionable = pool.filter((c) => c.commenceMs > now);
+  if (!stillActionable.length) return null;
+
+  const best = stillActionable.reduce((a, b) => (b.score > a.score ? b : a));
+  return {
+    pickId: best.id,
+    dateKey,
+    eventId: best.eventId,
+    sportKey: best.sportKey,
+    sportTitle: best.sportTitle,
+    marketKey: best.marketKey,
+    outcomeName: best.outcomeName,
+    point: best.point ?? null,
+    selection: best.selection,
+    american: best.american,
+    decimal: best.decimal,
+    score: best.score,
+    home: best.home,
+    away: best.away,
+    commenceMs: best.commenceMs,
+    book: best.book,
+    consensusProb: best.consensusProb,
+  };
 }
 
 /**

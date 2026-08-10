@@ -38,7 +38,7 @@ import { runMlbPropsScan, runMlbPropsGrading, getAllMlbPropsTracked } from './ml
 import { runNflPropsScan, runNflPropsGrading, getAllNflPropsTracked } from './nfl-props.js';
 import { runWnbaPropsScan, runWnbaPropsGrading, getAllWnbaPropsTracked } from './wnba-props.js';
 import { runNhlPropsScan, runNhlPropsGrading, getAllNhlPropsTracked } from './nhl-props.js';
-import { POTD_HOUR, runPotdDaily, runPotdClvSnapshot, runPotdGrading, backfillPotdAnalysis, getPotd, getPotdHistory } from './potd.js';
+import { runPotdDaily, runPotdClvSnapshot, runPotdGrading, backfillPotdAnalysis, getPotd, getPotdLeaning, getPotdHistory } from './potd.js';
 import { getOrGenerateAnalysis } from './analysis.js';
 import {
   UPSTREAM,
@@ -55,9 +55,10 @@ import {
   runClvSnapshot,
   runGrading,
   getTop5,
+  getTop5Leaning,
   getAllTrackedPicks,
   fetchFullSlateEvents,
-  TOP5_BATCH_HOUR,
+  TOP5_COUNT,
 } from './tracking.js';
 import { authorize as authorizeSettings, getSettings, putSettings } from './settings.js';
 import {
@@ -426,22 +427,25 @@ export default {
       ctx.waitUntil(refreshMlbLeagueStats(env, ctx));
     }
 
-    // 2am ET: Pixel's Picks, Full Slate tracking, and Play of the Day all
-    // lock in for the day here (TOP5_BATCH_HOUR === POTD_HOUR ===
-    // FULL_SLATE_BATCH_HOUR, all 2). All three need the same full-slate
-    // event fetch — fetched exactly once and shared as a single promise
-    // into each batch's own injectable fetchFullSlate parameter, rather
-    // than three independent fetch cycles (three real Odds-API-credit
-    // charges, and the same race-prone subrequest-stampede risk the MMA
-    // schedule bug earlier had) for the same data. Each batch is itself
-    // idempotent per ET day (checks its own manifest/KV key), so a retried
-    // or overlapping tick can't double-generate any of the three — but that
-    // idempotency guards the WORK, not this fetch: fetchFullSlateEvents()
-    // below runs unconditionally, at real Odds-API cost, before any of the
-    // three batches gets a chance to no-op. isTopOfHour keeps this to one
-    // real fetch a day even with the cron now ticking 3x within the 2am
-    // hour (see isTopOfHour's own comment).
-    if (etHour(now) === TOP5_BATCH_HOUR && isTopOfHour(now)) {
+    // Hourly, all day — not a single 2am batch anymore. Pixel's Picks, Full
+    // Slate tracking, and Play of the Day each lock games in on their own
+    // per-game timeline now (see tracking.js's isPickWindowOpen/
+    // PICK_LEAD_HOURS): a game's pick locks once IT is close enough to its
+    // own start, not the whole day's board at once. Checking hourly (rather
+    // than every 20-minute tick) is a deliberate cost tradeoff — the real
+    // full-slate fetch below is genuine Odds-API spend, and lead times are
+    // measured in hours, so hourly precision loses nothing that matters
+    // (a lock lands within an hour of its ideal moment either way).
+    //
+    // All three still share one full-slate fetch per tick (fetched once,
+    // handed to each batch's own injectable fetchFullSlate parameter) for
+    // the same reason as before: three independent fetch cycles would be
+    // three real Odds-API charges and the same race-prone subrequest-
+    // stampede risk the MMA schedule bug once had, for the same data. Each
+    // batch is itself idempotent/self-healing (checks its own manifest/pool
+    // state), so a retried or overlapping tick can't double-generate or
+    // double-lock anything.
+    if (isTopOfHour(now)) {
       const sharedSlate = fetchFullSlateEvents(env, ctx);
       const fetchFullSlate = () => sharedSlate;
       // Learn first, then pick: the daily learning review (worker/src/
@@ -453,7 +457,8 @@ export default {
       // unadjusted engine so tomorrow's learning stays unbiased. Learning
       // failures fall through to the batches (catch → null) rather than
       // costing the day's picks; runDailyLearning is idempotent per ET
-      // date, so the 2am hour's extra ticks can't double-learn.
+      // date, so calling it every hourly tick (not just the first one)
+      // can't double-learn — it's cheap to no-op once today's review exists.
       ctx.waitUntil(
         (async () => {
           await runDailyLearning(env, ctx, now, {
@@ -474,40 +479,53 @@ export default {
               return [...top5, ...slate, ...mlbProps, ...nflProps, ...wnbaProps, ...nhlProps];
             },
           }).catch(() => null);
-          await Promise.all([
+
+          // Top5's own "did it just become complete this tick" is the
+          // clean first-time signal for its notification — compare the
+          // count before and after this tick's batch call, since
+          // runTop5Batch's "skipped" isn't that signal (it validly no-ops
+          // on every tick once full, not just the first).
+          const top5Before = await getTop5(env, { now });
+          const wasComplete = top5Before.length >= TOP5_COUNT;
+
+          const [, , potdResult] = await Promise.all([
             runTop5Batch(env, ctx, now, { fetchFullSlate }),
             runFullSlateBatch(env, ctx, now, { fetchFullSlate }),
             runPotdDaily(env, ctx, now, { fetchFullSlate }),
           ]);
 
-          // Today's board now exists — notify whoever opted in (see
-          // worker/src/account-handlers.js's handleUpdateNotifications).
-          // Best-effort: notifications.js swallows individual send failures
-          // itself, and this whole step is wrapped so a D1 hiccup here can
-          // never cost the day's picks either.
+          // Notify whoever opted in (see worker/src/account-handlers.js's
+          // handleUpdateNotifications) the moment each board actually
+          // becomes final — not on every tick that merely topped it up or
+          // left it unchanged. Best-effort: notifications.js swallows
+          // individual send failures itself, and this whole step is
+          // wrapped so a D1 hiccup here can never cost the day's picks.
           const top5Picks = await getTop5(env, { now });
           try {
-            await Promise.all([
-              sendPotdNotifications(env, await getPotd(env, now)),
-              sendPicksNotifications(env, top5Picks),
-            ]);
+            const sends = [];
+            if (potdResult?.skipped === false) sends.push(sendPotdNotifications(env, await getPotd(env, now)));
+            if (!wasComplete && top5Picks.length >= TOP5_COUNT) sends.push(sendPicksNotifications(env, top5Picks));
+            await Promise.all(sends);
           } catch (e) {
             console.error('Notification send failed:', e);
           }
 
-          // Warm each of the day's five Pixel's Picks write-ups now, so the
-          // board is complete the moment anyone opens it rather than the
-          // first visitor of the day paying a model call's latency per pick.
-          // Play of the Day already generates its own inside runPotdDaily.
+          // Warm each currently-locked Pixel's Picks write-up, so a newly-
+          // locked slot's analysis is ready the moment anyone opens the
+          // board rather than the first visitor paying a model call's
+          // latency. Already-warmed picks are a cheap cache-hit KV read
+          // (getOrGenerateAnalysis's own cache), so calling this for all 5
+          // every hourly tick — not just newly-locked ones — costs almost
+          // nothing once the board's been stable for a while. Play of the
+          // Day already generates its own inside runPotdDaily.
           //
-          // Runs after the batches (it reads what they just stored) and
-          // sequentially rather than in parallel — this invocation has
-          // already spent a full-slate fetch, and a burst of five model
-          // calls alongside it is exactly the per-invocation subrequest
-          // pressure that has bitten this cron before. Failures are
-          // swallowed per pick: an unwarmed analysis just falls back to the
-          // existing on-demand /analysis path, so this is strictly a
-          // latency optimization and can never cost the day's picks.
+          // Sequential rather than parallel — this invocation has already
+          // spent a full-slate fetch, and a burst of model calls alongside
+          // it is exactly the per-invocation subrequest pressure that has
+          // bitten this cron before. Failures are swallowed per pick: an
+          // unwarmed analysis just falls back to the existing on-demand
+          // /analysis path, so this is strictly a latency optimization and
+          // can never cost the day's picks.
           try {
             for (const pick of top5Picks) {
               await getOrGenerateAnalysis(
@@ -531,48 +549,6 @@ export default {
             /* prewarm is best-effort; the on-demand path still covers it */
           }
         })(),
-      );
-    } else if (etHour(now) > TOP5_BATCH_HOUR) {
-      // Safety net for the rest of the day: runTop5Batch is self-healing
-      // (see its own comment) — it only skips once today's board actually
-      // has TOP5_COUNT picks, otherwise it tops up. Calling it on every tick
-      // costs almost nothing when the board is already full (one KV get,
-      // no fetch), and recovers on its own within 20 minutes if the 2am run
-      // ever comes up short again (degraded fetch, thin-day padding that
-      // still fell short, etc.) instead of staying stuck at a partial count
-      // for the rest of the day like the incident that motivated this.
-      ctx.waitUntil(runTop5Batch(env, ctx, now));
-
-      // Same safety net for Full Slate and Play of the Day — both are
-      // idempotent per ET day (an early "already generated" KV check), so
-      // calling them here is cheap (one KV get, no fetch) once they've
-      // succeeded. Added after a live incident where the 2am invocation's
-      // Top5 batch succeeded but Full Slate and POTD didn't (most likely a
-      // transient per-invocation subrequest/CPU-time limit, given a manual
-      // retry of both succeeded immediately with no code changes) — unlike
-      // Top5, neither had any retry at all, so a single bad 2am tick left
-      // both stuck empty/stale for the entire rest of the day.
-      ctx.waitUntil(runFullSlateBatch(env, ctx, now));
-      ctx.waitUntil(
-        runPotdDaily(env, ctx, now).then(async (result) => {
-          // Only notify if this tick is the one that actually generated
-          // today's pick for the first time — not on every skip once it
-          // already exists. (Top5/Picks notifications don't get this same
-          // retry-aware treatment yet: runTop5Batch's own "skipped" isn't a
-          // clean first-time signal the way POTD's is, since it can validly
-          // top up a partial board more than once — solving that without
-          // risking a duplicate "Pixel's Picks ready" email needs more
-          // thought than this fix, so it's left as a known gap.)
-          if (result && result.skipped === false) {
-            // runPotdDaily's own return only carries {pick}, not the
-            // AI writeup the primary 2am path notifies with — re-read the
-            // full stored record so a recovered pick's email looks the same
-            // either way.
-            return sendPotdNotifications(env, await getPotd(env, now)).catch((e) =>
-              console.error('Retried POTD notification failed:', e),
-            );
-          }
-        }),
       );
     }
 
@@ -874,18 +850,22 @@ export default {
 
     // Today's Play of the Day — written by the scheduled() cron, read-only
     // here. Free: reads KV, never touches the odds feed on this path.
+    // `leaning` is the current pool leader when today's pick hasn't locked
+    // yet (see potd.js's getPotdLeaning) — null once `potd` itself is set,
+    // since there's nothing left to lean on at that point.
     if (pathname === '/potd') {
       if (request.method !== 'GET') {
         return json({ error: 'Method not allowed' }, { status: 405, headers: cors });
       }
       try {
         const potd = await getPotd(env);
+        const leaning = potd ? null : await getPotdLeaning(env);
         return json(
-          { potd },
+          { potd, leaning },
           { headers: { ...cors, 'Cache-Control': 'public, max-age=300' } },
         );
       } catch (error) {
-        return json({ potd: null, reason: String(error).slice(0, 120) }, { headers: cors });
+        return json({ potd: null, leaning: null, reason: String(error).slice(0, 120) }, { headers: cors });
       }
     }
 
@@ -907,20 +887,23 @@ export default {
       }
     }
 
-    // Today's server-side tracked Top 5 — written by the scheduled() cron's
-    // 6am batch, updated by its hourly CLV/grading passes, read-only here.
-    // Independent of the client's own browser-local IndexedDB tracking (see
+    // Today's server-side tracked Top 5 — written by the scheduled() cron,
+    // updated by its hourly CLV/grading passes, read-only here. Independent
+    // of the client's own browser-local IndexedDB tracking (see
     // docs/learning.js) — this is the one shared history that exists
-    // whether or not anyone has the app open.
+    // whether or not anyone has the app open. `leaning` fills in whichever
+    // of the 5 slots aren't locked yet with the current pool leaders (see
+    // tracking.js's getTop5Leaning) — [] once all 5 are locked.
     if (pathname === '/top5' && request.method === 'GET') {
       try {
         const picks = await getTop5(env);
+        const leaning = picks.length < TOP5_COUNT ? await getTop5Leaning(env) : [];
         return json(
-          { picks },
+          { picks, leaning },
           { headers: { ...cors, 'Cache-Control': 'public, max-age=300' } },
         );
       } catch (error) {
-        return json({ picks: [], reason: String(error).slice(0, 120) }, { headers: cors });
+        return json({ picks: [], leaning: [], reason: String(error).slice(0, 120) }, { headers: cors });
       }
     }
 

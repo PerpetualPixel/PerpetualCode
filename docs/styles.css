@@ -3384,6 +3384,104 @@ input[type="range"]:focus-visible {
   line-height: 1.4;
 }
 
+/* Whether a Pixel's Picks/Play of the Day slot is the app's locked, final
+   call or still just a live lean — see renderLeanBadge's own comment. */
+.lean-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  margin: 10px 14px 0;
+  padding: 4px 10px;
+  border-radius: 999px;
+  font-size: 0.68rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  width: fit-content;
+}
+.lean-dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  flex: none;
+}
+.lean-badge.is-lean {
+  background: rgba(251, 191, 36, 0.12);
+  border: 1px solid rgba(251, 191, 36, 0.4);
+  color: var(--warn);
+}
+.lean-badge.is-lean .lean-dot {
+  background: var(--warn);
+  animation: lean-pulse 1.6s ease-in-out infinite;
+}
+.lean-badge.is-final {
+  background: rgba(16, 185, 129, 0.12);
+  border: 1px solid rgba(16, 185, 129, 0.4);
+  color: var(--success);
+}
+.lean-badge.is-final .lean-dot {
+  background: var(--success);
+}
+@keyframes lean-pulse {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.35; }
+}
+
+.potd-card-lean {
+  opacity: 0.92;
+}
+
+/* One-time "what's new" hint for the lean/final pick-timing change — shown
+   once per browser (see showWhatsNewHintIfFresh in app.js), dismissible,
+   never shown again after. */
+.whats-new-hint {
+  display: flex;
+  align-items: flex-start;
+  gap: 12px;
+  margin: 0 0 16px;
+  padding: 14px 16px;
+  border-radius: var(--radius);
+  background: linear-gradient(135deg, rgba(124, 58, 237, 0.12), rgba(0, 240, 255, 0.08));
+  border: 1px solid rgba(124, 58, 237, 0.35);
+}
+.whats-new-hint-body { flex: 1; min-width: 0; }
+.whats-new-hint-title {
+  margin: 0 0 4px;
+  font-size: 0.85rem;
+  font-weight: 700;
+  color: var(--text);
+}
+.whats-new-hint-text {
+  margin: 0;
+  font-size: 0.8rem;
+  line-height: 1.6;
+  color: var(--muted);
+}
+.whats-new-badge {
+  display: inline-flex;
+  align-items: center;
+  padding: 1px 7px;
+  border-radius: 999px;
+  font-size: 0.68rem;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+}
+.whats-new-badge.is-lean {
+  background: rgba(251, 191, 36, 0.15);
+  color: var(--warn);
+}
+.whats-new-badge.is-final {
+  background: rgba(16, 185, 129, 0.15);
+  color: var(--success);
+}
+.whats-new-hint .overlay-close-btn {
+  width: 28px;
+  height: 28px;
+  min-height: 28px;
+  font-size: 0.85rem;
+  flex: none;
+}
+
 /* ================================================================ */
 /* Day toggle (Today / Tomorrow)                                    */
 /* ================================================================ */
