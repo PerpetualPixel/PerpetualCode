@@ -702,9 +702,19 @@ export default {
       '/api/auth/reset-password',
       '/api/auth/verify-email',
     ]);
-    if (request.method === 'POST' && (AUTH_LIMITED_PATHS.has(pathname) || pathname === '/api/report-bug')) {
+    // Same X-Owner-Key-gated routes as authorizeSettings (worker/src/
+    // settings.js) — those were previously throttled only by the passphrase
+    // itself matching or not, with no cap on how many guesses a request
+    // could make per minute. Own key prefix so a burst of owner-route
+    // traffic can never eat into the auth/bug-report budgets or vice versa.
+    const OWNER_LIMITED_PATHS = new Set([
+      '/algo-health/resume',
+      '/algo-health/reset',
+      '/admin/onboarding-report',
+    ]);
+    if (request.method === 'POST' && (AUTH_LIMITED_PATHS.has(pathname) || pathname === '/api/report-bug' || OWNER_LIMITED_PATHS.has(pathname))) {
       const ip = request.headers.get('CF-Connecting-IP') ?? 'unknown';
-      const prefix = pathname === '/api/report-bug' ? 'bug' : 'auth';
+      const prefix = pathname === '/api/report-bug' ? 'bug' : OWNER_LIMITED_PATHS.has(pathname) ? 'owner' : 'auth';
       if (await rateLimited(`${prefix}:${ip}`)) {
         return json({ error: 'Too many attempts — try again in a minute.' }, { status: 429, headers: cors });
       }
@@ -1203,7 +1213,14 @@ export default {
       const sportKey = searchParams.get('sport') ?? '';
       const eventId = searchParams.get('eventId') ?? '';
 
-      if (!isAllowedSport(sportKey) || !/^tennis_/.test(sportKey) || !eventId) {
+      // The Odds API's own event IDs are opaque alphanumeric tokens — this
+      // isn't reachable for host redirection either way (eventId only ever
+      // lands in a URL *path* segment, and URL parsing can't have a later
+      // path segment introduce a new scheme/host), but rejecting anything
+      // outside that shape up front stops odd characters (?, #, /, ..) from
+      // reaching fetchTennisAltSpread's URL-building at all, rather than
+      // relying on it being harmless there.
+      if (!isAllowedSport(sportKey) || !/^tennis_/.test(sportKey) || !/^[a-zA-Z0-9]{1,64}$/.test(eventId)) {
         return json({ event: null, reason: 'invalid sport or eventId' }, { headers: cors });
       }
 
