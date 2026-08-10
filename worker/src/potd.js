@@ -54,7 +54,7 @@ const FLAT_UNIT_STAKE = 20;
 // not just the display card's old 8-day window.
 const KV_TTL_SECONDS = 86400 * 90;
 
-const TENNIS_ARCHIVE_BASE = 'https://miguelsgarcia4.github.io/PerpetualCode/data';
+const TENNIS_ARCHIVE_BASE = 'https://perpetualpicks.com/data'; // canonical URL directly — the miguelsgarcia4.github.io host 301-redirects here anyway (GitHub Pages' own custom-domain redirect), an extra hop worth skipping
 
 /** ET calendar date (YYYY-MM-DD) and wall-clock hour for a given instant. */
 function etParts(ms) {
@@ -116,8 +116,10 @@ async function loadTennisArchive(sportKey) {
 
   try {
     const r = await fetch(`${TENNIS_ARCHIVE_BASE}/tennis-${tour}.json`);
+    if (!r.ok) console.error(`Tennis archive fetch (${tour}) returned ${r.status}`);
     tennisArchiveCache[tour] = r.ok ? await r.json() : null;
-  } catch {
+  } catch (e) {
+    console.error(`Tennis archive fetch (${tour}) failed:`, e);
     tennisArchiveCache[tour] = null;
   }
   return tennisArchiveCache[tour];
@@ -256,7 +258,13 @@ async function buildRecord(best, dateKey, now, env, ctx) {
   try {
     const raw = await getOrGenerateAnalysis(best, env, ctx, now, { isPotd: true });
     if (raw) analysis = JSON.parse(raw);
-  } catch {
+  } catch (e) {
+    // Logged (not just swallowed) so a recurring failure here is
+    // diagnosable from the Worker's logs instead of silently posting an
+    // analysis-less Play of the Day every day with no trace of why —
+    // backfillPotdAnalysis below gets another shot at it on a later tick
+    // regardless.
+    console.error('POTD analysis generation failed:', e);
     analysis = null;
   }
   const writeup = buildWriteup(best, research, now, analysis);
@@ -376,6 +384,56 @@ export async function runPotdClvSnapshot(env, ctx, now = Date.now(), { fetchSpor
   pick.clv = { ...pick.clv, closeAmerican: fresh.american, updatedAt: now };
   await env.POTD_KV.put(`potd:${dateKey}`, JSON.stringify(record), { expirationTtl: KV_TTL_SECONDS });
   return { updated: true };
+}
+
+/**
+ * Retries today's AI write-up if it's still missing — runPotdDaily itself is
+ * a strict one-shot (posts the pick once, then `if (existing) return` skips
+ * every later tick for the rest of the day — see its own comment), so
+ * unlike Top5/Full Slate's self-healing top-up, a transient failure on that
+ * one attempt (a rate limit, a slow reply racing the cron invocation's own
+ * time budget, anything — buildRecord's own comment covers why this is
+ * never allowed to block posting the pick itself) used to leave the day's
+ * single showcase pick without a write-up for the rest of the day, with no
+ * way to recover. Called on every scheduled tick (see index.js's
+ * scheduled()) — cheap to no-op (one KV get) once a write-up exists, so
+ * running it far more often than it'll ever actually need to do work is
+ * fine.
+ */
+export async function backfillPotdAnalysis(env, ctx, now = Date.now()) {
+  const dateKey = etParts(now).date;
+  const kvKey = `potd:${dateKey}`;
+  const raw = await env.POTD_KV.get(kvKey);
+  if (!raw) return { attempted: false };
+
+  const record = JSON.parse(raw);
+  if (record.writeup?.analysis) return { attempted: false };
+
+  const candidate = {
+    eventId: record.pick.eventId,
+    sportKey: record.pick.sportKey,
+    sportTitle: record.writeup?.sportTitle,
+    home: record.pick.home,
+    away: record.pick.away,
+    outcomeName: record.pick.outcomeName,
+  };
+
+  let analysis = null;
+  try {
+    const raw2 = await getOrGenerateAnalysis(candidate, env, ctx, now, { isPotd: true });
+    if (raw2) analysis = JSON.parse(raw2);
+  } catch (e) {
+    console.error('POTD analysis backfill failed:', e);
+    return { attempted: true, succeeded: false };
+  }
+  if (!analysis) return { attempted: true, succeeded: false };
+
+  record.writeup.analysis = analysis.analysis ?? null;
+  record.writeup.reasons = analysis.quickTake ?? null;
+  record.writeup.devilsAdvocate = analysis.devilsAdvocate ?? null;
+  record.writeup.victoryMethods = analysis.victoryMethods ?? null;
+  await env.POTD_KV.put(kvKey, JSON.stringify(record), { expirationTtl: KV_TTL_SECONDS });
+  return { attempted: true, succeeded: true };
 }
 
 /** Grades one dateKey's POTD record if it exists and is still pending — the

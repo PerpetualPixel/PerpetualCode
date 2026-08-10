@@ -257,6 +257,7 @@ const MLB_ABBR_MAP = {
   'Kansas City Royals': 'KC',
   'Minnesota Twins': 'MIN',
   'Houston Astros': 'HOU',
+  'Texas Rangers': 'TEX',
   'Los Angeles Dodgers': 'LAD',
   'Oakland Athletics': 'ATH', // relocated for the 2026 season; ESPN's own slug moved from "oak" to "ath" (confirmed live: oak -> 400, ath -> 200)
   'Athletics': 'ATH', // some odds feeds already dropped the city name post-relocation

@@ -27,7 +27,7 @@ import { tennisRecentForm, tennisHeadToHead } from '../../docs/insights.js';
 
 const MODEL = 'claude-haiku-4-5-20251001';
 const CACHE_TTL_DAYS = 2;
-const TENNIS_ARCHIVE_BASE = 'https://miguelsgarcia4.github.io/PerpetualCode/data';
+const TENNIS_ARCHIVE_BASE = 'https://perpetualpicks.com/data'; // canonical URL directly — the miguelsgarcia4.github.io host 301-redirects here anyway (GitHub Pages' own custom-domain redirect), an extra hop worth skipping
 const ALL_SURFACES = { test: () => true };
 
 function etDate(ms) {
@@ -54,6 +54,7 @@ export const MLB_ABBR_MAP = {
   'New York Yankees': 'nyy', 'Tampa Bay Rays': 'tb', 'Toronto Blue Jays': 'tor',
   'Chicago White Sox': 'chw', 'Cleveland Guardians': 'cle', 'Detroit Tigers': 'det',
   'Kansas City Royals': 'kc', 'Minnesota Twins': 'min', 'Houston Astros': 'hou',
+  'Texas Rangers': 'tex',
   'Los Angeles Dodgers': 'lad', 'Oakland Athletics': 'ath', 'Athletics': 'ath',
   'Seattle Mariners': 'sea', 'Arizona Diamondbacks': 'ari', 'Colorado Rockies': 'col',
   'San Diego Padres': 'sd', 'San Francisco Giants': 'sf', 'Atlanta Braves': 'atl',
@@ -72,8 +73,10 @@ async function loadTennisArchive(sportKey) {
   if (tennisCache[tour]) return tennisCache[tour];
   try {
     const r = await fetch(`${TENNIS_ARCHIVE_BASE}/tennis-${tour}.json`);
+    if (!r.ok) console.error(`Tennis archive fetch (${tour}) returned ${r.status}`);
     tennisCache[tour] = r.ok ? await r.json() : null;
-  } catch {
+  } catch (e) {
+    console.error(`Tennis archive fetch (${tour}) failed:`, e);
     tennisCache[tour] = null;
   }
   return tennisCache[tour];
@@ -386,6 +389,8 @@ export async function getOrGenerateAnalysis(candidate, env, ctx, now = Date.now(
           fetchSituationalSplits(homeAbbr, ctx),
         ]);
         factSheet = baseballFactSheet({ pitchers, awaySplits, homeSplits }, candidate.away, candidate.home);
+      } else {
+        console.error(`MLB_ABBR_MAP missing entry for "${awayAbbr ? candidate.home : candidate.away}"`);
       }
     } else if (hasContext(candidate.sportKey)) {
       const context = await fetchContext(
@@ -393,7 +398,8 @@ export async function getOrGenerateAnalysis(candidate, env, ctx, now = Date.now(
       );
       factSheet = teamFactSheet(context);
     }
-  } catch {
+  } catch (e) {
+    console.error('Fact sheet build failed:', e);
     factSheet = null;
   }
   if (!factSheet) return null;
@@ -434,7 +440,8 @@ export async function getOrGenerateAnalysis(candidate, env, ctx, now = Date.now(
   let text;
   try {
     text = await callClaude(prompt, env, { maxTokens });
-  } catch {
+  } catch (e) {
+    console.error('Anthropic call failed:', e);
     return null;
   }
   if (!text) return null;

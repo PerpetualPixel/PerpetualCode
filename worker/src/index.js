@@ -38,7 +38,7 @@ import { runMlbPropsScan, runMlbPropsGrading, getAllMlbPropsTracked } from './ml
 import { runNflPropsScan, runNflPropsGrading, getAllNflPropsTracked } from './nfl-props.js';
 import { runWnbaPropsScan, runWnbaPropsGrading, getAllWnbaPropsTracked } from './wnba-props.js';
 import { runNhlPropsScan, runNhlPropsGrading, getAllNhlPropsTracked } from './nhl-props.js';
-import { POTD_HOUR, runPotdDaily, runPotdClvSnapshot, runPotdGrading, getPotd, getPotdHistory } from './potd.js';
+import { POTD_HOUR, runPotdDaily, runPotdClvSnapshot, runPotdGrading, backfillPotdAnalysis, getPotd, getPotdHistory } from './potd.js';
 import { getOrGenerateAnalysis } from './analysis.js';
 import {
   UPSTREAM,
@@ -591,6 +591,12 @@ export default {
     ctx.waitUntil(runPotdGrading(env, ctx, now));
     ctx.waitUntil(runFullSlateClvSnapshot(env, ctx, now));
     ctx.waitUntil(runFullSlateGrading(env, ctx, now));
+    // Retries today's Play of the Day write-up if the 2am generation attempt
+    // came back empty — see backfillPotdAnalysis's own comment for why that
+    // one-shot attempt needs a way to recover. No-ops (one KV get) once a
+    // write-up exists, so running it every tick costs nothing once it's done
+    // its job for the day.
+    ctx.waitUntil(backfillPotdAnalysis(env, ctx, now));
 
     // Monday 7am ET: the weekly algorithm health review (worker/src/
     // algo-health.js) — looks at the last HEALTH_WINDOW_DAYS of graded
@@ -828,7 +834,13 @@ export default {
         return json({ analysis: null, reason: 'missing eventId/sportKey/home/away/outcomeName' }, { headers: cors });
       }
       try {
-        const analysis = await getOrGenerateAnalysis(candidate, env, ctx);
+        // &isPotd=true exercises getOrGenerateAnalysis's POTD variant
+        // (longer prompt, higher maxTokens, separate cache namespace)
+        // directly rather than the regular per-game one — useful for
+        // reproducing a POTD-specific write-up failure without waiting for
+        // the 2am batch.
+        const isPotd = searchParams.get('isPotd') === 'true';
+        const analysis = await getOrGenerateAnalysis(candidate, env, ctx, Date.now(), { isPotd });
         return json(
           { analysis },
           { headers: { ...cors, 'Cache-Control': 'public, max-age=3600' } },
