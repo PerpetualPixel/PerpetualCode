@@ -2813,7 +2813,12 @@ input[type="range"]:focus-visible {
   bottom: 0;
   width: 100%;
   max-width: 600px;
-  background: var(--surface);
+  /* --panel-bg (solid, opaque), not --surface (3% translucent glass fill
+     meant for cards sitting flat on the page) — see --panel-bg's own
+     definition for why: reusing --surface on a fixed full-height panel lets
+     the page behind it bleed straight through, reading as small/broken
+     rather than a proper full panel. */
+  background: var(--panel-bg);
   border-left: 1px solid var(--line);
   overflow-y: auto;
   z-index: 1000;
