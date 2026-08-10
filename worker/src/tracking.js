@@ -556,9 +556,9 @@ export async function runGrading(
       // A metered second source can turn this specific void into a real
       // grade (see worker/src/tennis-results.js) — null falls through to
       // the same gradePick() void every other tennis spread/total gets.
-      outcome = (await settleTennisGameMarket(pick, scoreEvent, env, ctx, now)) ?? gradePick(pick, scoreEvent);
+      outcome = (await settleTennisGameMarket(pick, scoreEvent, env, ctx, now)) ?? gradePick(pick, scoreEvent, now);
     } else {
-      outcome = gradePick(pick, scoreEvent);
+      outcome = gradePick(pick, scoreEvent, now);
     }
     if (!outcome) continue;
     // A void (push, walkover, or a market this feed can't settle — see

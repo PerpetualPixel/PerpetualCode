@@ -34,8 +34,34 @@ function voidResult(reason) {
  *    is the standard sportsbook settlement case. The near-universal rule is
  *    applied: at least one full set completed → match-winner bets stand and
  *    the advancing player wins; nothing completed (a walkover) → void.
+ *
+ * 3. THE "0-0 COMPLETED" TRAP. `completed:true` with zero sets played
+ *    almost always means a genuine walkover (a scratched player, reported
+ *    near-instantly) — but confirmed live, this feed can also mark a match
+ *    completed:true and simply never post real set data for it at all,
+ *    for a match that actually played out normally (one TIER_1 ATP match
+ *    sat at 0-0, completed:true, 7+ hours after commence). A real walkover
+ *    is knowable almost immediately; a data gap for a real match isn't
+ *    distinguishable from one at the instant it's first seen, only by
+ *    whether it's still unresolved well after any real match could have
+ *    finished. So "0 sets played" isn't voided as a walkover until
+ *    WALKOVER_GRACE_HOURS have passed since commence — before that it
+ *    stays pending, same as an ordinary still-in-progress match, and gets
+ *    a fresh look on the next grading pass (worker/src/tracking.js's
+ *    runGrading runs every 20 minutes) or a rescue from the secondary
+ *    source (worker/src/tennis-results.js) if one's configured.
  */
-function gradeTennis(pick, homeSets, awaySets) {
+// Comfortably longer than any realistic best-of-3/best-of-5 match,
+// including rain delays — a judgment call, not a measured bound. TIER_1
+// (this function's only caller for h2h — see docs/tennis-tiers.js) includes
+// Grand Slams, so this has to clear a best-of-5 with delays, not just a
+// best-of-3. Voiding too early risks the exact wrong-permanent-void bug
+// this guards against; voiding too late just means a genuine walkover
+// shows "pending" a bit longer, which is harmless since grading is
+// idempotent and re-run every 20 minutes.
+const WALKOVER_GRACE_HOURS = 6;
+
+function gradeTennis(pick, homeSets, awaySets, now = Date.now()) {
   if (pick.marketKey !== 'h2h') {
     return voidResult('tennis spreads/totals are priced in games but scored in sets — not settleable');
   }
@@ -45,7 +71,17 @@ function gradeTennis(pick, homeSets, awaySets) {
 
   if (!decided) {
     // Retirement or walkover.
-    if (setsPlayed < 1) return voidResult('walkover — no completed set');
+    if (setsPlayed < 1) {
+      // pick.commenceMs is missing for at least one call site (docs/app.js's
+      // slateGameOutcome, a live UI indicator built from a partial pick
+      // object) — Number.isFinite guards that back to the old
+      // immediate-void behavior rather than NaN-comparing into always
+      // voiding or always staying pending.
+      if (Number.isFinite(pick.commenceMs) && (now - pick.commenceMs) / 3600000 < WALKOVER_GRACE_HOURS) {
+        return null; // too soon to tell a real walkover from a data gap — stay pending
+      }
+      return voidResult('walkover — no completed set');
+    }
     if (homeSets === awaySets) return voidResult('retirement with sets level — no advancing player to settle to');
     // One player was ahead on completed sets and advances.
     const pickedIsHome = pick.outcomeName === pick.home;
@@ -98,7 +134,7 @@ export function tennisMatchDecided(pick, scoreEvent) {
  * the learning/health reviews all exclude voids from win rate and ROI,
  * since a returned stake is neither a win nor a loss nor money at risk.
  */
-export function gradePick(pick, scoreEvent) {
+export function gradePick(pick, scoreEvent, now = Date.now()) {
   if (!scoreEvent?.completed || !Array.isArray(scoreEvent.scores)) return null;
 
   const scoreFor = (teamName) => {
@@ -113,7 +149,7 @@ export function gradePick(pick, scoreEvent) {
 
   let outcome;
   if (String(pick.sportKey ?? '').startsWith('tennis_')) {
-    outcome = gradeTennis(pick, homeScore, awayScore);
+    outcome = gradeTennis(pick, homeScore, awayScore, now);
   } else {
     outcome = gradeGeneric(pick, homeScore, awayScore);
   }

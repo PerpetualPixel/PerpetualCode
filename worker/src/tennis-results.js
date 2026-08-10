@@ -18,7 +18,7 @@
  *     day never risks the account's own rate limit.
  */
 
-import { gradeTennisGameMarket } from '../../docs/tennis-results.js';
+import { gradeTennisGameMarket, gradeTennisMatchWinner } from '../../docs/tennis-results.js';
 import { tennisMatchDecided } from '../../docs/learning.js';
 import { hasSecondarySettlementSource } from '../../docs/tennis-tiers.js';
 
@@ -95,20 +95,39 @@ async function fetchMatchResult(homeName, awayName, dateKey, env) {
 }
 
 /**
- * Attempt games-level settlement for one tennis spreads/totals pick.
+ * Attempt second-source settlement for one tennis pick — games-level
+ * (spreads/totals) or the h2h rescue path (see docs/tennis-results.js's
+ * header for why h2h is here at all).
  *
  * Returns `{won,payout}` | `{void,reason,payout}` on a real answer from
  * the second source, or `null` when this source can't or shouldn't be
- * used for this pick — budget exhausted, match not decided yet, retired,
- * the secret isn't configured, or the lookup/parse failed. `null` tells
- * the caller to fall back to docs/learning.js's gradePick, which already
- * voids this case correctly on its own.
+ * used for this pick — budget exhausted, the secret isn't configured, or
+ * the lookup/parse failed. `null` tells the caller to fall back to
+ * docs/learning.js's gradePick, which already handles this case (correctly
+ * for spreads/totals; usually correctly, with the one confirmed exception
+ * this rescue path exists for, on h2h).
  */
 export async function settleTennisGameMarket(pick, scoreEvent, env, ctx, now = Date.now()) {
   if (!hasSecondarySettlementSource(pick.sportKey, pick.marketKey)) return null;
+  if (!scoreEvent?.completed) return null; // not finished yet by the free source's own account — nothing to settle from any source
 
   const decided = tennisMatchDecided(pick, scoreEvent);
-  if (!decided?.decided) return null; // not completed yet, or a retirement — same unsettleable case either source
+  if (pick.marketKey === 'h2h') {
+    // The free source already grades a cleanly decided h2h match fine on
+    // its own — spending part of the metered daily budget confirming an
+    // answer already in hand would just waste it. This path is for the
+    // rescue case only: the free feed marking a match completed:true while
+    // never posting real set data (confirmed live — see docs/
+    // tennis-results.js's header), which reads as a walkover and voids a
+    // pick that actually had a real winner. Only reached when the free
+    // source COULDN'T decide it.
+    if (decided?.decided) return null;
+  } else if (!decided?.decided) {
+    // Spreads/totals: only worth the call once the free source itself
+    // shows a clean, decided set score — a genuine retirement has no fixed
+    // final games total from any source, so there's nothing to rescue.
+    return null;
+  }
 
   // Two different calendar days, deliberately not conflated: the budget
   // counts calls against TODAY (when we're actually asking), while the
@@ -124,5 +143,7 @@ export async function settleTennisGameMarket(pick, scoreEvent, env, ctx, now = D
   const apiResult = await fetchMatchResult(pick.home, pick.away, matchDateKey, env);
   if (!apiResult) return null;
 
-  return gradeTennisGameMarket(pick, apiResult);
+  return pick.marketKey === 'h2h'
+    ? gradeTennisMatchWinner(pick, apiResult)
+    : gradeTennisGameMarket(pick, apiResult);
 }

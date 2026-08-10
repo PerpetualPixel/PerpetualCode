@@ -243,9 +243,9 @@ export async function runFullSlateGrading(
     if (isMma(pick.sportKey)) {
       outcome = gradeMmaPickWithFallback(pick, scoreEvent, mmaResults);
     } else if (isTennis(pick.sportKey) && hasSecondarySettlementSource(pick.sportKey, pick.marketKey)) {
-      outcome = (await settleTennisGameMarket(pick, scoreEvent, env, ctx, now)) ?? gradePick(pick, scoreEvent);
+      outcome = (await settleTennisGameMarket(pick, scoreEvent, env, ctx, now)) ?? gradePick(pick, scoreEvent, now);
     } else {
-      outcome = gradePick(pick, scoreEvent);
+      outcome = gradePick(pick, scoreEvent, now);
     }
     if (!outcome) continue;
     pick.status = outcome.void ? 'void' : outcome.won ? 'won' : 'lost';

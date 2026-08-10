@@ -243,18 +243,27 @@ export function isSettleableTennisMarket(marketKey) {
 }
 
 /**
- * Whether a tennis spreads/totals pick is worth attempting against the
- * second, games-level results source (docs/tennis-results.js /
- * worker/src/tennis-results.js) rather than accepting isSettleableTennisMarket's
- * void outright. Deliberately narrower than "every tennis match": that
- * source is metered at 50 requests/day on its free tier, so this is scoped
- * to TIER_1 only (Slams, Masters 1000, WTA 1000) — the same tier
- * TIER_MARKETS already treats as worth a full board for. TIER_2/Challenger
- * stay moneyline-only regardless of what any settlement source can do,
- * because that restriction is about thin-market risk, not settleability.
+ * Whether a tennis pick is worth attempting against the second, set-level
+ * results source (docs/tennis-results.js / worker/src/tennis-results.js)
+ * rather than accepting the free source's own settlement outright.
+ * Deliberately narrower than "every tennis match": that source is metered
+ * at 50 requests/day on its free tier, so this is scoped to TIER_1 only
+ * (Slams, Masters 1000, WTA 1000) — the same tier TIER_MARKETS already
+ * treats as worth a full board for. TIER_2/Challenger stay moneyline-only
+ * regardless of what any settlement source can do, because that
+ * restriction is about thin-market risk, not settleability.
+ *
+ * h2h is included alongside spreads/totals for a different reason than
+ * those two: it's not unsettleable by the free source in general (most h2h
+ * picks grade fine on their own), but the free /scores feed can mark a
+ * match completed:true while never posting real set data at all — 0-0,
+ * persisting for hours (confirmed live) — which docs/learning.js's
+ * gradeTennis reads as a walkover and voids permanently. worker/src/
+ * tennis-results.js's settleTennisGameMarket only actually spends a call on
+ * h2h in exactly that rescue scenario, not on every already-decided match.
  */
 export function hasSecondarySettlementSource(sportKey, marketKey) {
-  if (marketKey !== 'spreads' && marketKey !== 'totals') return false;
+  if (marketKey !== 'spreads' && marketKey !== 'totals' && marketKey !== 'h2h') return false;
   return tennisTier(sportKey) === TIER_1;
 }
 
