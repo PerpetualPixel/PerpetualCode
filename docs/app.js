@@ -3148,8 +3148,17 @@ function slateTeamRow(game, side, { gameState, scoreEvent, recommendedId, hideMa
   const suppressRec = gameState !== 'upcoming';
   const score = gameState === 'upcoming' ? null : slateScoreFor(scoreEvent, team);
 
+  // Once a game is FINISHED, the losing side's row dims so the result reads
+  // at a glance — matching how tennis scoreboards gray the loser. Only on a
+  // real final with both scores known: a live trailing team isn't a loser
+  // yet, and a tie (soccer draws) dims nobody.
+  const oppTeam = isAway ? game.home : game.away;
+  const oppScore = gameState === 'finished' ? slateScoreFor(scoreEvent, oppTeam) : null;
+  const isLoser = gameState === 'finished'
+    && score != null && oppScore != null && Number(score) < Number(oppScore);
+
   return `
-    <div class="slate-team-row ${hideMarkets ? 'no-markets' : ''}">
+    <div class="slate-team-row ${hideMarkets ? 'no-markets' : ''} ${isLoser ? 'is-loser' : ''}">
       <span class="slate-team">
         ${logo ? `<img class="slate-logo" src="${esc(logo)}" alt="" loading="lazy">` : ''}
         ${esc(team)}${winPct ? ` <span class="slate-team-pct">${winPct}</span>` : ''}
@@ -3232,6 +3241,10 @@ function boxScoreGridHtml(box) {
   const headers = Array.from({ length: periods }, (_, i) => `<span>${i + 1}</span>`).join('');
   const totalsHead = isInnings ? '<span class="box-tot">R</span><span class="box-tot">H</span><span class="box-tot">E</span>' : '<span class="box-tot">T</span>';
 
+  // The loser's whole line dims (matching the tennis-scoreboard convention
+  // and the finished card's own team rows) — but only when ESPN actually
+  // marked a winner, so a tie/no-flag payload dims nobody.
+  const winnerKnown = box.home.winner !== box.away.winner;
   const teamRow = (side) => {
     const cells = Array.from({ length: periods }, (_, i) => {
       const v = side.linescores[i];
@@ -3240,7 +3253,8 @@ function boxScoreGridHtml(box) {
     const totals = isInnings
       ? `<span class="box-tot">${side.total ?? '—'}</span><span class="box-tot">${side.hits ?? '—'}</span><span class="box-tot">${side.errors ?? '—'}</span>`
       : `<span class="box-tot">${side.total ?? '—'}</span>`;
-    return `<div class="box-row ${side.winner ? 'is-winner' : ''}">
+    const tone = !winnerKnown ? '' : side.winner ? 'is-winner' : 'is-loser';
+    return `<div class="box-row ${tone}">
       <span class="box-team">${esc(side.abbr ?? side.name ?? '')}</span>${cells}${totals}
     </div>`;
   };
