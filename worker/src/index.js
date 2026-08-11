@@ -31,6 +31,7 @@ import { fetchContext, hasContext } from './context.js';
 import { fetchBoxScore, hasBoxScore } from './boxscore.js';
 import { fetchWeather, hasVenue } from './weather.js';
 import { fetchMmaContext } from './mma.js';
+import { fetchTennisPhotos } from './tennis-photo.js';
 import {
   fetchTeamStats,
   fetchRecentSchedule,
@@ -970,6 +971,34 @@ export default {
     // `leaning` is the current pool leader when today's pick hasn't locked
     // yet (see potd.js's getPotdLeaning) — null once `potd` itself is set,
     // since there's nothing left to lean on at that point.
+    // Head-to-head tennis player photos for "More Info", from Wikipedia
+    // (see worker/src/tennis-photo.js for why: ESPN's tennis surface is a
+    // dead end and the app's one paid tennis source has nowhere near the
+    // budget). Free, no odds credits. { context: null } is a normal answer
+    // (neither player has a confidently-matched Wikipedia photo), not an
+    // error — the card just keeps the initials-circle fallback.
+    if (pathname === '/tennis-photo') {
+      if (request.method !== 'GET') {
+        return json({ error: 'Method not allowed' }, { status: 405, headers: cors });
+      }
+      const { searchParams } = new URL(request.url);
+      try {
+        const context = await fetchTennisPhotos(
+          {
+            a: searchParams.get('a') ?? '',
+            b: searchParams.get('b') ?? '',
+          },
+          ctx,
+        );
+        return json(
+          { context },
+          { headers: { ...cors, 'Cache-Control': 'public, max-age=3600' } },
+        );
+      } catch (error) {
+        return json({ context: null, reason: String(error).slice(0, 120) }, { headers: cors });
+      }
+    }
+
     if (pathname === '/potd') {
       if (request.method !== 'GET') {
         return json({ error: 'Method not allowed' }, { status: 405, headers: cors });

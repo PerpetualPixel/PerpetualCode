@@ -1134,6 +1134,33 @@ function mmaContextFor(leg) {
 }
 
 /**
+ * Wikipedia-derived head-to-head player photos for one tennis matchup, via
+ * the worker (see worker/src/tennis-photo.js). Free, cached by event id in
+ * state.context — same shape and same "call again for a game already
+ * fetched or in flight is a no-op" behavior as mmaContextFor above.
+ */
+function tennisPhotosFor(leg) {
+  const key = `tennis-photo:${leg.eventId}`;
+  if (!state.context.has(key)) {
+    if (!CONFIG.WORKER_URL) {
+      state.context.set(key, Promise.resolve(null));
+    } else {
+      const url = new URL('/tennis-photo', CONFIG.WORKER_URL);
+      url.searchParams.set('a', leg.home);
+      url.searchParams.set('b', leg.away);
+      state.context.set(
+        key,
+        fetch(url, { headers: { Accept: 'application/json' } })
+          .then((r) => (r.ok ? r.json() : null))
+          .then((d) => d?.context ?? null)
+          .catch(() => null),
+      );
+    }
+  }
+  return state.context.get(key);
+}
+
+/**
  * Kicks off mmaContextFor AND matchupAnalysisFor for every MMA game
  * currently on the board, in the background, well before any user clicks
  * "More Info" — the whole point is that by the time they do, both fetches
@@ -1948,6 +1975,38 @@ function renderMmaPhotos(me, opponent) {
 }
 
 /**
+ * Head-to-head player photos for tennis "More Info" — Wikipedia-sourced
+ * (see worker/src/tennis-photo.js), reusing the same photo-row markup/CSS
+ * as renderMmaPhotos above rather than duplicating it under a new name.
+ * Renders nothing when neither player has a confidently-matched photo,
+ * same as renderMmaPhotos — a pair of bare initials circles on every
+ * single tennis match (Wikipedia's coverage is real but not total) would
+ * read as noise, not as the feature working.
+ */
+function renderTennisPhotos(photos, away, home) {
+  const initials = (name) => esc((name ?? '?').trim().charAt(0).toUpperCase());
+  const side = (name, photo, sideClass) => `
+    <div class="mma-photo-side ${sideClass}">
+      ${photo
+        ? `<img class="mma-photo" src="${esc(photo)}" alt="${esc(name)}" loading="lazy"
+             onerror="this.outerHTML='<span class=&quot;mma-photo mma-photo-fallback&quot;>${initials(name)}</span>'">`
+        : `<span class="mma-photo mma-photo-fallback">${initials(name)}</span>`}
+      <p class="mma-photo-name">${esc(name)}</p>
+    </div>`;
+
+  const homePhoto = photos?.a?.photo ?? null;
+  const awayPhoto = photos?.b?.photo ?? null;
+  if (!homePhoto && !awayPhoto) return '';
+
+  return `
+    <div class="mma-photo-row">
+      ${side(home, homePhoto, 'mma-photo-a')}
+      <span class="mma-photo-vs">VS</span>
+      ${side(away, awayPhoto, 'mma-photo-b')}
+    </div>`;
+}
+
+/**
  * Overall record plus a last-five-fights strip — five small circles, newest
  * first, green "W" for a win and red "L" for a loss (amber for a draw/no
  * contest, since those aren't "W or L" either). Renders under the fighter
@@ -2412,9 +2471,9 @@ async function openStatsDrawer(leg, opposite = null, { fullscreen = false, oddsO
   try {
     const analysisPromise = matchupAnalysisFor(leg);
     if (isTennis(leg.sportKey)) {
-      const tennisData = await tennisArchive(leg.sportKey);
+      const [tennisData, tennisPhotos] = await Promise.all([tennisArchive(leg.sportKey), tennisPhotosFor(leg)]);
       bullets = buildInsights(leg, { tennisData });
-      tennisBreakdownHtml = renderTennisBreakdown(tennisData, leg.away, leg.home);
+      tennisBreakdownHtml = renderTennisPhotos(tennisPhotos, leg.away, leg.home) + renderTennisBreakdown(tennisData, leg.away, leg.home);
     } else if (isMma(leg.sportKey)) {
       const mmaContext = await mmaContextFor(leg);
       bullets = buildInsights(leg, { mmaContext });
