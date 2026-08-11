@@ -1,6 +1,12 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { enrichMmaEvents } from '../worker/src/odds.js';
+import {
+  enrichMmaEvents,
+  fetchSport,
+  regionsFor,
+  REGIONS,
+  TENNIS_REGIONS,
+} from '../worker/src/odds.js';
 
 /**
  * Regression coverage for a real production bug: enrichMmaEvents used to call
@@ -89,4 +95,68 @@ test('enrichMmaEvents falls back to date grouping for every fight when both scor
   const enriched = await enrichMmaEvents(events, ctx);
   assert.ok(enriched.every((e) => e.ufc_event.event === 'Card - 08/09'));
   assert.equal(fetchCalls, 2, `a total failure should still only attempt 2 fetches, got ${fetchCalls}`);
+});
+
+/* --- tennis region expansion --------------------------------------------- */
+
+/**
+ * Lower-tier tennis is priced mostly by international books until close to
+ * start, so those matches came back with too few US books to clear
+ * RULES.MIN_BOOKS and rendered as all-dash rows. regionsFor widens the book
+ * set for tennis keys only — team sports stay on `us` so the per-region API
+ * cost isn't paid across the whole slate.
+ */
+test('regionsFor widens tennis keys and leaves team sports on us', () => {
+  assert.equal(regionsFor('tennis_wta_cincinnati'), TENNIS_REGIONS);
+  assert.equal(regionsFor('tennis_atp_canadian_open'), TENNIS_REGIONS);
+  assert.equal(TENNIS_REGIONS, 'us,uk,eu');
+
+  for (const key of ['baseball_mlb', 'americanfootball_nfl', 'mma_mixed_martial_arts', 'soccer_usa_mls']) {
+    assert.equal(regionsFor(key), REGIONS);
+  }
+});
+
+test('fetchSport requests the widened regions for a tennis key', async () => {
+  const requested = [];
+  globalThis.caches = { default: { async match() { return null; }, async put() {} } };
+  globalThis.fetch = async (url) => {
+    requested.push(String(url));
+    return {
+      ok: true,
+      async json() { return []; },
+      headers: { get: () => null },
+    };
+  };
+
+  await fetchSport('tennis_wta_cincinnati', { ODDS_API_KEY: 'k' }, ctx);
+  assert.equal(requested.length, 1);
+  const url = new URL(requested[0]);
+  assert.equal(url.searchParams.get('regions'), 'us,uk,eu');
+});
+
+test('fetchSport keeps team sports on the us region', async () => {
+  const requested = [];
+  globalThis.caches = { default: { async match() { return null; }, async put() {} } };
+  globalThis.fetch = async (url) => {
+    requested.push(String(url));
+    return { ok: true, async json() { return []; }, headers: { get: () => null } };
+  };
+
+  await fetchSport('baseball_mlb', { ODDS_API_KEY: 'k' }, ctx);
+  assert.equal(new URL(requested[0]).searchParams.get('regions'), 'us');
+});
+
+test('fetchSport caches tennis under a region-specific key (no us-only collision)', async () => {
+  const puts = [];
+  globalThis.caches = {
+    default: {
+      async match() { return null; },
+      async put(key) { puts.push(String(key.url ?? key)); },
+    },
+  };
+  globalThis.fetch = async () => ({ ok: true, async json() { return []; }, headers: { get: () => null } });
+
+  await fetchSport('tennis_wta_cincinnati', { ODDS_API_KEY: 'k' }, ctx);
+  assert.ok(puts.length >= 1);
+  assert.ok(puts[0].includes('regions=us,uk,eu'), `cache key should carry the tennis regions, got ${puts[0]}`);
 });

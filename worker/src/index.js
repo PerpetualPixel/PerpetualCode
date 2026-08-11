@@ -51,7 +51,7 @@ import { runPotdDaily, runPotdClvSnapshot, runPotdGrading, backfillPotdAnalysis,
 import { getOrGenerateAnalysis } from './analysis.js';
 import {
   UPSTREAM,
-  REGIONS,
+  regionsFor,
   DEFAULT_CACHE_SECONDS,
   isAllowedSport,
   ALLOWED_SPORTS,
@@ -196,7 +196,10 @@ async function fetchTennisAltSpread(sportKey, eventId, env, ctx) {
 
   const url = new URL(`${UPSTREAM}/sports/${sportKey}/events/${eventId}/odds`);
   url.searchParams.set('apiKey', (env.ODDS_API_KEY ?? '').trim());
-  url.searchParams.set('regions', REGIONS);
+  // Same widened book set as the main tennis pull (this only ever runs for
+  // tennis keys), so an alt-spread price comes from the same books that
+  // priced the match rather than an empty us-only response.
+  url.searchParams.set('regions', regionsFor(sportKey));
   url.searchParams.set('markets', 'alternate_spreads');
   url.searchParams.set('oddsFormat', 'american');
   url.searchParams.set('dateFormat', 'iso');
