@@ -83,6 +83,7 @@ import {
   runFullSlateClvSnapshot,
   runFullSlateGrading,
   getAllFullSlateTracked,
+  migrateFullSlatePickDates,
 } from './full-slate-tracking.js';
 import {
   runDailyLearning,
@@ -1198,6 +1199,19 @@ export default {
         return json({ sent: true }, { headers: cors });
       } catch (error) {
         return json({ error: String(error).slice(0, 120) }, { status: 500, headers: cors });
+      }
+    }
+
+    // Owner-only: Diagnose and migrate Full Slate picks that were tracked
+    // under the wrong date (commenceMs doesn't match storage dateKey).
+    if (pathname === '/admin/migrate-slate-dates' && request.method === 'POST') {
+      const auth = authorizeSettings(request, env);
+      if (!auth.ok) return json({ error: auth.error }, { status: auth.status, headers: cors });
+      try {
+        const result = await migrateFullSlatePickDates(env, ctx, Date.now(), { days: 5 });
+        return json(result, { headers: cors });
+      } catch (error) {
+        return json({ error: String(error).slice(0, 200) }, { status: 500, headers: cors });
       }
     }
 

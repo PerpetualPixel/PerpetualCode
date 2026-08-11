@@ -316,3 +316,80 @@ export async function resetFullSlateTracking(env, { now = Date.now(), days = 90 
   }
   return { deleted };
 }
+
+/** Diagnoses and migrates Full Slate picks tracked under the wrong date (where commenceMs doesn't match storage dateKey). */
+export async function migrateFullSlatePickDates(env, ctx, now = Date.now(), { days = 5 } = {}) {
+  const dateKeys = [];
+  for (let i = 0; i < days; i++) {
+    dateKeys.push(etDate(now - i * 86400000));
+  }
+
+  const misdatedPicks = [];
+  const movedPicks = [];
+
+  // Scan each date's manifest and picks
+  for (const storedDate of dateKeys) {
+    const manifestKey = `slate:${storedDate}:manifest`;
+    const manifestRaw = await env.POTD_KV.get(manifestKey);
+    if (!manifestRaw) continue;
+
+    const { pickIds } = JSON.parse(manifestRaw);
+
+    for (const pickId of pickIds) {
+      const pickKey = `slate:${storedDate}:pick:${pickId}`;
+      const pickRaw = await env.POTD_KV.get(pickKey);
+      if (!pickRaw) continue;
+
+      const pick = JSON.parse(pickRaw);
+      const actualDate = etDate(pick.commenceMs);
+
+      if (actualDate !== storedDate) {
+        misdatedPicks.push({
+          pickId,
+          storedDate,
+          actualDate,
+          pick: {
+            eventId: pick.eventId,
+            home: pick.home,
+            away: pick.away,
+            sportKey: pick.sportKey,
+          },
+        });
+
+        // Move the pick to correct date
+        const newPickKey = `slate:${actualDate}:pick:${pickId}`;
+        ctx.waitUntil(env.POTD_KV.put(newPickKey, pickRaw, { expirationTtl: 86400 * 90 }));
+
+        // Remove from old date
+        ctx.waitUntil(env.POTD_KV.delete(pickKey));
+
+        movedPicks.push({
+          pickId,
+          from: storedDate,
+          to: actualDate,
+        });
+
+        // Update manifest for old date
+        const oldManifest = JSON.parse(manifestRaw);
+        oldManifest.pickIds = oldManifest.pickIds.filter((id) => id !== pickId);
+        ctx.waitUntil(env.POTD_KV.put(manifestKey, JSON.stringify(oldManifest), { expirationTtl: 86400 * 90 }));
+
+        // Update manifest for new date
+        const newManifestKey = `slate:${actualDate}:manifest`;
+        const newManifestRaw = await env.POTD_KV.get(newManifestKey);
+        let newManifest = newManifestRaw ? JSON.parse(newManifestRaw) : { date: actualDate, pickIds: [], generatedAt: now, lastUpdatedAt: now };
+        if (!newManifest.pickIds.includes(pickId)) {
+          newManifest.pickIds.push(pickId);
+          newManifest.lastUpdatedAt = now;
+          ctx.waitUntil(env.POTD_KV.put(newManifestKey, JSON.stringify(newManifest), { expirationTtl: 86400 * 90 }));
+        }
+      }
+    }
+  }
+
+  return {
+    misdated: misdatedPicks,
+    moved: movedPicks,
+    summary: `Found ${misdatedPicks.length} misdated picks, moved ${movedPicks.length} to correct dates`,
+  };
+}
