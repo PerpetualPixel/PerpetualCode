@@ -415,22 +415,26 @@ function renderMlbStartingPitchers(d) {
   ];
 
   const pitcherCard = (side, pitcher) => {
-    if (!pitcher) return `<div class="stats-team"><p class="empty">TBD</p></div>`;
+    if (!pitcher) return `<div class="pitcher-card"><p class="empty">TBD</p></div>`;
     const record = pitcher.wins != null && pitcher.losses != null ? `${pitcher.wins}-${pitcher.losses}` : '—';
     const expanded = d.pitcherOutings[pitcher.playerId] !== undefined;
+    // Label-over-value cells in two 3-across rows (ERA/WHIP/IP, H/K/BB) —
+    // the reference layout's compact grid, which two cards fit side by side
+    // even on a phone, unlike the old one-stat-per-row list.
+    const cells = Object.entries(MLB_PITCHER_STAT_LABELS).map(([key, label]) => `
+      <div class="pitcher-cell">
+        <span class="pitcher-cell-label">${label}</span>
+        <span class="pitcher-cell-value">${esc(formatPitcherStat(key, pitcher[key]))}</span>
+      </div>`).join('');
     return `
-      <div class="stats-team pitcher-card">
-        <div class="team-header">
-          <span class="team-name">${esc(pitcher.name)}</span>
-          <span class="pitcher-meta">${record}${pitcher.jersey ? `, #${esc(pitcher.jersey)}` : ''}${pitcher.throws ? ` · ${esc(pitcher.throws)}HP` : ''}</span>
+      <div class="pitcher-card">
+        <div class="pitcher-head">
+          <span class="pitcher-name">${esc(pitcher.name)}</span>
+          <span class="pitcher-meta">${record}${pitcher.jersey ? `, #${esc(pitcher.jersey)}` : ''}${pitcher.throws ? ` <span class="pitcher-hand">${esc(pitcher.throws)}HP</span>` : ''}</span>
         </div>
-        ${Object.entries(MLB_PITCHER_STAT_LABELS).map(([key, label]) => `
-          <div class="stat-row">
-            <span class="stat-label">${label}</span>
-            <span class="stat-value">${esc(formatPitcherStat(key, pitcher[key]))}</span>
-          </div>`).join('')}
+        <div class="pitcher-cells">${cells}</div>
         <button type="button" class="pitcher-outings-toggle" data-pitcher-outings="${side}" data-player-id="${esc(pitcher.playerId)}">
-          ${expanded ? 'Hide' : 'Show'} Past 5 Outings
+          ${expanded ? 'Hide' : 'Past 5 Outings ›'}
         </button>
       </div>`;
   };
@@ -448,9 +452,8 @@ function renderMlbStartingPitchers(d) {
     .join('');
 
   return `
-    <div class="stats-grid">
+    <div class="pitcher-grid">
       ${pitcherCard('away', d.startingPitchers.away)}
-      <div class="stats-divider"></div>
       ${pitcherCard('home', d.startingPitchers.home)}
     </div>
     ${expandedOutings}`;
@@ -472,70 +475,95 @@ function renderMlbPitcherOutings(outings) {
   </div>`;
 }
 
-/** Season/Last 10/venue-split rows — no Underdog/Favorite split, since no data source tracks a team's record by whether it was favored. */
+/** "64-54" -> winning/losing/neutral tone class for a situational bar. */
+function recordTone(value) {
+  const m = /^(\d+)\s*-\s*(\d+)/.exec(value ?? '');
+  if (!m) return '';
+  const wins = Number(m[1]);
+  const losses = Number(m[2]);
+  if (wins > losses) return 'is-winning';
+  if (wins < losses) return 'is-losing';
+  return '';
+}
+
+/**
+ * Season/Last 10/venue-split rows as a mirrored side-by-side comparison —
+ * away team's bar on the left, home's on the right, each bar tinted by
+ * whether that record is winning or losing, per the reference layout. Built
+ * mobile-first: two bars per row always fit, unlike the old two-column
+ * stack that pushed the home team below the fold on a phone. No
+ * Underdog/Favorite split, since no data source tracks a team's record by
+ * whether it was favored.
+ */
 function renderMlbSituational(d) {
   const away = d.awayData.situational;
   const home = d.homeData.situational;
   if (!away && !home) return `<p class="empty">Situational data unavailable.</p>`;
 
-  const row = (label, value) => `
-    <div class="stat-row">
-      <span class="stat-label">${esc(label)}</span>
-      <span class="stat-value">${value ? esc(value) : '—'}</span>
+  const bar = (value) => `<div class="sit-bar ${recordTone(value)}">${value ? esc(value) : '—'}</div>`;
+  const row = (awayLabel, homeLabel, awayValue, homeValue) => `
+    <div class="sit-row">
+      <div class="sit-labels"><span>${esc(awayLabel)}</span><span>${esc(homeLabel)}</span></div>
+      <div class="sit-bars">${bar(awayValue)}${bar(homeValue)}</div>
     </div>`;
 
   return `
-    <div class="stats-grid">
-      <div class="stats-team">
-        <div class="team-header"><span class="team-name">${esc(d.awayAbbrev)}</span></div>
-        ${row('Season', away?.season)}
-        ${row('Last 10', away?.lastTen)}
-        ${row('Away', away?.away)}
-      </div>
-      <div class="stats-divider"></div>
-      <div class="stats-team">
-        <div class="team-header"><span class="team-name">${esc(d.homeAbbrev)}</span></div>
-        ${row('Season', home?.season)}
-        ${row('Last 10', home?.lastTen)}
-        ${row('Home', home?.home)}
-      </div>
-    </div>`;
+    <div class="vs-head">
+      <span class="vs-team">${esc(d.awayAbbrev)}</span>
+      <span class="vs-team">${esc(d.homeAbbrev)}</span>
+    </div>
+    ${row('Season', 'Season', away?.season, home?.season)}
+    ${row('Last 10', 'Last 10', away?.lastTen, home?.lastTen)}
+    ${row('Away', 'Home', away?.away, home?.home)}`;
 }
 
+/** League rank -> chip tone: top third green, bottom third red, middle neutral — the reference layout's three-tone chips, not the old binary good/bad split at 15th. */
+function rankTone(rank) {
+  if (rank == null) return '';
+  if (rank <= 10) return 'good';
+  if (rank >= 21) return 'bad';
+  return '';
+}
+
+/**
+ * Both teams' season stats as ONE shared row per stat — away's rank chip
+ * and value on the left, the stat name centered, home's value and rank chip
+ * mirrored on the right, per the reference layout. This is the direct
+ * side-by-side read the old two-independent-columns version never gave
+ * (and, on a phone, those columns stacked so "comparison" meant scrolling
+ * a full screen between the two teams' Batting Avg).
+ */
 function renderMlbTeamStats(d) {
   const category = d.category;
   const labels = category === 'offense' ? MLB_OFFENSE_LABELS : MLB_DEFENSE_LABELS;
+  const awayStats = d.awayData.teamStats?.[category];
+  const homeStats = d.homeData.teamStats?.[category];
 
-  const statRows = (stats) => {
-    if (!stats) return `<p class="empty">Stats unavailable</p>`;
-    return Object.entries(labels).map(([key, label]) => {
-      const entry = stats[key];
-      const rankClass = entry?.rank == null ? '' : entry.rank <= 15 ? 'good' : 'bad';
-      return `
-        <div class="stat-row">
-          <span class="stat-rank ${rankClass}">${ordinal(entry?.rank)}</span>
-          <span class="stat-label">${esc(label)}</span>
-          <span class="stat-value">${formatMlbStatValue(key, entry?.value)}</span>
-        </div>`;
-    }).join('');
-  };
+  const rows = (!awayStats && !homeStats)
+    ? `<p class="empty">Stats unavailable</p>`
+    : Object.entries(labels).map(([key, label]) => {
+        const a = awayStats?.[key];
+        const h = homeStats?.[key];
+        return `
+          <div class="ts-row">
+            <span class="ts-rank ${rankTone(a?.rank)}">${ordinal(a?.rank)}</span>
+            <span class="ts-value">${formatMlbStatValue(key, a?.value)}</span>
+            <span class="ts-label">${esc(label)}</span>
+            <span class="ts-value">${formatMlbStatValue(key, h?.value)}</span>
+            <span class="ts-rank ${rankTone(h?.rank)}">${ordinal(h?.rank)}</span>
+          </div>`;
+      }).join('');
 
   return `
-    <div class="stats-tabs">
+    <div class="vs-head">
+      <span class="vs-team">${esc(d.awayAbbrev)}</span>
+      <span class="vs-team">${esc(d.homeAbbrev)}</span>
+    </div>
+    <div class="stats-tabs stats-tabs--pills">
       <button type="button" class="stats-tab ${category === 'offense' ? 'is-active' : ''}" data-mlb-category="offense">Offense</button>
       <button type="button" class="stats-tab ${category === 'defense' ? 'is-active' : ''}" data-mlb-category="defense">Defense</button>
     </div>
-    <div class="stats-grid">
-      <div class="stats-team">
-        <div class="team-header"><span class="team-name">${esc(d.awayTeam)}</span></div>
-        ${statRows(d.awayData.teamStats?.[category])}
-      </div>
-      <div class="stats-divider"></div>
-      <div class="stats-team">
-        <div class="team-header"><span class="team-name">${esc(d.homeTeam)}</span></div>
-        ${statRows(d.homeData.teamStats?.[category])}
-      </div>
-    </div>`;
+    <div class="ts-rows">${rows}</div>`;
 }
 
 function renderMlbScheduleSection(d) {
