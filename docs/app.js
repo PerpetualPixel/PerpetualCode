@@ -1282,8 +1282,8 @@ function singleStakeLine(candidate) {
  */
 function renderLeanBadge(isLean) {
   return isLean
-    ? `<div class="lean-badge is-lean"><span class="lean-dot"></span>LEAN &mdash; not the final pick yet</div>`
-    : `<div class="lean-badge is-final"><span class="lean-dot"></span>FINAL</div>`;
+    ? `<div class="lean-badge is-lean"><span class="lean-dot"></span>LEAN &mdash; not locked in yet</div>`
+    : `<div class="lean-badge is-final"><span class="lean-dot"></span>PICK LOCKED IN</div>`;
 }
 
 function renderConfidence(pick) {
@@ -5303,7 +5303,7 @@ function showWelcomeToastIfFresh() {
 // Versioned so a future, meaningfully different change can show its own
 // hint again even to someone who already dismissed this one — bump the
 // suffix, don't reuse the key.
-const WHATS_NEW_LEAN_FINAL_KEY = 'pp_seen_hint_lean_final_v1';
+const WHATS_NEW_LEAN_FINAL_KEY = 'pp_seen_hint_lean_final_v2';
 
 /** One-time explainer for the Pixel's Picks/Play of the Day lock-timing
  * change (see renderLeanBadge) — localStorage, not sessionStorage, since
