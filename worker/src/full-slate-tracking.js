@@ -317,79 +317,126 @@ export async function resetFullSlateTracking(env, { now = Date.now(), days = 90 
   return { deleted };
 }
 
-/** Diagnoses and migrates Full Slate picks tracked under the wrong date (where commenceMs doesn't match storage dateKey). */
+/**
+ * Moves a batch of Full Slate picks off `storedDate` onto whatever ET
+ * calendar date each one's own commenceMs actually falls on, and returns how
+ * many moved. Shared by the one-off admin migration and the continuous
+ * hourly resync below.
+ *
+ * Every pick that needs to move gets its own `dateKey` field rewritten
+ * in-place before being re-persisted — not just relocated to a new KV key —
+ * because every render path that groups tracked picks by day (see
+ * docs/app.js's own comment: "Groups server-tracked picks by their own
+ * stored dateKey, not a pickId prefix") reads that field off the record
+ * itself, not the KV key it happens to be filed under. Moving only the
+ * storage location while leaving a stale dateKey inside the JSON is a
+ * no-op from the client's point of view — confirmed live: the first version
+ * of this migration did exactly that, and the affected picks kept rendering
+ * under their old day even after the KV keys had moved.
+ *
+ * Manifest updates are batched per source/target date and awaited (not
+ * fired via ctx.waitUntil) rather than one read-modify-write per pick: doing
+ * it per-pick raced multiple concurrent read-then-writes against the same
+ * manifest key when more than one pick left the same day in a single pass,
+ * so only the last write survived and the others' removals/additions were
+ * silently lost from the manifest (the underlying pick keys still moved
+ * correctly, but the manifest could end up listing a pickId that no longer
+ * lived at that date, or missing one that did).
+ */
+async function movePicksOffDate(env, storedDate, now, { dryRun = false, pendingOnly = false } = {}) {
+  const manifestKey = `slate:${storedDate}:manifest`;
+  const manifestRaw = await env.POTD_KV.get(manifestKey);
+  if (!manifestRaw) return { misdated: [], moved: [] };
+
+  const manifest = JSON.parse(manifestRaw);
+  const pickRaws = await Promise.all(
+    manifest.pickIds.map((id) => env.POTD_KV.get(`slate:${storedDate}:pick:${id}`)),
+  );
+
+  const misdated = [];
+  const toMove = []; // { pickId, actualDate, patchedRaw }
+  manifest.pickIds.forEach((pickId, i) => {
+    const pickRaw = pickRaws[i];
+    if (!pickRaw) return;
+    const pick = JSON.parse(pickRaw);
+    if (pendingOnly && pick.status !== 'pending') return;
+    const actualDate = etDate(pick.commenceMs);
+    if (actualDate === storedDate) return;
+
+    misdated.push({
+      pickId,
+      storedDate,
+      actualDate,
+      pick: { eventId: pick.eventId, home: pick.home, away: pick.away, sportKey: pick.sportKey },
+    });
+    if (dryRun) return;
+
+    pick.dateKey = actualDate;
+    toMove.push({ pickId, actualDate, patchedRaw: JSON.stringify(pick) });
+  });
+
+  if (!toMove.length) return { misdated, moved: [] };
+
+  // Write each moved pick to its correct date, delete it from the old one.
+  await Promise.all(
+    toMove.flatMap(({ pickId, actualDate, patchedRaw }) => [
+      env.POTD_KV.put(`slate:${actualDate}:pick:${pickId}`, patchedRaw, { expirationTtl: KV_TTL_SECONDS }),
+      env.POTD_KV.delete(`slate:${storedDate}:pick:${pickId}`),
+    ]),
+  );
+
+  // One rewrite of the source manifest, removing every moved pickId at once.
+  const movedIds = new Set(toMove.map((m) => m.pickId));
+  manifest.pickIds = manifest.pickIds.filter((id) => !movedIds.has(id));
+  manifest.lastUpdatedAt = now;
+  await env.POTD_KV.put(manifestKey, JSON.stringify(manifest), { expirationTtl: KV_TTL_SECONDS });
+
+  // One rewrite per distinct target date, adding every pick that landed there.
+  const byTargetDate = new Map();
+  for (const { pickId, actualDate } of toMove) {
+    if (!byTargetDate.has(actualDate)) byTargetDate.set(actualDate, []);
+    byTargetDate.get(actualDate).push(pickId);
+  }
+  await Promise.all(
+    [...byTargetDate.entries()].map(async ([targetDate, pickIds]) => {
+      const targetManifestKey = `slate:${targetDate}:manifest`;
+      const targetRaw = await env.POTD_KV.get(targetManifestKey);
+      const targetManifest = targetRaw
+        ? JSON.parse(targetRaw)
+        : { date: targetDate, pickIds: [], generatedAt: now };
+      const existing = new Set(targetManifest.pickIds);
+      for (const id of pickIds) existing.add(id);
+      targetManifest.pickIds = [...existing];
+      targetManifest.lastUpdatedAt = now;
+      return env.POTD_KV.put(targetManifestKey, JSON.stringify(targetManifest), { expirationTtl: KV_TTL_SECONDS });
+    }),
+  );
+
+  return { misdated, moved: toMove.map(({ pickId, actualDate }) => ({ pickId, from: storedDate, to: actualDate })) };
+}
+
+/** Owner-triggered diagnostic/repair over the last `days` of Full Slate tracking — see movePicksOffDate for the actual logic. */
 export async function migrateFullSlatePickDates(env, ctx, now = Date.now(), { days = 5 } = {}) {
-  const dateKeys = [];
-  for (let i = 0; i < days; i++) {
-    dateKeys.push(etDate(now - i * 86400000));
-  }
+  const dateKeys = Array.from({ length: days }, (_, i) => etDate(now - i * 86400000));
+  const results = await Promise.all(dateKeys.map((d) => movePicksOffDate(env, d, now)));
+  const misdated = results.flatMap((r) => r.misdated);
+  const moved = results.flatMap((r) => r.moved);
+  return { misdated, moved, summary: `Found ${misdated.length} misdated picks, moved ${moved.length} to correct dates` };
+}
 
-  const misdatedPicks = [];
-  const movedPicks = [];
-
-  // Scan each date's manifest and picks
-  for (const storedDate of dateKeys) {
-    const manifestKey = `slate:${storedDate}:manifest`;
-    const manifestRaw = await env.POTD_KV.get(manifestKey);
-    if (!manifestRaw) continue;
-
-    const { pickIds } = JSON.parse(manifestRaw);
-
-    for (const pickId of pickIds) {
-      const pickKey = `slate:${storedDate}:pick:${pickId}`;
-      const pickRaw = await env.POTD_KV.get(pickKey);
-      if (!pickRaw) continue;
-
-      const pick = JSON.parse(pickRaw);
-      const actualDate = etDate(pick.commenceMs);
-
-      if (actualDate !== storedDate) {
-        misdatedPicks.push({
-          pickId,
-          storedDate,
-          actualDate,
-          pick: {
-            eventId: pick.eventId,
-            home: pick.home,
-            away: pick.away,
-            sportKey: pick.sportKey,
-          },
-        });
-
-        // Move the pick to correct date
-        const newPickKey = `slate:${actualDate}:pick:${pickId}`;
-        ctx.waitUntil(env.POTD_KV.put(newPickKey, pickRaw, { expirationTtl: 86400 * 90 }));
-
-        // Remove from old date
-        ctx.waitUntil(env.POTD_KV.delete(pickKey));
-
-        movedPicks.push({
-          pickId,
-          from: storedDate,
-          to: actualDate,
-        });
-
-        // Update manifest for old date
-        const oldManifest = JSON.parse(manifestRaw);
-        oldManifest.pickIds = oldManifest.pickIds.filter((id) => id !== pickId);
-        ctx.waitUntil(env.POTD_KV.put(manifestKey, JSON.stringify(oldManifest), { expirationTtl: 86400 * 90 }));
-
-        // Update manifest for new date
-        const newManifestKey = `slate:${actualDate}:manifest`;
-        const newManifestRaw = await env.POTD_KV.get(newManifestKey);
-        let newManifest = newManifestRaw ? JSON.parse(newManifestRaw) : { date: actualDate, pickIds: [], generatedAt: now, lastUpdatedAt: now };
-        if (!newManifest.pickIds.includes(pickId)) {
-          newManifest.pickIds.push(pickId);
-          newManifest.lastUpdatedAt = now;
-          ctx.waitUntil(env.POTD_KV.put(newManifestKey, JSON.stringify(newManifest), { expirationTtl: 86400 * 90 }));
-        }
-      }
-    }
-  }
-
-  return {
-    misdated: misdatedPicks,
-    moved: movedPicks,
-    summary: `Found ${misdatedPicks.length} misdated picks, moved ${movedPicks.length} to correct dates`,
-  };
+/**
+ * Runs every hourly tick alongside runFullSlateClvSnapshot — catches any
+ * still-pending pick whose commenceMs has drifted onto a different ET
+ * calendar day than the one it's filed under (a live tournament reschedule
+ * between the pick locking in and its match's real start time, most often —
+ * tennis order-of-play routinely shifts a match to the next day after it's
+ * already been tracked) and moves it, the same way the admin migration does.
+ * Only ever touches pending picks — a graded one's day is already final and
+ * correctly reflects when its game actually happened.
+ */
+export async function runFullSlateDateResync(env, ctx, now = Date.now(), { days = 2 } = {}) {
+  const dateKeys = Array.from({ length: days }, (_, i) => etDate(now - i * 86400000));
+  const results = await Promise.all(dateKeys.map((d) => movePicksOffDate(env, d, now, { pendingOnly: true })));
+  const moved = results.flatMap((r) => r.moved);
+  return { moved: moved.length };
 }

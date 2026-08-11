@@ -816,3 +816,100 @@ export async function resetAllTracking(env, { now = Date.now(), days = 90 } = {}
   }
   return { deleted };
 }
+
+/**
+ * Moves a batch of Pixel's Picks off `storedDate` onto whatever ET calendar
+ * date each one's own commenceMs actually falls on — the Top 5 counterpart
+ * to worker/src/full-slate-tracking.js's own movePicksOffDate, same
+ * reasoning and same batched-manifest-write shape (see that file's own
+ * comment for why per-pick manifest writes raced each other and silently
+ * dropped entries when more than one pick left the same day at once).
+ * Every moved pick's own `dateKey` field is rewritten too, not just its KV
+ * key — docs/app.js groups tracked picks by that field, not by storage
+ * location.
+ */
+async function moveTop5PicksOffDate(env, storedDate, now, { dryRun = false, pendingOnly = false } = {}) {
+  const manifestKey = `track:${storedDate}:top5`;
+  const manifestRaw = await env.POTD_KV.get(manifestKey);
+  if (!manifestRaw) return { misdated: [], moved: [] };
+
+  const manifest = JSON.parse(manifestRaw);
+  const pickRaws = await Promise.all(
+    manifest.pickIds.map((id) => env.POTD_KV.get(`track:${storedDate}:pick:${id}`)),
+  );
+
+  const misdated = [];
+  const toMove = [];
+  manifest.pickIds.forEach((pickId, i) => {
+    const pickRaw = pickRaws[i];
+    if (!pickRaw) return;
+    const pick = JSON.parse(pickRaw);
+    if (pendingOnly && pick.status !== 'pending') return;
+    const actualDate = etDate(pick.commenceMs);
+    if (actualDate === storedDate) return;
+
+    misdated.push({
+      pickId,
+      storedDate,
+      actualDate,
+      pick: { eventId: pick.eventId, home: pick.home, away: pick.away, sportKey: pick.sportKey },
+    });
+    if (dryRun) return;
+
+    pick.dateKey = actualDate;
+    toMove.push({ pickId, actualDate, patchedRaw: JSON.stringify(pick) });
+  });
+
+  if (!toMove.length) return { misdated, moved: [] };
+
+  await Promise.all(
+    toMove.flatMap(({ pickId, actualDate, patchedRaw }) => [
+      env.POTD_KV.put(`track:${actualDate}:pick:${pickId}`, patchedRaw, { expirationTtl: KV_TTL_SECONDS }),
+      env.POTD_KV.delete(`track:${storedDate}:pick:${pickId}`),
+    ]),
+  );
+
+  const movedIds = new Set(toMove.map((m) => m.pickId));
+  manifest.pickIds = manifest.pickIds.filter((id) => !movedIds.has(id));
+  await env.POTD_KV.put(manifestKey, JSON.stringify(manifest), { expirationTtl: KV_TTL_SECONDS });
+
+  const byTargetDate = new Map();
+  for (const { pickId, actualDate } of toMove) {
+    if (!byTargetDate.has(actualDate)) byTargetDate.set(actualDate, []);
+    byTargetDate.get(actualDate).push(pickId);
+  }
+  await Promise.all(
+    [...byTargetDate.entries()].map(async ([targetDate, pickIds]) => {
+      const targetManifestKey = `track:${targetDate}:top5`;
+      const targetRaw = await env.POTD_KV.get(targetManifestKey);
+      const targetManifest = targetRaw ? JSON.parse(targetRaw) : { date: targetDate, generatedAt: now, pickIds: [] };
+      const existing = new Set(targetManifest.pickIds);
+      for (const id of pickIds) existing.add(id);
+      targetManifest.pickIds = [...existing];
+      return env.POTD_KV.put(targetManifestKey, JSON.stringify(targetManifest), { expirationTtl: KV_TTL_SECONDS });
+    }),
+  );
+
+  return { misdated, moved: toMove.map(({ pickId, actualDate }) => ({ pickId, from: storedDate, to: actualDate })) };
+}
+
+/** Owner-triggered diagnostic/repair over the last `days` of Pixel's Picks tracking — see moveTop5PicksOffDate for the actual logic. */
+export async function migrateTop5PickDates(env, ctx, now = Date.now(), { days = 5 } = {}) {
+  const dateKeys = Array.from({ length: days }, (_, i) => etDate(now - i * 86400000));
+  const results = await Promise.all(dateKeys.map((d) => moveTop5PicksOffDate(env, d, now)));
+  const misdated = results.flatMap((r) => r.misdated);
+  const moved = results.flatMap((r) => r.moved);
+  return { misdated, moved, summary: `Found ${misdated.length} misdated picks, moved ${moved.length} to correct dates` };
+}
+
+/**
+ * Runs every hourly tick — the Pixel's Picks counterpart to
+ * full-slate-tracking.js's own runFullSlateDateResync. Only touches pending
+ * picks; a graded one's day is already final.
+ */
+export async function runTop5DateResync(env, ctx, now = Date.now(), { days = 2 } = {}) {
+  const dateKeys = Array.from({ length: days }, (_, i) => etDate(now - i * 86400000));
+  const results = await Promise.all(dateKeys.map((d) => moveTop5PicksOffDate(env, d, now, { pendingOnly: true })));
+  const moved = results.flatMap((r) => r.moved);
+  return { moved: moved.length };
+}
