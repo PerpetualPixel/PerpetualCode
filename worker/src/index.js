@@ -23,6 +23,7 @@ import {
   markTop5PickIdsNotified,
 } from './notifications.js';
 import { sendWeeklyTrackingReport } from './weekly-report.js';
+import { sendDailyOnboardingReport } from './onboarding-report.js';
 import { handleReportBug } from './bug-reports.js';
 import { QuotaManager } from './quota.js';
 import { fetchContext, hasContext } from './context.js';
@@ -335,6 +336,7 @@ const MORNING_PREWARM_HOUR = 4; // 4am ET
 const MLB_LEAGUE_STATS_HOUR = 3; // 3am ET
 const ALGO_HEALTH_HOUR = 7; // Monday 7am ET
 const ALGO_HEALTH_WEEKDAY = 1; // Monday (0=Sunday per Intl's 'short' weekday index below)
+const ADMIN_REPORT_HOUR = 20; // 8pm ET daily — owner-only onboarding digest
 // How close to its own commence time an already-locked, not-yet-emailed
 // Pixel's Picks slot can get before waiting any longer for the rest of the
 // board risks missing the 1-hour notice floor — see the scheduled()
@@ -643,6 +645,18 @@ export default {
         ),
       );
     }
+
+    // 8pm ET daily: the owner-only new-signups digest (worker/src/
+    // onboarding-report.js) — who onboarded today, plus running totals for
+    // the week and month. Independent ctx.waitUntil, same as the weekly
+    // report above, so a send failure here can never affect anything else.
+    if (etHour(now) === ADMIN_REPORT_HOUR && isTopOfHour(now)) {
+      ctx.waitUntil(
+        sendDailyOnboardingReport(env, now).catch((e) =>
+          console.error('Daily onboarding report failed:', e),
+        ),
+      );
+    }
   },
 
   async fetch(request, env, ctx) {
@@ -688,9 +702,19 @@ export default {
       '/api/auth/reset-password',
       '/api/auth/verify-email',
     ]);
-    if (request.method === 'POST' && (AUTH_LIMITED_PATHS.has(pathname) || pathname === '/api/report-bug')) {
+    // Same X-Owner-Key-gated routes as authorizeSettings (worker/src/
+    // settings.js) — those were previously throttled only by the passphrase
+    // itself matching or not, with no cap on how many guesses a request
+    // could make per minute. Own key prefix so a burst of owner-route
+    // traffic can never eat into the auth/bug-report budgets or vice versa.
+    const OWNER_LIMITED_PATHS = new Set([
+      '/algo-health/resume',
+      '/algo-health/reset',
+      '/admin/onboarding-report',
+    ]);
+    if (request.method === 'POST' && (AUTH_LIMITED_PATHS.has(pathname) || pathname === '/api/report-bug' || OWNER_LIMITED_PATHS.has(pathname))) {
       const ip = request.headers.get('CF-Connecting-IP') ?? 'unknown';
-      const prefix = pathname === '/api/report-bug' ? 'bug' : 'auth';
+      const prefix = pathname === '/api/report-bug' ? 'bug' : OWNER_LIMITED_PATHS.has(pathname) ? 'owner' : 'auth';
       if (await rateLimited(`${prefix}:${ip}`)) {
         return json({ error: 'Too many attempts — try again in a minute.' }, { status: 429, headers: cors });
       }
@@ -1162,6 +1186,21 @@ export default {
       }
     }
 
+    // Manual send of the daily onboarding digest (worker/src/
+    // onboarding-report.js) — lets the owner trigger/test it on demand
+    // instead of waiting for the 8pm ET cron gate. Same owner-only
+    // X-Owner-Key gate as /settings and the algo-health admin routes above.
+    if (pathname === '/admin/onboarding-report' && request.method === 'POST') {
+      const auth = authorizeSettings(request, env);
+      if (!auth.ok) return json({ error: auth.error }, { status: auth.status, headers: cors });
+      try {
+        await sendDailyOnboardingReport(env, Date.now());
+        return json({ sent: true }, { headers: cors });
+      } catch (error) {
+        return json({ error: String(error).slice(0, 120) }, { status: 500, headers: cors });
+      }
+    }
+
     // Tennis alternate-spread ladder for one match already on the board.
     // Costs a real odds credit (unlike /context and /mma-context) — app.js
     // calls this for only a small, score-ranked slice of the tennis matches
@@ -1174,7 +1213,14 @@ export default {
       const sportKey = searchParams.get('sport') ?? '';
       const eventId = searchParams.get('eventId') ?? '';
 
-      if (!isAllowedSport(sportKey) || !/^tennis_/.test(sportKey) || !eventId) {
+      // The Odds API's own event IDs are opaque alphanumeric tokens — this
+      // isn't reachable for host redirection either way (eventId only ever
+      // lands in a URL *path* segment, and URL parsing can't have a later
+      // path segment introduce a new scheme/host), but rejecting anything
+      // outside that shape up front stops odd characters (?, #, /, ..) from
+      // reaching fetchTennisAltSpread's URL-building at all, rather than
+      // relying on it being harmless there.
+      if (!isAllowedSport(sportKey) || !/^tennis_/.test(sportKey) || !/^[a-zA-Z0-9]{1,64}$/.test(eventId)) {
         return json({ event: null, reason: 'invalid sport or eventId' }, { headers: cors });
       }
 

@@ -213,6 +213,66 @@ body {
   100% { opacity: 0; transform: translateX(-50%) translateY(-8px); }
 }
 
+/* Persistent (doesn't auto-hide like .welcome-toast above) — stays pinned
+   to the bottom of the viewport regardless of scroll position or which tab
+   is open, since a build the client fetched at page load can go stale at
+   any point in a long-lived session and the person needs to actually see
+   this to act on it. */
+.update-banner {
+  position: fixed;
+  left: 50%;
+  bottom: 16px;
+  transform: translateX(-50%);
+  z-index: 60;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  max-width: calc(100vw - 32px);
+  padding: 10px 10px 10px 16px;
+  border-radius: var(--radius);
+  background:
+    linear-gradient(rgba(8, 6, 20, 0.92), rgba(8, 6, 20, 0.92)) padding-box,
+    var(--card-border-gradient) border-box;
+  border: 1px solid transparent;
+  backdrop-filter: blur(16px);
+  -webkit-backdrop-filter: blur(16px);
+  box-shadow: var(--glow-magenta);
+  color: var(--text);
+  font-family: var(--sans);
+  font-size: 0.85rem;
+}
+.update-banner-text {
+  font-weight: 600;
+}
+.update-banner-refresh {
+  flex: none;
+  padding: 7px 16px;
+  border: none;
+  border-radius: 999px;
+  background: linear-gradient(135deg, #d946ef 0%, #9d4edd 100%);
+  color: #05050A;
+  font-family: var(--sans);
+  font-size: 0.8rem;
+  font-weight: 700;
+  cursor: pointer;
+}
+.update-banner .overlay-close-btn {
+  width: 28px;
+  height: 28px;
+  min-height: 28px;
+  font-size: 0.85rem;
+  flex: none;
+}
+@media (max-width: 480px) {
+  .update-banner {
+    left: 16px;
+    right: 16px;
+    bottom: 12px;
+    transform: none;
+    max-width: none;
+  }
+}
+
 /* ---------------------------------------------------------------- */
 /* Top bar                                                           */
 /* ---------------------------------------------------------------- */

@@ -586,6 +586,9 @@ const el = {
   scrim: document.getElementById('scrim'),
   accountLink: document.getElementById('accountLink'),
   welcomeToast: document.getElementById('welcomeToast'),
+  updateBanner: document.getElementById('updateBanner'),
+  updateBannerRefresh: document.getElementById('updateBannerRefresh'),
+  updateBannerDismiss: document.getElementById('updateBannerDismiss'),
   whatsNewHint: document.getElementById('whatsNewHint'),
   whatsNewHintClose: document.getElementById('whatsNewHintClose'),
   bankrollToggle: document.getElementById('bankrollToggle'),
@@ -1282,8 +1285,8 @@ function singleStakeLine(candidate) {
  */
 function renderLeanBadge(isLean) {
   return isLean
-    ? `<div class="lean-badge is-lean"><span class="lean-dot"></span>LEAN &mdash; not the final pick yet</div>`
-    : `<div class="lean-badge is-final"><span class="lean-dot"></span>FINAL</div>`;
+    ? `<div class="lean-badge is-lean"><span class="lean-dot"></span>LEAN &mdash; not locked in yet</div>`
+    : `<div class="lean-badge is-final"><span class="lean-dot"></span>PICK LOCKED IN</div>`;
 }
 
 function renderConfidence(pick) {
@@ -3209,7 +3212,7 @@ function slateGameHtml(game) {
   // lean, not the final record. Skipped once finished: the Won/Lost badge
   // already tells that story, and lean-vs-final stopped mattering the
   // moment the game ended.
-  const leanBadgeHtml = hasAnyPrice && !isFinished ? renderLeanBadge(trackedPick != null) : '';
+  const leanBadgeHtml = hasAnyPrice && !isFinished ? renderLeanBadge(trackedPick == null) : '';
 
   return `
     <article class="${cardClass}" ${isMlb ? `data-game-index="${idx}"` : ''}>
@@ -5303,7 +5306,7 @@ function showWelcomeToastIfFresh() {
 // Versioned so a future, meaningfully different change can show its own
 // hint again even to someone who already dismissed this one — bump the
 // suffix, don't reuse the key.
-const WHATS_NEW_LEAN_FINAL_KEY = 'pp_seen_hint_lean_final_v1';
+const WHATS_NEW_LEAN_FINAL_KEY = 'pp_seen_hint_lean_final_v2';
 
 /** One-time explainer for the Pixel's Picks/Play of the Day lock-timing
  * change (see renderLeanBadge) — localStorage, not sessionStorage, since
@@ -5364,6 +5367,7 @@ el.whatsNewHintClose.addEventListener('click', () => {
   );
 
   startSlateAutoRefresh();
+  startUpdateChecks();
 })();
 
 /**
@@ -5396,3 +5400,57 @@ function startSlateAutoRefresh() {
   // on return, rather than waiting up to 60s for the next tick.
   document.addEventListener('visibilitychange', tick);
 }
+
+/**
+ * Polls the deployed build's own version.js for a version newer than the
+ * one this page loaded with, and shows a persistent "refresh to update"
+ * banner (see #updateBanner in app.html) the moment it finds one. This is
+ * a static site with no service worker, so a tab left open across a
+ * deploy would otherwise keep running the old app.js/engine.js
+ * indefinitely with nothing telling the person anything changed.
+ *
+ * Fetched via a cache-busted dynamic import — a fresh query string each
+ * check bypasses both the HTTP cache and the JS module cache (which
+ * otherwise only ever loads a given specifier once per page load) — rather
+ * than a plain fetch()+regex, so this reuses the exact same BUILD_INFO
+ * shape already imported statically above, no separate parsing needed.
+ */
+const UPDATE_CHECK_MS = 10 * 60 * 1000; // 10 minutes
+let updateAvailable = false;
+let dismissedVersion = null;
+let pendingUpdateVersion = null;
+
+async function checkForAppUpdate() {
+  if (updateAvailable) return; // already showing; nothing new to look for until refreshed or dismissed
+  try {
+    const fresh = await import(`./version.js?check=${Date.now()}`);
+    const latestVersion = fresh.BUILD_INFO?.version;
+    if (!latestVersion || latestVersion === BUILD_INFO.version) return;
+    if (latestVersion === dismissedVersion) return;
+    pendingUpdateVersion = latestVersion;
+    updateAvailable = true;
+    el.updateBanner.hidden = false;
+  } catch {
+    // Network hiccup or offline — try again on the next tick.
+  }
+}
+
+function startUpdateChecks() {
+  const tick = () => {
+    if (document.visibilityState !== 'visible') return;
+    checkForAppUpdate();
+  };
+  setInterval(tick, UPDATE_CHECK_MS);
+  // Catches "tab was left open across a deploy" immediately on return,
+  // rather than waiting up to UPDATE_CHECK_MS for the next tick.
+  document.addEventListener('visibilitychange', tick);
+}
+
+el.updateBannerRefresh.addEventListener('click', () => location.reload());
+el.updateBannerDismiss.addEventListener('click', () => {
+  // Remembered so this same version doesn't immediately re-trigger the
+  // banner on the next poll — a genuinely newer version still will.
+  dismissedVersion = pendingUpdateVersion;
+  updateAvailable = false;
+  el.updateBanner.hidden = true;
+});

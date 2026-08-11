@@ -186,6 +186,46 @@ export function isPickWindowOpen(candidate, now) {
 }
 
 /**
+ * Whether any of today's real games — checked against the raw event list
+ * straight from the odds feed, not the price-filtered candidate pool —
+ * hasn't had its own pick window open yet. This is the actual "have we
+ * seen the whole day" signal runTop5Batch/potd.js's runPotdDaily need
+ * before finalizing; it used to be approximated as
+ * `eligibleToday.some(c => !isPickWindowOpen(c, now))`, checked against
+ * the price/EV/segment-filtered candidate list. That let a still-to-come
+ * game silently drop out of the "still waiting" check the moment it had no
+ * candidate at all yet — routine for a market that simply hasn't posted
+ * odds (tennis prices matches close to start far more than other sports
+ * do) — which is a real incident this exact gap produced: a mediocre
+ * early-afternoon game locked in as Play of the Day hours before a much
+ * stronger tennis match even had a price, because nothing left in the
+ * price-filtered set still needed waiting on.
+ *
+ * NCAAF's Power 4 filter is applied here too, since it's knowable from
+ * team names alone — a non-Power-4 buy game can never become eligible
+ * regardless of price, so it shouldn't block completeness either. A
+ * paused-segment exclusion is deliberately NOT applied here: that's
+ * specific to one (sportKey, marketKey) pair, and a raw event can carry
+ * several markets, so a paused moneyline shouldn't stop the whole game
+ * from counting while its spread or total might still be eligible.
+ */
+export function scheduleStillOpen(events, dateKey, now) {
+  return events.some((event) => {
+    const sportKey = event.sport_key;
+    const commenceMs = Date.parse(event.commence_time);
+    if (!Number.isFinite(commenceMs)) return false;
+    if (sportKey === 'americanfootball_ncaaf' && !isPower4Matchup(event.home_team, event.away_team)) return false;
+    const eligibleToday = isMma(sportKey)
+      ? isEligibleMmaFight(commenceMs, now)
+      : isTennis(sportKey)
+        ? isEligibleTennisMatch(commenceMs, now)
+        : etDate(commenceMs) === dateKey;
+    if (!eligibleToday) return false;
+    return !isPickWindowOpen({ sportKey, commenceMs }, now);
+  });
+}
+
+/**
  * Every raw sport key the client's own League Groups cover: the fixed keys
  * plus whatever tennis_atp_/tennis_wta_ tournaments the catalogue says are
  * live this week — the same "discover, don't hardcode" approach the
@@ -496,9 +536,11 @@ export async function runTop5Batch(
   // Split by whether each candidate's own game has reached its lock time —
   // see this function's own comment for why only "lockable" candidates get
   // captured into the pool this tick, and why the real slots wait for
-  // stillUpcoming to go false before drawing from it.
+  // stillUpcoming to go false before drawing from it. stillUpcoming itself
+  // is checked against the raw event list (scheduleStillOpen), not this
+  // price-filtered eligibleToday — see that function's own comment for why.
   const lockable = eligibleToday.filter((c) => isPickWindowOpen(c, now));
-  const stillUpcoming = eligibleToday.some((c) => !isPickWindowOpen(c, now));
+  const stillUpcoming = scheduleStillOpen(events, dateKey, now);
   await updateTop5Pool(env, ctx, dateKey, lockable, now);
 
   if (stillUpcoming) {

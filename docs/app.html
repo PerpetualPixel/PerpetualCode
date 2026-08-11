@@ -17,11 +17,17 @@
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Syne:wght@600;700;800&family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
-<link rel="stylesheet" href="styles.css?v=1.89">
+<link rel="stylesheet" href="styles.css?v=1.92">
 </head>
 <body>
 
 <div id="welcomeToast" class="welcome-toast" hidden role="status" aria-live="polite"></div>
+
+<div id="updateBanner" class="update-banner" hidden role="status" aria-live="polite">
+  <span class="update-banner-text">A new version of Perpetual Picks is available.</span>
+  <button type="button" id="updateBannerRefresh" class="update-banner-refresh">Refresh</button>
+  <button type="button" id="updateBannerDismiss" class="icon-btn overlay-close-btn" aria-label="Dismiss">✕</button>
+</div>
 
 <header class="topbar">
   <h1 class="wordmark"><img src="assets/logo-icon-64.png" alt="" class="wordmark-icon" width="26" height="26">PERPETUAL<span>PICKS</span></h1>
@@ -62,7 +68,7 @@
       individually, closer to its own game's start time, so the numbers are fresher. Before a
       slot locks you'll see a <span class="whats-new-badge is-lean">LEAN</span> badge — the
       algorithm's current best guess, which can still change — and
-      <span class="whats-new-badge is-final">FINAL</span> once it's locked in for good.
+      <span class="whats-new-badge is-final">PICK LOCKED IN</span> once it's set for good.
     </p>
   </div>
   <button type="button" id="whatsNewHintClose" class="icon-btn overlay-close-btn" aria-label="Dismiss">✕</button>
@@ -129,7 +135,7 @@
     required, drawn from every league and every sportsbook. Each slot locks
     individually, closer to its own game's start time — before that you'll
     see the algorithm's current <strong>LEAN</strong>, which can still
-    change; once <strong>FINAL</strong>, a pick is never re-picked. Nothing
+    change; once <strong>PICK LOCKED IN</strong>, a pick is never re-picked. Nothing
     here ever pads out with a bet that isn't actually worth taking. Every
     game regardless of price lives on the Full Slate tab.
   </p>
@@ -303,7 +309,7 @@
       range −250/+250, ranked purely by edge. Each slot locks individually,
       closer to its own game's start time, rather than all at once —
       before that you'll see a LEAN badge (the algorithm's current best
-      guess, still subject to change); FINAL means it's locked for good and
+      guess, still subject to change); PICK LOCKED IN means it's set for good and
       nothing changes after.
       <strong>Play of the Day</strong> is one pick for the whole day, the
       same for everyone, chosen the same way, with a full written breakdown
@@ -362,7 +368,7 @@
       to trust the numbers — not one batch for the whole day. Before a slot
       locks it shows a LEAN badge (the current best candidate, which can
       still lose its spot to something better as later games' own windows
-      open); once FINAL, reloading the page never changes it, and nothing
+      open); once the pick is locked in, reloading the page never changes it, and nothing
       about it reacts to price movement afterward. On a quiet day where
       fewer than 5 real edges clear the bar by the time nothing's left to
       wait for, the rest are filled from the next-best available prices and
@@ -395,8 +401,8 @@
       to call a lock without saying so. All 5 are tracked and count toward the
       Tracking Dashboard's win-rate math regardless of the flag. Each slot
       locks individually, closer to its own game's start time rather than
-      all at once — see it leaning before that, marked LEAN. Once a slot is
-      FINAL, it stays up unchanged regardless of how the market moves
+      all at once — see it leaning before that, marked LEAN. Once a slot's
+      pick is locked in, it stays up unchanged regardless of how the market moves
       afterward.</p>
     </details>
   </div>
@@ -694,6 +700,6 @@
   </div>
 </aside>
 
-<script type="module" src="app.js?v=1.89"></script>
+<script type="module" src="app.js?v=1.92"></script>
 </body>
 </html>
