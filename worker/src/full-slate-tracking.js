@@ -297,8 +297,40 @@ export async function runFullSlateGrading(
   const mmaResults = pending.some((p) => isMma(p.sportKey)) ? await fetchMmaResultsFn() : [];
 
   let graded = 0;
+  let rescheduled = 0;
   for (const pick of pending) {
     const scoreEvent = (scoreEventsBySport.get(pick.sportKey) ?? []).find((e) => e.id === pick.eventId);
+
+    // A pick's commenceMs is a snapshot taken when it locked in, and for
+    // tennis especially that snapshot goes stale: order-of-play routinely
+    // pushes a match hours or a full day later, and nothing here ever
+    // re-read it. Confirmed live — two Aug 10 matches sat "pending" looking
+    // like a grading failure when the feed had long since moved them to Aug
+    // 11; they hadn't been played yet. The date-resync couldn't see it
+    // either, since it only compares a pick's own stored commenceMs against
+    // its storage date and those agreed with each other. The freshest time
+    // is already in hand here at zero extra cost — this pass has to fetch
+    // /scores for every pending pick's sport regardless — so refresh it.
+    if (scoreEvent?.commence_time) {
+      const freshCommenceMs = Date.parse(scoreEvent.commence_time);
+      if (Number.isFinite(freshCommenceMs) && freshCommenceMs !== pick.commenceMs) {
+        const movedDay = etDate(freshCommenceMs) !== pick.dateKey;
+        pick.commenceMs = freshCommenceMs;
+        rescheduled++;
+        ctx.waitUntil(
+          env.POTD_KV.put(`slate:${pick.dateKey}:pick:${pick.pickId}`, JSON.stringify(pick), {
+            expirationTtl: KV_TTL_SECONDS,
+          }),
+        );
+        // Landed on a different ET day: this record is now misfiled, and
+        // grading it here would settle it under the wrong day permanently
+        // (the resync only re-buckets picks that are still pending). Leave
+        // it pending; runFullSlateDateResync moves it on a following tick
+        // and grading picks it up there, under the right day.
+        if (movedDay) continue;
+      }
+    }
+
     let outcome;
     if (isMma(pick.sportKey)) {
       outcome = gradeMmaPickWithFallback(pick, scoreEvent, mmaResults);
@@ -317,7 +349,7 @@ export async function runFullSlateGrading(
       }),
     );
   }
-  return { graded, remaining: pending.length - graded };
+  return { graded, remaining: pending.length - graded, rescheduled };
 }
 
 /** Today's tracked Full Slate picks (or a specific date's). */
