@@ -43,8 +43,11 @@ import {
   fetchCapperConsensus,
   capperConsensusSignal,
   consensusRecord,
+  consensusRescore,
   fightConsensusRecord,
+  fightConsensusComments,
   cachedConsensusFeed,
+  MMA_CONSENSUS_SWING,
 } from './capper-consensus.js';
 import {
   buildInsights,
@@ -2423,6 +2426,53 @@ function renderMmaBreakdown(mmaContext, subjectName, leg = null) {
  * and Pixel's Picks' own "why" drawer (data-more-stats) don't pass this —
  * they're the deliberate deep-dive entry points and keep full research.
  */
+/**
+ * The Capper Consensus section for an MMA leg — pinned directly under the
+ * Main Play callout (per explicit product direction: the cappers' read is
+ * the first thing to see about a fight, before even the book table), with
+ * the backing cappers' own reasoning as bullets underneath. Renders
+ * synchronously from the leg's own attached record or the cached feed —
+ * same first-paint-or-not-at-all posture as cachedConsensusFeed() itself —
+ * and returns '' for non-MMA legs and fights the feed doesn't cover.
+ *
+ * The swing only ever attaches to a market the feed can grade (moneyline/
+ * totals), but Full Slate's "More info" can open on any market — falling
+ * back to the fight's own moneyline entry means the consensus shows on
+ * whichever market you happened to open, and `scored` keeps the wording
+ * honest about whether it moved THIS pick's grade.
+ */
+function capperConsensusSectionHtml(leg) {
+  if (!isMma(leg.sportKey)) return '';
+  const feed = cachedConsensusFeed();
+  const cc = leg.capperConsensus ?? fightConsensusRecord(feed, leg);
+  if (!cc) return '';
+
+  const comments = feed ? fightConsensusComments(feed, leg) : (cc.comments ?? []);
+  const commentsHtml = comments.length
+    ? `<h4 class="capper-comments-title">What the cappers said</h4>
+      <ul class="capper-comments">${comments.map((c) =>
+        `<li><strong>${esc(c.capper)}</strong>` +
+        `${c.marketLabel ? ` <span class="capper-comment-market">(${esc(c.marketLabel)} — ${esc(c.selection)})</span>` : ''}` +
+        `: ${esc(c.comment)}</li>`).join('')}</ul>`
+    : '';
+
+  return `
+    <div class="stats-section capper-consensus">
+      <h3>Capper Consensus</h3>
+      <p>${esc(String(cc.pickCount))} capper${cc.pickCount === 1 ? '' : 's'} back <strong>${esc(cc.selection)}</strong> — ` +
+    `${esc(String(cc.consensusPct))}% of the trust-weighted picks on this fight, consensus strength ${esc(String(cc.strength))}/10 (${esc(cc.tier)}). ` +
+    `${!cc.scored
+      ? `That's a read the feed can't grade a ${esc(leg.marketLabel)} bet against, so it doesn't move this pick's number — it's here as context for the fight.`
+      : cc.aligned
+        ? `This pick agrees with the consensus, which raised its grade by up to ${MMA_CONSENSUS_SWING} points.`
+        : `This pick goes against the consensus, which lowered its grade by up to ${MMA_CONSENSUS_SWING} points.`}</p>` +
+    commentsHtml +
+    (cc.generatedAt
+      ? `<p class="consensus-meta">Consensus last updated ${esc(dateFmt.format(new Date(cc.generatedAt)))} — refreshed by each MMA_Engine weekly run.</p>`
+      : '') +
+    `</div>`;
+}
+
 async function openStatsDrawer(leg, opposite = null, { fullscreen = false, oddsOnly = false } = {}) {
   el.statsDrawer.classList.toggle('is-fullscreen', fullscreen);
   el.statsDrawerTitle.textContent = leg.selection;
@@ -2443,14 +2493,16 @@ async function openStatsDrawer(leg, opposite = null, { fullscreen = false, oddsO
       ${stakeLineHtml(suggestedStake(leg), 'main-play-stake')}
     </div>`;
 
-  // Fast initial paint: the bet itself (selection, price, suggested stake)
-  // and every book's price on this exact line render immediately, with no
-  // wait on the network calls below — a market-cell click is "what can I
-  // bet, and where," and that shouldn't sit behind an AI writeup or a
-  // weather lookup. For oddsOnly this is the entire drawer; otherwise the
-  // slower research sections stream in on top of it once they resolve — see
-  // the final innerHTML replace below.
-  el.statsDrawerBody.innerHTML = metaHtml + mainPlayHtml + renderPriceTable(leg);
+  // Fast initial paint: the bet itself (selection, price, suggested stake),
+  // the capper consensus for an MMA fight (synchronous from the cached
+  // feed — see capperConsensusSectionHtml), and every book's price on this
+  // exact line render immediately, with no wait on the network calls below —
+  // a market-cell click is "what can I bet, and where," and that shouldn't
+  // sit behind an AI writeup or a weather lookup. For oddsOnly this is the
+  // entire drawer; otherwise the slower research sections stream in on top
+  // of it once they resolve — see the final innerHTML replace below.
+  const consensusHtml = capperConsensusSectionHtml(leg);
+  el.statsDrawerBody.innerHTML = metaHtml + mainPlayHtml + consensusHtml + renderPriceTable(leg);
   if (oddsOnly) return;
 
   // The research below (AI writeup, form bullets, weather) is the slow
@@ -2560,34 +2612,6 @@ async function openStatsDrawer(leg, opposite = null, { fullscreen = false, oddsO
         : `MMA picks are chosen on this price math alone. This app applies no fighter-quality or form scoring to MMA (the research below is for context, not scoring). An underdog pick like this one means the market itself disagrees with the favorite's price; it isn't a projection that this fighter is actually better.`)
     : null;
 
-  // The capper consensus's own section. The swing only ever attaches to a
-  // moneyline (a rounds total has no fighter side to be with or against), but
-  // Full Slate's "More info" opens on the best-scoring candidate of the three
-  // markets — usually the total. Falling back to the fight's own entry means
-  // the consensus shows on whichever market you happened to open, and `scored`
-  // keeps the wording honest about whether it moved THIS pick's grade.
-  // A null here still means what it always did: no consensus data for this
-  // fight, never a silently-skipped lookup.
-  const cc = isMma(leg.sportKey)
-    ? (leg.capperConsensus ?? fightConsensusRecord(cachedConsensusFeed(), leg))
-    : null;
-  const capperConsensusHtml = cc
-    ? `
-      <div class="stats-section capper-consensus">
-        <h3>Capper Consensus</h3>
-        <p>${esc(String(cc.pickCount))} capper${cc.pickCount === 1 ? '' : 's'} back <strong>${esc(cc.selection)}</strong> — ` +
-      `${esc(String(cc.consensusPct))}% of the trust-weighted picks on this fight, consensus strength ${esc(String(cc.strength))}/10 (${esc(cc.tier)}). ` +
-      `${!cc.scored
-        ? `That's a read on who wins, so it doesn't move the grade of a ${esc(leg.marketLabel)} bet like this one — it's here as context for the fight.`
-        : cc.aligned
-          ? `This pick agrees with the consensus, which raised its grade by up to ${QUALITATIVE.MAX_SWING} points.`
-          : `This pick goes against the consensus, which lowered its grade by up to ${QUALITATIVE.MAX_SWING} points.`}</p>` +
-      (cc.generatedAt
-        ? `<p class="consensus-meta">Consensus last updated ${esc(dateFmt.format(new Date(cc.generatedAt)))} — refreshed by each MMA_Engine weekly run.</p>`
-        : '') +
-      `</div>`
-    : '';
-
   const analysisSectionHtml = analysisText
     ? `
       <div class="stats-section">
@@ -2610,10 +2634,11 @@ async function openStatsDrawer(leg, opposite = null, { fullscreen = false, oddsO
   // The AI-written matchup analysis replaces the quantitative price case
   // entirely when it's available (see worker/src/analysis.js) — falls back
   // to the existing no-vig/EV read whenever it isn't. MMA is the one
-  // exception: both always render, per the note above, with the capper
-  // consensus (when this fight has one) between them.
+  // exception: both always render, per the note above. (The capper
+  // consensus no longer sits between them — it's pinned at the top of the
+  // drawer under the Main Play, see capperConsensusSectionHtml.)
   const priceHtml = isMma(leg.sportKey)
-    ? analysisSectionHtml + capperConsensusHtml + marketCaseSectionHtml
+    ? analysisSectionHtml + marketCaseSectionHtml
     : (analysisText ? analysisSectionHtml : marketCaseSectionHtml);
 
   // Genuine risk to THIS pick, not a case for the other side — the model is
@@ -2666,6 +2691,7 @@ async function openStatsDrawer(leg, opposite = null, { fullscreen = false, oddsO
   el.statsDrawerBody.innerHTML =
     metaHtml +
     mainPlayHtml +
+    consensusHtml +
     renderPriceTable(leg) +
     renderWeatherPills(weather) +
     priceHtml +
@@ -2930,7 +2956,10 @@ function applyConsensusToCandidates(candidates, feed) {
       signal: match.signal,
       scored: true,
     });
-    Object.assign(c, scoreCandidate(c, { now, qualitative: match.signal }));
+    // The dedicated MMA swing (±MMA_CONSENSUS_SWING, outside the generic ±8
+    // qualitative clamp) — same shared math the worker's locked picks use,
+    // see consensusRescore in docs/capper-consensus.js.
+    Object.assign(c, consensusRescore(c, match.signal, { now }));
   }
 }
 
@@ -2952,9 +2981,18 @@ let qualitativeRunToken = 0;
  */
 async function refreshQualitativeSignals() {
   const token = ++qualitativeRunToken;
-  const eligible = dayFilteredCandidates().filter((c) => supportsQualitativeSignal(c.marketKey));
-  const targets = eligible.filter((c) => !isMmaSportKey(c.sportKey));
-  const mmaTargets = eligible.filter((c) => isMmaSportKey(c.sportKey) && c.marketKey === 'h2h');
+  const pool = dayFilteredCandidates();
+  const targets = pool.filter(
+    (c) => !isMmaSportKey(c.sportKey) && supportsQualitativeSignal(c.marketKey),
+  );
+  // MMA deliberately bypasses supportsQualitativeSignal's no-totals rule:
+  // the capper feed genuinely covers rounds totals ("doesn't go the
+  // distance" is an Under call with a fighter-agnostic side), unlike the
+  // team/tennis form signals that rule exists for. capperConsensusSignal
+  // itself returns null for any market the feed can't speak to.
+  const mmaTargets = pool.filter(
+    (c) => isMmaSportKey(c.sportKey) && (c.marketKey === 'h2h' || c.marketKey === 'totals'),
+  );
   if (!targets.length && !mmaTargets.length) return;
 
   const mmaWork = (async () => {
@@ -3333,6 +3371,22 @@ function bestCandidateForGame(game) {
   if (!all.length) return null;
 
   const inBand = all.filter((c) => c.american >= CONFIG.ODDS_MIN_DEFAULT && c.american <= CONFIG.ODDS_MAX_DEFAULT);
+
+  // MMA only (capperConsensus is never set on any other sport): when the
+  // MMA_Engine cappers have a graded read on this fight, THEIR side is the
+  // fight's pick — the engine's job shifts to pricing it across the books,
+  // not out-voting it with a market whose only virtue is cleaner liquidity.
+  // In-band aligned candidates still win first (value matters when there's a
+  // choice of consensus-backed markets), but a consensus favorite priced
+  // outside the band beats falling back to a non-consensus market: "Under
+  // 4.5 because the moneyline is -450" is exactly the swap this exists to
+  // stop. The ±MMA_CONSENSUS_SWING score adjustment usually gets the same
+  // answer on its own; this makes the preference structural rather than
+  // hoping the arithmetic clears every gap.
+  const aligned = (list) => list.filter((c) => c.capperConsensus?.scored && c.capperConsensus.aligned);
+  const alignedPool = aligned(inBand).length ? aligned(inBand) : aligned(all);
+  if (alignedPool.length) return alignedPool.reduce((best, c) => (c.score > best.score ? c : best));
+
   const pool = inBand.length ? inBand : all;
   return pool.reduce((best, c) => (c.score > best.score ? c : best));
 }

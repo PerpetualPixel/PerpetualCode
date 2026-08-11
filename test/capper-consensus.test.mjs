@@ -8,9 +8,13 @@ import {
   applyCapperConsensus,
   fetchCapperConsensus,
   fightConsensusRecord,
+  fightConsensusComments,
+  consensusRescore,
+  totalsSideOf,
+  MMA_CONSENSUS_SWING,
   FEED_TTL_MS,
 } from '../docs/capper-consensus.js';
-import { QUALITATIVE, scoreCandidate } from '../docs/engine.js';
+import { scoreCandidate } from '../docs/engine.js';
 
 const NOW = Date.parse('2026-08-11T12:00:00Z');
 
@@ -45,6 +49,22 @@ const FEED = {
       strength: 7.0,
       tier: 'lean',
       pick_count: 2,
+      comments: [
+        { capper: 'BetSlam with Sam', comment: 'Grappling gap is too wide.', confidence: 8 },
+      ],
+    },
+    {
+      fight: 'Ian Machado Garry vs Islam Makhache',
+      market: 'over_under',
+      market_label: 'Over / Under',
+      selection: 'Fight does not go the distance',
+      consensus_pct: 100.0,
+      strength: 6.0,
+      tier: 'lean',
+      pick_count: 1,
+      comments: [
+        { capper: 'We Want Picks (Jacob)', comment: 'Islam finds a sub late.', confidence: 7 },
+      ],
     },
   ],
 };
@@ -102,10 +122,52 @@ test('signal is negative for the opposite corner', () => {
   assert.equal(match.signal, -0.8);
 });
 
-test('non-h2h candidates and unknown fights return null', () => {
-  assert.equal(capperConsensusSignal(FEED, mmaCandidate({ marketKey: 'totals' })), null);
+test('unmatchable markets and unknown fights return null', () => {
+  assert.equal(capperConsensusSignal(FEED, mmaCandidate({ marketKey: 'spreads' })), null);
   assert.equal(
     capperConsensusSignal(FEED, mmaCandidate({ home: 'Jon Jones', away: 'Stipe Miocic', outcomeName: 'Jon Jones' })),
+    null,
+  );
+});
+
+/* --- rounds totals: the feed's over_under entries carry a signal too --- */
+
+test('totalsSideOf reads direction from capper phrasing', () => {
+  assert.deepEqual(totalsSideOf('Fight does not go the distance'), { side: 'Under', point: null });
+  assert.deepEqual(totalsSideOf("Fight doesn't go the distance"), { side: 'Under', point: null });
+  assert.deepEqual(totalsSideOf('Fight goes the distance'), { side: 'Over', point: null });
+  assert.deepEqual(totalsSideOf('Fight goes to a decision'), { side: 'Over', point: null });
+  assert.deepEqual(totalsSideOf('Under 2.5 rounds'), { side: 'Under', point: 2.5 });
+  assert.deepEqual(totalsSideOf('Over 1.5'), { side: 'Over', point: 1.5 });
+  assert.equal(totalsSideOf('Islam Makhachev by submission'), null);
+  assert.equal(totalsSideOf(''), null);
+});
+
+test('a totals candidate gets a signed signal from the over_under entry', () => {
+  const under = capperConsensusSignal(FEED, mmaCandidate({ marketKey: 'totals', outcomeName: 'Under', point: 4.5 }));
+  assert.ok(under.aligned);
+  assert.equal(under.signal, 0.6); // strength 6.0 / 10
+
+  const over = capperConsensusSignal(FEED, mmaCandidate({ marketKey: 'totals', outcomeName: 'Over', point: 4.5 }));
+  assert.ok(!over.aligned);
+  assert.equal(over.signal, -0.6);
+});
+
+test('a point-specific consensus only speaks to its exact line', () => {
+  const feed = {
+    picks: [{
+      fight: 'Ian Machado Garry vs Islam Makhache',
+      market: 'over_under',
+      selection: 'Under 2.5 rounds',
+      strength: 6.0,
+      tier: 'lean',
+      pick_count: 1,
+    }],
+  };
+  const exact = capperConsensusSignal(feed, mmaCandidate({ marketKey: 'totals', outcomeName: 'Under', point: 2.5 }));
+  assert.ok(exact.aligned);
+  assert.equal(
+    capperConsensusSignal(feed, mmaCandidate({ marketKey: 'totals', outcomeName: 'Under', point: 4.5 })),
     null,
   );
 });
@@ -129,7 +191,11 @@ test('applyCapperConsensus rescores matched MMA candidates only', () => {
   // The swing is real and symmetric: aligned scores above unmatched, opposed below.
   assert.ok(a.score > c.score);
   assert.ok(b.score < c.score);
-  assert.ok(a.score - b.score <= 2 * QUALITATIVE.MAX_SWING + 1e-9);
+  assert.ok(a.score - b.score <= 2 * MMA_CONSENSUS_SWING + 1e-9);
+  // And decisive: a strong consensus moves the grade far beyond the generic
+  // ±8 qualitative clamp — this is the number that lets the cappers' side
+  // out-rank a same-fight market with merely cleaner price liquidity.
+  assert.ok(a.score - c.score > 8);
 
   // Inputs are never mutated.
   assert.equal(aligned.capperConsensus, undefined);
@@ -144,17 +210,57 @@ test('applyCapperConsensus passes through on an empty feed', () => {
 
 /* --- the fight's consensus, for a drawer opened on any market --- */
 
-test('a totals candidate still resolves its fight, marked as not scored', () => {
-  // Full Slate's "More info" opens on the best-scoring candidate of the three
-  // markets, which for MMA is routinely the rounds total, not the moneyline.
-  const total = mmaCandidate({ marketKey: 'totals', outcomeName: 'Under' });
-  assert.equal(capperConsensusSignal(FEED, total), null); // no swing, correctly
+test('a market the feed cannot grade still resolves its fight, marked as not scored', () => {
+  // Full Slate's "More info" can open on a market the feed has no entry
+  // shaped like (a spread) — the fight's moneyline consensus still shows,
+  // it just never claims to have moved that pick's grade.
+  const spread = mmaCandidate({ marketKey: 'spreads' });
+  assert.equal(capperConsensusSignal(FEED, spread), null); // no swing, correctly
 
-  const record = fightConsensusRecord(FEED, total);
+  const record = fightConsensusRecord(FEED, spread);
   assert.equal(record.selection, 'Islam Makhachev');
   assert.equal(record.pickCount, 3);
-  assert.equal(record.scored, false); // never claims it moved a totals grade
-  assert.equal(record.aligned, null); // a total is neither with nor against
+  assert.equal(record.scored, false); // never claims it moved this grade
+  assert.equal(record.aligned, null); // a spread is neither with nor against
+});
+
+/* --- capper comments: the WHY behind the consensus --- */
+
+test('consensusRecord carries the feed entry comments', () => {
+  const [c] = applyCapperConsensus([mmaCandidate()], FEED, { now: NOW });
+  assert.deepEqual(c.capperConsensus.comments, []); // moneyline entry has none in this fixture
+  const totals = applyCapperConsensus(
+    [mmaCandidate({ marketKey: 'totals', outcomeName: 'Under', point: 4.5 })], FEED, { now: NOW },
+  )[0];
+  assert.equal(totals.capperConsensus.comments.length, 1);
+  assert.equal(totals.capperConsensus.comments[0].capper, 'We Want Picks (Jacob)');
+});
+
+test('fightConsensusComments aggregates every market entry, labelled and deduped', () => {
+  const comments = fightConsensusComments(FEED, mmaCandidate());
+  assert.equal(comments.length, 2);
+  const byCapper = Object.fromEntries(comments.map((c) => [c.capper, c]));
+  assert.equal(byCapper['BetSlam with Sam'].selection, 'Islam Makhachev by submission');
+  assert.equal(byCapper['We Want Picks (Jacob)'].marketLabel, 'Over / Under');
+
+  // The same comment attached to two entries reads once.
+  const dupFeed = {
+    picks: [
+      { fight: 'A Aa vs B Bb', market: 'moneyline', selection: 'A Aa', comments: [{ capper: 'X', comment: 'same' }] },
+      { fight: 'A Aa vs B Bb', market: 'method_of_victory', selection: 'A Aa by KO', comments: [{ capper: 'X', comment: 'same' }] },
+    ],
+  };
+  const cand = mmaCandidate({ home: 'A Aa', away: 'B Bb', outcomeName: 'A Aa' });
+  assert.equal(fightConsensusComments(dupFeed, cand).length, 1);
+});
+
+test('consensusRescore applies the full MMA swing outside the qualitative clamp', () => {
+  const c = { ...mmaCandidate(), ...scoreCandidate(mmaCandidate(), { now: NOW }) };
+  const base = scoreCandidate(c, { now: NOW }).score;
+  const up = consensusRescore(c, 1, { now: NOW });
+  const down = consensusRescore(c, -1, { now: NOW });
+  assert.equal(up.score, Math.min(100, base + MMA_CONSENSUS_SWING));
+  assert.equal(down.score, Math.max(0, base - MMA_CONSENSUS_SWING));
 });
 
 test('the scored record from applyCapperConsensus is marked as such', () => {
