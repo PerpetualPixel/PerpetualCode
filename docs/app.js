@@ -32,12 +32,14 @@ import {
   suggestedParlayStake,
   suggestedStake,
   scoreCandidate,
+  QUALITATIVE,
 } from './engine.js';
 import {
   tennisQualitativeSignal,
   teamQualitativeSignal,
   supportsQualitativeSignal,
 } from './qualitative.js';
+import { fetchCapperConsensus, capperConsensusSignal } from './capper-consensus.js';
 import {
   buildInsights,
   insightTexts,
@@ -2533,9 +2535,10 @@ async function openStatsDrawer(leg, opposite = null, { fullscreen = false, oddsO
     ? `<ul class="quick-take-list">${quickTake.map((t) => `<li>${esc(t)}</li>`).join('')}</ul>`
     : '';
 
-  // MMA gets no qualitative/form scoring at all (see docs/app.js's
-  // refreshQualitativeSignals(), which explicitly skips MMA) — every MMA
-  // pick, underdog or favorite, is chosen purely on the price math below.
+  // MMA has no form/Sherdog scoring, but moneylines can carry a capper-
+  // consensus swing (see refreshQualitativeSignals() and docs/
+  // capper-consensus.js) — the note below says which of the two actually
+  // applies to THIS pick rather than claiming price-only across the board.
   // The AI analysis is barred from ever mentioning price (worker/src/
   // analysis.js's prompt rules), so if it replaced the price case the way it
   // does for other sports, an MMA underdog pick would show a thin
@@ -2546,8 +2549,29 @@ async function openStatsDrawer(leg, opposite = null, { fullscreen = false, oddsO
   const stakeHtml = stake;
   const isUnderdogPick = typeof leg.american === 'number' && leg.american > 0;
   const mmaMarketNote = isMma(leg.sportKey) && isUnderdogPick
-    ? `MMA picks are chosen on this price math alone. This app applies no fighter-quality or form scoring to MMA (the research below is for context, not scoring). An underdog pick like this one means the market itself disagrees with the favorite's price; it isn't a projection that this fighter is actually better.`
+    ? (leg.capperConsensus
+        ? `MMA picks are graded on the price math below, plus a capped swing from the capper consensus (see the Capper Consensus section). An underdog pick like this one means the market itself disagrees with the favorite's price; it isn't a projection that this fighter is actually better.`
+        : `MMA picks are chosen on this price math alone. This app applies no fighter-quality or form scoring to MMA (the research below is for context, not scoring). An underdog pick like this one means the market itself disagrees with the favorite's price; it isn't a projection that this fighter is actually better.`)
     : null;
+
+  // The capper consensus's own section — only for an MMA leg that actually
+  // matched a feed entry, so its absence honestly means "no consensus data
+  // for this fight," never a silently-skipped lookup.
+  const cc = leg.capperConsensus;
+  const capperConsensusHtml = cc
+    ? `
+      <div class="stats-section capper-consensus">
+        <h3>Capper Consensus</h3>
+        <p>${esc(String(cc.pickCount))} capper${cc.pickCount === 1 ? '' : 's'} back <strong>${esc(cc.selection)}</strong> — ` +
+      `${esc(String(cc.consensusPct))}% of the trust-weighted picks on this fight, consensus strength ${esc(String(cc.strength))}/10 (${esc(cc.tier)}). ` +
+      `${cc.aligned
+        ? `This pick agrees with the consensus, which raised its grade by up to ${QUALITATIVE.MAX_SWING} points.`
+        : `This pick goes against the consensus, which lowered its grade by up to ${QUALITATIVE.MAX_SWING} points.`}</p>` +
+      (cc.generatedAt
+        ? `<p class="consensus-meta">Consensus last updated ${esc(dateFmt.format(new Date(cc.generatedAt)))} — refreshed by each MMA_Engine weekly run.</p>`
+        : '') +
+      `</div>`
+    : '';
 
   const analysisSectionHtml = analysisText
     ? `
@@ -2571,9 +2595,10 @@ async function openStatsDrawer(leg, opposite = null, { fullscreen = false, oddsO
   // The AI-written matchup analysis replaces the quantitative price case
   // entirely when it's available (see worker/src/analysis.js) — falls back
   // to the existing no-vig/EV read whenever it isn't. MMA is the one
-  // exception: both always render, per the note above.
+  // exception: both always render, per the note above, with the capper
+  // consensus (when this fight has one) between them.
   const priceHtml = isMma(leg.sportKey)
-    ? analysisSectionHtml + marketCaseSectionHtml
+    ? analysisSectionHtml + capperConsensusHtml + marketCaseSectionHtml
     : (analysisText ? analysisSectionHtml : marketCaseSectionHtml);
 
   // Genuine risk to THIS pick, not a case for the other side — the model is
@@ -2878,18 +2903,42 @@ let qualitativeRunToken = 0;
  * candidate using recent form / head-to-head / injuries already fetched for
  * the research bullets (tennisArchive/eventContext) — see docs/qualitative.js.
  * Never a new LLM call, never blocks first paint — fire-and-forget, re-renders
- * itself once done. MMA (Sherdog scraping, unproven at bulk scale) and totals
- * (no team/player side to attach a signal to) are skipped; those candidates
- * keep their price-only score exactly as before this function existed.
+ * itself once done. Totals are skipped (no team/player side to attach a
+ * signal to). MMA moneylines get their signal from the MMA_Engine capper
+ * consensus feed (docs/capper-consensus.js) rather than Sherdog form data;
+ * an MMA candidate with no consensus entry keeps its price-only score
+ * exactly as before.
  */
 async function refreshQualitativeSignals() {
   const token = ++qualitativeRunToken;
-  const targets = dayFilteredCandidates().filter(
-    (c) => supportsQualitativeSignal(c.marketKey) && !isMmaSportKey(c.sportKey),
-  );
-  if (!targets.length) return;
+  const eligible = dayFilteredCandidates().filter((c) => supportsQualitativeSignal(c.marketKey));
+  const targets = eligible.filter((c) => !isMmaSportKey(c.sportKey));
+  const mmaTargets = eligible.filter((c) => isMmaSportKey(c.sportKey) && c.marketKey === 'h2h');
+  if (!targets.length && !mmaTargets.length) return;
 
-  await Promise.allSettled(targets.map(async (c) => {
+  const mmaWork = (async () => {
+    if (!mmaTargets.length) return;
+    const feed = await fetchCapperConsensus();
+    if (!feed) return;
+    for (const c of mmaTargets) {
+      const match = capperConsensusSignal(feed, c);
+      if (!match) continue;
+      if (token !== qualitativeRunToken) return;
+      c.capperConsensus = {
+        selection: match.pick.selection,
+        consensusPct: match.pick.consensus_pct,
+        strength: match.pick.strength,
+        tier: match.pick.tier,
+        pickCount: match.pick.pick_count,
+        aligned: match.aligned,
+        signal: match.signal,
+        generatedAt: feed.generated_at ?? null,
+      };
+      Object.assign(c, scoreCandidate(c, { now: Date.now(), qualitative: match.signal }));
+    }
+  })();
+
+  await Promise.allSettled([mmaWork, ...targets.map(async (c) => {
     let signal = null;
     try {
       if (isTennis(c.sportKey)) {
@@ -2905,7 +2954,7 @@ async function refreshQualitativeSignals() {
     }
     if (token !== qualitativeRunToken) return; // a newer run has already started
     Object.assign(c, scoreCandidate(c, { now: Date.now(), qualitative: signal ?? 0 }));
-  }));
+  })]);
 
   if (token !== qualitativeRunToken) return; // superseded while awaiting — skip the render too
   renderFullSlate();

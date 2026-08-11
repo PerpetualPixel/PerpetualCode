@@ -26,6 +26,7 @@
  * having the app open.
  */
 import { analyze, topPicks, clearsMaxJuice } from '../../docs/engine.js';
+import { fetchCapperConsensus, applyCapperConsensus } from '../../docs/capper-consensus.js';
 import { isPower4Matchup } from '../../docs/ncaaf-conferences.js';
 import { gradePick } from '../../docs/learning.js';
 import { isMma, isTennis } from '../../docs/insights.js';
@@ -587,7 +588,17 @@ export async function runTop5Batch(
   // it stays in the pool's own history, just never becomes a real pick.
   const stillActionable = pool.filter((c) => c.commenceMs > now && !existingEventIds.has(c.eventId));
 
-  const slate = topPicks(stillActionable, {
+  // MMA moneylines get the MMA_Engine capper-consensus swing (docs/
+  // capper-consensus.js) before the final draw — the same enrichment the
+  // browser's refreshQualitativeSignals() applies, so the locked board and
+  // the live one grade an MMA fight the same way. Fetch failure degrades to
+  // the unadjusted pool: consensus is a bonus, never a dependency.
+  const consensusFeed = await fetchCapperConsensus().catch(() => null);
+  const drawPool = consensusFeed
+    ? applyCapperConsensus(stillActionable, consensusFeed, { now })
+    : stillActionable;
+
+  const slate = topPicks(drawPool, {
     count: needed,
     oddsMin: CONFIG.ODDS_MIN_DEFAULT,
     oddsMax: CONFIG.ODDS_MAX_DEFAULT,
@@ -829,7 +840,15 @@ export async function getTop5Leaning(env, { now = Date.now(), dateKey } = {}) {
   const existingEventIds = new Set(pickIds.map((id) => id.split(':')[0]));
   const stillActionable = pool.filter((c) => c.commenceMs > now && !existingEventIds.has(c.eventId));
 
-  const slate = topPicks(stillActionable, {
+  // Same capper-consensus enrichment as the real batch below, so the lean
+  // never disagrees with the eventual lock over an adjustment one of them
+  // didn't apply.
+  const consensusFeed = await fetchCapperConsensus().catch(() => null);
+  const drawPool = consensusFeed
+    ? applyCapperConsensus(stillActionable, consensusFeed, { now })
+    : stillActionable;
+
+  const slate = topPicks(drawPool, {
     count: needed,
     oddsMin: CONFIG.ODDS_MIN_DEFAULT,
     oddsMax: CONFIG.ODDS_MAX_DEFAULT,

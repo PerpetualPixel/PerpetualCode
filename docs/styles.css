@@ -1271,6 +1271,23 @@ input[type="range"]:focus-visible {
   color: var(--muted);
 }
 
+.capper-consensus p {
+  margin: 0 0 8px;
+  padding: 8px 10px;
+  border-left: 2px solid var(--accent);
+  background: color-mix(in srgb, var(--accent) 8%, transparent);
+  font-size: 0.82rem;
+  line-height: 1.4;
+}
+
+.capper-consensus .consensus-meta {
+  border-left: none;
+  background: none;
+  padding: 0 10px;
+  font-size: 0.74rem;
+  color: var(--muted);
+}
+
 /* The closing "what was the actual pick" recap every More Info card ends
    on, every sport — see openStatsDrawer's own comment. Full accent-green
    treatment (not the market-note/mma-no-data left-border-only style above):
