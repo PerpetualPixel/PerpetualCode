@@ -24,6 +24,7 @@ import {
 } from './notifications.js';
 import { sendWeeklyTrackingReport } from './weekly-report.js';
 import { sendDailyOnboardingReport } from './onboarding-report.js';
+import { sendLearningBriefEmail } from './learning-brief-email.js';
 import { handleReportBug } from './bug-reports.js';
 import { QuotaManager } from './quota.js';
 import { fetchContext, hasContext } from './context.js';
@@ -478,7 +479,7 @@ export default {
       // can't double-learn — it's cheap to no-op once today's review exists.
       ctx.waitUntil(
         (async () => {
-          await runDailyLearning(env, ctx, now, {
+          const learningResult = await runDailyLearning(env, ctx, now, {
             getPicks: async () => {
               // Props are a real selection surface (graded by genuine edges,
               // like Pixel's Picks/Play of the Day), not a raw-evidence
@@ -496,6 +497,16 @@ export default {
               return [...top5, ...slate, ...mlbProps, ...nflProps, ...wnbaProps, ...nhlProps];
             },
           }).catch(() => null);
+
+          // Owner briefing on days the review actually adjusted something
+          // (worker/src/learning-brief-email.js) — plain language, only
+          // when changes.length > 0, at most once/day since the review
+          // itself is idempotent per ET date (a skipped repeat run carries
+          // no changes array at all). Best-effort: a mail failure never
+          // touches the selection chain below.
+          if (learningResult && !learningResult.skipped && learningResult.changes?.length) {
+            ctx.waitUntil(sendLearningBriefEmail(env, learningResult, now));
+          }
 
           // Top5's own "did it just become complete this tick" is the
           // clean first-time signal for the ideal, single "board's
@@ -1226,6 +1237,27 @@ export default {
       try {
         const result = await migrateFullSlatePickDates(env, ctx, Date.now(), { days: 5 });
         return json(result, { headers: cors });
+      } catch (error) {
+        return json({ error: String(error).slice(0, 200) }, { status: 500, headers: cors });
+      }
+    }
+
+    // Manual (re)send of the plain-language learning briefing (worker/src/
+    // learning-brief-email.js) from the most recent review's stored log
+    // entry — lets the owner test the email without waiting for a morning
+    // when the review actually changes something. Same owner-only gate as
+    // the other admin routes. 404s meaningfully when no review has run yet;
+    // sends even when that entry carried zero changes (it's a test hook),
+    // which the response body says outright.
+    if (pathname === '/admin/learning-brief' && request.method === 'POST') {
+      const auth = authorizeSettings(request, env);
+      if (!auth.ok) return json({ error: auth.error }, { status: auth.status, headers: cors });
+      try {
+        const log = await getLearningLog(env);
+        const latest = log[0];
+        if (!latest) return json({ error: 'No learning review has run yet' }, { status: 404, headers: cors });
+        const result = await sendLearningBriefEmail(env, latest, Date.now());
+        return json({ ...result, dateKey: latest.dateKey, changeCount: latest.changes?.length ?? 0 }, { headers: cors });
       } catch (error) {
         return json({ error: String(error).slice(0, 200) }, { status: 500, headers: cors });
       }

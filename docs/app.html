@@ -483,6 +483,12 @@
     </div>
   </div>
 
+  <!-- Full-transparency indicator: shown whenever the daily learning review
+       adjusted the algorithm this morning (strong state) or adjustments are
+       currently active (subtle state). Populated by renderDailyLearningSection
+       in app.js; clicking scrolls to the Daily Learning section's details. -->
+  <button id="algoChangeBanner" class="algo-change-banner" type="button" hidden></button>
+
   <div class="learning-content">
     <!-- Server-Tracked: Full Slate / Pixel's Picks / Play of the Day -->
     <section class="learning-section">

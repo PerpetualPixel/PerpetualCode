@@ -4837,6 +4837,47 @@ function learnFeatureLabel(key) {
   return k;
 }
 
+/**
+ * Full-transparency banner at the top of the Tracking Dashboard: users see
+ * at a glance whenever the algorithm has been adjusted, without digging
+ * into the Daily Learning section. Two states:
+ *  - "adjusted this morning" (strong) when today's review entry carries
+ *    actual changes (changeCount > 0 — see worker/src/daily-learning.js's
+ *    log entry comment on why weightCount alone can't answer this);
+ *  - "N active adjustments" (subtle) when adjustments are in effect but
+ *    today's review changed nothing.
+ * Hidden entirely when the algorithm is running unadjusted. Clicking
+ * scrolls to the Daily Learning section, where every adjustment is shown
+ * with the evidence behind it.
+ */
+function renderAlgoChangeBanner(data) {
+  const banner = document.getElementById('algoChangeBanner');
+  if (!banner) return;
+
+  const latest = data?.log?.[0] ?? null;
+  const activeCount = Object.keys(data?.profile?.weights ?? {}).length;
+  const todayKey = etDateString(Date.now());
+  const changedToday = latest?.dateKey === todayKey && (latest.changeCount ?? 0) > 0;
+
+  if (changedToday) {
+    const n = latest.changeCount;
+    banner.className = 'algo-change-banner is-today';
+    banner.innerHTML = `<span class="algo-change-dot"></span><strong>Algorithm adjusted this morning</strong> — ${n} change${n === 1 ? '' : 's'} from the daily self-review. Tap for what changed and why.`;
+    banner.hidden = false;
+  } else if (activeCount > 0) {
+    banner.className = 'algo-change-banner';
+    banner.innerHTML = `<span class="algo-change-dot"></span>${activeCount} algorithm adjustment${activeCount === 1 ? '' : 's'} currently active — tap for details and evidence.`;
+    banner.hidden = false;
+  } else {
+    banner.hidden = true;
+    return;
+  }
+
+  banner.onclick = () => {
+    el.dailyLearnWeights?.closest('.learning-section')?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+  };
+}
+
 /** Current daily-learning weight profile + report log (see worker/src/daily-learning.js). */
 async function fetchDailyLearning() {
   if (!CONFIG.WORKER_URL) return null;
@@ -4860,8 +4901,10 @@ async function renderDailyLearningSection() {
   if (!data) {
     el.dailyLearnWeights.innerHTML = `<p class="empty">Couldn't load daily learning data.</p>`;
     el.dailyLearnLog.innerHTML = '';
+    renderAlgoChangeBanner(null);
     return;
   }
+  renderAlgoChangeBanner(data);
 
   const weights = data.profile?.weights ?? {};
   const evidence = data.profile?.evidence ?? {};
