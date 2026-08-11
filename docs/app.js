@@ -143,12 +143,12 @@ function etDateString(ms) {
   return `${parts.year}-${parts.month}-${parts.day}`;
 }
 
-/** A plain Date for the ET calendar day 'today' or 'tomorrow' falls on —
- * used only to render the "Tomorrow (Aug 9)" toggle label in the viewer's
- * own locale. The actual Today/Tomorrow filtering (withinDayFilter) never
+/** A plain Date for the ET calendar day 'yesterday'/'today'/'tomorrow'
+ * falls on — used only to render the toggle labels ("Tomorrow (Aug 9)") in
+ * the viewer's own locale. The actual day filtering (withinDayFilter) never
  * uses this; it compares ET calendar-date strings directly. */
 function etDayLabelDate(which) {
-  const targetMs = Date.now() + (which === 'tomorrow' ? ONE_DAY_MS : 0);
+  const targetMs = Date.now() + (which === 'tomorrow' ? ONE_DAY_MS : which === 'yesterday' ? -ONE_DAY_MS : 0);
   const fmt = new Intl.DateTimeFormat('en-US', {
     timeZone: 'America/New_York', year: 'numeric', month: '2-digit', day: '2-digit',
   });
@@ -187,7 +187,8 @@ function etDayLabelDate(which) {
  */
 function withinDayFilter(commenceMs, sportKey, isFinished = false) {
   if (!isFinished && isMmaSportKey(sportKey)) return true;
-  const targetMs = Date.now() + (state.dayFilter === 'tomorrow' ? ONE_DAY_MS : 0);
+  const targetMs = Date.now()
+    + (state.dayFilter === 'tomorrow' ? ONE_DAY_MS : state.dayFilter === 'yesterday' ? -ONE_DAY_MS : 0);
   return etDateString(commenceMs) === etDateString(targetMs);
 }
 
@@ -206,8 +207,11 @@ function sportGroupLabel(sportKey) {
 }
 
 function renderDayToggle() {
-  const tomorrowDate = etDayLabelDate('tomorrow');
-  el.tomorrowDateLabel.textContent = `(${tomorrowDate.toLocaleDateString(undefined, { month: 'short', day: 'numeric' })})`;
+  const dateChip = (d) => `(${d.toLocaleDateString(undefined, { month: 'short', day: 'numeric' })})`;
+  el.tomorrowDateLabel.textContent = dateChip(etDayLabelDate('tomorrow'));
+  el.yesterdayDateLabel.textContent = dateChip(etDayLabelDate('yesterday'));
+  el.dayFilterYesterday.classList.toggle('is-active', state.dayFilter === 'yesterday');
+  el.dayFilterYesterday.setAttribute('aria-pressed', String(state.dayFilter === 'yesterday'));
   el.dayFilterToday.classList.toggle('is-active', state.dayFilter === 'today');
   el.dayFilterToday.setAttribute('aria-pressed', String(state.dayFilter === 'today'));
   el.dayFilterTomorrow.classList.toggle('is-active', state.dayFilter === 'tomorrow');
@@ -218,9 +222,20 @@ function setDayFilter(which) {
   if (state.dayFilter === which) return;
   state.dayFilter = which;
   saveJSON(DAY_FILTER_KEY, which);
+  // Yesterday's games are all finished by definition, so landing there with
+  // the Upcoming filter would always show an empty board — auto-switch the
+  // state toggle to match (and back to Upcoming when returning to a live
+  // day, the setting almost everyone means there).
+  if (which === 'yesterday' && state.slateGameFilter !== 'finished') {
+    state.slateGameFilter = 'finished';
+    renderSlateStateToggle();
+  } else if (which !== 'yesterday' && state.slateGameFilter !== 'upcoming') {
+    state.slateGameFilter = 'upcoming';
+    renderSlateStateToggle();
+  }
   renderDayToggle();
   renderSlateLeagueOptions();
-  if (state.candidates.length) {
+  if (state.candidates.length || state.rawEvents.length) {
     renderFullSlate();
     // Pixel's Picks is a fixed daily set locked server-side (see
     // loadPixelPicks()) — it doesn't have a Today/Tomorrow of its own to
@@ -647,6 +662,8 @@ const el = {
   statsDrawerClose: document.getElementById('statsDrawerClose'),
   statsDrawerBody: document.getElementById('statsDrawerBody'),
   dayFilterBar: document.getElementById('dayFilterBar'),
+  dayFilterYesterday: document.getElementById('dayFilterYesterday'),
+  yesterdayDateLabel: document.getElementById('yesterdayDateLabel'),
   dayFilterToday: document.getElementById('dayFilterToday'),
   dayFilterTomorrow: document.getElementById('dayFilterTomorrow'),
   tomorrowDateLabel: document.getElementById('tomorrowDateLabel'),
@@ -730,7 +747,7 @@ const state = {
   // am I looking at" question, not two. MMA ignores this
   // entirely (see withinDayFilter/isMmaSportKey) since cards are announced
   // and worth showing weeks ahead of a single day toggle.
-  dayFilter: ['today', 'tomorrow'].includes(loadJSON(DAY_FILTER_KEY, 'today'))
+  dayFilter: ['yesterday', 'today', 'tomorrow'].includes(loadJSON(DAY_FILTER_KEY, 'today'))
     ? loadJSON(DAY_FILTER_KEY, 'today')
     : 'today',
   // Which of the three server-side trackers the Tracking Dashboard's
@@ -766,6 +783,11 @@ const state = {
   // for it (has `completed` and `scores`). Refreshed at most once a minute
   // per sport-group (see refreshSlateScores) rather than on every render.
   slateScores: new Map(),
+  // Finished-game box scores from the worker's /boxscore (per-inning/
+  // quarter linescores — MLB/NFL/NCAAF/WNBA), keyed by eventId. `null`
+  // means "asked, nothing available" so a fixture ESPN can't match isn't
+  // re-fetched on every render; absent means not asked yet.
+  boxScores: new Map(),
   slateScoresFetchedAt: new Map(), // group.id -> last fetch time, so switching leagues never gets throttled by an unrelated sport's recent fetch
   // The server's own Full Slate tracked pick per game (see
   // worker/src/full-slate-tracking.js) — eventId -> pick record. This is
@@ -781,7 +803,11 @@ const state = {
   // Full Slate's Upcoming/Live/Finished toggle — defaults to Upcoming each
   // fresh load rather than persisting, since "what's live right now" isn't
   // something you'd want stuck from a prior session.
-  slateGameFilter: 'upcoming',
+  // Everything on Yesterday's board is finished by definition, so a page
+  // restored onto that day starts on the Finished filter rather than an
+  // always-empty Upcoming view (setDayFilter keeps the two in sync from
+  // then on).
+  slateGameFilter: loadJSON(DAY_FILTER_KEY, 'today') === 'yesterday' ? 'finished' : 'upcoming',
   // Last-known UFC/PFL card name per MMA eventId, captured while the fight
   // still has live odds (see buildSlateGames). A fight's market disappears
   // from the odds feed the instant it starts — not just once it's finished
@@ -3171,6 +3197,130 @@ function opponentOf(game, cand) {
   return null;
 }
 
+// Sports the worker's /boxscore can serve a per-period linescore for —
+// mirrors worker/src/boxscore.js's BOX_LEAGUES.
+const BOX_SPORTS = new Set([
+  'baseball_mlb', 'americanfootball_nfl', 'americanfootball_ncaaf', 'basketball_wnba', 'basketball_nba',
+]);
+
+/**
+ * Fetch (once) the box score for a finished game and re-render the slate
+ * when it lands. `null` is cached too — an unmatched fixture stays a plain
+ * final-score card without re-asking on every render.
+ */
+function ensureBoxScore(game) {
+  if (state.boxScores.has(game.eventId) || !CONFIG.WORKER_URL) return;
+  state.boxScores.set(game.eventId, null); // in-flight/none marker
+  const url = new URL('/boxscore', CONFIG.WORKER_URL);
+  url.searchParams.set('sport', game.sportKey);
+  url.searchParams.set('home', game.home);
+  url.searchParams.set('away', game.away);
+  fetch(url, { headers: { Accept: 'application/json' } })
+    .then((r) => (r.ok ? r.json() : null))
+    .then((data) => {
+      if (!data?.box) return;
+      state.boxScores.set(game.eventId, data.box);
+      renderFullSlate();
+    })
+    .catch(() => { /* the plain final-score card is the fallback */ });
+}
+
+/** The per-period linescore grid — innings + R/H/E for MLB, quarters + T for football/basketball. */
+function boxScoreGridHtml(box) {
+  const isInnings = box.kind === 'innings';
+  const periods = Math.max(box.periods, box.home.linescores.length, box.away.linescores.length);
+  const headers = Array.from({ length: periods }, (_, i) => `<span>${i + 1}</span>`).join('');
+  const totalsHead = isInnings ? '<span class="box-tot">R</span><span class="box-tot">H</span><span class="box-tot">E</span>' : '<span class="box-tot">T</span>';
+
+  const teamRow = (side) => {
+    const cells = Array.from({ length: periods }, (_, i) => {
+      const v = side.linescores[i];
+      return `<span>${v == null ? '—' : v}</span>`;
+    }).join('');
+    const totals = isInnings
+      ? `<span class="box-tot">${side.total ?? '—'}</span><span class="box-tot">${side.hits ?? '—'}</span><span class="box-tot">${side.errors ?? '—'}</span>`
+      : `<span class="box-tot">${side.total ?? '—'}</span>`;
+    return `<div class="box-row ${side.winner ? 'is-winner' : ''}">
+      <span class="box-team">${esc(side.abbr ?? side.name ?? '')}</span>${cells}${totals}
+    </div>`;
+  };
+
+  return `
+    <div class="box-score" style="--box-periods:${periods}; --box-totals:${isInnings ? 3 : 1};">
+      ${box.venue ? `<div class="box-venue">${esc(box.venue)}</div>` : ''}
+      <div class="box-row box-head"><span class="box-team"></span>${headers}${totalsHead}</div>
+      ${teamRow(box.away)}
+      ${teamRow(box.home)}
+    </div>`;
+}
+
+/** Winner name for a completed scoreEvent from the raw /scores feed, else null on a tie/absent data. */
+function scoreEventWinner(scoreEvent) {
+  const scores = scoreEvent?.scores ?? [];
+  if (scores.length < 2) return null;
+  const a = Number(scores[0]?.score);
+  const b = Number(scores[1]?.score);
+  if (!Number.isFinite(a) || !Number.isFinite(b) || a === b) return null;
+  return a > b ? scores[0] : scores[1];
+}
+
+/**
+ * The finished card's per-sport result detail, rendered above the main-play
+ * line. Every fact traces to a payload value (docs/insights.js's rule):
+ * - Box sports: the ESPN linescore grid, once /boxscore has it.
+ * - Tennis: the settlement record's set-by-set score when the metered
+ *   source graded it ("(7-5, 6-3) Rybakina"); otherwise the free feed's
+ *   sets-won ("2-0 sets · Rybakina") — never a fabricated game score.
+ * - MMA: "Winner by Method" from the graded pick's detail; method omitted
+ *   when ESPN didn't carry one; winner-only from /scores as last resort.
+ * - Everything else (soccer, NHL): winner + final from the scores feed.
+ * Nothing available -> empty string, the card is exactly what it was.
+ */
+function finishedDetailHtml(game, scoreEvent, trackedPick) {
+  const detail = trackedPick?.result?.detail ?? null;
+
+  if (BOX_SPORTS.has(game.sportKey)) {
+    const box = state.boxScores.get(game.eventId);
+    if (box) return boxScoreGridHtml(box);
+    ensureBoxScore(game);
+    return '';
+  }
+
+  if (game.sportKey.startsWith('tennis_')) {
+    if (detail?.setScore && detail?.winner) {
+      return `<div class="finished-result-line"><strong>(${esc(detail.setScore)})</strong> ${esc(detail.winner)}</div>`;
+    }
+    const winner = scoreEventWinner(scoreEvent);
+    if (winner) {
+      const other = (scoreEvent.scores ?? []).find((s) => s !== winner);
+      return `<div class="finished-result-line"><strong>${esc(String(winner.score))}-${esc(String(other?.score ?? ''))} sets</strong> · ${esc(winner.name)}</div>`;
+    }
+    return '';
+  }
+
+  if (isMmaSportKey(game.sportKey)) {
+    if (detail?.winner) {
+      return `<div class="finished-result-line"><strong>${esc(detail.winner)}</strong>${detail.method ? ` by ${esc(detail.method)}` : ' wins'}</div>`;
+    }
+    const winner = scoreEventWinner(scoreEvent);
+    return winner ? `<div class="finished-result-line"><strong>${esc(winner.name)}</strong> wins</div>` : '';
+  }
+
+  // Soccer, NHL, and anything else with a plain final: winner + score
+  // (or a draw, which soccer genuinely has).
+  const scores = scoreEvent?.scores ?? [];
+  if (scores.length >= 2) {
+    const a = Number(scores[0]?.score);
+    const b = Number(scores[1]?.score);
+    if (Number.isFinite(a) && Number.isFinite(b)) {
+      if (a === b) return `<div class="finished-result-line"><strong>Draw</strong> ${a}–${b}</div>`;
+      const winner = a > b ? scores[0] : scores[1];
+      return `<div class="finished-result-line"><strong>${esc(winner.name)}</strong> win ${Math.max(a, b)}–${Math.min(a, b)}</div>`;
+    }
+  }
+  return '';
+}
+
 function slateGameHtml(game) {
   const idx = renderedSlateGames.push(game) - 1;
   const rec = bestCandidateForGame(game);
@@ -3242,6 +3392,12 @@ function slateGameHtml(game) {
   // moment the game ended.
   const leanBadgeHtml = hasAnyPrice && !isFinished ? renderLeanBadge(trackedPick == null) : '';
 
+  // Finished games lead with their real result — the box score grid for
+  // sports that have one, otherwise a one-line winner/score/method summary
+  // (see finishedDetailHtml) — with the main play + Won/Lost line kept
+  // below it exactly as before.
+  const finishedDetail = isFinished ? finishedDetailHtml(game, scoreEvent, trackedPick) : '';
+
   return `
     <article class="${cardClass}" ${isMlb ? `data-game-index="${idx}"` : ''}>
       <div class="slate-game-time">
@@ -3249,6 +3405,7 @@ function slateGameHtml(game) {
         ${infoButtonHtml}
       </div>
       ${leanBadgeHtml}
+      ${finishedDetail}
       ${hideMarkets ? '' : `
       <div class="slate-header-row">
         <span></span><span>Spread</span><span>O/U</span><span>ML</span>
@@ -3775,6 +3932,7 @@ function toggleLegBanner(event) {
 el.picks.addEventListener('click', toggleWhyPanel);
 el.picks.addEventListener('click', toggleLegBanner);
 
+el.dayFilterYesterday.addEventListener('click', () => setDayFilter('yesterday'));
 el.dayFilterToday.addEventListener('click', () => setDayFilter('today'));
 el.dayFilterTomorrow.addEventListener('click', () => setDayFilter('tomorrow'));
 

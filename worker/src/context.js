@@ -71,7 +71,7 @@ function fold(value) {
  * sends none at all, and leaving it off is one more way this looks like
  * automated traffic to whatever is watching.
  */
-async function cachedJson(url, ttl, ctx) {
+export async function cachedJson(url, ttl, ctx) {
   const cacheKey = new Request(`https://pixel-pick.cache/espn/${encodeURIComponent(url)}`);
   const cache = caches.default;
 
@@ -120,7 +120,7 @@ function teamScore(competitor, wanted) {
 }
 
 /** Locate the ESPN event for a fixture named by the odds feed. */
-function findEvent(scoreboard, home, away) {
+export function findEvent(scoreboard, home, away) {
   let best = null;
 
   for (const event of scoreboard?.events ?? []) {

@@ -341,7 +341,13 @@ export async function runFullSlateGrading(
     }
     if (!outcome) continue;
     pick.status = outcome.void ? 'void' : outcome.won ? 'won' : 'lost';
-    pick.result = { payout: outcome.payout, roiPercent: outcome.void ? 0 : (outcome.payout / pick.suggested_stake) * 100, voidReason: outcome.void ? outcome.reason : undefined };
+    pick.result = {
+      payout: outcome.payout,
+      roiPercent: outcome.void ? 0 : (outcome.payout / pick.suggested_stake) * 100,
+      voidReason: outcome.void ? outcome.reason : undefined,
+      // Same settlement-time display detail as tracking.js's runGrading.
+      detail: outcome.detail ?? undefined,
+    };
     graded++;
     ctx.waitUntil(
       env.POTD_KV.put(`slate:${pick.dateKey}:pick:${pick.pickId}`, JSON.stringify(pick), {

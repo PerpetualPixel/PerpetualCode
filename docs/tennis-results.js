@@ -142,7 +142,7 @@ export function gradeTennisGameMarket(pick, apiResult) {
   }
 
   const payout = won ? (pick.decimal - 1) * pick.suggested_stake : -pick.suggested_stake;
-  return { won, payout };
+  return { won, payout, detail: tennisDetail(pick, sets, homeIdx) };
 }
 
 /**
@@ -177,5 +177,27 @@ export function gradeTennisMatchWinner(pick, apiResult) {
   const pickedIsHome = pick.outcomeName === pick.home;
   const won = pickedIsHome ? homeSets > awaySets : awaySets > homeSets;
   const payout = won ? (pick.decimal - 1) * pick.suggested_stake : -pick.suggested_stake;
-  return { won, payout };
+  return { won, payout, detail: tennisDetail(pick, sets, homeIdx) };
+}
+
+/**
+ * Display detail for a settled tennis pick, persisted onto the tracked
+ * record so the finished card can show "(7-5, 6-3) Elena Rybakina" without
+ * ever re-spending the metered source on display. The set scores are
+ * re-oriented winner-first per set so the string always reads from the
+ * match winner's perspective, matching how tennis scorelines are
+ * conventionally written next to the winner's name.
+ */
+function tennisDetail(pick, sets, homeIdx) {
+  const awayIdx = homeIdx === 0 ? 1 : 0;
+  const homeSets = sets.filter((set) => set[homeIdx] > set[awayIdx]).length;
+  const awaySets = sets.filter((set) => set[awayIdx] > set[homeIdx]).length;
+  if (homeSets === awaySets) return null;
+  const homeWon = homeSets > awaySets;
+  const winnerIdx = homeWon ? homeIdx : awayIdx;
+  const loserIdx = homeWon ? awayIdx : homeIdx;
+  return {
+    winner: homeWon ? pick.home : pick.away,
+    setScore: sets.map((set) => `${set[winnerIdx]}-${set[loserIdx]}`).join(', '),
+  };
 }

@@ -333,11 +333,42 @@ export async function fetchMmaResults(ctx, now = Date.now()) {
           b: normalizeName(nameB),
           aWon: a.winner === true,
           bWon: b.winner === true,
+          // Real display names + finish method carried for the finished
+          // card's "Gamrot by Decision" line. The method is read across
+          // the fields ESPN has been seen to use, defensively — null
+          // (never a guess) when none is present, and the card then shows
+          // just the winner with no method rather than a fabricated one.
+          displayA: nameA,
+          displayB: nameB,
+          method: mmaFinishMethod(c),
         });
       }
     }
   }
   return fights;
+}
+
+/**
+ * Best-effort finish method from an ESPN MMA competition — "KO/TKO",
+ * "Submission", "Decision - Unanimous", etc. ESPN carries this
+ * inconsistently across cards (status.result on some, competitor-level
+ * result on others), so several homes are checked in order and null is the
+ * honest answer when none carries it.
+ */
+export function mmaFinishMethod(competition) {
+  const candidates = [
+    competition?.status?.result?.displayName,
+    competition?.status?.result?.description,
+    competition?.status?.result?.name,
+    (competition?.competitors ?? []).map((cc) => cc?.result?.displayName).find(Boolean),
+  ];
+  const raw = candidates.find((v) => typeof v === 'string' && v.trim());
+  if (!raw) return null;
+  const cleaned = raw.trim();
+  // ESPN sometimes reports the generic completion state here rather than a
+  // real method — that's not a finish method, so treat it as absent.
+  if (/^(final|full time|completed?)$/i.test(cleaned)) return null;
+  return cleaned;
 }
 
 /**
@@ -352,14 +383,21 @@ export async function fetchMmaResults(ctx, now = Date.now()) {
  * loss. Returns null (never fabricates a result) when no ESPN fight matches
  * both names.
  */
+/** The ESPN fight record matching one tracked bout's two names, else null — shared by grading fallback and display-detail attachment. */
+export function findMmaFight(homeTeam, awayTeam, results) {
+  const normHome = normalizeName(homeTeam);
+  const normAway = normalizeName(awayTeam);
+  return results.find(
+    (f) => (namesLikelyMatch(f.a, normHome) && namesLikelyMatch(f.b, normAway))
+      || (namesLikelyMatch(f.a, normAway) && namesLikelyMatch(f.b, normHome)),
+  ) ?? null;
+}
+
 export function buildMmaScoreEvent(homeTeam, awayTeam, results) {
   const normHome = normalizeName(homeTeam);
   const normAway = normalizeName(awayTeam);
 
-  const fight = results.find(
-    (f) => (namesLikelyMatch(f.a, normHome) && namesLikelyMatch(f.b, normAway))
-      || (namesLikelyMatch(f.a, normAway) && namesLikelyMatch(f.b, normHome)),
-  );
+  const fight = findMmaFight(homeTeam, awayTeam, results);
   if (!fight) return null;
 
   const homeIsA = namesLikelyMatch(fight.a, normHome);
@@ -388,9 +426,26 @@ export function buildMmaScoreEvent(homeTeam, awayTeam, results) {
  * takes the exact same single gradePick() call it always has.
  */
 export function gradeMmaPickWithFallback(pick, primaryScoreEvent, results) {
-  const direct = gradePick(pick, primaryScoreEvent);
-  if (direct) return direct;
-  if (!results?.length) return null;
-  const fallbackScoreEvent = buildMmaScoreEvent(pick.home, pick.away, results);
-  return fallbackScoreEvent ? gradePick(pick, fallbackScoreEvent) : null;
+  const outcome = (() => {
+    const direct = gradePick(pick, primaryScoreEvent);
+    if (direct) return direct;
+    if (!results?.length) return null;
+    const fallbackScoreEvent = buildMmaScoreEvent(pick.home, pick.away, results);
+    return fallbackScoreEvent ? gradePick(pick, fallbackScoreEvent) : null;
+  })();
+  if (!outcome || outcome.void) return outcome;
+
+  // Attach the winner's real name and finish method for the finished card's
+  // "Gamrot by Decision" line — from ESPN's fight record when one matches,
+  // regardless of which source did the grading (the Odds API path grades
+  // fine but never carries a method). Purely additive display data: absent
+  // ESPN coverage the outcome is exactly what it always was.
+  const fight = findMmaFight(pick.home, pick.away, results ?? []);
+  if (fight) {
+    const winnerName = fight.aWon ? fight.displayA : fight.bWon ? fight.displayB : null;
+    if (winnerName) {
+      return { ...outcome, detail: { winner: winnerName, method: fight.method ?? null } };
+    }
+  }
+  return outcome;
 }

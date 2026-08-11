@@ -581,7 +581,13 @@ async function gradePotdForDate(env, ctx, now, dateKey, pick, record, fetchScore
   if (!outcome) return false;
 
   pick.status = outcome.void ? 'void' : outcome.won ? 'won' : 'lost';
-  pick.result = { payout: outcome.payout, roiPercent: outcome.void ? 0 : (outcome.payout / pick.suggested_stake) * 100, voidReason: outcome.void ? outcome.reason : undefined };
+  pick.result = {
+    payout: outcome.payout,
+    roiPercent: outcome.void ? 0 : (outcome.payout / pick.suggested_stake) * 100,
+    voidReason: outcome.void ? outcome.reason : undefined,
+    // Same settlement-time display detail as tracking.js's runGrading.
+    detail: outcome.detail ?? undefined,
+  };
   await env.POTD_KV.put(`potd:${dateKey}`, JSON.stringify(record), { expirationTtl: KV_TTL_SECONDS });
   return true;
 }

@@ -783,6 +783,11 @@ export async function runGrading(
       roiPercent: outcome.void ? 0 : (outcome.payout / pick.suggested_stake) * 100,
       voidReason: outcome.void ? outcome.reason : undefined,
       retired: outcome.retired ?? undefined,
+      // Settlement-time display detail (tennis set scores, MMA winner +
+      // method — see docs/tennis-results.js's tennisDetail and
+      // ufc-events.js's gradeMmaPickWithFallback): captured here because
+      // grading is the only moment this data is in hand for free.
+      detail: outcome.detail ?? undefined,
     };
     graded++;
     ctx.waitUntil(

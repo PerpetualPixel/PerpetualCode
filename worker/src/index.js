@@ -28,6 +28,7 @@ import { sendLearningBriefEmail } from './learning-brief-email.js';
 import { handleReportBug } from './bug-reports.js';
 import { QuotaManager } from './quota.js';
 import { fetchContext, hasContext } from './context.js';
+import { fetchBoxScore, hasBoxScore } from './boxscore.js';
 import { fetchWeather, hasVenue } from './weather.js';
 import { fetchMmaContext } from './mma.js';
 import {
@@ -812,6 +813,31 @@ export default {
     if (pathname === '/api/account/logout-all' && request.method === 'POST') {
       const res = await handleLogoutAll(request, env);
       return new Response(res.body, { status: res.status, headers: { ...cors, ...Object.fromEntries(res.headers) } });
+    }
+
+    // Finished-game box score (per-inning/quarter linescores — see
+    // worker/src/boxscore.js) for one fixture already on the board. Free —
+    // ESPN cdn scoreboard, never the odds feed. { box: null } is a normal
+    // answer (unmatched fixture / not completed / unsupported sport), not
+    // an error: the finished card just keeps its plain final-score line.
+    if (pathname === '/boxscore') {
+      if (request.method !== 'GET') {
+        return json({ error: 'Method not allowed' }, { status: 405, headers: cors });
+      }
+      const { searchParams } = new URL(request.url);
+      const sportKey = searchParams.get('sport') ?? '';
+      if (!hasBoxScore(sportKey)) {
+        return json({ box: null, reason: 'unsupported sport' }, { headers: cors });
+      }
+      try {
+        const box = await fetchBoxScore(
+          { sportKey, home: searchParams.get('home') ?? '', away: searchParams.get('away') ?? '' },
+          ctx,
+        );
+        return json({ box }, { headers: { ...cors, 'Cache-Control': 'public, max-age=300' } });
+      } catch (error) {
+        return json({ box: null, reason: String(error).slice(0, 120) }, { headers: cors });
+      }
     }
 
     if (pathname === '/context') {

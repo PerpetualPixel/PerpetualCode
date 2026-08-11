@@ -2802,6 +2802,60 @@ input[type="range"]:focus-visible {
    doesn't leave three empty reserved column tracks sitting to its right. */
 .slate-team-row.no-markets { grid-template-columns: 1fr; }
 
+/* ── Finished-game result detail (see app.js's finishedDetailHtml) ────
+   The box score grid (MLB innings + R/H/E, NFL/WNBA quarters + T) and the
+   one-line winner summaries (tennis sets, MMA method, soccer/NHL final). */
+.box-score {
+  padding: 8px 14px 0;
+  overflow-x: auto; /* extra innings scroll inside the card, never the page */
+}
+
+.box-venue {
+  font-size: 0.68rem;
+  color: var(--muted);
+  text-align: center;
+  margin-bottom: 6px;
+}
+
+.box-row {
+  display: grid;
+  grid-template-columns: 42px repeat(var(--box-periods), minmax(18px, 1fr)) repeat(var(--box-totals), minmax(22px, 1.2fr));
+  gap: 2px;
+  align-items: center;
+  text-align: center;
+  font-family: var(--mono);
+  font-size: 0.72rem;
+  padding: 4px 0;
+}
+
+.box-row + .box-row { border-top: 1px solid var(--line); }
+
+.box-head {
+  color: var(--muted);
+  font-weight: 700;
+  border-top: none;
+}
+
+.box-team {
+  text-align: left;
+  font-weight: 700;
+  font-family: inherit;
+}
+
+.box-tot {
+  font-weight: 700;
+  background: var(--surface-2);
+  border-radius: 4px;
+  padding: 2px 0;
+}
+
+.box-row.is-winner .box-team { color: var(--accent); }
+
+.finished-result-line {
+  padding: 8px 14px 0;
+  font-size: 0.82rem;
+}
+
 /* Replaces the market grid entirely once a game is finished — the
    algorithm's Main play for that game, and whether it won. */
 .slate-main-play {
