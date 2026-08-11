@@ -99,6 +99,41 @@ export function capperConsensusSignal(feed, candidate) {
 }
 
 /**
+ * The feed entry flattened into the shape the UI renders.
+ *
+ * `scored` is the honest part: a fighter-consensus can only move the grade of
+ * a bet that HAS a fighter side, so an h2h candidate gets scored: true while
+ * a rounds total or spread on the same fight gets scored: false — the
+ * consensus is real context for that fight either way, but claiming it
+ * changed a totals grade would be a lie. `aligned` is null in that case too,
+ * since a total is neither with nor against the cappers' pick.
+ */
+export function consensusRecord(pick, feed, { aligned = null, signal = null, scored = false } = {}) {
+  return {
+    selection: pick.selection,
+    consensusPct: pick.consensus_pct,
+    strength: pick.strength,
+    tier: pick.tier,
+    pickCount: pick.pick_count,
+    aligned,
+    signal,
+    scored,
+    generatedAt: feed?.generated_at ?? null,
+  };
+}
+
+/**
+ * The consensus for a candidate's FIGHT, whatever market it is — the drawer
+ * needs this because Full Slate's "More info" opens on the best-scoring
+ * candidate of the three markets, which for MMA is usually a rounds total,
+ * not the moneyline the swing attached to. Null when the feed has no entry.
+ */
+export function fightConsensusRecord(feed, candidate) {
+  const pick = findConsensusPick(feed, candidate);
+  return pick ? consensusRecord(pick, feed) : null;
+}
+
+/**
  * Re-score every MMA h2h candidate that has a consensus entry, attaching
  * what was found as `capperConsensus` so the UI can show its work. Every
  * other candidate passes through untouched — same "enrichment is a bonus"
@@ -113,16 +148,11 @@ export function applyCapperConsensus(candidates, feed, { now = Date.now() } = {}
     if (!match) return c;
     const rescored = {
       ...c,
-      capperConsensus: {
-        selection: match.pick.selection,
-        consensusPct: match.pick.consensus_pct,
-        strength: match.pick.strength,
-        tier: match.pick.tier,
-        pickCount: match.pick.pick_count,
+      capperConsensus: consensusRecord(match.pick, feed, {
         aligned: match.aligned,
         signal: match.signal,
-        generatedAt: feed.generated_at ?? null,
-      },
+        scored: true,
+      }),
     };
     return Object.assign(rescored, scoreCandidate(rescored, { now, qualitative: match.signal }));
   });
@@ -131,6 +161,16 @@ export function applyCapperConsensus(candidates, feed, { now = Date.now() } = {}
 let feedCache = null;
 let feedFetchedAt = 0;
 export const FEED_TTL_MS = 60 * 1000;
+
+/**
+ * The last feed successfully fetched, or null before the first one lands.
+ * Synchronous on purpose: the stats drawer renders its first paint without
+ * awaiting anything, and a fight's consensus should appear in that paint or
+ * not at all rather than popping in a moment later.
+ */
+export function cachedConsensusFeed() {
+  return feedCache;
+}
 
 /**
  * Fetch the picks feed, cached for a minute.

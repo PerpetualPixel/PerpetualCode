@@ -39,7 +39,13 @@ import {
   teamQualitativeSignal,
   supportsQualitativeSignal,
 } from './qualitative.js';
-import { fetchCapperConsensus, capperConsensusSignal } from './capper-consensus.js';
+import {
+  fetchCapperConsensus,
+  capperConsensusSignal,
+  consensusRecord,
+  fightConsensusRecord,
+  cachedConsensusFeed,
+} from './capper-consensus.js';
 import {
   buildInsights,
   insightTexts,
@@ -2554,19 +2560,28 @@ async function openStatsDrawer(leg, opposite = null, { fullscreen = false, oddsO
         : `MMA picks are chosen on this price math alone. This app applies no fighter-quality or form scoring to MMA (the research below is for context, not scoring). An underdog pick like this one means the market itself disagrees with the favorite's price; it isn't a projection that this fighter is actually better.`)
     : null;
 
-  // The capper consensus's own section — only for an MMA leg that actually
-  // matched a feed entry, so its absence honestly means "no consensus data
-  // for this fight," never a silently-skipped lookup.
-  const cc = leg.capperConsensus;
+  // The capper consensus's own section. The swing only ever attaches to a
+  // moneyline (a rounds total has no fighter side to be with or against), but
+  // Full Slate's "More info" opens on the best-scoring candidate of the three
+  // markets — usually the total. Falling back to the fight's own entry means
+  // the consensus shows on whichever market you happened to open, and `scored`
+  // keeps the wording honest about whether it moved THIS pick's grade.
+  // A null here still means what it always did: no consensus data for this
+  // fight, never a silently-skipped lookup.
+  const cc = isMma(leg.sportKey)
+    ? (leg.capperConsensus ?? fightConsensusRecord(cachedConsensusFeed(), leg))
+    : null;
   const capperConsensusHtml = cc
     ? `
       <div class="stats-section capper-consensus">
         <h3>Capper Consensus</h3>
         <p>${esc(String(cc.pickCount))} capper${cc.pickCount === 1 ? '' : 's'} back <strong>${esc(cc.selection)}</strong> — ` +
       `${esc(String(cc.consensusPct))}% of the trust-weighted picks on this fight, consensus strength ${esc(String(cc.strength))}/10 (${esc(cc.tier)}). ` +
-      `${cc.aligned
-        ? `This pick agrees with the consensus, which raised its grade by up to ${QUALITATIVE.MAX_SWING} points.`
-        : `This pick goes against the consensus, which lowered its grade by up to ${QUALITATIVE.MAX_SWING} points.`}</p>` +
+      `${!cc.scored
+        ? `That's a read on who wins, so it doesn't move the grade of a ${esc(leg.marketLabel)} bet like this one — it's here as context for the fight.`
+        : cc.aligned
+          ? `This pick agrees with the consensus, which raised its grade by up to ${QUALITATIVE.MAX_SWING} points.`
+          : `This pick goes against the consensus, which lowered its grade by up to ${QUALITATIVE.MAX_SWING} points.`}</p>` +
       (cc.generatedAt
         ? `<p class="consensus-meta">Consensus last updated ${esc(dateFmt.format(new Date(cc.generatedAt)))} — refreshed by each MMA_Engine weekly run.</p>`
         : '') +
@@ -2910,16 +2925,11 @@ function applyConsensusToCandidates(candidates, feed) {
       Object.assign(c, scoreCandidate(c, { now, qualitative: 0 }));
       continue;
     }
-    c.capperConsensus = {
-      selection: match.pick.selection,
-      consensusPct: match.pick.consensus_pct,
-      strength: match.pick.strength,
-      tier: match.pick.tier,
-      pickCount: match.pick.pick_count,
+    c.capperConsensus = consensusRecord(match.pick, feed, {
       aligned: match.aligned,
       signal: match.signal,
-      generatedAt: feed.generated_at ?? null,
-    };
+      scored: true,
+    });
     Object.assign(c, scoreCandidate(c, { now, qualitative: match.signal }));
   }
 }

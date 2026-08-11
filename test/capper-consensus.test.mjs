@@ -7,6 +7,7 @@ import {
   capperConsensusSignal,
   applyCapperConsensus,
   fetchCapperConsensus,
+  fightConsensusRecord,
   FEED_TTL_MS,
 } from '../docs/capper-consensus.js';
 import { QUALITATIVE, scoreCandidate } from '../docs/engine.js';
@@ -139,6 +140,33 @@ test('applyCapperConsensus passes through on an empty feed', () => {
   const candidates = [mmaCandidate()];
   assert.equal(applyCapperConsensus(candidates, null), candidates);
   assert.equal(applyCapperConsensus(candidates, { picks: [] }), candidates);
+});
+
+/* --- the fight's consensus, for a drawer opened on any market --- */
+
+test('a totals candidate still resolves its fight, marked as not scored', () => {
+  // Full Slate's "More info" opens on the best-scoring candidate of the three
+  // markets, which for MMA is routinely the rounds total, not the moneyline.
+  const total = mmaCandidate({ marketKey: 'totals', outcomeName: 'Under' });
+  assert.equal(capperConsensusSignal(FEED, total), null); // no swing, correctly
+
+  const record = fightConsensusRecord(FEED, total);
+  assert.equal(record.selection, 'Islam Makhachev');
+  assert.equal(record.pickCount, 3);
+  assert.equal(record.scored, false); // never claims it moved a totals grade
+  assert.equal(record.aligned, null); // a total is neither with nor against
+});
+
+test('the scored record from applyCapperConsensus is marked as such', () => {
+  const [c] = applyCapperConsensus([mmaCandidate()], FEED, { now: NOW });
+  assert.equal(c.capperConsensus.scored, true);
+  assert.equal(c.capperConsensus.aligned, true);
+});
+
+test('fightConsensusRecord is null for an unknown fight or a missing feed', () => {
+  const unknown = mmaCandidate({ home: 'Jon Jones', away: 'Stipe Miocic', outcomeName: 'Jon Jones' });
+  assert.equal(fightConsensusRecord(FEED, unknown), null);
+  assert.equal(fightConsensusRecord(null, mmaCandidate()), null);
 });
 
 /* --- fetching: freshness is the whole point after a weekly.bat push --- */
