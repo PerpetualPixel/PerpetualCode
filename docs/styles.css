@@ -2851,6 +2851,15 @@ input[type="range"]:focus-visible {
 
 .box-row.is-winner .box-team { color: var(--accent); }
 
+/* The loser's whole line fades — box grid row and the card's team row
+   alike (see app.js's boxScoreGridHtml/slateTeamRow) — so a finished
+   card's result reads at a glance, tennis-scoreboard style. */
+.box-row.is-loser { opacity: 0.45; }
+
+.slate-team-row.is-loser .slate-team { opacity: 0.45; }
+
+.slate-team-row.is-loser .slate-logo { filter: grayscale(0.6); }
+
 .finished-result-line {
   padding: 8px 14px 0;
   font-size: 0.82rem;
