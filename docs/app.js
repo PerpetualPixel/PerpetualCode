@@ -678,6 +678,10 @@ const el = {
   slateEventRow: document.getElementById('slateEventRow'),
   slateEventLabel: document.getElementById('slateEventLabel'),
   slateEventSelect: document.getElementById('slateEventSelect'),
+  slateEventCustom: document.getElementById('slateEventCustom'),
+  slateEventTrigger: document.getElementById('slateEventTrigger'),
+  slateEventTriggerText: document.getElementById('slateEventTriggerText'),
+  slateEventMenu: document.getElementById('slateEventMenu'),
   slateSortSelect: document.getElementById('slateSortSelect'),
   slateBody: document.getElementById('slateBody'),
   statsPanel: document.getElementById('statsPanel'),
@@ -3474,12 +3478,31 @@ function renderSlateLeagueOptions() {
   if (el.slateLeagueTokens) {
     el.slateLeagueTokens.innerHTML = LEAGUE_GROUPS
       .map((group) => `
-        <button type="button" class="league-token ${group.id === state.slateLeague ? 'is-active' : ''} ${group.offSeason ? 'is-off-season' : ''}"
-                data-league-token="${esc(group.id)}" title="${esc(group.label)}" aria-label="${esc(group.label)}">
+        <button type="button" class="league-token has-tooltip ${group.id === state.slateLeague ? 'is-active' : ''} ${group.offSeason ? 'is-off-season' : ''}"
+                data-league-token="${esc(group.id)}" data-tooltip="${esc(group.label)}" aria-label="${esc(group.label)}">
           <span class="league-token-icon" aria-hidden="true">${LEAGUE_ICONS[group.id] ?? '●'}</span>
         </button>`)
       .join('');
   }
+}
+
+/**
+ * Mirrors the accessible #slateEventSelect (the actual source of truth for
+ * state.slateEvent) into a dark, site-styled dropdown — same "select stays
+ * the source of truth, a click just sets its value and fires 'change'"
+ * pattern the league tokens already use, because a native option-list popup
+ * can't be reached by this page's theme (see the color-scheme comment on
+ * `select` in styles.css).
+ */
+function syncEventCustomDropdown(items) {
+  if (!el.slateEventMenu) return;
+  el.slateEventMenu.innerHTML = items
+    .map(({ value, label }) => `
+      <li role="option" class="custom-select-option ${value === state.slateEvent ? 'is-selected' : ''}"
+          data-event-option="${esc(value)}" aria-selected="${value === state.slateEvent}">${esc(label)}</li>`)
+    .join('');
+  const active = items.find((i) => i.value === state.slateEvent) ?? items[0];
+  if (el.slateEventTriggerText) el.slateEventTriggerText.textContent = active?.label ?? '';
 }
 
 /**
@@ -3647,6 +3670,7 @@ function renderFullSlate() {
       }));
     el.slateEventSelect.innerHTML = options.join('');
     el.slateEventRow.hidden = false;
+    syncEventCustomDropdown([{ value: 'all', label: allLabel }, ...clusters.map((c) => ({ value: c.eventKey, label: c.label }))]);
 
     if (state.slateEvent !== 'all') {
       const match = clusters.find((c) => c.eventKey === state.slateEvent);
@@ -3978,6 +4002,33 @@ el.slateLeagueTokens?.addEventListener('click', (event) => {
 el.slateEventSelect.addEventListener('change', () => {
   state.slateEvent = el.slateEventSelect.value;
   renderFullSlate();
+});
+// The styled dropdown beside it is a second way to trigger the exact same
+// selection — same set-the-select's-value-and-dispatch-'change' pattern as
+// the league tokens, so the listener above stays the only place state
+// actually updates.
+function closeEventMenu() {
+  if (!el.slateEventMenu || el.slateEventMenu.hidden) return;
+  el.slateEventMenu.hidden = true;
+  el.slateEventTrigger?.setAttribute('aria-expanded', 'false');
+}
+el.slateEventTrigger?.addEventListener('click', () => {
+  const willOpen = el.slateEventMenu.hidden;
+  el.slateEventMenu.hidden = !willOpen;
+  el.slateEventTrigger.setAttribute('aria-expanded', String(willOpen));
+});
+el.slateEventMenu?.addEventListener('click', (event) => {
+  const opt = event.target.closest('[data-event-option]');
+  if (!opt) return;
+  el.slateEventSelect.value = opt.dataset.eventOption;
+  el.slateEventSelect.dispatchEvent(new Event('change'));
+  closeEventMenu();
+});
+document.addEventListener('click', (event) => {
+  if (el.slateEventCustom && !el.slateEventCustom.contains(event.target)) closeEventMenu();
+});
+document.addEventListener('keydown', (event) => {
+  if (event.key === 'Escape') closeEventMenu();
 });
 el.slateSortSelect?.addEventListener('change', () => {
   renderFullSlate();

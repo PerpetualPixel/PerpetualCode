@@ -2530,6 +2530,84 @@ input[type="range"]:focus-visible {
 }
 .slate-league-select:disabled { opacity: 0.5; }
 
+/* On-brand stand-in for #slateEventSelect (the MMA card / event picker) — a
+   native <select>'s open option-list is drawn by the browser/OS and can't be
+   reached by this page's dark theme even with color-scheme: dark (mobile
+   Safari in particular still renders its own plain white/black native sheet
+   over it), so this button+list mirrors the select instead of relying on
+   its popup. The select stays hidden-but-focusable as the real state. */
+.custom-select {
+  position: relative;
+  flex: 1;
+  min-width: 0;
+}
+.custom-select-btn {
+  width: 100%;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  color: var(--text);
+  font-family: var(--mono);
+  font-size: 0.8rem;
+  padding: 10px 12px;
+  min-height: 42px;
+  cursor: pointer;
+  transition: border-color 150ms ease, box-shadow 150ms ease;
+}
+.custom-select-btn:hover,
+.custom-select-btn[aria-expanded="true"] {
+  border-color: var(--accent);
+}
+.custom-select-btn[aria-expanded="true"] { box-shadow: var(--glow-violet); }
+.custom-select-value {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.custom-select-caret {
+  flex: none;
+  width: 10px;
+  height: 10px;
+  color: var(--muted);
+  transition: transform 150ms ease;
+}
+.custom-select-btn[aria-expanded="true"] .custom-select-caret { transform: rotate(180deg); }
+
+.custom-select-menu {
+  position: absolute;
+  top: calc(100% + 6px);
+  left: 0;
+  right: 0;
+  z-index: 40;
+  list-style: none;
+  margin: 0;
+  padding: 6px;
+  max-height: 280px;
+  overflow-y: auto;
+  background: var(--panel-bg);
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  box-shadow: var(--glow-violet), 0 12px 32px rgba(0, 0, 0, 0.5);
+}
+.custom-select-option {
+  padding: 9px 10px;
+  border-radius: calc(var(--radius) - 6px);
+  font-family: var(--mono);
+  font-size: 0.8rem;
+  color: var(--text);
+  cursor: pointer;
+  transition: background 120ms ease;
+}
+.custom-select-option:hover { background: rgba(124, 58, 237, 0.18); }
+.custom-select-option.is-selected {
+  background: rgba(124, 58, 237, 0.28);
+  color: #fff;
+}
+
 /* Glowing geometric tokens — the primary, visual way to switch sports feeds.
    The select above is kept as the accessible/keyboard/screen-reader source
    of truth (and still works standalone); clicking a token just sets its
@@ -2594,6 +2672,49 @@ input[type="range"]:focus-visible {
   box-shadow: none;
 }
 .league-token.is-off-season:hover .league-token-icon { filter: grayscale(1); }
+
+/* Themed stand-in for the browser's own title="" tooltip (a plain black-on-
+   white box that clashes with everything else here) — CSS-only, driven off
+   data-tooltip so it can never fight a native tooltip for the same hover. */
+.has-tooltip { position: relative; }
+.has-tooltip::after {
+  content: attr(data-tooltip);
+  position: absolute;
+  bottom: calc(100% + 9px);
+  left: 50%;
+  transform: translateX(-50%) translateY(4px);
+  background: var(--panel-bg);
+  color: var(--text);
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  padding: 6px 10px;
+  font-family: var(--mono);
+  font-size: 0.72rem;
+  white-space: nowrap;
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 150ms ease, transform 150ms ease;
+  box-shadow: 0 8px 20px rgba(0, 0, 0, 0.45);
+  z-index: 30;
+}
+.has-tooltip::before {
+  content: '';
+  position: absolute;
+  bottom: calc(100% + 3px);
+  left: 50%;
+  transform: translateX(-50%) translateY(4px);
+  border: 5px solid transparent;
+  border-top-color: var(--panel-bg);
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 150ms ease, transform 150ms ease;
+  z-index: 30;
+}
+.has-tooltip:hover::after, .has-tooltip:hover::before,
+.has-tooltip:focus-visible::after, .has-tooltip:focus-visible::before {
+  opacity: 1;
+  transform: translateX(-50%) translateY(0);
+}
 
 .slate-load-btn { white-space: nowrap; }
 

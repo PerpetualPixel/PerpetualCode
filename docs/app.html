@@ -17,7 +17,7 @@
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Syne:wght@600;700;800&family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
-<link rel="stylesheet" href="styles.css?v=1.94">
+<link rel="stylesheet" href="styles.css?v=1.95">
 </head>
 <body>
 
@@ -117,8 +117,21 @@
   </div>
 
   <div class="slate-controls" id="slateEventRow" hidden>
-    <label class="slate-league-label" id="slateEventLabel" for="slateEventSelect">Event</label>
-    <select id="slateEventSelect" class="slate-league-select"></select>
+    <label class="slate-league-label" id="slateEventLabel" for="slateEventTrigger">Event</label>
+    <!-- Native <select>'s open option-list is drawn by the browser/OS and
+         can't be reached by this page's dark theme (see the color-scheme
+         comment in styles.css) — kept sr-only as the accessible/keyboard
+         source of truth, same pattern as slateLeagueSelect above. The
+         button+list beside it is the actual on-brand UI; picking an item
+         just sets the select's value and fires 'change'. -->
+    <select id="slateEventSelect" class="slate-league-select sr-only"></select>
+    <div class="custom-select" id="slateEventCustom">
+      <button type="button" id="slateEventTrigger" class="custom-select-btn" aria-haspopup="listbox" aria-expanded="false">
+        <span id="slateEventTriggerText" class="custom-select-value"></span>
+        <svg class="custom-select-caret" viewBox="0 0 12 8" aria-hidden="true"><path d="M1 1l5 5 5-5" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/></svg>
+      </button>
+      <ul id="slateEventMenu" class="custom-select-menu" role="listbox" hidden></ul>
+    </div>
     <label class="slate-league-label" for="slateSortSelect">Sort</label>
     <select id="slateSortSelect" class="slate-league-select">
       <option value="time">Chronological</option>
@@ -709,6 +722,6 @@
   </div>
 </aside>
 
-<script type="module" src="app.js?v=1.94"></script>
+<script type="module" src="app.js?v=1.95"></script>
 </body>
 </html>
