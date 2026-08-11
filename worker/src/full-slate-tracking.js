@@ -76,7 +76,9 @@ function isEligibleMmaFight(commenceMs, now) {
 // Matches tracking.js's own TENNIS_NEXT_DAY_CUTOFF_HOUR/isEligibleTennisMatch
 // — duplicated for the same "never silently diverge from a private helper
 // in another file" reason as isEligibleMmaFight above.
-const TENNIS_NEXT_DAY_CUTOFF_HOUR = 6;
+// 2am, not 6am — matches tracking.js's own constant, set per explicit
+// product direction. See that file's comment for the reasoning.
+const TENNIS_NEXT_DAY_CUTOFF_HOUR = 2;
 
 /**
  * A tennis round can still be running past midnight ET (a night session

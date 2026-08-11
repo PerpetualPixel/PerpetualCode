@@ -111,7 +111,11 @@ function isEligibleMmaFight(commenceMs, now) {
 // tomorrow-afternoon start time (e.g. 3pm ET the next day) onto a board
 // that's supposed to be today's picks, which read as a real bug even though
 // the Odds API genuinely does split some rounds across two calendar days.
-const TENNIS_NEXT_DAY_CUTOFF_HOUR = 6;
+// 2am, not 6am: set per explicit product direction that the only tennis
+// matches allowed onto the previous day's board are the genuinely "super
+// early" ones — midnight to 2am ET, i.e. a night session that ran long.
+// A 5am start is an ordinary next-morning match and belongs on its own day.
+const TENNIS_NEXT_DAY_CUTOFF_HOUR = 2;
 
 /**
  * A tennis round can still be running past midnight ET (a night session
