@@ -285,7 +285,16 @@ export async function runMlbPropsScan(
   const manifestKey = `mlbprops:${dateKey}:manifest`;
   const manifestRaw = await env.POTD_KV.get(manifestKey);
   const manifest = manifestRaw ? JSON.parse(manifestRaw) : { date: dateKey, pickIds: [], processedEventIds: [] };
-  const processed = new Set(manifest.processedEventIds ?? []);
+  // Yesterday's processed set folded in, so a game postponed AFTER its scan
+  // (its picks already locked) can't be scanned a second time when it
+  // reappears under today's date — the props counterpart of the
+  // EVENT_DEDUPE_LOOKBACK_DAYS guard in tracking.js/full-slate-tracking.js,
+  // closing the same reschedule re-pick hole those trackers hit live.
+  const yesterdayManifestRaw = await env.POTD_KV.get(`mlbprops:${etDate(now - 86400000)}:manifest`);
+  const processed = new Set([
+    ...(manifest.processedEventIds ?? []),
+    ...(yesterdayManifestRaw ? JSON.parse(yesterdayManifestRaw).processedEventIds ?? [] : []),
+  ]);
 
   const eligible = games.filter((g) => !processed.has(g.id) && isWithinPropsWindow(new Date(g.commence_time).getTime(), now));
   if (!eligible.length) return { scanned: 0, gameCount: games.length };

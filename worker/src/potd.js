@@ -417,10 +417,24 @@ export async function runPotdDaily(env, ctx, now = Date.now(), { fetchFullSlate 
   // reason: the day's single highest-conviction pick shouldn't come from a
   // segment the evidence says has been misfiring when a nearly-as-good
   // candidate from a reliable one exists.
-  const [pausedSegments, learningProfile] = await Promise.all([
+  //
+  // The recent-POTD reads guard against the same reschedule re-pick hole
+  // tracking.js/full-slate-tracking.js close with their
+  // EVENT_DEDUPE_LOOKBACK_DAYS manifests: this function's own idempotency
+  // is per-date (`potd:${dateKey}` exists -> skip), so a match featured
+  // YESTERDAY whose start time then moved to today would read as a fresh,
+  // eligible candidate and could be featured a second day running —
+  // possibly on the opposite side, exactly the confirmed Full Slate
+  // incident. Two KV gets closes it.
+  const [pausedSegments, learningProfile, ...recentPotdRaws] = await Promise.all([
     getPausedSegments(env),
     getLearningProfile(env),
+    env.POTD_KV.get(`potd:${etDatePlusDays(now, -1)}`),
+    env.POTD_KV.get(`potd:${etDatePlusDays(now, -2)}`),
   ]);
+  const recentPotdEventIds = new Set(
+    recentPotdRaws.filter(Boolean).map((raw) => JSON.parse(raw)?.pick?.eventId).filter(Boolean),
+  );
 
   const events = await fetchFullSlate();
   const candidates = applyLearningToCandidates(analyze(events, { now }), learningProfile);
@@ -437,6 +451,9 @@ export async function runPotdDaily(env, ctx, now = Date.now(), { fetchFullSlate 
     if (c.sportKey === 'americanfootball_ncaaf' && !isPower4Matchup(c.home, c.away)) return false;
     if (c.commenceMs <= now) return false;
     if (isSegmentPaused(c, pausedSegments)) return false;
+    // A match already featured as a recent day's POTD can't be featured
+    // again — see the recentPotdEventIds comment above.
+    if (recentPotdEventIds.has(c.eventId)) return false;
     if (isTennis(c.sportKey)) return isEligibleTennisMatch(c.commenceMs, now);
     return etParts(c.commenceMs).date === dateKey;
   });
@@ -454,7 +471,10 @@ export async function runPotdDaily(env, ctx, now = Date.now(), { fetchFullSlate 
 
   const poolRaw = await env.POTD_KV.get(`potd-pool:${dateKey}`);
   const pool = poolRaw ? JSON.parse(poolRaw).entries : [];
-  const stillActionable = pool.filter((c) => c.commenceMs > now);
+  // recentPotdEventIds re-applied here because pool entries persist across
+  // ticks — an entry could have been added before the excluded match's
+  // reschedule became visible (or before this guard existed at all).
+  const stillActionable = pool.filter((c) => c.commenceMs > now && !recentPotdEventIds.has(c.eventId));
   if (!stillActionable.length) {
     return { skipped: true, reason: 'no qualifying candidate remained actionable today', dateKey };
   }
