@@ -3209,7 +3209,7 @@ function slateGameHtml(game) {
   // lean, not the final record. Skipped once finished: the Won/Lost badge
   // already tells that story, and lean-vs-final stopped mattering the
   // moment the game ended.
-  const leanBadgeHtml = hasAnyPrice && !isFinished ? renderLeanBadge(trackedPick != null) : '';
+  const leanBadgeHtml = hasAnyPrice && !isFinished ? renderLeanBadge(trackedPick == null) : '';
 
   return `
     <article class="${cardClass}" ${isMlb ? `data-game-index="${idx}"` : ''}>
