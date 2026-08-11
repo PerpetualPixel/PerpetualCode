@@ -12,7 +12,12 @@ try {
   console.warn('Could not get git commit hash');
 }
 
-// Get current timestamp in Eastern Time (EST/EDT)
+// Get current timestamp in Eastern Time, always labeled EST — Intl's own
+// 'short' timeZoneName follows real-world daylight saving (EDT in summer),
+// but the About panel is meant to show a fixed "EST" label year-round
+// rather than flip labels every DST changeover, so the wall-clock time
+// itself is still the correct America/New_York time, just suffixed by hand
+// instead of asking Intl for the DST-aware abbreviation.
 const now = new Date();
 const builtAt = now.toLocaleString('en-US', {
   timeZone: 'America/New_York',
@@ -23,8 +28,7 @@ const builtAt = now.toLocaleString('en-US', {
   minute: '2-digit',
   second: '2-digit',
   hour12: true,
-  timeZoneName: 'short'
-});
+}) + ' EST';
 
 // Read current version
 const versionPath = path.join(__dirname, 'docs', 'version.js');
