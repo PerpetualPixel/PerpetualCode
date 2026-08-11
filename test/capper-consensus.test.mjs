@@ -6,6 +6,8 @@ import {
   findConsensusPick,
   capperConsensusSignal,
   applyCapperConsensus,
+  fetchCapperConsensus,
+  FEED_TTL_MS,
 } from '../docs/capper-consensus.js';
 import { QUALITATIVE, scoreCandidate } from '../docs/engine.js';
 
@@ -137,4 +139,61 @@ test('applyCapperConsensus passes through on an empty feed', () => {
   const candidates = [mmaCandidate()];
   assert.equal(applyCapperConsensus(candidates, null), candidates);
   assert.equal(applyCapperConsensus(candidates, { picks: [] }), candidates);
+});
+
+/* --- fetching: freshness is the whole point after a weekly.bat push --- */
+
+// The module's feed cache is process-wide, so each test starts from a clock
+// far enough ahead of the last one that the previous test's entry is stale.
+let clock = 1_000_000;
+function nextWindow() {
+  clock += 10 * FEED_TTL_MS;
+  return clock;
+}
+
+function stubFetch(bodies) {
+  const calls = [];
+  globalThis.fetch = async (url, opts) => {
+    calls.push({ url: String(url), opts });
+    return { ok: true, json: async () => bodies[Math.min(calls.length - 1, bodies.length - 1)] };
+  };
+  return calls;
+}
+
+test('every request is cache-busted and bypasses the HTTP cache', async () => {
+  const calls = stubFetch([FEED]);
+  const now = nextWindow();
+  await fetchCapperConsensus('https://example.test/picks.json', { now });
+  assert.equal(calls[0].url, `https://example.test/picks.json?t=${now}`);
+  assert.equal(calls[0].opts.cache, 'no-store');
+});
+
+test('a second call inside the TTL is served from memory', async () => {
+  const calls = stubFetch([FEED]);
+  const now = nextWindow();
+  await fetchCapperConsensus('https://example.test/a.json', { now });
+  await fetchCapperConsensus('https://example.test/a.json', { now: now + FEED_TTL_MS - 1 });
+  assert.equal(calls.length, 1);
+});
+
+test('force refetches inside the TTL and picks up a newer feed', async () => {
+  const pushed = { ...FEED, generated_at: '2026-08-11T09:00:00+00:00' };
+  const calls = stubFetch([FEED, pushed]);
+  const now = nextWindow();
+  await fetchCapperConsensus('https://example.test/b.json', { now });
+  const fresh = await fetchCapperConsensus('https://example.test/b.json', { now: now + 500, force: true });
+  assert.equal(calls.length, 2);
+  assert.equal(fresh.generated_at, pushed.generated_at);
+  assert.notEqual(calls[0].url, calls[1].url); // distinct busters, or the CDN replays the old body
+});
+
+test('a failed refetch keeps the last good feed rather than blanking the board', async () => {
+  stubFetch([FEED]);
+  const now = nextWindow();
+  const good = await fetchCapperConsensus('https://example.test/c.json', { now });
+  globalThis.fetch = async () => {
+    throw new Error('offline');
+  };
+  const after = await fetchCapperConsensus('https://example.test/c.json', { now: now + 500, force: true });
+  assert.equal(after, good);
 });

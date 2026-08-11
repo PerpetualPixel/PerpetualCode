@@ -593,7 +593,7 @@ export async function runTop5Batch(
   // browser's refreshQualitativeSignals() applies, so the locked board and
   // the live one grade an MMA fight the same way. Fetch failure degrades to
   // the unadjusted pool: consensus is a bonus, never a dependency.
-  const consensusFeed = await fetchCapperConsensus().catch(() => null);
+  const consensusFeed = await fetchCapperConsensus(undefined, { force: true }).catch(() => null);
   const drawPool = consensusFeed
     ? applyCapperConsensus(stillActionable, consensusFeed, { now })
     : stillActionable;
@@ -843,7 +843,7 @@ export async function getTop5Leaning(env, { now = Date.now(), dateKey } = {}) {
   // Same capper-consensus enrichment as the real batch below, so the lean
   // never disagrees with the eventual lock over an adjustment one of them
   // didn't apply.
-  const consensusFeed = await fetchCapperConsensus().catch(() => null);
+  const consensusFeed = await fetchCapperConsensus(undefined, { force: true }).catch(() => null);
   const drawPool = consensusFeed
     ? applyCapperConsensus(stillActionable, consensusFeed, { now })
     : stillActionable;

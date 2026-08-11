@@ -2893,6 +2893,37 @@ async function enrichTennisAltSpreads() {
   }
 }
 
+/**
+ * Attach the capper-consensus swing to MMA moneyline candidates in place and
+ * rescore them. A candidate the feed no longer covers is reset to its
+ * price-only score rather than left holding a stale swing — MMA_Engine drops
+ * a fight from picks.json when the cappers stop agreeing on it, and that
+ * withdrawal is information too.
+ */
+function applyConsensusToCandidates(candidates, feed) {
+  const now = Date.now();
+  for (const c of candidates) {
+    const match = capperConsensusSignal(feed, c);
+    if (!match) {
+      if (!c.capperConsensus) continue;
+      delete c.capperConsensus;
+      Object.assign(c, scoreCandidate(c, { now, qualitative: 0 }));
+      continue;
+    }
+    c.capperConsensus = {
+      selection: match.pick.selection,
+      consensusPct: match.pick.consensus_pct,
+      strength: match.pick.strength,
+      tier: match.pick.tier,
+      pickCount: match.pick.pick_count,
+      aligned: match.aligned,
+      signal: match.signal,
+      generatedAt: feed.generated_at ?? null,
+    };
+    Object.assign(c, scoreCandidate(c, { now, qualitative: match.signal }));
+  }
+}
+
 // Bumped on every refreshQualitativeSignals() call — lets a slow run started
 // before the user switched days/leagues detect it's been superseded and
 // discard its own results rather than overwriting a newer run's.
@@ -2920,22 +2951,9 @@ async function refreshQualitativeSignals() {
     if (!mmaTargets.length) return;
     const feed = await fetchCapperConsensus();
     if (!feed) return;
-    for (const c of mmaTargets) {
-      const match = capperConsensusSignal(feed, c);
-      if (!match) continue;
-      if (token !== qualitativeRunToken) return;
-      c.capperConsensus = {
-        selection: match.pick.selection,
-        consensusPct: match.pick.consensus_pct,
-        strength: match.pick.strength,
-        tier: match.pick.tier,
-        pickCount: match.pick.pick_count,
-        aligned: match.aligned,
-        signal: match.signal,
-        generatedAt: feed.generated_at ?? null,
-      };
-      Object.assign(c, scoreCandidate(c, { now: Date.now(), qualitative: match.signal }));
-    }
+    if (token !== qualitativeRunToken) return;
+    appliedConsensusAt = feed.generated_at ?? null;
+    applyConsensusToCandidates(mmaTargets, feed);
   })();
 
   await Promise.allSettled([mmaWork, ...targets.map(async (c) => {
@@ -5770,6 +5788,7 @@ el.whatsNewHintClose.addEventListener('click', () => {
 
   startSlateAutoRefresh();
   startUpdateChecks();
+  startConsensusPolling();
 })();
 
 /**
@@ -5800,6 +5819,48 @@ function startSlateAutoRefresh() {
   setInterval(tick, SLATE_AUTO_REFRESH_MS);
   // Catches the common "left it open in a background tab" case immediately
   // on return, rather than waiting up to 60s for the next tick.
+  document.addEventListener('visibilitychange', tick);
+}
+
+/**
+ * Polls the MMA_Engine picks feed so a weekly run's new consensus lands on an
+ * already-open board within a minute, instead of whenever the page next
+ * happens to reload. MMA_Engine's weekly.bat pushes picks.json and a person
+ * watching the site expects the grades to move — this is what makes that
+ * true without a manual refresh.
+ *
+ * Only re-scores when `generated_at` actually differs from the applied feed,
+ * so the common case (same feed, nothing pushed) is one small conditional
+ * fetch and no re-render at all. The fetch itself is cache-busted in
+ * docs/capper-consensus.js; without that the CDN would keep handing back the
+ * pre-push body and this poll would learn nothing.
+ */
+const CONSENSUS_POLL_MS = 60000;
+let appliedConsensusAt = null;
+
+async function refreshCapperConsensus() {
+  const mmaTargets = dayFilteredCandidates().filter(
+    (c) => isMmaSportKey(c.sportKey) && c.marketKey === 'h2h',
+  );
+  if (!mmaTargets.length) return;
+  const feed = await fetchCapperConsensus(undefined, { force: true });
+  if (!feed) return;
+  const stamp = feed.generated_at ?? null;
+  if (stamp && stamp === appliedConsensusAt) return;
+  appliedConsensusAt = stamp;
+  applyConsensusToCandidates(mmaTargets, feed);
+  renderFullSlate();
+  renderPixelPicksBoard();
+}
+
+function startConsensusPolling() {
+  const tick = () => {
+    if (document.visibilityState !== 'visible') return;
+    refreshCapperConsensus();
+  };
+  setInterval(tick, CONSENSUS_POLL_MS);
+  // A tab left open in the background across a weekly run catches up the
+  // moment it's looked at, rather than waiting out the rest of the interval.
   document.addEventListener('visibilitychange', tick);
 }
 

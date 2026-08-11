@@ -130,17 +130,34 @@ export function applyCapperConsensus(candidates, feed, { now = Date.now() } = {}
 
 let feedCache = null;
 let feedFetchedAt = 0;
-const FEED_TTL_MS = 15 * 60 * 1000;
+export const FEED_TTL_MS = 60 * 1000;
 
 /**
- * Fetch the picks feed, cached for 15 minutes — the feed only changes when
- * MMA_Engine's weekly run pushes, so refetching per render would be noise.
- * Returns null on any failure: the price-only score always stands on its own.
+ * Fetch the picks feed, cached for a minute.
+ *
+ * The feed only changes when MMA_Engine's weekly run pushes, but the whole
+ * point of a push is that the board reflects it right away — so the cache is
+ * short and every actual request is cache-busted (unique `?t=` plus
+ * `cache: 'no-store'`). Without that, GitHub Pages' own CDN and the browser
+ * HTTP cache would both keep serving the pre-push body for minutes after
+ * weekly.bat finished, which reads as "the run didn't work".
+ *
+ * `force` skips the in-memory TTL for a caller that already knows it wants
+ * fresh bytes (the poller below). Returns the last good feed — or null if
+ * there has never been one — on any failure: the price-only score always
+ * stands on its own.
  */
-export async function fetchCapperConsensus(url = CAPPER_CONSENSUS_URL, { now = Date.now() } = {}) {
-  if (feedCache && now - feedFetchedAt < FEED_TTL_MS) return feedCache;
+export async function fetchCapperConsensus(
+  url = CAPPER_CONSENSUS_URL,
+  { now = Date.now(), force = false } = {},
+) {
+  if (!force && feedCache && now - feedFetchedAt < FEED_TTL_MS) return feedCache;
+  const busted = `${url}${url.includes('?') ? '&' : '?'}t=${now}`;
   try {
-    const res = await fetch(url, { headers: { accept: 'application/json' } });
+    const res = await fetch(busted, {
+      headers: { accept: 'application/json' },
+      cache: 'no-store',
+    });
     if (!res.ok) return feedCache;
     const feed = await res.json();
     if (!Array.isArray(feed?.picks)) return feedCache;
