@@ -32,8 +32,17 @@ const BOOK_KEYS = {
   BetRivers: 'betrivers', 'ESPN BET': 'espnbet', Fanatics: 'fanatics', 'Hard Rock Bet': 'hardrockbet',
 };
 
-/** A single-market h2h event — deep enough to clear RULES.MIN_SCORE with outlier>=35, a thin near-coin-flip line with outlier=0. */
-function makeEvent(id, { hoursOut = 6, outlier = 35, sport = 'baseball_mlb', sportTitle = 'MLB' } = {}) {
+/**
+ * A single-market h2h event — deep enough to clear RULES.MIN_SCORE with
+ * outlier>=35, a thin near-coin-flip line with outlier=0.
+ *
+ * hoursOut defaults to 2, INSIDE every sport's per-game lock lead time
+ * (PICK_LEAD_HOURS: 3h MLB/WNBA, 2.5h tennis/MMA) — same reasoning as
+ * test/tracking.test.mjs's own fixture comment: these tests predate
+ * per-game lock timing, and 6h-out games are now (correctly) not lockable
+ * yet at the fixture's NOW.
+ */
+function makeEvent(id, { hoursOut = 2, outlier = 35, sport = 'baseball_mlb', sportTitle = 'MLB', lastUpdate = NOW - 600000 } = {}) {
   return {
     id,
     sport_key: sport,
@@ -44,10 +53,10 @@ function makeEvent(id, { hoursOut = 6, outlier = 35, sport = 'baseball_mlb', spo
     bookmakers: BOOKS.map((title, i) => ({
       key: BOOK_KEYS[title],
       title,
-      last_update: new Date(NOW - 600000).toISOString(),
+      last_update: new Date(lastUpdate).toISOString(),
       markets: [{
         key: 'h2h',
-        last_update: new Date(NOW - 600000).toISOString(),
+        last_update: new Date(lastUpdate).toISOString(),
         outcomes: [
           { name: `${id} Home`, price: -140 + (i === 0 ? outlier : 0) },
           { name: `${id} Away`, price: 120 },
@@ -58,7 +67,7 @@ function makeEvent(id, { hoursOut = 6, outlier = 35, sport = 'baseball_mlb', spo
 }
 
 /** A game with BOTH an h2h and a spreads market on it, so the "one pick per game" logic has two real candidates to choose between. */
-function makeMultiMarketEvent(id, { hoursOut = 6, h2hOutlier = 0, spreadOutlier = 0 } = {}) {
+function makeMultiMarketEvent(id, { hoursOut = 2, h2hOutlier = 0, spreadOutlier = 0 } = {}) {
   return {
     id,
     sport_key: 'baseball_mlb',
@@ -104,7 +113,6 @@ test('runFullSlateBatch tracks exactly one pick per game, even when a game has m
 
   const result = await runFullSlateBatch(env, ctx, NOW, { fetchFullSlate: async () => events });
   assert.equal(result.skipped, false);
-  assert.equal(result.gameCount, 1);
   assert.equal(result.count, 1, 'only one pick should be stored for this one game, not one per market');
 
   const picks = await getFullSlateTracked(env, { dateKey: '2026-08-05' });
@@ -142,7 +150,7 @@ test('runFullSlateBatch tracks a game topPicks() would reject on price alone (ou
     id: 'longshot',
     sport_key: 'baseball_mlb',
     sport_title: 'MLB',
-    commence_time: new Date(NOW + 6 * 3.6e6).toISOString(),
+    commence_time: new Date(NOW + 2 * 3.6e6).toISOString(),
     home_team: 'Longshot Home',
     away_team: 'Longshot Away',
     bookmakers: BOOKS.map((title, i) => ({
@@ -168,10 +176,10 @@ test('runFullSlateBatch never picks a team-sport game that isn\'t happening toda
   const { env } = makeKvStore();
   const events = [
     makeEvent('far-out', { outlier: 40, hoursOut: 24 * 140, sport: 'americanfootball_nfl', sportTitle: 'NFL' }),
-    makeEvent('today', { outlier: 20, hoursOut: 6 }),
+    makeEvent('today', { outlier: 20 }),
   ];
   const result = await runFullSlateBatch(env, ctx, NOW, { fetchFullSlate: async () => events });
-  assert.equal(result.gameCount, 1);
+  assert.equal(result.count, 1, 'only the same-day game should be tracked');
 
   const picks = await getFullSlateTracked(env, { dateKey: '2026-08-05' });
   assert.ok(picks.every((p) => p.pickId.startsWith('today:')));
@@ -182,28 +190,41 @@ test('runFullSlateBatch honors MMA\'s today-or-early-tomorrow eligibility window
   const events = [
     // ~30h out, well past tomorrow's early-morning cutoff — not eligible.
     makeEvent('late-mma', { outlier: 30, hoursOut: 30, sport: 'mma_mixed_martial_arts', sportTitle: 'MMA' }),
-    makeEvent('today-mlb', { outlier: 20, hoursOut: 6 }),
+    makeEvent('today-mlb', { outlier: 20 }),
   ];
   const result = await runFullSlateBatch(env, ctx, NOW, { fetchFullSlate: async () => events });
-  assert.equal(result.gameCount, 1);
+  assert.equal(result.count, 1, 'only the same-day MLB game should be tracked, never the far-out MMA card');
 });
 
-test('runFullSlateBatch honors tennis\'s today-or-tomorrow eligibility window (a round spanning two calendar days)', async () => {
-  const { env } = makeKvStore();
-  const events = [
-    // ~30h out — tomorrow's ET date, same session as the currently-drawn
-    // round (e.g. a night session match) — eligible.
-    makeEvent('tomorrow-tennis', { outlier: 30, hoursOut: 30, sport: 'tennis_atp_canadian_open', sportTitle: 'ATP Canadian Open' }),
-    // ~54h out — the day after tomorrow, a future round that doesn't exist
-    // in the feed yet in practice, but still shouldn't be picked up even if
-    // it did — not eligible.
-    makeEvent('future-tennis', { outlier: 30, hoursOut: 54, sport: 'tennis_atp_canadian_open', sportTitle: 'ATP Canadian Open' }),
-  ];
-  const result = await runFullSlateBatch(env, ctx, NOW, { fetchFullSlate: async () => events });
-  assert.equal(result.gameCount, 1);
-
-  const [pick] = await getFullSlateTracked(env, { dateKey: '2026-08-05' });
-  assert.equal(pick.eventId, 'tomorrow-tennis');
+test('runFullSlateBatch tennis next-day carve-out: just-past-midnight eligible, ordinary tomorrow start not', async () => {
+  // Positive: 11pm ET with a 1am-ET-tomorrow match — a night session
+  // rolling past midnight, inside the midnight-2am ET carve-out, its own
+  // 2.5h lock window open. Stored under TODAY's date.
+  {
+    const { env } = makeKvStore();
+    const lateNow = Date.parse('2026-08-06T03:00:00Z'); // 11pm ET Aug 5
+    const events = [makeEvent('tennis-1am', {
+      outlier: 30, hoursOut: 17, // NOW + 17h = 1am ET Aug 6
+      sport: 'tennis_atp_canadian_open', sportTitle: 'ATP Canadian Open',
+      lastUpdate: lateNow - 600000,
+    })];
+    const result = await runFullSlateBatch(env, ctx, lateNow, { fetchFullSlate: async () => events });
+    assert.equal(result.count, 1, 'a match rolling just past midnight belongs on today\'s slate');
+    const [pick] = await getFullSlateTracked(env, { dateKey: '2026-08-05' });
+    assert.equal(pick.eventId, 'tennis-1am');
+  }
+  // Negative: an ordinary tomorrow-afternoon match, and one two days out —
+  // neither belongs on today's slate. The all-day-tomorrow window was a
+  // real bug, removed per explicit product direction (midnight-2am ET only).
+  {
+    const { env } = makeKvStore();
+    const events = [
+      makeEvent('tomorrow-tennis-pm', { outlier: 30, hoursOut: 30, sport: 'tennis_atp_canadian_open', sportTitle: 'ATP Canadian Open' }),
+      makeEvent('future-tennis', { outlier: 30, hoursOut: 54, sport: 'tennis_atp_canadian_open', sportTitle: 'ATP Canadian Open' }),
+    ];
+    const result = await runFullSlateBatch(env, ctx, NOW, { fetchFullSlate: async () => events });
+    assert.equal(result.count, 0, 'ordinary next-day (and later) matches belong on their own day\'s slate');
+  }
 });
 
 test('runFullSlateBatch stores picks with a flat unit stake', async () => {
@@ -214,15 +235,24 @@ test('runFullSlateBatch stores picks with a flat unit stake', async () => {
   assert.equal(picks[0].suggested_stake, 20);
 });
 
-test('runFullSlateBatch only runs once per ET day', async () => {
+test('runFullSlateBatch is idempotent within a day — a second call adds nothing for already-tracked games', async () => {
+  // The batch stopped being "once per ET day" when it became an hourly
+  // self-healing top-up (see runFullSlateBatch's own comment): a repeat
+  // call is expected and must simply add nothing new for games already in
+  // the manifest, never a second pick.
   const { env } = makeKvStore();
   const events = [makeEvent('a', { outlier: 35 })];
 
   const first = await runFullSlateBatch(env, ctx, NOW, { fetchFullSlate: async () => events });
   assert.equal(first.skipped, false);
+  assert.equal(first.added, 1);
 
   const second = await runFullSlateBatch(env, ctx, NOW, { fetchFullSlate: async () => events });
-  assert.equal(second.skipped, true);
+  assert.equal(second.added, 0, 'an already-tracked game must not be re-added');
+  assert.equal(second.count, 1, 'the day still holds exactly the one original pick');
+
+  const picks = await getFullSlateTracked(env, { dateKey: '2026-08-05' });
+  assert.equal(picks.length, 1);
 });
 
 /* ---------------------------------------------------------------- */
@@ -231,11 +261,11 @@ test('runFullSlateBatch only runs once per ET day', async () => {
 
 test('runFullSlateClvSnapshot updates closeAmerican when the price has moved', async () => {
   const { env } = makeKvStore();
-  const events = [makeEvent('clv', { outlier: 35, hoursOut: 6 })];
+  const events = [makeEvent('clv', { outlier: 35 })]; // 2h out — lockable at NOW, still pregame at snapshot time
   await runFullSlateBatch(env, ctx, NOW, { fetchFullSlate: async () => events });
 
-  const movedEvents = [makeEvent('clv', { outlier: 55, hoursOut: 5 })];
-  const result = await runFullSlateClvSnapshot(env, ctx, NOW + 3600000, {
+  const movedEvents = [makeEvent('clv', { outlier: 55 })];
+  const result = await runFullSlateClvSnapshot(env, ctx, NOW + 0.5 * 3.6e6, {
     fetchSportFn: async () => ({ events: movedEvents }),
   });
   assert.equal(result.updated, 1);
@@ -270,15 +300,21 @@ test('runFullSlateGrading grades a completed pick won/lost via the shared gradeP
 
 test('runFullSlateGrading still grades a pending pick after the ET date has rolled over past its own dateKey (regression: a late card used to get silently orphaned)', async () => {
   const { env } = makeKvStore();
-  // Generated at 8am ET Aug 5 against an MMA fight that doesn't commence
-  // until ~4am ET Aug 6 — a late card crossing the ET midnight boundary.
+  // Generated at 11pm ET Aug 5 against an MMA fight that doesn't commence
+  // until 1am ET Aug 6 — a late card crossing the ET midnight boundary.
   // isEligibleMmaFight allows this into today's (Aug 5) tracked batch since
   // it starts before MMA_NEXT_DAY_CUTOFF_HOUR the next morning (a team-sport
   // game can't reach this same scenario — those require same-ET-day
-  // commencement to be tracked at all). The pick is stored under dateKey
-  // "2026-08-05" (today's date at generation time).
-  const events = [makeEvent('late', { outlier: 35, hoursOut: 20, sport: 'mma_mixed_martial_arts', sportTitle: 'MMA' })];
-  await runFullSlateBatch(env, ctx, NOW, { fetchFullSlate: async () => events });
+  // commencement to be tracked at all), and the late generation "now" keeps
+  // the fight inside its own 2.5h lock window. The pick is stored under
+  // dateKey "2026-08-05" (today's date at generation time).
+  const genNow = Date.parse('2026-08-06T03:00:00Z'); // 11pm ET Aug 5
+  const events = [makeEvent('late', {
+    outlier: 35, hoursOut: 17, // NOW + 17h = 1am ET Aug 6, 2h after genNow
+    sport: 'mma_mixed_martial_arts', sportTitle: 'MMA',
+    lastUpdate: genNow - 600000,
+  })];
+  await runFullSlateBatch(env, ctx, genNow, { fetchFullSlate: async () => events });
 
   const [pick] = await getFullSlateTracked(env, { dateKey: '2026-08-05' });
   const scoreEvents = [{
@@ -312,12 +348,11 @@ test('runFullSlateGrading still grades a pending pick after the ET date has roll
 test('getAllFullSlateTracked spans multiple days, resetFullSlateTracking clears every one', async () => {
   const { env } = makeKvStore();
   const day2Now = NOW + 86400000;
+  // makeEvent's times are relative to the file-level NOW constant — rebuild
+  // day2's game relative to day2Now (2h out, inside its lock window, with a
+  // quote fresh as of day2) rather than 22h in day2Now's past.
   const day2Event = {
-    ...makeEvent('day2', { outlier: 35 }),
-    // makeEvent's commence_time is relative to the file-level NOW constant —
-    // override it here so day2's game is actually upcoming relative to
-    // day2Now, not 18 hours in day2Now's past.
-    commence_time: new Date(day2Now + 6 * 3.6e6).toISOString(),
+    ...makeEvent('day2', { outlier: 35, hoursOut: 26, lastUpdate: day2Now - 600000 }),
   };
   await runFullSlateBatch(env, ctx, NOW, { fetchFullSlate: async () => [makeEvent('day1', { outlier: 35 })] });
   await runFullSlateBatch(env, ctx, day2Now, { fetchFullSlate: async () => [day2Event] });

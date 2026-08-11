@@ -118,10 +118,16 @@ test('tennisMatchDecided returns null for an unfinished match', () => {
 /* Tier scoping                                                       */
 /* ---------------------------------------------------------------- */
 
-test('the second source is only ever attempted for TIER_1 spreads/totals', () => {
+test('the second source is only ever attempted for TIER_1 markets — spreads, totals, and h2h', () => {
   assert.equal(hasSecondarySettlementSource('tennis_atp_wimbledon', 'spreads'), true);
   assert.equal(hasSecondarySettlementSource('tennis_atp_wimbledon', 'totals'), true);
-  assert.equal(hasSecondarySettlementSource('tennis_atp_wimbledon', 'h2h'), false);
+  // h2h was added later, deliberately: the free /scores feed can mark a
+  // match completed:true with no set data at all, which voids a pick that
+  // had a real winner — the second source rescues exactly that case (see
+  // tennis-tiers.js's hasSecondarySettlementSource comment). Budget safety
+  // lives in settleTennisGameMarket, which skips h2h whenever the free
+  // source already decided it cleanly.
+  assert.equal(hasSecondarySettlementSource('tennis_atp_wimbledon', 'h2h'), true);
   assert.equal(hasSecondarySettlementSource('tennis_atp_some_new_500', 'spreads'), false); // TIER_2
   assert.equal(hasSecondarySettlementSource('baseball_mlb', 'spreads'), false);
 });
