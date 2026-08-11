@@ -831,7 +831,7 @@ export async function resetAllTracking(env, { now = Date.now(), days = 90 } = {}
 async function moveTop5PicksOffDate(env, storedDate, now, { dryRun = false, pendingOnly = false } = {}) {
   const manifestKey = `track:${storedDate}:top5`;
   const manifestRaw = await env.POTD_KV.get(manifestKey);
-  if (!manifestRaw) return { misdated: [], moved: [] };
+  if (!manifestRaw) return { misdated: [], moved: [], relabeled: [] };
 
   const manifest = JSON.parse(manifestRaw);
   const pickRaws = await Promise.all(
@@ -840,13 +840,24 @@ async function moveTop5PicksOffDate(env, storedDate, now, { dryRun = false, pend
 
   const misdated = [];
   const toMove = [];
+  // A pick already filed under the right KV location (storedDate ===
+  // actualDate) can still carry a stale dateKey field of its own — see
+  // full-slate-tracking.js's own movePicksOffDate for the full reasoning.
+  // Patched in place, no manifest change needed.
+  const toRelabel = [];
   manifest.pickIds.forEach((pickId, i) => {
     const pickRaw = pickRaws[i];
     if (!pickRaw) return;
     const pick = JSON.parse(pickRaw);
     if (pendingOnly && pick.status !== 'pending') return;
     const actualDate = etDate(pick.commenceMs);
-    if (actualDate === storedDate) return;
+
+    if (actualDate === storedDate) {
+      if (dryRun || pick.dateKey === storedDate) return;
+      pick.dateKey = storedDate;
+      toRelabel.push({ pickId, patchedRaw: JSON.stringify(pick) });
+      return;
+    }
 
     misdated.push({
       pickId,
@@ -860,7 +871,14 @@ async function moveTop5PicksOffDate(env, storedDate, now, { dryRun = false, pend
     toMove.push({ pickId, actualDate, patchedRaw: JSON.stringify(pick) });
   });
 
-  if (!toMove.length) return { misdated, moved: [] };
+  if (toRelabel.length) {
+    await Promise.all(
+      toRelabel.map(({ pickId, patchedRaw }) =>
+        env.POTD_KV.put(`track:${storedDate}:pick:${pickId}`, patchedRaw, { expirationTtl: KV_TTL_SECONDS })),
+    );
+  }
+
+  if (!toMove.length) return { misdated, moved: [], relabeled: toRelabel.map((r) => r.pickId) };
 
   await Promise.all(
     toMove.flatMap(({ pickId, actualDate, patchedRaw }) => [
@@ -890,7 +908,11 @@ async function moveTop5PicksOffDate(env, storedDate, now, { dryRun = false, pend
     }),
   );
 
-  return { misdated, moved: toMove.map(({ pickId, actualDate }) => ({ pickId, from: storedDate, to: actualDate })) };
+  return {
+    misdated,
+    moved: toMove.map(({ pickId, actualDate }) => ({ pickId, from: storedDate, to: actualDate })),
+    relabeled: toRelabel.map((r) => r.pickId),
+  };
 }
 
 /** Owner-triggered diagnostic/repair over the last `days` of Pixel's Picks tracking — see moveTop5PicksOffDate for the actual logic. */
@@ -899,7 +921,13 @@ export async function migrateTop5PickDates(env, ctx, now = Date.now(), { days = 
   const results = await Promise.all(dateKeys.map((d) => moveTop5PicksOffDate(env, d, now)));
   const misdated = results.flatMap((r) => r.misdated);
   const moved = results.flatMap((r) => r.moved);
-  return { misdated, moved, summary: `Found ${misdated.length} misdated picks, moved ${moved.length} to correct dates` };
+  const relabeled = results.flatMap((r) => r.relabeled);
+  return {
+    misdated,
+    moved,
+    relabeled,
+    summary: `Found ${misdated.length} misdated picks, moved ${moved.length} to correct dates, relabeled ${relabeled.length} already-relocated picks whose own dateKey field was still stale`,
+  };
 }
 
 /**

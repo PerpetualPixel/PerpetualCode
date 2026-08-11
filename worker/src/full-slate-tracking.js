@@ -346,7 +346,7 @@ export async function resetFullSlateTracking(env, { now = Date.now(), days = 90 
 async function movePicksOffDate(env, storedDate, now, { dryRun = false, pendingOnly = false } = {}) {
   const manifestKey = `slate:${storedDate}:manifest`;
   const manifestRaw = await env.POTD_KV.get(manifestKey);
-  if (!manifestRaw) return { misdated: [], moved: [] };
+  if (!manifestRaw) return { misdated: [], moved: [], relabeled: [] };
 
   const manifest = JSON.parse(manifestRaw);
   const pickRaws = await Promise.all(
@@ -355,13 +355,26 @@ async function movePicksOffDate(env, storedDate, now, { dryRun = false, pendingO
 
   const misdated = [];
   const toMove = []; // { pickId, actualDate, patchedRaw }
+  // A pick can already be filed under the right KV location (storedDate ===
+  // actualDate) while its own dateKey field still says otherwise — leftover
+  // damage from the first version of this migration, which relocated the KV
+  // key but never touched the field docs/app.js actually groups by. That
+  // needs an in-place field patch, not a move: no manifest change, same key,
+  // just a corrected payload.
+  const toRelabel = []; // { pickId, patchedRaw }
   manifest.pickIds.forEach((pickId, i) => {
     const pickRaw = pickRaws[i];
     if (!pickRaw) return;
     const pick = JSON.parse(pickRaw);
     if (pendingOnly && pick.status !== 'pending') return;
     const actualDate = etDate(pick.commenceMs);
-    if (actualDate === storedDate) return;
+
+    if (actualDate === storedDate) {
+      if (dryRun || pick.dateKey === storedDate) return;
+      pick.dateKey = storedDate;
+      toRelabel.push({ pickId, patchedRaw: JSON.stringify(pick) });
+      return;
+    }
 
     misdated.push({
       pickId,
@@ -375,7 +388,14 @@ async function movePicksOffDate(env, storedDate, now, { dryRun = false, pendingO
     toMove.push({ pickId, actualDate, patchedRaw: JSON.stringify(pick) });
   });
 
-  if (!toMove.length) return { misdated, moved: [] };
+  if (toRelabel.length) {
+    await Promise.all(
+      toRelabel.map(({ pickId, patchedRaw }) =>
+        env.POTD_KV.put(`slate:${storedDate}:pick:${pickId}`, patchedRaw, { expirationTtl: KV_TTL_SECONDS })),
+    );
+  }
+
+  if (!toMove.length) return { misdated, moved: [], relabeled: toRelabel.map((r) => r.pickId) };
 
   // Write each moved pick to its correct date, delete it from the old one.
   await Promise.all(
@@ -412,7 +432,11 @@ async function movePicksOffDate(env, storedDate, now, { dryRun = false, pendingO
     }),
   );
 
-  return { misdated, moved: toMove.map(({ pickId, actualDate }) => ({ pickId, from: storedDate, to: actualDate })) };
+  return {
+    misdated,
+    moved: toMove.map(({ pickId, actualDate }) => ({ pickId, from: storedDate, to: actualDate })),
+    relabeled: toRelabel.map((r) => r.pickId),
+  };
 }
 
 /** Owner-triggered diagnostic/repair over the last `days` of Full Slate tracking — see movePicksOffDate for the actual logic. */
@@ -421,7 +445,13 @@ export async function migrateFullSlatePickDates(env, ctx, now = Date.now(), { da
   const results = await Promise.all(dateKeys.map((d) => movePicksOffDate(env, d, now)));
   const misdated = results.flatMap((r) => r.misdated);
   const moved = results.flatMap((r) => r.moved);
-  return { misdated, moved, summary: `Found ${misdated.length} misdated picks, moved ${moved.length} to correct dates` };
+  const relabeled = results.flatMap((r) => r.relabeled);
+  return {
+    misdated,
+    moved,
+    relabeled,
+    summary: `Found ${misdated.length} misdated picks, moved ${moved.length} to correct dates, relabeled ${relabeled.length} already-relocated picks whose own dateKey field was still stale`,
+  };
 }
 
 /**
