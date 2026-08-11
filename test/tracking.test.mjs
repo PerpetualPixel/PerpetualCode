@@ -39,8 +39,19 @@ const BOOK_KEYS = {
   BetRivers: 'betrivers', 'ESPN BET': 'espnbet', Fanatics: 'fanatics', 'Hard Rock Bet': 'hardrockbet',
 };
 
-/** A single-market h2h event, deep enough to clear RULES.MIN_SCORE and (with outlier>=35) the EV/Kelly floor. */
-function makeEvent(id, { hoursOut = 6, outlier = 35, sport = 'baseball_mlb', sportTitle = 'MLB' } = {}) {
+/**
+ * A single-market h2h event, deep enough to clear RULES.MIN_SCORE and (with
+ * outlier>=35) the EV/Kelly floor.
+ *
+ * hoursOut defaults to 2, INSIDE every sport's per-game lock lead time
+ * (PICK_LEAD_HOURS: 3h for MLB/WNBA, 2.5h tennis/MMA) — these tests were
+ * originally written against the old "lock the whole day at 2am" behavior
+ * with games 6h out, and when per-game lock timing landed, every batch call
+ * started (correctly) waiting on games whose windows hadn't opened yet,
+ * which read as 40+ test failures. A test that wants a game the batch must
+ * WAIT on passes an explicit larger hoursOut instead.
+ */
+function makeEvent(id, { hoursOut = 2, outlier = 35, sport = 'baseball_mlb', sportTitle = 'MLB', lastUpdate = NOW - 600000 } = {}) {
   return {
     id,
     sport_key: sport,
@@ -51,10 +62,10 @@ function makeEvent(id, { hoursOut = 6, outlier = 35, sport = 'baseball_mlb', spo
     bookmakers: BOOKS.map((title, i) => ({
       key: BOOK_KEYS[title],
       title,
-      last_update: new Date(NOW - 600000).toISOString(),
+      last_update: new Date(lastUpdate).toISOString(),
       markets: [{
         key: 'h2h',
-        last_update: new Date(NOW - 600000).toISOString(),
+        last_update: new Date(lastUpdate).toISOString(),
         outcomes: [
           { name: `${id} Home`, price: -140 + (i === 0 ? outlier : 0) },
           { name: `${id} Away`, price: 120 },
@@ -74,7 +85,7 @@ function makeEvent(id, { hoursOut = 6, outlier = 35, sport = 'baseball_mlb', spo
  * score/EV combination (score and EV are too correlated in this scoring
  * model to reliably land "clears EV but not score" from a single dial).
  */
-function makeOutOfRangeEvent(id, { hoursOut = 6 } = {}) {
+function makeOutOfRangeEvent(id, { hoursOut = 2 } = {}) {
   return {
     id,
     sport_key: 'baseball_mlb',
@@ -127,7 +138,7 @@ test('runTop5Batch never picks a team-sport game that isn\'t happening today (e.
     // A real NFL line, priced months ahead of kickoff — must never surface
     // as "today's lock."
     makeEvent('nfl-far-out', { outlier: 40, hoursOut: 24 * 140, sport: 'americanfootball_nfl', sportTitle: 'NFL' }),
-    makeEvent('mlb-today', { outlier: 35, hoursOut: 6 }),
+    makeEvent('mlb-today', { outlier: 35 }),
   ];
 
   const result = await runTop5Batch(env, ctx, NOW, { fetchFullSlate: async () => events });
@@ -145,11 +156,35 @@ test('runTop5Batch excludes a team-sport game on tomorrow\'s date too, not just 
   assert.equal(result.count, 0, 'nothing today qualifies, so no picks should be stored even though tomorrow has a real edge');
 });
 
-test('runTop5Batch includes a tennis match on tomorrow\'s date, unlike a team sport — a round spans two calendar days', async () => {
-  const { env } = makeKvStore();
-  const events = [makeEvent('tomorrow-tennis', { outlier: 40, hoursOut: 30, sport: 'tennis_atp_canadian_open', sportTitle: 'ATP Canadian Open' })];
-  const result = await runTop5Batch(env, ctx, NOW, { fetchFullSlate: async () => events });
-  assert.equal(result.count, 1, 'tomorrow is still the same drawn round for tennis, so it should be eligible');
+test('runTop5Batch tennis next-day carve-out: a match rolling just past midnight (before 2am ET) is eligible, an ordinary tomorrow-afternoon match is not', async () => {
+  // Positive: 11pm ET Aug 5, with a match at 1am ET Aug 6 — a night session
+  // rolling past midnight, inside the midnight-2am ET carve-out, and late
+  // enough that its own 2.5h lock lead window is open.
+  {
+    const { env } = makeKvStore();
+    const lateNow = Date.parse('2026-08-06T03:00:00Z'); // 11pm ET Aug 5
+    const events = [makeEvent('tennis-1am', {
+      outlier: 40, hoursOut: 17, // NOW + 17h = 1am ET Aug 6
+      sport: 'tennis_atp_canadian_open', sportTitle: 'ATP Canadian Open',
+      lastUpdate: lateNow - 600000,
+    })];
+    const result = await runTop5Batch(env, ctx, lateNow, { fetchFullSlate: async () => events });
+    assert.equal(result.count, 1, 'a match rolling just past midnight stays on today\'s board');
+    const picks = await getTop5(env, { dateKey: '2026-08-05' });
+    assert.equal(picks.length, 1, 'and it is stored under TODAY\'s date, not tomorrow\'s');
+  }
+  // Negative: an ordinary tomorrow-2pm-ET match must NOT be on today's
+  // board — this was a real bug ("eligible all day tomorrow"), removed per
+  // explicit product direction; only midnight-2am ET next-day starts count.
+  {
+    const { env } = makeKvStore();
+    const events = [makeEvent('tennis-tomorrow-pm', {
+      outlier: 40, hoursOut: 30, // NOW + 30h = 2pm ET Aug 6
+      sport: 'tennis_atp_canadian_open', sportTitle: 'ATP Canadian Open',
+    })];
+    const result = await runTop5Batch(env, ctx, NOW, { fetchFullSlate: async () => events });
+    assert.equal(result.count, 0, 'an ordinary next-afternoon match belongs on tomorrow\'s board, not today\'s');
+  }
 });
 
 test('runTop5Batch pads to 5 with flagged picks on a thin day, real picks stay unflagged', async () => {
@@ -265,7 +300,7 @@ test('runTop5Batch never adds a pick for a game that already has one, even on a 
     id: 'g0',
     sport_key: 'baseball_mlb',
     sport_title: 'MLB',
-    commence_time: new Date(NOW + 6 * 3.6e6).toISOString(),
+    commence_time: new Date(NOW + 2 * 3.6e6).toISOString(),
     home_team: 'g0 Home',
     away_team: 'g0 Away',
     bookmakers: BOOKS.map((title, i) => ({
@@ -337,22 +372,23 @@ test('runTop5Batch uses the tuned EV floor from algo:config, not the shipped def
 
 test('runClvSnapshot updates closeAmerican when the price has moved, leaves it when it hasn\'t', async () => {
   const { env } = makeKvStore();
-  const original = makeEvent('a', { outlier: 35, hoursOut: 6 });
+  const original = makeEvent('a', { outlier: 35 }); // 2h out — inside the lock window at NOW
   await runTop5Batch(env, ctx, NOW, { fetchFullSlate: async () => [original] });
 
   const [before] = await getTop5(env, { dateKey: '2026-08-05' });
   assert.equal(before.clv.closeAmerican, before.clv.openAmerican);
 
   // The exact same event, but the outlier book's price has moved further.
-  const moved = makeEvent('a', { outlier: 60, hoursOut: 6 });
-  const r1 = await runClvSnapshot(env, ctx, NOW + 3.6e6, { fetchSportFn: async () => ({ events: [moved] }) });
+  // Snapshots run while the game (NOW+2h) is still pregame.
+  const moved = makeEvent('a', { outlier: 60 });
+  const r1 = await runClvSnapshot(env, ctx, NOW + 0.5 * 3.6e6, { fetchSportFn: async () => ({ events: [moved] }) });
   assert.equal(r1.updated, 1);
 
   const [after] = await getTop5(env, { dateKey: '2026-08-05' });
   assert.notEqual(after.clv.closeAmerican, after.clv.openAmerican);
 
   // A second snapshot against the identical price is a no-op.
-  const r2 = await runClvSnapshot(env, ctx, NOW + 2 * 3.6e6, { fetchSportFn: async () => ({ events: [moved] }) });
+  const r2 = await runClvSnapshot(env, ctx, NOW + 3.6e6, { fetchSportFn: async () => ({ events: [moved] }) });
   assert.equal(r2.updated, 0);
 });
 
@@ -410,7 +446,9 @@ test('getAllTrackedPicks spans multiple days, resetAllTracking clears every one'
   const day2 = NOW + 86400000;
 
   await runTop5Batch(env, ctx, day1, { fetchFullSlate: async () => [makeEvent('d1', { outlier: 35 })] });
-  await runTop5Batch(env, ctx, day2, { fetchFullSlate: async () => [makeEvent('d2', { outlier: 35, hoursOut: 30 })] });
+  // d2: 2h out from day2's own "now" (26h from the fixture's NOW anchor),
+  // with a quote fresh as of day2 — inside its own lock window on day2.
+  await runTop5Batch(env, ctx, day2, { fetchFullSlate: async () => [makeEvent('d2', { outlier: 35, hoursOut: 26, lastUpdate: day2 - 600000 })] });
 
   const all = await getAllTrackedPicks(env, { now: day2, days: 5 });
   assert.equal(all.length, 2);

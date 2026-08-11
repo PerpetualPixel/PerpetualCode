@@ -77,6 +77,9 @@
 <div id="dayFilterBar" class="day-toggle-bar">
   <span class="day-toggle-label">Showing</span>
   <div class="day-toggle" role="group" aria-label="Which day's games to show">
+    <button id="dayFilterYesterday" class="day-toggle-btn" type="button" aria-pressed="false">
+      Yesterday <span id="yesterdayDateLabel"></span>
+    </button>
     <button id="dayFilterToday" class="day-toggle-btn is-active" type="button" aria-pressed="true">Today</button>
     <button id="dayFilterTomorrow" class="day-toggle-btn" type="button" aria-pressed="false">
       Tomorrow <span id="tomorrowDateLabel"></span>
@@ -482,6 +485,12 @@
       <button id="learningPanelClose" class="icon-btn overlay-close-btn" aria-label="Close tracking">✕</button>
     </div>
   </div>
+
+  <!-- Full-transparency indicator: shown whenever the daily learning review
+       adjusted the algorithm this morning (strong state) or adjustments are
+       currently active (subtle state). Populated by renderDailyLearningSection
+       in app.js; clicking scrolls to the Daily Learning section's details. -->
+  <button id="algoChangeBanner" class="algo-change-banner" type="button" hidden></button>
 
   <div class="learning-content">
     <!-- Server-Tracked: Full Slate / Pixel's Picks / Play of the Day -->

@@ -143,12 +143,12 @@ function etDateString(ms) {
   return `${parts.year}-${parts.month}-${parts.day}`;
 }
 
-/** A plain Date for the ET calendar day 'today' or 'tomorrow' falls on —
- * used only to render the "Tomorrow (Aug 9)" toggle label in the viewer's
- * own locale. The actual Today/Tomorrow filtering (withinDayFilter) never
+/** A plain Date for the ET calendar day 'yesterday'/'today'/'tomorrow'
+ * falls on — used only to render the toggle labels ("Tomorrow (Aug 9)") in
+ * the viewer's own locale. The actual day filtering (withinDayFilter) never
  * uses this; it compares ET calendar-date strings directly. */
 function etDayLabelDate(which) {
-  const targetMs = Date.now() + (which === 'tomorrow' ? ONE_DAY_MS : 0);
+  const targetMs = Date.now() + (which === 'tomorrow' ? ONE_DAY_MS : which === 'yesterday' ? -ONE_DAY_MS : 0);
   const fmt = new Intl.DateTimeFormat('en-US', {
     timeZone: 'America/New_York', year: 'numeric', month: '2-digit', day: '2-digit',
   });
@@ -187,7 +187,8 @@ function etDayLabelDate(which) {
  */
 function withinDayFilter(commenceMs, sportKey, isFinished = false) {
   if (!isFinished && isMmaSportKey(sportKey)) return true;
-  const targetMs = Date.now() + (state.dayFilter === 'tomorrow' ? ONE_DAY_MS : 0);
+  const targetMs = Date.now()
+    + (state.dayFilter === 'tomorrow' ? ONE_DAY_MS : state.dayFilter === 'yesterday' ? -ONE_DAY_MS : 0);
   return etDateString(commenceMs) === etDateString(targetMs);
 }
 
@@ -206,8 +207,11 @@ function sportGroupLabel(sportKey) {
 }
 
 function renderDayToggle() {
-  const tomorrowDate = etDayLabelDate('tomorrow');
-  el.tomorrowDateLabel.textContent = `(${tomorrowDate.toLocaleDateString(undefined, { month: 'short', day: 'numeric' })})`;
+  const dateChip = (d) => `(${d.toLocaleDateString(undefined, { month: 'short', day: 'numeric' })})`;
+  el.tomorrowDateLabel.textContent = dateChip(etDayLabelDate('tomorrow'));
+  el.yesterdayDateLabel.textContent = dateChip(etDayLabelDate('yesterday'));
+  el.dayFilterYesterday.classList.toggle('is-active', state.dayFilter === 'yesterday');
+  el.dayFilterYesterday.setAttribute('aria-pressed', String(state.dayFilter === 'yesterday'));
   el.dayFilterToday.classList.toggle('is-active', state.dayFilter === 'today');
   el.dayFilterToday.setAttribute('aria-pressed', String(state.dayFilter === 'today'));
   el.dayFilterTomorrow.classList.toggle('is-active', state.dayFilter === 'tomorrow');
@@ -218,9 +222,20 @@ function setDayFilter(which) {
   if (state.dayFilter === which) return;
   state.dayFilter = which;
   saveJSON(DAY_FILTER_KEY, which);
+  // Yesterday's games are all finished by definition, so landing there with
+  // the Upcoming filter would always show an empty board — auto-switch the
+  // state toggle to match (and back to Upcoming when returning to a live
+  // day, the setting almost everyone means there).
+  if (which === 'yesterday' && state.slateGameFilter !== 'finished') {
+    state.slateGameFilter = 'finished';
+    renderSlateStateToggle();
+  } else if (which !== 'yesterday' && state.slateGameFilter !== 'upcoming') {
+    state.slateGameFilter = 'upcoming';
+    renderSlateStateToggle();
+  }
   renderDayToggle();
   renderSlateLeagueOptions();
-  if (state.candidates.length) {
+  if (state.candidates.length || state.rawEvents.length) {
     renderFullSlate();
     // Pixel's Picks is a fixed daily set locked server-side (see
     // loadPixelPicks()) — it doesn't have a Today/Tomorrow of its own to
@@ -415,22 +430,26 @@ function renderMlbStartingPitchers(d) {
   ];
 
   const pitcherCard = (side, pitcher) => {
-    if (!pitcher) return `<div class="stats-team"><p class="empty">TBD</p></div>`;
+    if (!pitcher) return `<div class="pitcher-card"><p class="empty">TBD</p></div>`;
     const record = pitcher.wins != null && pitcher.losses != null ? `${pitcher.wins}-${pitcher.losses}` : '—';
     const expanded = d.pitcherOutings[pitcher.playerId] !== undefined;
+    // Label-over-value cells in two 3-across rows (ERA/WHIP/IP, H/K/BB) —
+    // the reference layout's compact grid, which two cards fit side by side
+    // even on a phone, unlike the old one-stat-per-row list.
+    const cells = Object.entries(MLB_PITCHER_STAT_LABELS).map(([key, label]) => `
+      <div class="pitcher-cell">
+        <span class="pitcher-cell-label">${label}</span>
+        <span class="pitcher-cell-value">${esc(formatPitcherStat(key, pitcher[key]))}</span>
+      </div>`).join('');
     return `
-      <div class="stats-team pitcher-card">
-        <div class="team-header">
-          <span class="team-name">${esc(pitcher.name)}</span>
-          <span class="pitcher-meta">${record}${pitcher.jersey ? `, #${esc(pitcher.jersey)}` : ''}${pitcher.throws ? ` · ${esc(pitcher.throws)}HP` : ''}</span>
+      <div class="pitcher-card">
+        <div class="pitcher-head">
+          <span class="pitcher-name">${esc(pitcher.name)}</span>
+          <span class="pitcher-meta">${record}${pitcher.jersey ? `, #${esc(pitcher.jersey)}` : ''}${pitcher.throws ? ` <span class="pitcher-hand">${esc(pitcher.throws)}HP</span>` : ''}</span>
         </div>
-        ${Object.entries(MLB_PITCHER_STAT_LABELS).map(([key, label]) => `
-          <div class="stat-row">
-            <span class="stat-label">${label}</span>
-            <span class="stat-value">${esc(formatPitcherStat(key, pitcher[key]))}</span>
-          </div>`).join('')}
+        <div class="pitcher-cells">${cells}</div>
         <button type="button" class="pitcher-outings-toggle" data-pitcher-outings="${side}" data-player-id="${esc(pitcher.playerId)}">
-          ${expanded ? 'Hide' : 'Show'} Past 5 Outings
+          ${expanded ? 'Hide' : 'Past 5 Outings ›'}
         </button>
       </div>`;
   };
@@ -448,9 +467,8 @@ function renderMlbStartingPitchers(d) {
     .join('');
 
   return `
-    <div class="stats-grid">
+    <div class="pitcher-grid">
       ${pitcherCard('away', d.startingPitchers.away)}
-      <div class="stats-divider"></div>
       ${pitcherCard('home', d.startingPitchers.home)}
     </div>
     ${expandedOutings}`;
@@ -472,70 +490,95 @@ function renderMlbPitcherOutings(outings) {
   </div>`;
 }
 
-/** Season/Last 10/venue-split rows — no Underdog/Favorite split, since no data source tracks a team's record by whether it was favored. */
+/** "64-54" -> winning/losing/neutral tone class for a situational bar. */
+function recordTone(value) {
+  const m = /^(\d+)\s*-\s*(\d+)/.exec(value ?? '');
+  if (!m) return '';
+  const wins = Number(m[1]);
+  const losses = Number(m[2]);
+  if (wins > losses) return 'is-winning';
+  if (wins < losses) return 'is-losing';
+  return '';
+}
+
+/**
+ * Season/Last 10/venue-split rows as a mirrored side-by-side comparison —
+ * away team's bar on the left, home's on the right, each bar tinted by
+ * whether that record is winning or losing, per the reference layout. Built
+ * mobile-first: two bars per row always fit, unlike the old two-column
+ * stack that pushed the home team below the fold on a phone. No
+ * Underdog/Favorite split, since no data source tracks a team's record by
+ * whether it was favored.
+ */
 function renderMlbSituational(d) {
   const away = d.awayData.situational;
   const home = d.homeData.situational;
   if (!away && !home) return `<p class="empty">Situational data unavailable.</p>`;
 
-  const row = (label, value) => `
-    <div class="stat-row">
-      <span class="stat-label">${esc(label)}</span>
-      <span class="stat-value">${value ? esc(value) : '—'}</span>
+  const bar = (value) => `<div class="sit-bar ${recordTone(value)}">${value ? esc(value) : '—'}</div>`;
+  const row = (awayLabel, homeLabel, awayValue, homeValue) => `
+    <div class="sit-row">
+      <div class="sit-labels"><span>${esc(awayLabel)}</span><span>${esc(homeLabel)}</span></div>
+      <div class="sit-bars">${bar(awayValue)}${bar(homeValue)}</div>
     </div>`;
 
   return `
-    <div class="stats-grid">
-      <div class="stats-team">
-        <div class="team-header"><span class="team-name">${esc(d.awayAbbrev)}</span></div>
-        ${row('Season', away?.season)}
-        ${row('Last 10', away?.lastTen)}
-        ${row('Away', away?.away)}
-      </div>
-      <div class="stats-divider"></div>
-      <div class="stats-team">
-        <div class="team-header"><span class="team-name">${esc(d.homeAbbrev)}</span></div>
-        ${row('Season', home?.season)}
-        ${row('Last 10', home?.lastTen)}
-        ${row('Home', home?.home)}
-      </div>
-    </div>`;
+    <div class="vs-head">
+      <span class="vs-team">${esc(d.awayAbbrev)}</span>
+      <span class="vs-team">${esc(d.homeAbbrev)}</span>
+    </div>
+    ${row('Season', 'Season', away?.season, home?.season)}
+    ${row('Last 10', 'Last 10', away?.lastTen, home?.lastTen)}
+    ${row('Away', 'Home', away?.away, home?.home)}`;
 }
 
+/** League rank -> chip tone: top third green, bottom third red, middle neutral — the reference layout's three-tone chips, not the old binary good/bad split at 15th. */
+function rankTone(rank) {
+  if (rank == null) return '';
+  if (rank <= 10) return 'good';
+  if (rank >= 21) return 'bad';
+  return '';
+}
+
+/**
+ * Both teams' season stats as ONE shared row per stat — away's rank chip
+ * and value on the left, the stat name centered, home's value and rank chip
+ * mirrored on the right, per the reference layout. This is the direct
+ * side-by-side read the old two-independent-columns version never gave
+ * (and, on a phone, those columns stacked so "comparison" meant scrolling
+ * a full screen between the two teams' Batting Avg).
+ */
 function renderMlbTeamStats(d) {
   const category = d.category;
   const labels = category === 'offense' ? MLB_OFFENSE_LABELS : MLB_DEFENSE_LABELS;
+  const awayStats = d.awayData.teamStats?.[category];
+  const homeStats = d.homeData.teamStats?.[category];
 
-  const statRows = (stats) => {
-    if (!stats) return `<p class="empty">Stats unavailable</p>`;
-    return Object.entries(labels).map(([key, label]) => {
-      const entry = stats[key];
-      const rankClass = entry?.rank == null ? '' : entry.rank <= 15 ? 'good' : 'bad';
-      return `
-        <div class="stat-row">
-          <span class="stat-rank ${rankClass}">${ordinal(entry?.rank)}</span>
-          <span class="stat-label">${esc(label)}</span>
-          <span class="stat-value">${formatMlbStatValue(key, entry?.value)}</span>
-        </div>`;
-    }).join('');
-  };
+  const rows = (!awayStats && !homeStats)
+    ? `<p class="empty">Stats unavailable</p>`
+    : Object.entries(labels).map(([key, label]) => {
+        const a = awayStats?.[key];
+        const h = homeStats?.[key];
+        return `
+          <div class="ts-row">
+            <span class="ts-rank ${rankTone(a?.rank)}">${ordinal(a?.rank)}</span>
+            <span class="ts-value">${formatMlbStatValue(key, a?.value)}</span>
+            <span class="ts-label">${esc(label)}</span>
+            <span class="ts-value">${formatMlbStatValue(key, h?.value)}</span>
+            <span class="ts-rank ${rankTone(h?.rank)}">${ordinal(h?.rank)}</span>
+          </div>`;
+      }).join('');
 
   return `
-    <div class="stats-tabs">
+    <div class="vs-head">
+      <span class="vs-team">${esc(d.awayAbbrev)}</span>
+      <span class="vs-team">${esc(d.homeAbbrev)}</span>
+    </div>
+    <div class="stats-tabs stats-tabs--pills">
       <button type="button" class="stats-tab ${category === 'offense' ? 'is-active' : ''}" data-mlb-category="offense">Offense</button>
       <button type="button" class="stats-tab ${category === 'defense' ? 'is-active' : ''}" data-mlb-category="defense">Defense</button>
     </div>
-    <div class="stats-grid">
-      <div class="stats-team">
-        <div class="team-header"><span class="team-name">${esc(d.awayTeam)}</span></div>
-        ${statRows(d.awayData.teamStats?.[category])}
-      </div>
-      <div class="stats-divider"></div>
-      <div class="stats-team">
-        <div class="team-header"><span class="team-name">${esc(d.homeTeam)}</span></div>
-        ${statRows(d.homeData.teamStats?.[category])}
-      </div>
-    </div>`;
+    <div class="ts-rows">${rows}</div>`;
 }
 
 function renderMlbScheduleSection(d) {
@@ -619,6 +662,8 @@ const el = {
   statsDrawerClose: document.getElementById('statsDrawerClose'),
   statsDrawerBody: document.getElementById('statsDrawerBody'),
   dayFilterBar: document.getElementById('dayFilterBar'),
+  dayFilterYesterday: document.getElementById('dayFilterYesterday'),
+  yesterdayDateLabel: document.getElementById('yesterdayDateLabel'),
   dayFilterToday: document.getElementById('dayFilterToday'),
   dayFilterTomorrow: document.getElementById('dayFilterTomorrow'),
   tomorrowDateLabel: document.getElementById('tomorrowDateLabel'),
@@ -702,7 +747,7 @@ const state = {
   // am I looking at" question, not two. MMA ignores this
   // entirely (see withinDayFilter/isMmaSportKey) since cards are announced
   // and worth showing weeks ahead of a single day toggle.
-  dayFilter: ['today', 'tomorrow'].includes(loadJSON(DAY_FILTER_KEY, 'today'))
+  dayFilter: ['yesterday', 'today', 'tomorrow'].includes(loadJSON(DAY_FILTER_KEY, 'today'))
     ? loadJSON(DAY_FILTER_KEY, 'today')
     : 'today',
   // Which of the three server-side trackers the Tracking Dashboard's
@@ -738,6 +783,11 @@ const state = {
   // for it (has `completed` and `scores`). Refreshed at most once a minute
   // per sport-group (see refreshSlateScores) rather than on every render.
   slateScores: new Map(),
+  // Finished-game box scores from the worker's /boxscore (per-inning/
+  // quarter linescores — MLB/NFL/NCAAF/WNBA), keyed by eventId. `null`
+  // means "asked, nothing available" so a fixture ESPN can't match isn't
+  // re-fetched on every render; absent means not asked yet.
+  boxScores: new Map(),
   slateScoresFetchedAt: new Map(), // group.id -> last fetch time, so switching leagues never gets throttled by an unrelated sport's recent fetch
   // The server's own Full Slate tracked pick per game (see
   // worker/src/full-slate-tracking.js) — eventId -> pick record. This is
@@ -753,7 +803,11 @@ const state = {
   // Full Slate's Upcoming/Live/Finished toggle — defaults to Upcoming each
   // fresh load rather than persisting, since "what's live right now" isn't
   // something you'd want stuck from a prior session.
-  slateGameFilter: 'upcoming',
+  // Everything on Yesterday's board is finished by definition, so a page
+  // restored onto that day starts on the Finished filter rather than an
+  // always-empty Upcoming view (setDayFilter keeps the two in sync from
+  // then on).
+  slateGameFilter: loadJSON(DAY_FILTER_KEY, 'today') === 'yesterday' ? 'finished' : 'upcoming',
   // Last-known UFC/PFL card name per MMA eventId, captured while the fight
   // still has live odds (see buildSlateGames). A fight's market disappears
   // from the odds feed the instant it starts — not just once it's finished
@@ -3143,6 +3197,130 @@ function opponentOf(game, cand) {
   return null;
 }
 
+// Sports the worker's /boxscore can serve a per-period linescore for —
+// mirrors worker/src/boxscore.js's BOX_LEAGUES.
+const BOX_SPORTS = new Set([
+  'baseball_mlb', 'americanfootball_nfl', 'americanfootball_ncaaf', 'basketball_wnba', 'basketball_nba',
+]);
+
+/**
+ * Fetch (once) the box score for a finished game and re-render the slate
+ * when it lands. `null` is cached too — an unmatched fixture stays a plain
+ * final-score card without re-asking on every render.
+ */
+function ensureBoxScore(game) {
+  if (state.boxScores.has(game.eventId) || !CONFIG.WORKER_URL) return;
+  state.boxScores.set(game.eventId, null); // in-flight/none marker
+  const url = new URL('/boxscore', CONFIG.WORKER_URL);
+  url.searchParams.set('sport', game.sportKey);
+  url.searchParams.set('home', game.home);
+  url.searchParams.set('away', game.away);
+  fetch(url, { headers: { Accept: 'application/json' } })
+    .then((r) => (r.ok ? r.json() : null))
+    .then((data) => {
+      if (!data?.box) return;
+      state.boxScores.set(game.eventId, data.box);
+      renderFullSlate();
+    })
+    .catch(() => { /* the plain final-score card is the fallback */ });
+}
+
+/** The per-period linescore grid — innings + R/H/E for MLB, quarters + T for football/basketball. */
+function boxScoreGridHtml(box) {
+  const isInnings = box.kind === 'innings';
+  const periods = Math.max(box.periods, box.home.linescores.length, box.away.linescores.length);
+  const headers = Array.from({ length: periods }, (_, i) => `<span>${i + 1}</span>`).join('');
+  const totalsHead = isInnings ? '<span class="box-tot">R</span><span class="box-tot">H</span><span class="box-tot">E</span>' : '<span class="box-tot">T</span>';
+
+  const teamRow = (side) => {
+    const cells = Array.from({ length: periods }, (_, i) => {
+      const v = side.linescores[i];
+      return `<span>${v == null ? '—' : v}</span>`;
+    }).join('');
+    const totals = isInnings
+      ? `<span class="box-tot">${side.total ?? '—'}</span><span class="box-tot">${side.hits ?? '—'}</span><span class="box-tot">${side.errors ?? '—'}</span>`
+      : `<span class="box-tot">${side.total ?? '—'}</span>`;
+    return `<div class="box-row ${side.winner ? 'is-winner' : ''}">
+      <span class="box-team">${esc(side.abbr ?? side.name ?? '')}</span>${cells}${totals}
+    </div>`;
+  };
+
+  return `
+    <div class="box-score" style="--box-periods:${periods}; --box-totals:${isInnings ? 3 : 1};">
+      ${box.venue ? `<div class="box-venue">${esc(box.venue)}</div>` : ''}
+      <div class="box-row box-head"><span class="box-team"></span>${headers}${totalsHead}</div>
+      ${teamRow(box.away)}
+      ${teamRow(box.home)}
+    </div>`;
+}
+
+/** Winner name for a completed scoreEvent from the raw /scores feed, else null on a tie/absent data. */
+function scoreEventWinner(scoreEvent) {
+  const scores = scoreEvent?.scores ?? [];
+  if (scores.length < 2) return null;
+  const a = Number(scores[0]?.score);
+  const b = Number(scores[1]?.score);
+  if (!Number.isFinite(a) || !Number.isFinite(b) || a === b) return null;
+  return a > b ? scores[0] : scores[1];
+}
+
+/**
+ * The finished card's per-sport result detail, rendered above the main-play
+ * line. Every fact traces to a payload value (docs/insights.js's rule):
+ * - Box sports: the ESPN linescore grid, once /boxscore has it.
+ * - Tennis: the settlement record's set-by-set score when the metered
+ *   source graded it ("(7-5, 6-3) Rybakina"); otherwise the free feed's
+ *   sets-won ("2-0 sets · Rybakina") — never a fabricated game score.
+ * - MMA: "Winner by Method" from the graded pick's detail; method omitted
+ *   when ESPN didn't carry one; winner-only from /scores as last resort.
+ * - Everything else (soccer, NHL): winner + final from the scores feed.
+ * Nothing available -> empty string, the card is exactly what it was.
+ */
+function finishedDetailHtml(game, scoreEvent, trackedPick) {
+  const detail = trackedPick?.result?.detail ?? null;
+
+  if (BOX_SPORTS.has(game.sportKey)) {
+    const box = state.boxScores.get(game.eventId);
+    if (box) return boxScoreGridHtml(box);
+    ensureBoxScore(game);
+    return '';
+  }
+
+  if (game.sportKey.startsWith('tennis_')) {
+    if (detail?.setScore && detail?.winner) {
+      return `<div class="finished-result-line"><strong>(${esc(detail.setScore)})</strong> ${esc(detail.winner)}</div>`;
+    }
+    const winner = scoreEventWinner(scoreEvent);
+    if (winner) {
+      const other = (scoreEvent.scores ?? []).find((s) => s !== winner);
+      return `<div class="finished-result-line"><strong>${esc(String(winner.score))}-${esc(String(other?.score ?? ''))} sets</strong> · ${esc(winner.name)}</div>`;
+    }
+    return '';
+  }
+
+  if (isMmaSportKey(game.sportKey)) {
+    if (detail?.winner) {
+      return `<div class="finished-result-line"><strong>${esc(detail.winner)}</strong>${detail.method ? ` by ${esc(detail.method)}` : ' wins'}</div>`;
+    }
+    const winner = scoreEventWinner(scoreEvent);
+    return winner ? `<div class="finished-result-line"><strong>${esc(winner.name)}</strong> wins</div>` : '';
+  }
+
+  // Soccer, NHL, and anything else with a plain final: winner + score
+  // (or a draw, which soccer genuinely has).
+  const scores = scoreEvent?.scores ?? [];
+  if (scores.length >= 2) {
+    const a = Number(scores[0]?.score);
+    const b = Number(scores[1]?.score);
+    if (Number.isFinite(a) && Number.isFinite(b)) {
+      if (a === b) return `<div class="finished-result-line"><strong>Draw</strong> ${a}–${b}</div>`;
+      const winner = a > b ? scores[0] : scores[1];
+      return `<div class="finished-result-line"><strong>${esc(winner.name)}</strong> win ${Math.max(a, b)}–${Math.min(a, b)}</div>`;
+    }
+  }
+  return '';
+}
+
 function slateGameHtml(game) {
   const idx = renderedSlateGames.push(game) - 1;
   const rec = bestCandidateForGame(game);
@@ -3214,6 +3392,12 @@ function slateGameHtml(game) {
   // moment the game ended.
   const leanBadgeHtml = hasAnyPrice && !isFinished ? renderLeanBadge(trackedPick == null) : '';
 
+  // Finished games lead with their real result — the box score grid for
+  // sports that have one, otherwise a one-line winner/score/method summary
+  // (see finishedDetailHtml) — with the main play + Won/Lost line kept
+  // below it exactly as before.
+  const finishedDetail = isFinished ? finishedDetailHtml(game, scoreEvent, trackedPick) : '';
+
   return `
     <article class="${cardClass}" ${isMlb ? `data-game-index="${idx}"` : ''}>
       <div class="slate-game-time">
@@ -3221,6 +3405,7 @@ function slateGameHtml(game) {
         ${infoButtonHtml}
       </div>
       ${leanBadgeHtml}
+      ${finishedDetail}
       ${hideMarkets ? '' : `
       <div class="slate-header-row">
         <span></span><span>Spread</span><span>O/U</span><span>ML</span>
@@ -3747,6 +3932,7 @@ function toggleLegBanner(event) {
 el.picks.addEventListener('click', toggleWhyPanel);
 el.picks.addEventListener('click', toggleLegBanner);
 
+el.dayFilterYesterday.addEventListener('click', () => setDayFilter('yesterday'));
 el.dayFilterToday.addEventListener('click', () => setDayFilter('today'));
 el.dayFilterTomorrow.addEventListener('click', () => setDayFilter('tomorrow'));
 
@@ -4837,6 +5023,47 @@ function learnFeatureLabel(key) {
   return k;
 }
 
+/**
+ * Full-transparency banner at the top of the Tracking Dashboard: users see
+ * at a glance whenever the algorithm has been adjusted, without digging
+ * into the Daily Learning section. Two states:
+ *  - "adjusted this morning" (strong) when today's review entry carries
+ *    actual changes (changeCount > 0 — see worker/src/daily-learning.js's
+ *    log entry comment on why weightCount alone can't answer this);
+ *  - "N active adjustments" (subtle) when adjustments are in effect but
+ *    today's review changed nothing.
+ * Hidden entirely when the algorithm is running unadjusted. Clicking
+ * scrolls to the Daily Learning section, where every adjustment is shown
+ * with the evidence behind it.
+ */
+function renderAlgoChangeBanner(data) {
+  const banner = document.getElementById('algoChangeBanner');
+  if (!banner) return;
+
+  const latest = data?.log?.[0] ?? null;
+  const activeCount = Object.keys(data?.profile?.weights ?? {}).length;
+  const todayKey = etDateString(Date.now());
+  const changedToday = latest?.dateKey === todayKey && (latest.changeCount ?? 0) > 0;
+
+  if (changedToday) {
+    const n = latest.changeCount;
+    banner.className = 'algo-change-banner is-today';
+    banner.innerHTML = `<span class="algo-change-dot"></span><strong>Algorithm adjusted this morning</strong> — ${n} change${n === 1 ? '' : 's'} from the daily self-review. Tap for what changed and why.`;
+    banner.hidden = false;
+  } else if (activeCount > 0) {
+    banner.className = 'algo-change-banner';
+    banner.innerHTML = `<span class="algo-change-dot"></span>${activeCount} algorithm adjustment${activeCount === 1 ? '' : 's'} currently active — tap for details and evidence.`;
+    banner.hidden = false;
+  } else {
+    banner.hidden = true;
+    return;
+  }
+
+  banner.onclick = () => {
+    el.dailyLearnWeights?.closest('.learning-section')?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+  };
+}
+
 /** Current daily-learning weight profile + report log (see worker/src/daily-learning.js). */
 async function fetchDailyLearning() {
   if (!CONFIG.WORKER_URL) return null;
@@ -4860,8 +5087,10 @@ async function renderDailyLearningSection() {
   if (!data) {
     el.dailyLearnWeights.innerHTML = `<p class="empty">Couldn't load daily learning data.</p>`;
     el.dailyLearnLog.innerHTML = '';
+    renderAlgoChangeBanner(null);
     return;
   }
+  renderAlgoChangeBanner(data);
 
   const weights = data.profile?.weights ?? {};
   const evidence = data.profile?.evidence ?? {};

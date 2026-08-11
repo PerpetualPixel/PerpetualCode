@@ -53,6 +53,13 @@ export const TOP5_COUNT = 5;
 const FLAT_UNIT_STAKE = 20;
 const KV_TTL_SECONDS = 86400 * 90; // 90 days — long enough for weeks of calibration data, not forever
 
+// How many ET calendar days back runTop5Batch looks for an event it already
+// tracked — same constant, same value, same reasoning as
+// full-slate-tracking.js's own EVENT_DEDUPE_LOOKBACK_DAYS (see the long
+// comment at its declaration there): a game whose start time moved after
+// its pick locked in must not be pickable a second time under a new date.
+const EVENT_DEDUPE_LOOKBACK_DAYS = 2;
+
 const FIXED_SPORT_KEYS = [
   'baseball_mlb',
   'americanfootball_nfl',
@@ -111,7 +118,11 @@ function isEligibleMmaFight(commenceMs, now) {
 // tomorrow-afternoon start time (e.g. 3pm ET the next day) onto a board
 // that's supposed to be today's picks, which read as a real bug even though
 // the Odds API genuinely does split some rounds across two calendar days.
-const TENNIS_NEXT_DAY_CUTOFF_HOUR = 6;
+// 2am, not 6am: set per explicit product direction that the only tennis
+// matches allowed onto the previous day's board are the genuinely "super
+// early" ones — midnight to 2am ET, i.e. a night session that ran long.
+// A 5am start is an ordinary next-morning match and belongs on its own day.
+const TENNIS_NEXT_DAY_CUTOFF_HOUR = 2;
 
 /**
  * A tennis round can still be running past midnight ET (a night session
@@ -499,7 +510,28 @@ export async function runTop5Batch(
   // the first run and "Team B to win" (the same game's other side) from a
   // later top-up run — a real incident this exact gap produced live
   // (Pittsburgh Pirates AND New York Mets both picked to win the same game).
-  const existingEventIds = new Set(existingPickIds.map((id) => id.split(':')[0]));
+  //
+  // The exclusion window spans EVENT_DEDUPE_LOOKBACK_DAYS of manifests, not
+  // just today's, for the same reason full-slate-tracking.js's
+  // runFullSlateBatch does: a match whose start time moves after its pick
+  // locked in (tennis order-of-play, most often) shows up to a later day's
+  // batch as an eventId absent from that day's manifest — because it's in a
+  // previous day's — and gets picked a SECOND time, by then possibly on the
+  // opposite side (the confirmed Full Slate incident: Rafael Jodar -105 AND
+  // Arthur Fils +100 on one match). On this board a duplicate is worse than
+  // a double-count: it burns one of only TOP5_COUNT daily slots.
+  const priorDateKeys = Array.from(
+    { length: EVENT_DEDUPE_LOOKBACK_DAYS }, (_, i) => etDate(now - (i + 1) * 86400000),
+  );
+  const priorManifests = await Promise.all(
+    priorDateKeys.map((dk) => env.POTD_KV.get(`track:${dk}:top5`)),
+  );
+  const existingEventIds = new Set(
+    [
+      ...existingPickIds,
+      ...priorManifests.filter(Boolean).flatMap((raw) => JSON.parse(raw).pickIds ?? []),
+    ].map((id) => id.split(':')[0]),
+  );
   const eligibleToday = applyLearningToCandidates(
     analyze(events, { now })
       .filter((c) => {
@@ -703,8 +735,32 @@ export async function runGrading(
   const mmaResults = pending.some((p) => isMma(p.sportKey)) ? await fetchMmaResultsFn() : [];
 
   let graded = 0;
+  let rescheduled = 0;
   for (const pick of pending) {
     const scoreEvent = (scoreEventsBySport.get(pick.sportKey) ?? []).find((e) => e.id === pick.eventId);
+
+    // Same live-feed commence-time refresh as full-slate-tracking.js's
+    // runFullSlateGrading — see its comment for the confirmed incident this
+    // guards against (a rescheduled tennis match sitting "pending" on the
+    // wrong day forever, its stored commenceMs a stale lock-time snapshot).
+    // When the fresh time lands on a different ET day, grading is skipped
+    // for this tick so runTop5DateResync can re-bucket the still-pending
+    // pick first; grading resumes under the right day on a later tick.
+    if (scoreEvent?.commence_time) {
+      const freshCommenceMs = Date.parse(scoreEvent.commence_time);
+      if (Number.isFinite(freshCommenceMs) && freshCommenceMs !== pick.commenceMs) {
+        const movedDay = etDate(freshCommenceMs) !== pick.dateKey;
+        pick.commenceMs = freshCommenceMs;
+        rescheduled++;
+        ctx.waitUntil(
+          env.POTD_KV.put(`track:${pick.dateKey}:pick:${pick.pickId}`, JSON.stringify(pick), {
+            expirationTtl: KV_TTL_SECONDS,
+          }),
+        );
+        if (movedDay) continue;
+      }
+    }
+
     let outcome;
     if (isMma(pick.sportKey)) {
       outcome = gradeMmaPickWithFallback(pick, scoreEvent, mmaResults);
@@ -727,6 +783,11 @@ export async function runGrading(
       roiPercent: outcome.void ? 0 : (outcome.payout / pick.suggested_stake) * 100,
       voidReason: outcome.void ? outcome.reason : undefined,
       retired: outcome.retired ?? undefined,
+      // Settlement-time display detail (tennis set scores, MMA winner +
+      // method — see docs/tennis-results.js's tennisDetail and
+      // ufc-events.js's gradeMmaPickWithFallback): captured here because
+      // grading is the only moment this data is in hand for free.
+      detail: outcome.detail ?? undefined,
     };
     graded++;
     ctx.waitUntil(
@@ -735,7 +796,7 @@ export async function runGrading(
       }),
     );
   }
-  return { graded, remaining: pending.length - graded };
+  return { graded, remaining: pending.length - graded, rescheduled };
 }
 
 /** Today's tracked Top 5 (or a specific date's), for the /top5 route. */
@@ -815,4 +876,234 @@ export async function resetAllTracking(env, { now = Date.now(), days = 90 } = {}
     await env.POTD_KV.delete(`track:${dateKey}:top5`);
   }
   return { deleted };
+}
+
+/**
+ * Moves a batch of Pixel's Picks off `storedDate` onto whatever ET calendar
+ * date each one's own commenceMs actually falls on — the Top 5 counterpart
+ * to worker/src/full-slate-tracking.js's own movePicksOffDate, same
+ * reasoning and same batched-manifest-write shape (see that file's own
+ * comment for why per-pick manifest writes raced each other and silently
+ * dropped entries when more than one pick left the same day at once).
+ * Every moved pick's own `dateKey` field is rewritten too, not just its KV
+ * key — docs/app.js groups tracked picks by that field, not by storage
+ * location.
+ */
+async function moveTop5PicksOffDate(env, storedDate, now, { dryRun = false, pendingOnly = false } = {}) {
+  const manifestKey = `track:${storedDate}:top5`;
+  const manifestRaw = await env.POTD_KV.get(manifestKey);
+  if (!manifestRaw) return { misdated: [], moved: [], relabeled: [] };
+
+  const manifest = JSON.parse(manifestRaw);
+  const pickRaws = await Promise.all(
+    manifest.pickIds.map((id) => env.POTD_KV.get(`track:${storedDate}:pick:${id}`)),
+  );
+
+  const misdated = [];
+  const toMove = [];
+  // A pick already filed under the right KV location (storedDate ===
+  // actualDate) can still carry a stale dateKey field of its own — see
+  // full-slate-tracking.js's own movePicksOffDate for the full reasoning.
+  // Patched in place, no manifest change needed.
+  const toRelabel = [];
+  manifest.pickIds.forEach((pickId, i) => {
+    const pickRaw = pickRaws[i];
+    if (!pickRaw) return;
+    const pick = JSON.parse(pickRaw);
+    if (pendingOnly && pick.status !== 'pending') return;
+    const actualDate = etDate(pick.commenceMs);
+
+    if (actualDate === storedDate) {
+      if (dryRun || pick.dateKey === storedDate) return;
+      pick.dateKey = storedDate;
+      toRelabel.push({ pickId, patchedRaw: JSON.stringify(pick) });
+      return;
+    }
+
+    misdated.push({
+      pickId,
+      storedDate,
+      actualDate,
+      pick: { eventId: pick.eventId, home: pick.home, away: pick.away, sportKey: pick.sportKey },
+    });
+    if (dryRun) return;
+
+    pick.dateKey = actualDate;
+    toMove.push({ pickId, actualDate, patchedRaw: JSON.stringify(pick) });
+  });
+
+  if (toRelabel.length) {
+    await Promise.all(
+      toRelabel.map(({ pickId, patchedRaw }) =>
+        env.POTD_KV.put(`track:${storedDate}:pick:${pickId}`, patchedRaw, { expirationTtl: KV_TTL_SECONDS })),
+    );
+  }
+
+  if (!toMove.length) return { misdated, moved: [], relabeled: toRelabel.map((r) => r.pickId) };
+
+  await Promise.all(
+    toMove.flatMap(({ pickId, actualDate, patchedRaw }) => [
+      env.POTD_KV.put(`track:${actualDate}:pick:${pickId}`, patchedRaw, { expirationTtl: KV_TTL_SECONDS }),
+      env.POTD_KV.delete(`track:${storedDate}:pick:${pickId}`),
+    ]),
+  );
+
+  const movedIds = new Set(toMove.map((m) => m.pickId));
+  manifest.pickIds = manifest.pickIds.filter((id) => !movedIds.has(id));
+  await env.POTD_KV.put(manifestKey, JSON.stringify(manifest), { expirationTtl: KV_TTL_SECONDS });
+
+  const byTargetDate = new Map();
+  for (const { pickId, actualDate } of toMove) {
+    if (!byTargetDate.has(actualDate)) byTargetDate.set(actualDate, []);
+    byTargetDate.get(actualDate).push(pickId);
+  }
+  await Promise.all(
+    [...byTargetDate.entries()].map(async ([targetDate, pickIds]) => {
+      const targetManifestKey = `track:${targetDate}:top5`;
+      const targetRaw = await env.POTD_KV.get(targetManifestKey);
+      const targetManifest = targetRaw ? JSON.parse(targetRaw) : { date: targetDate, generatedAt: now, pickIds: [] };
+      const existing = new Set(targetManifest.pickIds);
+      for (const id of pickIds) existing.add(id);
+      targetManifest.pickIds = [...existing];
+      return env.POTD_KV.put(targetManifestKey, JSON.stringify(targetManifest), { expirationTtl: KV_TTL_SECONDS });
+    }),
+  );
+
+  return {
+    misdated,
+    moved: toMove.map(({ pickId, actualDate }) => ({ pickId, from: storedDate, to: actualDate })),
+    relabeled: toRelabel.map((r) => r.pickId),
+  };
+}
+
+/**
+ * Collapses an event holding more than one tracked Pixel's Pick on the same
+ * day back to the earliest-generated one — the Top 5 counterpart to
+ * full-slate-tracking.js's own dedupeEventPicksOnDate; see that function's
+ * comment for the full reasoning (keeper = the lock the algorithm actually
+ * committed to first; its commenceMs is refreshed from the newest duplicate;
+ * groups carrying any graded pick are reported, never touched). Extra stake
+ * here: a duplicate doesn't just distort the record, it burns one of only
+ * TOP5_COUNT daily slots, and runTop5Batch's own top-up self-heals the freed
+ * slot with a genuinely different game on its next tick.
+ */
+async function dedupeTop5EventPicksOnDate(env, storedDate, now) {
+  const manifestKey = `track:${storedDate}:top5`;
+  const manifestRaw = await env.POTD_KV.get(manifestKey);
+  if (!manifestRaw) return { collapsed: [], skippedGraded: [] };
+
+  const manifest = JSON.parse(manifestRaw);
+  const pickRaws = await Promise.all(
+    manifest.pickIds.map((id) => env.POTD_KV.get(`track:${storedDate}:pick:${id}`)),
+  );
+
+  const byEvent = new Map();
+  manifest.pickIds.forEach((pickId, i) => {
+    if (!pickRaws[i]) return;
+    const pick = JSON.parse(pickRaws[i]);
+    if (!byEvent.has(pick.eventId)) byEvent.set(pick.eventId, []);
+    byEvent.get(pick.eventId).push({ pickId, pick });
+  });
+
+  const collapsed = [];
+  const skippedGraded = [];
+  const dropIds = [];
+  const rewrites = [];
+
+  for (const [eventId, group] of byEvent) {
+    if (group.length < 2) continue;
+
+    const graded = group.filter(({ pick }) => pick.status !== 'pending');
+    if (graded.length) {
+      skippedGraded.push({
+        eventId,
+        storedDate,
+        picks: group.map(({ pickId, pick }) => ({ pickId, selection: pick.selection, status: pick.status })),
+      });
+      continue;
+    }
+
+    const sorted = [...group].sort((a, b) => a.pick.generatedAt - b.pick.generatedAt);
+    const keeper = sorted[0];
+    const dropped = sorted.slice(1);
+    const freshestCommenceMs = sorted.reduce(
+      (best, cur) => (cur.pick.generatedAt > best.generatedAt ? cur.pick : best), keeper.pick,
+    ).commenceMs;
+
+    if (keeper.pick.commenceMs !== freshestCommenceMs) {
+      keeper.pick.commenceMs = freshestCommenceMs;
+      rewrites.push({ pickId: keeper.pickId, patchedRaw: JSON.stringify(keeper.pick) });
+    }
+
+    dropIds.push(...dropped.map((d) => d.pickId));
+    collapsed.push({
+      eventId,
+      storedDate,
+      kept: { pickId: keeper.pickId, selection: keeper.pick.selection },
+      dropped: dropped.map(({ pickId, pick }) => ({ pickId, selection: pick.selection })),
+    });
+  }
+
+  if (!dropIds.length && !rewrites.length) return { collapsed, skippedGraded };
+
+  await Promise.all([
+    ...rewrites.map(({ pickId, patchedRaw }) =>
+      env.POTD_KV.put(`track:${storedDate}:pick:${pickId}`, patchedRaw, { expirationTtl: KV_TTL_SECONDS })),
+    ...dropIds.map((id) => env.POTD_KV.delete(`track:${storedDate}:pick:${id}`)),
+  ]);
+
+  if (dropIds.length) {
+    const dropSet = new Set(dropIds);
+    manifest.pickIds = manifest.pickIds.filter((id) => !dropSet.has(id));
+    await env.POTD_KV.put(manifestKey, JSON.stringify(manifest), { expirationTtl: KV_TTL_SECONDS });
+  }
+
+  return { collapsed, skippedGraded };
+}
+
+/** Owner-triggered diagnostic/repair over the last `days` of Pixel's Picks tracking — see moveTop5PicksOffDate/dedupeTop5EventPicksOnDate for the actual logic. */
+export async function migrateTop5PickDates(env, ctx, now = Date.now(), { days = 5 } = {}) {
+  const dateKeys = Array.from({ length: days }, (_, i) => etDate(now - i * 86400000));
+  const results = await Promise.all(dateKeys.map((d) => moveTop5PicksOffDate(env, d, now)));
+  const misdated = results.flatMap((r) => r.misdated);
+  const moved = results.flatMap((r) => r.moved);
+  const relabeled = results.flatMap((r) => r.relabeled);
+
+  // After the date fixes, same ordering rationale as the Full Slate
+  // migration: duplicates only converge onto one day once each record is
+  // filed under its match's real date.
+  const dedupeResults = await Promise.all(dateKeys.map((d) => dedupeTop5EventPicksOnDate(env, d, now)));
+  const collapsed = dedupeResults.flatMap((r) => r.collapsed);
+  const skippedGraded = dedupeResults.flatMap((r) => r.skippedGraded);
+
+  return {
+    misdated,
+    moved,
+    relabeled,
+    collapsed,
+    skippedGraded,
+    summary:
+      `Found ${misdated.length} misdated picks, moved ${moved.length} to correct dates, ` +
+      `relabeled ${relabeled.length} already-relocated picks whose own dateKey field was still stale, ` +
+      `collapsed ${collapsed.length} events that had been tracked more than once` +
+      (skippedGraded.length ? `, left ${skippedGraded.length} duplicate event(s) alone because they carry graded results` : ''),
+  };
+}
+
+/**
+ * Runs every tick — the Pixel's Picks counterpart to
+ * full-slate-tracking.js's own runFullSlateDateResync. Only touches pending
+ * picks; a graded one's day is already final. Collapses any event left
+ * holding more than one still-pending pick after the date fixes, same as
+ * the Full Slate resync does.
+ */
+export async function runTop5DateResync(env, ctx, now = Date.now(), { days = 2 } = {}) {
+  const dateKeys = Array.from({ length: days }, (_, i) => etDate(now - i * 86400000));
+  const results = await Promise.all(dateKeys.map((d) => moveTop5PicksOffDate(env, d, now, { pendingOnly: true })));
+  const moved = results.flatMap((r) => r.moved);
+
+  const dedupeResults = await Promise.all(dateKeys.map((d) => dedupeTop5EventPicksOnDate(env, d, now)));
+  const collapsed = dedupeResults.flatMap((r) => r.collapsed);
+
+  return { moved: moved.length, collapsed: collapsed.length };
 }

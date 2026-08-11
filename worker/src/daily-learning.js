@@ -258,6 +258,12 @@ export function buildDailyReport({ dateKey, yesterdayStats, windowStats, weights
 
   const prev = prevWeights ?? {};
   const allKeys = [...new Set([...Object.keys(weights), ...Object.keys(prev)])].sort();
+  // Structured version of the same diff the lines below narrate — consumed
+  // by the plain-language admin briefing email (worker/src/
+  // learning-brief-email.js) and the dashboard's "algorithm adjusted"
+  // indicator, so both stay built from the identical evidence rather than
+  // re-deriving (and possibly disagreeing about) what changed.
+  const changes = [];
   for (const key of allKeys) {
     const now = weights[key];
     const before = prev[key];
@@ -267,10 +273,13 @@ export function buildDailyReport({ dateKey, yesterdayStats, windowStats, weights
       : 'no longer enough evidence in the window';
     if (now !== undefined && before === undefined) {
       lines.push(`${now < 1 ? 'Penalizing' : 'Boosting'} ${featureLabel(key)}: x${now.toFixed(3)} — ${why}.`);
+      changes.push({ key, label: featureLabel(key), kind: 'added', before: null, now, stats: stats ?? null });
     } else if (now === undefined && before !== undefined) {
       lines.push(`Cleared adjustment on ${featureLabel(key)} (was x${before.toFixed(3)}) — ${why}.`);
+      changes.push({ key, label: featureLabel(key), kind: 'cleared', before, now: null, stats: stats ?? null });
     } else if (now !== undefined && Math.abs(now - before) >= 0.005) {
       lines.push(`${featureLabel(key)}: x${before.toFixed(3)} → x${now.toFixed(3)} — ${why}.`);
+      changes.push({ key, label: featureLabel(key), kind: 'moved', before, now, stats: stats ?? null });
     }
   }
 
@@ -282,7 +291,7 @@ export function buildDailyReport({ dateKey, yesterdayStats, windowStats, weights
     );
   }
 
-  return { dateKey, lines, weightCount: Object.keys(weights).length };
+  return { dateKey, lines, weightCount: Object.keys(weights).length, changes };
 }
 
 /* ---------------------------------------------------------------- */
@@ -334,12 +343,27 @@ export async function runDailyLearning(env, ctx, now = Date.now(), { getPicks })
   });
 
   const profile = { dateKey, generatedAt: now, weights, evidence };
-  const entry = { dateKey, at: now, report: report.lines, weightCount: report.weightCount, windowN: windowStats.n };
+  // The structured changes + day/window stats ride on the log entry so the
+  // dashboard's "algorithm adjusted today" indicator (docs/app.js) and the
+  // owner's manual /admin/learning-brief resend can both answer "what
+  // actually CHANGED this morning" from the log alone — weightCount only
+  // says how many adjustments are active, which includes carried-over ones.
+  const entry = {
+    dateKey, at: now, report: report.lines, weightCount: report.weightCount,
+    windowN: windowStats.n, changeCount: report.changes.length,
+    changes: report.changes, yesterdayStats, windowStats,
+  };
 
   await Promise.all([
     env.POTD_KV.put(LEARN_PROFILE_KEY, JSON.stringify(profile), { expirationTtl: LEARN_TTL }),
     env.POTD_KV.put(LEARN_LOG_KEY, JSON.stringify([entry, ...log].slice(0, LOG_MAX)), { expirationTtl: LEARN_TTL }),
   ]);
 
-  return { skipped: false, dateKey, weights, report: report.lines };
+  return {
+    skipped: false, dateKey, weights, report: report.lines,
+    // Consumed by the plain-language admin briefing (worker/src/
+    // learning-brief-email.js) — structured changes plus the day/window
+    // stats its key-numbers line is built from.
+    changes: report.changes, yesterdayStats, windowStats,
+  };
 }

@@ -101,19 +101,28 @@ function isExhibition(candidate) {
   return names.some((n) => EXHIBITION_PATTERN.test(n) || CAPTAIN_TEAM_PATTERN.test(n));
 }
 
-// Matches tracking.js's own isEligibleTennisMatch — a tennis round
-// routinely spans two calendar days (day/night sessions, weather pushes),
-// and the Odds API only ever lists the round that's actually been drawn, so
-// there's no risk of this reaching into a future round early. Play of the
-// Day only ever needs today's session eligible to consider tomorrow's too;
-// unlike Full Slate/Pixel's Picks it doesn't need MMA's own extension here
-// since that's an existing, separate, unrelated behavior this isn't scoped
-// to touch.
+// Matches tracking.js/full-slate-tracking.js's own
+// TENNIS_NEXT_DAY_CUTOFF_HOUR. This file previously accepted the ENTIRE next
+// calendar day, which is the same "eligible all day tomorrow" bug those two
+// files already fixed — it let a completely ordinary tomorrow-afternoon
+// match be picked as *today's* Play of the Day. The fix never got ported
+// here at the time; this closes that gap.
+const TENNIS_NEXT_DAY_CUTOFF_HOUR = 2;
+
+/**
+ * A tennis round can still be running just past midnight ET (a night session
+ * that started on time but ran long), and the Odds API only ever lists the
+ * round that's actually been drawn, so there's no risk of reaching into a
+ * future round early. Eligible if it starts today, or before
+ * TENNIS_NEXT_DAY_CUTOFF_HOUR tomorrow morning — NOT for an ordinary
+ * tomorrow-afternoon start, which belongs on tomorrow's board.
+ */
 function isEligibleTennisMatch(commenceMs, now) {
   const today = etParts(now).date;
   const commenceDate = etParts(commenceMs).date;
   if (commenceDate === today) return true;
-  return commenceDate === etDatePlusDays(now, 1);
+  return commenceDate === etDatePlusDays(now, 1)
+    && etParts(commenceMs).hour < TENNIS_NEXT_DAY_CUTOFF_HOUR;
 }
 
 /**
@@ -408,10 +417,24 @@ export async function runPotdDaily(env, ctx, now = Date.now(), { fetchFullSlate 
   // reason: the day's single highest-conviction pick shouldn't come from a
   // segment the evidence says has been misfiring when a nearly-as-good
   // candidate from a reliable one exists.
-  const [pausedSegments, learningProfile] = await Promise.all([
+  //
+  // The recent-POTD reads guard against the same reschedule re-pick hole
+  // tracking.js/full-slate-tracking.js close with their
+  // EVENT_DEDUPE_LOOKBACK_DAYS manifests: this function's own idempotency
+  // is per-date (`potd:${dateKey}` exists -> skip), so a match featured
+  // YESTERDAY whose start time then moved to today would read as a fresh,
+  // eligible candidate and could be featured a second day running —
+  // possibly on the opposite side, exactly the confirmed Full Slate
+  // incident. Two KV gets closes it.
+  const [pausedSegments, learningProfile, ...recentPotdRaws] = await Promise.all([
     getPausedSegments(env),
     getLearningProfile(env),
+    env.POTD_KV.get(`potd:${etDatePlusDays(now, -1)}`),
+    env.POTD_KV.get(`potd:${etDatePlusDays(now, -2)}`),
   ]);
+  const recentPotdEventIds = new Set(
+    recentPotdRaws.filter(Boolean).map((raw) => JSON.parse(raw)?.pick?.eventId).filter(Boolean),
+  );
 
   const events = await fetchFullSlate();
   const candidates = applyLearningToCandidates(analyze(events, { now }), learningProfile);
@@ -428,6 +451,9 @@ export async function runPotdDaily(env, ctx, now = Date.now(), { fetchFullSlate 
     if (c.sportKey === 'americanfootball_ncaaf' && !isPower4Matchup(c.home, c.away)) return false;
     if (c.commenceMs <= now) return false;
     if (isSegmentPaused(c, pausedSegments)) return false;
+    // A match already featured as a recent day's POTD can't be featured
+    // again — see the recentPotdEventIds comment above.
+    if (recentPotdEventIds.has(c.eventId)) return false;
     if (isTennis(c.sportKey)) return isEligibleTennisMatch(c.commenceMs, now);
     return etParts(c.commenceMs).date === dateKey;
   });
@@ -445,7 +471,10 @@ export async function runPotdDaily(env, ctx, now = Date.now(), { fetchFullSlate 
 
   const poolRaw = await env.POTD_KV.get(`potd-pool:${dateKey}`);
   const pool = poolRaw ? JSON.parse(poolRaw).entries : [];
-  const stillActionable = pool.filter((c) => c.commenceMs > now);
+  // recentPotdEventIds re-applied here because pool entries persist across
+  // ticks — an entry could have been added before the excluded match's
+  // reschedule became visible (or before this guard existed at all).
+  const stillActionable = pool.filter((c) => c.commenceMs > now && !recentPotdEventIds.has(c.eventId));
   if (!stillActionable.length) {
     return { skipped: true, reason: 'no qualifying candidate remained actionable today', dateKey };
   }
@@ -552,7 +581,13 @@ async function gradePotdForDate(env, ctx, now, dateKey, pick, record, fetchScore
   if (!outcome) return false;
 
   pick.status = outcome.void ? 'void' : outcome.won ? 'won' : 'lost';
-  pick.result = { payout: outcome.payout, roiPercent: outcome.void ? 0 : (outcome.payout / pick.suggested_stake) * 100, voidReason: outcome.void ? outcome.reason : undefined };
+  pick.result = {
+    payout: outcome.payout,
+    roiPercent: outcome.void ? 0 : (outcome.payout / pick.suggested_stake) * 100,
+    voidReason: outcome.void ? outcome.reason : undefined,
+    // Same settlement-time display detail as tracking.js's runGrading.
+    detail: outcome.detail ?? undefined,
+  };
   await env.POTD_KV.put(`potd:${dateKey}`, JSON.stringify(record), { expirationTtl: KV_TTL_SECONDS });
   return true;
 }

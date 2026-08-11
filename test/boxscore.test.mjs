@@ -1,0 +1,153 @@
+/**
+ * Finished-game result detail: the /boxscore extraction (worker/src/
+ * boxscore.js), the tennis set-score settlement detail (docs/
+ * tennis-results.js), and the MMA winner/method detail (worker/src/
+ * ufc-events.js) — the three data paths behind the finished cards'
+ * box-score grids and result lines.
+ */
+import { test } from 'node:test';
+import assert from 'node:assert/strict';
+import { boxFromScoreboard, hasBoxScore } from '../worker/src/boxscore.js';
+import { gradeTennisMatchWinner, gradeTennisGameMarket } from '../docs/tennis-results.js';
+import { mmaFinishMethod, gradeMmaPickWithFallback } from '../worker/src/ufc-events.js';
+
+const MLB_LEAGUE = { kind: 'innings', periods: 9, path: 'mlb' };
+
+/** A completed MLB scoreboard event shaped like ESPN's cdn payload. */
+function mlbScoreboard({ completed = true } = {}) {
+  const side = (abbr, displayName, homeAway, runs, perInning, hits, errors, winner) => ({
+    homeAway,
+    winner,
+    score: String(runs),
+    hits,
+    errors,
+    linescores: perInning.map((v) => ({ value: v })),
+    records: [{ type: 'total', summary: '64-54' }],
+    team: { abbreviation: abbr, displayName, shortDisplayName: displayName.split(' ').pop(), name: displayName.split(' ').pop() },
+  });
+  return {
+    events: [{
+      date: '2026-08-10T23:07Z',
+      competitions: [{
+        status: { type: { completed } },
+        venue: { fullName: 'Rogers Centre', address: { city: 'Toronto', state: 'ON' } },
+        competitors: [
+          side('TOR', 'Toronto Blue Jays', 'home', 2, [0, 0, 0, 0, 1, 1, 0, 0, 0], 7, 0, true),
+          side('BOS', 'Boston Red Sox', 'away', 1, [0, 0, 0, 0, 0, 0, 1, 0, 0], 6, 1, false),
+        ],
+      }],
+    }],
+  };
+}
+
+test('boxFromScoreboard extracts innings, R/H/E, venue, and winner for a matched completed game', () => {
+  const box = boxFromScoreboard(mlbScoreboard(), {
+    home: 'Toronto Blue Jays', away: 'Boston Red Sox', league: MLB_LEAGUE,
+  });
+  assert.ok(box);
+  assert.equal(box.kind, 'innings');
+  assert.equal(box.venue, 'Rogers Centre – Toronto – ON');
+  assert.equal(box.home.abbr, 'TOR');
+  assert.equal(box.home.total, 2);
+  assert.equal(box.home.hits, 7);
+  assert.equal(box.home.errors, 0);
+  assert.equal(box.home.winner, true);
+  assert.deepEqual(box.away.linescores, [0, 0, 0, 0, 0, 0, 1, 0, 0]);
+  assert.equal(box.away.errors, 1);
+  assert.equal(box.away.winner, false);
+});
+
+test('boxFromScoreboard returns null for a not-yet-completed game and an unmatched fixture', () => {
+  assert.equal(
+    boxFromScoreboard(mlbScoreboard({ completed: false }), { home: 'Toronto Blue Jays', away: 'Boston Red Sox', league: MLB_LEAGUE }),
+    null,
+    'a live game has no final box',
+  );
+  assert.equal(
+    boxFromScoreboard(mlbScoreboard(), { home: 'Arizona Diamondbacks', away: 'Colorado Rockies', league: MLB_LEAGUE }),
+    null,
+    'a fixture not on this scoreboard must never borrow another game\'s box',
+  );
+});
+
+test('boxFromScoreboard pads a shortened linescore to the standard period count with nulls, never zeros', () => {
+  const sb = mlbScoreboard();
+  sb.events[0].competitions[0].competitors[0].linescores = [{ value: 0 }, { value: 2 }]; // rain-shortened report
+  const box = boxFromScoreboard(sb, { home: 'Toronto Blue Jays', away: 'Boston Red Sox', league: MLB_LEAGUE });
+  assert.equal(box.home.linescores.length, 9);
+  assert.equal(box.home.linescores[2], null, 'a missing inning is unknown, not a fabricated 0');
+});
+
+test('hasBoxScore covers exactly the sports with a per-period source', () => {
+  assert.equal(hasBoxScore('baseball_mlb'), true);
+  assert.equal(hasBoxScore('americanfootball_nfl'), true);
+  assert.equal(hasBoxScore('basketball_wnba'), true);
+  assert.equal(hasBoxScore('icehockey_nhl'), false, 'NHL has no scoreboard on the reachable ESPN host');
+  assert.equal(hasBoxScore('tennis_atp_canadian_open'), false);
+  assert.equal(hasBoxScore('mma_mixed_martial_arts'), false);
+});
+
+/* ── Tennis set-score detail ────────────────────────────────────── */
+
+const TENNIS_PICK = {
+  marketKey: 'h2h', home: 'Elena Rybakina', away: 'Naomi Osaka',
+  outcomeName: 'Elena Rybakina', decimal: 1.9, suggested_stake: 20,
+};
+
+test('gradeTennisMatchWinner attaches winner-oriented set-score detail', () => {
+  const outcome = gradeTennisMatchWinner(TENNIS_PICK, {
+    participantNames: ['Elena Rybakina', 'Naomi Osaka'],
+    score: '7-5,6-3',
+    status: 'Ended',
+  });
+  assert.equal(outcome.won, true);
+  assert.equal(outcome.detail.winner, 'Elena Rybakina');
+  assert.equal(outcome.detail.setScore, '7-5, 6-3');
+});
+
+test('tennis set detail reads winner-first even when the API listed the winner second', () => {
+  const outcome = gradeTennisMatchWinner(TENNIS_PICK, {
+    participantNames: ['Naomi Osaka', 'Elena Rybakina'],
+    score: '5-7,3-6', // Osaka-first orientation: Rybakina won the same 7-5, 6-3
+    status: 'Ended',
+  });
+  assert.equal(outcome.won, true);
+  assert.equal(outcome.detail.winner, 'Elena Rybakina');
+  assert.equal(outcome.detail.setScore, '7-5, 6-3', 'scoreline reads from the winner\'s perspective regardless of API order');
+});
+
+test('gradeTennisGameMarket carries the same detail on spreads/totals settlements', () => {
+  const outcome = gradeTennisGameMarket(
+    { ...TENNIS_PICK, marketKey: 'totals', outcomeName: 'Over', point: 18.5 },
+    { participantNames: ['Elena Rybakina', 'Naomi Osaka'], score: '7-5,6-3', status: 'Ended' },
+  );
+  assert.equal(outcome.won, true); // 21 games > 18.5
+  assert.equal(outcome.detail.setScore, '7-5, 6-3');
+});
+
+/* ── MMA winner + method detail ─────────────────────────────────── */
+
+test('mmaFinishMethod reads the method across ESPN field variants and never invents one', () => {
+  assert.equal(mmaFinishMethod({ status: { result: { displayName: 'Decision - Unanimous' } } }), 'Decision - Unanimous');
+  assert.equal(mmaFinishMethod({ status: { result: { description: 'KO/TKO' } } }), 'KO/TKO');
+  assert.equal(mmaFinishMethod({ competitors: [{ result: { displayName: 'Submission' } }] }), 'Submission');
+  assert.equal(mmaFinishMethod({ status: { result: { displayName: 'Final' } } }), null, 'a generic completion state is not a finish method');
+  assert.equal(mmaFinishMethod({}), null);
+});
+
+test('gradeMmaPickWithFallback attaches winner + method detail to a graded fight', () => {
+  const pick = {
+    marketKey: 'h2h', home: 'Mateusz Gamrot', away: 'Charles Oliveira',
+    outcomeName: 'Mateusz Gamrot', decimal: 2.1, suggested_stake: 20,
+    eventId: 'f1',
+  };
+  const results = [{
+    a: 'mateusz gamrot', b: 'charles oliveira', aWon: true, bWon: false,
+    displayA: 'Mateusz Gamrot', displayB: 'Charles Oliveira', method: 'Decision - Unanimous',
+  }];
+  const outcome = gradeMmaPickWithFallback(pick, null, results);
+  assert.ok(outcome);
+  assert.equal(outcome.won, true);
+  assert.equal(outcome.detail.winner, 'Mateusz Gamrot');
+  assert.equal(outcome.detail.method, 'Decision - Unanimous');
+});

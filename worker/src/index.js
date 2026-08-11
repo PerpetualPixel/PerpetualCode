@@ -24,9 +24,11 @@ import {
 } from './notifications.js';
 import { sendWeeklyTrackingReport } from './weekly-report.js';
 import { sendDailyOnboardingReport } from './onboarding-report.js';
+import { sendLearningBriefEmail } from './learning-brief-email.js';
 import { handleReportBug } from './bug-reports.js';
 import { QuotaManager } from './quota.js';
 import { fetchContext, hasContext } from './context.js';
+import { fetchBoxScore, hasBoxScore } from './boxscore.js';
 import { fetchWeather, hasVenue } from './weather.js';
 import { fetchMmaContext } from './mma.js';
 import {
@@ -65,6 +67,8 @@ import {
   getAllTrackedPicks,
   fetchFullSlateEvents,
   TOP5_COUNT,
+  runTop5DateResync,
+  migrateTop5PickDates,
 } from './tracking.js';
 import { authorize as authorizeSettings, getSettings, putSettings } from './settings.js';
 import {
@@ -83,6 +87,8 @@ import {
   runFullSlateClvSnapshot,
   runFullSlateGrading,
   getAllFullSlateTracked,
+  migrateFullSlatePickDates,
+  runFullSlateDateResync,
 } from './full-slate-tracking.js';
 import {
   runDailyLearning,
@@ -474,7 +480,7 @@ export default {
       // can't double-learn — it's cheap to no-op once today's review exists.
       ctx.waitUntil(
         (async () => {
-          await runDailyLearning(env, ctx, now, {
+          const learningResult = await runDailyLearning(env, ctx, now, {
             getPicks: async () => {
               // Props are a real selection surface (graded by genuine edges,
               // like Pixel's Picks/Play of the Day), not a raw-evidence
@@ -492,6 +498,16 @@ export default {
               return [...top5, ...slate, ...mlbProps, ...nflProps, ...wnbaProps, ...nhlProps];
             },
           }).catch(() => null);
+
+          // Owner briefing on days the review actually adjusted something
+          // (worker/src/learning-brief-email.js) — plain language, only
+          // when changes.length > 0, at most once/day since the review
+          // itself is idempotent per ET date (a skipped repeat run carries
+          // no changes array at all). Best-effort: a mail failure never
+          // touches the selection chain below.
+          if (learningResult && !learningResult.skipped && learningResult.changes?.length) {
+            ctx.waitUntil(sendLearningBriefEmail(env, learningResult, now));
+          }
 
           // Top5's own "did it just become complete this tick" is the
           // clean first-time signal for the ideal, single "board's
@@ -612,6 +628,15 @@ export default {
     ctx.waitUntil(runPotdGrading(env, ctx, now));
     ctx.waitUntil(runFullSlateClvSnapshot(env, ctx, now));
     ctx.waitUntil(runFullSlateGrading(env, ctx, now));
+    // Self-healing: a still-pending pick's commenceMs can drift onto a
+    // different ET calendar day than the one it's filed under — most often
+    // tennis order-of-play pushing a match to the next day after it's
+    // already locked in and tracked (see full-slate-tracking.js's own
+    // runFullSlateDateResync/tracking.js's runTop5DateResync for the full
+    // reasoning). Runs every tick so this never again requires a manual
+    // admin migration call to fix.
+    ctx.waitUntil(runFullSlateDateResync(env, ctx, now));
+    ctx.waitUntil(runTop5DateResync(env, ctx, now));
     // Retries today's Play of the Day write-up if the 2am generation attempt
     // came back empty — see backfillPotdAnalysis's own comment for why that
     // one-shot attempt needs a way to recover. No-ops (one KV get) once a
@@ -788,6 +813,31 @@ export default {
     if (pathname === '/api/account/logout-all' && request.method === 'POST') {
       const res = await handleLogoutAll(request, env);
       return new Response(res.body, { status: res.status, headers: { ...cors, ...Object.fromEntries(res.headers) } });
+    }
+
+    // Finished-game box score (per-inning/quarter linescores — see
+    // worker/src/boxscore.js) for one fixture already on the board. Free —
+    // ESPN cdn scoreboard, never the odds feed. { box: null } is a normal
+    // answer (unmatched fixture / not completed / unsupported sport), not
+    // an error: the finished card just keeps its plain final-score line.
+    if (pathname === '/boxscore') {
+      if (request.method !== 'GET') {
+        return json({ error: 'Method not allowed' }, { status: 405, headers: cors });
+      }
+      const { searchParams } = new URL(request.url);
+      const sportKey = searchParams.get('sport') ?? '';
+      if (!hasBoxScore(sportKey)) {
+        return json({ box: null, reason: 'unsupported sport' }, { headers: cors });
+      }
+      try {
+        const box = await fetchBoxScore(
+          { sportKey, home: searchParams.get('home') ?? '', away: searchParams.get('away') ?? '' },
+          ctx,
+        );
+        return json({ box }, { headers: { ...cors, 'Cache-Control': 'public, max-age=300' } });
+      } catch (error) {
+        return json({ box: null, reason: String(error).slice(0, 120) }, { headers: cors });
+      }
     }
 
     if (pathname === '/context') {
@@ -1198,6 +1248,59 @@ export default {
         return json({ sent: true }, { headers: cors });
       } catch (error) {
         return json({ error: String(error).slice(0, 120) }, { status: 500, headers: cors });
+      }
+    }
+
+    // Owner-only: Diagnose and migrate Full Slate picks that were tracked
+    // under the wrong date (commenceMs doesn't match storage dateKey). Now
+    // also self-heals every hourly tick (see full-slate-tracking.js's
+    // runFullSlateDateResync in scheduled()) — this route stays for one-off
+    // repair of already-graded historical picks, which the automatic resync
+    // deliberately leaves alone.
+    if (pathname === '/admin/migrate-slate-dates' && request.method === 'POST') {
+      const auth = authorizeSettings(request, env);
+      if (!auth.ok) return json({ error: auth.error }, { status: auth.status, headers: cors });
+      try {
+        const result = await migrateFullSlatePickDates(env, ctx, Date.now(), { days: 5 });
+        return json(result, { headers: cors });
+      } catch (error) {
+        return json({ error: String(error).slice(0, 200) }, { status: 500, headers: cors });
+      }
+    }
+
+    // Manual (re)send of the plain-language learning briefing (worker/src/
+    // learning-brief-email.js) from the most recent review's stored log
+    // entry — lets the owner test the email without waiting for a morning
+    // when the review actually changes something. Same owner-only gate as
+    // the other admin routes. 404s meaningfully when no review has run yet;
+    // sends even when that entry carried zero changes (it's a test hook),
+    // which the response body says outright.
+    if (pathname === '/admin/learning-brief' && request.method === 'POST') {
+      const auth = authorizeSettings(request, env);
+      if (!auth.ok) return json({ error: auth.error }, { status: auth.status, headers: cors });
+      try {
+        const log = await getLearningLog(env);
+        const latest = log[0];
+        if (!latest) return json({ error: 'No learning review has run yet' }, { status: 404, headers: cors });
+        const result = await sendLearningBriefEmail(env, latest, Date.now());
+        return json({ ...result, dateKey: latest.dateKey, changeCount: latest.changes?.length ?? 0 }, { headers: cors });
+      } catch (error) {
+        return json({ error: String(error).slice(0, 200) }, { status: 500, headers: cors });
+      }
+    }
+
+    // Same as /admin/migrate-slate-dates but for Pixel's Picks (worker/src/
+    // tracking.js's migrateTop5PickDates) — the two trackers share the
+    // identical isEligibleTennisMatch/isEligibleMmaFight logic and the same
+    // exposure to a match rescheduling after its pick already locked in.
+    if (pathname === '/admin/migrate-top5-dates' && request.method === 'POST') {
+      const auth = authorizeSettings(request, env);
+      if (!auth.ok) return json({ error: auth.error }, { status: auth.status, headers: cors });
+      try {
+        const result = await migrateTop5PickDates(env, ctx, Date.now(), { days: 5 });
+        return json(result, { headers: cors });
+      } catch (error) {
+        return json({ error: String(error).slice(0, 200) }, { status: 500, headers: cors });
       }
     }
 

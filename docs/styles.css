@@ -2802,6 +2802,60 @@ input[type="range"]:focus-visible {
    doesn't leave three empty reserved column tracks sitting to its right. */
 .slate-team-row.no-markets { grid-template-columns: 1fr; }
 
+/* ── Finished-game result detail (see app.js's finishedDetailHtml) ────
+   The box score grid (MLB innings + R/H/E, NFL/WNBA quarters + T) and the
+   one-line winner summaries (tennis sets, MMA method, soccer/NHL final). */
+.box-score {
+  padding: 8px 14px 0;
+  overflow-x: auto; /* extra innings scroll inside the card, never the page */
+}
+
+.box-venue {
+  font-size: 0.68rem;
+  color: var(--muted);
+  text-align: center;
+  margin-bottom: 6px;
+}
+
+.box-row {
+  display: grid;
+  grid-template-columns: 42px repeat(var(--box-periods), minmax(18px, 1fr)) repeat(var(--box-totals), minmax(22px, 1.2fr));
+  gap: 2px;
+  align-items: center;
+  text-align: center;
+  font-family: var(--mono);
+  font-size: 0.72rem;
+  padding: 4px 0;
+}
+
+.box-row + .box-row { border-top: 1px solid var(--line); }
+
+.box-head {
+  color: var(--muted);
+  font-weight: 700;
+  border-top: none;
+}
+
+.box-team {
+  text-align: left;
+  font-weight: 700;
+  font-family: inherit;
+}
+
+.box-tot {
+  font-weight: 700;
+  background: var(--surface-2);
+  border-radius: 4px;
+  padding: 2px 0;
+}
+
+.box-row.is-winner .box-team { color: var(--accent); }
+
+.finished-result-line {
+  padding: 8px 14px 0;
+  font-size: 0.82rem;
+}
+
 /* Replaces the market grid entirely once a game is finished — the
    algorithm's Main play for that game, and whether it won. */
 .slate-main-play {
@@ -3128,6 +3182,189 @@ input[type="range"]:focus-visible {
   border-bottom-color: var(--accent);
 }
 
+/* Segmented-pill variant of the tabs, per the MLB stats reference layout. */
+.stats-tabs--pills {
+  border-bottom: none;
+  background: var(--surface-2);
+  border-radius: 999px;
+  padding: 4px;
+  gap: 4px;
+}
+
+.stats-tabs--pills .stats-tab {
+  flex: 1;
+  border-bottom: none;
+  border-radius: 999px;
+  padding: 8px 10px;
+  text-align: center;
+}
+
+.stats-tabs--pills .stats-tab.is-active {
+  background: var(--surface);
+  color: var(--text);
+  font-weight: 600;
+}
+
+/* ── MLB stats: side-by-side comparison layout ─────────────────────────
+   (see docs/app.js's renderMlbSituational / renderMlbTeamStats /
+   renderMlbStartingPitchers — built to read as one mirrored comparison on
+   any width, phones especially, instead of two stacked team columns.) */
+
+.vs-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  font-weight: 700;
+  font-size: 1rem;
+  margin-bottom: 12px;
+}
+
+/* Situational Results: mirrored label pair over a bar pair per split. */
+.sit-row {
+  margin-bottom: 12px;
+}
+
+.sit-labels {
+  display: flex;
+  justify-content: space-between;
+  font-size: 0.75rem;
+  color: var(--muted);
+  margin-bottom: 4px;
+}
+
+.sit-bars {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 12px;
+}
+
+.sit-bar {
+  padding: 8px 0;
+  border-radius: 8px;
+  text-align: center;
+  font-family: var(--mono);
+  font-weight: 700;
+  font-size: 0.9rem;
+  background: var(--surface-2);
+  border: 1px solid var(--line);
+}
+
+.sit-bar.is-winning {
+  background: rgba(34, 197, 94, 0.14);
+  border-color: rgba(34, 197, 94, 0.35);
+}
+
+.sit-bar.is-losing {
+  background: rgba(239, 68, 68, 0.12);
+  border-color: rgba(239, 68, 68, 0.3);
+}
+
+/* Starting Pitchers: two compact cards that stay side by side on phones. */
+.pitcher-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 16px;
+  align-items: start;
+}
+
+.pitcher-head {
+  margin-bottom: 10px;
+}
+
+.pitcher-name {
+  display: block;
+  font-weight: 700;
+  font-size: 0.9rem;
+}
+
+.pitcher-hand {
+  display: inline-block;
+  background: var(--text);
+  color: var(--bg, #05050a);
+  border-radius: 999px;
+  padding: 1px 7px;
+  font-size: 0.65rem;
+  font-weight: 700;
+  vertical-align: 1px;
+}
+
+.pitcher-cells {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 10px 6px;
+  margin-bottom: 10px;
+}
+
+.pitcher-cell-label {
+  display: block;
+  font-size: 0.65rem;
+  color: var(--muted);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+.pitcher-cell-value {
+  display: block;
+  font-family: var(--mono);
+  font-weight: 700;
+  font-size: 0.95rem;
+}
+
+/* Team Stats: one shared row per stat — rank chip + value | centered
+   label | value + rank chip. minmax(0, …) keeps long labels from blowing
+   out the row on narrow screens; the label just wraps. */
+.ts-rows {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.ts-row {
+  display: grid;
+  grid-template-columns: 44px 1fr minmax(0, 1.5fr) 1fr 44px;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 8px;
+  background: var(--surface-2);
+  border-radius: 8px;
+  font-size: 0.78rem;
+}
+
+.ts-rank {
+  text-align: center;
+  font-weight: 700;
+  font-family: var(--mono);
+  padding: 4px 0;
+  border-radius: 6px;
+  background: var(--surface);
+  border: 1px solid var(--line);
+}
+
+.ts-rank.good {
+  background: rgba(34, 197, 94, 0.14);
+  border-color: rgba(34, 197, 94, 0.35);
+  color: #4ade80;
+}
+
+.ts-rank.bad {
+  background: rgba(239, 68, 68, 0.12);
+  border-color: rgba(239, 68, 68, 0.3);
+  color: #f87171;
+}
+
+.ts-value {
+  font-family: var(--mono);
+  color: var(--muted);
+  text-align: center;
+}
+
+.ts-label {
+  text-align: center;
+  font-weight: 600;
+  min-width: 0;
+  overflow-wrap: break-word;
+}
+
 .schedule-content {
   background: var(--surface-2);
   border-radius: var(--radius);
@@ -3233,6 +3470,22 @@ input[type="range"]:focus-visible {
   .stats-divider {
     display: none;
   }
+
+  /* The redesigned MLB comparison sections deliberately KEEP their
+     side-by-side shape on phones — that's the point of the mirrored
+     layout — they just tighten up. */
+  .ts-row {
+    grid-template-columns: 40px 1fr minmax(0, 1.3fr) 1fr 40px;
+    font-size: 0.72rem;
+  }
+
+  .pitcher-grid {
+    gap: 10px;
+  }
+
+  .pitcher-cells {
+    gap: 8px 4px;
+  }
 }
 
 /* ================================================================ */
@@ -3258,6 +3511,52 @@ input[type="range"]:focus-visible {
   max-width: 720px;
   margin: 0 auto;
   box-sizing: border-box;
+}
+
+/* Full-transparency algorithm-change indicator at the top of the Tracking
+   Dashboard (see app.js's renderAlgoChangeBanner). Rendered as a button so
+   it's keyboard/screen-reader activatable; the strong .is-today state marks
+   a same-morning adjustment, the base state marks any active adjustments. */
+.algo-change-banner {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  width: calc(100% - 32px);
+  margin: 12px 16px 0;
+  padding: 10px 14px;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: rgba(157, 78, 221, 0.08);
+  color: var(--text);
+  font: inherit;
+  font-size: 13px;
+  line-height: 1.45;
+  text-align: left;
+  cursor: pointer;
+  box-sizing: border-box;
+}
+
+.algo-change-banner.is-today {
+  border-color: rgba(217, 70, 239, 0.55);
+  background: rgba(217, 70, 239, 0.12);
+}
+
+.algo-change-dot {
+  flex: 0 0 auto;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: #d946ef;
+}
+
+.algo-change-banner.is-today .algo-change-dot {
+  box-shadow: 0 0 0 4px rgba(217, 70, 239, 0.2);
+  animation: algo-dot-pulse 2s ease-in-out infinite;
+}
+
+@keyframes algo-dot-pulse {
+  0%, 100% { box-shadow: 0 0 0 3px rgba(217, 70, 239, 0.15); }
+  50% { box-shadow: 0 0 0 6px rgba(217, 70, 239, 0.3); }
 }
 
 .learning-section {

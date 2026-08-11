@@ -221,7 +221,13 @@ export async function runWnbaPropsScan(env, ctx, now = Date.now(), { fetchFullSl
   const manifestKey = `wnbaprops:${dateKey}:manifest`;
   const manifestRaw = await env.POTD_KV.get(manifestKey);
   const manifest = manifestRaw ? JSON.parse(manifestRaw) : { date: dateKey, pickIds: [], processedEventIds: [] };
-  const processed = new Set(manifest.processedEventIds ?? []);
+  // Yesterday's processed set folded in — same postponement re-scan guard
+  // as mlb-props.js's runMlbPropsScan; see the comment there.
+  const yesterdayManifestRaw = await env.POTD_KV.get(`wnbaprops:${etDate(now - 86400000)}:manifest`);
+  const processed = new Set([
+    ...(manifest.processedEventIds ?? []),
+    ...(yesterdayManifestRaw ? JSON.parse(yesterdayManifestRaw).processedEventIds ?? [] : []),
+  ]);
 
   const eligible = games.filter((g) => !processed.has(g.id) && isWithinPropsWindow(new Date(g.commence_time).getTime(), now));
   if (!eligible.length) return { scanned: 0, gameCount: games.length };
