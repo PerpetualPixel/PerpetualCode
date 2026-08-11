@@ -32,6 +32,7 @@
  */
 
 import { analyze, RULES, formatAmerican, suggestedStake, clearsMaxJuice } from '../../docs/engine.js';
+import { fetchCapperConsensus, applyCapperConsensus } from '../../docs/capper-consensus.js';
 import { isPower4Matchup } from '../../docs/ncaaf-conferences.js';
 import { buildInsights, insightsByTier, isTennis, isMma } from '../../docs/insights.js';
 import { gradePick } from '../../docs/learning.js';
@@ -479,7 +480,19 @@ export async function runPotdDaily(env, ctx, now = Date.now(), { fetchFullSlate 
     return { skipped: true, reason: 'no qualifying candidate remained actionable today', dateKey };
   }
 
-  const best = stillActionable.reduce((a, b) => (b.score > a.score ? b : a));
+  // MMA candidates get the MMA_Engine capper-consensus swing (docs/
+  // capper-consensus.js) before the day's single winner is drawn — the same
+  // enrichment Pixel's Picks' own batch applies (worker/src/tracking.js), so
+  // a consensus-backed fight competes for Play of the Day on the same
+  // adjusted grade it carries everywhere else, still subject to every date/
+  // band/segment filter above. Fetch failure degrades to the unadjusted
+  // pool: consensus is a bonus, never a dependency.
+  const consensusFeed = await fetchCapperConsensus(undefined, { force: true }).catch(() => null);
+  const drawPool = consensusFeed
+    ? applyCapperConsensus(stillActionable, consensusFeed, { now })
+    : stillActionable;
+
+  const best = drawPool.reduce((a, b) => (b.score > a.score ? b : a));
   const record = await buildRecord(best, dateKey, now, env, ctx);
   // A day's pick, once posted, doesn't move even if the market does — it's
   // an editorial call made at a point in time, not a live-repriced candidate.
