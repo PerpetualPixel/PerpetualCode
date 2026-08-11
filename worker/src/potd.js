@@ -116,6 +116,43 @@ function isEligibleTennisMatch(commenceMs, now) {
   return commenceDate === etDatePlusDays(now, 1);
 }
 
+/**
+ * Whether any of today's real games — checked against the raw event list
+ * straight from the odds feed, not the price/exhibition/band-filtered
+ * candidate pool — hasn't had its own pick window open yet. Same fix, same
+ * reasoning, as tracking.js's own scheduleStillOpen: runPotdDaily used to
+ * approximate "have we seen the whole day" as
+ * `eligibleToday.some(c => !isPickWindowOpen(c, now))`, checked against a
+ * list already narrowed to POTD's own -200..+150 price band. A game whose
+ * odds simply hadn't posted yet — routine for tennis, priced close to
+ * start far more than other sports — had no candidate at all yet, so it
+ * could never register as "still waiting on," letting POTD conclude the
+ * day was fully compared and lock a mediocre early pick hours before a
+ * genuinely stronger match even had a price.
+ *
+ * Exhibition and NCAAF Power 4 are both knowable from team names alone, so
+ * they're applied here too — an All-Star Game or Group-of-5 buy game can
+ * never become eligible regardless of price, so neither should block
+ * completeness. A paused-segment exclusion is deliberately NOT applied
+ * here, for the same reason as tracking.js's version: it's specific to one
+ * (sportKey, marketKey) pair, and a raw event can carry several markets.
+ */
+function scheduleStillOpen(events, dateKey, now) {
+  return events.some((event) => {
+    const sportKey = event.sport_key;
+    const commenceMs = Date.parse(event.commence_time);
+    if (!Number.isFinite(commenceMs)) return false;
+    if (EXHIBITION_PATTERN.test(event.home_team) || EXHIBITION_PATTERN.test(event.away_team)) return false;
+    if (CAPTAIN_TEAM_PATTERN.test(event.home_team) || CAPTAIN_TEAM_PATTERN.test(event.away_team)) return false;
+    if (sportKey === 'americanfootball_ncaaf' && !isPower4Matchup(event.home_team, event.away_team)) return false;
+    const eligibleToday = isTennis(sportKey)
+      ? isEligibleTennisMatch(commenceMs, now)
+      : etParts(commenceMs).date === dateKey;
+    if (!eligibleToday) return false;
+    return !isPickWindowOpen({ sportKey, commenceMs }, now);
+  });
+}
+
 let tennisArchiveCache = null; // module-scope: survives across requests in the same isolate
 async function loadTennisArchive(sportKey) {
   const tour = /wta/i.test(sportKey) ? 'wta' : 'atp';
@@ -395,8 +432,11 @@ export async function runPotdDaily(env, ctx, now = Date.now(), { fetchFullSlate 
     return etParts(c.commenceMs).date === dateKey;
   });
 
+  // stillUpcoming is checked against the raw event list (scheduleStillOpen),
+  // not this price/band-filtered eligibleToday — see that function's own
+  // comment for why.
   const lockable = eligibleToday.filter((c) => isPickWindowOpen(c, now));
-  const stillUpcoming = eligibleToday.some((c) => !isPickWindowOpen(c, now));
+  const stillUpcoming = scheduleStillOpen(events, dateKey, now);
   await updatePotdPool(env, ctx, dateKey, lockable, now);
 
   if (stillUpcoming) {
