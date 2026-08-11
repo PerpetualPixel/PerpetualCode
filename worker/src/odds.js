@@ -39,7 +39,28 @@ export function isAllowedSport(key) {
 
 export const MARKETS = 'h2h,spreads,totals';
 export const REGIONS = 'us';
+// Lower-tier tennis (WTA/ATP 125s, qualifying draws) is frequently priced
+// only by international books until close to start — US books post those
+// matches late or not at all. That left them coming back with fewer than
+// RULES.MIN_BOOKS quoting each line, so no candidate was built and the match
+// rendered as an all-dash Full Slate row even an hour out. Tennis alone
+// widens to the EU/UK books that actually price it. Scoped to tennis on
+// purpose: The Odds API bills per region per market, so widening every sport
+// would multiply the quota cost of the whole slate for no benefit to the team
+// sports US books already cover deeply.
+export const TENNIS_REGIONS = 'us,uk,eu';
 export const DEFAULT_CACHE_SECONDS = 900;
+
+/**
+ * The Odds API `regions` value to request for a sport key: the wider
+ * US+UK+EU set for tennis tournament keys, plain `us` for everything else.
+ * Tennis is matched by the same prefixes isAllowedSport uses, so a new
+ * tournament key is covered the week it appears without a list to maintain.
+ */
+export function regionsFor(sportKey) {
+  const isTennis = ALLOWED_SPORT_PREFIXES.some((prefix) => sportKey.startsWith(prefix));
+  return isTennis ? TENNIS_REGIONS : REGIONS;
+}
 // The sports catalogue is free to fetch and changes on the order of days.
 export const SPORTS_LIST_CACHE_SECONDS = 3600;
 
@@ -121,16 +142,20 @@ export async function enrichMmaEvents(events, ctx) {
  * a redundant fetch within the window.
  */
 export async function fetchSport(sport, env, ctx) {
+  const regions = regionsFor(sport);
   const url = new URL(`${UPSTREAM}/sports/${sport}/odds`);
   url.searchParams.set('apiKey', (env.ODDS_API_KEY ?? '').trim());
-  url.searchParams.set('regions', REGIONS);
+  url.searchParams.set('regions', regions);
   url.searchParams.set('markets', MARKETS);
   url.searchParams.set('oddsFormat', 'american');
   url.searchParams.set('dateFormat', 'iso');
 
   const ttl = Number(env.CACHE_SECONDS ?? DEFAULT_CACHE_SECONDS);
+  // The region set is part of the cache key, so widening tennis doesn't collide
+  // with any previously-cached us-only entry for the same key — the tennis
+  // pull just fetches fresh under its own key.
   const cacheKey = new Request(
-    `https://pixel-pick.cache/odds/${sport}?markets=${MARKETS}&regions=${REGIONS}`,
+    `https://pixel-pick.cache/odds/${sport}?markets=${MARKETS}&regions=${regions}`,
   );
   const cache = caches.default;
 
