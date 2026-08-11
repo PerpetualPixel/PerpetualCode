@@ -36,6 +36,14 @@ import { settleTennisGameMarket } from './tennis-results.js';
 const FLAT_UNIT_STAKE = 20;
 const KV_TTL_SECONDS = 86400 * 90; // 90 days — matches every other tracker's retention
 
+// How many ET calendar days back runFullSlateBatch looks for an event it has
+// already tracked, so a game whose start time moved after its pick locked in
+// can't be picked a second time under a new date. Matches
+// GRADING_LOOKBACK_DAYS below (the window grading already walks for the same
+// crossing-midnight reason) — 2 days comfortably covers any real reschedule;
+// a match moved more than 48h is a different fixture in practice.
+const EVENT_DEDUPE_LOOKBACK_DAYS = 2;
+
 /** ET calendar date (YYYY-MM-DD) for a given instant — same as tracking.js's own etDate. */
 function etDate(ms) {
   const fmt = new Intl.DateTimeFormat('en-US', {
@@ -122,7 +130,31 @@ export async function runFullSlateBatch(
   const existingRaw = await env.POTD_KV.get(manifestKey);
   const existing = existingRaw ? JSON.parse(existingRaw) : null;
   const existingPickIds = existing?.pickIds ?? [];
-  const existingEventIds = new Set(existingPickIds.map((id) => id.split(':')[0]));
+
+  // "Already tracked" has to be answered across a window of days, not just
+  // today's manifest. An event's start time can move after its pick locked
+  // in (tennis order-of-play reschedules routinely shift a match by hours,
+  // sometimes across midnight), and when it does, today's batch sees an
+  // eventId that isn't in today's manifest — because it's in yesterday's —
+  // and tracks the same match a SECOND time. Confirmed live, and it isn't
+  // merely a double-count: by the time the second pick was taken the line
+  // had moved enough that the engine graded the opposite side highest, so
+  // the tracker held Rafael Jodar -105 AND Arthur Fils +100 on the same
+  // match, a guaranteed one-win-one-loss bleeding the vig. Checking the
+  // same GRADING_LOOKBACK_DAYS window grading already walks keeps one
+  // event to one tracked pick even when its date moves underneath us.
+  const priorDateKeys = Array.from(
+    { length: EVENT_DEDUPE_LOOKBACK_DAYS }, (_, i) => etDate(now - (i + 1) * 86400000),
+  );
+  const priorManifests = await Promise.all(
+    priorDateKeys.map((dk) => env.POTD_KV.get(`slate:${dk}:manifest`)),
+  );
+  const existingEventIds = new Set(
+    [
+      ...existingPickIds,
+      ...priorManifests.filter(Boolean).flatMap((raw) => JSON.parse(raw).pickIds ?? []),
+    ].map((id) => id.split(':')[0]),
+  );
 
   const events = await fetchFullSlate();
   const candidates = analyze(events, { now })
@@ -439,23 +471,140 @@ async function movePicksOffDate(env, storedDate, now, { dryRun = false, pendingO
   };
 }
 
-/** Owner-triggered diagnostic/repair over the last `days` of Full Slate tracking — see movePicksOffDate for the actual logic. */
+/**
+ * Collapses an event that ended up with more than one tracked pick on the
+ * same day back to the single pick that was actually locked in first.
+ *
+ * This is the repair half of EVENT_DEDUPE_LOOKBACK_DAYS above: a match whose
+ * start time moved after being tracked could be picked again by a later
+ * day's batch, and once the date-resync files both records under the match's
+ * real day, that day holds two picks on one game — in the confirmed live
+ * case, on OPPOSITE SIDES (Rafael Jodar -105 and Arthur Fils +100), which is
+ * a guaranteed one-win-one-loss rather than merely a double-count.
+ *
+ * The earliest-generated pick is the keeper, always. That's the one the
+ * algorithm actually committed to at the time, and this file's whole premise
+ * (see the module header on tracking.js) is that a locked pick never changes
+ * after the fact — keeping the later one would be retroactively re-picking a
+ * game with information the original lock didn't have, which is exactly the
+ * hindsight this tracker exists to rule out. Its commenceMs IS refreshed
+ * from the newest duplicate, though: the later record saw the corrected
+ * start time, and a keeper carrying a stale one would keep landing in the
+ * wrong day's bucket and mis-time its own grading window.
+ *
+ * Only ever collapses picks that are still pending or all-unsettled. If any
+ * duplicate already carries a real graded result, the group is left entirely
+ * alone and reported instead — deleting settled history is not a repair this
+ * should make unattended.
+ */
+async function dedupeEventPicksOnDate(env, storedDate, now) {
+  const manifestKey = `slate:${storedDate}:manifest`;
+  const manifestRaw = await env.POTD_KV.get(manifestKey);
+  if (!manifestRaw) return { collapsed: [], skippedGraded: [] };
+
+  const manifest = JSON.parse(manifestRaw);
+  const pickRaws = await Promise.all(
+    manifest.pickIds.map((id) => env.POTD_KV.get(`slate:${storedDate}:pick:${id}`)),
+  );
+
+  const byEvent = new Map();
+  manifest.pickIds.forEach((pickId, i) => {
+    if (!pickRaws[i]) return;
+    const pick = JSON.parse(pickRaws[i]);
+    if (!byEvent.has(pick.eventId)) byEvent.set(pick.eventId, []);
+    byEvent.get(pick.eventId).push({ pickId, pick });
+  });
+
+  const collapsed = [];
+  const skippedGraded = [];
+  const dropIds = [];
+  const rewrites = [];
+
+  for (const [eventId, group] of byEvent) {
+    if (group.length < 2) continue;
+
+    const graded = group.filter(({ pick }) => pick.status !== 'pending');
+    if (graded.length) {
+      skippedGraded.push({
+        eventId,
+        storedDate,
+        picks: group.map(({ pickId, pick }) => ({ pickId, selection: pick.selection, status: pick.status })),
+      });
+      continue;
+    }
+
+    const sorted = [...group].sort((a, b) => a.pick.generatedAt - b.pick.generatedAt);
+    const keeper = sorted[0];
+    const dropped = sorted.slice(1);
+    // The newest duplicate saw the most recently corrected start time.
+    const freshestCommenceMs = sorted.reduce(
+      (best, cur) => (cur.pick.generatedAt > best.generatedAt ? cur.pick : best), keeper.pick,
+    ).commenceMs;
+
+    if (keeper.pick.commenceMs !== freshestCommenceMs) {
+      keeper.pick.commenceMs = freshestCommenceMs;
+      rewrites.push({ pickId: keeper.pickId, patchedRaw: JSON.stringify(keeper.pick) });
+    }
+
+    dropIds.push(...dropped.map((d) => d.pickId));
+    collapsed.push({
+      eventId,
+      storedDate,
+      kept: { pickId: keeper.pickId, selection: keeper.pick.selection },
+      dropped: dropped.map(({ pickId, pick }) => ({ pickId, selection: pick.selection })),
+    });
+  }
+
+  if (!dropIds.length && !rewrites.length) return { collapsed, skippedGraded };
+
+  await Promise.all([
+    ...rewrites.map(({ pickId, patchedRaw }) =>
+      env.POTD_KV.put(`slate:${storedDate}:pick:${pickId}`, patchedRaw, { expirationTtl: KV_TTL_SECONDS })),
+    ...dropIds.map((id) => env.POTD_KV.delete(`slate:${storedDate}:pick:${id}`)),
+  ]);
+
+  if (dropIds.length) {
+    const dropSet = new Set(dropIds);
+    manifest.pickIds = manifest.pickIds.filter((id) => !dropSet.has(id));
+    manifest.lastUpdatedAt = now;
+    await env.POTD_KV.put(manifestKey, JSON.stringify(manifest), { expirationTtl: KV_TTL_SECONDS });
+  }
+
+  return { collapsed, skippedGraded };
+}
+
+/** Owner-triggered diagnostic/repair over the last `days` of Full Slate tracking — see movePicksOffDate/dedupeEventPicksOnDate for the actual logic. */
 export async function migrateFullSlatePickDates(env, ctx, now = Date.now(), { days = 5 } = {}) {
   const dateKeys = Array.from({ length: days }, (_, i) => etDate(now - i * 86400000));
   const results = await Promise.all(dateKeys.map((d) => movePicksOffDate(env, d, now)));
   const misdated = results.flatMap((r) => r.misdated);
   const moved = results.flatMap((r) => r.moved);
   const relabeled = results.flatMap((r) => r.relabeled);
+
+  // Dedupe AFTER the date fixes above, not before: two picks on one event
+  // only land on the same day once each has been filed under its match's
+  // real date, so running this first would miss exactly the case that
+  // motivated it.
+  const dedupeResults = await Promise.all(dateKeys.map((d) => dedupeEventPicksOnDate(env, d, now)));
+  const collapsed = dedupeResults.flatMap((r) => r.collapsed);
+  const skippedGraded = dedupeResults.flatMap((r) => r.skippedGraded);
+
   return {
     misdated,
     moved,
     relabeled,
-    summary: `Found ${misdated.length} misdated picks, moved ${moved.length} to correct dates, relabeled ${relabeled.length} already-relocated picks whose own dateKey field was still stale`,
+    collapsed,
+    skippedGraded,
+    summary:
+      `Found ${misdated.length} misdated picks, moved ${moved.length} to correct dates, ` +
+      `relabeled ${relabeled.length} already-relocated picks whose own dateKey field was still stale, ` +
+      `collapsed ${collapsed.length} events that had been tracked more than once` +
+      (skippedGraded.length ? `, left ${skippedGraded.length} duplicate event(s) alone because they carry graded results` : ''),
   };
 }
 
 /**
- * Runs every hourly tick alongside runFullSlateClvSnapshot — catches any
+ * Runs every tick alongside runFullSlateClvSnapshot — catches any
  * still-pending pick whose commenceMs has drifted onto a different ET
  * calendar day than the one it's filed under (a live tournament reschedule
  * between the pick locking in and its match's real start time, most often —
@@ -463,10 +612,21 @@ export async function migrateFullSlatePickDates(env, ctx, now = Date.now(), { da
  * already been tracked) and moves it, the same way the admin migration does.
  * Only ever touches pending picks — a graded one's day is already final and
  * correctly reflects when its game actually happened.
+ *
+ * Then collapses any event left holding more than one still-pending pick,
+ * which is the state a reschedule used to produce before
+ * EVENT_DEDUPE_LOOKBACK_DAYS closed the hole at pick time. Runs after the
+ * date fixes for the reason dedupeEventPicksOnDate's own comment gives:
+ * duplicates only converge onto one day once both are filed correctly.
+ * Graded groups are left alone here exactly as they are in the admin path.
  */
 export async function runFullSlateDateResync(env, ctx, now = Date.now(), { days = 2 } = {}) {
   const dateKeys = Array.from({ length: days }, (_, i) => etDate(now - i * 86400000));
   const results = await Promise.all(dateKeys.map((d) => movePicksOffDate(env, d, now, { pendingOnly: true })));
   const moved = results.flatMap((r) => r.moved);
-  return { moved: moved.length };
+
+  const dedupeResults = await Promise.all(dateKeys.map((d) => dedupeEventPicksOnDate(env, d, now)));
+  const collapsed = dedupeResults.flatMap((r) => r.collapsed);
+
+  return { moved: moved.length, collapsed: collapsed.length };
 }
