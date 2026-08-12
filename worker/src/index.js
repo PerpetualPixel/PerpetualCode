@@ -46,6 +46,7 @@ import {
 import { runMlbPropsScan, runMlbPropsGrading, getAllMlbPropsTracked } from './mlb-props.js';
 import { runNflPropsScan, runNflPropsGrading, getAllNflPropsTracked } from './nfl-props.js';
 import { runWnbaPropsScan, runWnbaPropsGrading, getAllWnbaPropsTracked } from './wnba-props.js';
+import { runPropPlayDaily, runPropPlayGrading } from './prop-play.js';
 import { runNhlPropsScan, runNhlPropsGrading, getAllNhlPropsTracked } from './nhl-props.js';
 import { runPotdDaily, runPotdClvSnapshot, runPotdGrading, backfillPotdAnalysis, getPotd, getPotdLeaning, getPotdHistory } from './potd.js';
 import { getOrGenerateAnalysis } from './analysis.js';
@@ -434,6 +435,11 @@ export default {
     // dynamic window, see worker/src/wnba-props.js.
     ctx.waitUntil(runWnbaPropsScan(env, ctx, now, { fetchFullSlate: () => fetchFullSlateEvents(env, ctx) }));
     ctx.waitUntil(runWnbaPropsGrading(env, ctx, now));
+    // Prop Play of the Day — one safe-line straight/2-leg parlay with a
+    // stats-backed writeup, built once pregame and graded from ESPN
+    // boxscores. See worker/src/prop-play.js.
+    ctx.waitUntil(runPropPlayDaily(env, ctx, now));
+    ctx.waitUntil(runPropPlayGrading(env, ctx, now));
 
     // Every tick: NHL player props (Shots on Goal) — same per-game dynamic
     // window, see worker/src/nhl-props.js.
@@ -1021,6 +1027,32 @@ export default {
         );
       } catch (error) {
         return json({ context: null, reason: String(error).slice(0, 120) }, { headers: cors });
+      }
+    }
+
+    if (pathname === '/prop-play') {
+      if (request.method !== 'GET') {
+        return json({ error: 'Method not allowed' }, { status: 405, headers: cors });
+      }
+      try {
+        // ?date=YYYY-MM-DD reads a past day's record; ?debug=1 re-runs the
+        // selection with its full decision trace (which legs were rejected
+        // and why) — the shapes ESPN and the alternate markets return can't
+        // be verified anywhere but live, so the trace IS the debugger.
+        const url = new URL(request.url);
+        const debug = url.searchParams.get('debug') === '1';
+        const date = url.searchParams.get('date');
+        if (date && /^\d{4}-\d{2}-\d{2}$/.test(date)) {
+          const raw = await env.POTD_KV.get(`propplay:${date}`);
+          return json({ propPlay: raw ? JSON.parse(raw) : null }, { headers: { ...cors, 'Cache-Control': 'public, max-age=300' } });
+        }
+        const result = await runPropPlayDaily(env, ctx, Date.now(), { debug });
+        return json(
+          { propPlay: result.record ?? null, ...(debug ? { created: result.created, reason: result.reason ?? null, trace: result.trace ?? null } : {}) },
+          { headers: { ...cors, 'Cache-Control': debug ? 'no-store' : 'public, max-age=300' } },
+        );
+      } catch (error) {
+        return json({ propPlay: null, reason: String(error).slice(0, 160) }, { headers: cors });
       }
     }
 
