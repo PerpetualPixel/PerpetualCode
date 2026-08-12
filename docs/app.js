@@ -3454,7 +3454,12 @@ function ensureBoxScore(game, { live = false } = {}) {
   // scoreboard. Without it every finished game silently lost its grid at
   // the next ET midnight — yesterday's fixtures aren't on today's page.
   url.searchParams.set('date', etDateString(game.commenceMs).replaceAll('-', ''));
-  fetch(url, { headers: { Accept: 'application/json' } })
+  // no-store: the poll cadence (60s) and the worker's own short TTLs make a
+  // browser HTTP cache worthless here, and it has real teeth — a cached
+  // {box:null} from an older worker keeps being served back, no network
+  // request made, for its whole max-age, which reads as "still no grid"
+  // minutes after the worker was actually fixed.
+  fetch(url, { headers: { Accept: 'application/json' }, cache: 'no-store' })
     .then((r) => (r.ok ? r.json() : null))
     .then((data) => {
       // The deployed worker stamps every /boxscore answer with supportsLive
@@ -3468,16 +3473,40 @@ function ensureBoxScore(game, { live = false } = {}) {
           'The deployed worker predates live box scores — live cards will not show innings until it is redeployed (git pull, then wrangler deploy from worker/).',
         );
       }
-      if (!data?.box) return;
+      if (!data?.box) {
+        // A boxless answer is normal (pregame, unmatched fixture) but must
+        // not be invisible: the reason names which gate refused, per fixture,
+        // right in the console — the difference between diagnosing this in
+        // one screenshot and guessing at it for three rounds.
+        boxScoreDiagnostic(game, data ? `no box (reason: ${data.reason ?? 'not reported'})` : 'response not ok');
+        return;
+      }
       const previous = state.boxScores.get(game.eventId);
       state.boxScores.set(game.eventId, data.box);
+      // The success case logs too (once per game-state change, so roughly
+      // once a half-inning): without it, "the box arrived but didn't render"
+      // and "the box never arrived" are the same blank card.
+      boxScoreDiagnostic(game, `box ok (${data.box.status?.detail ?? (data.box.status?.completed ? 'final' : 'in progress')})`);
       // Re-render only on an actual change. A live game is re-asked every
       // minute but only turns a half-inning every few, and renderFullSlate()
       // re-enters this function — so re-rendering unconditionally would churn
       // the whole slate (and drop any open drawer) for identical data.
       if (JSON.stringify(previous) !== JSON.stringify(data.box)) renderFullSlate();
     })
-    .catch(() => { /* the plain score card is the fallback */ });
+    // A failed fetch must say so: a fully silent catch is how a blocked or
+    // CORS-refused request stays indistinguishable from "no data" forever.
+    // The card itself still degrades to the plain score line either way.
+    .catch((err) => boxScoreDiagnostic(game, `fetch failed: ${err?.message ?? err}`));
+}
+
+// One console line per fixture+outcome for the /boxscore path — repeated
+// polls of an unchanged outcome stay quiet, a changed outcome logs again.
+const boxScoreDiagnosticsSeen = new Set();
+function boxScoreDiagnostic(game, message) {
+  const key = `${game.eventId}:${message}`;
+  if (boxScoreDiagnosticsSeen.has(key)) return;
+  boxScoreDiagnosticsSeen.add(key);
+  console.info(`[boxscore] ${game.away} @ ${game.home}: ${message}`);
 }
 
 /**
