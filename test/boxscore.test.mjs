@@ -58,17 +58,53 @@ test('boxFromScoreboard extracts innings, R/H/E, venue, and winner for a matched
   assert.equal(box.away.winner, false);
 });
 
-test('boxFromScoreboard names its refusals: unmatched fixture, unreadable status', () => {
+test('boxFromScoreboard refuses an unmatched fixture', () => {
   assert.deepEqual(
     boxFromScoreboard(mlbScoreboard(), { home: 'Arizona Diamondbacks', away: 'Colorado Rockies', league: MLB_LEAGUE }),
     { box: null, reason: 'unmatched' },
     'a fixture not on this scoreboard must never borrow another game\'s box',
   );
-  assert.deepEqual(
-    boxFromScoreboard(mlbScoreboard({ completed: false }), { home: 'Toronto Blue Jays', away: 'Boston Red Sox', league: MLB_LEAGUE }),
-    { box: null, reason: 'unreadable_status' },
-    'neither a state nor a completed flag: a shape this code cannot read, so no grid',
+});
+
+test('boxFromScoreboard serves a statusless payload once linescores exist', () => {
+  // Regression for the live-cards bug: a payload with no readable state but
+  // real linescore entries was refused as "unreadable", which is exactly how
+  // every live card stayed grid-less while finished ones (completed: true)
+  // rendered. Linescores only exist once play has started — that IS the
+  // signal, so it serves, as in-progress.
+  const { box, reason } = boxFromScoreboard(
+    mlbScoreboard({ completed: false }),
+    { home: 'Toronto Blue Jays', away: 'Boston Red Sox', league: MLB_LEAGUE },
   );
+  assert.equal(reason, 'ok');
+  assert.ok(box);
+  assert.equal(box.status.completed, false);
+  assert.equal(box.home.total, 2);
+});
+
+test('boxFromScoreboard refuses a game with nothing to show', () => {
+  // No status anywhere and no linescore entries: hasn't started.
+  const sb = mlbScoreboard({ completed: false });
+  for (const c of sb.events[0].competitions[0].competitors) {
+    delete c.linescores;
+    delete c.winner;
+  }
+  assert.deepEqual(
+    boxFromScoreboard(sb, { home: 'Toronto Blue Jays', away: 'Boston Red Sox', league: MLB_LEAGUE }),
+    { box: null, reason: 'not_started' },
+  );
+});
+
+test('boxFromScoreboard reads status from the event when the competition lacks one', () => {
+  // Some leagues' scoreboard pages hang status off the event rather than the
+  // competition (the WNBA finished-card case) — both spots are read.
+  const sb = mlbScoreboard({ completed: false });
+  delete sb.events[0].competitions[0].status;
+  sb.events[0].status = { period: 4, type: { state: 'post', completed: true, shortDetail: 'Final' } };
+  const { box, reason } = boxFromScoreboard(sb, { home: 'Toronto Blue Jays', away: 'Boston Red Sox', league: MLB_LEAGUE });
+  assert.equal(reason, 'ok');
+  assert.equal(box.status.completed, true);
+  assert.equal(box.status.detail, 'Final');
 });
 
 // -- live (in-progress) boxes ------------------------------------------------
@@ -102,13 +138,15 @@ test('boxFromScoreboard serves an in-progress game with its status and partial l
   assert.deepEqual(box.away.linescores, [1, 0, 0, 0, null, null, null, null, null]);
 });
 
-test('boxFromScoreboard returns null before first pitch', () => {
+test('boxFromScoreboard returns null before first pitch, even over stray linescores', () => {
   // A scheduled game has no line to show, and the card's pregame layout is
-  // already the right one — a grid of nine em dashes would be noise.
+  // already the right one — a grid of nine em dashes would be noise. An
+  // explicit 'pre' from ESPN outranks every other started-signal: this
+  // fixture even carries linescore entries, and 'pre' still wins.
   const sb = liveMlbScoreboard({ state: 'pre', detail: '7:07 PM ET', period: 0 });
   assert.deepEqual(
     boxFromScoreboard(sb, { home: 'Toronto Blue Jays', away: 'Boston Red Sox', league: MLB_LEAGUE }),
-    { box: null, reason: 'pregame' },
+    { box: null, reason: 'not_started' },
   );
 });
 
