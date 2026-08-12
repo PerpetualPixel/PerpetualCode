@@ -46,7 +46,7 @@ import {
 import { runMlbPropsScan, runMlbPropsGrading, getAllMlbPropsTracked } from './mlb-props.js';
 import { runNflPropsScan, runNflPropsGrading, getAllNflPropsTracked } from './nfl-props.js';
 import { runWnbaPropsScan, runWnbaPropsGrading, getAllWnbaPropsTracked } from './wnba-props.js';
-import { runPropPlayDaily, runPropPlayGrading } from './prop-play.js';
+import { runPropPlayDaily, runPropPlayGrading, getAllPropPlays } from './prop-play.js';
 import { runNhlPropsScan, runNhlPropsGrading, getAllNhlPropsTracked } from './nhl-props.js';
 import { runPotdDaily, runPotdClvSnapshot, runPotdGrading, backfillPotdAnalysis, getPotd, getPotdLeaning, getPotdHistory } from './potd.js';
 import { getOrGenerateAnalysis } from './analysis.js';
@@ -1027,6 +1027,15 @@ export default {
         );
       } catch (error) {
         return json({ context: null, reason: String(error).slice(0, 120) }, { headers: cors });
+      }
+    }
+
+    if (pathname === '/prop-play-history' && request.method === 'GET') {
+      try {
+        const picks = await getAllPropPlays(env);
+        return json({ picks }, { headers: { ...cors, 'Cache-Control': 'public, max-age=300' } });
+      } catch (error) {
+        return json({ picks: [], reason: String(error).slice(0, 120) }, { headers: cors });
       }
     }
 

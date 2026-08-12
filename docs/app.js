@@ -776,7 +776,7 @@ const state = {
   activeTracker: 'top5',
   // All three trackers' full history, fetched once per dashboard open and
   // re-rendered from on toggle — not re-fetched per click.
-  trackerPicks: { fullslate: [], top5: [], potd: [] },
+  trackerPicks: { fullslate: [], top5: [], potd: [], propplay: [] },
   // List/Calendar/Graph — which of the three views renders the currently
   // active tracker's picks below the metric cards.
   trackerView: 'list',
@@ -5107,6 +5107,22 @@ function renderTop5DayBlock(day, open = false) {
 }
 
 /** Every Play of the Day pick the worker has ever tracked (see worker/src/potd.js's getPotdHistory), up to 90 days. */
+/** Prop Play of the Day history — one record per PLAY (a 2-leg parlay is
+ * one 5U bet: any missed leg loses the whole play). Same record shape as
+ * the other trackers, so every renderer works unchanged. */
+async function fetchPropPlayHistory() {
+  if (!CONFIG.WORKER_URL) return [];
+  try {
+    const url = new URL('/prop-play-history', CONFIG.WORKER_URL);
+    const res = await fetch(url, { headers: { Accept: 'application/json' } });
+    if (!res.ok) return [];
+    const data = await res.json();
+    return data.picks ?? [];
+  } catch {
+    return [];
+  }
+}
+
 async function fetchPotdHistory() {
   if (!CONFIG.WORKER_URL) return [];
   try {
@@ -5138,6 +5154,7 @@ const TRACKER_EMPTY_MESSAGES = {
   fullslate: 'Nothing tracked yet. The worker locks in one pick per game, across every sport, at 2am ET.',
   top5: 'Nothing tracked yet. The worker generates Pixel\'s Picks at 2am ET.',
   potd: 'Nothing tracked yet. The worker generates Play of the Day at 2am ET.',
+  propplay: 'Nothing tracked yet. The Prop Play of the Day posts pregame each day.',
 };
 
 /**
@@ -5153,10 +5170,10 @@ const TRACKER_EMPTY_MESSAGES = {
  * tracker tab is active (see renderTrackerSection's own comment).
  */
 async function loadTrackerHistories() {
-  const [fullSlate, top5, potd] = await Promise.all([
-    fetchFullSlateHistory(), fetchTop5History(), fetchPotdHistory(),
+  const [fullSlate, top5, potd, propplay] = await Promise.all([
+    fetchFullSlateHistory(), fetchTop5History(), fetchPotdHistory(), fetchPropPlayHistory(),
   ]);
-  state.trackerPicks = { fullslate: fullSlate, top5, potd };
+  state.trackerPicks = { fullslate: fullSlate, top5, potd, propplay };
   renderTrackerSection();
   return top5;
 }

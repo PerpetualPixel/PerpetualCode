@@ -229,7 +229,9 @@ test('the stored record carries a headline, price, and tracking fields', async (
   assert.equal(record.writeup.sections.find((s) => s.title === 'The Market & Price Case'), undefined);
 
   assert.equal(record.pick.status, 'pending');
-  assert.equal(record.pick.suggested_stake, 20);
+  // 5U play (product direction): FLAT_UNIT_STAKE 20 x 5 — the Play of the
+  // Day and the Prop Play are the two flagship 5-unit plays.
+  assert.equal(record.pick.suggested_stake, 100);
   assert.equal(record.pick.dateKey, '2026-08-05');
   assert.equal(record.pick.clv.openAmerican, record.pick.american);
   assert.equal(record.pick.result, null);
