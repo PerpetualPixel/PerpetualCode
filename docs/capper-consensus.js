@@ -134,6 +134,17 @@ export function totalsSideOf(selection) {
 }
 
 /**
+ * Whether the feed says this candidate's fight has been cancelled — pulled
+ * from ESPN's official card by MMA_Engine's event_card annotation and
+ * carried on every pick as `card_status`. A fight with any cancelled entry
+ * is cancelled (the status is fight-level; every entry of the fight carries
+ * the same value). False on feeds built before the field existed.
+ */
+export function fightCancelled(feed, candidate) {
+  return findFightPicks(feed, candidate).some((p) => p.card_status === 'cancelled');
+}
+
+/**
  * The -1..1 signal for one MMA candidate, or null when the feed has no
  * matching entry for its fight+market or the candidate's side can't be
  * resolved. `aligned` says whether the candidate IS the consensus side; the
@@ -143,8 +154,15 @@ export function totalsSideOf(selection) {
  * matched by fighter surname) and rounds totals (totals ↔ the feed's
  * over_under entry, matched by direction — see totalsSideOf). Everything
  * else (spreads, props) returns null: the feed has no entry shaped like it.
+ *
+ * A cancelled fight returns null for every market: a consensus about a bout
+ * that is no longer happening must not move any candidate's grade, in either
+ * direction. The record (with its `cancelled` flag) still reaches the UI via
+ * fightConsensusRecord, so the drawer can say WHY nothing is being scored.
  */
 export function capperConsensusSignal(feed, candidate) {
+  if (fightCancelled(feed, candidate)) return null;
+
   if (candidate.marketKey === 'h2h') {
     const pick = findConsensusPick(feed, candidate);
     if (!pick) return null;
@@ -196,6 +214,10 @@ export function consensusRecord(pick, feed, { aligned = null, signal = null, sco
     strength: pick.strength,
     tier: pick.tier,
     pickCount: pick.pick_count,
+    // Fight-level card status from MMA_Engine's ESPN annotation. The drawer
+    // banners a cancelled fight; capperConsensusSignal already refuses to
+    // score one. False (not null) on feeds predating the field.
+    cancelled: pick.card_status === 'cancelled',
     // The backing cappers' own reasoning for this selection, verbatim from
     // the feed (MMA_Engine exports them trust-ordered) — [] on a feed built
     // before comments existed.

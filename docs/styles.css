@@ -1288,6 +1288,17 @@ input[type="range"]:focus-visible {
   color: var(--muted);
 }
 
+/* The drawer's cancelled-fight banner: the consensus below it is history,
+   not a live read. */
+.capper-consensus .consensus-cancelled {
+  color: var(--danger);
+  background: rgba(239, 68, 68, 0.1);
+  border: 1px solid rgba(239, 68, 68, 0.35);
+  border-radius: 8px;
+  padding: 8px 10px;
+  font-weight: 600;
+}
+
 .capper-comments-title {
   margin: 10px 0 6px;
   font-size: 0.78rem;
@@ -2872,6 +2883,22 @@ input[type="range"]:focus-visible {
   letter-spacing: 0.06em;
   text-transform: uppercase;
 }
+
+/* An MMA bout the official card no longer carries (per MMA_Engine's ESPN
+   annotation) — bannered and dimmed, never silently removed. */
+.slate-cancelled-badge {
+  margin-left: 6px;
+  font-size: 0.7rem;
+  font-weight: 800;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+  color: var(--danger);
+  background: rgba(239, 68, 68, 0.12);
+  border: 1px solid rgba(239, 68, 68, 0.4);
+  border-radius: 999px;
+  padding: 1px 8px;
+}
+.slate-game.is-cancelled { opacity: 0.72; }
 
 .slate-team-score {
   font-family: var(--mono);

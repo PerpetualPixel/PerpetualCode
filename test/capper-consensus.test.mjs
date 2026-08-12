@@ -9,6 +9,7 @@ import {
   fetchCapperConsensus,
   fightConsensusRecord,
   fightConsensusComments,
+  fightCancelled,
   consensusRescore,
   totalsSideOf,
   MMA_CONSENSUS_SWING,
@@ -330,4 +331,45 @@ test('a failed refetch keeps the last good feed rather than blanking the board',
   };
   const after = await fetchCapperConsensus('https://example.test/c.json', { now: now + 500, force: true });
   assert.equal(after, good);
+});
+
+/* ── cancelled fights (card_status from MMA_Engine's ESPN annotation) ──── */
+
+const CANCELLED_FEED = {
+  ...FEED,
+  picks: FEED.picks.map((p) =>
+    p.fight.includes('Makhache') ? { ...p, card_status: 'cancelled' } : { ...p, card_status: 'on_card' }),
+};
+
+test('fightCancelled reads the fight-level card status', () => {
+  assert.equal(fightCancelled(CANCELLED_FEED, mmaCandidate()), true);
+  assert.equal(fightCancelled(FEED, mmaCandidate()), false, 'feeds without the field are never cancelled');
+  assert.equal(
+    fightCancelled(CANCELLED_FEED, mmaCandidate({ home: 'Mansour Abdul-Malik', away: 'Dustin Stoltzfus' })),
+    false,
+  );
+});
+
+test('a cancelled fight never moves a grade, in either direction', () => {
+  // Aligned h2h, opposed h2h, and the totals market — all must refuse to
+  // score once the bout is off the card.
+  assert.equal(capperConsensusSignal(CANCELLED_FEED, mmaCandidate()), null);
+  assert.equal(capperConsensusSignal(CANCELLED_FEED, mmaCandidate({ outcomeName: 'Ian Garry' })), null);
+  assert.equal(
+    capperConsensusSignal(CANCELLED_FEED, mmaCandidate({ marketKey: 'totals', outcomeName: 'Under', point: 4.5 })),
+    null,
+  );
+  // The unaffected fight on the same feed still scores.
+  const other = capperConsensusSignal(
+    CANCELLED_FEED,
+    mmaCandidate({ home: 'Mansour Abdul-Malik', away: 'Dustin Stoltzfus', outcomeName: 'Mansour Abdul-Malik' }),
+  );
+  assert.ok(other && other.aligned);
+});
+
+test('the drawer record still surfaces the cancelled consensus, flagged', () => {
+  const record = fightConsensusRecord(CANCELLED_FEED, mmaCandidate());
+  assert.ok(record, 'the consensus stays visible — bannered, not removed');
+  assert.equal(record.cancelled, true);
+  assert.equal(fightConsensusRecord(FEED, mmaCandidate()).cancelled, false);
 });
