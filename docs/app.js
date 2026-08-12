@@ -2503,11 +2503,21 @@ async function openStatsDrawer(leg, opposite = null, { fullscreen = false, oddsO
     `${homeLogo ? `<img class="stats-meta-logo" src="${esc(homeLogo)}" alt="" loading="lazy">` : ''}${esc(leg.home)}` +
     `</strong> · ${esc(leg.marketLabel)} · ` +
     `${esc(dateFmt.format(new Date(leg.commenceMs)))}</p>`;
+  // MMA drawers name BOTH plays (explicit product direction): the Main Play
+  // (what's tracked) and the fight's best value straight from the cappers'
+  // own priced entries, when one exists and isn't already the main play.
+  const mmaValueStraight = isMma(leg.sportKey) ? bestValueStraight(cachedConsensusFeed(), leg) : null;
+  const valuePlayHtml = mmaValueStraight && mmaValueStraight.selection !== leg.selection
+    ? `<div class="main-play-value">Value play: <strong>${esc(mmaValueStraight.selection)}</strong>
+        <span class="main-play-price">${esc(formatAmerican(mmaValueStraight.quoted_odds.american))}</span>
+        <span class="main-play-value-note">cappers' price · strength ${esc(String(mmaValueStraight.strength))}/10</span></div>`
+    : '';
   const mainPlayHtml = `
     <div class="main-play-callout">
       <div class="main-play-label">Main Play</div>
       <div class="main-play-selection">${esc(leg.selection)} <span class="main-play-price">${esc(formatAmerican(leg.american))}</span></div>
       ${stakeLineHtml(suggestedStake(leg), 'main-play-stake')}
+      ${valuePlayHtml}
     </div>`;
 
   // Fast initial paint: the bet itself (selection, price, suggested stake),
@@ -3329,7 +3339,7 @@ function slateCell(cand, opposite, { totalLabel, suppressRec = false, isRec = fa
             data-slate-cell="${idx}" title="${esc(cand.selection)}">${esc(label)}</button>`;
 }
 
-function slateTeamRow(game, side, { gameState, scoreEvent, recommendedId, hideMarkets = false }) {
+function slateTeamRow(game, side, { gameState, scoreEvent, recommendedId, hideMarkets = false, mlOnly = false }) {
   const isAway = side === 'away';
   const team = isAway ? game.away : game.home;
   const spread = isAway ? game.spreads.away : game.spreads.home;
@@ -3368,7 +3378,9 @@ function slateTeamRow(game, side, { gameState, scoreEvent, recommendedId, hideMa
         ${esc(team)}${winPct ? ` <span class="slate-team-pct">${winPct}</span>` : ''}
         ${score != null ? ` <span class="slate-team-score">${score}</span>` : ''}
       </span>
-      ${hideMarkets ? '' : `
+      ${hideMarkets ? '' : mlOnly ? `
+      ${slateCell(h2h, oppH2h, { suppressRec, isRec: h2h && h2h.id === recommendedId })}
+      ` : `
       ${slateCell(spread, oppSpread, { suppressRec, isRec: spread && spread.id === recommendedId })}
       ${slateCell(total, oppTotal, { totalLabel, suppressRec, isRec: total && total.id === recommendedId })}
       ${slateCell(h2h, oppH2h, { suppressRec, isRec: h2h && h2h.id === recommendedId })}
@@ -3410,6 +3422,14 @@ function bestCandidateForGame(game) {
   // answer on its own; this makes the preference structural rather than
   // hoping the arithmetic clears every gap.
   const aligned = (list) => list.filter((c) => c.capperConsensus?.scored && c.capperConsensus.aligned);
+  // The card's highlighted pick is the WINNER CALL (explicit product
+  // direction: the ML picks chase a near-perfect fight card, per the
+  // engine's most-correct cappers) — so the consensus-aligned MONEYLINE
+  // side wins the highlight outright whenever the cappers called the
+  // fight, price band or not. Other aligned markets only lead when the
+  // consensus never named a winner.
+  const alignedMl = aligned(all).filter((c) => c.marketKey === 'h2h');
+  if (alignedMl.length) return alignedMl.reduce((best, c) => (c.score > best.score ? c : best));
   const alignedPool = aligned(inBand).length ? aligned(inBand) : aligned(all);
   if (alignedPool.length) return alignedPool.reduce((best, c) => (c.score > best.score ? c : best));
 
@@ -3706,7 +3726,13 @@ function slateGameHtml(game) {
   // prices are stale and the algorithm's read was a pregame one, so it's
   // dropped for live games exactly like it already was for finished ones.
   const hideMarkets = gameState !== 'upcoming';
-  const rowProps = { gameState, scoreEvent, recommendedId: rec?.id ?? null, hideMarkets };
+  // MMA cards are pure fight-prediction cards (explicit product direction):
+  // moneyline only — the spread/total columns come off, and the highlighted
+  // ML side is the consensus winner call for every fight, chasing a perfect
+  // card. The rounds total still exists as data (the drawer and value play
+  // use it) — it just no longer competes for space or attention on the card.
+  const mlOnly = isMmaSportKey(game.sportKey);
+  const rowProps = { gameState, scoreEvent, recommendedId: rec?.id ?? null, hideMarkets, mlOnly };
 
   // MMA_Engine's ESPN card annotation (carried on every picks.json entry as
   // card_status) can know a bout is off before the odds feed drops its
@@ -3717,6 +3743,7 @@ function slateGameHtml(game) {
 
   const cardClass = [
     'slate-game',
+    mlOnly ? 'ml-only' : '',
     gameState === 'live' ? 'is-live' : '',
     mmaCancelled ? 'is-cancelled' : '',
     outcome ? `pick-${outcome}` : '', // pick-won -> green border, pick-lost -> red border
@@ -3802,7 +3829,10 @@ function slateGameHtml(game) {
       ${leanBadgeHtml}
       ${finishedDetail}
       ${liveDetail}
-      ${hideMarkets ? '' : `
+      ${hideMarkets ? '' : mlOnly ? `
+      <div class="slate-header-row ml-only">
+        <span></span><span>ML</span>
+      </div>` : `
       <div class="slate-header-row">
         <span></span><span>Spread</span><span>O/U</span><span>ML</span>
       </div>`}
