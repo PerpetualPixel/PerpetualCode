@@ -4172,6 +4172,16 @@ function renderFullSlate() {
       html += '</div>'; // Close last event section
     }
 
+    // The MMA Consensus Engine credit shows ONLY under the MMA slate — the
+    // one league it powers — never on other leagues' boards.
+    if (group.id === 'mma') {
+      html += `<a class="mma-engine-ad" href="https://perpetualpixel.github.io/MMA_Engine/" target="_blank" rel="noopener">
+        <span class="mma-engine-ad-icon">🥊</span>
+        <span class="mma-engine-ad-text"><strong>MMA picks powered by the MMA Consensus Engine</strong> —
+        the trust-weighted consensus of the sport's most accurate cappers. See every fight's full breakdown &rarr;</span>
+      </a>`;
+    }
+
     el.slateBody.innerHTML = html;
   } else {
     const emptyMsg = state.slateGameFilter !== 'upcoming'
