@@ -24,10 +24,10 @@ import { fetchContext, hasContext } from './context.js';
 import { fetchMmaContext } from './mma.js';
 import { fetchStartingPitchers, fetchSituationalSplits } from './mlb-stats.js';
 import { tennisRecentForm, tennisHeadToHead } from '../../docs/insights.js';
+import { loadTennisArchive } from './tennis-archive.js';
 
 const MODEL = 'claude-haiku-4-5-20251001';
 const CACHE_TTL_DAYS = 2;
-const TENNIS_ARCHIVE_BASE = 'https://perpetualpicks.com/data'; // canonical URL directly — the miguelsgarcia4.github.io host 301-redirects here anyway (GitHub Pages' own custom-domain redirect), an extra hop worth skipping
 const ALL_SURFACES = { test: () => true };
 
 function etDate(ms) {
@@ -63,24 +63,6 @@ export const MLB_ABBR_MAP = {
   'Milwaukee Brewers': 'mil', 'Pittsburgh Pirates': 'pit', 'St. Louis Cardinals': 'stl',
 };
 export const mlbAbbr = (teamName) => MLB_ABBR_MAP[teamName] ?? null;
-
-// Module-scope: survives across requests in the same isolate, same pattern
-// potd.js already uses for this exact static asset.
-let tennisCache = null;
-async function loadTennisArchive(sportKey) {
-  const tour = /wta/i.test(sportKey) ? 'wta' : 'atp';
-  tennisCache ??= {};
-  if (tennisCache[tour]) return tennisCache[tour];
-  try {
-    const r = await fetch(`${TENNIS_ARCHIVE_BASE}/tennis-${tour}.json`);
-    if (!r.ok) console.error(`Tennis archive fetch (${tour}) returned ${r.status}`);
-    tennisCache[tour] = r.ok ? await r.json() : null;
-  } catch (e) {
-    console.error(`Tennis archive fetch (${tour}) failed:`, e);
-    tennisCache[tour] = null;
-  }
-  return tennisCache[tour];
-}
 
 function teamFactSheet(context) {
   if (!context) return null;
