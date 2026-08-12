@@ -1,16 +1,21 @@
 /**
- * Finished-game box scores for the Full Slate's finished cards — per-inning
- * runs plus R/H/E for MLB, per-quarter points for NFL/NCAAF/WNBA/NBA — read
- * from the same cdn.espn.com scoreboard host and event-matching logic
+ * Box scores for the Full Slate's live and finished cards — per-inning runs
+ * plus R/H/E for MLB, per-quarter points for NFL/NCAAF/WNBA/NBA — read from
+ * the same cdn.espn.com scoreboard host and event-matching logic
  * worker/src/context.js already uses (imported, not duplicated: attributing
  * the wrong game's box score to a card is this feature's one fabrication
  * failure mode, so the confidence-scored matcher must be THE matcher).
  *
+ * In-progress games are served too, carrying `status` ('in'/'post' plus
+ * ESPN's own "Top 5th" wording): the odds feed's /scores gives a running
+ * total and nothing else, so the inning a live game is in — and the innings
+ * its runs came in — are only knowable from here.
+ *
  * Free — never touches the odds feed. Returns { box: null } whenever the
- * fixture can't be matched with confidence or the game isn't completed on
- * ESPN's side yet — the card then simply keeps its existing final-score
- * line, the same "shorter card, never a wrong one" convention every other
- * ESPN-backed feature here follows.
+ * fixture can't be matched with confidence or the game hasn't started on
+ * ESPN's side — the card then simply keeps its existing score line, the
+ * same "shorter card, never a wrong one" convention every other ESPN-backed
+ * feature here follows.
  *
  * Sports without a per-period source deliberately aren't here: NHL has no
  * scoreboard page at all on the reachable ESPN host (see context.js's
@@ -36,7 +41,11 @@ const BOX_LEAGUES = {
 
 export const hasBoxScore = (sportKey) => Boolean(BOX_LEAGUES[sportKey]);
 
-const SCOREBOARD_TTL = 300; // finished games don't change; live ones fill in
+// Live lines change every half-inning, so the scoreboard is cached for a
+// minute rather than five — the slate polls on the same 60s cadence, and one
+// scoreboard request serves every card in a league, so this is one free ESPN
+// call per league per minute, not one per game.
+const SCOREBOARD_TTL = 60;
 
 /** One competitor's stat by name from ESPN's statistics array, else null. */
 function statOf(competitor, name) {
@@ -77,17 +86,48 @@ function sideFrom(competitor, { kind, periods }) {
 }
 
 /**
+ * Where the game stands, in ESPN's own words. `detail` is the string ESPN
+ * shows ("Top 5th", "Bot 9th", "End 3rd", "Final") — passed through verbatim
+ * rather than reconstructed from `period` + a half-inning guess, since only
+ * ESPN knows whether a half is mid-inning, ended, or in a delay.
+ */
+function statusFrom(competition) {
+  const status = competition?.status ?? {};
+  const type = status.type ?? {};
+  const period = Number(status.period);
+  return {
+    // 'pre' | 'in' | 'post' on ESPN's scoreboard payloads.
+    state: typeof type.state === 'string' ? type.state : null,
+    completed: type.completed === true,
+    detail: type.shortDetail ?? type.detail ?? type.description ?? null,
+    period: Number.isFinite(period) && period > 0 ? period : null,
+  };
+}
+
+/**
  * Pure extraction from an already-fetched scoreboard — split from
  * fetchBoxScore so the matching/extraction logic is unit-testable against
  * a fixed scoreboard shape without a network. Null when the fixture can't
- * be confidently matched or isn't completed on ESPN's side.
+ * be confidently matched or hasn't started.
+ *
+ * In-progress games are included: a live linescore is the whole point of the
+ * grid on a live card (which inning it's in, and which innings the runs came
+ * in). Callers distinguish the two via `status.completed` — the returned
+ * shape is otherwise identical, with unplayed periods padded as nulls.
  */
 export function boxFromScoreboard(scoreboard, { home, away, league }) {
   const found = findEvent(scoreboard, home, away);
   if (!found) return null;
 
   const { event, competition, homeSide, awaySide } = found;
-  if (!competition?.status?.type?.completed) return null;
+  const status = statusFrom(competition);
+  // Nothing to show before first pitch — there's no line yet, and the card's
+  // existing pregame layout is already the right one.
+  if (status.state === 'pre') return null;
+  // A payload carrying neither a state nor a completed flag is one this code
+  // doesn't understand. Stay conservative and let the card keep whatever it
+  // already shows, rather than rendering a grid off a shape we're guessing at.
+  if (!status.state && !status.completed) return null;
 
   const venue = competition?.venue ?? {};
   const venueLine = [venue.fullName, venue.address?.city, venue.address?.state]
@@ -99,16 +139,16 @@ export function boxFromScoreboard(scoreboard, { home, away, league }) {
     periods: league.periods,
     startTime: event?.date ?? null,
     venue: venueLine,
+    status,
     home: sideFrom(homeSide, league),
     away: sideFrom(awaySide, league),
   };
 }
 
 /**
- * The finished-game box for one fixture, matched by the same odds-feed team
+ * The box for one fixture, live or final, matched by the same odds-feed team
  * names the slate card already has. Null when the sport has no box source,
- * the fixture can't be confidently matched, or ESPN doesn't show it
- * completed yet.
+ * the fixture can't be confidently matched, or the game hasn't started.
  */
 export async function fetchBoxScore({ sportKey, home, away }, ctx) {
   const league = BOX_LEAGUES[sportKey];

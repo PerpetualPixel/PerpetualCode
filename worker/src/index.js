@@ -819,11 +819,11 @@ export default {
       return new Response(res.body, { status: res.status, headers: { ...cors, ...Object.fromEntries(res.headers) } });
     }
 
-    // Finished-game box score (per-inning/quarter linescores — see
+    // Live or finished box score (per-inning/quarter linescores — see
     // worker/src/boxscore.js) for one fixture already on the board. Free —
     // ESPN cdn scoreboard, never the odds feed. { box: null } is a normal
-    // answer (unmatched fixture / not completed / unsupported sport), not
-    // an error: the finished card just keeps its plain final-score line.
+    // answer (unmatched fixture / not started / unsupported sport), not
+    // an error: the card just keeps its plain score line.
     if (pathname === '/boxscore') {
       if (request.method !== 'GET') {
         return json({ error: 'Method not allowed' }, { status: 405, headers: cors });
@@ -838,7 +838,11 @@ export default {
           { sportKey, home: searchParams.get('home') ?? '', away: searchParams.get('away') ?? '' },
           ctx,
         );
-        return json({ box }, { headers: { ...cors, 'Cache-Control': 'public, max-age=300' } });
+        // A finished box is immutable, but a live one is stale the moment the
+        // half-inning turns — caching it for 5 minutes would pin the card to
+        // an old inning no matter how often the slate re-asks.
+        const maxAge = box && box.status && !box.status.completed ? 30 : 300;
+        return json({ box }, { headers: { ...cors, 'Cache-Control': `public, max-age=${maxAge}` } });
       } catch (error) {
         return json({ box: null, reason: String(error).slice(0, 120) }, { headers: cors });
       }
