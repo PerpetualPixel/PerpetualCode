@@ -3450,6 +3450,10 @@ function ensureBoxScore(game, { live = false } = {}) {
   url.searchParams.set('sport', game.sportKey);
   url.searchParams.set('home', game.home);
   url.searchParams.set('away', game.away);
+  // The game's own ET date, so the worker asks ESPN for THAT day's
+  // scoreboard. Without it every finished game silently lost its grid at
+  // the next ET midnight — yesterday's fixtures aren't on today's page.
+  url.searchParams.set('date', etDateString(game.commenceMs).replaceAll('-', ''));
   fetch(url, { headers: { Accept: 'application/json' } })
     .then((r) => (r.ok ? r.json() : null))
     .then((data) => {
