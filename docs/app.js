@@ -48,6 +48,8 @@ import {
   fightConsensusRecord,
   fightConsensusComments,
   fightCancelled,
+  bestValueStraight,
+  upgradeToValueStraight,
   cachedConsensusFeed,
   MMA_CONSENSUS_SWING,
 } from './capper-consensus.js';
@@ -3681,7 +3683,15 @@ function slateGameHtml(game) {
   const trackedPick = state.slateTrackedPicks.get(game.eventId) ?? null;
   const trackedOutcome = trackedPick?.status === 'won' ? 'won' : trackedPick?.status === 'lost' ? 'lost' : null;
   const outcome = trackedOutcome ?? slateGameOutcome(game, rec); // 'won' | 'lost' | null — only set once finished
-  const mainPlaySelection = trackedPick?.selection ?? rec?.selection ?? null;
+  // MMA fights run their best VALUE play: the priced candidate earns the
+  // slot, but a capper-priced straight (method/round/distance) replaces it
+  // as the named pick when it carries more value — the same swap the
+  // server's lock applies (see upgradeToValueStraight), so card and record
+  // never name different bets.
+  const playCandidate = rec && isMmaSportKey(game.sportKey)
+    ? upgradeToValueStraight(rec, cachedConsensusFeed())
+    : rec;
+  const mainPlaySelection = trackedPick?.selection ?? playCandidate?.selection ?? null;
   const isFinished = gameState === 'finished';
   // The market grid only means anything pregame — once a game is live the
   // prices are stale and the algorithm's read was a pregame one, so it's
@@ -3783,6 +3793,13 @@ function slateGameHtml(game) {
       </div>`}
       ${slateTeamRow(game, 'away', rowProps)}
       ${slateTeamRow(game, 'home', rowProps)}
+      ${!hideMarkets && playCandidate?.straight ? `
+      <div class="slate-straight-play">
+        <span class="slate-straight-label">★ Value play</span>
+        <span class="slate-straight-selection">${esc(playCandidate.selection)}</span>
+        <span class="slate-straight-odds">${esc(formatAmerican(playCandidate.american))}</span>
+        <span class="slate-straight-note">cappers' price · replaces ${esc(formatAmerican(playCandidate.straight.replaced.american))} ML as the tracked pick</span>
+      </div>` : ''}
       ${mainPlayHtml}
     </article>`;
 }

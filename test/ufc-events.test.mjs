@@ -384,3 +384,26 @@ test('gradeMmaPickWithFallback returns null (stays pending) when neither source 
   const outcome = gradeMmaPickWithFallback(pick, undefined, []);
   assert.equal(outcome, null);
 });
+
+test('gradeMmaStraight grades method, round, and distance straights from the fight record', async () => {
+  const { gradeMmaStraight } = await import('../worker/src/ufc-events.js');
+  const results = [{
+    a: 'islam makhachev', b: 'ian machado garry', aWon: true, bWon: false,
+    displayA: 'Islam Makhachev', displayB: 'Ian Machado Garry',
+    method: 'Submission', round: 4,
+  }];
+  const base = { marketKey: 'mma_straight', home: 'Islam Makhachev', away: 'Ian Machado Garry' };
+
+  assert.equal(gradeMmaStraight({ ...base, selection: 'Islam Makhachev by submission' }, results).won, true);
+  assert.equal(gradeMmaStraight({ ...base, selection: 'Islam Makhachev by KO/TKO' }, results).won, false);
+  assert.equal(gradeMmaStraight({ ...base, selection: 'Islam Makhachev by submission in round 4' }, results).won, true);
+  assert.equal(gradeMmaStraight({ ...base, selection: 'Islam Makhachev in round 1' }, results).won, false);
+  assert.equal(gradeMmaStraight({ ...base, selection: 'Fight does not go the distance' }, results).won, true);
+  assert.equal(gradeMmaStraight({ ...base, selection: 'Under 2.5 rounds' }, results).won, false, 'round-4 finish goes over 2.5');
+  assert.equal(gradeMmaStraight({ ...base, selection: 'Over 2.5 rounds' }, results).won, true);
+  assert.equal(gradeMmaStraight({ ...base, selection: 'Ian Machado Garry by KO' }, results).won, false, 'his fighter lost');
+  // Missing data voids rather than guesses; unknown fight stays pending.
+  const noMethod = [{ ...results[0], method: null, round: null }];
+  assert.equal(gradeMmaStraight({ ...base, selection: 'Islam Makhachev by submission' }, noMethod).void, true);
+  assert.equal(gradeMmaStraight({ ...base, selection: 'Islam Makhachev by submission' }, []), null);
+});

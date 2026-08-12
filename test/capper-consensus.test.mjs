@@ -10,6 +10,8 @@ import {
   fightConsensusRecord,
   fightConsensusComments,
   fightCancelled,
+  bestValueStraight,
+  upgradeToValueStraight,
   consensusRescore,
   totalsSideOf,
   MMA_CONSENSUS_SWING,
@@ -372,4 +374,46 @@ test('the drawer record still surfaces the cancelled consensus, flagged', () => 
   assert.ok(record, 'the consensus stays visible — bannered, not removed');
   assert.equal(record.cancelled, true);
   assert.equal(fightConsensusRecord(FEED, mmaCandidate()).cancelled, false);
+});
+
+/* ── MMA value straights ───────────────────────────────────────────── */
+
+const STRAIGHT_FEED = {
+  ...FEED,
+  picks: [
+    { fight: 'Ian Machado Garry vs Islam Makhache', market: 'moneyline', selection: 'Islam Makhachev',
+      consensus_pct: 100, strength: 8.0, tier: 'strong', pick_count: 3,
+      quoted_odds: { american: -450, decimal: 1.222, count: 2 }, value: 1.8 },
+    { fight: 'Ian Machado Garry vs Islam Makhache', market: 'method_of_victory', market_label: 'Method of Victory',
+      selection: 'Islam Makhachev by submission', consensus_pct: 100, strength: 7.0, tier: 'lean', pick_count: 2,
+      quoted_odds: { american: 200, decimal: 3.0, count: 2 }, value: 14.0 },
+    { fight: 'Ian Machado Garry vs Islam Makhache', market: 'round', market_label: 'Round',
+      selection: 'Islam Makhachev in round 5', consensus_pct: 100, strength: 2.0, tier: 'pass', pick_count: 1,
+      quoted_odds: { american: 900, decimal: 10.0, count: 1 }, value: 18.0 },
+  ],
+};
+
+test('bestValueStraight takes the highest-value priced entry that clears floor and tier', () => {
+  const best = bestValueStraight(STRAIGHT_FEED, mmaCandidate());
+  // The round-5 longshot has more raw value but is pass-tier; the -450 ML
+  // is below the -200 floor. The +200 submission is the play.
+  assert.equal(best.selection, 'Islam Makhachev by submission');
+  assert.equal(bestValueStraight(FEED, mmaCandidate()), null, 'unpriced feeds yield nothing');
+});
+
+test('the straight replaces a heavy moneyline but not a fairly-priced one', () => {
+  const heavy = mmaCandidate({ american: -1800, decimal: 1.056 });
+  const swapped = upgradeToValueStraight(heavy, STRAIGHT_FEED);
+  assert.equal(swapped.marketKey, 'mma_straight');
+  assert.equal(swapped.american, 200);
+  assert.equal(swapped.straight.replaced.american, -1800);
+  assert.equal(swapped.score, heavy.score, 'slot-earning score is untouched');
+
+  // Fair price + strong consensus on the ML itself: (2.3-1)*8 = 10.4 < 14 → still swaps;
+  // a plus-money ML with the same strength holds: (4.6-1)*8 = 28.8 > 14.
+  const dogML = mmaCandidate({ american: 360, decimal: 4.6,
+    capperConsensus: { scored: true, aligned: true, strength: 8.0 } });
+  assert.equal(upgradeToValueStraight(dogML, STRAIGHT_FEED), dogML);
+  const nonMma = { ...mmaCandidate(), sportKey: 'baseball_mlb' };
+  assert.equal(upgradeToValueStraight(nonMma, STRAIGHT_FEED), nonMma);
 });

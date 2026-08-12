@@ -32,7 +32,7 @@
  */
 
 import { analyze, RULES, formatAmerican, suggestedStake, clearsMaxJuice } from '../../docs/engine.js';
-import { fetchCapperConsensus, applyCapperConsensus } from '../../docs/capper-consensus.js';
+import { fetchCapperConsensus, applyCapperConsensus, upgradeToValueStraight } from '../../docs/capper-consensus.js';
 import { isPower4Matchup } from '../../docs/ncaaf-conferences.js';
 import { buildInsights, insightsByTier, isTennis, isMma } from '../../docs/insights.js';
 import { gradePick } from '../../docs/learning.js';
@@ -492,7 +492,11 @@ export async function runPotdDaily(env, ctx, now = Date.now(), { fetchFullSlate 
     ? applyCapperConsensus(stillActionable, consensusFeed, { now })
     : stillActionable;
 
-  const best = drawPool.reduce((a, b) => (b.score > a.score ? b : a));
+  const chosen = drawPool.reduce((a, b) => (b.score > a.score ? b : a));
+  // An MMA winner runs as its best-value play (possibly a capper-priced
+  // straight) rather than a moneyline too heavy to pay — same swap the Full
+  // Slate lock applies, so the two boards never disagree about a fight.
+  const best = consensusFeed ? upgradeToValueStraight(chosen, consensusFeed) : chosen;
   const record = await buildRecord(best, dateKey, now, env, ctx);
   // A day's pick, once posted, doesn't move even if the market does — it's
   // an editorial call made at a point in time, not a live-repriced candidate.
