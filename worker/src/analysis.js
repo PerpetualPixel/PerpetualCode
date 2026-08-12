@@ -402,9 +402,23 @@ export async function getOrGenerateAnalysis(candidate, env, ctx, now = Date.now(
     console.error('Fact sheet build failed:', e);
     factSheet = null;
   }
-  if (!factSheet) return null;
-
   const isMma = isMmaSport(candidate.sportKey);
+  // MMA is the one sport where a missing fact sheet must NOT kill the
+  // write-up (explicit product direction: EVERY fight card carries the
+  // Expected Methods of Victory section). Sherdog misses lesser-known
+  // fighters and mismatched spellings routinely, and the methods
+  // percentages are the model's own estimates even when stats resolve —
+  // so a fight with no sheet proceeds with an honest empty one and firm
+  // anti-invention instructions. Every other sport keeps requiring real
+  // context: a team write-up without its fact sheet has nothing to argue
+  // from.
+  if (!factSheet) {
+    if (!isMma) return null;
+    factSheet = 'No verified stat sheet could be resolved for these fighters. '
+      + 'Argue only from widely known, verifiable information about them; if you know '
+      + 'little, say so plainly and keep the victory-method percentages conservative '
+      + 'and close together rather than inventing confident numbers.';
+  }
   // outcomeName is the exact team/player name for h2h and spreads, and
   // literally "Over"/"Under" for totals (see docs/app.js's own comment on
   // this same field) — passed to the model as a given, not something it's

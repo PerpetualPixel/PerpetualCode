@@ -43,6 +43,7 @@ import {
 import {
   fetchCapperConsensus,
   capperConsensusSignal,
+  surnamesMatch,
   consensusRecord,
   consensusRescore,
   fightConsensusRecord,
@@ -2597,6 +2598,13 @@ async function openStatsDrawer(leg, opposite = null, { fullscreen = false, oddsO
     (entries ?? [])
       .map((v) => `<li><strong>${esc(methodLabel[v.method] ?? v.method)}</strong>${v.percentage != null ? ` (${v.percentage}%)` : ''}: ${esc(v.reasoning)}</li>`)
       .join('');
+  // The model keys victoryMethods by fighter name in ITS spelling, which
+  // can disagree with the odds feed's ("Gillian"/"Jillian", accents) — an
+  // exact lookup then silently empties a column. Surname matching bridges
+  // it, the same tolerance every other MMA name join here uses.
+  const methodsFor = (name) => victoryMethods?.[name]
+    ?? victoryMethods?.[Object.keys(victoryMethods ?? {}).find((k) => surnamesMatch(k, name)) ?? '']
+    ?? null;
   const victoryMethodsHtml = victoryMethods
     ? `
       <div class="stats-section victory-methods">
@@ -2604,11 +2612,11 @@ async function openStatsDrawer(leg, opposite = null, { fullscreen = false, oddsO
         <div class="victory-fighters">
           <div class="victory-fighter">
             <div class="fighter-name">${esc(leg.away)}</div>
-            <ul class="victory-list">${victoryList(victoryMethods[leg.away])}</ul>
+            <ul class="victory-list">${victoryList(methodsFor(leg.away))}</ul>
           </div>
           <div class="victory-fighter">
             <div class="fighter-name">${esc(leg.home)}</div>
-            <ul class="victory-list">${victoryList(victoryMethods[leg.home])}</ul>
+            <ul class="victory-list">${victoryList(methodsFor(leg.home))}</ul>
           </div>
         </div>
       </div>`
