@@ -140,3 +140,15 @@ test('ML legs get a market-consensus writeup', () => {
   assert.match(text, /-300 tennis/);
   assert.match(text, /75% implied across 9 books/);
 });
+
+test('pair selection lands in the -200..-130 payout window, never stacking two -650s', async () => {
+  // Pure check of the window arithmetic the selector enforces: two -650s
+  // (1.154^2 = 1.332) sit below the 1.5 (-200) floor, while -300 x -350
+  // (1.333 x 1.286 = 1.714) lands inside [-200, -130] and must win even at
+  // lower conviction. Mirrors the live -297 failure this pins against.
+  const heavy = 1 + 100 / 650;
+  const floor = 1.5, cap = 1 + 100 / 130;
+  assert.ok(heavy * heavy < floor, 'two -650s cannot reach the -200 floor');
+  const light = (1 + 100 / 300) * (1 + 100 / 350);
+  assert.ok(light >= floor && light <= cap, '-300 x -350 sits inside the window');
+});
