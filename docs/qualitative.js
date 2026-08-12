@@ -15,8 +15,8 @@
  * never a fabricated "neutral" value standing in for missing data.
  */
 
-import { tennisRecentForm, tennisHeadToHead, matchTeamSide, isUnavailable } from './insights.js';
-import { clamp } from './engine.js';
+import { tennisRecentForm, tennisHeadToHead, matchTeamSide, isUnavailable, isTennis } from './insights.js';
+import { clamp, scoreCandidate } from './engine.js';
 
 /**
  * Recent-form win-rate differential (65%) blended with a confidence-
@@ -105,4 +105,64 @@ export function teamQualitativeSignal(context, subjectTeamName, { minFormSample 
  */
 export function supportsQualitativeSignal(marketKey) {
   return marketKey !== 'totals';
+}
+
+/**
+ * Minimum form/head-to-head signal a market underdog needs before a straight
+ * tennis moneyline on them is allowed at all. tennisQualitativeSignal()'s
+ * form component is a win-rate differential over each player's last ≤10
+ * matches, so 0.15 ≈ the dog winning one-and-a-half more of their last ten
+ * than the favorite — a visible, checkable form edge, not a hunch.
+ */
+export const TENNIS_DOG_MIN_SIGNAL = 0.15;
+
+/**
+ * The straight-moneyline underdog gate for tennis.
+ *
+ * The price engine's EV shopping has a structural tilt in a two-outcome
+ * market: the "best price vs. consensus" outlier it hunts for almost always
+ * lives on the underdog side, so a pure-price board fills up with +EV dogs —
+ * each individually defensible, collectively a sub-50% win rate by
+ * construction. Live WTA slates confirmed it (a run of upset calls against
+ * in-form favorites). The fix is evidential, not cosmetic: a tennis
+ * moneyline on the market's underdog (no-vig consensus below 50%) is only
+ * pickable when the recent-form/head-to-head signal actually backs the
+ * upset. No archive coverage for the players — routine at ITF/Challenger
+ * level — means no evidence, and no evidence means no upset call: the
+ * favorite (or another market) takes the slot instead.
+ *
+ * Spreads deliberately pass through: a game-handicap dog covering is not an
+ * upset call, and consensusProb there measures covering, not winning.
+ */
+export function tennisUnderdogBlocked(candidate, signal) {
+  if (candidate?.marketKey !== 'h2h') return false;
+  if (!(Number(candidate.consensusProb) < 0.5)) return false;
+  return !(Number.isFinite(signal) && signal >= TENNIS_DOG_MIN_SIGNAL);
+}
+
+/**
+ * Apply the tennis form signal to a mixed-sport candidate list: every tennis
+ * candidate with a real side gets re-scored with its form/head-to-head
+ * signal (the same ±QUALITATIVE.MAX_SWING enrichment the browser applies
+ * live), and unsupported straight-moneyline underdogs are removed entirely
+ * (see tennisUnderdogBlocked). Non-tennis candidates and tennis totals pass
+ * through untouched.
+ *
+ * `archives` is { atp?, wta? } — the flattened tennis-data.co.uk datasets
+ * docs/data/tennis-{tour}.json ships (null/absent tours degrade to the
+ * unscored pass-through for favorites, and to a block for dogs).
+ *
+ * Returns a new array; does NOT re-sort — callers relying on score order
+ * must sort after this, since re-scoring can reorder tennis candidates.
+ */
+export function applyTennisFormSignal(candidates, archives, { now = Date.now() } = {}) {
+  return (candidates ?? []).flatMap((c) => {
+    if (!isTennis(c.sportKey) || !supportsQualitativeSignal(c.marketKey)) return [c];
+    const data = archives?.[/wta/i.test(c.sportKey) ? 'wta' : 'atp'] ?? null;
+    const opponent = c.outcomeName === c.home ? c.away : c.home;
+    const signal = data ? tennisQualitativeSignal(data, c.outcomeName, opponent) : null;
+    if (tennisUnderdogBlocked(c, signal)) return [];
+    if (signal == null) return [{ ...c, formSignal: null }];
+    return [{ ...c, ...scoreCandidate(c, { now, qualitative: signal }), formSignal: signal }];
+  });
 }

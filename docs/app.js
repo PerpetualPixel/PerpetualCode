@@ -39,6 +39,7 @@ import {
   tennisQualitativeSignal,
   teamQualitativeSignal,
   supportsQualitativeSignal,
+  tennisUnderdogBlocked,
 } from './qualitative.js';
 import {
   fetchCapperConsensus,
@@ -3043,6 +3044,10 @@ async function refreshQualitativeSignals() {
         const data = await tennisArchive(c.sportKey);
         const opponent = c.outcomeName === c.home ? c.away : c.home;
         signal = data ? tennisQualitativeSignal(data, c.outcomeName, opponent) : null;
+        // Stored so bestCandidateForGame's underdog gate can consult it —
+        // the score alone can't distinguish "form-backed dog" from "dog the
+        // archive has never heard of".
+        c.formSignal = signal;
       } else {
         const context = await eventContext(c);
         signal = teamQualitativeSignal(context, c.outcomeName);
@@ -3409,12 +3414,26 @@ function slateTeamRow(game, side, { gameState, scoreEvent, recommendedId, hideMa
  * game actually clears the band, so More Info still has something to show.
  */
 function bestCandidateForGame(game) {
-  const all = [
+  let all = [
     game.h2h.away, game.h2h.home,
     game.spreads.away, game.spreads.home,
     game.totals.away, game.totals.home,
   ].filter(Boolean);
   if (!all.length) return null;
+
+  // Tennis: an unsupported straight-moneyline underdog is never the card's
+  // recommendation (docs/qualitative.js's tennisUnderdogBlocked — the same
+  // gate the server's tracked boards apply, so card and record agree).
+  // Before the form enrichment has run, formSignal is undefined and every
+  // dog is treated as unsupported — conservative by design; the re-render
+  // after refreshQualitativeSignals() unblocks a genuinely form-backed one.
+  // The guard on gated.length is a can't-happen fallback (a game's favorite
+  // moneyline side always passes), kept so a pathological board still
+  // renders something rather than nothing.
+  if (isTennis(game.sportKey)) {
+    const gated = all.filter((c) => !tennisUnderdogBlocked(c, c.formSignal));
+    if (gated.length) all = gated;
+  }
 
   const inBand = all.filter((c) => c.american >= CONFIG.ODDS_MIN_DEFAULT && c.american <= CONFIG.ODDS_MAX_DEFAULT);
 

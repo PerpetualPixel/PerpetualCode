@@ -32,6 +32,8 @@ import { getAllWnbaPropsTracked } from './wnba-props.js';
 import { getAllMlbPropsTracked } from './mlb-props.js';
 import { getAllNflPropsTracked } from './nfl-props.js';
 import { getAllNhlPropsTracked } from './nhl-props.js';
+import { applyTennisFormSignal } from '../../docs/qualitative.js';
+import { loadTennisArchivesFor } from './tennis-archive.js';
 
 // Matches tracking.js's own FLAT_UNIT_STAKE — duplicated for the same reason
 // that file already duplicates it from docs/learning.js: keeps this file's
@@ -163,7 +165,7 @@ export async function runFullSlateBatch(
   );
 
   const events = await fetchFullSlate();
-  const candidates = analyze(events, { now })
+  const analyzed = analyze(events, { now })
     .filter((c) => {
       if (isMma(c.sportKey)) return isEligibleMmaFight(c.commenceMs, now);
       if (isTennis(c.sportKey)) return isEligibleTennisMatch(c.commenceMs, now);
@@ -172,8 +174,21 @@ export async function runFullSlateBatch(
     .filter((c) => isPickWindowOpen(c, now))
     .filter((c) => !existingEventIds.has(c.eventId));
 
-  // analyze() is already sorted by score descending, so the first candidate
-  // seen for a given eventId is that game's best — one pick per game.
+  // Tennis form gate (docs/qualitative.js): even though this board is
+  // otherwise the unfiltered record of the engine's lean, an unsupported
+  // straight-moneyline underdog is removed here too — same precedent as the
+  // MMA capper-consensus preference: when a real evidence source
+  // contradicts a pure-price read, the recommendation follows the evidence,
+  // and the game's slot falls to its next-best candidate (usually the
+  // favorite's moneyline) rather than going empty. Re-sorted afterwards
+  // because the form re-score can reorder tennis candidates, and the
+  // per-game loop below depends on score-descending order.
+  const candidates = applyTennisFormSignal(analyzed, await loadTennisArchivesFor(analyzed), { now })
+    .sort((a, b) => b.score - a.score);
+
+  // analyze() is already sorted by score descending (re-sorted above after
+  // the tennis form re-score), so the first candidate seen for a given
+  // eventId is that game's best — one pick per game.
   //
   // Tennis is the one exception: its spreads and totals are priced in games
   // while the free /scores reports sets, so they can't be settled by that

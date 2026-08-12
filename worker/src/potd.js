@@ -47,6 +47,8 @@ import { getOrGenerateAnalysis } from './analysis.js';
 import { hasSecondarySettlementSource } from '../../docs/tennis-tiers.js';
 import { settleTennisGameMarket } from './tennis-results.js';
 import { isPickWindowOpen } from './tracking.js';
+import { applyTennisFormSignal } from '../../docs/qualitative.js';
+import { loadTennisArchive, loadTennisArchivesFor } from './tennis-archive.js';
 
 const ET_TZ = 'America/New_York';
 export const POTD_HOUR = 2; // 2am ET — when the daily learning review runs, not when picks lock anymore
@@ -62,8 +64,6 @@ const FLAT_UNIT_STAKE = 20;
 // the Day section (getPotdHistory) needs weeks of history to be meaningful,
 // not just the display card's old 8-day window.
 const KV_TTL_SECONDS = 86400 * 90;
-
-const TENNIS_ARCHIVE_BASE = 'https://perpetualpicks.com/data'; // canonical URL directly — the miguelsgarcia4.github.io host 301-redirects here anyway (GitHub Pages' own custom-domain redirect), an extra hop worth skipping
 
 /** ET calendar date (YYYY-MM-DD) and wall-clock hour for a given instant. */
 function etParts(ms) {
@@ -161,23 +161,6 @@ function scheduleStillOpen(events, dateKey, now) {
     if (!eligibleToday) return false;
     return !isPickWindowOpen({ sportKey, commenceMs }, now);
   });
-}
-
-let tennisArchiveCache = null; // module-scope: survives across requests in the same isolate
-async function loadTennisArchive(sportKey) {
-  const tour = /wta/i.test(sportKey) ? 'wta' : 'atp';
-  tennisArchiveCache ??= {};
-  if (tennisArchiveCache[tour]) return tennisArchiveCache[tour];
-
-  try {
-    const r = await fetch(`${TENNIS_ARCHIVE_BASE}/tennis-${tour}.json`);
-    if (!r.ok) console.error(`Tennis archive fetch (${tour}) returned ${r.status}`);
-    tennisArchiveCache[tour] = r.ok ? await r.json() : null;
-  } catch (e) {
-    console.error(`Tennis archive fetch (${tour}) failed:`, e);
-    tennisArchiveCache[tour] = null;
-  }
-  return tennisArchiveCache[tour];
 }
 
 /** Reconstruct the same {leg, home/away subject} buildInsights expects. */
@@ -441,7 +424,16 @@ export async function runPotdDaily(env, ctx, now = Date.now(), { fetchFullSlate 
   );
 
   const events = await fetchFullSlate();
-  const candidates = applyLearningToCandidates(analyze(events, { now }), learningProfile);
+  // Tennis form gate (docs/qualitative.js): re-score tennis candidates with
+  // their recent-form/head-to-head signal and drop unsupported straight-
+  // moneyline underdogs — same gate the Top 5 and Full Slate batches apply,
+  // in the same order (form first, then the learning multiplier scales the
+  // form-adjusted grade).
+  const analyzed = analyze(events, { now });
+  const candidates = applyLearningToCandidates(
+    applyTennisFormSignal(analyzed, await loadTennisArchivesFor(analyzed), { now }),
+    learningProfile,
+  );
   const eligibleToday = candidates.filter((c) => {
     if (c.score < RULES.MIN_SCORE) return false;
     if (isExhibition(c)) return false;

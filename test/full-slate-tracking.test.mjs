@@ -8,6 +8,12 @@ import {
   getAllFullSlateTracked,
   resetFullSlateTracking,
 } from '../worker/src/full-slate-tracking.js';
+import { seedTennisArchiveCacheForTests } from '../worker/src/tennis-archive.js';
+
+// The tennis form gate (docs/qualitative.js) reads the static archive; unit
+// tests must never hit the network, and a null archive is the honest
+// degraded mode (favorites pass unscored, unsupported dogs are blocked).
+seedTennisArchiveCacheForTests({ atp: null, wta: null });
 
 function makeKvStore() {
   const store = new Map();

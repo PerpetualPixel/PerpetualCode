@@ -39,6 +39,8 @@ import { fetchSport, fetchScores, fetchCatalogue, UPSTREAM, REGIONS, DEFAULT_CAC
 import { getAlgoConfig, getPausedSegments, isSegmentPaused } from './algo-health.js';
 import { getLearningProfile, applyLearningToCandidates } from './daily-learning.js';
 import { fetchMmaResults, gradeMmaPickWithFallback } from './ufc-events.js';
+import { applyTennisFormSignal } from '../../docs/qualitative.js';
+import { loadTennisArchivesFor } from './tennis-archive.js';
 import {
   tennisTier,
   dedupeTennisEvents,
@@ -541,8 +543,7 @@ export async function runTop5Batch(
       ...priorManifests.filter(Boolean).flatMap((raw) => JSON.parse(raw).pickIds ?? []),
     ].map((id) => id.split(':')[0]),
   );
-  const eligibleToday = applyLearningToCandidates(
-    analyze(events, { now })
+  const analyzed = analyze(events, { now })
       .filter((c) => {
         if (isMma(c.sportKey)) return isEligibleMmaFight(c.commenceMs, now);
         if (isTennis(c.sportKey)) return isEligibleTennisMatch(c.commenceMs, now);
@@ -570,7 +571,18 @@ export async function runTop5Batch(
       // passes through untouched. Full Slate deliberately does NOT apply
       // this (see its own comment) — it stays the unfiltered raw record.
       .filter((c) => c.sportKey !== 'americanfootball_ncaaf' || isPower4Matchup(c.home, c.away))
-      .filter((c) => !existingEventIds.has(c.eventId)),
+      .filter((c) => !existingEventIds.has(c.eventId));
+
+  // Tennis form gate (docs/qualitative.js): re-score tennis candidates with
+  // their recent-form/head-to-head signal and drop straight-moneyline
+  // underdogs the form data doesn't back — the pure-price engine's EV
+  // shopping structurally over-picks tennis dogs (the outlier price it hunts
+  // lives on the dog side of a two-outcome market), which a live run of WTA
+  // upset calls confirmed. Applied BEFORE the learning weights so the
+  // reliability multiplier scales the form-adjusted grade, same order the
+  // browser's own enrichment implies.
+  const eligibleToday = applyLearningToCandidates(
+    applyTennisFormSignal(analyzed, await loadTennisArchivesFor(analyzed), { now }),
     learningProfile,
   );
 
