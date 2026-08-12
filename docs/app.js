@@ -2485,7 +2485,7 @@ function capperConsensusSectionHtml(leg) {
           : `This pick goes against the consensus, which lowered its grade by up to ${MMA_CONSENSUS_SWING} points.`}</p>` +
     commentsHtml +
     (cc.generatedAt
-      ? `<p class="consensus-meta">Consensus last updated ${esc(dateFmt.format(new Date(cc.generatedAt)))} — refreshed by each MMA_Engine weekly run.</p>`
+      ? `<p class="consensus-meta">Consensus last updated ${esc(dateFmt.format(new Date(cc.generatedAt)))} — powered by the <a href="https://perpetualpixel.github.io/MMA_Engine/" target="_blank" rel="noopener">MMA Consensus Engine</a>.</p>`
       : '') +
     `</div>`;
 }
