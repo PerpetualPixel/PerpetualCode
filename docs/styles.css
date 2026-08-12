@@ -4555,3 +4555,6 @@ input[type="range"]:focus-visible {
 }
 .prop-play-writeup { margin-top: 10px; color: var(--muted); font-size: 0.85rem; line-height: 1.55; }
 .prop-play-writeup p { margin: 0 0 8px; }
+
+/* The displaced team-side lean shown under a prop Main Play. */
+.slate-main-play-lean { color: var(--muted); font-size: 0.74rem; flex-basis: 100%; }

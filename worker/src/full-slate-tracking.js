@@ -28,6 +28,10 @@ import { pickRecordFrom, fetchFullSlateEvents, isPickWindowOpen } from './tracki
 import { fetchMmaResults, gradeMmaPickWithFallback } from './ufc-events.js';
 import { isSettleableTennisMarket, hasSecondarySettlementSource } from '../../docs/tennis-tiers.js';
 import { settleTennisGameMarket } from './tennis-results.js';
+import { getAllWnbaPropsTracked } from './wnba-props.js';
+import { getAllMlbPropsTracked } from './mlb-props.js';
+import { getAllNflPropsTracked } from './nfl-props.js';
+import { getAllNhlPropsTracked } from './nhl-props.js';
 
 // Matches tracking.js's own FLAT_UNIT_STAKE — duplicated for the same reason
 // that file already duplicates it from docs/learning.js: keeps this file's
@@ -194,10 +198,60 @@ export async function runFullSlateBatch(
     if (!bestPerGame.has(c.eventId)) bestPerGame.set(c.eventId, c);
   }
 
+  // A player prop can be the game's Main Play (explicit product direction:
+  // "the pitcher is more likely to get 5 strikeouts than the team is to
+  // win — make the prop the main play"). The per-sport prop scans already
+  // score their picks on the SAME 0-100 scale as these team candidates, so
+  // the comparison is direct: when a same-game prop priced -200 or better
+  // outscores the team market, the prop takes the slot and the displaced
+  // team side is kept as `teamLean` so the card still shows the ML/spread
+  // lean. Grading is delegated to the prop's own pool via `propRef` — the
+  // pool grades from boxscores; this record just mirrors its settlement.
+  const PROP_PRICE_FLOOR_DECIMAL = 1.5; // -200 or better, per direction
+  const POOL_OF_SPORT = {
+    basketball_wnba: 'wnbaprops', baseball_mlb: 'mlbprops',
+    americanfootball_nfl: 'nflprops', icehockey_nhl: 'nhlprops',
+  };
+  let todaysProps = [];
+  try {
+    const pools = await Promise.all([
+      getAllWnbaPropsTracked(env, { now, days: 1 }),
+      getAllMlbPropsTracked(env, { now, days: 1 }),
+      getAllNflPropsTracked(env, { now, days: 1 }),
+      getAllNhlPropsTracked(env, { now, days: 1 }),
+    ]);
+    todaysProps = pools.flat().filter((p) =>
+      p.status === 'pending' && Number(p.decimal) >= PROP_PRICE_FLOOR_DECIMAL && Number.isFinite(p.score));
+  } catch { /* props are an upgrade, never a dependency */ }
+
+  for (const [eventId, teamCandidate] of bestPerGame) {
+    const gameProps = todaysProps.filter((p) =>
+      p.eventId === eventId || (p.home === teamCandidate.home && p.away === teamCandidate.away));
+    const bestProp = gameProps.sort((x, y) => y.score - x.score)[0];
+    if (!bestProp || bestProp.score <= teamCandidate.score) continue;
+    bestPerGame.set(eventId, {
+      ...bestProp,
+      eventId,
+      outcomeName: bestProp.outcomeName ?? bestProp.selection,
+      teamLean: {
+        selection: teamCandidate.selection,
+        marketKey: teamCandidate.marketKey,
+        american: teamCandidate.american,
+        point: teamCandidate.point ?? null,
+      },
+      propRef: {
+        pool: POOL_OF_SPORT[bestProp.sportKey] ?? null,
+        dateKey: bestProp.dateKey ?? dateKey,
+        pickId: bestProp.pickId,
+      },
+    });
+  }
+
   const newPickIds = [];
   for (const candidate of bestPerGame.values()) {
     const wrapped = { legs: [candidate], score: candidate.score, meetsStandard: true, flagReason: null };
     const record = pickRecordFrom(wrapped, dateKey, now);
+    if (candidate.propRef) { record.propRef = candidate.propRef; record.teamLean = candidate.teamLean; }
     newPickIds.push(record.pickId);
     ctx.waitUntil(
       env.POTD_KV.put(`slate:${dateKey}:pick:${record.pickId}`, JSON.stringify(record), {
@@ -299,6 +353,24 @@ export async function runFullSlateGrading(
   let graded = 0;
   let rescheduled = 0;
   for (const pick of pending) {
+    // Prop main plays settle by mirroring their prop pool's own record —
+    // the pool grades from real boxscores; duplicating that here would be
+    // a second, drift-prone grader for the same bet.
+    if (pick.propRef?.pool && pick.propRef.pickId) {
+      try {
+        const raw = await env.POTD_KV.get(`${pick.propRef.pool}:${pick.propRef.dateKey}:pick:${pick.propRef.pickId}`);
+        const source = raw ? JSON.parse(raw) : null;
+        if (source && source.status !== 'pending') {
+          pick.status = source.status;
+          pick.result = source.result ?? null;
+          graded++;
+          ctx.waitUntil(env.POTD_KV.put(`slate:${pick.dateKey}:pick:${pick.pickId}`, JSON.stringify(pick), {
+            expirationTtl: KV_TTL_SECONDS,
+          }));
+        }
+      } catch { /* stays pending until the pool settles */ }
+      continue;
+    }
     const scoreEvent = (scoreEventsBySport.get(pick.sportKey) ?? []).find((e) => e.id === pick.eventId);
 
     // A pick's commenceMs is a snapshot taken when it locked in, and for

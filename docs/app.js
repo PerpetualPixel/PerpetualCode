@@ -3758,11 +3758,17 @@ function slateGameHtml(game) {
   // once finished). Only a finished game ever has an outcome to tag —
   // slateGameOutcome() returns null for a live game, so the Won/Lost badge
   // simply never appears until there's an actual result to show.
+  // When a player prop won the game's Main Play slot (see full-slate-
+  // tracking.js's prop upgrade), the displaced team side still shows as the
+  // matchup lean — the reader gets both: the prop to bet and the side we'd
+  // take in the game itself.
+  const teamLean = trackedPick?.teamLean ?? null;
   const mainPlayHtml = hideMarkets && mainPlaySelection
     ? `<div class="slate-main-play">
         <span class="slate-main-play-label">Main play</span>
         <span class="slate-main-play-selection">${esc(mainPlaySelection)}</span>
         ${outcome ? `<span class="slate-main-play-outcome is-${outcome}">${outcome === 'won' ? '✅ Won' : '❌ Lost'}</span>` : ''}
+        ${teamLean ? `<span class="slate-main-play-lean">Game lean: ${esc(teamLean.selection)} ${esc(formatAmerican(teamLean.american))}</span>` : ''}
       </div>`
     : '';
 
