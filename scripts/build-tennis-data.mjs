@@ -188,14 +188,40 @@ const years = argYears.length ? argYears : [thisYear - 1, thisYear];
 
 fs.mkdirSync(OUT_DIR, { recursive: true });
 
+let failed = false;
+
 for (const tour of Object.keys(TOURS)) {
   console.log(`${tour.toUpperCase()}:`);
   const data = await buildTour(tour, years);
   const file = path.join(OUT_DIR, `tennis-${tour}.json`);
+
+  // Never overwrite a good archive with an empty one. Every download failing
+  // (tennis-data.co.uk 403s datacenter IPs, and any site can be down) used to
+  // still write a 0-match file straight over the real one — and because the
+  // tennis form gate treats a missing archive as "no evidence", the silent
+  // result was every straight-moneyline underdog blocked on both tours until
+  // someone noticed the picks had gone strange. A build that fetched nothing
+  // is a failed build, not an empty dataset.
+  if (!data.matches.length) {
+    failed = true;
+    const kept = fs.existsSync(file);
+    console.log(
+      `  -> NOT WRITTEN — every download failed, so there is nothing to build.\n` +
+      `     ${kept ? `Left ${path.relative(process.cwd(), file)} as it was.` : `No existing ${path.relative(process.cwd(), file)} to fall back on.`}\n`,
+    );
+    continue;
+  }
+
   fs.writeFileSync(file, JSON.stringify(data));
   const kb = (fs.statSync(file).size / 1024).toFixed(0);
   console.log(
     `  -> ${path.relative(process.cwd(), file)} · ${data.matches.length} matches · ` +
     `${data.players.length} players · ${kb}kb\n`,
   );
+}
+
+// Non-zero exit so this can't pass silently in a script or scheduled job.
+if (failed) {
+  console.error('Build incomplete: at least one tour fetched no data. Existing archives were left untouched.');
+  process.exit(1);
 }
