@@ -1048,7 +1048,7 @@ export default {
         }
         const result = await runPropPlayDaily(env, ctx, Date.now(), { debug });
         return json(
-          { propPlay: result.record ?? null, ...(debug ? { created: result.created, reason: result.reason ?? null, trace: result.trace ?? null } : {}) },
+          { propPlay: result.record ?? null, ...(debug ? { created: result.created, reason: result.reason ?? null, trace: result.trace ?? null, wouldPost: result.wouldPost ?? null } : {}) },
           { headers: { ...cors, 'Cache-Control': debug ? 'no-store' : 'public, max-age=300' } },
         );
       } catch (error) {
