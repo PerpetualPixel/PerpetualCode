@@ -49,6 +49,13 @@ const STAT_LABEL = { points: 'points', rebounds: 'rebounds', assists: 'assists' 
 const LEG_DECIMAL_MIN = 1 + 100 / 650; // -650
 const LEG_DECIMAL_MAX = 1 + 100 / 250; // -250
 const PARLAY_DECIMAL_MAX = 1 + 100 / 130; // -130 (the hand-made winners ran -162/-164)
+// The payout FLOOR, per explicit product direction after the first live play
+// posted a combined -297 ("horrible — $297 to make $100"): a parlay must
+// land at -200 or better whenever any qualified pair can get there. Pairs
+// inside the [-200, -130] window are chosen by conviction; only when no
+// pair reaches the window does the closest-to-window pair (then a straight)
+// run instead.
+const COMBINED_DECIMAL_MIN = 1.5; // -200
 // Payout-aware target: among SAFE legs (gates already passed), prefer the
 // lightest line — the -460/-310 sweet spot — over stacking two -650s into a
 // combined price that barely pays.
@@ -362,18 +369,34 @@ export async function runPropPlayDaily(env, ctx, now = Date.now(), { debug = fal
   trace.push(`qualified legs: ${qualified.length}`);
   if (!qualified.length) return { created: false, reason: 'no leg cleared the conviction gates', trace };
 
-  // Every qualified leg is already SAFE (the gates saw to that), so rank by
-  // what it pays for that safety: conviction x profit-per-$1. This is what
-  // keeps the ticket in the -460/-310 sweet spot the hand-made winners used
-  // instead of stacking two -650s into a combined price that barely pays.
+  // Every qualified leg is already SAFE (the gates saw to that), so the
+  // pairing optimizes what the ticket PAYS for that safety. All cross-game
+  // pairs are searched: a pair landing in the [-200, -130] payout window
+  // wins (highest combined conviction among them); if none reaches -200,
+  // the lightest pair runs; only with no pair at all does a straight run —
+  // ranked by conviction x profit-per-$1 so even the straight leans toward
+  // the -250 end of the band, not -650.
   const value = (c) => c.conviction * (c.decimal - 1);
   qualified.sort((x, y) => value(y) - value(x));
-  const first = qualified[0];
-  const partners = qualified.filter(
-    (c) => c.game.oddsEventId !== first.game.oddsEventId && first.decimal * c.decimal <= PARLAY_DECIMAL_MAX,
-  );
-  const second = partners[0];
-  const legs = second ? [first, second] : [first];
+  let bestPair = null;
+  for (let i = 0; i < qualified.length; i++) {
+    for (let j = i + 1; j < qualified.length; j++) {
+      const a = qualified[i], b = qualified[j];
+      if (a.game.oddsEventId === b.game.oddsEventId) continue;
+      const combined = a.decimal * b.decimal;
+      if (combined > PARLAY_DECIMAL_MAX) continue;
+      const inWindow = combined >= COMBINED_DECIMAL_MIN;
+      const conviction = a.conviction + b.conviction;
+      const better = !bestPair
+        || (inWindow && !bestPair.inWindow)
+        || (inWindow === bestPair.inWindow && (inWindow ? conviction > bestPair.conviction : combined > bestPair.combined));
+      if (better) bestPair = { legs: [a, b], combined, conviction, inWindow };
+    }
+  }
+  if (bestPair) {
+    trace.push(`pair: ${fmtAmerican(toAmerican(bestPair.combined))}${bestPair.inWindow ? ' (in the -200..-130 window)' : ' (no pair reached -200; lightest taken)'}`);
+  }
+  const legs = bestPair ? bestPair.legs : [qualified[0]];
   const combinedDecimal = legs.reduce((d, leg) => d * leg.decimal, 1);
   const combinedAmerican = toAmerican(combinedDecimal);
 
