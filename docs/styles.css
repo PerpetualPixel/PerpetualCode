@@ -4570,3 +4570,16 @@ input[type="range"]:focus-visible {
 /* The fight's value straight named alongside the Main Play in the drawer. */
 .main-play-value { margin-top: 6px; font-size: 0.82rem; color: var(--muted); }
 .main-play-value-note { font-size: 0.72rem; margin-left: 6px; }
+
+/* Small "powered by" credit for the MMA Consensus Engine — a quiet strip at
+   the bottom of the page flow, never fixed, never covering content. */
+.mma-engine-ad {
+  display: flex; align-items: center; gap: 10px; max-width: 640px;
+  margin: 28px auto 18px; padding: 10px 16px; border-radius: 10px;
+  border: 1px solid color-mix(in srgb, var(--accent) 35%, transparent);
+  background: color-mix(in srgb, var(--accent) 6%, transparent);
+  color: var(--muted); text-decoration: none; font-size: 0.82rem; line-height: 1.45;
+}
+.mma-engine-ad:hover { border-color: var(--accent); color: var(--text); }
+.mma-engine-ad strong { color: var(--text); }
+.mma-engine-ad-icon { font-size: 1.25rem; }
