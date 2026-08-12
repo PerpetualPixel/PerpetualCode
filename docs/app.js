@@ -3483,15 +3483,30 @@ function ensureBoxScore(game, { live = false } = {}) {
 /**
  * The in-progress linescore for a live card, or null — and, as a side effect,
  * what keeps it refreshing (mirroring how finishedDetailHtml drives the
- * finished grid). Gated on ESPN's own 'in' state rather than the card's
- * clock-derived one: slateGameState() calls a game live the moment its start
- * time passes, which is routinely a few minutes before first pitch.
+ * finished grid). The worker only serves a box once the game has visibly
+ * started (see boxFromScoreboard's gate), so any not-completed box here IS
+ * in progress — requiring ESPN's 'in' state on top of that was the bug that
+ * left every live card grid-less while finished ones rendered fine, since
+ * ESPN doesn't reliably carry that field where it was being read.
  */
 function liveBoxFor(game) {
   if (!BOX_SPORTS.has(game.sportKey)) return null;
   ensureBoxScore(game, { live: true });
   const box = state.boxScores.get(game.eventId);
-  return box?.status?.state === 'in' ? box : null;
+  return box?.status && !box.status.completed ? box : null;
+}
+
+/**
+ * The text next to a live card's ● Live badge: ESPN's own words ("Top 5th",
+ * "End of 3rd") when present, else a plain period fallback ("Inning 5",
+ * "Q3") built from the number alone — labeled without a top/bottom guess,
+ * because only ESPN knows which half it is.
+ */
+function liveBoxDetailText(box) {
+  if (box?.status?.detail) return box.status.detail;
+  const period = box?.status?.period;
+  if (!period) return null;
+  return box.kind === 'innings' ? `Inning ${period}` : `Q${period}`;
 }
 
 /** The per-period linescore grid — innings + R/H/E for MLB, quarters + T for football/basketball. */
@@ -3501,7 +3516,9 @@ function boxScoreGridHtml(box) {
   // The period in play, so a live grid says which inning is current rather
   // than leaving you to infer it from where the numbers stop. Absent on a
   // finished box (and on the pre-status payloads older callers may hold).
-  const current = box.status?.state === 'in' ? box.status.period : null;
+  // Keyed on not-completed, same as liveBoxFor — never on ESPN's state
+  // field, which isn't reliably present.
+  const current = box.status && !box.status.completed ? box.status.period : null;
   const headers = Array.from({ length: periods }, (_, i) =>
     `<span${current === i + 1 ? ' class="box-now"' : ''}>${i + 1}</span>`).join('');
   const totalsHead = isInnings ? '<span class="box-tot">R</span><span class="box-tot">H</span><span class="box-tot">E</span>' : '<span class="box-tot">T</span>';
@@ -3652,10 +3669,12 @@ function slateGameHtml(game) {
   // keeps itself refreshed — see liveBoxFor.
   const liveBox = gameState === 'live' ? liveBoxFor(game) : null;
 
-  // What sits next to the Live badge: the box sports get ESPN's own "Top 5th";
-  // tennis gets a sets chip from the free /scores feed when it's actually
-  // posting live numbers (frequently it doesn't — then no chip, never a guess).
-  const liveDetailText = liveBox?.status?.detail
+  // What sits next to the Live badge: the box sports get ESPN's own "Top 5th"
+  // (or a plain "Inning 5" when ESPN's wording is absent — see
+  // liveBoxDetailText); tennis gets a sets chip from the free /scores feed
+  // when it's actually posting live numbers (frequently it doesn't — then no
+  // chip, never a guess).
+  const liveDetailText = (liveBox ? liveBoxDetailText(liveBox) : null)
     ?? (gameState === 'live' && game.sportKey.startsWith('tennis_') ? liveSetsLabel(scoreEvent) : null);
 
   const timeHtml = isFinished

@@ -98,9 +98,14 @@ function sideFrom(competitor, { kind, periods }) {
  * shows ("Top 5th", "Bot 9th", "End 3rd", "Final") — passed through verbatim
  * rather than reconstructed from `period` + a half-inning guess, since only
  * ESPN knows whether a half is mid-inning, ended, or in a delay.
+ *
+ * Read from the competition's status first, falling back to the event's:
+ * ESPN populates one or the other depending on league and page, and the
+ * competition-only read is exactly why finished MLB grids rendered while
+ * other cases returned nothing.
  */
-function statusFrom(competition) {
-  const status = competition?.status ?? {};
+function statusFrom(competition, event) {
+  const status = competition?.status ?? event?.status ?? {};
   const type = status.type ?? {};
   const period = Number(status.period);
   return {
@@ -127,21 +132,25 @@ function statusFrom(competition) {
  * be indistinguishable from every other null, which made "no grid anywhere"
  * undiagnosable from the outside. The reason rides the /boxscore response,
  * so opening the URL in a browser now says WHICH gate refused —
- * 'unmatched' | 'pregame' | 'unreadable_status' | 'ok'.
+ * 'unmatched' | 'not_started' | 'ok'.
  */
 export function boxFromScoreboard(scoreboard, { home, away, league }) {
   const found = findEvent(scoreboard, home, away);
   if (!found) return { box: null, reason: 'unmatched' };
 
   const { event, competition, homeSide, awaySide } = found;
-  const status = statusFrom(competition);
-  // Nothing to show before first pitch — there's no line yet, and the card's
-  // existing pregame layout is already the right one.
-  if (status.state === 'pre') return { box: null, reason: 'pregame' };
-  // A payload carrying neither a state nor a completed flag is one this code
-  // doesn't understand. Stay conservative and let the card keep whatever it
-  // already shows, rather than rendering a grid off a shape we're guessing at.
-  if (!status.state && !status.completed) return { box: null, reason: 'unreadable_status' };
+  const status = statusFrom(competition, event);
+  // Serve anything that has visibly started; refuse only a game with no line
+  // to show. Requiring status.type.state === 'in' here was the live bug: the
+  // finished path passed on completed:true while live games needed a field
+  // ESPN doesn't reliably place where it was being read — so finished grids
+  // rendered and live cards got nothing, silently. The gate now rests on
+  // signals that can't disagree between the two paths: an explicit
+  // pre-game state refuses; a completed flag, an in/post state, or actual
+  // linescore entries (ESPN only writes those once play starts) serve.
+  const hasLine = [homeSide, awaySide].some((c) => (c?.linescores ?? []).length > 0);
+  const started = status.completed || status.state === 'in' || status.state === 'post' || hasLine;
+  if (status.state === 'pre' || !started) return { box: null, reason: 'not_started' };
 
   const venue = competition?.venue ?? {};
   const venueLine = [venue.fullName, venue.address?.city, venue.address?.state]
