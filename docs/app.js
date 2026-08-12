@@ -651,6 +651,8 @@ const el = {
   updateBannerDismiss: document.getElementById('updateBannerDismiss'),
   whatsNewHint: document.getElementById('whatsNewHint'),
   whatsNewHintClose: document.getElementById('whatsNewHintClose'),
+  retractionNotice: document.getElementById('retractionNotice'),
+  retractionNoticeClose: document.getElementById('retractionNoticeClose'),
   bankrollToggle: document.getElementById('bankrollToggle'),
   bankrollPanel: document.getElementById('bankrollPanel'),
   bankrollClose: document.getElementById('bankrollClose'),
@@ -5150,16 +5152,38 @@ function renderTop5DayBlock(day, open = false) {
   const dateLabel = new Date(`${day.date}T00:00:00`).toLocaleDateString(undefined, {
     weekday: 'short', month: 'short', day: 'numeric',
   });
-  const record = `${day.wins}-${day.losses}` + (day.pending ? ` · ${day.pending} pending` : '');
+  // Voids are surfaced on the day line too, not just per-row: a day with
+  // retracted picks otherwise shows a W-L that silently covers fewer picks
+  // than the day actually holds, which looks like picks went missing.
+  const record = `${day.wins}-${day.losses}`
+    + (day.voided ? ` · ${day.voided} void` : '')
+    + (day.pending ? ` · ${day.pending} pending` : '');
   const trendClass = day.net > 0 ? 'positive' : day.net < 0 ? 'negative' : '';
 
   const rows = day.picks.map((p) => {
-    const statusClass = p.status === 'won' ? 'status-won' : p.status === 'lost' ? 'status-lost' : 'status-pending';
-    const statusLabel = p.status === 'won' ? 'WIN' : p.status === 'lost' ? 'LOSS' : 'PENDING';
+    // A void is settled, not still-to-come — it used to fall through to
+    // PENDING here, which read as "we're still waiting on this" for a pick
+    // that had already been pushed, walked over, or (see worker/src/
+    // retraction.js) pulled by hand. RETRACTED is called out separately
+    // from an ordinary void because only a retraction is a human decision
+    // the user is owed an explanation for; the reason rides along as the
+    // row's tooltip.
+    const retracted = Boolean(p.retracted);
+    const statusClass = p.status === 'won' ? 'status-won'
+      : p.status === 'lost' ? 'status-lost'
+      : p.status === 'void' ? 'status-void'
+      : 'status-pending';
+    const statusLabel = p.status === 'won' ? 'WIN'
+      : p.status === 'lost' ? 'LOSS'
+      : p.status === 'void' ? (retracted ? 'RETRACTED' : 'VOID')
+      : 'PENDING';
+    const voidTitle = p.status === 'void'
+      ? ` title="${esc(`Void — stake returned, counts as neither a win nor a loss${p.result?.voidReason ? `: ${p.result.voidReason}` : ''}`)}"`
+      : '';
     const payoutLabel = p.result ? formatSignedMoney(p.result.payout) : '—';
     const flagged = !meetsTrackingStandard(p);
     return `
-      <div class="day-pick-row ${statusClass}">
+      <div class="day-pick-row ${statusClass}"${voidTitle}>
         <span class="pick-matchup">${esc(p.away)} @ ${esc(p.home)}${flagged ? ' <span class="pick-flag-inline" title="Outside standard criteria: a thin-day fallback pick, still counted in every total">⚠ flagged</span>' : ''}</span>
         <span class="pick-side">${esc(p.selection)}</span>
         <span class="pick-status">${statusLabel}</span>
@@ -6131,11 +6155,39 @@ el.whatsNewHintClose.addEventListener('click', () => {
   el.whatsNewHint.hidden = true;
 });
 
+// Versioned on the same rule as WHATS_NEW_LEAN_FINAL_KEY: a future
+// retraction gets its own suffix rather than reusing this one, so someone
+// who dismissed this notice still sees the next one.
+const RETRACTION_NOTICE_KEY = 'pp_seen_notice_wta_retraction_v1';
+
+/**
+ * One-time blanket notice for the manual WTA retraction (see the worker's
+ * /admin/retract-wta route). Deliberately ONE notice covering every
+ * retracted pick rather than a per-pick callout: a badge already marks each
+ * one in the tracking dashboard, and the thing a user actually needs told
+ * once is *why the record changed underneath them* — that the picks were
+ * pulled by hand, and that a void is not a loss.
+ *
+ * Shown at the very top, above the day filter and every board, since it
+ * explains something about the whole app rather than one tab. localStorage,
+ * not sessionStorage — once ever per browser, same as the lean/final hint.
+ */
+function showRetractionNoticeIfFresh() {
+  if (localStorage.getItem(RETRACTION_NOTICE_KEY)) return;
+  el.retractionNotice.hidden = false;
+}
+
+el.retractionNoticeClose.addEventListener('click', () => {
+  localStorage.setItem(RETRACTION_NOTICE_KEY, '1');
+  el.retractionNotice.hidden = true;
+});
+
 (async function init() {
   if (!checkAuth()) return;
 
   showWelcomeToastIfFresh();
   showWhatsNewHintIfFresh();
+  showRetractionNoticeIfFresh();
 
   el.accountLink.hidden = !getToken();
   el.pixelSort.value = state.pixelSort;

@@ -49,6 +49,7 @@ import { settleTennisGameMarket } from './tennis-results.js';
 import { isPickWindowOpen } from './tracking.js';
 import { applyTennisFormSignal } from '../../docs/qualitative.js';
 import { loadTennisArchive, loadTennisArchivesFor } from './tennis-archive.js';
+import { retractedRecord } from './retraction.js';
 
 const ET_TZ = 'America/New_York';
 export const POTD_HOUR = 2; // 2am ET — when the daily learning review runs, not when picks lock anymore
@@ -710,12 +711,54 @@ export async function getPotdHistory(env, { now = Date.now(), days = 90 } = {}) 
   for (let i = 0; i < days; i++) {
     dateKeys.push(etParts(now - i * 86400000).date);
   }
-  const raw = await Promise.all(dateKeys.map((d) => env.POTD_KV.get(`potd:${d}`)));
-  return raw
-    .filter(Boolean)
-    .map((r) => JSON.parse(r).pick)
+  // Retracted days are read alongside live ones (see retractPotd): a pulled
+  // Play of the Day still belongs in the history, settled as a void, rather
+  // than vanishing and leaving the day looking like one nothing was picked.
+  const [raw, retractedRaw] = await Promise.all([
+    Promise.all(dateKeys.map((d) => env.POTD_KV.get(`potd:${d}`))),
+    Promise.all(dateKeys.map((d) => env.POTD_KV.get(`potd-retracted:${d}`))),
+  ]);
+  const records = [
+    ...raw.filter(Boolean).map((r) => JSON.parse(r)),
+    // One day can hold several retractions — a pick pulled, regenerated,
+    // and pulled again — so this key stores an array, not a single record.
+    ...retractedRaw.filter(Boolean).flatMap((r) => JSON.parse(r)),
+  ];
+  return records
+    .map((r) => r.pick)
     // A record written by the old two-phase/per-sport system has no `status`
     // (it was write-up-only, never tracked) — skip it rather than surfacing
     // an untracked pick the summary/day-block math can't make sense of.
     .filter((pick) => pick && pick.status != null);
+}
+
+/**
+ * Retracts a day's Play of the Day when its pick matches, voiding it and
+ * clearing the slot so runPotdDaily picks the day again on its next tick.
+ *
+ * Unlike the two multi-pick trackers, this one's idempotency is the mere
+ * EXISTENCE of `potd:<date>` ("already generated -> skip"), so the live key
+ * has to be deleted outright for the day to be re-picked at all — which is
+ * exactly why the record can't simply be voided in place. It's appended to
+ * `potd-retracted:<date>` instead (an array, since a day can be pulled more
+ * than once), where getPotdHistory above reads it back.
+ */
+export async function retractPotd(env, { now = Date.now(), dateKey, match, reason }) {
+  const day = dateKey ?? etParts(now).date;
+  const raw = await env.POTD_KV.get(`potd:${day}`);
+  if (!raw) return { dateKey: day, retracted: 0, picks: [] };
+
+  const record = JSON.parse(raw);
+  if (!record.pick || !match(record.pick)) return { dateKey: day, retracted: 0, picks: [] };
+
+  const pulled = { ...record, pick: retractedRecord(record.pick, { reason, at: now }) };
+  const priorRaw = await env.POTD_KV.get(`potd-retracted:${day}`);
+  const prior = priorRaw ? JSON.parse(priorRaw) : [];
+
+  await env.POTD_KV.put(`potd-retracted:${day}`, JSON.stringify([...prior, pulled]), {
+    expirationTtl: KV_TTL_SECONDS,
+  });
+  await env.POTD_KV.delete(`potd:${day}`);
+
+  return { dateKey: day, retracted: 1, picks: [pulled.pick] };
 }

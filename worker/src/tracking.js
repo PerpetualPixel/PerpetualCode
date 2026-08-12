@@ -49,6 +49,7 @@ import {
   hasSecondarySettlementSource,
 } from '../../docs/tennis-tiers.js';
 import { settleTennisGameMarket } from './tennis-results.js';
+import { retractedRecord } from './retraction.js';
 
 export const TOP5_COUNT = 5;
 // Matches docs/learning.js's own FLAT_UNIT_STAKE — duplicated rather than
@@ -703,7 +704,13 @@ export async function runTop5Batch(
 
   const pickIds = [...existingPickIds, ...newPickIds];
   ctx.waitUntil(
-    env.POTD_KV.put(manifestKey, JSON.stringify({ date: dateKey, generatedAt: now, pickIds }), {
+    // Spread `existing` rather than building a fresh object — the manifest
+    // also carries retractedPickIds (see retractTop5Picks), and a literal
+    // listing only this function's own fields would drop them on the very
+    // next top-up tick, orphaning every retracted record.
+    env.POTD_KV.put(manifestKey, JSON.stringify({
+      ...(existing ?? {}), date: dateKey, generatedAt: now, pickIds,
+    }), {
       expirationTtl: KV_TTL_SECONDS,
     }),
   );
@@ -711,12 +718,72 @@ export async function runTop5Batch(
   return { skipped: false, dateKey, count: pickIds.length, added: newPickIds.length, poolSize: slate.poolSize };
 }
 
+/**
+ * A day's Pixel's Picks records. `picks` includes retracted ones so the
+ * dashboard still shows them (voided) rather than a gap; `pickIds` is the
+ * LIVE set only, since every caller reading it — the batch's own top-up
+ * count and event dedupe, the date migration, the reset sweep — means
+ * "picks that still stand." Exactly mirrors full-slate-tracking.js's own
+ * loadFullSlateTracked; see retractTop5Picks below.
+ */
 async function loadTrackedPicks(env, dateKey) {
   const manifestRaw = await env.POTD_KV.get(`track:${dateKey}:top5`);
-  if (!manifestRaw) return { pickIds: [], picks: [] };
-  const { pickIds } = JSON.parse(manifestRaw);
-  const stored = await Promise.all(pickIds.map((id) => env.POTD_KV.get(`track:${dateKey}:pick:${id}`)));
-  return { pickIds, picks: stored.filter(Boolean).map((r) => JSON.parse(r)) };
+  if (!manifestRaw) return { pickIds: [], picks: [], retractedPickIds: [] };
+  const { pickIds = [], retractedPickIds = [] } = JSON.parse(manifestRaw);
+  const [stored, retracted] = await Promise.all([
+    Promise.all(pickIds.map((id) => env.POTD_KV.get(`track:${dateKey}:pick:${id}`))),
+    Promise.all(retractedPickIds.map((id) => env.POTD_KV.get(`track:${dateKey}:retracted:${id}`))),
+  ]);
+  return {
+    pickIds,
+    retractedPickIds,
+    picks: [...stored, ...retracted].filter(Boolean).map((r) => JSON.parse(r)),
+  };
+}
+
+/**
+ * The Pixel's Picks counterpart to full-slate-tracking.js's
+ * retractFullSlatePicks — same contract, same reasoning, same reason the
+ * record moves to its own key prefix instead of staying in place. Because
+ * runTop5Batch tops up to TOP5_COUNT, removing an id from `pickIds` also
+ * re-opens that slot: the board refills to five on the next tick, from
+ * whatever the engine now grades highest.
+ */
+export async function retractTop5Picks(env, { now = Date.now(), dateKey, match, reason }) {
+  const day = dateKey ?? etDate(now);
+  const manifestKey = `track:${day}:top5`;
+  const manifestRaw = await env.POTD_KV.get(manifestKey);
+  if (!manifestRaw) return { dateKey: day, retracted: 0, picks: [] };
+
+  const manifest = JSON.parse(manifestRaw);
+  const pickIds = manifest.pickIds ?? [];
+  const stored = await Promise.all(pickIds.map((id) => env.POTD_KV.get(`track:${day}:pick:${id}`)));
+
+  const keptIds = [];
+  const pulled = [];
+  pickIds.forEach((pickId, i) => {
+    const raw = stored[i];
+    if (!raw) { keptIds.push(pickId); return; }
+    const pick = JSON.parse(raw);
+    if (!match(pick)) { keptIds.push(pickId); return; }
+    pulled.push(retractedRecord(pick, { reason, at: now }));
+  });
+
+  if (!pulled.length) return { dateKey: day, retracted: 0, picks: [] };
+
+  await Promise.all(pulled.flatMap((pick) => [
+    env.POTD_KV.put(`track:${day}:retracted:${pick.pickId}`, JSON.stringify(pick), {
+      expirationTtl: KV_TTL_SECONDS,
+    }),
+    env.POTD_KV.delete(`track:${day}:pick:${pick.pickId}`),
+  ]));
+
+  manifest.pickIds = keptIds;
+  manifest.retractedPickIds = [...new Set([...(manifest.retractedPickIds ?? []), ...pulled.map((p) => p.pickId)])];
+  manifest.lastUpdatedAt = now;
+  await env.POTD_KV.put(manifestKey, JSON.stringify(manifest), { expirationTtl: KV_TTL_SECONDS });
+
+  return { dateKey: day, retracted: pulled.length, picks: pulled };
 }
 
 /**
@@ -959,9 +1026,15 @@ export async function resetAllTracking(env, { now = Date.now(), days = 90 } = {}
   let deleted = 0;
   for (let i = 0; i < days; i++) {
     const dateKey = etDate(now - i * 86400000);
-    const { pickIds } = await loadTrackedPicks(env, dateKey);
+    const { pickIds, retractedPickIds } = await loadTrackedPicks(env, dateKey);
     for (const id of pickIds) {
       await env.POTD_KV.delete(`track:${dateKey}:pick:${id}`);
+      deleted++;
+    }
+    // Retracted records sit under their own key prefix — dropping the
+    // manifest without them would leave unreachable orphans behind.
+    for (const id of retractedPickIds) {
+      await env.POTD_KV.delete(`track:${dateKey}:retracted:${id}`);
       deleted++;
     }
     await env.POTD_KV.delete(`track:${dateKey}:top5`);

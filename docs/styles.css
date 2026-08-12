@@ -4075,6 +4075,18 @@ input[type="range"]:focus-visible {
   background: rgba(16, 185, 129, 0.15);
   color: var(--success);
 }
+.whats-new-badge.is-retracted {
+  background: rgba(251, 191, 36, 0.15);
+  color: var(--warn);
+}
+
+/* A correction notice, not a new-feature hint — amber rather than the
+   purple/cyan "what's new" wash, so the two read as different kinds of
+   message even when both happen to be showing. */
+.whats-new-hint.is-notice {
+  background: linear-gradient(135deg, rgba(251, 191, 36, 0.12), rgba(251, 191, 36, 0.04));
+  border-color: rgba(251, 191, 36, 0.35);
+}
 .whats-new-hint .overlay-close-btn {
   width: 28px;
   height: 28px;
@@ -4249,6 +4261,10 @@ input[type="range"]:focus-visible {
 .status-won .pick-status { color: var(--success); }
 .status-lost .pick-status { color: var(--danger); }
 .status-pending .pick-status { color: var(--muted); }
+/* Void (a push, a walkover, or a manual retraction) — amber, so it reads as
+   "settled, but neither a win nor a loss" rather than borrowing pending's
+   grey and looking like it's still to come. */
+.status-void .pick-status { color: var(--warn); }
 
 .pick-payout {
   font-family: var(--mono);
