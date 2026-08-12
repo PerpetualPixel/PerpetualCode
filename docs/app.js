@@ -2695,28 +2695,25 @@ async function openStatsDrawer(leg, opposite = null, { fullscreen = false, oddsO
       `</div>`
     : '';
 
-  // The bet itself — Main Play plus every book's price on this exact line —
-  // stays pinned at the top, exactly matching the fast initial paint above
-  // (same metaHtml + mainPlayHtml + renderPriceTable(leg) trio), so nothing
-  // reflows or gets pushed down once research resolves. That research
-  // (matchup analysis, Devil's Advocate, MMA/tennis breakdown, form bullets)
-  // is real value, but it's supplementary reading, not what someone clicking
-  // a market cell is primarily asking for — "what can I bet, and where."
-  // Previously this all rendered ABOVE the price table, so once the AI
-  // writeup and research finished loading, the actual sportsbook odds ended
-  // up buried at the bottom of a long scroll behind a wall of prose.
+  // The Main Play and the consensus stay pinned at the top; the book-by-book
+  // price table goes at the VERY BOTTOM, below all research — explicit
+  // product direction: the table is reference data for line-shopping after
+  // the read is made, and having it above the analysis pushed everything the
+  // drawer is actually for below the fold. (It still renders instantly in
+  // the fast first paint above, where it IS the bottom until the slower
+  // research sections resolve and take its place.)
   el.statsDrawerBody.innerHTML =
     metaHtml +
     mainPlayHtml +
     consensusHtml +
-    renderPriceTable(leg) +
     renderWeatherPills(weather) +
     priceHtml +
     devilHtml +
     mmaBreakdownHtml +
     mmaNoDataHtml +
     tennisBreakdownHtml +
-    renderStatsResearch(bullets);
+    renderStatsResearch(bullets) +
+    renderPriceTable(leg);
 }
 
 /**
