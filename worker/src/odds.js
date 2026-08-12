@@ -44,11 +44,21 @@ export const REGIONS = 'us';
 // matches late or not at all. That left them coming back with fewer than
 // RULES.MIN_BOOKS quoting each line, so no candidate was built and the match
 // rendered as an all-dash Full Slate row even an hour out. Tennis alone
-// widens to the EU/UK books that actually price it. Scoped to tennis on
-// purpose: The Odds API bills per region per market, so widening every sport
-// would multiply the quota cost of the whole slate for no benefit to the team
-// sports US books already cover deeply.
-export const TENNIS_REGIONS = 'us,uk,eu';
+// uses the EU/UK books that actually price it — WITHOUT the us region: the
+// whole point of the widening was that US books don't post these matches,
+// so paying a third region's credits to re-ask them added cost (9 vs 6
+// credits per fetch, the most expensive call in the app) for lines the
+// uk/eu set already carries. Scoped to tennis on purpose: The Odds API
+// bills per region per market, so widening every sport would multiply the
+// quota cost of the whole slate.
+export const TENNIS_REGIONS = 'uk,eu';
+// A sport whose odds board came back EMPTY is out of season or between
+// cards — nothing there can change in minutes, and The Odds API bills the
+// same markets-x-regions price for an empty answer as a full one. Empty
+// boards are cached this long instead of CACHE_SECONDS, which cuts the
+// standing burn of NBA/NCAAB/NHL in August to a handful of calls a day
+// with no seasonal allowlist to maintain.
+export const EMPTY_BOARD_CACHE_SECONDS = 3 * 3600;
 export const DEFAULT_CACHE_SECONDS = 900;
 
 /**
@@ -185,11 +195,15 @@ export async function fetchSport(sport, env, ctx) {
     events = await enrichMmaEvents(events, ctx);
   }
 
+  // An empty board holds far longer than a live one — see
+  // EMPTY_BOARD_CACHE_SECONDS. Cached AFTER the MMA enrichment on purpose:
+  // enrichment never invents events, so emptiness is the upstream's answer.
+  const cacheTtl = Array.isArray(events) && events.length === 0 ? EMPTY_BOARD_CACHE_SECONDS : ttl;
   ctx.waitUntil(
     cache.put(
       cacheKey,
       new Response(JSON.stringify(events), {
-        headers: { 'Content-Type': 'application/json', 'Cache-Control': `max-age=${ttl}` },
+        headers: { 'Content-Type': 'application/json', 'Cache-Control': `max-age=${cacheTtl}` },
       }),
     ),
   );
