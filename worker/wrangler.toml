@@ -12,7 +12,7 @@ ALLOWED_ORIGINS = "https://perpetualpicks.com,https://www.perpetualpicks.com,htt
 # the single biggest lever on the monthly bill: credits are spent per cache MISS,
 # not per tap, so a shared app burns them on cache turnover rather than usage.
 # 900s (15 min) costs roughly a third of 300s and barely moves the picks.
-CACHE_SECONDS = "900"
+CACHE_SECONDS = "1800"
 
 # Require a signed-in account for /odds. Leave "false" until the D1 database is
 # created and migrations are applied — the frontend's CONFIG.REQUIRE_AUTH must
@@ -92,10 +92,10 @@ id = "15a94259af1c4d4cb4bc19076d0be2d9"
 # 300s scores cache either way, hourly or every 20 min, so more ticks = more
 # real upstream calls) — the once-daily 2am batch generation and 4am prewarm
 # are unaffected, since those are gated to a single matching hour regardless
-# of tick frequency. Checked live before changing this: ~17,167 of a ~20,000
-# credit budget remaining, comfortable headroom for the 3x increase. If
-# credits start running tight, widen this back toward "*/30" or "0 * * * *"
-# before touching CACHE_SECONDS (900s) below — cache duration is the bigger
-# lever per the comment above it.
+# of tick frequency. The 20-minute tick against a 15-minute odds cache
+# meant every single cron run repaid full upstream price (~3,000-4,000
+# credits/day, confirmed live at 88% of the monthly budget spent in 6
+# days). At */30 with CACHE_SECONDS=1800 the cron hits its own cache every
+# other run — the two settings are tuned as a pair; change them together.
 [triggers]
-crons = ["*/20 * * * *"]
+crons = ["*/30 * * * *"]

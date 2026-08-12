@@ -3253,10 +3253,22 @@ async function refreshSlateScores(group) {
   if (!CONFIG.WORKER_URL || !group.keys.length) return false;
   const lastFetch = state.slateScoresFetchedAt.get(group.id) ?? 0;
   if (Date.now() - lastFetch < 60000) return false;
+  // Scores only exist once something has started: a sport whose board is
+  // all future games (outside 30 minutes) and nothing from the last 36
+  // hours has no score to fetch, and the /scores call costs real Odds API
+  // credits per sport per fetch. Sports with no rendered games yet pass
+  // through (first paint), so a cold load behaves exactly as before.
+  const now = Date.now();
+  const active = group.keys.filter((key) => {
+    const games = renderedSlateGames.filter((g) => g.sportKey === key);
+    if (!games.length) return true;
+    return games.some((g) => g.commenceMs <= now + 30 * 60000 && g.commenceMs >= now - 36 * 3.6e6);
+  });
+  if (!active.length) return false;
   state.slateScoresFetchedAt.set(group.id, Date.now());
   try {
     const url = new URL('/scores', CONFIG.WORKER_URL);
-    url.searchParams.set('sports', group.keys.join(','));
+    url.searchParams.set('sports', active.join(','));
     const res = await fetch(url, { headers: { Accept: 'application/json' } });
     if (!res.ok) return false;
     const data = await res.json();
