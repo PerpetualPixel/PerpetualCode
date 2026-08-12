@@ -798,11 +798,14 @@ const state = {
   // for it (has `completed` and `scores`). Refreshed at most once a minute
   // per sport-group (see refreshSlateScores) rather than on every render.
   slateScores: new Map(),
-  // Finished-game box scores from the worker's /boxscore (per-inning/
+  // Live and finished box scores from the worker's /boxscore (per-inning/
   // quarter linescores — MLB/NFL/NCAAF/WNBA), keyed by eventId. `null`
   // means "asked, nothing available" so a fixture ESPN can't match isn't
   // re-fetched on every render; absent means not asked yet.
   boxScores: new Map(),
+  // eventId -> last /boxscore fetch time. A finished box is fetched once and
+  // kept; a live one is re-asked on the same cadence the slate polls scores.
+  boxScoresFetchedAt: new Map(),
   slateScoresFetchedAt: new Map(), // group.id -> last fetch time, so switching leagues never gets throttled by an unrelated sport's recent fetch
   // The server's own Full Slate tracked pick per game (see
   // worker/src/full-slate-tracking.js) — eventId -> pick record. This is
@@ -3406,14 +3409,26 @@ const BOX_SPORTS = new Set([
   'baseball_mlb', 'americanfootball_nfl', 'americanfootball_ncaaf', 'basketball_wnba', 'basketball_nba',
 ]);
 
+// How often a live game's box score is re-asked. Matches the slate's own
+// score-poll cadence (SLATE_AUTO_REFRESH_MS) so a live card's inning and its
+// score number move together instead of disagreeing for a minute at a time.
+const BOX_LIVE_REFRESH_MS = 60000;
+
 /**
- * Fetch (once) the box score for a finished game and re-render the slate
- * when it lands. `null` is cached too — an unmatched fixture stays a plain
- * final-score card without re-asking on every render.
+ * Fetch the box score for a game and re-render the slate when it changes.
+ * A finished box is fetched once — `null` is cached too, so a fixture ESPN
+ * can't match stays a plain card without re-asking on every render. A live
+ * box is re-asked every BOX_LIVE_REFRESH_MS, since its whole value is that
+ * it changes.
  */
-function ensureBoxScore(game) {
-  if (state.boxScores.has(game.eventId) || !CONFIG.WORKER_URL) return;
-  state.boxScores.set(game.eventId, null); // in-flight/none marker
+function ensureBoxScore(game, { live = false } = {}) {
+  if (!CONFIG.WORKER_URL) return;
+  const asked = state.boxScores.has(game.eventId);
+  const since = Date.now() - (state.boxScoresFetchedAt.get(game.eventId) ?? 0);
+  if (asked && (!live || since < BOX_LIVE_REFRESH_MS)) return;
+
+  state.boxScoresFetchedAt.set(game.eventId, Date.now());
+  if (!asked) state.boxScores.set(game.eventId, null); // in-flight/none marker
   const url = new URL('/boxscore', CONFIG.WORKER_URL);
   url.searchParams.set('sport', game.sportKey);
   url.searchParams.set('home', game.home);
@@ -3422,23 +3437,50 @@ function ensureBoxScore(game) {
     .then((r) => (r.ok ? r.json() : null))
     .then((data) => {
       if (!data?.box) return;
+      const previous = state.boxScores.get(game.eventId);
       state.boxScores.set(game.eventId, data.box);
-      renderFullSlate();
+      // Re-render only on an actual change. A live game is re-asked every
+      // minute but only turns a half-inning every few, and renderFullSlate()
+      // re-enters this function — so re-rendering unconditionally would churn
+      // the whole slate (and drop any open drawer) for identical data.
+      if (JSON.stringify(previous) !== JSON.stringify(data.box)) renderFullSlate();
     })
-    .catch(() => { /* the plain final-score card is the fallback */ });
+    .catch(() => { /* the plain score card is the fallback */ });
+}
+
+/**
+ * The in-progress linescore for a live card, or null — and, as a side effect,
+ * what keeps it refreshing (mirroring how finishedDetailHtml drives the
+ * finished grid). Gated on ESPN's own 'in' state rather than the card's
+ * clock-derived one: slateGameState() calls a game live the moment its start
+ * time passes, which is routinely a few minutes before first pitch.
+ */
+function liveBoxFor(game) {
+  if (!BOX_SPORTS.has(game.sportKey)) return null;
+  ensureBoxScore(game, { live: true });
+  const box = state.boxScores.get(game.eventId);
+  return box?.status?.state === 'in' ? box : null;
 }
 
 /** The per-period linescore grid — innings + R/H/E for MLB, quarters + T for football/basketball. */
 function boxScoreGridHtml(box) {
   const isInnings = box.kind === 'innings';
   const periods = Math.max(box.periods, box.home.linescores.length, box.away.linescores.length);
-  const headers = Array.from({ length: periods }, (_, i) => `<span>${i + 1}</span>`).join('');
+  // The period in play, so a live grid says which inning is current rather
+  // than leaving you to infer it from where the numbers stop. Absent on a
+  // finished box (and on the pre-status payloads older callers may hold).
+  const current = box.status?.state === 'in' ? box.status.period : null;
+  const headers = Array.from({ length: periods }, (_, i) =>
+    `<span${current === i + 1 ? ' class="box-now"' : ''}>${i + 1}</span>`).join('');
   const totalsHead = isInnings ? '<span class="box-tot">R</span><span class="box-tot">H</span><span class="box-tot">E</span>' : '<span class="box-tot">T</span>';
 
   // The loser's whole line dims (matching the tennis-scoreboard convention
   // and the finished card's own team rows) — but only when ESPN actually
-  // marked a winner, so a tie/no-flag payload dims nobody.
-  const winnerKnown = box.home.winner !== box.away.winner;
+  // marked a winner, so a tie/no-flag payload dims nobody. Suppressed outright
+  // mid-game: should a live payload ever carry the flag, dimming a team that's
+  // a run down in the 4th would read as a result that hasn't happened.
+  const decided = box.status ? box.status.completed : true;
+  const winnerKnown = decided && box.home.winner !== box.away.winner;
   const teamRow = (side) => {
     const cells = Array.from({ length: periods }, (_, i) => {
       const v = side.linescores[i];
@@ -3570,10 +3612,16 @@ function slateGameHtml(game) {
     ? `<button type="button" class="more-info-btn" data-show-mlb-stats="${idx}">View Stats</button>`
     : `<button type="button" class="more-info-btn" data-more-info="${idx}">More Info</button>`;
 
+  // The live linescore, once ESPN confirms the game is actually underway.
+  // Drives both the inning next to the Live badge and the grid below it, and
+  // keeps itself refreshed — see liveBoxFor.
+  const liveBox = gameState === 'live' ? liveBoxFor(game) : null;
+
   const timeHtml = isFinished
     ? `<span class="slate-final">Final</span>`
     : gameState === 'live'
-      ? `<span class="slate-live-badge">● Live</span>`
+      ? `<span class="slate-live-badge">● Live</span>${
+          liveBox?.status?.detail ? `<span class="slate-live-detail">${esc(liveBox.status.detail)}</span>` : ''}`
       : `<span>${esc(dateFmt.format(new Date(game.commenceMs)))}</span>`;
 
   // Once a game is live or finished, the per-market price grid no longer
@@ -3606,6 +3654,11 @@ function slateGameHtml(game) {
   // below it exactly as before.
   const finishedDetail = isFinished ? finishedDetailHtml(game, scoreEvent, trackedPick) : '';
 
+  // A live game gets the same grid, which is what makes the runs legible as
+  // innings rather than a single total: the score line says 4-1, the grid says
+  // which innings those came in and which one is being played now.
+  const liveDetail = liveBox ? boxScoreGridHtml(liveBox) : '';
+
   return `
     <article class="${cardClass}" ${isMlb ? `data-game-index="${idx}"` : ''}>
       <div class="slate-game-time">
@@ -3614,6 +3667,7 @@ function slateGameHtml(game) {
       </div>
       ${leanBadgeHtml}
       ${finishedDetail}
+      ${liveDetail}
       ${hideMarkets ? '' : `
       <div class="slate-header-row">
         <span></span><span>Spread</span><span>O/U</span><span>ML</span>

@@ -57,17 +57,69 @@ test('boxFromScoreboard extracts innings, R/H/E, venue, and winner for a matched
   assert.equal(box.away.winner, false);
 });
 
-test('boxFromScoreboard returns null for a not-yet-completed game and an unmatched fixture', () => {
-  assert.equal(
-    boxFromScoreboard(mlbScoreboard({ completed: false }), { home: 'Toronto Blue Jays', away: 'Boston Red Sox', league: MLB_LEAGUE }),
-    null,
-    'a live game has no final box',
-  );
+test('boxFromScoreboard returns null for an unmatched fixture and an unreadable status', () => {
   assert.equal(
     boxFromScoreboard(mlbScoreboard(), { home: 'Arizona Diamondbacks', away: 'Colorado Rockies', league: MLB_LEAGUE }),
     null,
     'a fixture not on this scoreboard must never borrow another game\'s box',
   );
+  assert.equal(
+    boxFromScoreboard(mlbScoreboard({ completed: false }), { home: 'Toronto Blue Jays', away: 'Boston Red Sox', league: MLB_LEAGUE }),
+    null,
+    'neither a state nor a completed flag: a shape this code cannot read, so no grid',
+  );
+});
+
+// -- live (in-progress) boxes ------------------------------------------------
+
+/** An MLB scoreboard mid-game: 5 innings played, ESPN reporting "Top 5th". */
+function liveMlbScoreboard({ state = 'in', detail = 'Top 5th', period = 5 } = {}) {
+  const sb = mlbScoreboard({ completed: false });
+  const competition = sb.events[0].competitions[0];
+  competition.status = { period, type: { state, completed: false, shortDetail: detail } };
+  // Only the innings actually played are reported while a game is live.
+  competition.competitors[0].linescores = [{ value: 0 }, { value: 1 }, { value: 0 }, { value: 0 }, { value: 1 }];
+  competition.competitors[0].score = '2';
+  competition.competitors[1].linescores = [{ value: 1 }, { value: 0 }, { value: 0 }, { value: 0 }];
+  competition.competitors[1].score = '1';
+  return sb;
+}
+
+test('boxFromScoreboard serves an in-progress game with its status and partial line', () => {
+  const box = boxFromScoreboard(liveMlbScoreboard(), {
+    home: 'Toronto Blue Jays', away: 'Boston Red Sox', league: MLB_LEAGUE,
+  });
+  assert.ok(box, 'a live game must return a box — the inning is the whole point');
+  assert.equal(box.status.state, 'in');
+  assert.equal(box.status.completed, false);
+  assert.equal(box.status.detail, 'Top 5th');
+  assert.equal(box.status.period, 5);
+  assert.equal(box.home.total, 2);
+  // Innings not yet played pad as null (rendered "—"), never as a fabricated 0.
+  assert.deepEqual(box.home.linescores, [0, 1, 0, 0, 1, null, null, null, null]);
+  assert.deepEqual(box.away.linescores, [1, 0, 0, 0, null, null, null, null, null]);
+});
+
+test('boxFromScoreboard returns null before first pitch', () => {
+  // A scheduled game has no line to show, and the card's pregame layout is
+  // already the right one — a grid of nine em dashes would be noise.
+  const sb = liveMlbScoreboard({ state: 'pre', detail: '7:07 PM ET', period: 0 });
+  assert.equal(
+    boxFromScoreboard(sb, { home: 'Toronto Blue Jays', away: 'Boston Red Sox', league: MLB_LEAGUE }),
+    null,
+  );
+});
+
+test('boxFromScoreboard carries a completed status through for a finished game', () => {
+  // The finished card's grid keeps working, and gains the flag the renderer
+  // reads to decide whether dimming the loser is allowed yet.
+  const sb = mlbScoreboard();
+  sb.events[0].competitions[0].status = { period: 9, type: { state: 'post', completed: true, shortDetail: 'Final' } };
+  const box = boxFromScoreboard(sb, { home: 'Toronto Blue Jays', away: 'Boston Red Sox', league: MLB_LEAGUE });
+  assert.ok(box);
+  assert.equal(box.status.completed, true);
+  assert.equal(box.status.state, 'post');
+  assert.equal(box.status.detail, 'Final');
 });
 
 test('boxFromScoreboard pads a shortened linescore to the standard period count with nulls, never zeros', () => {
