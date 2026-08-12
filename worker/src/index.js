@@ -841,7 +841,7 @@ export default {
         // reason/source always ride along ('unmatched', 'no_scoreboard',
         // 'pregame', ... / 'cdn' vs 'site') — opening this URL in a browser
         // is the whole remote-diagnosis story for "why is there no grid."
-        const { box, reason, source } = await fetchBoxScore(
+        const { box, reason, source, attempts } = await fetchBoxScore(
           {
             sportKey,
             home: searchParams.get('home') ?? '',
@@ -857,7 +857,10 @@ export default {
         // started serving the game yet, and a 5-minute cached null would keep
         // the grid off well into the first innings.
         const maxAge = box && (!box.status || box.status.completed) ? 300 : 30;
-        return json({ box, reason, source, supportsLive: true }, { headers: { ...cors, 'Cache-Control': `public, max-age=${maxAge}` } });
+        // attempts lists every scoreboard page consulted and its verdict
+        // ("cdn-dated:wrong_day", "cdn:ok", ...) — the one-paste answer to
+        // "which page did this come from / why did every page refuse."
+        return json({ box, reason, source, attempts, supportsLive: true }, { headers: { ...cors, 'Cache-Control': `public, max-age=${maxAge}` } });
       } catch (error) {
         return json({ box: null, supportsLive: true, reason: String(error).slice(0, 120) }, { headers: cors });
       }

@@ -49,6 +49,24 @@ const BOX_LEAGUES = {
 
 export const hasBoxScore = (sportKey) => Boolean(BOX_LEAGUES[sportKey]);
 
+const ET_DAY_FMT = new Intl.DateTimeFormat('en-CA', {
+  timeZone: 'America/New_York', year: 'numeric', month: '2-digit', day: '2-digit',
+});
+
+/**
+ * "2026-08-12T01:45Z" -> "20260811": the ET calendar day an instant falls on,
+ * in the same YYYYMMDD form the client's `date` param uses. Null when the
+ * input doesn't parse. This is what pins a matched scoreboard event to the
+ * day the caller actually asked about — same-matchup series games on
+ * consecutive nights are one findEvent score apart, and only the date
+ * separates them.
+ */
+export function etDay(iso) {
+  const ms = Date.parse(iso ?? '');
+  if (!Number.isFinite(ms)) return null;
+  return ET_DAY_FMT.format(ms).replaceAll('-', '');
+}
+
 // Live lines change every half-inning, so the scoreboard is cached for a
 // minute rather than five — the slate polls on the same 60s cadence, and one
 // scoreboard request serves every card in a league, so this is one free ESPN
@@ -132,13 +150,24 @@ function statusFrom(competition, event) {
  * be indistinguishable from every other null, which made "no grid anywhere"
  * undiagnosable from the outside. The reason rides the /boxscore response,
  * so opening the URL in a browser now says WHICH gate refused —
- * 'unmatched' | 'not_started' | 'ok'.
+ * 'unmatched' | 'wrong_day' | 'not_started' | 'ok'.
+ *
+ * `expectedDay` (YYYYMMDD, ET) rejects a matched event that falls on a
+ * different ET day than the caller asked about. This is the guard that makes
+ * undated scoreboard pages safe to consult at all: teams in a series play
+ * the same opponent on consecutive nights, and without the date check
+ * tomorrow's pregame fixture is a perfect findEvent match for tonight's
+ * live game.
  */
-export function boxFromScoreboard(scoreboard, { home, away, league }) {
+export function boxFromScoreboard(scoreboard, { home, away, league, expectedDay }) {
   const found = findEvent(scoreboard, home, away);
   if (!found) return { box: null, reason: 'unmatched' };
 
   const { event, competition, homeSide, awaySide } = found;
+  const eventDay = etDay(event?.date);
+  if (expectedDay && eventDay && eventDay !== expectedDay) {
+    return { box: null, reason: 'wrong_day' };
+  }
   const status = statusFrom(competition, event);
   // Serve anything that has visibly started; refuse only a game with no line
   // to show. Requiring status.type.state === 'in' here was the live bug: the
@@ -184,30 +213,49 @@ export function boxFromScoreboard(scoreboard, { home, away, league }) {
  * requests keep past finals servable. Invalid/absent dates fall back to the
  * undated (today) page rather than failing.
  */
+// How informative each refusal is, for picking which one to report when every
+// candidate page refuses. 'not_started' (matched, right day, no line yet) says
+// the most; 'no_scoreboard' the least.
+const REASON_RANK = { no_scoreboard: 0, unmatched: 1, wrong_day: 2, not_started: 3 };
+
 export async function fetchBoxScore({ sportKey, home, away, date }, ctx) {
   const league = BOX_LEAGUES[sportKey];
   if (!league || !home || !away) return { box: null, reason: 'bad_request', source: null };
   const day = /^\d{8}$/.test(String(date ?? '')) ? String(date) : null;
 
-  // Primary: the cdn host context.js already uses. Fallback: the site host
-  // mlb-stats.js already uses — reachable from Workers, same events shape —
-  // so a cdn blockage or page reshape degrades to a second fetch, not to
-  // every card on the slate silently losing its grid.
-  const cdnPage = await cachedJson(
-    `${ESPN_CDN}/${league.path}/scoreboard?xhr=1${day ? `&date=${day}` : ''}`,
-    SCOREBOARD_TTL, ctx,
-  );
-  let scoreboard = cdnPage?.content?.sbData ?? null;
-  let source = 'cdn';
-  if (!Array.isArray(scoreboard?.events)) {
-    const sitePage = await cachedJson(
-      `${ESPN_SITE}/${league.sitePath}/scoreboard${day ? `?dates=${day}` : ''}`,
-      SCOREBOARD_TTL, ctx,
-    );
-    scoreboard = Array.isArray(sitePage?.events) ? sitePage : null;
-    source = scoreboard ? 'site' : null;
-  }
-  if (!scoreboard) return { box: null, reason: 'no_scoreboard', source: null };
+  // No single scoreboard page is trusted, because none of them is reliably
+  // faithful. Confirmed live tonight: late in the evening the cdn page for
+  // "today's" date rolls to serving the NEXT day's schedule — same matchups,
+  // every game pregame — while the undated page still carries the live
+  // slate, which flipped this endpoint from ok to not_started mid-game. So
+  // candidates are tried in order (both hosts — site.web.api.espn.com is
+  // NOT the blocked site.api.espn.com; mlb-stats.js fetches it from this
+  // same worker — dated then undated), and the first whose matched event
+  // falls on the requested ET day AND has a line to show wins. The
+  // expectedDay check inside boxFromScoreboard is what makes the undated
+  // pages safe: a series' next-night fixture can never be attributed to
+  // tonight's card.
+  const candidates = [
+    { source: 'cdn-dated', enabled: Boolean(day), url: `${ESPN_CDN}/${league.path}/scoreboard?xhr=1&date=${day}`, unwrap: (p) => p?.content?.sbData },
+    { source: 'cdn', enabled: true, url: `${ESPN_CDN}/${league.path}/scoreboard?xhr=1`, unwrap: (p) => p?.content?.sbData },
+    { source: 'site-dated', enabled: Boolean(day), url: `${ESPN_SITE}/${league.sitePath}/scoreboard?dates=${day}`, unwrap: (p) => p },
+    { source: 'site', enabled: true, url: `${ESPN_SITE}/${league.sitePath}/scoreboard`, unwrap: (p) => p },
+  ];
 
-  return { ...boxFromScoreboard(scoreboard, { home, away, league }), source };
+  const attempts = [];
+  let bestRefusal = 'no_scoreboard';
+  for (const candidate of candidates) {
+    if (!candidate.enabled) continue;
+    const page = await cachedJson(candidate.url, SCOREBOARD_TTL, ctx);
+    const scoreboard = candidate.unwrap(page);
+    if (!Array.isArray(scoreboard?.events)) {
+      attempts.push(`${candidate.source}:no_scoreboard`);
+      continue;
+    }
+    const result = boxFromScoreboard(scoreboard, { home, away, league, expectedDay: day });
+    attempts.push(`${candidate.source}:${result.reason}`);
+    if (result.box) return { ...result, source: candidate.source, attempts };
+    if ((REASON_RANK[result.reason] ?? 0) > (REASON_RANK[bestRefusal] ?? 0)) bestRefusal = result.reason;
+  }
+  return { box: null, reason: bestRefusal, source: null, attempts };
 }

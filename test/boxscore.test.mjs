@@ -7,7 +7,7 @@
  */
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { boxFromScoreboard, hasBoxScore } from '../worker/src/boxscore.js';
+import { boxFromScoreboard, etDay, hasBoxScore } from '../worker/src/boxscore.js';
 import { gradeTennisMatchWinner, gradeTennisGameMarket } from '../docs/tennis-results.js';
 import { mmaFinishMethod, gradeMmaPickWithFallback } from '../worker/src/ufc-events.js';
 
@@ -242,4 +242,57 @@ test('gradeMmaPickWithFallback attaches winner + method detail to a graded fight
   assert.equal(outcome.won, true);
   assert.equal(outcome.detail.winner, 'Mateusz Gamrot');
   assert.equal(outcome.detail.method, 'Decision - Unanimous');
+});
+
+// -- the wrong-day guard -----------------------------------------------------
+
+test('etDay converts a UTC instant to its ET calendar day', () => {
+  // 01:45Z on Aug 12 is 9:45 PM ET on Aug 11 — the exact boundary this
+  // guard exists for: West Coast night games are "tomorrow" in UTC.
+  assert.equal(etDay('2026-08-12T01:45Z'), '20260811');
+  assert.equal(etDay('2026-08-12T16:00Z'), '20260812');
+  assert.equal(etDay('not a date'), null);
+  assert.equal(etDay(undefined), null);
+});
+
+test('boxFromScoreboard refuses a matched event from a different ET day', () => {
+  // The failure this prevents was observed live: late in the evening ESPN's
+  // dated cdn page rolls to the NEXT day's schedule — same matchups, all
+  // pregame. Teams in a series are a perfect findEvent match on consecutive
+  // nights; only the date tells tonight's live game from tomorrow's fixture.
+  const sb = mlbScoreboard();
+  sb.events[0].date = '2026-08-12T23:00Z'; // ET Aug 12
+  assert.deepEqual(
+    boxFromScoreboard(sb, {
+      home: 'Toronto Blue Jays', away: 'Boston Red Sox', league: MLB_LEAGUE, expectedDay: '20260811',
+    }),
+    { box: null, reason: 'wrong_day' },
+  );
+});
+
+test('boxFromScoreboard serves the matched event when its ET day agrees', () => {
+  const sb = mlbScoreboard();
+  sb.events[0].date = '2026-08-12T01:45Z'; // 9:45 PM ET Aug 11
+  const { box, reason } = boxFromScoreboard(sb, {
+    home: 'Toronto Blue Jays', away: 'Boston Red Sox', league: MLB_LEAGUE, expectedDay: '20260811',
+  });
+  assert.equal(reason, 'ok');
+  assert.ok(box);
+});
+
+test('boxFromScoreboard skips the day check when no expectedDay or event date exists', () => {
+  // No expectedDay: caller didn't pin a day, nothing to enforce. No event
+  // date: nothing to compare against — refusing there would break every
+  // payload that omits the field, for no correctness gain.
+  const noExpected = boxFromScoreboard(mlbScoreboard(), {
+    home: 'Toronto Blue Jays', away: 'Boston Red Sox', league: MLB_LEAGUE,
+  });
+  assert.equal(noExpected.reason, 'ok');
+
+  const sb = mlbScoreboard();
+  delete sb.events[0].date;
+  const noEventDate = boxFromScoreboard(sb, {
+    home: 'Toronto Blue Jays', away: 'Boston Red Sox', league: MLB_LEAGUE, expectedDay: '20260811',
+  });
+  assert.equal(noEventDate.reason, 'ok');
 });
