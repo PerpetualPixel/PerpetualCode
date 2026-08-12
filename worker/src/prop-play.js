@@ -22,7 +22,8 @@
  * generic so an NBA/NFL variant is a constants change, not a rewrite.
  */
 
-import { fetchSport, UPSTREAM, REGIONS } from './odds.js';
+import { fetchSport, fetchScores, UPSTREAM, REGIONS } from './odds.js';
+import { gradePick } from '../../docs/learning.js';
 import { normalizeName } from '../../docs/wnba-props.js';
 import { espnAbbr } from '../../docs/team-logos.js';
 
@@ -47,7 +48,18 @@ const STAT_LABEL = { points: 'points', rebounds: 'rebounds', assists: 'assists' 
 // stays a safety-first play, not a lottery ticket.
 const LEG_DECIMAL_MIN = 1 + 100 / 650; // -650
 const LEG_DECIMAL_MAX = 1 + 100 / 250; // -250
-const PARLAY_DECIMAL_MAX = 1 + 100 / 150; // -150
+const PARLAY_DECIMAL_MAX = 1 + 100 / 130; // -130 (the hand-made winners ran -162/-164)
+// Payout-aware target: among SAFE legs (gates already passed), prefer the
+// lightest line — the -460/-310 sweet spot — over stacking two -650s into a
+// combined price that barely pays.
+
+// Moneyline legs: heavy favorites from ANY slate sport (a -250 tennis or
+// WNBA ML, per explicit product direction). Conviction for an ML is the
+// market's own consensus: the median implied probability across books.
+const ML_SPORTS = ['basketball_wnba', 'baseball_mlb', 'upcoming'];
+const ML_IMPLIED_MIN = 0.72;
+const ML_MIN_BOOKS = 4;
+const ML_STALE_VOID_MS = 48 * 3600 * 1000;
 
 // Conviction gates, from the player's real game log.
 const MIN_GAMES = 8;
@@ -151,10 +163,61 @@ export function hitProfile(values, need) {
 const convictionOf = (p) =>
   p.season * 0.35 + p.l10 * 0.35 + p.l5 * 0.15 + (Math.min(p.streak, 15) / 15) * 0.15;
 
+/**
+ * Heavy-favorite moneyline legs from an already-fetched (cached — no new
+ * credits) odds payload: each pregame side priced in the safe band, with the
+ * median price across books and its implied probability as the conviction
+ * measure. Requires a real consensus (>= ML_MIN_BOOKS books quoting).
+ */
+export function extractMlCandidates(events, sportKey, dateKey, now) {
+  const out = [];
+  for (const event of events ?? []) {
+    if (sportKey === 'upcoming' && !(event.sport_key ?? '').startsWith('tennis_')) continue;
+    const commenceMs = new Date(event.commence_time).getTime();
+    if (etDate(commenceMs) !== dateKey || commenceMs <= now) continue;
+    for (const side of [event.home_team, event.away_team]) {
+      const decimals = [];
+      for (const book of event.bookmakers ?? []) {
+        const market = (book.markets ?? []).find((m) => m.key === 'h2h');
+        const outcome = market?.outcomes?.find((o) => o.name === side);
+        const price = Number(outcome?.price);
+        if (!Number.isFinite(price)) continue;
+        decimals.push(price > 0 ? 1 + price / 100 : 1 + 100 / Math.abs(price));
+      }
+      if (decimals.length < ML_MIN_BOOKS) continue;
+      decimals.sort((x, y) => x - y);
+      const mid = Math.floor(decimals.length / 2);
+      const median = decimals.length % 2 ? decimals[mid] : (decimals[mid - 1] + decimals[mid]) / 2;
+      if (median < LEG_DECIMAL_MIN || median > LEG_DECIMAL_MAX) continue;
+      const implied = 1 / median;
+      if (implied < ML_IMPLIED_MIN) continue;
+      const opponent = side === event.home_team ? event.away_team : event.home_team;
+      out.push({
+        kind: 'ml', player: side, opponent, statKey: null,
+        american: toAmerican(median), decimal: Math.round(median * 1000) / 1000,
+        implied: Math.round(implied * 1000) / 1000, books: decimals.length,
+        book: `${decimals.length} books (median)`,
+        conviction: implied,
+        game: { oddsEventId: event.id, home: event.home_team, away: event.away_team, commence: event.commence_time, sportKey: event.sport_key ?? sportKey },
+      });
+    }
+  }
+  return out;
+}
+
+const SPORT_LABEL = (key) => key?.startsWith('tennis_') ? 'tennis'
+  : { basketball_wnba: 'WNBA', baseball_mlb: 'MLB', mma_mixed_martial_arts: 'MMA' }[key] ?? key;
+
 const pct = (r) => `${Math.round(r * 100)}%`;
 
-/** The stats-dense pitch for one leg — every number comes from the game log. */
+/** The stats-dense pitch for one leg — every number comes from the game log
+ * (props) or the market's own book consensus (moneylines). */
 export function legWriteup(leg) {
+  if (leg.kind === 'ml') {
+    return `${leg.player} is a ${fmtAmerican(leg.american)} ${SPORT_LABEL(leg.game?.sportKey ?? leg.sportKey)} ` +
+      `favorite over ${leg.opponent} — ${pct(leg.implied)} implied across ${leg.books} books, the market's ` +
+      `strongest consensus tier. A favorite this heavy anchors the ticket without needing anything unusual to happen.`;
+  }
   const p = leg.profile;
   const stat = STAT_LABEL[leg.statKey];
   const sentences = [
@@ -227,6 +290,9 @@ export async function runPropPlayDaily(env, ctx, now = Date.now(), { debug = fal
   const kvKey = `propplay:${dateKey}`;
   const existing = await env.POTD_KV.get(kvKey);
   if (existing && !debug) return { created: false, record: JSON.parse(existing) };
+  // Once posted, a day's play never changes — a debug call re-runs the
+  // selection for its trace but must NOT replace the published record.
+  const alreadyPosted = Boolean(existing);
 
   const trace = [];
   const { events } = await fetchSport('basketball_wnba', env, ctx);
@@ -282,14 +348,31 @@ export async function runPropPlayDaily(env, ctx, now = Date.now(), { debug = fal
     }
     qualified.push({ ...c, profile, conviction: convictionOf(profile) });
   }
+  // Heavy-favorite moneylines from any slate sport join the same pool,
+  // judged by the market's own consensus — the slate's cached odds mean no
+  // new credits. ('upcoming' covers tennis tournament keys without a list.)
+  for (const sportKey of ML_SPORTS) {
+    try {
+      const { events: mlEvents } = await fetchSport(sportKey, env, ctx);
+      const mls = extractMlCandidates(mlEvents, sportKey, dateKey, now);
+      trace.push(`${sportKey}: ${mls.length} qualifying moneyline favorites`);
+      qualified.push(...mls);
+    } catch { trace.push(`${sportKey}: ml fetch failed`); }
+  }
   trace.push(`qualified legs: ${qualified.length}`);
   if (!qualified.length) return { created: false, reason: 'no leg cleared the conviction gates', trace };
 
-  qualified.sort((x, y) => y.conviction - x.conviction);
+  // Every qualified leg is already SAFE (the gates saw to that), so rank by
+  // what it pays for that safety: conviction x profit-per-$1. This is what
+  // keeps the ticket in the -460/-310 sweet spot the hand-made winners used
+  // instead of stacking two -650s into a combined price that barely pays.
+  const value = (c) => c.conviction * (c.decimal - 1);
+  qualified.sort((x, y) => value(y) - value(x));
   const first = qualified[0];
-  const second = qualified.find(
+  const partners = qualified.filter(
     (c) => c.game.oddsEventId !== first.game.oddsEventId && first.decimal * c.decimal <= PARLAY_DECIMAL_MAX,
   );
+  const second = partners[0];
   const legs = second ? [first, second] : [first];
   const combinedDecimal = legs.reduce((d, leg) => d * leg.decimal, 1);
   const combinedAmerican = toAmerican(combinedDecimal);
@@ -300,9 +383,15 @@ export async function runPropPlayDaily(env, ctx, now = Date.now(), { debug = fal
     combinedAmerican,
     combinedDecimal: Math.round(combinedDecimal * 1000) / 1000,
     legs: await Promise.all(legs.map(async (leg) => ({
+      kind: leg.kind ?? 'prop',
+      sportKey: leg.game.sportKey ?? 'basketball_wnba',
+      oddsEventId: leg.game.oddsEventId ?? null,
       player: leg.player,
       statKey: leg.statKey,
-      label: `${leg.player} ${leg.need}+ ${STAT_LABEL[leg.statKey]}`,
+      label: leg.kind === 'ml'
+        ? `${leg.player} ML (vs ${leg.opponent})`
+        : `${leg.player} ${leg.need}+ ${STAT_LABEL[leg.statKey]}`,
+      ...(leg.kind === 'ml' ? { opponent: leg.opponent, implied: leg.implied, books: leg.books } : {}),
       need: leg.need,
       point: leg.point,
       american: leg.american,
@@ -310,7 +399,7 @@ export async function runPropPlayDaily(env, ctx, now = Date.now(), { debug = fal
       home: leg.game.home,
       away: leg.game.away,
       commence: leg.game.commence,
-      espnEventId: await resolveWnbaEventId(leg.game, ctx),
+      espnEventId: leg.kind === 'ml' ? null : await resolveWnbaEventId(leg.game, ctx),
       profile: leg.profile,
       status: 'pending',
     }))),
@@ -318,6 +407,9 @@ export async function runPropPlayDaily(env, ctx, now = Date.now(), { debug = fal
     status: 'pending',
     generatedAt: now,
   };
+  if (alreadyPosted) {
+    return { created: false, record: JSON.parse(existing), wouldPost: record, trace };
+  }
   await env.POTD_KV.put(kvKey, JSON.stringify(record), { expirationTtl: KV_TTL_SECONDS });
   return { created: true, record, ...(debug ? { trace } : {}) };
 }
@@ -353,7 +445,32 @@ export async function runPropPlayGrading(env, ctx, now = Date.now()) {
     if (record.status !== 'pending') continue;
 
     for (const leg of record.legs) {
-      if (leg.status !== 'pending' || !leg.espnEventId) continue;
+      if (leg.status !== 'pending') continue;
+      if (leg.kind === 'ml') {
+        // Winner from the same scores feed the slate already polls (cached).
+        try {
+          const { events: scoreEvents } = await fetchScores(leg.sportKey, env, ctx);
+          const scoreEvent = (scoreEvents ?? []).find((e) => e.id === (leg.oddsEventId ?? '') || (e.home_team === leg.home && e.away_team === leg.away));
+          const outcome = gradePick(
+            { home: leg.home, away: leg.away, outcomeName: leg.player, marketKey: 'h2h', decimal: 2, suggested_stake: 1 },
+            scoreEvent,
+          );
+          if (outcome) {
+            leg.status = outcome.void ? 'void' : outcome.won ? 'won' : 'lost';
+          } else if (now - new Date(leg.commence).getTime() > ML_STALE_VOID_MS) {
+            leg.status = 'void';
+            leg.voidReason = 'no result source within 48h';
+          }
+        } catch { /* stays pending until the next grading pass */ }
+        continue;
+      }
+      if (!leg.espnEventId) {
+        if (now - new Date(leg.commence).getTime() > ML_STALE_VOID_MS) {
+          leg.status = 'void';
+          leg.voidReason = 'no ESPN event mapping';
+        }
+        continue;
+      }
       const summary = await cachedJson(`${ESPN_SITE}/summary?event=${leg.espnEventId}`, SUMMARY_TTL, ctx);
       if (!summary?.header?.competitions?.[0]?.status?.type?.completed) continue;
       const rows = [];
