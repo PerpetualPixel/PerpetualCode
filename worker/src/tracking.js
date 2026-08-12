@@ -27,6 +27,10 @@
  */
 import { analyze, topPicks, clearsMaxJuice } from '../../docs/engine.js';
 import { fetchCapperConsensus, applyCapperConsensus, upgradeToValueStraight } from '../../docs/capper-consensus.js';
+import { getAllWnbaPropsTracked } from './wnba-props.js';
+import { getAllMlbPropsTracked } from './mlb-props.js';
+import { getAllNflPropsTracked } from './nfl-props.js';
+import { getAllNhlPropsTracked } from './nhl-props.js';
 import { isPower4Matchup } from '../../docs/ncaaf-conferences.js';
 import { gradePick } from '../../docs/learning.js';
 import { isMma, isTennis } from '../../docs/insights.js';
@@ -337,7 +341,11 @@ export async function fetchFullSlateEvents(env, ctx) {
  * summarizePicks, top5ClvPct) depends on; duplicating this mapping in a
  * second file would risk the two trackers' records silently drifting apart.
  */
-export function pickRecordFrom(pick, dateKey, now) {
+// stakeUnits defaults to 2: Pixel's Picks are 2-UNIT plays (product
+// direction — the 5 daily picks sit just below the two 5U Plays of the Day).
+// Full Slate passes 1 explicitly: it tracks every game and stays the flat
+// 1U baseline.
+export function pickRecordFrom(pick, dateKey, now, stakeUnits = 2) {
   const leg = pick.legs[0];
   return {
     pickId: leg.id,
@@ -383,7 +391,7 @@ export function pickRecordFrom(pick, dateKey, now) {
     // and isn't itself a probability.
     consensusProb: leg.consensusProb,
     commenceMs: leg.commenceMs,
-    suggested_stake: FLAT_UNIT_STAKE,
+    suggested_stake: FLAT_UNIT_STAKE * stakeUnits,
     generatedAt: now,
     status: 'pending',
     clv: { openAmerican: leg.american, closeAmerican: leg.american, updatedAt: now },
@@ -599,14 +607,58 @@ export async function runTop5Batch(
     : stillActionable;
 
   const slate = topPicks(drawPool, {
+    // -200 or better, per explicit product direction for the revamped
+    // 7-play hierarchy: every Pixel's Pick must pay at least -200 (the
+    // config band allows -250; the flagship plays deserve the tighter
+    // floor).
+    oddsMin: Math.max(CONFIG.ODDS_MIN_DEFAULT, -200),
     count: needed,
-    oddsMin: CONFIG.ODDS_MIN_DEFAULT,
     oddsMax: CONFIG.ODDS_MAX_DEFAULT,
     minScore: algoConfig.MIN_SCORE,
     minEv: algoConfig.MIN_EV_PCT,
     minKelly: algoConfig.MIN_KELLY_FRACTION,
     guaranteeCount: true,
   });
+
+  // The revamped hierarchy: the two BEST plays of the day are the 5U
+  // flagships (Play of the Day + Prop Play); Pixel's Picks are the next 5.
+  // High-conviction prop picks (already scored 0-100 by their scans, priced
+  // -200 or better) compete for those 5 slots on equal footing with the
+  // team markets, and anything already featured by a flagship is excluded
+  // so the 7 plays never overlap.
+  try {
+    const [potdRaw, propPlayRaw, ...pools] = await Promise.all([
+      env.POTD_KV.get(`potd:${dateKey}`),
+      env.POTD_KV.get(`propplay:${dateKey}`),
+      getAllWnbaPropsTracked(env, { now, days: 1 }),
+      getAllMlbPropsTracked(env, { now, days: 1 }),
+      getAllNflPropsTracked(env, { now, days: 1 }),
+      getAllNhlPropsTracked(env, { now, days: 1 }),
+    ]);
+    const featured = new Set();
+    const potdRecord = potdRaw ? JSON.parse(potdRaw) : null;
+    if (potdRecord?.pick?.eventId) featured.add(potdRecord.pick.eventId);
+    const propPlay = propPlayRaw ? JSON.parse(propPlayRaw) : null;
+    for (const leg of propPlay?.legs ?? []) {
+      if (leg.oddsEventId) featured.add(leg.oddsEventId);
+    }
+    slate.picks = slate.picks.filter((p) => !featured.has(p.legs[0].eventId));
+
+    const propCandidates = pools.flat().filter((p) =>
+      p.status === 'pending' && Number(p.decimal) >= 1.5 && Number.isFinite(p.score)
+      && p.commenceMs > now && !featured.has(p.eventId) && !existingEventIds.has(p.eventId));
+    const merged = [
+      ...slate.picks,
+      ...propCandidates.map((p) => ({ legs: [p], score: p.score, meetsStandard: true, flagReason: null })),
+    ].sort((x, y) => y.score - x.score);
+    const perEvent = new Set();
+    slate.picks = merged.filter((p) => {
+      const eventId = p.legs[0].eventId;
+      if (perEvent.has(eventId)) return false;
+      perEvent.add(eventId);
+      return true;
+    }).slice(0, needed);
+  } catch { /* props and flagship dedupe are upgrades — the team slate stands alone */ }
 
   // Belt-and-suspenders alongside the existingEventIds filter above: even
   // though topPicks() can't return two same-event candidates from a single

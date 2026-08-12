@@ -125,7 +125,8 @@ test('runTop5Batch stores at most TOP5_COUNT picks, all clearing the EV/Kelly fl
   assert.equal(picks.length, result.count);
   for (const p of picks) {
     assert.equal(p.status, 'pending');
-    assert.equal(p.suggested_stake, 20);
+    // 2U per Pixel's Pick (product direction — see pickRecordFrom).
+    assert.equal(p.suggested_stake, 40);
     // Real edges clearing the sharp standard outright, not padding.
     assert.equal(p.meetsStandard, true);
     assert.equal(p.flagReason, null);
