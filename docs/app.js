@@ -47,6 +47,7 @@ import {
   consensusRescore,
   fightConsensusRecord,
   fightConsensusComments,
+  fightCancelled,
   cachedConsensusFeed,
   MMA_CONSENSUS_SWING,
 } from './capper-consensus.js';
@@ -2460,16 +2461,26 @@ function capperConsensusSectionHtml(leg) {
         `: ${esc(c.comment)}</li>`).join('')}</ul>`
     : '';
 
+  // MMA_Engine's ESPN card annotation says the bout is off: banner it, and
+  // explain that the consensus below is history, not a live read.
+  const cancelledBanner = cc.cancelled
+    ? `<p class="consensus-cancelled">✕ This fight has been cancelled — it is no longer on the card. ` +
+      `The consensus below is kept for reference and doesn't move any grades.</p>`
+    : '';
+
   return `
     <div class="stats-section capper-consensus">
       <h3>Capper Consensus</h3>
+      ${cancelledBanner}
       <p>${esc(String(cc.pickCount))} capper${cc.pickCount === 1 ? '' : 's'} back <strong>${esc(cc.selection)}</strong> — ` +
     `${esc(String(cc.consensusPct))}% of the trust-weighted picks on this fight, consensus strength ${esc(String(cc.strength))}/10 (${esc(cc.tier)}). ` +
-    `${!cc.scored
-      ? `That's a read the feed can't grade a ${esc(leg.marketLabel)} bet against, so it doesn't move this pick's number — it's here as context for the fight.`
-      : cc.aligned
-        ? `This pick agrees with the consensus, which raised its grade by up to ${MMA_CONSENSUS_SWING} points.`
-        : `This pick goes against the consensus, which lowered its grade by up to ${MMA_CONSENSUS_SWING} points.`}</p>` +
+    `${cc.cancelled
+      ? ''
+      : !cc.scored
+        ? `That's a read the feed can't grade a ${esc(leg.marketLabel)} bet against, so it doesn't move this pick's number — it's here as context for the fight.`
+        : cc.aligned
+          ? `This pick agrees with the consensus, which raised its grade by up to ${MMA_CONSENSUS_SWING} points.`
+          : `This pick goes against the consensus, which lowered its grade by up to ${MMA_CONSENSUS_SWING} points.`}</p>` +
     commentsHtml +
     (cc.generatedAt
       ? `<p class="consensus-meta">Consensus last updated ${esc(dateFmt.format(new Date(cc.generatedAt)))} — refreshed by each MMA_Engine weekly run.</p>`
@@ -3678,9 +3689,17 @@ function slateGameHtml(game) {
   const hideMarkets = gameState !== 'upcoming';
   const rowProps = { gameState, scoreEvent, recommendedId: rec?.id ?? null, hideMarkets };
 
+  // MMA_Engine's ESPN card annotation (carried on every picks.json entry as
+  // card_status) can know a bout is off before the odds feed drops its
+  // prices. Banner the card rather than let it read as a live betting
+  // opportunity — mirrors the engine dashboard's own cancelled treatment.
+  const mmaCancelled = !isFinished && isMmaSportKey(game.sportKey)
+    && fightCancelled(cachedConsensusFeed(), { home: game.home, away: game.away });
+
   const cardClass = [
     'slate-game',
     gameState === 'live' ? 'is-live' : '',
+    mmaCancelled ? 'is-cancelled' : '',
     outcome ? `pick-${outcome}` : '', // pick-won -> green border, pick-lost -> red border
   ].filter(Boolean).join(' ');
 
@@ -3711,7 +3730,8 @@ function slateGameHtml(game) {
     : gameState === 'live'
       ? `<span class="slate-live-badge">● Live</span>${
           liveDetailText ? `<span class="slate-live-detail">${esc(liveDetailText)}</span>` : ''}`
-      : `<span>${esc(dateFmt.format(new Date(game.commenceMs)))}</span>`;
+      : `<span>${esc(dateFmt.format(new Date(game.commenceMs)))}</span>${
+          mmaCancelled ? `<span class="slate-cancelled-badge">✕ Cancelled</span>` : ''}`;
 
   // Once a game is live or finished, the per-market price grid no longer
   // means anything — replaced by a single line naming the algorithm's Main
