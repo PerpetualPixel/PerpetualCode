@@ -48,7 +48,7 @@ import { runNflPropsScan, runNflPropsGrading, getAllNflPropsTracked } from './nf
 import { runWnbaPropsScan, runWnbaPropsGrading, getAllWnbaPropsTracked } from './wnba-props.js';
 import { runPropPlayDaily, runPropPlayGrading, getAllPropPlays } from './prop-play.js';
 import { runNhlPropsScan, runNhlPropsGrading, getAllNhlPropsTracked } from './nhl-props.js';
-import { runPotdDaily, runPotdClvSnapshot, runPotdGrading, backfillPotdAnalysis, getPotd, getPotdLeaning, getPotdHistory } from './potd.js';
+import { runPotdDaily, runPotdClvSnapshot, runPotdGrading, backfillPotdAnalysis, getPotd, getPotdLeaning, getPotdHistory, retractPotd } from './potd.js';
 import { getOrGenerateAnalysis } from './analysis.js';
 import {
   UPSTREAM,
@@ -71,6 +71,7 @@ import {
   TOP5_COUNT,
   runTop5DateResync,
   migrateTop5PickDates,
+  retractTop5Picks,
 } from './tracking.js';
 import { authorize as authorizeSettings, getSettings, putSettings } from './settings.js';
 import {
@@ -91,7 +92,9 @@ import {
   getAllFullSlateTracked,
   migrateFullSlatePickDates,
   runFullSlateDateResync,
+  retractFullSlatePicks,
 } from './full-slate-tracking.js';
+import { isWtaPick } from './retraction.js';
 import {
   runDailyLearning,
   getLearningProfile,
@@ -746,6 +749,7 @@ export default {
       '/algo-health/resume',
       '/algo-health/reset',
       '/admin/onboarding-report',
+      '/admin/retract-wta',
     ]);
     if (request.method === 'POST' && (AUTH_LIMITED_PATHS.has(pathname) || pathname === '/api/report-bug' || OWNER_LIMITED_PATHS.has(pathname))) {
       const ip = request.headers.get('CF-Connecting-IP') ?? 'unknown';
@@ -1379,6 +1383,76 @@ export default {
         if (!latest) return json({ error: 'No learning review has run yet' }, { status: 404, headers: cors });
         const result = await sendLearningBriefEmail(env, latest, Date.now());
         return json({ ...result, dateKey: latest.dateKey, changeCount: latest.changes?.length ?? 0 }, { headers: cors });
+      } catch (error) {
+        return json({ error: String(error).slice(0, 200) }, { status: 500, headers: cors });
+      }
+    }
+
+    /**
+     * Retracts every WTA pick still standing for a day, across all three
+     * trackers, then re-runs the selection batches so the day is picked
+     * again under the current algorithm.
+     *
+     * This is the manual counterpart to a mid-day algorithm change. The
+     * tennis form gate (docs/qualitative.js) shipped while a slate was
+     * already live, and every batch is a self-healing top-up that only ever
+     * ADDS games it hasn't seen — so nothing in the normal run loop would
+     * ever revisit the WTA picks made that morning under the pure-price
+     * engine. Without this route the board would stay permanently split:
+     * pre-gate picks alongside post-gate ones, on the same day, with no way
+     * to tell them apart.
+     *
+     * Retracted picks are voided, not deleted — stake returned, no win, no
+     * loss, still on the dashboard with the reason attached (see
+     * worker/src/retraction.js). Regeneration is genuinely a re-pick, not a
+     * replay: a match that has since started is past its pick window
+     * (tracking.js's isPickWindowOpen) and simply doesn't get a replacement,
+     * which is the honest outcome — you cannot pick a match already in
+     * progress. So `retracted` and `added` are reported separately rather
+     * than as one number; they are not expected to match.
+     */
+    if (pathname === '/admin/retract-wta' && request.method === 'POST') {
+      const auth = authorizeSettings(request, env);
+      if (!auth.ok) return json({ error: auth.error }, { status: auth.status, headers: cors });
+      try {
+        const now = Date.now();
+        const body = await request.json().catch(() => ({}));
+        const dateKey = typeof body?.dateKey === 'string' ? body.dateKey : undefined;
+        const reason = typeof body?.reason === 'string' && body.reason.trim()
+          ? body.reason.trim()
+          : 'retracted — re-picked under the tennis recent-form gate';
+
+        const [slate, top5, potd] = await Promise.all([
+          retractFullSlatePicks(env, { now, dateKey, match: isWtaPick, reason }),
+          retractTop5Picks(env, { now, dateKey, match: isWtaPick, reason }),
+          retractPotd(env, { now, dateKey, match: isWtaPick, reason }),
+        ]);
+
+        // Re-pick only if something was actually pulled — an accidental
+        // repeat call shouldn't spend a full-slate Odds-API fetch for
+        // nothing. The batches share one fetch, same as the hourly tick.
+        const retracted = slate.retracted + top5.retracted + potd.retracted;
+        let regenerated = null;
+        if (retracted > 0) {
+          const sharedSlate = fetchFullSlateEvents(env, ctx);
+          const fetchFullSlate = () => sharedSlate;
+          const [top5Run, slateRun, potdRun] = await Promise.all([
+            runTop5Batch(env, ctx, now, { fetchFullSlate }),
+            runFullSlateBatch(env, ctx, now, { fetchFullSlate }),
+            runPotdDaily(env, ctx, now, { fetchFullSlate }),
+          ]);
+          regenerated = { top5: top5Run, fullSlate: slateRun, potd: potdRun };
+        }
+
+        return json({
+          retracted,
+          byTracker: {
+            fullSlate: slate.retracted, top5: top5.retracted, potd: potd.retracted,
+          },
+          dateKey: slate.dateKey,
+          reason,
+          regenerated,
+        }, { headers: cors });
       } catch (error) {
         return json({ error: String(error).slice(0, 200) }, { status: 500, headers: cors });
       }

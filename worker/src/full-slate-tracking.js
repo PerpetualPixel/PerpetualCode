@@ -34,6 +34,7 @@ import { getAllNflPropsTracked } from './nfl-props.js';
 import { getAllNhlPropsTracked } from './nhl-props.js';
 import { applyTennisFormSignal } from '../../docs/qualitative.js';
 import { loadTennisArchivesFor } from './tennis-archive.js';
+import { retractedRecord } from './retraction.js';
 
 // Matches tracking.js's own FLAT_UNIT_STAKE — duplicated for the same reason
 // that file already duplicates it from docs/learning.js: keeps this file's
@@ -277,7 +278,14 @@ export async function runFullSlateBatch(
 
   const pickIds = [...existingPickIds, ...newPickIds];
   ctx.waitUntil(
+    // Spread `existing` rather than building a fresh object: the manifest
+    // also carries retractedPickIds (see retractFullSlatePicks), and a
+    // literal that only listed the fields this function itself writes would
+    // silently drop them — orphaning every retracted record the moment the
+    // next hourly top-up ran, which is precisely the tick that follows a
+    // retraction.
     env.POTD_KV.put(manifestKey, JSON.stringify({
+      ...(existing ?? {}),
       date: dateKey, generatedAt: existing?.generatedAt ?? now, lastUpdatedAt: now, pickIds,
     }), {
       expirationTtl: KV_TTL_SECONDS,
@@ -287,12 +295,84 @@ export async function runFullSlateBatch(
   return { skipped: false, dateKey, count: pickIds.length, added: newPickIds.length };
 }
 
+/**
+ * A day's Full Slate records.
+ *
+ * `picks` includes retracted ones (see retractFullSlatePicks) so the
+ * dashboard still shows them, voided, rather than a silent gap where a pick
+ * used to be. `pickIds` deliberately does NOT: it's the LIVE set, and every
+ * caller that reads it — the batch's own event dedupe, the date migration,
+ * the reset sweep — means "picks that still stand." A retracted pick must
+ * not keep its game from being re-picked; that re-pick is the entire point
+ * of retracting it.
+ */
 async function loadFullSlateTracked(env, dateKey) {
   const manifestRaw = await env.POTD_KV.get(`slate:${dateKey}:manifest`);
-  if (!manifestRaw) return { pickIds: [], picks: [] };
-  const { pickIds } = JSON.parse(manifestRaw);
-  const stored = await Promise.all(pickIds.map((id) => env.POTD_KV.get(`slate:${dateKey}:pick:${id}`)));
-  return { pickIds, picks: stored.filter(Boolean).map((r) => JSON.parse(r)) };
+  if (!manifestRaw) return { pickIds: [], picks: [], retractedPickIds: [] };
+  const { pickIds = [], retractedPickIds = [] } = JSON.parse(manifestRaw);
+  const [stored, retracted] = await Promise.all([
+    Promise.all(pickIds.map((id) => env.POTD_KV.get(`slate:${dateKey}:pick:${id}`))),
+    Promise.all(retractedPickIds.map((id) => env.POTD_KV.get(`slate:${dateKey}:retracted:${id}`))),
+  ]);
+  return {
+    pickIds,
+    retractedPickIds,
+    picks: [...stored, ...retracted].filter(Boolean).map((r) => JSON.parse(r)),
+  };
+}
+
+/**
+ * Pulls every Full Slate pick matching `match` out of the live record for a
+ * day and re-files it as a retraction — voided, reason attached, still
+ * visible on the dashboard (see worker/src/retraction.js for why a void and
+ * not a delete).
+ *
+ * Retracted records move to their own `slate:<date>:retracted:<pickId>` key
+ * rather than staying in place. Two reasons, both load-bearing: the pickId
+ * is `${eventId}:${marketKey}|...` (docs/engine.js's analyze()), so a
+ * regenerated pick that lands on the SAME market as the one just retracted
+ * would otherwise overwrite the retraction and quietly un-void it; and
+ * keeping the id out of `pickIds` is what lets the batch's dedupe see the
+ * game as un-picked and give it a fresh pick at all.
+ */
+export async function retractFullSlatePicks(env, { now = Date.now(), dateKey, match, reason }) {
+  const day = dateKey ?? etDate(now);
+  const manifestKey = `slate:${day}:manifest`;
+  const manifestRaw = await env.POTD_KV.get(manifestKey);
+  if (!manifestRaw) return { dateKey: day, retracted: 0, picks: [] };
+
+  const manifest = JSON.parse(manifestRaw);
+  const pickIds = manifest.pickIds ?? [];
+  const stored = await Promise.all(pickIds.map((id) => env.POTD_KV.get(`slate:${day}:pick:${id}`)));
+
+  const keptIds = [];
+  const pulled = [];
+  pickIds.forEach((pickId, i) => {
+    const raw = stored[i];
+    // A manifest id with no record behind it is already gone (expired TTL,
+    // a half-finished migration) — there's nothing to retract, but dropping
+    // it here would quietly rewrite history, so it stays listed as-is.
+    if (!raw) { keptIds.push(pickId); return; }
+    const pick = JSON.parse(raw);
+    if (!match(pick)) { keptIds.push(pickId); return; }
+    pulled.push(retractedRecord(pick, { reason, at: now }));
+  });
+
+  if (!pulled.length) return { dateKey: day, retracted: 0, picks: [] };
+
+  await Promise.all(pulled.flatMap((pick) => [
+    env.POTD_KV.put(`slate:${day}:retracted:${pick.pickId}`, JSON.stringify(pick), {
+      expirationTtl: KV_TTL_SECONDS,
+    }),
+    env.POTD_KV.delete(`slate:${day}:pick:${pick.pickId}`),
+  ]));
+
+  manifest.pickIds = keptIds;
+  manifest.retractedPickIds = [...new Set([...(manifest.retractedPickIds ?? []), ...pulled.map((p) => p.pickId)])];
+  manifest.lastUpdatedAt = now;
+  await env.POTD_KV.put(manifestKey, JSON.stringify(manifest), { expirationTtl: KV_TTL_SECONDS });
+
+  return { dateKey: day, retracted: pulled.length, picks: pulled };
 }
 
 /** Same "freshest price before kickoff" CLV approximation as tracking.js's own runClvSnapshot, keyed under slate: instead of track:. */
@@ -466,9 +546,16 @@ export async function resetFullSlateTracking(env, { now = Date.now(), days = 90 
   let deleted = 0;
   for (let i = 0; i < days; i++) {
     const dateKey = etDate(now - i * 86400000);
-    const { pickIds } = await loadFullSlateTracked(env, dateKey);
+    const { pickIds, retractedPickIds } = await loadFullSlateTracked(env, dateKey);
     for (const id of pickIds) {
       await env.POTD_KV.delete(`slate:${dateKey}:pick:${id}`);
+      deleted++;
+    }
+    // Retracted records live under their own key prefix and are listed
+    // separately in the manifest — a sweep that only walked pickIds would
+    // drop the manifest while leaving them behind as unreachable orphans.
+    for (const id of retractedPickIds) {
+      await env.POTD_KV.delete(`slate:${dateKey}:retracted:${id}`);
       deleted++;
     }
     await env.POTD_KV.delete(`slate:${dateKey}:manifest`);

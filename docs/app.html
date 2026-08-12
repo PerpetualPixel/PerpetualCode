@@ -17,7 +17,7 @@
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Syne:wght@600;700;800&family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
-<link rel="stylesheet" href="styles.css?v=1.118">
+<link rel="stylesheet" href="styles.css?v=1.119">
 </head>
 <body>
 
@@ -72,6 +72,24 @@
     </p>
   </div>
   <button type="button" id="whatsNewHintClose" class="icon-btn overlay-close-btn" aria-label="Dismiss">✕</button>
+</div>
+
+<div id="retractionNotice" class="whats-new-hint is-notice" hidden role="status">
+  <div class="whats-new-hint-body">
+    <p class="whats-new-hint-title">Notice: today's WTA picks were retracted and re-run</p>
+    <p class="whats-new-hint-text">
+      WTA picks were calling too many straight-up upsets against in-form favourites. A recent-form
+      check now sits in front of every tennis moneyline: the algorithm can only take an underdog
+      when that player's recent results and head-to-head actually back the upset. Because the
+      change landed mid-day, <strong>every WTA pick already on today's board was pulled and the
+      slate re-run under the new rule</strong> — across Full Slate, Pixel's Picks and Play of the Day.
+      Retracted picks stay visible, marked <span class="whats-new-badge is-retracted">RETRACTED</span>,
+      and settle as a <strong>void</strong>: your stake is returned and they count as neither a win
+      nor a loss in any record or ROI figure. Matches that had already started keep no replacement
+      pick — a match in progress can't honestly be re-picked.
+    </p>
+  </div>
+  <button type="button" id="retractionNoticeClose" class="icon-btn overlay-close-btn" aria-label="Dismiss">✕</button>
 </div>
 
 <div id="dayFilterBar" class="day-toggle-bar">
@@ -723,6 +741,6 @@
   </div>
 </aside>
 
-<script type="module" src="app.js?v=1.118"></script>
+<script type="module" src="app.js?v=1.119"></script>
 </body>
 </html>
