@@ -308,9 +308,35 @@ export function applyCapperConsensus(candidates, feed, { now = Date.now() } = {}
 export const MMA_STRAIGHT_FLOOR_DECIMAL = 1.5;
 
 /**
+ * Whether a straight selection is too specific to ever recommend (explicit
+ * product direction: "a sub in round 4 is too specific to be displayed as a
+ * value pick"). A method+round combo only survives when the early-finish
+ * logic supports it — a submission called for rounds 1-3, a KO/TKO for
+ * rounds 1-2. Later-round method calls are dart throws in a fight that
+ * deep, and "decision in round X" is a contradiction. Round-only ("in
+ * round 1") and method-only ("by submission") picks are never blocked —
+ * the specificity problem is the COMBINATION, late.
+ */
+export function tooSpecificStraight(selection) {
+  const s = String(selection ?? '').toLowerCase();
+  const round = s.match(/round\s*(\d)/);
+  if (!round) return false;
+  const r = Number(round[1]);
+  const method = /(ko|tko|knock)/.test(s) ? 'ko'
+    : /(sub|choke|tap|armbar|guillotine|kimura)/.test(s) ? 'sub'
+    : /(dec|cards|judges|points)/.test(s) ? 'dec'
+    : null;
+  if (!method) return false;
+  if (method === 'dec') return true;
+  if (method === 'ko') return r > 2;
+  return r > 3;
+}
+
+/**
  * The fight's best value straight from the feed, or null: the highest-value
  * priced entry (any market) that clears the odds floor, isn't from a
- * cancelled fight, and isn't a mere pass-tier lean. Null when nothing
+ * cancelled fight, isn't a mere pass-tier lean, and isn't too specific to
+ * responsibly recommend (see tooSpecificStraight). Null when nothing
  * qualifies — most fights have no priced entries at all, and that's fine.
  */
 export function bestValueStraight(feed, candidate) {
@@ -320,6 +346,7 @@ export function bestValueStraight(feed, candidate) {
     const odds = pick.quoted_odds;
     if (!odds || !(odds.decimal >= MMA_STRAIGHT_FLOOR_DECIMAL)) continue;
     if (pick.tier === 'pass' || !(pick.value > 0)) continue;
+    if (tooSpecificStraight(pick.selection)) continue;
     if (!best || pick.value > best.value) best = pick;
   }
   return best;

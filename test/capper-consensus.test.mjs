@@ -417,3 +417,25 @@ test('the straight replaces a heavy moneyline but not a fairly-priced one', () =
   const nonMma = { ...mmaCandidate(), sportKey: 'baseball_mlb' };
   assert.equal(upgradeToValueStraight(nonMma, STRAIGHT_FEED), nonMma);
 });
+
+test('tooSpecificStraight blocks late method+round darts, allows early-finish logic', async () => {
+  const { tooSpecificStraight, bestValueStraight } = await import('../docs/capper-consensus.js');
+  // Allowed: early-finish combos, round-only, method-only.
+  assert.equal(tooSpecificStraight('Islam Makhachev by submission in round 3'), false);
+  assert.equal(tooSpecificStraight('Jalin Turner by KO/TKO in round 2'), false);
+  assert.equal(tooSpecificStraight('Jalin Turner in round 1'), false);
+  assert.equal(tooSpecificStraight('Islam Makhachev by submission'), false);
+  // Blocked: a sub in round 4+, a KO in round 3+, any "decision in round X".
+  assert.equal(tooSpecificStraight('Islam Makhachev by submission in round 4'), true);
+  assert.equal(tooSpecificStraight('Jalin Turner by knockout in round 3'), true);
+  assert.equal(tooSpecificStraight('Someone by decision in round 5'), true);
+
+  // And bestValueStraight skips them even at the top value score.
+  const feed = { picks: [{
+    fight: 'Ian Machado Garry vs Islam Makhache', market: 'round',
+    selection: 'Islam Makhachev by submission in round 4',
+    strength: 5.0, tier: 'lean', value: 10.5,
+    quoted_odds: { american: 110, decimal: 2.1, count: 1 },
+  }] };
+  assert.equal(bestValueStraight(feed, mmaCandidate()), null);
+});
