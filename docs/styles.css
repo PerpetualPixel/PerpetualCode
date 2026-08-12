@@ -4558,3 +4558,15 @@ input[type="range"]:focus-visible {
 
 /* The displaced team-side lean shown under a prop Main Play. */
 .slate-main-play-lean { color: var(--muted); font-size: 0.74rem; flex-basis: 100%; }
+
+/* MMA fight-prediction cards: one ML column, no spread/total. */
+.slate-game.ml-only .slate-header-row.ml-only,
+.slate-game.ml-only .slate-team-row:not(.no-markets) {
+  display: grid;
+  grid-template-columns: 1fr minmax(72px, auto);
+  gap: 4px 8px;
+  align-items: center;
+}
+/* The fight's value straight named alongside the Main Play in the drawer. */
+.main-play-value { margin-top: 6px; font-size: 0.82rem; color: var(--muted); }
+.main-play-value-note { font-size: 0.72rem; margin-left: 6px; }
