@@ -250,7 +250,7 @@ export async function runFullSlateBatch(
   const newPickIds = [];
   for (const candidate of bestPerGame.values()) {
     const wrapped = { legs: [candidate], score: candidate.score, meetsStandard: true, flagReason: null };
-    const record = pickRecordFrom(wrapped, dateKey, now);
+    const record = pickRecordFrom(wrapped, dateKey, now, 1); // Full Slate stays 1U
     if (candidate.propRef) { record.propRef = candidate.propRef; record.teamLean = candidate.teamLean; }
     newPickIds.push(record.pickId);
     ctx.waitUntil(
