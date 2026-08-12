@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 
-import { parseSetScore, matchHomeIndex, gradeTennisGameMarket } from '../docs/tennis-results.js';
+import { parseSetScore, matchHomeIndex, gradeTennisGameMarket, liveSetsLabel } from '../docs/tennis-results.js';
 import { tennisMatchDecided } from '../docs/learning.js';
 import { hasSecondarySettlementSource, TIER_1, TIER_2 } from '../docs/tennis-tiers.js';
 
@@ -130,4 +130,33 @@ test('the second source is only ever attempted for TIER_1 markets — spreads, t
   assert.equal(hasSecondarySettlementSource('tennis_atp_wimbledon', 'h2h'), true);
   assert.equal(hasSecondarySettlementSource('tennis_atp_some_new_500', 'spreads'), false); // TIER_2
   assert.equal(hasSecondarySettlementSource('baseball_mlb', 'spreads'), false);
+});
+
+// -- liveSetsLabel: the live card's sets chip --------------------------------
+
+test('liveSetsLabel renders sets for an explicitly in-progress match', () => {
+  assert.equal(liveSetsLabel({
+    completed: false,
+    scores: [{ name: 'A. Player', score: '1' }, { name: 'B. Player', score: '0' }],
+  }), '1–0 sets');
+  assert.equal(liveSetsLabel({
+    completed: false,
+    scores: [{ name: 'A', score: '2' }, { name: 'B', score: '2' }],
+  }), '2–2 sets', 'a live fifth set is the deepest valid in-progress state');
+});
+
+test('liveSetsLabel refuses everything it cannot vouch for', () => {
+  // completed:true is a finished match (finishedDetailHtml territory), and an
+  // absent event / absent flag is unknown — neither is "live", so no chip.
+  assert.equal(liveSetsLabel({ completed: true, scores: [{ name: 'A', score: '2' }, { name: 'B', score: '0' }] }), null);
+  assert.equal(liveSetsLabel(null), null);
+  assert.equal(liveSetsLabel({ scores: [{ name: 'A', score: '1' }, { name: 'B', score: '0' }] }), null);
+  // The feed frequently posts no scores at all while a match runs.
+  assert.equal(liveSetsLabel({ completed: false, scores: [] }), null);
+  assert.equal(liveSetsLabel({ completed: false, scores: null }), null);
+  assert.equal(liveSetsLabel({ completed: false, scores: [{ name: 'A', score: '1' }] }), null);
+  assert.equal(liveSetsLabel({ completed: false, scores: [{ name: 'A', score: 'X' }, { name: 'B', score: '0' }] }), null);
+  // Five completed sets can't be in progress — whatever these numbers are,
+  // they aren't a live set count, so refuse rather than mislabel them.
+  assert.equal(liveSetsLabel({ completed: false, scores: [{ name: 'A', score: '4' }, { name: 'B', score: '1' }] }), null);
 });
