@@ -152,3 +152,16 @@ test('pair selection lands in the -200..-130 payout window, never stacking two -
   const light = (1 + 100 / 300) * (1 + 100 / 350);
   assert.ok(light >= floor && light <= cap, '-300 x -350 sits inside the window');
 });
+
+test('pair pricing targets even money: the lightest safe pair beats heavier ones', () => {
+  // Two -250 legs multiply to ~+96 — as close to +100 as the safe band
+  // allows — and must beat a -300 x -350 (-140) pair, which in turn beats
+  // two -650s (-297, below the -200 floor entirely).
+  const dec = (a) => 1 + 100 / Math.abs(a);
+  const light = dec(250) * dec(250);
+  const mid = dec(300) * dec(350);
+  const heavy = dec(650) * dec(650);
+  assert.ok(light > 1.9 && light < 2.05, 'two -250s land at ~+96, inside the even-money ceiling');
+  assert.ok(light > mid && mid > heavy);
+  assert.ok(heavy < 1.5, 'two -650s stay below the -200 floor');
+});

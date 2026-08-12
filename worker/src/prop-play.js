@@ -48,14 +48,16 @@ const STAT_LABEL = { points: 'points', rebounds: 'rebounds', assists: 'assists' 
 // stays a safety-first play, not a lottery ticket.
 const LEG_DECIMAL_MIN = 1 + 100 / 650; // -650
 const LEG_DECIMAL_MAX = 1 + 100 / 250; // -250
-const PARLAY_DECIMAL_MAX = 1 + 100 / 130; // -130 (the hand-made winners ran -162/-164)
-// The payout FLOOR, per explicit product direction after the first live play
-// posted a combined -297 ("horrible — $297 to make $100"): a parlay must
-// land at -200 or better whenever any qualified pair can get there. Pairs
-// inside the [-200, -130] window are chosen by conviction; only when no
-// pair reaches the window does the closest-to-window pair (then a straight)
-// run instead.
+const PARLAY_DECIMAL_MAX = 2.05; // ~+105 — the even-money ceiling
+// Payout target, per explicit product direction (first "-297 is horrible —
+// $297 to make $100", then "ideally closer to +100"): the parlay pays as
+// close to even money as the qualified pool allows, floored at -200. With
+// legs capped at -250 apiece, two light legs multiply to at most ~+96, so
+// "closest to +100" simply means the LIGHTEST qualifying pair — near-ties
+// (within ~8 cents of decimal) break toward conviction so a marginally
+// heavier pair with a clearly better record still wins.
 const COMBINED_DECIMAL_MIN = 1.5; // -200
+const NEAR_TIE_DECIMAL = 0.08;
 // Payout-aware target: among SAFE legs (gates already passed), prefer the
 // lightest line — the -460/-310 sweet spot — over stacking two -650s into a
 // combined price that barely pays.
@@ -76,6 +78,11 @@ const MAX_GAMES_SCANNED = 3;
 const MAX_GAMELOG_LOOKUPS = 12;
 
 const GRADING_LOOKBACK_DAYS = 3;
+// The Prop Play is a 5-UNIT play (product direction: it and the regular
+// Play of the Day are 5U each). $20/unit matches FLAT_UNIT_STAKE across the
+// trackers, so the record's dollar stake is 5 x 20.
+const UNIT_STAKE = 20;
+const PLAY_UNITS = 5;
 
 function etDate(ms) {
   const fmt = new Intl.DateTimeFormat('en-US', {
@@ -378,23 +385,26 @@ export async function runPropPlayDaily(env, ctx, now = Date.now(), { debug = fal
   // the -250 end of the band, not -650.
   const value = (c) => c.conviction * (c.decimal - 1);
   qualified.sort((x, y) => value(y) - value(x));
-  let bestPair = null;
+  const pairs = [];
   for (let i = 0; i < qualified.length; i++) {
     for (let j = i + 1; j < qualified.length; j++) {
       const a = qualified[i], b = qualified[j];
       if (a.game.oddsEventId === b.game.oddsEventId) continue;
       const combined = a.decimal * b.decimal;
       if (combined > PARLAY_DECIMAL_MAX) continue;
-      const inWindow = combined >= COMBINED_DECIMAL_MIN;
-      const conviction = a.conviction + b.conviction;
-      const better = !bestPair
-        || (inWindow && !bestPair.inWindow)
-        || (inWindow === bestPair.inWindow && (inWindow ? conviction > bestPair.conviction : combined > bestPair.combined));
-      if (better) bestPair = { legs: [a, b], combined, conviction, inWindow };
+      pairs.push({ legs: [a, b], combined, conviction: a.conviction + b.conviction });
     }
   }
+  // Lightest first — the whole point is paying close to +100 — then let a
+  // near-tie fall to the pair with the stronger records.
+  pairs.sort((x, y) => y.combined - x.combined);
+  let bestPair = pairs[0] ?? null;
   if (bestPair) {
-    trace.push(`pair: ${fmtAmerican(toAmerican(bestPair.combined))}${bestPair.inWindow ? ' (in the -200..-130 window)' : ' (no pair reached -200; lightest taken)'}`);
+    for (const pair of pairs) {
+      if (bestPair.combined - pair.combined > NEAR_TIE_DECIMAL) break;
+      if (pair.conviction > bestPair.conviction) bestPair = pair;
+    }
+    trace.push(`pair: ${fmtAmerican(toAmerican(bestPair.combined))}${bestPair.combined >= COMBINED_DECIMAL_MIN ? ' (at or better than the -200 floor, targeting +100)' : ' (thin slate — no pair reached -200; lightest taken)'}`);
   }
   const legs = bestPair ? bestPair.legs : [qualified[0]];
   const combinedDecimal = legs.reduce((d, leg) => d * leg.decimal, 1);
@@ -427,6 +437,8 @@ export async function runPropPlayDaily(env, ctx, now = Date.now(), { debug = fal
       status: 'pending',
     }))),
     writeup: playWriteup(legs, combinedAmerican),
+    units: PLAY_UNITS,
+    suggested_stake: UNIT_STAKE * PLAY_UNITS,
     status: 'pending',
     generatedAt: now,
   };
@@ -524,9 +536,52 @@ export async function runPropPlayGrading(env, ctx, now = Date.now()) {
       record.status = record.legs.some((l) => l.status === 'lost') ? 'lost'
         : record.legs.some((l) => l.status === 'void') ? 'void'
         : 'won';
+      // Settled as ONE play: both legs must hit; one miss loses the full
+      // 5U stake, a win pays the combined price on it.
+      const stake = record.suggested_stake ?? UNIT_STAKE * PLAY_UNITS;
+      const payout = record.status === 'won' ? stake * (record.combinedDecimal - 1)
+        : record.status === 'lost' ? -stake : 0;
+      record.result = { payout: Math.round(payout * 100) / 100, roiPercent: Math.round((payout / stake) * 10000) / 100 };
       graded++;
     }
     await env.POTD_KV.put(`propplay:${dateKey}`, JSON.stringify(record), { expirationTtl: KV_TTL_SECONDS });
   }
   return { graded };
+}
+
+/**
+ * Every Prop Play across the KV window, mapped to the exact record shape the
+ * site's tracker tabs already render (dateKey/selection/status/result/
+ * suggested_stake) — one record per PLAY, not per leg: the play wins only
+ * when every leg hits, so the tracker judges it as the single 5U bet it is.
+ */
+export async function getAllPropPlays(env, { now = Date.now(), days = 90 } = {}) {
+  const picks = [];
+  for (let i = 0; i < days; i++) {
+    const dateKey = etDate(now - i * 86400000);
+    const raw = await env.POTD_KV.get(`propplay:${dateKey}`);
+    if (!raw) continue;
+    const record = JSON.parse(raw);
+    const [first] = record.legs;
+    picks.push({
+      pickId: `propplay:${record.date}`,
+      dateKey: record.date,
+      sportKey: record.legs.length === 2 ? 'prop_parlay' : (first?.sportKey ?? 'prop'),
+      home: first?.home ?? '',
+      away: first?.away ?? '',
+      commenceMs: first?.commence ? new Date(first.commence).getTime() : null,
+      marketKey: 'prop_play',
+      marketLabel: record.kind === 'parlay' ? 'Prop Play (2-leg parlay)' : 'Prop Play (straight)',
+      selection: record.legs.map((l) => l.label).join(' + '),
+      american: record.combinedAmerican,
+      decimal: record.combinedDecimal,
+      suggested_stake: record.suggested_stake ?? UNIT_STAKE * PLAY_UNITS,
+      units: record.units ?? PLAY_UNITS,
+      status: record.status,
+      result: record.result ?? null,
+      clv: null,
+      meetsStandard: true,
+    });
+  }
+  return picks;
 }

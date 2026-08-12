@@ -348,7 +348,10 @@ async function buildRecord(best, dateKey, now, env, ctx) {
       commenceMs: best.commenceMs,
       book: best.book,
       consensusProb: best.consensusProb,
-      suggested_stake: FLAT_UNIT_STAKE,
+      // Play of the Day is a 5-UNIT play (product direction — it and the
+      // Prop Play are the two 5U flagship plays; every other tracker stays
+      // at the flat 1U).
+      suggested_stake: FLAT_UNIT_STAKE * 5,
       status: 'pending',
       clv: { openAmerican: best.american, closeAmerican: best.american, updatedAt: now },
       result: null,
