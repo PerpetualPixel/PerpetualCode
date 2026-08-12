@@ -104,3 +104,39 @@ test('gradePropLeg grades against the boxscore and voids a DNP', () => {
   assert.equal(gradePropLeg(leg, null).void, true, 'no boxscore row = DNP = void, never a guessed loss');
   assert.equal(gradePropLeg(leg, { rebounds: 'DNP' }).void, true);
 });
+
+/* ── moneyline legs (mixed-sport pool) ─────────────────────────── */
+
+test('extractMlCandidates keeps consensus heavy favorites in the safe band', async () => {
+  const { extractMlCandidates } = await import('../worker/src/prop-play.js');
+  const book = (price) => ({ markets: [{ key: 'h2h', outcomes: [
+    { name: 'Iga Swiatek', price }, { name: 'Elina Svitolina', price: +220 },
+  ] }] });
+  const events = [{
+    id: 'ev-t1', sport_key: 'tennis_wta_cincinnati',
+    home_team: 'Iga Swiatek', away_team: 'Elina Svitolina',
+    commence_time: '2026-08-12T23:00:00Z',
+    bookmakers: [book(-300), book(-280), book(-320), book(-300), book(-290)],
+  }];
+  const out = extractMlCandidates(events, 'upcoming', '2026-08-12', Date.parse('2026-08-12T15:00:00Z'));
+  assert.equal(out.length, 1, 'the favorite qualifies, the +220 dog never does');
+  assert.equal(out[0].player, 'Iga Swiatek');
+  assert.equal(out[0].kind, 'ml');
+  assert.ok(out[0].implied >= 0.72);
+  assert.equal(out[0].books, 5);
+
+  // Under 4 books = no real consensus; a started game never qualifies.
+  const thin = [{ ...events[0], bookmakers: [book(-300), book(-300), book(-300)] }];
+  assert.equal(extractMlCandidates(thin, 'upcoming', '2026-08-12', Date.parse('2026-08-12T15:00:00Z')).length, 0);
+  assert.equal(extractMlCandidates(events, 'upcoming', '2026-08-12', Date.parse('2026-08-13T01:00:00Z')).length, 0);
+});
+
+test('ML legs get a market-consensus writeup', () => {
+  const text = legWriteup({
+    kind: 'ml', player: 'Iga Swiatek', opponent: 'Elina Svitolina',
+    american: -300, implied: 0.75, books: 9,
+    game: { sportKey: 'tennis_wta_cincinnati' },
+  });
+  assert.match(text, /-300 tennis/);
+  assert.match(text, /75% implied across 9 books/);
+});
