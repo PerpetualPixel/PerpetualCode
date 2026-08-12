@@ -838,8 +838,16 @@ export default {
         return json({ box: null, supportsLive: true, reason: 'unsupported sport' }, { headers: cors });
       }
       try {
-        const box = await fetchBoxScore(
-          { sportKey, home: searchParams.get('home') ?? '', away: searchParams.get('away') ?? '' },
+        // reason/source always ride along ('unmatched', 'no_scoreboard',
+        // 'pregame', ... / 'cdn' vs 'site') — opening this URL in a browser
+        // is the whole remote-diagnosis story for "why is there no grid."
+        const { box, reason, source } = await fetchBoxScore(
+          {
+            sportKey,
+            home: searchParams.get('home') ?? '',
+            away: searchParams.get('away') ?? '',
+            date: searchParams.get('date') ?? '',
+          },
           ctx,
         );
         // A finished box is immutable, but a live one is stale the moment the
@@ -849,7 +857,7 @@ export default {
         // started serving the game yet, and a 5-minute cached null would keep
         // the grid off well into the first innings.
         const maxAge = box && (!box.status || box.status.completed) ? 300 : 30;
-        return json({ box, supportsLive: true }, { headers: { ...cors, 'Cache-Control': `public, max-age=${maxAge}` } });
+        return json({ box, reason, source, supportsLive: true }, { headers: { ...cors, 'Cache-Control': `public, max-age=${maxAge}` } });
       } catch (error) {
         return json({ box: null, supportsLive: true, reason: String(error).slice(0, 120) }, { headers: cors });
       }

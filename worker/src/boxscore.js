@@ -26,17 +26,25 @@
 import { cachedJson, findEvent } from './context.js';
 
 const ESPN_CDN = 'https://cdn.espn.com/core';
+// Fallback scoreboard host. site.web.api.espn.com is NOT the blocked
+// site.api.espn.com (see context.js's header) — worker/src/mlb-stats.js has
+// been fetching it from this same deployed worker all along, so it's a
+// proven-reachable second chance when the cdn page is missing or reshapes.
+// Its scoreboard returns { events: [...] } directly, the same inner shape
+// findEvent already reads — no separate extraction needed.
+const ESPN_SITE = 'https://site.web.api.espn.com/apis/site/v2/sports';
 
 // Which sports have a period-by-period scoreboard worth serving, and how
 // their linescore/totals fields read. MLB's "score" is runs; the football/
 // basketball sports' is points. NBA/NCAAB ride along for free the day
 // they're wired into the slate — same paths context.js already lists.
+// `path` is cdn.espn.com/core's slug; `sitePath` is the fallback host's.
 const BOX_LEAGUES = {
-  baseball_mlb: { path: 'mlb', kind: 'innings', periods: 9 },
-  americanfootball_nfl: { path: 'nfl', kind: 'quarters', periods: 4 },
-  americanfootball_ncaaf: { path: 'college-football', kind: 'quarters', periods: 4 },
-  basketball_wnba: { path: 'wnba', kind: 'quarters', periods: 4 },
-  basketball_nba: { path: 'nba', kind: 'quarters', periods: 4 },
+  baseball_mlb: { path: 'mlb', sitePath: 'baseball/mlb', kind: 'innings', periods: 9 },
+  americanfootball_nfl: { path: 'nfl', sitePath: 'football/nfl', kind: 'quarters', periods: 4 },
+  americanfootball_ncaaf: { path: 'college-football', sitePath: 'football/college-football', kind: 'quarters', periods: 4 },
+  basketball_wnba: { path: 'wnba', sitePath: 'basketball/wnba', kind: 'quarters', periods: 4 },
+  basketball_nba: { path: 'nba', sitePath: 'basketball/nba', kind: 'quarters', periods: 4 },
 };
 
 export const hasBoxScore = (sportKey) => Boolean(BOX_LEAGUES[sportKey]);
@@ -114,20 +122,26 @@ function statusFrom(competition) {
  * grid on a live card (which inning it's in, and which innings the runs came
  * in). Callers distinguish the two via `status.completed` — the returned
  * shape is otherwise identical, with unplayed periods padded as nulls.
+ *
+ * Returns { box, reason } rather than a bare box-or-null: every null used to
+ * be indistinguishable from every other null, which made "no grid anywhere"
+ * undiagnosable from the outside. The reason rides the /boxscore response,
+ * so opening the URL in a browser now says WHICH gate refused —
+ * 'unmatched' | 'pregame' | 'unreadable_status' | 'ok'.
  */
 export function boxFromScoreboard(scoreboard, { home, away, league }) {
   const found = findEvent(scoreboard, home, away);
-  if (!found) return null;
+  if (!found) return { box: null, reason: 'unmatched' };
 
   const { event, competition, homeSide, awaySide } = found;
   const status = statusFrom(competition);
   // Nothing to show before first pitch — there's no line yet, and the card's
   // existing pregame layout is already the right one.
-  if (status.state === 'pre') return null;
+  if (status.state === 'pre') return { box: null, reason: 'pregame' };
   // A payload carrying neither a state nor a completed flag is one this code
   // doesn't understand. Stay conservative and let the card keep whatever it
   // already shows, rather than rendering a grid off a shape we're guessing at.
-  if (!status.state && !status.completed) return null;
+  if (!status.state && !status.completed) return { box: null, reason: 'unreadable_status' };
 
   const venue = competition?.venue ?? {};
   const venueLine = [venue.fullName, venue.address?.city, venue.address?.state]
@@ -135,26 +149,56 @@ export function boxFromScoreboard(scoreboard, { home, away, league }) {
     .join(' – ') || null;
 
   return {
-    kind: league.kind,
-    periods: league.periods,
-    startTime: event?.date ?? null,
-    venue: venueLine,
-    status,
-    home: sideFrom(homeSide, league),
-    away: sideFrom(awaySide, league),
+    box: {
+      kind: league.kind,
+      periods: league.periods,
+      startTime: event?.date ?? null,
+      venue: venueLine,
+      status,
+      home: sideFrom(homeSide, league),
+      away: sideFrom(awaySide, league),
+    },
+    reason: 'ok',
   };
 }
 
 /**
  * The box for one fixture, live or final, matched by the same odds-feed team
- * names the slate card already has. Null when the sport has no box source,
- * the fixture can't be confidently matched, or the game hasn't started.
+ * names the slate card already has. Returns { box, reason, source }; box is
+ * null when the sport has no box source, no scoreboard could be fetched, the
+ * fixture can't be confidently matched, or the game hasn't started.
+ *
+ * `date` (YYYYMMDD, the game's own ET date, sent by the client) matters more
+ * than it looks: without it, ESPN serves the CURRENT day's scoreboard only,
+ * so every finished game silently lost its grid at the next ET midnight —
+ * yesterday's fixtures simply aren't on today's page to be matched. Dated
+ * requests keep past finals servable. Invalid/absent dates fall back to the
+ * undated (today) page rather than failing.
  */
-export async function fetchBoxScore({ sportKey, home, away }, ctx) {
+export async function fetchBoxScore({ sportKey, home, away, date }, ctx) {
   const league = BOX_LEAGUES[sportKey];
-  if (!league || !home || !away) return null;
+  if (!league || !home || !away) return { box: null, reason: 'bad_request', source: null };
+  const day = /^\d{8}$/.test(String(date ?? '')) ? String(date) : null;
 
-  const page = await cachedJson(`${ESPN_CDN}/${league.path}/scoreboard?xhr=1`, SCOREBOARD_TTL, ctx);
-  const scoreboard = page?.content?.sbData ?? null;
-  return boxFromScoreboard(scoreboard, { home, away, league });
+  // Primary: the cdn host context.js already uses. Fallback: the site host
+  // mlb-stats.js already uses — reachable from Workers, same events shape —
+  // so a cdn blockage or page reshape degrades to a second fetch, not to
+  // every card on the slate silently losing its grid.
+  const cdnPage = await cachedJson(
+    `${ESPN_CDN}/${league.path}/scoreboard?xhr=1${day ? `&date=${day}` : ''}`,
+    SCOREBOARD_TTL, ctx,
+  );
+  let scoreboard = cdnPage?.content?.sbData ?? null;
+  let source = 'cdn';
+  if (!Array.isArray(scoreboard?.events)) {
+    const sitePage = await cachedJson(
+      `${ESPN_SITE}/${league.sitePath}/scoreboard${day ? `?dates=${day}` : ''}`,
+      SCOREBOARD_TTL, ctx,
+    );
+    scoreboard = Array.isArray(sitePage?.events) ? sitePage : null;
+    source = scoreboard ? 'site' : null;
+  }
+  if (!scoreboard) return { box: null, reason: 'no_scoreboard', source: null };
+
+  return { ...boxFromScoreboard(scoreboard, { home, away, league }), source };
 }
