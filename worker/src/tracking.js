@@ -26,7 +26,7 @@
  * having the app open.
  */
 import { analyze, topPicks, clearsMaxJuice } from '../../docs/engine.js';
-import { fetchCapperConsensus, applyCapperConsensus } from '../../docs/capper-consensus.js';
+import { fetchCapperConsensus, applyCapperConsensus, upgradeToValueStraight } from '../../docs/capper-consensus.js';
 import { isPower4Matchup } from '../../docs/ncaaf-conferences.js';
 import { gradePick } from '../../docs/learning.js';
 import { isMma, isTennis } from '../../docs/insights.js';
@@ -620,6 +620,11 @@ export async function runTop5Batch(
   const usedEventIds = new Set(existingEventIds);
   const newPickIds = [];
   for (const pick of slate.picks) {
+    // MMA fights lock their best VALUE play, not automatically the priced
+    // market that earned the slot: a heavy moneyline gives way to the
+    // consensus's priced straight (method/round/distance) when the straight
+    // carries more value — see upgradeToValueStraight.
+    if (consensusFeed) pick.legs = pick.legs.map((leg) => upgradeToValueStraight(leg, consensusFeed));
     const eventId = pick.legs[0].eventId;
     if (usedEventIds.has(eventId)) continue;
     usedEventIds.add(eventId);
@@ -858,7 +863,10 @@ export async function getTop5Leaning(env, { now = Date.now(), dateKey } = {}) {
     guaranteeCount: false,
   });
 
-  return slate.picks.map((pick) => pickRecordFrom(pick, dk, now));
+  return slate.picks.map((pick) => {
+    if (consensusFeed) pick.legs = pick.legs.map((leg) => upgradeToValueStraight(leg, consensusFeed));
+    return pickRecordFrom(pick, dk, now);
+  });
 }
 
 /**

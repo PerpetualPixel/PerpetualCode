@@ -296,6 +296,86 @@ export function applyCapperConsensus(candidates, feed, { now = Date.now() } = {}
   });
 }
 
+/* ── MMA value straights ─────────────────────────────────────────────
+ * The engine's picks.json now prices entries with the backers' own median
+ * quoted odds (quoted_odds) and scores them (value = profit-per-$1 x
+ * strength). That lets the site run a fight as a STRAIGHT — one bet, any
+ * market: "Makhachev by submission +200", "doesn't go the distance -150" —
+ * instead of a moneyline whose price is too heavy to pay. */
+
+/** Heavier than -200 pays too little to run alone (the user's line: a -250
+ * KO call is not value; -200 or longer is). No ceiling — dogs qualify. */
+export const MMA_STRAIGHT_FLOOR_DECIMAL = 1.5;
+
+/**
+ * The fight's best value straight from the feed, or null: the highest-value
+ * priced entry (any market) that clears the odds floor, isn't from a
+ * cancelled fight, and isn't a mere pass-tier lean. Null when nothing
+ * qualifies — most fights have no priced entries at all, and that's fine.
+ */
+export function bestValueStraight(feed, candidate) {
+  let best = null;
+  for (const pick of findFightPicks(feed, candidate)) {
+    if (pick.card_status === 'cancelled') return null; // fight is off
+    const odds = pick.quoted_odds;
+    if (!odds || !(odds.decimal >= MMA_STRAIGHT_FLOOR_DECIMAL)) continue;
+    if (pick.tier === 'pass' || !(pick.value > 0)) continue;
+    if (!best || pick.value > best.value) best = pick;
+  }
+  return best;
+}
+
+/**
+ * Whether the straight should replace this candidate as the fight's tracked
+ * main play. Both sides are judged by the same yardstick the Straights tab
+ * uses — potential profit per $1 x strength — with the candidate's strength
+ * read from its own consensus record when the cappers scored it (neutral 5
+ * otherwise). A -1800 moneyline yields ~0.06 profit/$1 and loses to any
+ * real play; a fairly-priced ML keeps its spot unless the prop genuinely
+ * carries more value.
+ */
+export function straightBeatsCandidate(straight, candidate) {
+  if (!straight) return false;
+  const decimal = Number(candidate.decimal);
+  if (!Number.isFinite(decimal)) return true; // no book price to defend
+  const strength = candidate.capperConsensus?.scored && candidate.capperConsensus.aligned
+    ? candidate.capperConsensus.strength
+    : 5;
+  return straight.value > (decimal - 1) * strength;
+}
+
+/**
+ * The fight's tracked play: the candidate itself, or a straight-swapped
+ * version of it. The fight EARNS its slot through the priced board exactly
+ * as before (score/EV/Kelly untouched, so topPicks and the slate flow don't
+ * change) — this only upgrades WHICH bet runs on that slot when the
+ * consensus prices a better single. The swapped leg keeps the original
+ * market's identity in `straight.replaced` so the UI can still show the
+ * moneyline read alongside.
+ */
+export function upgradeToValueStraight(candidate, feed) {
+  if (candidate?.sportKey !== 'mma_mixed_martial_arts') return candidate;
+  const straight = bestValueStraight(feed, candidate);
+  if (!straightBeatsCandidate(straight, candidate)) return candidate;
+  return {
+    ...candidate,
+    marketKey: 'mma_straight',
+    marketLabel: straight.market_label ?? 'Straight',
+    selection: straight.selection,
+    outcomeName: straight.selection,
+    point: null,
+    american: straight.quoted_odds.american,
+    decimal: straight.quoted_odds.decimal,
+    straight: {
+      market: straight.market,
+      strength: straight.strength,
+      value: straight.value,
+      quotedBy: straight.quoted_odds.count,
+      replaced: { selection: candidate.selection, american: candidate.american, marketKey: candidate.marketKey },
+    },
+  };
+}
+
 let feedCache = null;
 let feedFetchedAt = 0;
 export const FEED_TTL_MS = 60 * 1000;

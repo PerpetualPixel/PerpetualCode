@@ -341,6 +341,12 @@ export async function fetchMmaResults(ctx, now = Date.now()) {
           displayA: nameA,
           displayB: nameB,
           method: mmaFinishMethod(c),
+          // The round the fight ended in (ESPN's status.period) — what
+          // grades "in round 1" and over/under-rounds straights. Null when
+          // ESPN omits it; those straights then void rather than guess.
+          round: Number.isFinite(Number(c.status?.period)) && Number(c.status.period) > 0
+            ? Number(c.status.period)
+            : null,
         });
       }
     }
@@ -425,7 +431,102 @@ export function buildMmaScoreEvent(homeTeam, awayTeam, results) {
  * this whole function) for a non-MMA pick, so a pick from any other sport
  * takes the exact same single gradePick() call it always has.
  */
+/** The finish-method bucket of a result or selection: 'ko' | 'sub' | 'dec' | null. */
+function methodBucketOf(text) {
+  const s = String(text ?? '').toLowerCase();
+  if (/(ko|tko|knock)/.test(s)) return 'ko';
+  if (/(sub|choke|tap|armbar|guillotine|kimura)/.test(s)) return 'sub';
+  if (/(dec|cards|judges|points)/.test(s)) return 'dec';
+  return null;
+}
+
+/**
+ * Parse a capper-phrased straight selection ("Makhachev by submission in
+ * round 4", "Fight does not go the distance", "Under 1.5 rounds", "Turner
+ * inside the distance") into gradable terms. Null when nothing gradable can
+ * be read — the pick then voids rather than being guessed at.
+ */
+export function parseMmaStraight(selection) {
+  const s = String(selection ?? '').toLowerCase();
+  if (!s.trim()) return null;
+  const roundMatch = s.match(/round\s*(\d)(?:\s*(?:or|and|-)\s*(\d))?/);
+  const rounds = roundMatch ? [Number(roundMatch[1]), roundMatch[2] ? Number(roundMatch[2]) : null].filter(Boolean) : null;
+  const ouMatch = s.match(/\b(over|under)\s*(\d+(?:\.\d+)?)/);
+  if (ouMatch) return { kind: 'rounds_total', side: ouMatch[1], point: Number(ouMatch[2]) };
+  const method = methodBucketOf(s);
+  const negDistance = /\b(does not|doesn t|doesn't|won t|won't|will not)\b.*\bdistance\b/.test(s)
+    || /\binside the distance\b/.test(s) || (/\bfinish/.test(s) && !method);
+  const distance = !negDistance && (/\bgoes? the distance\b/.test(s));
+  return { kind: 'result', method, rounds, insideDistance: negDistance || null, goesDistance: distance || null };
+}
+
+/**
+ * Grade an 'mma_straight' leg from ESPN's completed-fight record. Returns
+ * { won } / { void: true, reason } / null (fight not found yet — stays
+ * pending). Fighter-specific terms require the named fighter to have won;
+ * method/round/distance terms each check the finish record, and any term
+ * ESPN's data can't answer (no round, no method) voids the pick — a straight
+ * is never guessed right or wrong.
+ */
+export function gradeMmaStraight(pick, results) {
+  const fight = findMmaFight(pick.home, pick.away, results ?? []);
+  if (!fight) return null;
+  const terms = parseMmaStraight(pick.selection);
+  if (!terms) return { void: true, reason: 'unparseable straight selection' };
+  const finishedInside = fight.method != null ? methodBucketOf(fight.method) !== 'dec' : null;
+  const detailBase = {
+    winner: fight.aWon ? fight.displayA : fight.bWon ? fight.displayB : null,
+    method: fight.method ?? null,
+    round: fight.round ?? null,
+  };
+  const done = (won) => ({ won, detail: detailBase });
+
+  if (terms.kind === 'rounds_total') {
+    if (fight.round == null && finishedInside !== false) return { void: true, reason: 'no finish round from ESPN' };
+    // A decision always goes past any posted rounds line; a finish in round
+    // R means the fight ended before R.5, so Under X.5 wins iff R <= X.
+    const wentOver = finishedInside === false || (fight.round != null && fight.round > terms.point);
+    return done(terms.side === 'over' ? wentOver : !wentOver);
+  }
+
+  // Fighter-specific? The selection must name one of the two sides.
+  const names = [[fight.a, fight.aWon], [fight.b, fight.bWon]];
+  const sel = normalizeName(pick.selection);
+  const named = names.find(([n]) => n && n.split(' ').some((t) => t.length > 3 && sel.includes(t)));
+  if (named && !named[1]) return done(false); // their fighter lost — no term can save it
+  if (!named && (terms.method || terms.rounds) && !terms.insideDistance && !terms.goesDistance) {
+    // "by KO round 1" with no recognizable fighter — can't attribute; void.
+    if (!terms.method && !terms.rounds) return { void: true, reason: 'no gradable term' };
+  }
+
+  if (terms.method) {
+    if (fight.method == null) return { void: true, reason: 'no finish method from ESPN' };
+    if (methodBucketOf(fight.method) !== terms.method) return done(false);
+  }
+  if (terms.rounds?.length) {
+    if (fight.round == null) return { void: true, reason: 'no finish round from ESPN' };
+    if (finishedInside === false) return done(false); // went to a decision
+    if (!terms.rounds.includes(fight.round)) return done(false);
+  }
+  if (terms.insideDistance) {
+    if (finishedInside == null) return { void: true, reason: 'no finish method from ESPN' };
+    if (!finishedInside) return done(false);
+  }
+  if (terms.goesDistance) {
+    if (finishedInside == null) return { void: true, reason: 'no finish method from ESPN' };
+    if (finishedInside) return done(false);
+  }
+  if (!terms.method && !terms.rounds?.length && !terms.insideDistance && !terms.goesDistance) {
+    // Plain fighter moneyline phrased as a straight ("Eric McConico").
+    if (!named) return { void: true, reason: 'selection names neither fighter' };
+  }
+  return done(true);
+}
+
 export function gradeMmaPickWithFallback(pick, primaryScoreEvent, results) {
+  // Straight legs (capper-priced props) grade purely from ESPN's fight
+  // record — the odds feed has no market shaped like them.
+  if (pick.marketKey === 'mma_straight') return gradeMmaStraight(pick, results);
   const outcome = (() => {
     const direct = gradePick(pick, primaryScoreEvent);
     if (direct) return direct;

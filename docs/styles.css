@@ -4516,3 +4516,17 @@ input[type="range"]:focus-visible {
   stroke-width: 1;
   stroke-dasharray: 3 3;
 }
+
+/* The MMA value play (capper-priced straight) that replaces a heavy
+   moneyline as the fight's tracked pick — see upgradeToValueStraight. */
+.slate-straight-play {
+  display: flex; flex-wrap: wrap; align-items: baseline; gap: 6px;
+  padding: 6px 10px; margin-top: 6px;
+  border: 1px solid color-mix(in srgb, var(--accent) 45%, transparent);
+  border-radius: 8px; background: color-mix(in srgb, var(--accent) 7%, transparent);
+  font-size: 0.8rem;
+}
+.slate-straight-label { color: var(--accent); font-weight: 800; letter-spacing: 0.04em; }
+.slate-straight-selection { font-weight: 700; }
+.slate-straight-odds { font-family: var(--mono); font-weight: 800; color: var(--accent); }
+.slate-straight-note { color: var(--muted); font-size: 0.72rem; }
