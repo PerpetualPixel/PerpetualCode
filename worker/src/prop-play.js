@@ -249,8 +249,15 @@ export async function runPropPlayDaily(env, ctx, now = Date.now(), { debug = fal
   }
   if (!candidates.length) return { created: false, reason: 'no safe-band alternate lines found', trace };
 
-  // Most parlay-friendly prices first, and one lookup per player+stat.
-  candidates.sort((x, y) => y.decimal - x.decimal);
+  // SAFEST line first — heaviest juice = deepest below the player's normal
+  // output — and one lookup per player+stat, which keeps each player's
+  // deepest-comfort threshold. Confirmed live the other way round: sorting
+  // lightest-first shortlisted the most aggressive thresholds in the band
+  // (a 20+ line on a 17-ppg scorer), which by construction fail the 75/80%
+  // hit-rate gates, and zero legs qualified. The product is Hamby 10+ when
+  // she averages 15 — the -460 line with the 87% season record — not the
+  // 20+ line priced like a coin flip.
+  candidates.sort((x, y) => x.decimal - y.decimal);
   const seen = new Set();
   const shortlist = [];
   for (const c of candidates) {
