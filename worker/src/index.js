@@ -828,10 +828,14 @@ export default {
       if (request.method !== 'GET') {
         return json({ error: 'Method not allowed' }, { status: 405, headers: cors });
       }
+      // Every answer carries supportsLive: true — a deploy stamp, not a
+      // per-fixture fact. The client warns (once) when it's absent, which is
+      // how "the production worker predates live box scores" surfaces as a
+      // console line instead of as live cards silently never growing a grid.
       const { searchParams } = new URL(request.url);
       const sportKey = searchParams.get('sport') ?? '';
       if (!hasBoxScore(sportKey)) {
-        return json({ box: null, reason: 'unsupported sport' }, { headers: cors });
+        return json({ box: null, supportsLive: true, reason: 'unsupported sport' }, { headers: cors });
       }
       try {
         const box = await fetchBoxScore(
@@ -840,11 +844,14 @@ export default {
         );
         // A finished box is immutable, but a live one is stale the moment the
         // half-inning turns — caching it for 5 minutes would pin the card to
-        // an old inning no matter how often the slate re-asks.
-        const maxAge = box && box.status && !box.status.completed ? 30 : 300;
-        return json({ box }, { headers: { ...cors, 'Cache-Control': `public, max-age=${maxAge}` } });
+        // an old inning no matter how often the slate re-asks. A null gets the
+        // short TTL too: for a live fixture it usually means ESPN just hasn't
+        // started serving the game yet, and a 5-minute cached null would keep
+        // the grid off well into the first innings.
+        const maxAge = box && (!box.status || box.status.completed) ? 300 : 30;
+        return json({ box, supportsLive: true }, { headers: { ...cors, 'Cache-Control': `public, max-age=${maxAge}` } });
       } catch (error) {
-        return json({ box: null, reason: String(error).slice(0, 120) }, { headers: cors });
+        return json({ box: null, supportsLive: true, reason: String(error).slice(0, 120) }, { headers: cors });
       }
     }
 

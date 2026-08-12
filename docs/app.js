@@ -16,6 +16,7 @@ import { DEMO_EVENTS } from './demo.js';
 import { teamLogoUrl } from './team-logos.js';
 import { BUILD_INFO } from './version.js';
 import { summarizePicks, gradePick } from './learning.js';
+import { liveSetsLabel } from './tennis-results.js';
 import {
   RULES,
   SPORTSBOOKS,
@@ -3409,23 +3410,39 @@ const BOX_SPORTS = new Set([
   'baseball_mlb', 'americanfootball_nfl', 'americanfootball_ncaaf', 'basketball_wnba', 'basketball_nba',
 ]);
 
-// How often a live game's box score is re-asked. Matches the slate's own
-// score-poll cadence (SLATE_AUTO_REFRESH_MS) so a live card's inning and its
-// score number move together instead of disagreeing for a minute at a time.
+// How often a not-yet-final game's box score is re-asked. Matches the slate's
+// own score-poll cadence (SLATE_AUTO_REFRESH_MS) so a live card's inning and
+// its score number move together instead of disagreeing for a minute at a time.
 const BOX_LIVE_REFRESH_MS = 60000;
+
+// One-time flag for the deploy-drift warning below — the mismatch is global
+// (it's the worker that's old, not one fixture), so one console line, not one
+// per card per minute.
+let warnedStaleBoxWorker = false;
 
 /**
  * Fetch the box score for a game and re-render the slate when it changes.
- * A finished box is fetched once — `null` is cached too, so a fixture ESPN
- * can't match stays a plain card without re-asking on every render. A live
- * box is re-asked every BOX_LIVE_REFRESH_MS, since its whole value is that
- * it changes.
+ * A box is settled once ESPN marks it completed — fetched once and kept, with
+ * `null` cached too so a fixture ESPN can't match stays a plain card without
+ * re-asking on every render. Until then the answer can still change, so it's
+ * re-asked every BOX_LIVE_REFRESH_MS:
+ *   - a live box, obviously — its whole value is that it changes;
+ *   - a `null` on a card whose clock already says live (`live: true` callers):
+ *     ESPN often serves nothing until first pitch, minutes after commence;
+ *   - a box still marked in-progress on a card that has since finished —
+ *     without this, a game watched live kept its mid-game grid frozen forever,
+ *     because the finished path never re-asked once anything was cached.
+ * Pre-status payloads (an old worker) were only ever served for finished
+ * games, so they count as settled rather than being re-polled forever.
  */
 function ensureBoxScore(game, { live = false } = {}) {
   if (!CONFIG.WORKER_URL) return;
   const asked = state.boxScores.has(game.eventId);
+  const cached = state.boxScores.get(game.eventId);
+  const settled = cached != null && (!cached.status || cached.status.completed);
+  const canStillChange = !settled && (cached != null || live);
   const since = Date.now() - (state.boxScoresFetchedAt.get(game.eventId) ?? 0);
-  if (asked && (!live || since < BOX_LIVE_REFRESH_MS)) return;
+  if (asked && (!canStillChange || since < BOX_LIVE_REFRESH_MS)) return;
 
   state.boxScoresFetchedAt.set(game.eventId, Date.now());
   if (!asked) state.boxScores.set(game.eventId, null); // in-flight/none marker
@@ -3436,6 +3453,17 @@ function ensureBoxScore(game, { live = false } = {}) {
   fetch(url, { headers: { Accept: 'application/json' } })
     .then((r) => (r.ok ? r.json() : null))
     .then((data) => {
+      // The deployed worker stamps every /boxscore answer with supportsLive
+      // (see worker/src/index.js). Its absence means the worker running in
+      // production predates live box scores — the exact silent state where
+      // the site looks fine and live cards just never grow a grid — so say
+      // so once, with the fix, instead of leaving it to be inferred.
+      if (data && !('supportsLive' in data) && !warnedStaleBoxWorker) {
+        warnedStaleBoxWorker = true;
+        console.warn(
+          'The deployed worker predates live box scores — live cards will not show innings until it is redeployed (git pull, then wrangler deploy from worker/).',
+        );
+      }
       if (!data?.box) return;
       const previous = state.boxScores.get(game.eventId);
       state.boxScores.set(game.eventId, data.box);
@@ -3530,9 +3558,12 @@ function finishedDetailHtml(game, scoreEvent, trackedPick) {
   const detail = trackedPick?.result?.detail ?? null;
 
   if (BOX_SPORTS.has(game.sportKey)) {
+    // ensureBoxScore runs even when a box is already cached: a game that was
+    // watched live has its in-progress grid here, and this is what upgrades
+    // it to the real final (last innings, winner dimming) within a minute.
+    ensureBoxScore(game);
     const box = state.boxScores.get(game.eventId);
     if (box) return boxScoreGridHtml(box);
-    ensureBoxScore(game);
     return '';
   }
 
@@ -3617,11 +3648,17 @@ function slateGameHtml(game) {
   // keeps itself refreshed — see liveBoxFor.
   const liveBox = gameState === 'live' ? liveBoxFor(game) : null;
 
+  // What sits next to the Live badge: the box sports get ESPN's own "Top 5th";
+  // tennis gets a sets chip from the free /scores feed when it's actually
+  // posting live numbers (frequently it doesn't — then no chip, never a guess).
+  const liveDetailText = liveBox?.status?.detail
+    ?? (gameState === 'live' && game.sportKey.startsWith('tennis_') ? liveSetsLabel(scoreEvent) : null);
+
   const timeHtml = isFinished
     ? `<span class="slate-final">Final</span>`
     : gameState === 'live'
       ? `<span class="slate-live-badge">● Live</span>${
-          liveBox?.status?.detail ? `<span class="slate-live-detail">${esc(liveBox.status.detail)}</span>` : ''}`
+          liveDetailText ? `<span class="slate-live-detail">${esc(liveDetailText)}</span>` : ''}`
       : `<span>${esc(dateFmt.format(new Date(game.commenceMs)))}</span>`;
 
   // Once a game is live or finished, the per-market price grid no longer

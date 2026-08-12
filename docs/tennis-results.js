@@ -78,6 +78,27 @@ export function parseSetScore(scoreString) {
 }
 
 /**
+ * The live card's "1–0 sets" chip, from the free /scores feed's own numbers —
+ * which for tennis are SETS won (0/1/2), never games (see this module's
+ * header). Null unless the event is explicitly still in progress
+ * (completed === false, not merely absent), both players carry a finite
+ * count, and the pair still reads as a plausible in-progress match (sum ≤ 4
+ * — four completed sets is the most a still-live fifth-set match can have).
+ * The free feed frequently posts nothing at all while a match runs; null
+ * here means the card simply shows no chip, never a guessed one.
+ */
+export function liveSetsLabel(scoreEvent) {
+  if (scoreEvent?.completed !== false) return null;
+  const scores = scoreEvent.scores ?? [];
+  if (scores.length !== 2) return null;
+  const a = Number(scores[0]?.score);
+  const b = Number(scores[1]?.score);
+  if (!Number.isFinite(a) || !Number.isFinite(b)) return null;
+  if (a < 0 || b < 0 || a + b > 4) return null;
+  return `${a}–${b} sets`;
+}
+
+/**
  * Which side of the result API's response (0 or 1) corresponds to the
  * tracked pick's own `home`, by normalized name — independent of URL
  * argument order, since the API's own participant order in its response
