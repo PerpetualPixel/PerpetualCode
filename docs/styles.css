@@ -4530,3 +4530,28 @@ input[type="range"]:focus-visible {
 .slate-straight-selection { font-weight: 700; }
 .slate-straight-odds { font-family: var(--mono); font-weight: 800; color: var(--accent); }
 .slate-straight-note { color: var(--muted); font-size: 0.72rem; }
+
+/* Prop Play of the Day — safe-line prop straight/parlay with its stats case. */
+.prop-play-card {
+  margin-top: 18px; border: 1px solid var(--border); border-radius: 12px;
+  background: var(--surface); padding: 14px 16px;
+}
+.prop-play-header { display: flex; flex-wrap: wrap; align-items: baseline; gap: 10px; margin-bottom: 8px; }
+.prop-play-title { font-weight: 800; letter-spacing: 0.03em; color: var(--accent); text-transform: uppercase; font-size: 0.8rem; }
+.prop-play-kind { color: var(--muted); font-size: 0.8rem; font-weight: 700; }
+.prop-play-status { font-weight: 800; font-size: 0.78rem; padding: 1px 8px; border-radius: 999px; }
+.prop-play-status.is-won { color: var(--success); background: rgba(16, 185, 129, 0.14); }
+.prop-play-status.is-lost { color: var(--danger); background: rgba(239, 68, 68, 0.14); }
+.prop-play-status.is-void { color: var(--muted); background: rgba(148, 163, 184, 0.14); }
+.prop-play-leg { padding: 8px 0; border-top: 1px dashed var(--border); }
+.prop-play-leg-line { display: flex; flex-wrap: wrap; gap: 8px; align-items: baseline; }
+.prop-play-price { font-family: var(--mono); font-weight: 800; color: var(--accent); }
+.prop-play-leg-sub { color: var(--muted); font-size: 0.76rem; }
+.prop-play-chips { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 4px; }
+.prop-play-chip {
+  font-size: 0.7rem; font-weight: 700; color: var(--success);
+  border: 1px solid color-mix(in srgb, var(--success) 45%, transparent);
+  border-radius: 999px; padding: 1px 8px;
+}
+.prop-play-writeup { margin-top: 10px; color: var(--muted); font-size: 0.85rem; line-height: 1.55; }
+.prop-play-writeup p { margin: 0 0 8px; }

@@ -4908,7 +4908,53 @@ async function loadPotd({ force = false } = {}) {
   } catch {
     potdLoaded = false; // a network hiccup shouldn't permanently give up
     el.potdBody.innerHTML = `<p class="empty">Couldn't reach the odds feed.</p>`;
+    return;
   }
+
+  // The Prop Play of the Day rides on the same tab, below the main card —
+  // additive: any failure here leaves the PoTD exactly as rendered above.
+  try {
+    const res = await fetch(new URL('/prop-play', CONFIG.WORKER_URL), { headers: { Accept: 'application/json' } });
+    const { propPlay } = await res.json();
+    if (propPlay) el.potdBody.insertAdjacentHTML('beforeend', renderPropPlayCard(propPlay));
+  } catch { /* prop play is a bonus, never a blocker */ }
+}
+
+/** The Prop Play of the Day card: safe-line legs, each with its measured
+ * hit-rate case (the same numbers the worker's writeup quotes — see
+ * worker/src/prop-play.js), and a Won/Lost/Void chip once graded. */
+function renderPropPlayCard(record) {
+  const statusChip = record.status !== 'pending'
+    ? `<span class="prop-play-status is-${esc(record.status)}">${record.status === 'won' ? '✅ Won' : record.status === 'lost' ? '❌ Lost' : 'Voided'}</span>`
+    : '';
+  const legs = (record.legs ?? []).map((leg) => {
+    const p = leg.profile ?? {};
+    const chips = [
+      Number.isFinite(p.season) ? `${Math.round(p.season * 100)}% season` : null,
+      Number.isFinite(p.l10) ? `${Math.round(p.l10 * 100)}% L10` : null,
+      p.streak >= 3 ? `${p.streak}-game streak` : null,
+    ].filter(Boolean).map((c) => `<span class="prop-play-chip">${esc(c)}</span>`).join('');
+    const outcome = leg.status && leg.status !== 'pending'
+      ? ` <span class="prop-play-status is-${esc(leg.status)}">${leg.status === 'won' ? '✅' : leg.status === 'lost' ? '❌' : 'void'}${leg.actual != null ? ` (${esc(String(leg.actual))})` : ''}</span>`
+      : '';
+    return `<div class="prop-play-leg">
+      <div class="prop-play-leg-line"><strong>${esc(leg.label)}</strong>
+        <span class="prop-play-price">${esc(formatAmerican(leg.american))}</span>${outcome}</div>
+      <div class="prop-play-leg-sub">${esc(leg.away)} @ ${esc(leg.home)} · ${esc(leg.book)}</div>
+      <div class="prop-play-chips">${chips}</div>
+    </div>`;
+  }).join('');
+  const paragraphs = String(record.writeup ?? '').split('\n\n')
+    .map((p) => `<p>${esc(p)}</p>`).join('');
+  return `<div class="prop-play-card">
+    <div class="prop-play-header">
+      <span class="prop-play-title">Prop Play of the Day</span>
+      <span class="prop-play-kind">${record.kind === 'parlay' ? '2-leg parlay' : 'Straight'} · ${esc(formatAmerican(record.combinedAmerican))}</span>
+      ${statusChip}
+    </div>
+    ${legs}
+    <div class="prop-play-writeup">${paragraphs}</div>
+  </div>`;
 }
 
 function setActiveTab(tab) {
