@@ -160,3 +160,50 @@ test('/top5-reset stays closed even when a valid owner key is supplied', async (
   const res = await worker.fetch(call('/top5-reset', { method: 'POST', key: PASS }), env, ctx);
   assert.equal(res.status, 403);
 });
+
+/* ---------------------------------------------------------------- */
+/* Owner-gated admin routes                                          */
+/* ---------------------------------------------------------------- */
+
+/**
+ * These exercise the route WIRING, not the sweep's logic (that lives in
+ * test/tennis-espn.test.mjs and test/full-slate-tracking.test.mjs).
+ *
+ * Worth having because a route body is the one place a plain
+ * ReferenceError can ship green: /admin/regrade-tennis originally read
+ * `url.searchParams`, but the fetch handler destructures only `pathname`
+ * from the request URL, so `url` was never defined. Every module test
+ * passed and the endpoint 500'd on its first real call.
+ */
+const ADMIN_ROUTES = ['/admin/regrade-tennis', '/admin/grade-now'];
+
+for (const path of ADMIN_ROUTES) {
+  test(`${path} rejects a wrong owner key`, async () => {
+    const res = await worker.fetch(call(path, { method: 'POST', key: 'nope' }), makeEnv(), ctx);
+    assert.equal(res.status, 401);
+  });
+
+  test(`${path} runs to a real response with a valid key`, async () => {
+    const res = await worker.fetch(call(path, { method: 'POST', key: PASS }), makeEnv(), ctx);
+    const body = await res.json();
+    // The sweep itself finds nothing in an empty KV — the point is that the
+    // handler executes end to end instead of throwing.
+    assert.equal(res.status, 200, `expected 200, got ${res.status}: ${JSON.stringify(body)}`);
+    assert.equal(body.error, undefined, `handler threw: ${body.error}`);
+  });
+}
+
+test('/admin/regrade-tennis reads its resume offset from the query string', async () => {
+  const res = await worker.fetch(
+    call('/admin/regrade-tennis?offset=88&days=90', { method: 'POST', key: PASS }),
+    makeEnv(),
+    ctx,
+  );
+  const body = await res.json();
+  assert.equal(res.status, 200);
+  // Starting at day 88 of a 90-day range leaves 2 days to walk, so the
+  // range completes and the caller is told there's nothing left.
+  assert.equal(body.regraded.fullSlate.daysWalked, 2);
+  assert.equal(body.nextOffsetDays, null);
+  assert.equal(body.done, true);
+});

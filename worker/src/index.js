@@ -1448,8 +1448,12 @@ export default {
       if (!auth.ok) return json({ error: auth.error }, { status: auth.status, headers: cors });
       try {
         const now = Date.now();
-        const days = Math.min(Number(url.searchParams.get('days')) || 90, 90);
-        const offsetDays = Math.max(Number(url.searchParams.get('offset')) || 0, 0);
+        // The fetch handler only destructures `pathname` from the request
+        // URL; every route that needs the query string builds its own, same
+        // as the routes above.
+        const { searchParams } = new URL(request.url);
+        const days = Math.min(Number(searchParams.get('days')) || 90, 90);
+        const offsetDays = Math.max(Number(searchParams.get('offset')) || 0, 0);
 
         // Sequential, not Promise.all: all three share one invocation's
         // subrequest ceiling, and running them concurrently would spend it
