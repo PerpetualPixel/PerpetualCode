@@ -17,7 +17,7 @@
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Syne:wght@600;700;800&family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
-<link rel="stylesheet" href="styles.css?v=1.132">
+<link rel="stylesheet" href="styles.css?v=1.133">
 </head>
 <body>
 
@@ -198,6 +198,11 @@
 
 <section id="potdView" role="tabpanel" aria-labelledby="tabPotd" hidden>
   <div id="potdBody" class="potd"></div>
+  <!-- The Ladder Challenge rides on this tab under the day's two flagship
+       plays. Its own section rather than a third card in #potdBody: the
+       ladder is a compounding run, not another one-off pick, and the two
+       are never graded or staked the same way. -->
+  <div id="ladderBody" class="ladder"></div>
 </section>
 </main>
 
@@ -680,6 +685,26 @@
       </div>
     </section>
 
+    <!-- Ladder Challenge — deliberately its own section rather than a fifth
+         tab in the tracker above. Every tracker up there flat-stakes one
+         unit per pick and is judged on win rate and ROI across picks; the
+         ladder rides its whole bankroll on each rung, so the unit of
+         accounting is the RUN — how far a climb got before it broke, and how
+         much came off the table on the way. Those numbers don't belong in
+         the same table. -->
+    <section class="learning-section">
+      <h3>Ladder Challenge <span class="stats-source">Tracked as climbs, not as a win rate — the bankroll compounds</span></h3>
+      <p class="filter-hint">
+        One lower-risk play a day around −200, staking the entire ladder
+        bankroll each time. A win rides straight into the next rung; a loss
+        ends that climb and the next one starts back at $20, Day 1. Profit is
+        skimmed off at fixed points on the way up, and that banked money is
+        all a busted climb keeps — which is why each run is shown start to
+        finish rather than averaged into anything.
+      </p>
+      <div id="ladderTracker" class="ladder-tracker"></div>
+    </section>
+
     <!-- Calibration & Audit -->
     <section class="learning-section">
       <h3>Calibration &amp; Audit <span class="stats-source">Reporting only, nothing here changes the algorithm automatically</span></h3>
@@ -809,6 +834,6 @@
   </div>
 </aside>
 
-<script type="module" src="app.js?v=1.132"></script>
+<script type="module" src="app.js?v=1.133"></script>
 </body>
 </html>

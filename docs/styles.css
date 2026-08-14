@@ -618,6 +618,46 @@ body {
   color: var(--muted);
 }
 
+/* "More info" on the Play of the Day card. Full width and quiet rather than
+   the accent-filled .more-info-btn the slate rows use: on this card it sits
+   under the pick as a disclosure control, not as the card's call to action —
+   the pick itself is that. */
+.potd-more-btn {
+  display: block;
+  width: 100%;
+  margin-top: 14px;
+  padding: 10px 14px;
+  min-height: 40px;
+  background: var(--surface-2);
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  color: var(--text);
+  font-family: var(--mono);
+  font-size: 0.72rem;
+  font-weight: 600;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  cursor: pointer;
+  transition: background 160ms ease, border-color 160ms ease;
+}
+
+.potd-more-btn:hover {
+  background: var(--accent-dim);
+  border-color: var(--accent);
+}
+
+.potd-more-btn[aria-expanded='true'] {
+  border-color: var(--accent);
+}
+
+/* The first section inside the expanded write-up already has the button
+   above it as a visual break, so it doesn't need its own top rule. */
+.potd-detail > .potd-section:first-child {
+  border-top: none;
+  padding-top: 0;
+  margin-top: 14px;
+}
+
 /* ---------------------------------------------------------------- */
 /* Parlay Builder                                                     */
 /* ---------------------------------------------------------------- */
@@ -4571,6 +4611,327 @@ input[type="range"]:focus-visible {
 }
 .prop-play-writeup { margin-top: 10px; color: var(--muted); font-size: 0.85rem; line-height: 1.55; }
 .prop-play-writeup p { margin: 0 0 8px; }
+
+/* ---------------------------------------------------------------- */
+/* Ladder Challenge                                                  */
+/* ---------------------------------------------------------------- */
+
+/* Same glass-and-gradient-border treatment as .potd-card: the ladder is a
+   flagship surface on this tab, not a footnote under the two picks. */
+.ladder-card {
+  margin-top: 18px;
+  background:
+    linear-gradient(rgba(8, 6, 20, 0.55), rgba(8, 6, 20, 0.55)) padding-box,
+    var(--card-border-gradient) border-box;
+  border: 1px solid transparent;
+  border-radius: var(--radius);
+  padding: 18px;
+  box-shadow: var(--shadow-sm);
+}
+
+.ladder-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 10px;
+  margin-bottom: 8px;
+}
+
+.ladder-title {
+  margin: 0;
+  font-family: var(--display);
+  font-size: 1.05rem;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
+.ladder-day {
+  font-family: var(--mono);
+  font-size: 0.78rem;
+  font-weight: 800;
+  color: var(--laser);
+  border: 1px solid color-mix(in srgb, var(--laser) 45%, transparent);
+  border-radius: 999px;
+  padding: 2px 10px;
+}
+
+.ladder-intro {
+  margin: 0 0 14px;
+  color: var(--muted);
+  font-size: 0.82rem;
+  line-height: 1.55;
+}
+
+.ladder-stats {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 10px;
+  margin-bottom: 12px;
+}
+
+.ladder-stat {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: 10px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background: var(--surface);
+}
+
+.ladder-stat-label {
+  font-family: var(--mono);
+  font-size: 0.65rem;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--muted);
+}
+
+.ladder-stat-value {
+  font-family: var(--mono);
+  font-size: 1.05rem;
+  font-weight: 800;
+}
+
+/* Banked money is the one number a busted run keeps, so it reads as won. */
+.ladder-stat-value.is-banked { color: var(--success); }
+
+.ladder-progress {
+  height: 6px;
+  border-radius: 999px;
+  background: var(--surface-2);
+  overflow: hidden;
+  margin-bottom: 14px;
+}
+
+.ladder-progress-fill {
+  height: 100%;
+  border-radius: 999px;
+  background: linear-gradient(90deg, var(--accent), var(--laser));
+  transition: width 400ms ease;
+}
+
+/* The rungs. Sized so the whole climb fits a phone without scrolling — the
+   shape of it (how far up the current rung is, where the take-outs land) is
+   the point, and half a ladder off the edge of the screen doesn't carry it.
+   The strip still scrolls below ~330px rather than crushing the amounts. */
+.ladder-track {
+  display: flex;
+  gap: 5px;
+  margin: 0 0 14px;
+  padding: 0 0 4px;
+  list-style: none;
+  overflow-x: auto;
+}
+
+.ladder-rung {
+  flex: 1 1 0;
+  min-width: 38px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 2px;
+  padding: 8px 3px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background: var(--surface);
+  opacity: 0.55;
+}
+
+.ladder-rung-step {
+  font-family: var(--mono);
+  font-size: 0.6rem;
+  letter-spacing: 0.08em;
+  color: var(--muted);
+}
+
+.ladder-rung-stake {
+  font-family: var(--mono);
+  font-size: 0.78rem;
+  font-weight: 800;
+}
+
+/* The take-out marked on the rung that banks it. */
+.ladder-rung-skim {
+  font-family: var(--mono);
+  font-size: 0.62rem;
+  font-weight: 700;
+  color: var(--success);
+}
+
+.ladder-rung.is-done {
+  opacity: 1;
+  border-color: color-mix(in srgb, var(--success) 45%, transparent);
+}
+
+.ladder-rung.is-current {
+  opacity: 1;
+  border-color: var(--laser);
+  box-shadow: var(--glow-laser);
+}
+
+.ladder-play {
+  padding: 14px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background: var(--surface);
+}
+
+.ladder-play.is-holding { border-style: dashed; }
+
+.ladder-play-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 8px;
+  margin-bottom: 6px;
+}
+
+.ladder-play-title {
+  font-family: var(--mono);
+  font-size: 0.75rem;
+  font-weight: 800;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+  color: var(--accent);
+}
+
+.ladder-play-pick {
+  margin: 0 0 4px;
+  font-size: 1rem;
+  font-weight: 700;
+  line-height: 1.35;
+}
+
+.ladder-play-sub,
+.ladder-play-note {
+  margin: 0;
+  font-family: var(--mono);
+  font-size: 0.72rem;
+  color: var(--muted);
+  line-height: 1.5;
+}
+
+.ladder-play-note { font-family: var(--sans); font-size: 0.8rem; }
+
+.ladder-play-stake {
+  margin: 10px 0 0;
+  padding-top: 10px;
+  border-top: 1px dashed var(--line);
+  font-family: var(--mono);
+  font-size: 0.8rem;
+  color: var(--muted);
+}
+
+.ladder-play-stake strong { color: var(--text); }
+
+.ladder-status {
+  font-weight: 800;
+  font-size: 0.75rem;
+  padding: 1px 8px;
+  border-radius: 999px;
+}
+.ladder-status.is-won { color: var(--success); background: rgba(16, 185, 129, 0.14); }
+.ladder-status.is-lost { color: var(--danger); background: rgba(239, 68, 68, 0.14); }
+.ladder-status.is-void { color: var(--muted); background: rgba(148, 163, 184, 0.14); }
+
+/* The dashboard's ladder panel: the live climb, then the finished ones. */
+.ladder-tracker-current {
+  padding: 14px;
+  margin-bottom: 12px;
+  border: 1px solid var(--laser);
+  border-radius: var(--radius);
+  background: var(--surface);
+  box-shadow: var(--glow-laser);
+}
+
+.ladder-tracker-grid { margin-bottom: 12px; }
+
+.ladder-runs { display: flex; flex-direction: column; gap: 10px; }
+
+.ladder-run {
+  padding: 12px 14px;
+  border: 1px solid var(--line);
+  border-left: 3px solid var(--danger);
+  border-radius: var(--radius);
+  background: var(--surface);
+}
+
+.ladder-run.is-complete { border-left-color: var(--success); }
+
+.ladder-run-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 8px;
+  margin-bottom: 8px;
+}
+
+.ladder-run-verdict { font-size: 0.85rem; font-weight: 700; }
+.ladder-run-verdict.is-live { color: var(--laser); }
+
+.ladder-run-dates {
+  font-family: var(--mono);
+  font-size: 0.7rem;
+  color: var(--muted);
+}
+
+/* One pip per rung of the plan — filled to where the climb actually got,
+   with the rung that broke it marked in the loss color. */
+.ladder-run-pips {
+  display: flex;
+  gap: 4px;
+  margin-bottom: 8px;
+}
+
+.ladder-pip {
+  flex: 1 1 0;
+  height: 6px;
+  border-radius: 999px;
+  background: var(--surface-2);
+  border: 1px solid var(--line);
+}
+
+.ladder-pip.is-filled {
+  background: linear-gradient(90deg, var(--accent), var(--laser));
+  border-color: transparent;
+}
+
+.ladder-pip.is-broke {
+  background: var(--danger);
+  border-color: transparent;
+}
+
+.ladder-pip.is-current {
+  border-color: var(--laser);
+  background: var(--accent-dim);
+}
+
+.ladder-run-figures {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 14px;
+  font-family: var(--mono);
+  font-size: 0.78rem;
+}
+
+.ladder-run-figures .is-banked { color: var(--success); }
+
+.ladder-run-label {
+  font-size: 0.62rem;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--muted);
+  margin-right: 4px;
+}
+
+.ladder-run-note {
+  margin: 8px 0 0;
+  font-size: 0.76rem;
+  color: var(--muted);
+}
 
 /* The displaced team-side lean shown under a prop Main Play. */
 .slate-main-play-lean { color: var(--muted); font-size: 0.74rem; flex-basis: 100%; }

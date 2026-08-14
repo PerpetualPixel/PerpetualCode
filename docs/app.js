@@ -712,6 +712,8 @@ const el = {
   boardView: document.getElementById('boardView'),
   potdView: document.getElementById('potdView'),
   potdBody: document.getElementById('potdBody'),
+  ladderBody: document.getElementById('ladderBody'),
+  ladderTracker: document.getElementById('ladderTracker'),
   learningPanel: document.getElementById('learningPanel'),
   trackerLoading: document.getElementById('trackerLoading'),
   learningContent: document.querySelector('.learning-content'),
@@ -4431,6 +4433,7 @@ function toggleLegBanner(event) {
 // renders a "?" why-button via renderLeg.
 el.picks.addEventListener('click', toggleWhyPanel);
 el.picks.addEventListener('click', toggleLegBanner);
+el.potdBody.addEventListener('click', togglePotdDetail);
 
 el.dayFilterYesterday.addEventListener('click', () => setDayFilter('yesterday'));
 el.dayFilterToday.addEventListener('click', () => setDayFilter('today'));
@@ -4871,11 +4874,22 @@ function renderPotdBooks(writeup) {
     </div>`;
 }
 
-/** The single Play of the Day card. */
+/**
+ * The single Play of the Day card, collapsed to its pick by default.
+ *
+ * Everything that makes the case — the book table, the sharp take, the
+ * quantitative sections, the devil's advocate — sits behind "More info".
+ * The full write-up is several screens tall on a phone, and the Prop Play of
+ * the Day renders directly below this card on the same tab: expanded by
+ * default, the day's second play was pushed so far down it read as missing.
+ * Same collapse-by-default pattern (and the same aria-expanded/aria-controls
+ * wiring) Pixel's Picks already uses for its own legs.
+ */
 function renderPotdCard(writeup, generatedAt, stale) {
   const staleNote = stale
     ? `<p class="potd-stale">Today's pick hasn't posted yet. Showing yesterday's.</p>`
     : '';
+  const detailId = 'potdDetail';
   return `
     <article class="potd-card">
       <div class="potd-head">
@@ -4887,16 +4901,40 @@ function renderPotdCard(writeup, generatedAt, stale) {
       <h2 class="potd-headline">${esc(writeup.headline)}</h2>
       <p class="potd-matchup">
         ${esc(writeup.matchup)} · ${esc(potdDateTimeFmt.format(new Date(writeup.commenceMs)))}
+        · best price at ${esc(writeup.book)}
       </p>
       ${renderPotdConfidence(writeup.score, writeup.stake)}
-      ${renderPotdBooks(writeup)}
-      ${renderPotdSharpTake(writeup)}
-      ${writeup.sections.map(renderPotdSection).join('')}
-      ${renderPotdDevilsAdvocate(writeup)}
-      <p class="potd-meta">
-        Best price at ${esc(writeup.book)} · posted ${esc(potdDateTimeFmt.format(new Date(generatedAt)))}
-      </p>
+      <button type="button" class="potd-more-btn" aria-expanded="false" aria-controls="${detailId}">
+        More info
+      </button>
+      <div class="potd-detail" id="${detailId}" hidden>
+        ${renderPotdBooks(writeup)}
+        ${renderPotdSharpTake(writeup)}
+        ${writeup.sections.map(renderPotdSection).join('')}
+        ${renderPotdDevilsAdvocate(writeup)}
+        <p class="potd-meta">
+          Best price at ${esc(writeup.book)} · posted ${esc(potdDateTimeFmt.format(new Date(generatedAt)))}
+        </p>
+      </div>
     </article>`;
+}
+
+/**
+ * Expands/collapses a Play of the Day card's write-up. Delegated on the tab
+ * body so it survives every re-render, same as the Board's own why/leg
+ * toggles. The label flips with the state — a button that says "More info"
+ * while the info is already showing is the kind of thing you only notice by
+ * clicking it twice.
+ */
+function togglePotdDetail(event) {
+  const button = event.target.closest('.potd-more-btn');
+  if (!button) return;
+  const detail = document.getElementById(button.getAttribute('aria-controls'));
+  if (!detail) return;
+  const open = button.getAttribute('aria-expanded') === 'true';
+  button.setAttribute('aria-expanded', String(!open));
+  button.textContent = open ? 'More info' : 'Hide info';
+  detail.hidden = open;
 }
 
 /**
@@ -5005,6 +5043,144 @@ async function loadPotd({ force = false } = {}) {
   } catch { /* prop play is a bonus, never a blocker */ }
 }
 
+/* ------------------------------------------------------------------ */
+/* Ladder Challenge                                                    */
+/* ------------------------------------------------------------------ */
+
+/** Whole dollars where the number is whole, cents only when the real
+ * bankroll actually has them — a rung filled off -200 lands on $31.43, and
+ * rounding that to $31 on screen would stop the displayed climb adding up. */
+function ladderMoney(n) {
+  const value = Number(n ?? 0);
+  return Number.isInteger(value) ? `$${value}` : `$${value.toFixed(2)}`;
+}
+
+/**
+ * The rung track: one pip per step of the ideal climb, each labelled with
+ * what that rung bets. Steps already won are filled, the current one is
+ * marked, and the rungs that bank profit carry a skim marker — the take-outs
+ * are the part of the ladder that makes a run worth something even when it
+ * eventually breaks, so they're on the map rather than buried in the copy.
+ */
+function renderLadderTrack(plan, state) {
+  const done = state.wins ?? 0;
+  return `<ol class="ladder-track">
+    ${plan.rungs.map((rung) => {
+      const status = rung.step <= done ? 'is-done' : rung.step === state.step ? 'is-current' : '';
+      return `<li class="ladder-rung ${status}">
+        <span class="ladder-rung-step">${rung.step}</span>
+        <span class="ladder-rung-stake">${ladderMoney(rung.stake)}</span>
+        ${rung.takeOut ? `<span class="ladder-rung-skim" title="Bank ${ladderMoney(rung.takeOut)} here">+${ladderMoney(rung.takeOut)}</span>` : ''}
+      </li>`;
+    }).join('')}
+  </ol>`;
+}
+
+/** Today's rung: the play itself, what it risks, and what it returns. */
+function renderLadderPlay(ladder) {
+  const { play } = ladder;
+  if (!play) {
+    return `<div class="ladder-play is-holding">
+      <p class="ladder-play-title">Holding today</p>
+      <p class="ladder-play-note">
+        Nothing on today's board cleared the ladder's band
+        (${esc(formatAmerican(ladder.band.min))} to ${esc(formatAmerican(ladder.band.max))})
+        without clashing with a play already posted. The climb keeps its place —
+        no rung is played on a day that doesn't offer one.
+      </p>
+    </div>`;
+  }
+
+  const { pick } = play;
+  const settled = pick.status && pick.status !== 'pending';
+  const statusChip = settled
+    ? `<span class="ladder-status is-${esc(pick.status)}">${pick.status === 'won' ? '✅ Won' : pick.status === 'lost' ? '❌ Lost' : 'Void'}</span>`
+    : '';
+  const staleNote = play.stale
+    ? `<p class="ladder-play-note">Today's rung hasn't posted yet — this is the last one played.</p>`
+    : '';
+  return `<div class="ladder-play">
+    <div class="ladder-play-head">
+      <span class="ladder-play-title">Rung ${play.step} · ${esc(formatAmerican(pick.american))}</span>
+      ${statusChip}
+    </div>
+    ${staleNote}
+    <p class="ladder-play-pick">${esc(pick.selection)}</p>
+    <p class="ladder-play-sub">
+      ${esc(pick.away)} @ ${esc(pick.home)} · ${esc(potdDateTimeFmt.format(new Date(pick.commenceMs)))}
+      · ${esc(pick.book)}
+    </p>
+    <p class="ladder-play-stake">
+      Risking <strong>${ladderMoney(play.stake)}</strong> to return
+      <strong>${ladderMoney(play.toReturn)}</strong>
+    </p>
+  </div>`;
+}
+
+/**
+ * The Ladder Challenge section: where the current climb stands, the map of
+ * the whole climb, and today's rung.
+ */
+function renderLadder(ladder) {
+  if (!ladder) {
+    el.ladderBody.innerHTML = '';
+    return;
+  }
+  const { state, plan } = ladder;
+  const progress = Math.min(100, Math.round((state.bankroll / ladder.target) * 100));
+
+  el.ladderBody.innerHTML = `
+    <section class="ladder-card">
+      <div class="ladder-head">
+        <h2 class="ladder-title">Ladder Challenge</h2>
+        <span class="ladder-day">Day ${state.step}</span>
+      </div>
+      <p class="ladder-intro">
+        One lower-risk play a day, around ${esc(formatAmerican(-200))}. Every win rides
+        straight into the next rung — ${ladderMoney(ladder.base)} to ${ladderMoney(ladder.target)}
+        in ${plan.rungs.length} steps, banking ${ladderMoney(plan.banked)} along the way.
+        One loss and the ladder starts over at ${ladderMoney(ladder.base)}, Day 1.
+      </p>
+
+      <div class="ladder-stats">
+        <div class="ladder-stat">
+          <span class="ladder-stat-label">Riding now</span>
+          <span class="ladder-stat-value">${ladderMoney(state.bankroll)}</span>
+        </div>
+        <div class="ladder-stat">
+          <span class="ladder-stat-label">Banked</span>
+          <span class="ladder-stat-value is-banked">${ladderMoney(state.banked)}</span>
+        </div>
+        <div class="ladder-stat">
+          <span class="ladder-stat-label">Target</span>
+          <span class="ladder-stat-value">${ladderMoney(ladder.target)}</span>
+        </div>
+      </div>
+
+      <div class="ladder-progress" role="img"
+           aria-label="Climb ${progress}% of the way to ${ladderMoney(ladder.target)}">
+        <div class="ladder-progress-fill" style="width: ${progress}%"></div>
+      </div>
+
+      ${renderLadderTrack(plan, state)}
+      ${renderLadderPlay(ladder)}
+    </section>`;
+}
+
+let ladderLoaded = false;
+async function loadLadder({ force = false } = {}) {
+  if (!el.ladderBody || (ladderLoaded && !force)) return;
+  if (!CONFIG.WORKER_URL) return;
+  ladderLoaded = true;
+  try {
+    const res = await fetch(new URL('/ladder', CONFIG.WORKER_URL), { headers: { Accept: 'application/json' } });
+    const { ladder } = await res.json();
+    renderLadder(ladder ?? null);
+  } catch {
+    ladderLoaded = false; // same as the other loaders: a hiccup isn't permanent
+  }
+}
+
 /** The Prop Play of the Day card: safe-line legs, each with its measured
  * hit-rate case (the same numbers the worker's writeup quotes — see
  * worker/src/prop-play.js), and a Won/Lost/Void chip once graded. */
@@ -5073,7 +5249,7 @@ function setActiveTab(tab) {
     el.tabBoard.classList.remove('has-new');
   }
 
-  if (tab === 'potd') loadPotd();
+  if (tab === 'potd') { loadPotd(); loadLadder(); }
   // Re-render from whatever's already loaded rather than re-fetching —
   // everything loads once at boot (refreshAllLeagues), so switching tabs is
   // never itself a billed call.
@@ -5295,12 +5471,122 @@ function setTrackerLoading(isLoading) {
 }
 
 async function loadTrackerHistories() {
-  const [fullSlate, top5, potd, propplay] = await Promise.all([
+  const [fullSlate, top5, potd, propplay, ladder] = await Promise.all([
     fetchFullSlateHistory(), fetchTop5History(), fetchPotdHistory(), fetchPropPlayHistory(),
+    fetchLadderHistory(),
   ]);
   state.trackerPicks = { fullslate: fullSlate, top5, potd, propplay };
   renderTrackerSection();
+  renderLadderDashboard(ladder);
   return top5;
+}
+
+async function fetchLadderHistory() {
+  if (!CONFIG.WORKER_URL) return null;
+  try {
+    const res = await fetch(new URL('/ladder-history', CONFIG.WORKER_URL), { headers: { Accept: 'application/json' } });
+    if (!res.ok) return null;
+    return await res.json();
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * One finished climb, start to finish: where it began, how far up it got,
+ * and what ended it. The rung pips are the same map the Play of the Day
+ * tab's ladder draws, filled to however far this run actually climbed —
+ * "made it to 6 of 8 before it broke" is the fact worth seeing at a glance,
+ * and a number alone doesn't carry it.
+ */
+function renderLadderRun(run, plan) {
+  const busted = run.status === 'busted';
+  const climbed = run.wins ?? 0;
+  const pips = plan.rungs.map((rung) => {
+    const filled = rung.step <= climbed;
+    const broke = busted && rung.step === climbed + 1;
+    return `<span class="ladder-pip ${filled ? 'is-filled' : ''} ${broke ? 'is-broke' : ''}"></span>`;
+  }).join('');
+
+  const dates = [run.startedAt, run.endedAt]
+    .filter(Boolean)
+    .map((ms) => new Date(ms).toLocaleDateString(undefined, { month: 'short', day: 'numeric' }));
+
+  return `<div class="ladder-run ${busted ? 'is-busted' : 'is-complete'}">
+    <div class="ladder-run-head">
+      <span class="ladder-run-verdict">
+        ${busted ? '💥 Broke at rung ' + (climbed + 1) : '🏁 Completed the climb'}
+      </span>
+      <span class="ladder-run-dates">${esc(dates.join(' → '))}</span>
+    </div>
+    <div class="ladder-run-pips" role="img" aria-label="Climbed ${climbed} of ${plan.rungs.length} rungs">${pips}</div>
+    <div class="ladder-run-figures">
+      <span><span class="ladder-run-label">Climbed</span> ${climbed}/${plan.rungs.length}</span>
+      <span><span class="ladder-run-label">Banked</span> <strong class="is-banked">${ladderMoney(run.banked ?? 0)}</strong></span>
+      <span><span class="ladder-run-label">Ended with</span> <strong>${ladderMoney(run.totalValue ?? 0)}</strong></span>
+    </div>
+    ${busted && run.lostAt ? `<p class="ladder-run-note">
+      Lost ${ladderMoney(run.lostAt.stake)} on ${esc(run.lostAt.selection ?? 'the next rung')}.
+    </p>` : ''}
+  </div>`;
+}
+
+/**
+ * The dashboard's ladder panel: the climb currently in progress, then every
+ * finished one, newest first.
+ */
+function renderLadderDashboard(data) {
+  if (!el.ladderTracker) return;
+  if (!data || !data.state) {
+    el.ladderTracker.innerHTML = `<p class="empty">
+      No ladder data yet — the first climb starts with the next qualifying play.</p>`;
+    return;
+  }
+  const { state: current, runs = [], plan } = data;
+  const settledRungs = (data.plays ?? []).filter((p) => p.pick?.status && p.pick.status !== 'pending');
+  const bankedAllTime = runs.reduce((sum, r) => sum + (r.banked ?? 0), 0) + (current.banked ?? 0);
+  const bestClimb = Math.max(0, ...runs.map((r) => r.wins ?? 0), current.wins ?? 0);
+
+  el.ladderTracker.innerHTML = `
+    <div class="ladder-tracker-current">
+      <div class="ladder-run-head">
+        <span class="ladder-run-verdict is-live">Climbing now · Day ${current.step}</span>
+        <span class="ladder-run-dates">
+          started ${esc(new Date(current.startedAt).toLocaleDateString(undefined, { month: 'short', day: 'numeric' }))}
+        </span>
+      </div>
+      <div class="ladder-run-pips" role="img" aria-label="Climbed ${current.wins ?? 0} of ${plan.rungs.length} rungs">
+        ${plan.rungs.map((r) => `<span class="ladder-pip ${r.step <= (current.wins ?? 0) ? 'is-filled' : ''} ${r.step === current.step ? 'is-current' : ''}"></span>`).join('')}
+      </div>
+      <div class="ladder-run-figures">
+        <span><span class="ladder-run-label">Riding</span> <strong>${ladderMoney(current.bankroll)}</strong></span>
+        <span><span class="ladder-run-label">Banked</span> <strong class="is-banked">${ladderMoney(current.banked ?? 0)}</strong></span>
+        <span><span class="ladder-run-label">Rungs won</span> ${current.wins ?? 0}/${plan.rungs.length}</span>
+      </div>
+    </div>
+
+    <div class="learning-grid ladder-tracker-grid">
+      <div class="metric-card">
+        <div class="metric-label">Climbs Finished</div>
+        <div class="metric-value">${runs.length}</div>
+      </div>
+      <div class="metric-card">
+        <div class="metric-label">Best Climb</div>
+        <div class="metric-value">${bestClimb}/${plan.rungs.length}</div>
+      </div>
+      <div class="metric-card">
+        <div class="metric-label">Banked All Time</div>
+        <div class="metric-value">${ladderMoney(Math.round(bankedAllTime * 100) / 100)}</div>
+      </div>
+      <div class="metric-card">
+        <div class="metric-label">Rungs Settled</div>
+        <div class="metric-value">${settledRungs.length}</div>
+      </div>
+    </div>
+
+    ${runs.length
+      ? `<div class="ladder-runs">${runs.map((run) => renderLadderRun(run, plan)).join('')}</div>`
+      : `<p class="empty">No finished climbs yet — the one above is the first.</p>`}`;
 }
 
 /**
@@ -6256,6 +6542,7 @@ el.retractionNoticeClose.addEventListener('click', () => {
   renderFullSlate();
   await loadPixelPicks(); // Pixel's Picks is the worker's own 2am ET locked set, never re-picked client-side
   await loadPotd(); // eager, not lazy-on-tab-click, so the "new pick" tab indicator can show before the user ever opens this tab
+  loadLadder(); // fire-and-forget: a KV-only read that fills the ladder section under the same tab
   refreshQualitativeSignals(); // fire-and-forget — enriches scores with form/H2H/injuries once loaded
 
   setStatus(

@@ -272,6 +272,34 @@ before — that idempotency check is what makes "consistent all day" actually
 true rather than just usually true.
 
 ```
+GET /ladder
+GET /ladder-history
+```
+
+The Ladder Challenge (`worker/src/ladder.js`): one lower-risk play a day in
+the −250..−165 band, staking the entire ladder bankroll each time. **Free** —
+KV only on both paths. `/ladder` returns the live climb, the ideal plan, and
+today's rung (or yesterday's, labelled `stale`, before today's posts);
+`/ladder-history` returns every settled rung plus every finished climb, which
+is what the dashboard's ladder panel draws.
+
+This is the one surface here that compounds. Every other tracker flat-stakes a
+unit per pick and is judged on win rate and ROI; the ladder rides its whole
+bankroll on each rung, so it's accounted for in RUNS — $20 up to $360 in eight
+wins, skimming $5/$15/$30 out at $40/$120/$240 on the way, and a single loss
+ends the climb and starts the next one back at $20. A void doesn't count either
+way: the rung is simply replayed. The skimmed money is the only thing a busted
+climb keeps, which is the whole reason the skims exist.
+
+Selection runs in `scheduled()` **after** the Play of the Day batch, never
+concurrently with it: the ladder's rule is "not the Play of the Day, not the
+Prop Play, nothing contradicting today's board", and it reads all three out of
+KV. Run in parallel with the batch that writes them and the exclusions would
+read an undecided day and pass on an empty set — the ladder could post the
+exact pick it exists to avoid. A day with nothing in band posts nothing and
+the climb keeps its place; holding is a valid outcome, not a failure.
+
+```
 GET /weather?sport=baseball_mlb&home=Houston+Astros&commenceMs=1785953400000
 ```
 
