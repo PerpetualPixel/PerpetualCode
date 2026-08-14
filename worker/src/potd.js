@@ -72,7 +72,7 @@ const FLAT_UNIT_STAKE = 20;
 const KV_TTL_SECONDS = 86400 * 90;
 
 /** ET calendar date (YYYY-MM-DD) and wall-clock hour for a given instant. */
-function etParts(ms) {
+export function etParts(ms) {
   const fmt = new Intl.DateTimeFormat('en-US', {
     timeZone: ET_TZ,
     year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', hour12: false,
@@ -84,7 +84,7 @@ function etParts(ms) {
 }
 
 /** The ET calendar date N days after the date containing `ms`. */
-function etDatePlusDays(ms, days) {
+export function etDatePlusDays(ms, days) {
   return etParts(ms + days * 86400000).date;
 }
 
@@ -103,7 +103,7 @@ const EXHIBITION_PATTERN = /all[\s-]?star|pro\s?bowl|dunk contest|3-point contes
 // named "Team <FirstName>", so this catches the actual naming pattern those
 // games use in the odds feed, which the keyword list above doesn't.
 const CAPTAIN_TEAM_PATTERN = /^team [a-z.'-]+$/i;
-function isExhibition(candidate) {
+export function isExhibition(candidate) {
   const names = [candidate.home, candidate.away];
   return names.some((n) => EXHIBITION_PATTERN.test(n) || CAPTAIN_TEAM_PATTERN.test(n));
 }
@@ -124,7 +124,7 @@ const TENNIS_NEXT_DAY_CUTOFF_HOUR = 2;
  * TENNIS_NEXT_DAY_CUTOFF_HOUR tomorrow morning — NOT for an ordinary
  * tomorrow-afternoon start, which belongs on tomorrow's board.
  */
-function isEligibleTennisMatch(commenceMs, now) {
+export function isEligibleTennisMatch(commenceMs, now) {
   const today = etParts(now).date;
   const commenceDate = etParts(commenceMs).date;
   if (commenceDate === today) return true;
@@ -153,7 +153,7 @@ function isEligibleTennisMatch(commenceMs, now) {
  * here, for the same reason as tracking.js's version: it's specific to one
  * (sportKey, marketKey) pair, and a raw event can carry several markets.
  */
-function scheduleStillOpen(events, dateKey, now) {
+export function scheduleStillOpen(events, dateKey, now) {
   return events.some((event) => {
     const sportKey = event.sport_key;
     const commenceMs = Date.parse(event.commence_time);

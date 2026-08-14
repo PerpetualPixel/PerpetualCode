@@ -49,6 +49,7 @@ import { runWnbaPropsScan, runWnbaPropsGrading, getAllWnbaPropsTracked } from '.
 import { runPropPlayDaily, runPropPlayGrading, getAllPropPlays } from './prop-play.js';
 import { runNhlPropsScan, runNhlPropsGrading, getAllNhlPropsTracked } from './nhl-props.js';
 import { runPotdDaily, runPotdClvSnapshot, runPotdGrading, backfillPotdAnalysis, getPotd, getPotdLeaning, getPotdHistory, retractPotd, regradePotdTennisVoids } from './potd.js';
+import { runLadderDaily, runLadderGrading, getLadder, getLadderHistory } from './ladder.js';
 import { getOrGenerateAnalysis } from './analysis.js';
 import {
   UPSTREAM,
@@ -558,6 +559,22 @@ export default {
             runPotdDaily(env, ctx, now, { fetchFullSlate }),
           ]);
 
+          // AFTER that Promise.all, never inside it: the ladder's whole
+          // selection rule is "not the Play of the Day, not the Prop Play,
+          // nothing contradicting today's board", and it reads those from
+          // KV. Run concurrently with the batch that writes them and it
+          // would be reading a day that hasn't been decided yet — the
+          // exclusions would silently pass on an empty set and the ladder
+          // could post the exact pick it's supposed to avoid. Both surfaces
+          // lock on the same signal (the day's field being settled), so by
+          // the time this can pick at all, they're already written.
+          ctx.waitUntil(
+            runLadderDaily(env, ctx, now, {
+              fetchFullSlate,
+              getTop5Picks: () => getTop5(env, { now }),
+            }).catch((e) => console.error('Ladder Challenge selection failed:', e)),
+          );
+
           // Notify whoever opted in (see worker/src/account-handlers.js's
           // handleUpdateNotifications). Best-effort: notifications.js
           // swallows individual send failures itself, and this whole step
@@ -659,6 +676,10 @@ export default {
     ctx.waitUntil(runGrading(env, ctx, now));
     ctx.waitUntil(runPotdClvSnapshot(env, ctx, now));
     ctx.waitUntil(runPotdGrading(env, ctx, now));
+    // The ladder compounds, so its grading is what actually moves the
+    // bankroll — a rung left ungraded stalls the whole climb, not just one
+    // pick's record. Same every-tick, idempotent shape as the rest.
+    ctx.waitUntil(runLadderGrading(env, ctx, now));
     ctx.waitUntil(runFullSlateClvSnapshot(env, ctx, now));
     ctx.waitUntil(runFullSlateGrading(env, ctx, now));
     // Self-healing: a still-pending pick's commenceMs can drift onto a
@@ -1138,6 +1159,38 @@ export default {
         );
       } catch (error) {
         return json({ propPlay: null, reason: String(error).slice(0, 160) }, { headers: cors });
+      }
+    }
+
+    // The Ladder Challenge's live state: the current climb, the day's rung,
+    // and the ideal plan the section draws. KV only, no odds credit.
+    if (pathname === '/ladder') {
+      if (request.method !== 'GET') {
+        return json({ error: 'Method not allowed' }, { status: 405, headers: cors });
+      }
+      try {
+        return json(
+          { ladder: await getLadder(env) },
+          { headers: { ...cors, 'Cache-Control': 'public, max-age=120' } },
+        );
+      } catch (error) {
+        return json({ ladder: null, reason: String(error).slice(0, 120) }, { headers: cors });
+      }
+    }
+
+    // Every settled rung plus every finished climb — what the Tracking
+    // Dashboard's ladder panel is built from.
+    if (pathname === '/ladder-history') {
+      if (request.method !== 'GET') {
+        return json({ error: 'Method not allowed' }, { status: 405, headers: cors });
+      }
+      try {
+        return json(
+          await getLadderHistory(env),
+          { headers: { ...cors, 'Cache-Control': 'public, max-age=300' } },
+        );
+      } catch (error) {
+        return json({ plays: [], runs: [], state: null, reason: String(error).slice(0, 120) }, { headers: cors });
       }
     }
 
