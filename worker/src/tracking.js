@@ -47,7 +47,14 @@ import {
   isMarketAllowedForTier,
   tierLiquidityBlock,
 } from '../../docs/tennis-tiers.js';
-import { fetchTennisResults, gradeTennisPickWithEspn, isRegradableTennisVoid, isNoOpTennisRegrade } from './tennis-espn.js';
+import {
+  fetchTennisResults,
+  gradeTennisPickWithEspn,
+  isRegradableTennisVoid,
+  isNoOpTennisRegrade,
+  regradeTennisVoids,
+  BACKFILL_READ_BUDGET,
+} from './tennis-espn.js';
 import { retractedRecord } from './retraction.js';
 
 export const TOP5_COUNT = 5;
@@ -1282,4 +1289,42 @@ export async function runTop5DateResync(env, ctx, now = Date.now(), { days = 2 }
   const collapsed = dedupeResults.flatMap((r) => r.collapsed);
 
   return { moved: moved.length, collapsed: collapsed.length };
+}
+
+/**
+ * Pixel's Picks counterpart to full-slate-tracking.js's own
+ * regradeFullSlateTennisVoids — see that function for the walk/budget
+ * reasoning. Same shape, `track:` keys instead of `slate:`.
+ */
+export async function regradeTop5TennisVoids(
+  env,
+  ctx,
+  { now = Date.now(), days = 90, offsetDays = 0, readBudget = BACKFILL_READ_BUDGET } = {},
+) {
+  const candidates = [];
+  let reads = 0;
+  let day = offsetDays;
+
+  while (day < days) {
+    const dateKey = etDate(now - day * 86400000);
+    const { picks } = await loadTrackedPicks(env, dateKey);
+    reads += 1 + picks.length;
+    candidates.push(...picks.filter(isRegradableTennisVoid));
+    day++;
+    if (reads >= readBudget) break;
+  }
+
+  const changed = await regradeTennisVoids(candidates, env, ctx, now);
+  await Promise.all(changed.map((pick) => env.POTD_KV.put(
+    `track:${pick.dateKey}:pick:${pick.pickId}`,
+    JSON.stringify(pick),
+    { expirationTtl: KV_TTL_SECONDS },
+  )));
+
+  return {
+    daysWalked: day - offsetDays,
+    nextOffsetDays: day < days ? day : null,
+    found: candidates.length,
+    regraded: changed.length,
+  };
 }

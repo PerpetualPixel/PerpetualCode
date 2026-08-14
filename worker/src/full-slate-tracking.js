@@ -27,7 +27,15 @@ import { fetchSport, fetchScores } from './odds.js';
 import { pickRecordFrom, fetchFullSlateEvents, isPickWindowOpen } from './tracking.js';
 import { fetchMmaResults, gradeMmaPickWithFallback } from './ufc-events.js';
 import { isSettleableTennisMarket, hasSecondarySettlementSource } from '../../docs/tennis-tiers.js';
-import { fetchTennisResults, gradeTennisPickWithEspn, findTennisMatch, isRegradableTennisVoid, isNoOpTennisRegrade } from './tennis-espn.js';
+import {
+  fetchTennisResults,
+  gradeTennisPickWithEspn,
+  findTennisMatch,
+  isRegradableTennisVoid,
+  isNoOpTennisRegrade,
+  regradeTennisVoids,
+  BACKFILL_READ_BUDGET,
+} from './tennis-espn.js';
 import { getAllWnbaPropsTracked } from './wnba-props.js';
 import { getAllMlbPropsTracked } from './mlb-props.js';
 import { getAllNflPropsTracked } from './nfl-props.js';
@@ -985,4 +993,56 @@ export async function runFullSlateDateResync(env, ctx, now = Date.now(), { days 
   const collapsed = dedupeResults.flatMap((r) => r.collapsed);
 
   return { moved: moved.length, collapsed: collapsed.length };
+}
+
+/**
+ * Backfill sweep: re-grade Full Slate tennis voids across the retention
+ * window, not just the two days the live grading pass looks back.
+ *
+ * Walks day by day rather than loading the whole window at once, so it can
+ * stop cleanly at BACKFILL_READ_BUDGET and hand back the offset to resume
+ * from. `nextOffsetDays` is null when the walk reached the end of the
+ * requested range — that's the signal there's nothing left to sweep.
+ *
+ * Idempotent: regradeTennisVoids returns only picks whose outcome actually
+ * changed, so re-running over an already-swept range writes nothing.
+ */
+export async function regradeFullSlateTennisVoids(
+  env,
+  ctx,
+  { now = Date.now(), days = 90, offsetDays = 0, readBudget = BACKFILL_READ_BUDGET } = {},
+) {
+  const candidates = [];
+  let reads = 0;
+  let day = offsetDays;
+
+  while (day < days) {
+    const dateKey = etDate(now - day * 86400000);
+    const { picks } = await loadFullSlateTracked(env, dateKey);
+    reads += 1 + picks.length; // the manifest plus one read per pick record
+    candidates.push(...picks.filter(isRegradableTennisVoid));
+    day++;
+    if (reads >= readBudget) break;
+  }
+
+  const changed = await regradeTennisVoids(candidates, env, ctx, now);
+  await Promise.all(changed.map((pick) => env.POTD_KV.put(
+    `slate:${pick.dateKey}:pick:${pick.pickId}`,
+    JSON.stringify(pick),
+    { expirationTtl: KV_TTL_SECONDS },
+  )));
+
+  return {
+    daysWalked: day - offsetDays,
+    nextOffsetDays: day < days ? day : null,
+    found: candidates.length,
+    regraded: changed.length,
+    picks: changed.map((p) => ({
+      dateKey: p.dateKey,
+      matchup: `${p.away} @ ${p.home}`,
+      selection: p.selection ?? `${p.outcomeName} ${p.point ?? ''}`.trim(),
+      status: p.status,
+      payout: p.result?.payout ?? 0,
+    })),
+  };
 }

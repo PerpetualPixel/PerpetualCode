@@ -8,8 +8,10 @@ import {
   getAllFullSlateTracked,
   resetFullSlateTracking,
   diagnosePendingFullSlate,
+  regradeFullSlateTennisVoids,
 } from '../worker/src/full-slate-tracking.js';
 import { seedTennisArchiveCacheForTests } from '../worker/src/tennis-archive.js';
+import { UNSETTLEABLE_TENNIS_GAME_MARKET } from '../docs/learning.js';
 
 // The tennis form gate (docs/qualitative.js) reads the static archive; unit
 // tests must never hit the network, and a null archive is the honest
@@ -472,4 +474,74 @@ test('grading reports which picks it settled, not just how many', async () => {
   // The ids themselves, so /admin/grade-now's diagnostics can exclude them
   // rather than re-reading a KV that hasn't caught up yet.
   assert.deepEqual(result.settledPickIds, [pick.pickId]);
+});
+
+/* ---------------------------------------------------------------- */
+/* Tennis void backfill                                              */
+/* ---------------------------------------------------------------- */
+
+/** ET calendar date for an instant — mirrors the module's own etDate. */
+function etDateOf(ms) {
+  const fmt = new Intl.DateTimeFormat('en-US', {
+    timeZone: 'America/New_York', year: 'numeric', month: '2-digit', day: '2-digit',
+  });
+  const parts = Object.fromEntries(fmt.formatToParts(ms).map((p) => [p.type, p.value]));
+  return `${parts.year}-${parts.month}-${parts.day}`;
+}
+
+/** Seeds one day's manifest + a single voided tennis total straight into KV. */
+function seedVoidedTennisDay(store, dateKey, pickId) {
+  store.set(`slate:${dateKey}:manifest`, JSON.stringify({ date: dateKey, pickIds: [pickId] }));
+  store.set(`slate:${dateKey}:pick:${pickId}`, JSON.stringify({
+    pickId,
+    dateKey,
+    eventId: `ev-${pickId}`,
+    sportKey: 'tennis_wta_cincinnati_open',
+    marketKey: 'totals',
+    home: 'Iga Swiatek',
+    away: 'Elena Rybakina',
+    outcomeName: 'Under',
+    point: 22.5,
+    decimal: 1.9,
+    suggested_stake: 20,
+    commenceMs: Date.parse(`${dateKey}T16:00:00Z`),
+    status: 'void',
+    result: { payout: 0, roiPercent: 0, voidReason: UNSETTLEABLE_TENNIS_GAME_MARKET },
+  }));
+}
+
+/**
+ * A 90-day walk of the Full Slate reads every pick on every day across every
+ * sport, which runs past the subrequest ceiling one Worker invocation has.
+ * The sweep stops at its read budget and reports where to resume — dying
+ * partway with no record of how far it got is the failure this prevents.
+ */
+test('the backfill stops at its read budget and reports where to resume', async () => {
+  const { env, store } = makeKvStore();
+  for (let i = 0; i < 6; i++) {
+    seedVoidedTennisDay(store, etDateOf(NOW - i * 86400000), `p${i}`);
+  }
+
+  // Budget of 3 covers only the first two days (manifest + one pick each).
+  const first = await regradeFullSlateTennisVoids(env, ctx, { now: NOW, days: 6, offsetDays: 0, readBudget: 3 });
+  assert.equal(first.daysWalked, 2);
+  assert.equal(first.nextOffsetDays, 2, 'the caller is told exactly where to pick back up');
+  assert.equal(first.found, 2);
+
+  const rest = await regradeFullSlateTennisVoids(env, ctx, { now: NOW, days: 6, offsetDays: first.nextOffsetDays, readBudget: 1000 });
+  assert.equal(rest.nextOffsetDays, null, 'null is the signal that the range is fully swept');
+  assert.equal(rest.found, 4);
+});
+
+test('a fully swept range re-runs as a no-op', async () => {
+  const { env, store } = makeKvStore();
+  seedVoidedTennisDay(store, etDateOf(NOW), 'p0');
+
+  // No ESPN results reachable in unit tests, so nothing settles — which is
+  // exactly the case that must not rewrite the record anyway.
+  const first = await regradeFullSlateTennisVoids(env, ctx, { now: NOW, days: 1 });
+  const second = await regradeFullSlateTennisVoids(env, ctx, { now: NOW, days: 1 });
+  assert.equal(first.regraded, 0);
+  assert.equal(second.regraded, 0);
+  assert.equal(second.nextOffsetDays, null);
 });

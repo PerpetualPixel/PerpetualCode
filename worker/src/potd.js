@@ -44,7 +44,13 @@ import { getPausedSegments, isSegmentPaused } from './algo-health.js';
 import { getLearningProfile, applyLearningToCandidates } from './daily-learning.js';
 import { fetchMmaResults, gradeMmaPickWithFallback } from './ufc-events.js';
 import { getOrGenerateAnalysis } from './analysis.js';
-import { fetchTennisResults, gradeTennisPickWithEspn, isRegradableTennisVoid, isNoOpTennisRegrade } from './tennis-espn.js';
+import {
+  fetchTennisResults,
+  gradeTennisPickWithEspn,
+  isRegradableTennisVoid,
+  isNoOpTennisRegrade,
+  regradeTennisVoids,
+} from './tennis-espn.js';
 import { isPickWindowOpen } from './tracking.js';
 import { applyTennisFormSignal } from '../../docs/qualitative.js';
 import { loadTennisArchive, loadTennisArchivesFor } from './tennis-archive.js';
@@ -769,4 +775,43 @@ export async function retractPotd(env, { now = Date.now(), dateKey, match, reaso
   await env.POTD_KV.delete(`potd:${day}`);
 
   return { dateKey: day, retracted: 1, picks: [pulled.pick] };
+}
+
+/**
+ * Play of the Day counterpart to the other two trackers' tennis backfill.
+ *
+ * No read budget here: this is one KV record per day, not a manifest plus a
+ * pick per game, so even the full 90-day window is 90 reads — an order of
+ * magnitude under the ceiling the multi-pick trackers have to respect.
+ *
+ * A retracted day is deliberately left alone: those live under their own
+ * key and a retraction is meant to stay pulled (see worker/src/retraction.js).
+ */
+export async function regradePotdTennisVoids(env, ctx, { now = Date.now(), days = 90 } = {}) {
+  const dateKeys = [];
+  for (let i = 0; i < days; i++) dateKeys.push(etParts(now - i * 86400000).date);
+
+  const raw = await Promise.all(dateKeys.map((d) => env.POTD_KV.get(`potd:${d}`)));
+  const records = [];
+  raw.forEach((r, i) => {
+    if (!r) return;
+    try {
+      const record = JSON.parse(r);
+      if (record?.pick && isRegradableTennisVoid(record.pick)) {
+        records.push({ dateKey: dateKeys[i], record });
+      }
+    } catch { /* an unparseable day is left exactly as it is */ }
+  });
+
+  const changed = await regradeTennisVoids(records.map((r) => r.record.pick), env, ctx, now);
+  const changedIds = new Set(changed.map((p) => p.pickId));
+  const toWrite = records.filter((r) => changedIds.has(r.record.pick.pickId));
+
+  await Promise.all(toWrite.map(({ dateKey, record }) => env.POTD_KV.put(
+    `potd:${dateKey}`,
+    JSON.stringify(record),
+    { expirationTtl: KV_TTL_SECONDS },
+  )));
+
+  return { found: records.length, regraded: toWrite.length };
 }

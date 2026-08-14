@@ -402,6 +402,76 @@ export function isNoOpTennisRegrade(pick, outcome) {
     && outcome.reason === pick.result?.voidReason;
 }
 
+/** The settled shape every tracker writes — kept here so the backfill can't drift from the live grading passes. */
+function applyOutcome(pick, outcome) {
+  pick.status = outcome.void ? 'void' : outcome.won ? 'won' : 'lost';
+  pick.result = {
+    payout: outcome.payout,
+    roiPercent: outcome.void ? 0 : (outcome.payout / pick.suggested_stake) * 100,
+    voidReason: outcome.void ? outcome.reason : undefined,
+    detail: outcome.detail ?? undefined,
+  };
+  return pick;
+}
+
+/**
+ * Re-grade already-settled tennis voids against ESPN's results for each
+ * pick's OWN day — the historical counterpart to the reopen the live
+ * grading passes do.
+ *
+ * The live passes only look back GRADING_LOOKBACK_DAYS (2), which is right
+ * for grading but leaves every older day carrying voids that a games-level
+ * score can now settle. This walks whatever range a caller hands it.
+ *
+ * Fetches ESPN once per affected DAY, not per pick: one scoreboard request
+ * returns a tournament's whole draw, so a day with a dozen stranded picks
+ * costs the same two free requests as a day with one. Days with nothing to
+ * regrade cost nothing at all — the grouping happens before any fetch.
+ *
+ * Returns only the picks whose outcome actually CHANGED, so a caller writes
+ * the minimum and a re-run over an already-swept range is a no-op.
+ */
+export async function regradeTennisVoids(picks, env, ctx, now = Date.now(), { fetchTennisResultsFn = fetchTennisResults } = {}) {
+  const byDate = new Map();
+  for (const pick of picks ?? []) {
+    if (!isRegradableTennisVoid(pick)) continue;
+    const dateKey = pick.dateKey ?? null;
+    if (!dateKey) continue;
+    if (!byDate.has(dateKey)) byDate.set(dateKey, []);
+    byDate.get(dateKey).push(pick);
+  }
+
+  const changed = [];
+  for (const [dateKey, group] of byDate) {
+    // Midday UTC on the pick's own ET date: far enough from either midnight
+    // that the UTC date ESPN's `dates` parameter wants is unambiguously the
+    // day the match was played.
+    const atMs = Date.parse(`${dateKey}T18:00:00Z`);
+    const results = await fetchTennisResultsFn(ctx, Number.isFinite(atMs) ? atMs : now);
+    for (const pick of group) {
+      // `now` (not the match's own date) stays the grading clock so the
+      // walkover grace window is measured from the present — for a pick this
+      // old that window closed long ago, which is the correct reading.
+      const outcome = await gradeTennisPickWithEspn(pick, null, results, env, ctx, now);
+      if (!outcome || isNoOpTennisRegrade(pick, outcome)) continue;
+      changed.push(applyOutcome(pick, outcome));
+    }
+  }
+  return changed;
+}
+
+/**
+ * How many KV reads one backfill invocation will spend before stopping and
+ * handing back a resume point.
+ *
+ * A Worker invocation has a hard ceiling on how many subrequests (KV reads
+ * included) it may make, and a full 90-day walk of the Full Slate — every
+ * pick on every day, across every sport — runs to several thousand. Rather
+ * than let the sweep die partway through with no record of how far it got,
+ * it stops short on purpose and reports the offset to resume from.
+ */
+export const BACKFILL_READ_BUDGET = 600;
+
 /** The `{ setScore, winner }` display detail docs/app.js already renders for a settled tennis pick. */
 function tennisDetail(match) {
   if (!match) return null;
