@@ -27,7 +27,7 @@ import { fetchSport, fetchScores } from './odds.js';
 import { pickRecordFrom, fetchFullSlateEvents, isPickWindowOpen } from './tracking.js';
 import { fetchMmaResults, gradeMmaPickWithFallback } from './ufc-events.js';
 import { isSettleableTennisMarket, hasSecondarySettlementSource } from '../../docs/tennis-tiers.js';
-import { fetchTennisResults, gradeTennisPickWithEspn, findTennisMatch } from './tennis-espn.js';
+import { fetchTennisResults, gradeTennisPickWithEspn, findTennisMatch, isRegradableTennisVoid, isNoOpTennisRegrade } from './tennis-espn.js';
 import { getAllWnbaPropsTracked } from './wnba-props.js';
 import { getAllMlbPropsTracked } from './mlb-props.js';
 import { getAllNflPropsTracked } from './nfl-props.js';
@@ -443,6 +443,16 @@ const GRADING_LOOKBACK_DAYS = 2;
  * dead end, since that feed has never posted a tennis result and is no
  * longer what settles them.
  *
+ * `justSettledPickIds` excludes picks a grading pass settled moments ago.
+ * Without it this diagnostic reports its own caller's work as stuck: the
+ * graders persist through `ctx.waitUntil`, which by design doesn't block the
+ * response, and KV is eventually consistent on top of that — so re-reading
+ * immediately after grading returns some picks at their pre-write value.
+ * Confirmed live on the first real run: a match ESPN had as STATUS_FINAL
+ * with decided sets, which could not have failed to settle, came back in
+ * this report as pending. A diagnostic that exists to answer "why is this
+ * stuck" and answers it wrongly is worse than no diagnostic.
+ *
  * Read-only — fetches nothing but the same short-cached scores and ESPN
  * scoreboards grading itself uses, and writes nothing.
  */
@@ -450,13 +460,19 @@ export async function diagnosePendingFullSlate(
   env,
   ctx,
   now = Date.now(),
-  { fetchScoresFn = (s) => fetchScores(s, env, ctx), fetchTennisResultsFn = () => fetchTennisResults(ctx, now) } = {},
+  {
+    fetchScoresFn = (s) => fetchScores(s, env, ctx),
+    fetchTennisResultsFn = () => fetchTennisResults(ctx, now),
+    justSettledPickIds = [],
+  } = {},
 ) {
   const dateKeys = [...new Set(
     Array.from({ length: GRADING_LOOKBACK_DAYS }, (_, i) => etDate(now - i * 86400000)),
   )];
   const loaded = await Promise.all(dateKeys.map((dk) => loadFullSlateTracked(env, dk)));
-  const pending = loaded.flatMap((d) => d.picks).filter((p) => p.status === 'pending');
+  const justSettled = new Set(justSettledPickIds);
+  const pending = loaded.flatMap((d) => d.picks)
+    .filter((p) => p.status === 'pending' && !justSettled.has(p.pickId));
   if (!pending.length) return { window: dateKeys, pending: 0, bySport: [] };
 
   const sportsNeeded = [...new Set(pending.map((p) => p.sportKey))];
@@ -542,7 +558,13 @@ export async function runFullSlateGrading(
   )];
   const loaded = await Promise.all(dateKeys.map((dk) => loadFullSlateTracked(env, dk)));
   const picks = loaded.flatMap((d) => d.picks);
-  const pending = picks.filter((p) => p.status === 'pending');
+  // Tennis spreads/totals voided purely for want of a games-level score are
+  // reconsidered alongside genuinely pending picks: ESPN supplies that score
+  // now (see worker/src/tennis-espn.js), so a board settled under the old
+  // rule repairs itself on the next pass instead of needing a manual sweep
+  // per affected day. Idempotent — once one settles it is no longer a void,
+  // and one that still can't settle is skipped below rather than rewritten.
+  const pending = picks.filter((p) => p.status === 'pending' || isRegradableTennisVoid(p));
   if (!pending.length) return { graded: 0, remaining: 0 };
 
   const sportsNeeded = [...new Set(pending.map((p) => p.sportKey))];
@@ -556,6 +578,7 @@ export async function runFullSlateGrading(
 
   let graded = 0;
   let rescheduled = 0;
+  const settledPickIds = [];
   for (const pick of pending) {
     // Prop main plays settle by mirroring their prop pool's own record —
     // the pool grades from real boxscores; duplicating that here would be
@@ -568,6 +591,7 @@ export async function runFullSlateGrading(
           pick.status = source.status;
           pick.result = source.result ?? null;
           graded++;
+          settledPickIds.push(pick.pickId);
           ctx.waitUntil(env.POTD_KV.put(`slate:${pick.dateKey}:pick:${pick.pickId}`, JSON.stringify(pick), {
             expirationTtl: KV_TTL_SECONDS,
           }));
@@ -616,6 +640,10 @@ export async function runFullSlateGrading(
       outcome = gradePick(pick, scoreEvent, now);
     }
     if (!outcome) continue;
+    // A reopened void that still can't settle (a retirement has no fixed
+    // final games count from any source) lands right back on the reason it
+    // already carries — nothing changed, so don't rewrite it or count it.
+    if (isNoOpTennisRegrade(pick, outcome)) continue;
     pick.status = outcome.void ? 'void' : outcome.won ? 'won' : 'lost';
     pick.result = {
       payout: outcome.payout,
@@ -625,13 +653,18 @@ export async function runFullSlateGrading(
       detail: outcome.detail ?? undefined,
     };
     graded++;
+    settledPickIds.push(pick.pickId);
     ctx.waitUntil(
       env.POTD_KV.put(`slate:${pick.dateKey}:pick:${pick.pickId}`, JSON.stringify(pick), {
         expirationTtl: KV_TTL_SECONDS,
       }),
     );
   }
-  return { graded, remaining: pending.length - graded, rescheduled };
+  // The ids, not just the count: a caller that re-reads KV right after this
+  // returns (see /admin/grade-now's diagnostics) would otherwise see these
+  // picks as still pending, because the writes above are waitUntil'd and KV
+  // is eventually consistent on top of that.
+  return { graded, remaining: pending.length - graded, rescheduled, settledPickIds };
 }
 
 /** Today's tracked Full Slate picks (or a specific date's). */

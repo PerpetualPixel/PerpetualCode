@@ -44,7 +44,7 @@ import { getPausedSegments, isSegmentPaused } from './algo-health.js';
 import { getLearningProfile, applyLearningToCandidates } from './daily-learning.js';
 import { fetchMmaResults, gradeMmaPickWithFallback } from './ufc-events.js';
 import { getOrGenerateAnalysis } from './analysis.js';
-import { fetchTennisResults, gradeTennisPickWithEspn } from './tennis-espn.js';
+import { fetchTennisResults, gradeTennisPickWithEspn, isRegradableTennisVoid, isNoOpTennisRegrade } from './tennis-espn.js';
 import { isPickWindowOpen } from './tracking.js';
 import { applyTennisFormSignal } from '../../docs/qualitative.js';
 import { loadTennisArchive, loadTennisArchivesFor } from './tennis-archive.js';
@@ -593,6 +593,7 @@ async function gradePotdForDate(env, ctx, now, dateKey, pick, record, fetchScore
     outcome = gradePick(pick, scoreEvent);
   }
   if (!outcome) return false;
+  if (isNoOpTennisRegrade(pick, outcome)) return false;
 
   pick.status = outcome.void ? 'void' : outcome.won ? 'won' : 'lost';
   pick.result = {
@@ -638,7 +639,9 @@ export async function runPotdGrading(env, ctx, now = Date.now(), {
     const raw = await env.POTD_KV.get(`potd:${dateKey}`);
     if (!raw) continue;
     const record = JSON.parse(raw);
-    if (record.pick.status !== 'pending') continue;
+    // A tennis spread/total voided only for want of a games score is
+    // reconsidered too — see worker/src/tennis-espn.js's isRegradableTennisVoid.
+    if (record.pick.status !== 'pending' && !isRegradableTennisVoid(record.pick)) continue;
     if (await gradePotdForDate(env, ctx, now, dateKey, record.pick, record, fetchScoresFn, fetchMmaResultsFn, fetchTennisResultsFn)) {
       graded = true;
     }

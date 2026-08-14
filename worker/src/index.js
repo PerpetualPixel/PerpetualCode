@@ -1429,9 +1429,13 @@ export default {
           runPotdGrading(env, ctx, now).catch((e) => ({ error: String(e).slice(0, 200) })),
         ]);
         // Diagnosed AFTER the grading pass, so it explains what's left
-        // rather than what was already about to settle on its own.
-        const diagnostics = await diagnosePendingFullSlate(env, ctx, now)
-          .catch((e) => ({ error: String(e).slice(0, 200) }));
+        // rather than what was already about to settle on its own — but
+        // told explicitly which picks that pass just settled, since the
+        // grader's own writes are waitUntil'd into an eventually-consistent
+        // KV and re-reading here would otherwise report them as stuck.
+        const diagnostics = await diagnosePendingFullSlate(env, ctx, now, {
+          justSettledPickIds: fullSlate?.settledPickIds ?? [],
+        }).catch((e) => ({ error: String(e).slice(0, 200) }));
         return json({ graded: { top5, fullSlate, potd }, diagnostics }, { headers: cors });
       } catch (error) {
         return json({ error: String(error).slice(0, 200) }, { status: 500, headers: cors });

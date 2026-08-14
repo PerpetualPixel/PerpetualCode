@@ -44,8 +44,9 @@
  *     WTA competitions.
  */
 
-import { gradePick } from '../../docs/learning.js';
-import { tourOf } from '../../docs/tennis-tiers.js';
+import { gradePick, UNSETTLEABLE_TENNIS_GAME_MARKET } from '../../docs/learning.js';
+import { gradeTennisGameMarket } from '../../docs/tennis-results.js';
+import { tourOf, isTennisKey } from '../../docs/tennis-tiers.js';
 import { settleTennisGameMarket } from './tennis-results.js';
 
 const ESPN_TENNIS_SCOREBOARDS = {
@@ -337,6 +338,70 @@ export function buildTennisScoreEvent(pick, results) {
   };
 }
 
+/**
+ * ESPN's per-set GAMES score, in the `{ participantNames, score, status }`
+ * shape docs/tennis-results.js's gradeTennisGameMarket already reads.
+ *
+ * This is what makes a tennis spread or total settleable at all. Those
+ * markets are priced in games (confirmed against the live catalogue: a
+ * spread ladder running -6.5 through 6.5 in half-game steps, totals of
+ * 17.5-23.5 — no set line looks like that), while the only score any feed
+ * gave us was sets, so gradeTennis voided every one of them as "priced in
+ * games but scored in sets." A full WTA day put eight such picks on the
+ * board and voided all eight. ESPN's `linescores[].value` IS the games
+ * count per set, so the answer was one field away the whole time.
+ *
+ * The grading math is not reimplemented here — gradeTennisGameMarket was
+ * written for the metered source and is already tested against real
+ * scorelines, including the exact-number push cases the whole-number rungs
+ * of that ladder make possible.
+ *
+ * STATUS_FINAL only. A retirement has no fixed final games total from any
+ * source (the match simply stopped), and a walkover has none at all, so
+ * both keep voiding — which is what books do with them too.
+ *
+ * `participantNames` is handed back in ESPN's own column order using the
+ * PICK's spelling of each name, not ESPN's. gradeTennisGameMarket orients
+ * itself with matchHomeIndex, which compares names by strict equality — so
+ * feeding it ESPN's spelling would silently fail to orient exactly the
+ * cases this module's fuzzy matcher exists to handle ("Zhu Lin" vs "Lin
+ * Zhu"). The orientation is already decided, once, by that matcher.
+ */
+export function buildTennisGameResult(pick, match) {
+  if (!match || match.statusName !== 'STATUS_FINAL' || !match.setScoreAB) return null;
+  const homeIsA = namesLikelyMatch(match.a, normalizeName(pick.home));
+  return {
+    participantNames: homeIsA ? [pick.home, pick.away] : [pick.away, pick.home],
+    score: match.setScoreAB,
+    status: 'Ended',
+  };
+}
+
+/**
+ * Whether a pick was voided ONLY because no games-level score existed, and
+ * so deserves another look now that one does.
+ *
+ * Grading passes include these alongside genuinely pending picks, which is
+ * what repairs a board that was already settled under the old rule — the
+ * alternative being a manual sweep that has to be remembered and run once
+ * per affected day. Narrow on purpose: it matches one exact void reason on
+ * one sport, and never a manual retraction (worker/src/retraction.js), whose
+ * whole point is that it stays pulled.
+ */
+export function isRegradableTennisVoid(pick) {
+  return pick?.status === 'void'
+    && isTennisKey(pick?.sportKey)
+    && !pick?.retracted
+    && pick?.result?.voidReason === UNSETTLEABLE_TENNIS_GAME_MARKET;
+}
+
+/** Whether an outcome is the same unsettleable void the pick already carries — i.e. nothing changed and there's nothing to rewrite. */
+export function isNoOpTennisRegrade(pick, outcome) {
+  return isRegradableTennisVoid(pick)
+    && Boolean(outcome?.void)
+    && outcome.reason === pick.result?.voidReason;
+}
+
 /** The `{ setScore, winner }` display detail docs/app.js already renders for a settled tennis pick. */
 function tennisDetail(match) {
   if (!match) return null;
@@ -379,7 +444,13 @@ export async function gradeTennisPickWithEspn(pick, primaryScoreEvent, results, 
   const scoreEvent = espnScoreEvent ?? primaryScoreEvent;
 
   const settle = secondarySource ?? settleTennisGameMarket;
-  const outcome = (await settle(pick, scoreEvent, env, ctx, now)) ?? gradePick(pick, scoreEvent, now);
+  // ESPN's own games score first: it settles spreads/totals for free, for
+  // every tier, with no daily budget — so the metered source is only
+  // reached now when ESPN has no match for the pick at all.
+  const espnGames = gradeTennisGameMarket(pick, buildTennisGameResult(pick, match));
+  const outcome = espnGames
+    ?? (await settle(pick, scoreEvent, env, ctx, now))
+    ?? gradePick(pick, scoreEvent, now);
   if (!outcome || outcome.void) return outcome;
 
   // Purely additive display data, and only when the grading source didn't
