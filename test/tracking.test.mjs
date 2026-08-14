@@ -8,6 +8,8 @@ import {
   getAllTrackedPicks,
   resetAllTracking,
   TOP5_COUNT,
+  contradictsPublishedBoard,
+  runBoardReview,
 } from '../worker/src/tracking.js';
 import { TUNABLE_BOUNDS } from '../worker/src/algo-health.js';
 import { seedTennisArchiveCacheForTests } from '../worker/src/tennis-archive.js';
@@ -194,11 +196,20 @@ test('runTop5Batch tennis next-day carve-out: a match rolling just past midnight
   }
 });
 
-test('runTop5Batch pads to 5 with flagged picks on a thin day, real picks stay unflagged', async () => {
+test('runTop5Batch refuses to pad with a price outside the hard band', async () => {
   const { env } = makeKvStore();
-  // Two real sharp edges (inside the -250/+250 band) plus one real-EV
-  // underdog priced outside that band — clears the EV/Kelly floor but not
-  // the odds range, so it can only ever fill a guaranteeCount() slot.
+  // Two real sharp edges plus a +350 longshot that clears the EV/Kelly floor
+  // but sits outside Pixel's Picks' hard price band.
+  //
+  // This used to be padded onto the board as a flagged fallback slot, because
+  // guaranteeCount relaxed the odds range without limit — it only LABELLED
+  // the price as out of band and posted it anyway. That is the same hole a
+  // -1800 favorite came through on the live board, against a board that
+  // advertises "-200 or better."
+  //
+  // The count promise and the price band genuinely conflict on a thin day,
+  // and the band wins: a short board is recoverable, a board whose stated
+  // standard is a lie is not.
   const events = [
     makeEvent('sharp1', { outlier: 35 }),
     makeEvent('sharp2', { outlier: 40 }),
@@ -209,15 +220,28 @@ test('runTop5Batch pads to 5 with flagged picks on a thin day, real picks stay u
   assert.equal(result.skipped, false);
 
   const picks = await getTop5(env, { dateKey: '2026-08-05' });
-  const flagged = picks.filter((p) => p.meetsStandard === false);
-  const clean = picks.filter((p) => p.meetsStandard === true);
-  assert.equal(flagged.length, 1, 'the out-of-range pick should be the one padded/flagged slot');
-  assert.match(flagged[0].pickId, /^longshot:/);
-  assert.ok(typeof flagged[0].flagReason === 'string' && flagged[0].flagReason.length > 0);
-  assert.equal(clean.length, 2);
-  for (const p of clean) {
-    assert.equal(p.flagReason, null);
+  assert.equal(picks.length, 2, 'the day only had two candidates inside the band');
+  assert.ok(!picks.some((p) => p.pickId.startsWith('longshot:')), 'the +350 must never reach the board');
+  for (const p of picks) {
+    assert.ok(p.american >= -200 && p.american <= 150, `${p.pickId} priced ${p.american} is outside the hard band`);
   }
+});
+
+test('a heavy favorite is never posted, even to fill a slot', async () => {
+  const { env } = makeKvStore();
+  // The reported failure in its own right: "I don't want a -1800."
+  const heavy = makeOutOfRangeEvent('chalk');
+  for (const book of heavy.bookmakers) {
+    book.markets[0].outcomes = [
+      { name: 'chalk Home', price: -1800 },
+      { name: 'chalk Away', price: 1200 },
+    ];
+  }
+  const result = await runTop5Batch(env, ctx, NOW, { fetchFullSlate: async () => [heavy] });
+  assert.equal(result.skipped, false);
+
+  const picks = await getTop5(env, { dateKey: '2026-08-05' });
+  assert.ok(picks.every((p) => p.american >= -200), 'nothing worse than -200 may be posted');
 });
 
 test('runTop5Batch never surfaces a -EV or dust-edge candidate, even to fill toward 5', async () => {
@@ -465,4 +489,176 @@ test('getAllTrackedPicks spans multiple days, resetAllTracking clears every one'
 
   const afterReset = await getAllTrackedPicks(env, { now: day2, days: 5 });
   assert.equal(afterReset.length, 0);
+});
+
+/* ---------------------------------------------------------------- */
+/* The 5-pick minimum                                                */
+/* ---------------------------------------------------------------- */
+
+/** An event N hours from NOW, priced with a real edge so it's a live candidate. */
+function eventAtHour(id, hoursOut, outlier = 35) {
+  return makeEvent(id, { hoursOut, outlier });
+}
+
+/**
+ * The reported failure, reproduced end to end: "time and time again I need
+ * this to be 5 minimum but I come back and find only 1 or 2."
+ *
+ * The board waited until every one of today's games had reached its lock
+ * window before drawing, so it could compare the whole day. That trigger
+ * fires ~3h before the day's LAST game — and the draw pool only contains
+ * games that haven't started. On a day spread from early afternoon to late
+ * evening, the entire afternoon was unbettable by the time the draw ran.
+ */
+test('a day spread across many hours still produces a full board', async () => {
+  const { env } = makeKvStore();
+  // Eight games at 2h intervals — the shape of a real MLB slate. Under the
+  // old all-or-nothing draw, only the last couple were still bettable when
+  // the board was finally allowed to pick.
+  const events = Array.from({ length: 8 }, (_, i) => eventAtHour(`g${i}`, 2 + i * 2, 35 + i));
+
+  // Walk the day tick by tick, exactly as the cron does.
+  let now = NOW;
+  for (let tick = 0; tick < 40; tick++) {
+    await runTop5Batch(env, ctx, now, {
+      fetchFullSlate: async () => events.filter((e) => Date.parse(e.commence_time) > now),
+    });
+    now += 30 * 60000; // 30 minutes
+  }
+
+  const picks = await getTop5(env, { dateKey: '2026-08-05' });
+  assert.equal(picks.length, 5, `expected a full board, got ${picks.length}`);
+  // Five distinct games, all inside the price band — a board padded by
+  // double-picking one game, or by reaching for a price the band forbids,
+  // would satisfy the count while defeating the point of it.
+  assert.equal(new Set(picks.map((p) => p.eventId)).size, 5, 'the board double-picked a game to reach five');
+  for (const p of picks) {
+    assert.ok(p.american >= -200 && p.american <= 150, `${p.pickId} priced ${p.american} is outside the hard band`);
+  }
+});
+
+test('a strong number is locked when it appears rather than left to expire', async () => {
+  const { env } = makeKvStore();
+  // One standout early game, plus later ones that keep the day "still open"
+  // so the old code would have kept waiting until the early one had started.
+  const events = [
+    eventAtHour('early-standout', 2.6, 90),
+    eventAtHour('late1', 10),
+    eventAtHour('late2', 12),
+  ];
+  await runTop5Batch(env, ctx, NOW, { fetchFullSlate: async () => events });
+
+  const picks = await getTop5(env, { dateKey: '2026-08-05' });
+  assert.ok(picks.some((p) => p.pickId.startsWith('early-standout:')),
+    'the standout should be taken on sight, not lost to its own start time');
+});
+
+test('the board never takes the opposite side of a Full Slate or PoTD pick', async () => {
+  const { env, store } = makeKvStore();
+  const events = [eventAtHour('shared', 2.5, 40), eventAtHour('other', 3)];
+
+  // The Full Slate already called this game's moneyline the other way.
+  store.set('slate:2026-08-05:manifest', JSON.stringify({ date: '2026-08-05', pickIds: ['p1'] }));
+  store.set('slate:2026-08-05:pick:p1', JSON.stringify({
+    pickId: 'p1', eventId: 'shared', marketKey: 'h2h', outcomeName: 'shared Away', status: 'pending',
+  }));
+
+  await runTop5Batch(env, ctx, NOW, { fetchFullSlate: async () => events });
+  const picks = await getTop5(env, { dateKey: '2026-08-05' });
+
+  const conflicting = picks.filter(
+    (p) => p.eventId === 'shared' && p.marketKey === 'h2h' && p.outcomeName !== 'shared Away',
+  );
+  assert.equal(conflicting.length, 0, 'picked the opposite side of a published Full Slate call');
+});
+
+test('agreeing with another board is allowed — only the opposite side is barred', () => {
+  const published = new Set(['ev1|h2h|Team A']);
+  assert.equal(contradictsPublishedBoard({ eventId: 'ev1', marketKey: 'h2h', outcomeName: 'Team A' }, published), false);
+  assert.equal(contradictsPublishedBoard({ eventId: 'ev1', marketKey: 'h2h', outcomeName: 'Team B' }, published), true);
+  // A different market on the same game is a separate bet, not a contradiction.
+  assert.equal(contradictsPublishedBoard({ eventId: 'ev1', marketKey: 'totals', outcomeName: 'Over' }, published), false);
+  assert.equal(contradictsPublishedBoard({ eventId: 'ev2', marketKey: 'h2h', outcomeName: 'Team B' }, published), false);
+});
+
+/* ---------------------------------------------------------------- */
+/* The 3-of-5 standard                                               */
+/* ---------------------------------------------------------------- */
+
+/** Seeds a fully-settled Pixel's Picks day with a given win/loss split. */
+function seedSettledDay(store, dateKey, results) {
+  const ids = results.map((_, i) => `p${i}`);
+  store.set(`track:${dateKey}:top5`, JSON.stringify({ date: dateKey, pickIds: ids }));
+  results.forEach((status, i) => {
+    store.set(`track:${dateKey}:pick:p${i}`, JSON.stringify({
+      pickId: `p${i}`, dateKey, eventId: `ev${i}`, sportKey: 'baseball_mlb',
+      marketKey: 'h2h', outcomeName: 'Home', suggested_stake: 20, status,
+      result: { payout: status === 'won' ? 18 : -20 },
+    }));
+  });
+}
+
+const YESTERDAY = '2026-08-04';
+
+test('a board that misses 3 of 5 raises its own conviction floor', async () => {
+  const { env, store } = makeKvStore();
+  seedSettledDay(store, YESTERDAY, ['won', 'lost', 'lost', 'lost', 'lost']);
+
+  const verdict = await runBoardReview(env, ctx, NOW);
+  assert.equal(verdict.met, false);
+  assert.equal(verdict.wins, 1);
+  assert.equal(verdict.required, 3);
+  assert.ok(verdict.scoreBump > 0, 'a missed standard must tighten the floor');
+});
+
+test('a board that meets the standard earns its ground back', async () => {
+  const { env, store } = makeKvStore();
+  store.set('track:board-review', JSON.stringify({ scoreBump: 6, lastReviewedDate: null, history: [] }));
+  seedSettledDay(store, YESTERDAY, ['won', 'won', 'won', 'lost', 'lost']);
+
+  const verdict = await runBoardReview(env, ctx, NOW);
+  assert.equal(verdict.met, true);
+  assert.ok(verdict.scoreBump < 6, 'meeting the standard must relax the floor');
+});
+
+test('the floor is capped, so a cold streak cannot shut the board down', async () => {
+  const { env, store } = makeKvStore();
+  store.set('track:board-review', JSON.stringify({ scoreBump: 99, lastReviewedDate: null, history: [] }));
+  seedSettledDay(store, YESTERDAY, ['lost', 'lost', 'lost', 'lost', 'lost']);
+
+  const verdict = await runBoardReview(env, ctx, NOW);
+  assert.ok(verdict.scoreBump <= 8, `bump ${verdict.scoreBump} exceeded the cap`);
+});
+
+test('a day still carrying pending picks is not judged', async () => {
+  const { env, store } = makeKvStore();
+  seedSettledDay(store, YESTERDAY, ['won', 'lost', 'lost', 'lost', 'lost']);
+  // One still unsettled — grading it as a miss would invent a failure out of
+  // a day that simply hasn't finished.
+  const raw = JSON.parse(store.get(`track:${YESTERDAY}:pick:p4`));
+  raw.status = 'pending';
+  store.set(`track:${YESTERDAY}:pick:p4`, JSON.stringify(raw));
+
+  const verdict = await runBoardReview(env, ctx, NOW);
+  assert.equal(verdict.skipped, true);
+});
+
+test('voids count toward neither half of the ratio', async () => {
+  const { env, store } = makeKvStore();
+  // 3 wins, 1 loss, 1 void -> 4 decided, requires ceil(0.6*4) = 3. Met.
+  seedSettledDay(store, YESTERDAY, ['won', 'won', 'won', 'lost', 'void']);
+
+  const verdict = await runBoardReview(env, ctx, NOW);
+  assert.equal(verdict.decided, 4, 'the void must not be counted as a decided pick');
+  assert.equal(verdict.met, true, 'a walkover is not a miss the board should pay for');
+});
+
+test('the review runs once per day, not once per tick', async () => {
+  const { env, store } = makeKvStore();
+  seedSettledDay(store, YESTERDAY, ['lost', 'lost', 'lost', 'lost', 'lost']);
+
+  const first = await runBoardReview(env, ctx, NOW);
+  const second = await runBoardReview(env, ctx, NOW);
+  assert.equal(first.skipped, undefined);
+  assert.equal(second.skipped, true, 'a second run the same day must not compound the adjustment');
 });

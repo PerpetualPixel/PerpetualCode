@@ -58,6 +58,109 @@ import {
 import { retractedRecord } from './retraction.js';
 
 export const TOP5_COUNT = 5;
+
+/**
+ * Score at or above which a candidate is locked the moment its window opens,
+ * without waiting for the rest of the day to be visible.
+ *
+ * The board used to wait for EVERY one of today's games to reach its lock
+ * window before drawing at all, so it could compare the whole day. The
+ * trigger for that fires ~3h before the day's LAST game — by which point the
+ * draw pool, which only contains games that haven't started, has lost the
+ * entire afternoon. On a normal MLB day (1pm-10pm ET) the draw happened
+ * around 7pm and could only see 7pm-or-later games. That is why a board
+ * promising 5 kept posting 1 or 2, repeatedly, and why guaranteeCount
+ * couldn't save it: its fallback draws from that same emptied pool.
+ *
+ * A genuinely strong number doesn't need the rest of the day for context, so
+ * it's taken when it appears rather than left to expire.
+ */
+const PREMIUM_LOCK_SCORE = 72;
+
+/**
+ * How much slack to leave before treating the day as running out.
+ *
+ * Slots are filled once the remaining unstarted events are down to roughly
+ * the number of slots still open. The buffer exists because supply is only
+ * re-measured once per tick (15 min) and several games can start between two
+ * ticks — waiting for supply to reach exactly the slot count would routinely
+ * overshoot and strand the board short, which is the entire failure being
+ * fixed here.
+ */
+const DEADLINE_BUFFER_EVENTS = 3;
+
+/**
+ * Pixel's Picks price band, per explicit product direction: "-200 straight is
+ * okay ... near that range of -200 to +100. I don't want a -1800."
+ *
+ * SHARP is the standard a real lock is held to. HARD is the bound nothing
+ * crosses, thin-day fallback included — see topPicks' own hardOddsMin note
+ * for how a -1800 reached a live board that already claimed a -200 floor.
+ * The hard ceiling sits above the sharp one because the two ends fail
+ * differently: an extra-long dog is a bad-value bet, while a -1800 favorite
+ * is a bet whose price makes the whole board's premise dishonest.
+ */
+const PIXEL_ODDS = { SHARP_MIN: -200, SHARP_MAX: 100, HARD_MIN: -200, HARD_MAX: 150 };
+
+/**
+ * Sides already taken by the other boards, as `eventId|marketKey|outcomeName`.
+ *
+ * Pixel's Picks must never sit on the opposite side of a bet the Full Slate
+ * or Play of the Day already published — per explicit product direction,
+ * "these cannot contradict another pick anywhere in the full slate or play of
+ * the day." Agreement is fine and expected: the Full Slate carries a pick on
+ * essentially every game, so excluding its events outright would leave
+ * nothing to pick from. Only the OPPOSITE side of a market it already called
+ * is a contradiction.
+ *
+ * Read straight from KV rather than through full-slate-tracking.js's own
+ * loader: that module already imports from this one, and closing the cycle
+ * for one lookup isn't worth the load-order fragility.
+ */
+async function loadPublishedSides(env, dateKey) {
+  const sides = new Set();
+  const add = (pick) => {
+    if (!pick?.eventId || !pick?.marketKey || !pick?.outcomeName) return;
+    sides.add(`${pick.eventId}|${pick.marketKey}|${pick.outcomeName}`);
+  };
+
+  try {
+    const [slateManifestRaw, potdRaw] = await Promise.all([
+      env.POTD_KV.get(`slate:${dateKey}:manifest`),
+      env.POTD_KV.get(`potd:${dateKey}`),
+    ]);
+    if (potdRaw) add(JSON.parse(potdRaw)?.pick);
+
+    const slateIds = slateManifestRaw ? (JSON.parse(slateManifestRaw).pickIds ?? []) : [];
+    const slatePicks = await Promise.all(
+      slateIds.map((id) => env.POTD_KV.get(`slate:${dateKey}:pick:${id}`)),
+    );
+    for (const raw of slatePicks) {
+      if (raw) add(JSON.parse(raw));
+    }
+  } catch {
+    // A cross-board read failure must not stop the board from being built —
+    // it degrades to this board's own same-event guards, which already
+    // prevent the worst case (two Pixel's Picks on opposite sides).
+  }
+  return sides;
+}
+
+/**
+ * Whether a candidate takes the opposite side of a market another board
+ * already published. Same event + same market + a DIFFERENT outcome is the
+ * contradiction; the identical outcome is agreement and passes.
+ */
+export function contradictsPublishedBoard(candidate, publishedSides) {
+  if (!publishedSides?.size) return false;
+  for (const side of publishedSides) {
+    const [eventId, marketKey, outcomeName] = side.split('|');
+    if (candidate.eventId === eventId && candidate.marketKey === marketKey && candidate.outcomeName !== outcomeName) {
+      return true;
+    }
+  }
+  return false;
+}
 // Matches docs/learning.js's own FLAT_UNIT_STAKE — duplicated rather than
 // imported because that module's exported constant sits alongside
 // IndexedDB-touching functions this file never calls; importing just the
@@ -495,7 +598,7 @@ export async function runTop5Batch(
   // sport+bet-type segment entirely, based on that segment's real graded
   // history — both read fresh here so a Monday-morning review takes effect
   // on the very next batch, not just future ones.
-  const [algoConfig, pausedSegments, learningProfile] = await Promise.all([
+  const [algoConfig, pausedSegments, learningProfile, boardReview] = await Promise.all([
     getAlgoConfig(env),
     getPausedSegments(env),
     // The daily learning review's reliability weights (worker/src/
@@ -506,7 +609,12 @@ export async function runTop5Batch(
     // keeps recording the unadjusted engine so tomorrow's learning is
     // drawn from unbiased evidence.
     getLearningProfile(env),
+    // The 3-of-5 accountability loop (runBoardReview below): a board that
+    // missed the standard raises its own conviction floor for the next day,
+    // and earns the ground back by meeting it.
+    getBoardReview(env),
   ]);
+  const convictionFloor = algoConfig.MIN_SCORE + (boardReview.scoreBump ?? 0);
 
   const events = await fetchFullSlate();
   // Team sports post odds for games weeks or months out (an NFL regular-
@@ -603,12 +711,32 @@ export async function runTop5Batch(
   const stillUpcoming = scheduleStillOpen(events, dateKey, now);
   await updateTop5Pool(env, ctx, dateKey, lockable, now);
 
-  if (stillUpcoming) {
-    return { skipped: true, reason: "still comparing today's games", dateKey, added: 0 };
-  }
-
   const poolRaw = await env.POTD_KV.get(`track:${dateKey}:pool`);
   const pool = poolRaw ? JSON.parse(poolRaw).entries : [];
+
+  // How many of today's eligible games still haven't started — the day's
+  // remaining supply of chances. Measured off the raw event list, not the
+  // price-filtered pool, for the same reason scheduleStillOpen is: a game
+  // that hasn't posted a price yet is still a chance this board has left.
+  const supplyLeft = events.filter((event) => {
+    const commenceMs = Date.parse(event.commence_time);
+    if (!Number.isFinite(commenceMs) || commenceMs <= now) return false;
+    if (existingEventIds.has(event.id)) return false;
+    if (event.sport_key === 'americanfootball_ncaaf' && !isPower4Matchup(event.home_team, event.away_team)) return false;
+    if (isMma(event.sport_key)) return isEligibleMmaFight(commenceMs, now);
+    if (isTennis(event.sport_key)) return isEligibleTennisMatch(commenceMs, now);
+    return etDate(commenceMs) === dateKey;
+  }).length;
+
+  // Two ways a slot gets filled on this tick:
+  //   - the day is running out (supply is down to roughly the slots left, or
+  //     every game has had its window and there's nothing more coming), so
+  //     take the best of what's actually still bettable; or
+  //   - a candidate is strong enough to stand on its own (PREMIUM_LOCK_SCORE),
+  //     in which case waiting only risks losing it to its own start time.
+  // The old behaviour was neither: it waited for the whole day, every time,
+  // and by then most of the day was unbettable.
+  const atDeadline = !stillUpcoming || supplyLeft <= needed + DEADLINE_BUFFER_EVENTS;
   // Already-locked events are excluded same as the live eligibility filter
   // above (existingEventIds) — a pool entry can predate today's most recent
   // lock. Anything whose game has since started can't be posted anymore;
@@ -625,18 +753,26 @@ export async function runTop5Batch(
     ? applyCapperConsensus(stillActionable, consensusFeed, { now })
     : stillActionable;
 
-  const slate = topPicks(drawPool, {
-    // -200 or better, per explicit product direction for the revamped
-    // 7-play hierarchy: every Pixel's Pick must pay at least -200 (the
-    // config band allows -250; the flagship plays deserve the tighter
-    // floor).
-    oddsMin: Math.max(CONFIG.ODDS_MIN_DEFAULT, -200),
+  // Never the opposite side of something the Full Slate or Play of the Day
+  // already published — see loadPublishedSides.
+  const publishedSides = await loadPublishedSides(env, dateKey);
+  const nonConflicting = drawPool.filter((c) => !contradictsPublishedBoard(c, publishedSides));
+
+  const slate = topPicks(nonConflicting, {
+    oddsMin: PIXEL_ODDS.SHARP_MIN,
+    oddsMax: PIXEL_ODDS.SHARP_MAX,
+    // Enforced even by the thin-day fallback, which is what stops a -1800
+    // reaching a board that promises -200 or better.
+    hardOddsMin: PIXEL_ODDS.HARD_MIN,
+    hardOddsMax: PIXEL_ODDS.HARD_MAX,
     count: needed,
-    oddsMax: CONFIG.ODDS_MAX_DEFAULT,
-    minScore: algoConfig.MIN_SCORE,
+    // Off-deadline, only a genuinely strong number earns a slot early;
+    // at the deadline the standard is the configured one and the fallback
+    // is allowed to fill rather than let the board finish short.
+    minScore: atDeadline ? convictionFloor : Math.max(convictionFloor, PREMIUM_LOCK_SCORE),
     minEv: algoConfig.MIN_EV_PCT,
     minKelly: algoConfig.MIN_KELLY_FRACTION,
-    guaranteeCount: true,
+    guaranteeCount: atDeadline,
   });
 
   // The revamped hierarchy: the two BEST plays of the day are the 5U
@@ -665,7 +801,12 @@ export async function runTop5Batch(
 
     const propCandidates = pools.flat().filter((p) =>
       p.status === 'pending' && Number(p.decimal) >= 1.5 && Number.isFinite(p.score)
-      && p.commenceMs > now && !featured.has(p.eventId) && !existingEventIds.has(p.eventId));
+      && p.commenceMs > now && !featured.has(p.eventId) && !existingEventIds.has(p.eventId)
+      // Same price band and same cross-board rule the team markets are held
+      // to — a prop is a Pixel's Pick like any other, not a side door around
+      // the standard.
+      && Number(p.american) >= PIXEL_ODDS.HARD_MIN && Number(p.american) <= PIXEL_ODDS.HARD_MAX
+      && !contradictsPublishedBoard(p, publishedSides));
     const merged = [
       ...slate.picks,
       ...propCandidates.map((p) => ({ legs: [p], score: p.score, meetsStandard: true, flagReason: null })),
@@ -1332,4 +1473,102 @@ export async function regradeTop5TennisVoids(
     found: candidates.length,
     regraded: changed.length,
   };
+}
+
+/* ---------------------------------------------------------------- */
+/* Board accountability — the 3-of-5 standard                        */
+/* ---------------------------------------------------------------- */
+
+/**
+ * The bar Pixel's Picks is held to, per explicit product direction: "These
+ * picks need to hit at least 3/5 or the algorithm needs to reassess its
+ * picks again."
+ */
+export const BOARD_STANDARD_WINS = 3;
+
+/** KV key holding the rolling board-review state and its recent verdicts. */
+const BOARD_REVIEW_KEY = 'track:board-review';
+
+/**
+ * How far the conviction floor moves after a day that missed the standard,
+ * and how far back it relaxes after one that met it.
+ *
+ * Deliberately asymmetric and small. A single five-pick day is a tiny
+ * sample — at a true 55% win rate, missing 3/5 happens more than a third of
+ * the time by chance alone — so one bad day must not be able to slam the
+ * standard shut, and one good day must not undo a genuine trend in a single
+ * step. What this produces is drift under sustained evidence, not a reaction
+ * to noise.
+ */
+const BOARD_TIGHTEN_STEP = 2;
+const BOARD_RELAX_STEP = 1;
+/** Ceiling on the accumulated adjustment, so a cold streak can't drive the board to zero picks. */
+const BOARD_MAX_SCORE_BUMP = 8;
+
+export async function getBoardReview(env) {
+  const raw = await env.POTD_KV.get(BOARD_REVIEW_KEY);
+  const parsed = raw ? JSON.parse(raw) : null;
+  return { scoreBump: 0, lastReviewedDate: null, history: [], ...(parsed ?? {}) };
+}
+
+/**
+ * Grades yesterday's Pixel's Picks board against the 3-of-5 standard and
+ * moves the conviction floor accordingly.
+ *
+ * Runs once per ET day (idempotent on `lastReviewedDate`), against the most
+ * recent day whose picks are ALL settled — reviewing a half-graded day would
+ * count still-pending picks as non-wins and manufacture a miss out of a day
+ * that hadn't finished yet.
+ *
+ * Voids are excluded from both halves of the ratio, the same way
+ * summarizePicks already excludes them everywhere else: a returned stake is
+ * neither a win nor a loss, and counting one as a miss would punish the board
+ * for a walkover it had no part in.
+ *
+ * Reporting only in one specific sense — it moves a floor, it never rewrites
+ * a graded result. The Full Slate record stays untouched by design so
+ * tomorrow's evidence is still drawn from the unadjusted engine.
+ */
+export async function runBoardReview(env, ctx, now = Date.now(), { days = 4 } = {}) {
+  const review = await getBoardReview(env);
+  const today = etDate(now);
+  if (review.lastReviewedDate === today) return { skipped: true, reason: 'already reviewed today' };
+
+  // Walk back to the most recent fully-settled day, skipping today (still in
+  // progress) and any day still carrying a pending pick.
+  let target = null;
+  for (let i = 1; i <= days; i++) {
+    const dateKey = etDate(now - i * 86400000);
+    const { picks } = await loadTrackedPicks(env, dateKey);
+    const live = picks.filter((p) => !p.retracted);
+    if (!live.length) continue;
+    if (live.some((p) => p.status === 'pending')) continue;
+    target = { dateKey, picks: live };
+    break;
+  }
+  if (!target) return { skipped: true, reason: 'no fully-settled day to review' };
+
+  const decided = target.picks.filter((p) => p.status === 'won' || p.status === 'lost');
+  if (!decided.length) return { skipped: true, reason: 'nothing decided on that day' };
+
+  const wins = decided.filter((p) => p.status === 'won').length;
+  // Scaled to the day's real size: a 4-pick day that went 2-4 shouldn't be
+  // judged against a bar written for 5.
+  const required = Math.ceil((BOARD_STANDARD_WINS / TOP5_COUNT) * decided.length);
+  const met = wins >= required;
+
+  const scoreBump = met
+    ? Math.max(0, review.scoreBump - BOARD_RELAX_STEP)
+    : Math.min(BOARD_MAX_SCORE_BUMP, review.scoreBump + BOARD_TIGHTEN_STEP);
+
+  const entry = { dateKey: target.dateKey, wins, decided: decided.length, required, met, scoreBump, at: now };
+  const next = {
+    scoreBump,
+    lastReviewedDate: today,
+    // Bounded so the record stays a useful recent history rather than an
+    // ever-growing KV value.
+    history: [entry, ...review.history].slice(0, 30),
+  };
+  ctx.waitUntil(env.POTD_KV.put(BOARD_REVIEW_KEY, JSON.stringify(next), { expirationTtl: KV_TTL_SECONDS }));
+  return entry;
 }
