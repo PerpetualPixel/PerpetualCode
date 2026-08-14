@@ -48,7 +48,7 @@ import { runNflPropsScan, runNflPropsGrading, getAllNflPropsTracked } from './nf
 import { runWnbaPropsScan, runWnbaPropsGrading, getAllWnbaPropsTracked } from './wnba-props.js';
 import { runPropPlayDaily, runPropPlayGrading, getAllPropPlays } from './prop-play.js';
 import { runNhlPropsScan, runNhlPropsGrading, getAllNhlPropsTracked } from './nhl-props.js';
-import { runPotdDaily, runPotdClvSnapshot, runPotdGrading, backfillPotdAnalysis, getPotd, getPotdLeaning, getPotdHistory, retractPotd } from './potd.js';
+import { runPotdDaily, runPotdClvSnapshot, runPotdGrading, backfillPotdAnalysis, getPotd, getPotdLeaning, getPotdHistory, retractPotd, regradePotdTennisVoids } from './potd.js';
 import { getOrGenerateAnalysis } from './analysis.js';
 import {
   UPSTREAM,
@@ -72,6 +72,7 @@ import {
   runTop5DateResync,
   migrateTop5PickDates,
   retractTop5Picks,
+  regradeTop5TennisVoids,
 } from './tracking.js';
 import { authorize as authorizeSettings, getSettings, putSettings } from './settings.js';
 import {
@@ -94,6 +95,7 @@ import {
   runFullSlateDateResync,
   retractFullSlatePicks,
   diagnosePendingFullSlate,
+  regradeFullSlateTennisVoids,
 } from './full-slate-tracking.js';
 import { isWtaPick } from './retraction.js';
 import {
@@ -757,6 +759,7 @@ export default {
       '/admin/onboarding-report',
       '/admin/retract-wta',
       '/admin/grade-now',
+      '/admin/regrade-tennis',
     ]);
     if (request.method === 'POST' && (AUTH_LIMITED_PATHS.has(pathname) || pathname === '/api/report-bug' || OWNER_LIMITED_PATHS.has(pathname))) {
       const ip = request.headers.get('CF-Connecting-IP') ?? 'unknown';
@@ -1418,6 +1421,62 @@ export default {
      * stored home/away — the four independent ways settlement silently
      * fails.
      */
+    /**
+     * Backfill sweep: re-settle tennis spreads/totals across the whole
+     * retention window, not just the two days the live grading pass looks
+     * back.
+     *
+     * Those picks were voided as "priced in games but scored in sets" under
+     * a rule that was correct only while no games-level score existed. ESPN
+     * supplies one now (see worker/src/tennis-espn.js), and the live passes
+     * reopen such voids automatically — but only inside their own 2-day
+     * lookback, which leaves every older day carrying a settled-but-wrong
+     * void. This is what fixes those.
+     *
+     * Resumable by design. A 90-day walk of the Full Slate reads every pick
+     * on every day across every sport, which runs past the subrequest
+     * ceiling a single Worker invocation has. Rather than die partway with
+     * no record of how far it got, the sweep stops at a read budget and
+     * returns `nextOffsetDays`; call again with ?offset=<that> to continue.
+     * Null means the range is fully swept.
+     *
+     * Idempotent — only picks whose outcome actually changes are written, so
+     * re-running over a swept range is a no-op.
+     */
+    if (pathname === '/admin/regrade-tennis' && request.method === 'POST') {
+      const auth = authorizeSettings(request, env);
+      if (!auth.ok) return json({ error: auth.error }, { status: auth.status, headers: cors });
+      try {
+        const now = Date.now();
+        const days = Math.min(Number(url.searchParams.get('days')) || 90, 90);
+        const offsetDays = Math.max(Number(url.searchParams.get('offset')) || 0, 0);
+
+        // Sequential, not Promise.all: all three share one invocation's
+        // subrequest ceiling, and running them concurrently would spend it
+        // three times as fast for no wall-clock benefit worth the risk of
+        // the sweep dying mid-run.
+        const fullSlate = await regradeFullSlateTennisVoids(env, ctx, { now, days, offsetDays })
+          .catch((e) => ({ error: String(e).slice(0, 200) }));
+        const top5 = await regradeTop5TennisVoids(env, ctx, { now, days, offsetDays })
+          .catch((e) => ({ error: String(e).slice(0, 200) }));
+        // Only on the first chunk: Play of the Day is one record per day, so
+        // it sweeps the entire window in a single pass and re-walking it per
+        // chunk would be pure waste.
+        const potd = offsetDays === 0
+          ? await regradePotdTennisVoids(env, ctx, { now, days }).catch((e) => ({ error: String(e).slice(0, 200) }))
+          : { skipped: 'swept on the first chunk' };
+
+        const nextOffsetDays = fullSlate?.nextOffsetDays ?? top5?.nextOffsetDays ?? null;
+        return json({
+          regraded: { fullSlate, top5, potd },
+          nextOffsetDays,
+          done: nextOffsetDays == null,
+        }, { headers: cors });
+      } catch (error) {
+        return json({ error: String(error).slice(0, 200) }, { status: 500, headers: cors });
+      }
+    }
+
     if (pathname === '/admin/grade-now' && request.method === 'POST') {
       const auth = authorizeSettings(request, env);
       if (!auth.ok) return json({ error: auth.error }, { status: auth.status, headers: cors });

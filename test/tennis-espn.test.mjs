@@ -8,6 +8,7 @@ import {
   gradeTennisPickWithEspn,
   isRegradableTennisVoid,
   isNoOpTennisRegrade,
+  regradeTennisVoids,
 } from '../worker/src/tennis-espn.js';
 import { UNSETTLEABLE_TENNIS_GAME_MARKET } from '../docs/learning.js';
 
@@ -418,4 +419,67 @@ test('a reopened void that still cannot settle is left alone, not rewritten', ()
   // A different void reason IS a change worth recording.
   assert.equal(isNoOpTennisRegrade(pick, { void: true, reason: 'push — total games landed exactly on the number' }), false);
   assert.equal(isNoOpTennisRegrade(pick, { won: true, payout: 18 }), false);
+});
+
+/* ---------------------------------------------------------------- */
+/* Historical backfill                                               */
+/* ---------------------------------------------------------------- */
+
+const voidedTotal = (over) => ({
+  pickId: 'p1',
+  dateKey: '2026-08-13',
+  sportKey: 'tennis_wta_cincinnati_open',
+  marketKey: 'totals',
+  home: 'Iga Swiatek',
+  away: 'Elena Rybakina',
+  outcomeName: 'Under',
+  point: 22.5,
+  decimal: 1.9,
+  suggested_stake: 20,
+  commenceMs: Date.parse('2026-08-13T16:00Z'),
+  status: 'void',
+  result: { payout: 0, roiPercent: 0, voidReason: UNSETTLEABLE_TENNIS_GAME_MARKET },
+  ...over,
+});
+
+test('backfill re-settles an old void and rewrites its record', async () => {
+  const changed = await regradeTennisVoids([voidedTotal()], {}, ctx, Date.now(), {
+    fetchTennisResultsFn: async () => finished,
+  });
+  assert.equal(changed.length, 1);
+  assert.equal(changed[0].status, 'won');
+  assert.equal(changed[0].result.payout, 18);
+  assert.equal(changed[0].result.roiPercent, 90);
+  assert.equal(changed[0].result.voidReason, undefined, 'the stale void reason must not survive');
+});
+
+test('backfill fetches once per day, not once per pick', async () => {
+  let fetches = 0;
+  const sameDay = [
+    voidedTotal({ pickId: 'a' }),
+    voidedTotal({ pickId: 'b', point: 10.5 }),
+    voidedTotal({ pickId: 'c', dateKey: '2026-08-12' }),
+  ];
+  await regradeTennisVoids(sameDay, {}, ctx, Date.now(), {
+    fetchTennisResultsFn: async () => { fetches++; return finished; },
+  });
+  assert.equal(fetches, 2, 'two distinct days -> two fetches, not three picks -> three fetches');
+});
+
+test('backfill returns nothing when no outcome changed, so a re-run writes nothing', async () => {
+  // ESPN has no match for this pick, so it lands back on the same void.
+  const changed = await regradeTennisVoids([voidedTotal()], {}, ctx, Date.now(), {
+    fetchTennisResultsFn: async () => [],
+  });
+  assert.deepEqual(changed, []);
+});
+
+test('backfill skips picks it has no business touching', async () => {
+  const changed = await regradeTennisVoids([
+    voidedTotal({ pickId: 'retracted', retracted: { at: 1, reason: 'pulled' } }),
+    voidedTotal({ pickId: 'settled', status: 'lost', result: { payout: -20 } }),
+    voidedTotal({ pickId: 'walkover', result: { voidReason: 'walkover — no completed set' } }),
+    voidedTotal({ pickId: 'nodate', dateKey: undefined }),
+  ], {}, ctx, Date.now(), { fetchTennisResultsFn: async () => finished });
+  assert.deepEqual(changed, []);
 });
