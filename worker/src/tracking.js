@@ -876,10 +876,15 @@ export async function runGrading(
     fetchScoresFn = (s) => fetchScores(s, env, ctx),
     fetchMmaResultsFn = () => fetchMmaResults(ctx, now),
     fetchTennisResultsFn = () => fetchTennisResults(ctx, now),
+    // Widened by the nightly reconciliation pass (see index.js's scheduled
+    // handler). The every-tick default stays deliberately short: grading
+    // runs 96 times a day and almost never needs to look further back than
+    // a game that crossed midnight.
+    lookbackDays = GRADING_LOOKBACK_DAYS,
   } = {},
 ) {
   const dateKeys = [...new Set(
-    Array.from({ length: GRADING_LOOKBACK_DAYS }, (_, i) => etDate(now - i * 86400000)),
+    Array.from({ length: lookbackDays }, (_, i) => etDate(now - i * 86400000)),
   )];
   const loaded = await Promise.all(dateKeys.map((dk) => loadTrackedPicks(env, dk)));
   const picks = loaded.flatMap((d) => d.picks);

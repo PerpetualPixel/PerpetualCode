@@ -545,3 +545,72 @@ test('a fully swept range re-runs as a no-op', async () => {
   assert.equal(second.regraded, 0);
   assert.equal(second.nextOffsetDays, null);
 });
+
+/* ---------------------------------------------------------------- */
+/* Reconciliation lookback                                           */
+/* ---------------------------------------------------------------- */
+
+/**
+ * The every-tick lookback is 2 days, which leaves a sharp edge: a pick that
+ * couldn't settle within two days of its date was stranded PERMANENTLY, with
+ * no code path that would ever look at it again. That's what happened to a
+ * full WTA board when the odds feed turned out never to post tennis results
+ * — by the time ESPN was wired in, those picks had aged out of every pass.
+ *
+ * The nightly reconciliation calls the same grader with a wider window.
+ */
+test('the default lookback leaves an older pending pick alone', async () => {
+  const { env, store } = makeKvStore();
+  const dateKey = etDateOf(NOW - 5 * 86400000);
+  seedPendingDay(store, dateKey, 'old-1');
+
+  const result = await runFullSlateGrading(env, ctx, NOW, {
+    fetchScoresFn: async () => ({ events: [finishedEventFor('old-1')] }),
+    fetchMmaResultsFn: async () => [],
+  });
+  assert.equal(result.graded, 0, 'five days back is outside the every-tick window');
+});
+
+test('a widened lookback reaches back and settles it', async () => {
+  const { env, store } = makeKvStore();
+  const dateKey = etDateOf(NOW - 5 * 86400000);
+  seedPendingDay(store, dateKey, 'old-1');
+
+  const result = await runFullSlateGrading(env, ctx, NOW, {
+    fetchScoresFn: async () => ({ events: [finishedEventFor('old-1')] }),
+    fetchMmaResultsFn: async () => [],
+    lookbackDays: 14,
+  });
+  assert.equal(result.graded, 1, 'the nightly pass rescues what the tick window cannot see');
+
+  const stored = JSON.parse(store.get(`slate:${dateKey}:pick:old-1`));
+  assert.equal(stored.status, 'won');
+});
+
+/** A single still-pending MLB pick on one day, seeded straight into KV. */
+function seedPendingDay(store, dateKey, pickId) {
+  store.set(`slate:${dateKey}:manifest`, JSON.stringify({ date: dateKey, pickIds: [pickId] }));
+  store.set(`slate:${dateKey}:pick:${pickId}`, JSON.stringify({
+    pickId,
+    dateKey,
+    eventId: `ev-${pickId}`,
+    sportKey: 'baseball_mlb',
+    marketKey: 'h2h',
+    home: 'Home Team',
+    away: 'Away Team',
+    outcomeName: 'Home Team',
+    decimal: 1.9,
+    suggested_stake: 20,
+    commenceMs: Date.parse(`${dateKey}T18:00:00Z`),
+    status: 'pending',
+    result: null,
+  }));
+}
+
+function finishedEventFor(pickId) {
+  return {
+    id: `ev-${pickId}`,
+    completed: true,
+    scores: [{ name: 'Home Team', score: '5' }, { name: 'Away Team', score: '2' }],
+  };
+}

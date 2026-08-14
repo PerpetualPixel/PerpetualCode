@@ -354,6 +354,17 @@ const MLB_LEAGUE_STATS_HOUR = 3; // 3am ET
 const ALGO_HEALTH_HOUR = 7; // Monday 7am ET
 const ALGO_HEALTH_WEEKDAY = 1; // Monday (0=Sunday per Intl's 'short' weekday index below)
 const ADMIN_REPORT_HOUR = 20; // 8pm ET daily — owner-only onboarding digest
+
+// 4am ET daily: the reconciliation pass. Deliberately the quietest hour on
+// the board — every North American card has finished and the next day's
+// lines are barely up, so a wider grading walk competes with nothing.
+const RECONCILE_HOUR = 4;
+// Two weeks back, against the every-tick default of 2 days. Long enough that
+// a settlement source fixed days after the fact still catches the picks it
+// was fixed for, short enough that the walk stays cheap enough to run daily.
+// The 90-day repair of anything older stays a deliberate, owner-triggered
+// action (/admin/regrade-tennis) rather than something on a timer.
+const RECONCILE_LOOKBACK_DAYS = 14;
 // How close to its own commence time an already-locked, not-yet-emailed
 // Pixel's Picks slot can get before waiting any longer for the rest of the
 // board risks missing the 1-hour notice floor — see the scheduled()
@@ -658,6 +669,45 @@ export default {
     // admin migration call to fix.
     ctx.waitUntil(runFullSlateDateResync(env, ctx, now));
     ctx.waitUntil(runTop5DateResync(env, ctx, now));
+    // 4am ET daily: reconciliation — the same three graders, but looking
+    // back RECONCILE_LOOKBACK_DAYS instead of the every-tick default of 2,
+    // plus a re-settle of tennis voids that a since-improved rule can now
+    // decide.
+    //
+    // This exists because the short lookback has a sharp edge: a pick that
+    // couldn't settle within two days of its date was stranded PERMANENTLY,
+    // with no code path that would ever look at it again. That is not
+    // hypothetical — a full WTA board sat unsettleable because the odds feed
+    // never posts tennis results, and by the time ESPN was wired in as a
+    // source those picks had long since aged out of every grading pass. They
+    // only came back because someone noticed and ran a manual sweep.
+    //
+    // Same reasoning as the date-resync above: the fix belongs on a timer,
+    // not in a runbook. Any future settlement improvement now heals its own
+    // history within a day rather than waiting to be noticed.
+    //
+    // Cheap precisely because it should normally find nothing: each grader
+    // returns immediately when no pick in its window is still pending, and
+    // /scores is only fetched for sports that actually have one — so a
+    // healthy night costs a handful of KV reads and no upstream credits.
+    if (etHour(now) === RECONCILE_HOUR && isTopOfHour(now)) {
+      ctx.waitUntil((async () => {
+        const opts = { lookbackDays: RECONCILE_LOOKBACK_DAYS };
+        const results = {
+          top5: await runGrading(env, ctx, now, opts).catch((e) => ({ error: String(e) })),
+          fullSlate: await runFullSlateGrading(env, ctx, now, opts).catch((e) => ({ error: String(e) })),
+          potd: await runPotdGrading(env, ctx, now, opts).catch((e) => ({ error: String(e) })),
+          tennisVoids: await regradeFullSlateTennisVoids(env, ctx, { now, days: RECONCILE_LOOKBACK_DAYS })
+            .catch((e) => ({ error: String(e) })),
+        };
+        // Logged only when it actually did something — a silent healthy
+        // night is the expected case and shouldn't fill the tail with noise.
+        const touched = (results.top5?.graded ?? 0) + (results.fullSlate?.graded ?? 0)
+          + (results.tennisVoids?.regraded ?? 0) + (results.potd?.graded ? 1 : 0);
+        if (touched > 0) console.log('Nightly reconciliation settled', touched, JSON.stringify(results));
+      })());
+    }
+
     // Retries today's Play of the Day write-up if the 2am generation attempt
     // came back empty — see backfillPotdAnalysis's own comment for why that
     // one-shot attempt needs a way to recover. No-ops (one KV get) once a
