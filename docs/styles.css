@@ -1109,6 +1109,17 @@ input[type="range"]:focus-visible {
 
 .leg-detail { margin-top: 12px; }
 
+.leg-cancelled {
+  color: var(--danger);
+  background: rgba(239, 68, 68, 0.1);
+  border: 1px solid rgba(239, 68, 68, 0.35);
+  border-radius: 8px;
+  padding: 8px 10px;
+  font-weight: 600;
+  font-size: 0.85rem;
+  margin: 0 0 12px 0;
+}
+
 /* when / where / price grid */
 .meta {
   display: grid;

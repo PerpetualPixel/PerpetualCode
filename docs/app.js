@@ -1473,6 +1473,8 @@ function renderLeg(leg, index, isCombo) {
   // without having to escape bet ids into a CSS selector.
   const slot = renderedLegs.push(leg) - 1;
 
+  const cancelled = isMma(leg.sportKey) && fightCancelled(cachedConsensusFeed(), { home: leg.home, away: leg.away });
+
   return `
     <div class="leg">
       ${isCombo ? `<p class="chip">Leg ${index + 1}</p>` : ''}
@@ -1486,6 +1488,7 @@ function renderLeg(leg, index, isCombo) {
       </button>
 
       <div class="leg-detail" id="${detailId}" hidden>
+        ${cancelled ? `<p class="leg-cancelled">✕ This fight has been cancelled — it is no longer on the card.</p>` : ''}
         <dl class="meta">
           <div>
             <dt>When</dt>
