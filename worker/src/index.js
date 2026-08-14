@@ -73,6 +73,7 @@ import {
   migrateTop5PickDates,
   retractTop5Picks,
   regradeTop5TennisVoids,
+  runBoardReview,
 } from './tracking.js';
 import { authorize as authorizeSettings, getSettings, putSettings } from './settings.js';
 import {
@@ -691,6 +692,10 @@ export default {
     // /scores is only fetched for sports that actually have one — so a
     // healthy night costs a handful of KV reads and no upstream credits.
     if (etHour(now) === RECONCILE_HOUR && isTopOfHour(now)) {
+      // Pixel's Picks' own 3-of-5 accountability check runs in the same
+      // nightly slot, and deliberately AFTER the graders above: it reviews
+      // the most recent fully-settled day, so it wants the day's last
+      // stragglers settled before it decides whether the standard was met.
       ctx.waitUntil((async () => {
         const opts = { lookbackDays: RECONCILE_LOOKBACK_DAYS };
         const results = {
@@ -705,6 +710,13 @@ export default {
         const touched = (results.top5?.graded ?? 0) + (results.fullSlate?.graded ?? 0)
           + (results.tennisVoids?.regraded ?? 0) + (results.potd?.graded ? 1 : 0);
         if (touched > 0) console.log('Nightly reconciliation settled', touched, JSON.stringify(results));
+
+        const board = await runBoardReview(env, ctx, now).catch((e) => ({ error: String(e) }));
+        // Logged whenever it actually reached a verdict — unlike the
+        // settlement counts above, a board that met or missed its standard
+        // is worth a line either way, since that is the number the whole
+        // feedback loop turns on.
+        if (!board?.skipped) console.log('Pixel\'s Picks board review:', JSON.stringify(board));
       })());
     }
 

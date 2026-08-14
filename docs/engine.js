@@ -815,15 +815,28 @@ export function topPicks(
     // flagged as outside the sharp standard, and a thin day shouldn't
     // produce a short board just because what's left is dog-priced.
     maxDogs = 2,
+    // A bound NOTHING crosses — not even the guaranteeCount fallback below,
+    // which relaxes `oddsMin`/`oddsMax` and until now relaxed them without
+    // limit. That's how a board promising "-200 or better" could post a
+    // -1800 favorite: the fallback didn't check the price at all, it just
+    // LABELLED the pick "odds outside -200/+250" and posted it anyway.
+    // Reported from the live board, and the reason these exist separately
+    // from the soft band: a short board is recoverable, a 90%-implied
+    // favorite dressed as a value play is not.
+    hardOddsMin = -Infinity,
+    hardOddsMax = Infinity,
   } = {},
 ) {
   const DOG_AMERICAN = 120;
   const inRange = (a) => a >= oddsMin && a <= oddsMax;
+  const withinHardBounds = (a) => a >= hardOddsMin && a <= hardOddsMax;
   // A hard floor, unlike the odds band and score — a candidate that's
   // genuinely not worth the stake should never surface, not even flagged as
   // a non-standard fallback pick (see guaranteeCount below).
   const clearsEdgeBar = (c) => c.ev > minEv && suggestedStake(c) >= minKelly;
-  const pool = candidates.filter((c) => inRange(c.american) && c.score >= minScore && clearsEdgeBar(c));
+  const pool = candidates.filter(
+    (c) => inRange(c.american) && withinHardBounds(c.american) && c.score >= minScore && clearsEdgeBar(c),
+  );
 
   const fresh = pool.filter((c) => !exclude.has(c.id));
   // Once everything in range has been shown this session, recycle rather than
@@ -875,7 +888,7 @@ export function topPicks(
   // fallback lock wouldn't make it a better one.
   if (guaranteeCount && picks.length < count) {
     const fallbackSorted = [...candidates]
-      .filter((c) => !usedLegs.includes(c) && clearsEdgeBar(c))
+      .filter((c) => !usedLegs.includes(c) && clearsEdgeBar(c) && withinHardBounds(c.american))
       .sort((a, b) => sortKey(b) - sortKey(a));
 
     for (const c of fallbackSorted) {
