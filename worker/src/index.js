@@ -459,15 +459,17 @@ export default {
       ctx.waitUntil(refreshMlbLeagueStats(env, ctx));
     }
 
-    // Hourly, all day — not a single 2am batch anymore. Pixel's Picks, Full
-    // Slate tracking, and Play of the Day each lock games in on their own
-    // per-game timeline now (see tracking.js's isPickWindowOpen/
-    // PICK_LEAD_HOURS): a game's pick locks once IT is close enough to its
-    // own start, not the whole day's board at once. Checking hourly (rather
-    // than every 20-minute tick) is a deliberate cost tradeoff — the real
-    // full-slate fetch below is genuine Odds-API spend, and lead times are
-    // measured in hours, so hourly precision loses nothing that matters
-    // (a lock lands within an hour of its ideal moment either way).
+    // Every cron tick (15 min, not gated to the top of the hour — see
+    // wrangler.toml's [triggers] comment for the credit-budget reasoning
+    // behind that interval). Pixel's Picks, Full Slate tracking, and Play of
+    // the Day each lock games in on their own per-game timeline (see
+    // tracking.js's isPickWindowOpen/PICK_LEAD_HOURS): a game's pick locks
+    // once IT is close enough to its own start, not the whole day's board at
+    // once. Ungated as of 2026-08-14 (was hourly, a deliberate cost tradeoff
+    // under the old Odds API plan) — now that the plan's monthly credit
+    // ceiling is far above actual usage, a lock lands within 15 minutes of
+    // its ideal moment instead of up to an hour, and the board's own prices
+    // refresh on the same cadence.
     //
     // All three still share one full-slate fetch per tick (fetched once,
     // handed to each batch's own injectable fetchFullSlate parameter) for
@@ -476,8 +478,12 @@ export default {
     // stampede risk the MMA schedule bug once had, for the same data. Each
     // batch is itself idempotent/self-healing (checks its own manifest/pool
     // state), so a retried or overlapping tick can't double-generate or
-    // double-lock anything.
-    if (isTopOfHour(now)) {
+    // double-lock anything — the same property that makes running this
+    // block every tick (rather than once/hour) safe: nothing here assumes
+    // "this is the first time today," except runDailyLearning and the
+    // notification/analysis-prewarm steps below, which already document
+    // their own idempotency for exactly this reason.
+    {
       const sharedSlate = fetchFullSlateEvents(env, ctx);
       const fetchFullSlate = () => sharedSlate;
       // Learn first, then pick: the daily learning review (worker/src/
@@ -489,8 +495,8 @@ export default {
       // unadjusted engine so tomorrow's learning stays unbiased. Learning
       // failures fall through to the batches (catch → null) rather than
       // costing the day's picks; runDailyLearning is idempotent per ET
-      // date, so calling it every hourly tick (not just the first one)
-      // can't double-learn — it's cheap to no-op once today's review exists.
+      // date, so calling it every tick (not just the first one) can't
+      // double-learn — it's cheap to no-op once today's review exists.
       ctx.waitUntil(
         (async () => {
           const learningResult = await runDailyLearning(env, ctx, now, {
@@ -626,12 +632,11 @@ export default {
       );
     }
 
-    // Every tick (now every 20 min, not gated to the top of the hour): refresh
-    // the closing-line snapshot for whatever's still pending and not yet
-    // underway, and grade whatever now has a completed score. This is the
-    // one block that's meant to benefit from the faster cron — a pick gets
-    // graded within 20 minutes of its game ending instead of sitting
-    // "pending" for up to an hour. Safe to run every tick for all three
+    // Every tick (15 min, not gated to the top of the hour): refresh the
+    // closing-line snapshot for whatever's still pending and not yet
+    // underway, and grade whatever now has a completed score. A pick gets
+    // graded within 15 minutes of its game ending instead of sitting
+    // "pending" for longer. Safe to run every tick for all three
     // trackers — CLV only touches games that haven't started, grading only
     // touches picks still pending — so there's no "already ran today" gate
     // needed the way the 2am batch has.
