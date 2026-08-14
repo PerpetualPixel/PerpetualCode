@@ -4599,3 +4599,69 @@ input[type="range"]:focus-visible {
 .mma-engine-ad:hover { border-color: var(--accent); color: var(--text); }
 .mma-engine-ad strong { color: var(--text); }
 .mma-engine-ad-icon { font-size: 1.25rem; }
+
+/* ---------------------------------------------------------------- */
+/* Tracking Dashboard loading state                                  */
+/* ---------------------------------------------------------------- */
+
+/* Takes the place of .learning-content while the tracked-pick histories
+   are in flight — see the markup comment in app.html for why it replaces
+   the dashboard rather than overlaying it. Fills the panel the same way
+   .learning-content does so the panel doesn't collapse to header height
+   mid-load. */
+.tracker-loading {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 1.1rem;
+  padding: 2rem 1.5rem;
+  text-align: center;
+}
+
+.tracker-loading[hidden] { display: none; }
+
+.tracker-loading-logo {
+  width: min(45vw, 150px);
+  height: auto;
+  /* Slow on purpose: a fast spinner reads as "working hard / nearly done"
+     and makes a multi-second wait feel broken when it doesn't end. At this
+     speed it reads as a steady heartbeat instead. */
+  animation: tracker-loading-spin 3.2s linear infinite;
+}
+
+.tracker-loading-title {
+  margin: 0;
+  font-size: 1.05rem;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  color: var(--text);
+}
+
+.tracker-loading-note {
+  margin: 0;
+  max-width: 34ch;
+  font-size: 0.85rem;
+  line-height: 1.5;
+  color: var(--muted);
+}
+
+@keyframes tracker-loading-spin {
+  from { transform: rotate(0deg); }
+  to { transform: rotate(360deg); }
+}
+
+/* A rotating logo is exactly the kind of sustained motion that triggers
+   vestibular symptoms, and this one runs for the whole load. Reduced-motion
+   users get a gentle opacity pulse — still obviously "working," no
+   rotation. */
+@media (prefers-reduced-motion: reduce) {
+  .tracker-loading-logo {
+    animation: tracker-loading-pulse 1.8s ease-in-out infinite;
+  }
+  @keyframes tracker-loading-pulse {
+    0%, 100% { opacity: 1; }
+    50% { opacity: 0.45; }
+  }
+}
