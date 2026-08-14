@@ -130,11 +130,19 @@ test('shrinkage: the same miss rate moves the weight less on a small sample', ()
   if (small !== null) assert.ok(small > large, `small=${small} should be milder than large=${large}`);
 });
 
-test('weights are bounded: penalty never below 0.85, boost never above 1.05', () => {
+test('weights are bounded: penalty never below 0.70, boost never above 1.05', () => {
   const worst = weightFromStats(featureStats(bucket(200, 40))); // catastrophic
-  assert.ok(worst >= 0.85, `penalty floor breached: ${worst}`);
+  assert.ok(worst >= 0.7, `penalty floor breached: ${worst}`);
   const best = weightFromStats(featureStats(bucket(200, 160, { prob: 0.55 }))); // running impossibly hot
   assert.ok(best === null || best <= 1.05, `boost cap breached: ${best}`);
+});
+
+test('a catastrophic feature can now sink well below the old 0.85 floor', () => {
+  // The widened floor exists so sustained real losses actually push a
+  // segment off the curated boards — the live case that motivated it was a
+  // 29.6%-win-rate odds band whose weight could only reach x0.96.
+  const worst = weightFromStats(featureStats(bucket(200, 40)));
+  assert.ok(worst !== null && worst < 0.85, `expected a sub-0.85 penalty, got ${worst}`);
 });
 
 test('a feature performing exactly as expected gets no weight (no-op dropped)', () => {
@@ -183,11 +191,11 @@ test('a candidate matching no weighted feature passes through unchanged', () => 
 });
 
 test('stacked penalties multiply but clamp at the combined floor', () => {
-  const profile = { weights: { 'seg:baseball_mlb|h2h': 0.85, 'odds:heavyfav': 0.85 } };
+  const profile = { weights: { 'seg:baseball_mlb|h2h': 0.72, 'odds:heavyfav': 0.72 } };
   const c = { sportKey: 'baseball_mlb', marketKey: 'h2h', american: -220, score: 100 };
-  // 0.85 × 0.85 = 0.7225 would breach the combined floor of 0.78.
-  assert.equal(combinedWeightFor(c, profile), 0.78);
-  assert.equal(applyLearningToCandidates([c], profile)[0].score, 78);
+  // 0.72 × 0.72 = 0.5184 would breach the combined floor of 0.60.
+  assert.equal(combinedWeightFor(c, profile), 0.6);
+  assert.equal(applyLearningToCandidates([c], profile)[0].score, 60);
 });
 
 test('an empty or missing profile is a pure pass-through', () => {
