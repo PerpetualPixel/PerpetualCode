@@ -12,7 +12,10 @@ ALLOWED_ORIGINS = "https://perpetualpicks.com,https://www.perpetualpicks.com,htt
 # the single biggest lever on the monthly bill: credits are spent per cache MISS,
 # not per tap, so a shared app burns them on cache turnover rather than usage.
 # 900s (15 min) costs roughly a third of 300s and barely moves the picks.
-CACHE_SECONDS = "1800"
+#
+# Paired with [triggers] crons below — see that comment before changing
+# either value alone.
+CACHE_SECONDS = "900"
 
 # Require a signed-in account for /odds. Leave "false" until the D1 database is
 # created and migrations are applied — the frontend's CONFIG.REQUIRE_AUTH must
@@ -76,26 +79,29 @@ new_sqlite_classes = ["QuotaManager"]
 binding = "POTD_KV"
 id = "15a94259af1c4d4cb4bc19076d0be2d9"
 
-# Runs every 20 minutes rather than at the exact target times, because Cron
+# Runs every 15 minutes rather than at the exact target times, because Cron
 # Triggers are UTC-only and the target times are ET wall-clock (2am/3am/4am/
 # 7am), which shift by an hour across DST — a frequent tick lets the handler
 # itself check current ET time via Intl and only do the once-daily/once-
 # weekly work in the matching hour, so the schedule stays correct across DST
 # without needing separate UTC crons maintained by hand twice a year.
 #
-# 20 minutes (not hourly) is deliberate: the CLV snapshot + grading pass
-# (tracking.js's runClvSnapshot/runGrading and their Full Slate/POTD
-# equivalents) is what actually benefits from a shorter interval — a pick
-# gets graded within 20 minutes of its game ending instead of sitting
-# "pending" for up to an hour. This roughly triples the Odds API credits that
-# heartbeat spends (each tick is a cache miss against the 900s odds cache and
-# 300s scores cache either way, hourly or every 20 min, so more ticks = more
-# real upstream calls) — the once-daily 2am batch generation and 4am prewarm
-# are unaffected, since those are gated to a single matching hour regardless
-# of tick frequency. The 20-minute tick against a 15-minute odds cache
-# meant every single cron run repaid full upstream price (~3,000-4,000
-# credits/day, confirmed live at 88% of the monthly budget spent in 6
-# days). At */30 with CACHE_SECONDS=1800 the cron hits its own cache every
-# other run — the two settings are tuned as a pair; change them together.
+# CRITICAL: the cron interval and CACHE_SECONDS below are tuned as a PAIR —
+# never change one without the other. A tick interval LONGER than the odds
+# cache TTL means every single tick is a guaranteed cache miss, repaying
+# full upstream price each time: confirmed live once already, a 20-minute
+# tick against a 900s (15-minute) cache burned ~3,000-4,000 credits/day —
+# 88% of that month's budget gone in 6 days. Keeping the tick interval EQUAL
+# to the cache TTL (as both are here, 15 min / 900s) means only roughly
+# every other tick is a real miss — a fixed, known-safe ratio, not a
+# coincidence.
+#
+# Bumped from */30 (with CACHE_SECONDS=1800) on 2026-08-14 after the Odds
+# API plan moved to 100,000 credits/month — actual spend under the old
+# 30-min/1800s pairing was ~230 credits/day (~7,000/month, 7% of the OLD
+# smaller budget), so doubling the tick rate to this pairing is still
+# expected to land around 15-20% of the NEW, much larger budget. Re-check
+# actual usage after this has run for a few days; if it's climbing higher
+# than expected, widen both back out together, never just one.
 [triggers]
-crons = ["*/30 * * * *"]
+crons = ["*/15 * * * *"]
