@@ -6,7 +6,10 @@ import {
   findTennisMatch,
   buildTennisScoreEvent,
   gradeTennisPickWithEspn,
+  isRegradableTennisVoid,
+  isNoOpTennisRegrade,
 } from '../worker/src/tennis-espn.js';
+import { UNSETTLEABLE_TENNIS_GAME_MARKET } from '../docs/learning.js';
 
 /**
  * Fixtures below mirror the exact shapes read off a live ESPN tennis
@@ -290,12 +293,28 @@ test('leaves a pick pending when neither source has the match', async () => {
   assert.equal(outcome, null);
 });
 
-test('the metered source now sees a completed event, and its answer wins', async () => {
+test('ESPN\'s free games score settles before the metered source is spent', async () => {
+  // tennis-results.js is capped at 30 calls/day. ESPN gives the same
+  // set-by-set games for free and unmetered, so reaching for the meter when
+  // ESPN already has the match is pure waste.
+  let meterCalled = false;
+  const pick = pickOf({ away: 'Lin Zhu', marketKey: 'totals', outcomeName: 'Under', point: 30.5 });
+  const withGames = [{ ...results[0], setScoreAB: '3-6, 6-1, 6-1' }];
+  const outcome = await gradeTennisPickWithEspn(pick, { completed: false, scores: null }, withGames, {}, ctx, Date.now(), {
+    secondarySource: async () => { meterCalled = true; return null; },
+  });
+  assert.equal(meterCalled, false, 'the metered budget must not be touched when ESPN has the match');
+  assert.equal(outcome.won, true, '23 games is under 30.5');
+});
+
+test('the metered source is still reached, and now sees a completed event', async () => {
   // The whole reason tennis-results.js never fired: it hard-gates on
-  // scoreEvent.completed, which the odds feed never set for tennis.
+  // scoreEvent.completed, which the odds feed never set for tennis. It is
+  // now reached only when ESPN has no games score for the match.
   let sawCompleted = null;
   const pick = pickOf({ away: 'Lin Zhu', marketKey: 'spreads', point: -3.5, outcomeName: 'Lilli Tagger' });
-  const outcome = await gradeTennisPickWithEspn(pick, { completed: false, scores: null }, results, {}, ctx, Date.now(), {
+  const noGames = [{ ...results[0], setScoreAB: null }];
+  const outcome = await gradeTennisPickWithEspn(pick, { completed: false, scores: null }, noGames, {}, ctx, Date.now(), {
     secondarySource: async (_p, scoreEvent) => {
       sawCompleted = scoreEvent?.completed;
       return { won: true, payout: 16, detail: { setScore: '3-6, 6-1, 6-1', winner: 'Lilli Tagger' } };
@@ -303,4 +322,100 @@ test('the metered source now sees a completed event, and its answer wins', async
   });
   assert.equal(sawCompleted, true);
   assert.equal(outcome.won, true);
+});
+
+/* ---------------------------------------------------------------- */
+/* Games markets — the void that shouldn't have been                 */
+/* ---------------------------------------------------------------- */
+
+/**
+ * Tennis spreads and totals are priced in GAMES (confirmed against the live
+ * catalogue: a spread ladder running -6.5 through 6.5 in half-game steps,
+ * totals of 17.5-23.5), but the only score any feed carried was sets — so
+ * gradeTennis voided every one. A single WTA day put eight such picks on the
+ * board and voided all eight. ESPN's linescores are the games count.
+ */
+const finished = [{
+  tour: 'wta',
+  a: 'elena rybakina',
+  b: 'iga swiatek',
+  displayA: 'Elena Rybakina',
+  displayB: 'Iga Swiatek',
+  setsA: 0,
+  setsB: 2,
+  aWon: false,
+  bWon: true,
+  statusName: 'STATUS_FINAL',
+  setScoreAB: '2-6, 3-6', // 17 games total
+  note: '(7) Iga Swiatek (POL) bt (2) Elena Rybakina (KAZ) 6-2 6-3',
+}];
+
+const gamesPick = (over) => ({
+  sportKey: 'tennis_wta_cincinnati_open',
+  home: 'Iga Swiatek',
+  away: 'Elena Rybakina',
+  decimal: 1.9,
+  suggested_stake: 20,
+  commenceMs: Date.parse('2026-08-13T16:00Z'),
+  ...over,
+});
+
+const noSecondary = { secondarySource: async () => null };
+
+test('a total settles off ESPN game counts instead of voiding', async () => {
+  const pick = gamesPick({ marketKey: 'totals', outcomeName: 'Under', point: 22.5 });
+  const outcome = await gradeTennisPickWithEspn(pick, null, finished, {}, ctx, Date.now(), noSecondary);
+  assert.equal(outcome.won, true, '17 games is under 22.5');
+  assert.equal(outcome.payout, 18);
+});
+
+test('a spread settles off the game margin', async () => {
+  const pick = gamesPick({ marketKey: 'spreads', outcomeName: 'Iga Swiatek', point: -3.5 });
+  const outcome = await gradeTennisPickWithEspn(pick, null, finished, {}, ctx, Date.now(), noSecondary);
+  assert.equal(outcome.won, true, 'Swiatek won 12 games to 5 — covers -3.5');
+});
+
+test('a total landing exactly on the number is a push, not a win', async () => {
+  // The catalogue carries whole-number rungs (-4, -3, 1, 3), so this is
+  // reachable, not theoretical.
+  const pick = gamesPick({ marketKey: 'totals', outcomeName: 'Over', point: 17 });
+  const outcome = await gradeTennisPickWithEspn(pick, null, finished, {}, ctx, Date.now(), noSecondary);
+  assert.equal(outcome.void, true);
+  assert.match(outcome.reason, /push/);
+});
+
+test('a retirement still voids a games market — no fixed final total exists', async () => {
+  const retired = [{ ...finished[0], statusName: 'STATUS_RETIRED', setScoreAB: '6-4, 2-3', setsA: 1, setsB: 0, aWon: true, bWon: false }];
+  const pick = gamesPick({ marketKey: 'totals', outcomeName: 'Under', point: 22.5 });
+  const outcome = await gradeTennisPickWithEspn(pick, null, retired, {}, ctx, Date.now(), noSecondary);
+  assert.equal(outcome.void, true);
+});
+
+test('orientation follows the pick\'s own names, not ESPN\'s spelling', async () => {
+  // matchHomeIndex compares names by strict equality, so handing it ESPN's
+  // spelling would silently fail to orient exactly the reversed-name case
+  // this module's fuzzy matcher exists for.
+  const reversed = [{ ...finished[0], a: 'swiatek iga', displayA: 'Swiatek Iga', b: 'elena rybakina', displayB: 'Elena Rybakina', setScoreAB: '6-2, 6-3' }];
+  const pick = gamesPick({ marketKey: 'spreads', outcomeName: 'Iga Swiatek', point: -3.5 });
+  const outcome = await gradeTennisPickWithEspn(pick, null, reversed, {}, ctx, Date.now(), noSecondary);
+  assert.equal(outcome.won, true);
+});
+
+test('only a void from the games/sets rule is reopened — never a retraction', async () => {
+  const settled = { sportKey: 'tennis_wta_x', status: 'void', result: { voidReason: UNSETTLEABLE_TENNIS_GAME_MARKET } };
+  assert.equal(isRegradableTennisVoid(settled), true);
+
+  assert.equal(isRegradableTennisVoid({ ...settled, retracted: { at: 1, reason: 'pulled' } }), false,
+    'a manual retraction stays pulled — that is its entire point');
+  assert.equal(isRegradableTennisVoid({ ...settled, result: { voidReason: 'walkover — no completed set' } }), false);
+  assert.equal(isRegradableTennisVoid({ ...settled, sportKey: 'baseball_mlb' }), false);
+  assert.equal(isRegradableTennisVoid({ ...settled, status: 'won' }), false);
+});
+
+test('a reopened void that still cannot settle is left alone, not rewritten', () => {
+  const pick = { sportKey: 'tennis_wta_x', status: 'void', result: { voidReason: UNSETTLEABLE_TENNIS_GAME_MARKET } };
+  assert.equal(isNoOpTennisRegrade(pick, { void: true, reason: UNSETTLEABLE_TENNIS_GAME_MARKET }), true);
+  // A different void reason IS a change worth recording.
+  assert.equal(isNoOpTennisRegrade(pick, { void: true, reason: 'push — total games landed exactly on the number' }), false);
+  assert.equal(isNoOpTennisRegrade(pick, { won: true, payout: 18 }), false);
 });

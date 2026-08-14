@@ -27,7 +27,7 @@ import { fetchSport, fetchScores } from './odds.js';
 import { pickRecordFrom, fetchFullSlateEvents, isPickWindowOpen } from './tracking.js';
 import { fetchMmaResults, gradeMmaPickWithFallback } from './ufc-events.js';
 import { isSettleableTennisMarket, hasSecondarySettlementSource } from '../../docs/tennis-tiers.js';
-import { fetchTennisResults, gradeTennisPickWithEspn, findTennisMatch } from './tennis-espn.js';
+import { fetchTennisResults, gradeTennisPickWithEspn, findTennisMatch, isRegradableTennisVoid, isNoOpTennisRegrade } from './tennis-espn.js';
 import { getAllWnbaPropsTracked } from './wnba-props.js';
 import { getAllMlbPropsTracked } from './mlb-props.js';
 import { getAllNflPropsTracked } from './nfl-props.js';
@@ -558,7 +558,13 @@ export async function runFullSlateGrading(
   )];
   const loaded = await Promise.all(dateKeys.map((dk) => loadFullSlateTracked(env, dk)));
   const picks = loaded.flatMap((d) => d.picks);
-  const pending = picks.filter((p) => p.status === 'pending');
+  // Tennis spreads/totals voided purely for want of a games-level score are
+  // reconsidered alongside genuinely pending picks: ESPN supplies that score
+  // now (see worker/src/tennis-espn.js), so a board settled under the old
+  // rule repairs itself on the next pass instead of needing a manual sweep
+  // per affected day. Idempotent — once one settles it is no longer a void,
+  // and one that still can't settle is skipped below rather than rewritten.
+  const pending = picks.filter((p) => p.status === 'pending' || isRegradableTennisVoid(p));
   if (!pending.length) return { graded: 0, remaining: 0 };
 
   const sportsNeeded = [...new Set(pending.map((p) => p.sportKey))];
@@ -634,6 +640,10 @@ export async function runFullSlateGrading(
       outcome = gradePick(pick, scoreEvent, now);
     }
     if (!outcome) continue;
+    // A reopened void that still can't settle (a retirement has no fixed
+    // final games count from any source) lands right back on the reason it
+    // already carries — nothing changed, so don't rewrite it or count it.
+    if (isNoOpTennisRegrade(pick, outcome)) continue;
     pick.status = outcome.void ? 'void' : outcome.won ? 'won' : 'lost';
     pick.result = {
       payout: outcome.payout,

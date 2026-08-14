@@ -61,9 +61,19 @@ function voidResult(reason) {
 // idempotent and re-run every 20 minutes.
 const WALKOVER_GRACE_HOURS = 6;
 
+/**
+ * The void reason a tennis spread/total gets when only a SETS score is
+ * available. Exported because it's load-bearing beyond this file:
+ * worker/src/tennis-espn.js matches on it to reopen picks voided for this
+ * reason once a games-level source can actually settle them, and a silent
+ * drift between the two strings would turn that reopen into a no-op that
+ * still reads as working.
+ */
+export const UNSETTLEABLE_TENNIS_GAME_MARKET = 'tennis spreads/totals are priced in games but scored in sets — not settleable';
+
 function gradeTennis(pick, homeSets, awaySets, now = Date.now()) {
   if (pick.marketKey !== 'h2h') {
-    return voidResult('tennis spreads/totals are priced in games but scored in sets — not settleable');
+    return voidResult(UNSETTLEABLE_TENNIS_GAME_MARKET);
   }
 
   const setsPlayed = homeSets + awaySets;

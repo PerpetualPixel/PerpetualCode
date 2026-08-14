@@ -47,7 +47,7 @@ import {
   isMarketAllowedForTier,
   tierLiquidityBlock,
 } from '../../docs/tennis-tiers.js';
-import { fetchTennisResults, gradeTennisPickWithEspn } from './tennis-espn.js';
+import { fetchTennisResults, gradeTennisPickWithEspn, isRegradableTennisVoid, isNoOpTennisRegrade } from './tennis-espn.js';
 import { retractedRecord } from './retraction.js';
 
 export const TOP5_COUNT = 5;
@@ -876,7 +876,9 @@ export async function runGrading(
   )];
   const loaded = await Promise.all(dateKeys.map((dk) => loadTrackedPicks(env, dk)));
   const picks = loaded.flatMap((d) => d.picks);
-  const pending = picks.filter((p) => p.status === 'pending');
+  // Same reopen as full-slate-tracking.js's own grading pass — see its
+  // comment for why a void can come back into scope.
+  const pending = picks.filter((p) => p.status === 'pending' || isRegradableTennisVoid(p));
   if (!pending.length) return { graded: 0, remaining: 0 };
 
   const sportsNeeded = [...new Set(pending.map((p) => p.sportKey))];
@@ -927,6 +929,9 @@ export async function runGrading(
       outcome = gradePick(pick, scoreEvent, now);
     }
     if (!outcome) continue;
+    // A reopened void that still can't settle lands right back on the reason
+    // it already carries — nothing changed, so leave the record alone.
+    if (isNoOpTennisRegrade(pick, outcome)) continue;
     // A void (push, walkover, or a market this feed can't settle — see
     // gradePick) is recorded as settled with the stake returned, so it stops
     // being pending instead of sitting unresolved forever, and is excluded
