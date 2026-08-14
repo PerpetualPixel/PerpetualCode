@@ -428,3 +428,48 @@ test('diagnosePendingFullSlate reports a clean board as nothing pending', async 
   assert.equal(report.pending, 0);
   assert.deepEqual(report.bySport, []);
 });
+
+/**
+ * The diagnostic runs immediately after grading, and the grader's own writes
+ * are waitUntil'd into an eventually-consistent KV — so a pick that just
+ * settled can still read as `pending` here. Reporting it as stuck is the one
+ * thing this diagnostic exists to not do. Confirmed live on the first real
+ * run: a tennis match ESPN had as STATUS_FINAL with decided sets, which
+ * could not have failed to settle, came back in this report as pending.
+ */
+test('a pick the grading pass just settled is not reported as stuck', async () => {
+  const { env } = makeKvStore();
+  await runFullSlateBatch(env, ctx, NOW, { fetchFullSlate: async () => [makeEvent('e1'), makeEvent('e2')] });
+  const picks = await getFullSlateTracked(env, { dateKey: '2026-08-05' });
+  assert.equal(picks.length, 2);
+
+  const report = await diagnosePendingFullSlate(env, ctx, NOW, {
+    fetchScoresFn: async () => ({ events: [] }),
+    justSettledPickIds: [picks[0].pickId],
+  });
+
+  assert.equal(report.pending, 1, 'only the genuinely stuck pick is reported');
+  assert.equal(report.bySport[0].samples[0].eventId, picks[1].eventId);
+});
+
+test('grading reports which picks it settled, not just how many', async () => {
+  const { env } = makeKvStore();
+  await runFullSlateBatch(env, ctx, NOW, { fetchFullSlate: async () => [makeEvent('e1')] });
+  const [pick] = await getFullSlateTracked(env, { dateKey: '2026-08-05' });
+
+  const result = await runFullSlateGrading(env, ctx, NOW, {
+    fetchScoresFn: async () => ({
+      events: [{
+        id: pick.eventId,
+        completed: true,
+        scores: [{ name: pick.home, score: '5' }, { name: pick.away, score: '2' }],
+      }],
+    }),
+    fetchMmaResultsFn: async () => [],
+  });
+
+  assert.equal(result.graded, 1);
+  // The ids themselves, so /admin/grade-now's diagnostics can exclude them
+  // rather than re-reading a KV that hasn't caught up yet.
+  assert.deepEqual(result.settledPickIds, [pick.pickId]);
+});
