@@ -55,6 +55,16 @@ silently break a selector. Every extractor fails toward a shorter card, never
 a wrong one; a brand-new Contender Series prospect with a thin or absent
 Sherdog page is a true "nothing on file" case, not a bug.
 
+Which *card* a fight belongs to is a separate problem with a separate source:
+ESPN's per-promotion MMA scoreboards on `site.web.api.espn.com` (reachable,
+unlike the hosts above) carry the real event name, and
+[`worker/src/ufc-events.js`](worker/src/ufc-events.js) matches each priced
+fight against them. The promotions it queries are discovered from ESPN's own
+league directories rather than hardcoded — a fixed UFC+PFL pair left every
+other promotion's card displaying as a bare `Card - MM/DD`, and a longer
+hand-kept list would fail the same silent way the next time ESPN's roster of
+leagues changed.
+
 None of these sources cost odds credits.
 
 **The rule in [`docs/insights.js`](docs/insights.js): every sentence must trace
