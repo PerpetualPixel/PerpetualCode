@@ -17,7 +17,7 @@
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Syne:wght@600;700;800&family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
-<link rel="stylesheet" href="styles.css?v=1.121">
+<link rel="stylesheet" href="styles.css?v=1.122">
 </head>
 <body>
 
@@ -635,7 +635,7 @@
         results — both actual wins vs. what its own probabilities predicted,
         and closing-line value — for every sport + bet-type segment and odds
         band. A segment that's been misfiring gets a bounded score penalty
-        (down to x0.85) so it needs a visibly better number to make the
+        (down to x0.70) so it needs a visibly better number to make the
         board; one that's been sharp gets a small nudge (capped at x1.05).
         Small samples barely move the needle by design, adjustments apply
         only to the <em>next</em> day's selection, and the Full Slate record
@@ -741,6 +741,6 @@
   </div>
 </aside>
 
-<script type="module" src="app.js?v=1.121"></script>
+<script type="module" src="app.js?v=1.122"></script>
 </body>
 </html>

@@ -41,9 +41,16 @@
  *   - Every pick records both its raw and adjusted score plus the profile
  *     date that adjusted it, so "did the learning layer actually help" is
  *     itself measurable later.
- *   - Bounds are tight and asymmetric: a feature can be penalized down to
- *     x0.85 but boosted only to x1.05. Chasing winners overfits much faster
- *     than benching losers; the asymmetry encodes that.
+ *   - Bounds are asymmetric: a feature can be penalized down to x0.70 but
+ *     boosted only to x1.05. Chasing winners overfits much faster than
+ *     benching losers; the asymmetry encodes that. The penalty floor was
+ *     originally x0.85, sized when the graded record was small — live
+ *     experience showed that to be toothless against a structural leak:
+ *     the +120-and-longer band sat at 16/54 (29.6%) over a 30-day window
+ *     while its weight could only reach x0.96, a 4% haircut on the exact
+ *     segment losing the most. The wider floor lets sustained, real losses
+ *     actually push a segment off the curated boards; the boost cap stays
+ *     tight because that overfit risk hasn't changed.
  *   - Below MIN_FEATURE_N graded picks a feature gets no weight at all, and
  *     shrinkage means even at the threshold the movement is fractional.
  *     "No adjustment" is always the default over an adjustment on noise.
@@ -59,9 +66,9 @@ const LEARN_TTL = 86400 * 365;
 export const LEARN_WINDOW_DAYS = 30;
 export const MIN_FEATURE_N = 15; // below this, a feature emits no weight at all
 const SHRINK_K = 30; // shrink = n/(n+K): n=15 → 33% of target, n=90 → 75%
-const WEIGHT_MIN = 0.85; // hardest single-feature penalty
+const WEIGHT_MIN = 0.7; // hardest single-feature penalty — see file header for why this widened from 0.85
 const WEIGHT_MAX = 1.05; // gentlest cap on boosting — see file header on asymmetry
-const COMBINED_MIN = 0.78; // floor when multiple penalized features stack on one candidate
+const COMBINED_MIN = 0.6; // floor when multiple penalized features stack on one candidate
 const COMBINED_MAX = 1.08;
 // How much one unit of evidence moves the pre-shrinkage target: z is worth
 // 6%/point (capped), CLV probability-points 2%/point (capped) — results

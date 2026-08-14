@@ -392,6 +392,33 @@ export function buildCandidates(events, { now = Date.now() } = {}) {
 export const QUALITATIVE = { MAX_SWING: 8 };
 
 /**
+ * Score penalty for long-shot candidates — sized from this app's own graded
+ * record, not theory. The 30-day window that motivated it: +120-and-longer
+ * underdogs were 57% of all graded picks (54 of 95) and won 16/54 (29.6%)
+ * with negative closing-line value, while near-pickem prices (-119 to +119)
+ * went 17/27 with +0.97pts CLV. The cause is structural: the edge component
+ * hunts the one book hanging an outlier price against consensus, and in a
+ * two-outcome market that outlier almost always lives on the LESS likely
+ * side — so a pure-price board systematically over-fills with long shots,
+ * each individually "+EV," collectively a sub-third win rate. The tennis
+ * form gate (docs/qualitative.js) closed this hole for tennis by demanding
+ * real evidence behind an upset call; this is the sport-agnostic
+ * counterpart for everywhere no such evidence source exists.
+ *
+ * Shape: zero penalty at or above START win probability, growing linearly
+ * to MAX_DROP at FULL. Deliberately one-sided — a penalty on unlikely
+ * winners, never a bonus for heavy favorites (the record shows near-pickem
+ * is the sharp band, not heavy chalk; rewarding chalk would just replace
+ * one structural tilt with another). START sits below the ~0.47-0.53 zone
+ * where spreads/totals live by construction, so those markets are
+ * untouched; a +120 moneyline (~0.44) grazes it, a +150 (~0.39) loses
+ * about 5 points, a +200 (~0.31) nearly the full 12 — enough that a long
+ * shot has to carry a genuinely large, clean edge to clear MIN_SCORE at
+ * all, not merely an outlier price.
+ */
+export const UNDERDOG_PROB_PENALTY = { START: 0.45, FULL: 0.30, MAX_DROP: 12 };
+
+/**
  * Composite 0–100 grade. Edge dominates; everything else is confidence that
  * the edge is real rather than an artifact of a thin or stale market.
  *
@@ -433,7 +460,21 @@ export function scoreCandidate(c, { now = Date.now(), qualitative = 0 } = {}) {
       0.14 * parts.shopping +
       0.08 * parts.freshness);
 
-  const score = clamp(priceScore + QUALITATIVE.MAX_SWING * parts.qualitative, 0, 100);
+  // Long-shot penalty (see UNDERDOG_PROB_PENALTY above) — subtracted from
+  // the composite rather than folded into the weighted average, same
+  // reasoning as the qualitative swing: a candidate with no consensusProb
+  // (never the case for analyze()'s own output, but this function is also
+  // called on re-scores) contributes exactly 0, not a phantom mid-value.
+  const probPenalty = Number.isFinite(c.consensusProb)
+    ? UNDERDOG_PROB_PENALTY.MAX_DROP *
+      norm(
+        UNDERDOG_PROB_PENALTY.START - c.consensusProb,
+        0,
+        UNDERDOG_PROB_PENALTY.START - UNDERDOG_PROB_PENALTY.FULL,
+      )
+    : 0;
+
+  const score = clamp(priceScore - probPenalty + QUALITATIVE.MAX_SWING * parts.qualitative, 0, 100);
 
   return { score, parts };
 }
@@ -762,8 +803,21 @@ export function topPicks(
     // sort nudge, not a filter — it can move a close call to the front of the
     // queue, never invent or hide a grade.
     preferredSportKeys = null,
+    // Board-composition cap on +120-and-longer underdogs (the same >= +120
+    // boundary the daily learning's own odds band calls 'dog'). Evidence
+    // behind the default: with no cap, that band was 57% of all graded
+    // picks and won 29.6% of them (see UNDERDOG_PROB_PENALTY's numbers) —
+    // the score penalty fixes the ranking, this fixes the worst case where
+    // a slate's top scores STILL all happen to be long shots. Two of a
+    // five-pick board keeps genuinely strong dogs pickable without letting
+    // them be the board's identity again. The guaranteeCount fallback below
+    // deliberately does NOT enforce it: those slots are already visibly
+    // flagged as outside the sharp standard, and a thin day shouldn't
+    // produce a short board just because what's left is dog-priced.
+    maxDogs = 2,
   } = {},
 ) {
+  const DOG_AMERICAN = 120;
   const inRange = (a) => a >= oddsMin && a <= oddsMax;
   // A hard floor, unlike the odds band and score — a candidate that's
   // genuinely not worth the stake should never surface, not even flagged as
@@ -789,6 +843,7 @@ export function topPicks(
 
   const picks = [];
   const usedLegs = [];
+  let dogCount = 0;
   for (const c of sorted) {
     if (picks.length >= count) break;
     // Game-level conflict resolution: reject if same game already on board
@@ -796,6 +851,9 @@ export function topPicks(
     if (usedLegs.some((leg) => leg.eventId === c.eventId)) continue;
     // Market-level conflict: reject if exact same market already on board
     if (usedLegs.some((leg) => contradicts(leg, c))) continue;
+    // Board-composition cap — see maxDogs above.
+    if (c.american >= DOG_AMERICAN && dogCount >= maxDogs) continue;
+    if (c.american >= DOG_AMERICAN) dogCount++;
     usedLegs.push(c);
     picks.push({
       type: 'single',

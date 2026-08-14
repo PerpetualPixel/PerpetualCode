@@ -10,6 +10,7 @@ import {
   buildCandidates,
   scoreCandidate,
   QUALITATIVE,
+  UNDERDOG_PROB_PENALTY,
   analyze,
   generateSlate,
   topPicks,
@@ -881,4 +882,71 @@ test('candidates carry the league identity the filter groups on', () => {
   const mlbOnly = candidates.filter((c) => c.sportKey === 'baseball_mlb');
   assert.ok(mlbOnly.length > 0);
   assert.ok(mlbOnly.every((c) => c.sportTitle === 'MLB'));
+});
+
+/* ---------------------------------------------------------------- */
+/* Long-shot probability penalty + board dog cap                      */
+/* ---------------------------------------------------------------- */
+
+test('scoreCandidate penalizes low-probability sides and leaves near-50/50 markets alone', () => {
+  const base = {
+    ev: 0.03, bookCount: 8, disagreement: 0.006, shopGain: 0.02,
+    commenceMs: NOW + 6 * HOUR, updatedMs: NOW - 0.25 * HOUR,
+  };
+  const coinflip = scoreCandidate({ ...base, consensusProb: 0.5 }, { now: NOW }).score;
+  const spreadish = scoreCandidate({ ...base, consensusProb: 0.48 }, { now: NOW }).score;
+  const modestDog = scoreCandidate({ ...base, consensusProb: 0.44 }, { now: NOW }).score;
+  const longShot = scoreCandidate({ ...base, consensusProb: 0.31 }, { now: NOW }).score;
+
+  assert.equal(coinflip, spreadish, 'the ~0.47-0.53 zone spreads/totals live in must be untouched');
+  assert.ok(coinflip - modestDog < 1.5, 'a +120-ish dog is grazed, not hammered');
+  assert.ok(modestDog > longShot, 'the penalty must deepen as win probability falls');
+  const expectedDrop =
+    UNDERDOG_PROB_PENALTY.MAX_DROP *
+    ((UNDERDOG_PROB_PENALTY.START - 0.31) / (UNDERDOG_PROB_PENALTY.START - UNDERDOG_PROB_PENALTY.FULL));
+  assert.ok(
+    Math.abs(coinflip - longShot - expectedDrop) < 1e-9,
+    `a 31% shot should lose ~${expectedDrop.toFixed(1)} points, lost ${(coinflip - longShot).toFixed(1)}`,
+  );
+});
+
+test('the penalty saturates at FULL, and a candidate with no consensusProb is untouched', () => {
+  const base = {
+    ev: 0.03, bookCount: 8, disagreement: 0.006, shopGain: 0.02,
+    commenceMs: NOW + 6 * HOUR, updatedMs: NOW - 0.25 * HOUR,
+  };
+  const atFull = scoreCandidate({ ...base, consensusProb: UNDERDOG_PROB_PENALTY.FULL }, { now: NOW }).score;
+  const beyond = scoreCandidate({ ...base, consensusProb: 0.2 }, { now: NOW }).score;
+  assert.equal(atFull, beyond, 'penalty must cap at MAX_DROP, not keep growing');
+
+  // No consensusProb (a synthetic/re-scored candidate) contributes exactly 0
+  // penalty — same "no data is 0, never a phantom value" rule the
+  // qualitative swing follows.
+  const missing = scoreCandidate(base, { now: NOW }).score;
+  const at50 = scoreCandidate({ ...base, consensusProb: 0.5 }, { now: NOW }).score;
+  assert.equal(missing, at50);
+});
+
+test('topPicks caps +120-and-longer dogs at maxDogs, favorites fill the rest', () => {
+  // Four games whose OUTLIER side is the home underdog (+150 base, book 0
+  // hangs +185) and three whose outlier side is a favorite.
+  const events = [
+    ...Array.from({ length: 4 }, (_, i) => makeEvent(`dog${i}`, 150, -180, SHARP)),
+    ...Array.from({ length: 3 }, (_, i) => makeEvent(`fav${i}`, -140, 120, SHARP)),
+  ];
+  const candidates = analyze(events, { now: NOW });
+
+  const board = topPicks(candidates, { oddsMin: -1000, oddsMax: 500, minScore: 0, count: 5 });
+  const dogs = board.picks.filter((p) => p.american >= 120);
+  assert.ok(dogs.length <= 2, `default cap is 2, board carried ${dogs.length} dogs`);
+  assert.equal(board.picks.length, 5, 'the cap must not shorten the board while favorites remain');
+
+  const none = topPicks(candidates, { oddsMin: -1000, oddsMax: 500, minScore: 0, count: 5, maxDogs: 0 });
+  assert.ok(none.picks.every((p) => p.american < 120), 'maxDogs: 0 must exclude every dog');
+
+  const uncapped = topPicks(candidates, { oddsMin: -1000, oddsMax: 500, minScore: 0, count: 7, maxDogs: Infinity });
+  assert.ok(
+    uncapped.picks.filter((p) => p.american >= 120).length >= 4,
+    'maxDogs: Infinity must restore the uncapped behavior',
+  );
 });

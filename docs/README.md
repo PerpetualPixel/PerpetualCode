@@ -243,7 +243,7 @@ before any picks are chosen, the review digests the trailing 30 days of
 graded results — actual wins vs. what each pick's own no-vig probability
 predicted (a z-test), plus closing-line value, the fastest honest tell that
 a perceived edge is illusory — for every sport + bet-type segment and odds
-band. Each feature gets a bounded reliability weight (x0.85 to x1.05, shrunk
+band. Each feature gets a bounded reliability weight (x0.70 to x1.05, shrunk
 toward 1.0 on small samples) that multiplies into candidate scores at that
 morning's Pixel's Picks and Play of the Day selection: a misfiring segment
 needs a visibly better number to make the board, a sharp one gets a small
