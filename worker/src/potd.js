@@ -635,9 +635,10 @@ export async function runPotdGrading(env, ctx, now = Date.now(), {
   fetchScoresFn = (s) => fetchScores(s, env, ctx),
   fetchMmaResultsFn = () => fetchMmaResults(ctx, now),
   fetchTennisResultsFn = () => fetchTennisResults(ctx, now),
+  lookbackDays = GRADING_LOOKBACK_DAYS,
 } = {}) {
   const dateKeys = [...new Set(
-    Array.from({ length: GRADING_LOOKBACK_DAYS }, (_, i) => etDatePlusDays(now, -i)),
+    Array.from({ length: lookbackDays }, (_, i) => etDatePlusDays(now, -i)),
   )];
 
   let graded = false;
