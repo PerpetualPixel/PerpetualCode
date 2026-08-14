@@ -418,6 +418,90 @@ export async function runFullSlateClvSnapshot(
 const GRADING_LOOKBACK_DAYS = 2;
 
 /**
+ * Why every still-pending Full Slate pick hasn't graded yet.
+ *
+ * Grading fails SILENTLY by construction: gradePick() returns null for
+ * anything it can't settle and the pick simply stays pending, and a failed
+ * scores fetch surfaces as `events ?? []` — an empty list indistinguishable
+ * from "nothing has finished yet." That's the right runtime behavior (never
+ * guess a result) but it leaves no way to answer "why is a whole day's board
+ * still pending," which is exactly the question a stuck board raises. This
+ * reports the four things that can independently break settlement, per sport:
+ *
+ *   - the scores fetch itself errored (quota exhausted, bad key, dead key)
+ *   - the feed returned events, but none whose id matches the tracked pick
+ *     (grading joins on event id; a feed that ids the same match differently
+ *     from the odds feed can never settle it)
+ *   - the event matched but isn't `completed` yet
+ *   - it's completed, but `scores[].name` doesn't match the stored
+ *     home/away, so gradePick can't read a number for either side
+ *
+ * Read-only — fetches nothing but the same 5-minute-cached scores grading
+ * itself uses, and writes nothing.
+ */
+export async function diagnosePendingFullSlate(
+  env,
+  ctx,
+  now = Date.now(),
+  { fetchScoresFn = (s) => fetchScores(s, env, ctx) } = {},
+) {
+  const dateKeys = [...new Set(
+    Array.from({ length: GRADING_LOOKBACK_DAYS }, (_, i) => etDate(now - i * 86400000)),
+  )];
+  const loaded = await Promise.all(dateKeys.map((dk) => loadFullSlateTracked(env, dk)));
+  const pending = loaded.flatMap((d) => d.picks).filter((p) => p.status === 'pending');
+  if (!pending.length) return { window: dateKeys, pending: 0, bySport: [] };
+
+  const sportsNeeded = [...new Set(pending.map((p) => p.sportKey))];
+  const fetched = await Promise.all(sportsNeeded.map((s) => fetchScoresFn(s)));
+
+  const bySport = sportsNeeded.map((sportKey, i) => {
+    const result = fetched[i] ?? {};
+    const events = result.events ?? [];
+    const mine = pending.filter((p) => p.sportKey === sportKey);
+
+    let foundById = 0;
+    let completed = 0;
+    let namesUsable = 0;
+    const samples = [];
+
+    for (const pick of mine) {
+      const event = events.find((e) => e.id === pick.eventId);
+      if (event) foundById++;
+      const isDone = Boolean(event?.completed);
+      if (isDone) completed++;
+      const feedNames = Array.isArray(event?.scores) ? event.scores.map((s) => s.name) : [];
+      const usable = feedNames.includes(pick.home) && feedNames.includes(pick.away);
+      if (usable) namesUsable++;
+      // A few concrete rows beat any summary when the failure turns out to
+      // be a name/id mismatch — the exact strings are the whole diagnosis.
+      if (samples.length < 3) {
+        samples.push({
+          eventId: pick.eventId,
+          pickNames: [pick.away, pick.home],
+          foundById: Boolean(event),
+          completed: isDone,
+          feedNames,
+        });
+      }
+    }
+
+    return {
+      sportKey,
+      pending: mine.length,
+      scoresReturned: events.length,
+      scoresError: result.error ?? null,
+      foundById,
+      completed,
+      namesUsable,
+      samples,
+    };
+  });
+
+  return { window: dateKeys, pending: pending.length, bySport };
+}
+
+/**
  * Same continuous, idempotent grading as tracking.js's own runGrading, keyed
  * under slate: instead of track: — including the same ESPN fallback for MMA
  * picks (see worker/src/ufc-events.js's gradeMmaPickWithFallback), since

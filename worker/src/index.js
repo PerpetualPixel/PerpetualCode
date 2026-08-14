@@ -93,6 +93,7 @@ import {
   migrateFullSlatePickDates,
   runFullSlateDateResync,
   retractFullSlatePicks,
+  diagnosePendingFullSlate,
 } from './full-slate-tracking.js';
 import { isWtaPick } from './retraction.js';
 import {
@@ -755,6 +756,7 @@ export default {
       '/algo-health/reset',
       '/admin/onboarding-report',
       '/admin/retract-wta',
+      '/admin/grade-now',
     ]);
     if (request.method === 'POST' && (AUTH_LIMITED_PATHS.has(pathname) || pathname === '/api/report-bug' || OWNER_LIMITED_PATHS.has(pathname))) {
       const ip = request.headers.get('CF-Connecting-IP') ?? 'unknown';
@@ -1388,6 +1390,49 @@ export default {
         if (!latest) return json({ error: 'No learning review has run yet' }, { status: 404, headers: cors });
         const result = await sendLearningBriefEmail(env, latest, Date.now());
         return json({ ...result, dateKey: latest.dateKey, changeCount: latest.changes?.length ?? 0 }, { headers: cors });
+      } catch (error) {
+        return json({ error: String(error).slice(0, 200) }, { status: 500, headers: cors });
+      }
+    }
+
+    /**
+     * Forces an immediate grading pass across all three trackers, then
+     * reports why anything still hasn't settled.
+     *
+     * Grading otherwise only ever runs from the cron, so a stuck board has
+     * no manual recovery and no visibility: gradePick() returns null for
+     * anything it can't settle and the pick just stays pending, and a failed
+     * scores fetch (quota exhausted, rotated key) degrades to an empty event
+     * list that looks identical to "nothing has finished yet." Both are the
+     * right runtime behavior — never guess a result — but together they mean
+     * a whole day can sit pending with nothing to point at. Confirmed live:
+     * an exhausted Odds API quota left a full WTA board unsettled with no
+     * signal anywhere.
+     *
+     * Safe to call repeatedly: every grader is already idempotent (each only
+     * touches picks still pending) and the scores it reads are 5-minute
+     * cached, so a burst of calls costs at most one upstream fetch per sport.
+     * The `diagnostics` block is read-only and reports per sport whether the
+     * fetch errored, whether the feed carried the tracked event id at all,
+     * whether it's completed, and whether its score names line up with the
+     * stored home/away — the four independent ways settlement silently
+     * fails.
+     */
+    if (pathname === '/admin/grade-now' && request.method === 'POST') {
+      const auth = authorizeSettings(request, env);
+      if (!auth.ok) return json({ error: auth.error }, { status: auth.status, headers: cors });
+      try {
+        const now = Date.now();
+        const [top5, fullSlate, potd] = await Promise.all([
+          runGrading(env, ctx, now).catch((e) => ({ error: String(e).slice(0, 200) })),
+          runFullSlateGrading(env, ctx, now).catch((e) => ({ error: String(e).slice(0, 200) })),
+          runPotdGrading(env, ctx, now).catch((e) => ({ error: String(e).slice(0, 200) })),
+        ]);
+        // Diagnosed AFTER the grading pass, so it explains what's left
+        // rather than what was already about to settle on its own.
+        const diagnostics = await diagnosePendingFullSlate(env, ctx, now)
+          .catch((e) => ({ error: String(e).slice(0, 200) }));
+        return json({ graded: { top5, fullSlate, potd }, diagnostics }, { headers: cors });
       } catch (error) {
         return json({ error: String(error).slice(0, 200) }, { status: 500, headers: cors });
       }

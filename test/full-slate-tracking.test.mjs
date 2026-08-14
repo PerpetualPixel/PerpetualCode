@@ -7,6 +7,7 @@ import {
   getFullSlateTracked,
   getAllFullSlateTracked,
   resetFullSlateTracking,
+  diagnosePendingFullSlate,
 } from '../worker/src/full-slate-tracking.js';
 import { seedTennisArchiveCacheForTests } from '../worker/src/tennis-archive.js';
 
@@ -371,4 +372,59 @@ test('getAllFullSlateTracked spans multiple days, resetFullSlateTracking clears 
 
   const afterReset = await getAllFullSlateTracked(env, { now: NOW + 86400000, days: 5 });
   assert.equal(afterReset.length, 0);
+});
+
+/* ---------------------------------------------------------------- */
+/* diagnosePendingFullSlate                                          */
+/* ---------------------------------------------------------------- */
+
+test('diagnosePendingFullSlate surfaces a scores-fetch error instead of an empty-looking board', async () => {
+  const { env } = makeKvStore();
+  await runFullSlateBatch(env, ctx, NOW, { fetchFullSlate: async () => [makeEvent('e1')] });
+
+  // Exactly what fetchScores returns on an exhausted quota / bad key: an
+  // error object and NO events array — which grading silently reads as [].
+  const report = await diagnosePendingFullSlate(env, ctx, NOW, {
+    fetchScoresFn: async () => ({ error: { status: 401, detail: 'quota exhausted' } }),
+  });
+
+  assert.equal(report.pending, 1);
+  const sport = report.bySport[0];
+  assert.equal(sport.scoresError.status, 401, 'the fetch failure must be reported, not swallowed');
+  assert.equal(sport.scoresReturned, 0);
+  assert.equal(sport.foundById, 0);
+});
+
+test('diagnosePendingFullSlate distinguishes a name mismatch from a missing event', async () => {
+  const { env } = makeKvStore();
+  await runFullSlateBatch(env, ctx, NOW, { fetchFullSlate: async () => [makeEvent('e1')] });
+  const [pick] = await getFullSlateTracked(env, { dateKey: '2026-08-05' });
+
+  // The event IS there and IS completed — but the feed spells the players
+  // differently, so gradePick can't read a score for either side. Without
+  // this distinction it looks identical to "no result yet."
+  const report = await diagnosePendingFullSlate(env, ctx, NOW, {
+    fetchScoresFn: async () => ({
+      events: [{
+        id: pick.eventId,
+        completed: true,
+        scores: [{ name: 'Someone Else', score: '2' }, { name: 'Another Name', score: '0' }],
+      }],
+    }),
+  });
+
+  const sport = report.bySport[0];
+  assert.equal(sport.foundById, 1, 'the event id matched');
+  assert.equal(sport.completed, 1, 'and it is finished');
+  assert.equal(sport.namesUsable, 0, 'but the names do not line up — the actual blocker');
+  assert.deepEqual(sport.samples[0].feedNames, ['Someone Else', 'Another Name']);
+});
+
+test('diagnosePendingFullSlate reports a clean board as nothing pending', async () => {
+  const { env } = makeKvStore();
+  const report = await diagnosePendingFullSlate(env, ctx, NOW, {
+    fetchScoresFn: async () => ({ events: [] }),
+  });
+  assert.equal(report.pending, 0);
+  assert.deepEqual(report.bySport, []);
 });
