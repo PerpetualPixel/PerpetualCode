@@ -17,7 +17,7 @@
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Syne:wght@600;700;800&family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
-<link rel="stylesheet" href="styles.css?v=1.96">
+<link rel="stylesheet" href="styles.css?v=1.97">
 </head>
 <body>
 
@@ -57,6 +57,9 @@
   </button>
   <button id="tabPotd" class="top-tab" role="tab" aria-selected="false" aria-controls="potdView">
     Play of the Day
+  </button>
+  <button id="tabParlay" class="top-tab" role="tab" aria-selected="false" aria-controls="parlayView">
+    Parlay Builder
   </button>
 </nav>
 
@@ -180,6 +183,81 @@
 
 <section id="potdView" role="tabpanel" aria-labelledby="tabPotd" hidden>
   <div id="potdBody" class="potd"></div>
+</section>
+
+<section id="parlayView" role="tabpanel" aria-labelledby="tabParlay" hidden>
+  <p class="filter-hint tab-intro">
+    Build your own ticket. Choose the leagues and the bar, then press Generate.
+    You get straight legs at their own real prices — never two from the same
+    game, never both sides of one market. Lock the legs you want and press
+    again to re-roll the rest.
+  </p>
+
+  <div class="parlay-controls">
+    <div class="parlay-filters">
+      <div class="filter-head">
+        <span class="filter-cost">Leagues</span>
+        <button type="button" id="parlayLeagueAll" class="link-btn">All / none</button>
+      </div>
+      <div id="parlayLeagueGrid" class="check-grid"></div>
+    </div>
+
+    <aside class="parlay-pool" aria-live="polite" aria-label="Legs available with the current filters">
+      <p class="parlay-pool-num" id="parlayPoolLegs">0</p>
+      <p class="parlay-pool-label">legs available</p>
+      <p class="parlay-pool-sub" id="parlayPoolGames">across 0 games</p>
+    </aside>
+  </div>
+
+  <div class="slider-row">
+    <div class="slider-label">
+      <label for="parlayLegCount">Legs on the ticket</label>
+      <span class="slider-value" id="parlayLegCountValue">3</span>
+    </div>
+    <input type="range" id="parlayLegCount" min="2" max="12" step="1" value="3">
+  </div>
+
+  <label class="check parlay-conf-toggle">
+    <input type="checkbox" id="parlayConfToggle">
+    <span>Set a minimum confidence</span>
+  </label>
+
+  <div class="slider-row" id="parlayConfRow" hidden>
+    <div class="slider-label">
+      <label for="parlayConfSlider">Minimum confidence</label>
+      <span class="slider-value" id="parlayConfValue">50</span>
+    </div>
+    <input type="range" id="parlayConfSlider" min="0" max="95" step="1" value="50">
+  </div>
+
+  <p id="parlayShortfall" class="filter-hint parlay-shortfall" hidden></p>
+
+  <button type="button" id="parlayGenerate" class="generate">
+    <span class="generate-label" id="parlayGenerateLabel">Generate</span>
+    <span class="generate-sub" id="parlayGenerateSub">3-leg parlay</span>
+  </button>
+
+  <div id="parlayTicket" class="parlay-ticket" hidden></div>
+
+  <div class="sort-row" id="parlaySortRow" hidden>
+    <label class="sort-label" for="parlaySort">Sort</label>
+    <select id="parlaySort" class="sort-select">
+      <option value="confidence">Confidence, high to low</option>
+      <option value="chrono">Soonest game first</option>
+      <option value="locked">Locked first</option>
+    </select>
+  </div>
+
+  <section id="parlayBody" class="picks" aria-live="polite"></section>
+
+  <p class="disclaimer">
+    Parlay prices assume the legs are independent — that's why no two ever come
+    from the same game. Correlation between separate games is still real and
+    unpriced here, so the more legs you stack, the more the true number drifts
+    from the one shown. Odds move. Always confirm at the book before you bet.
+    21+. For entertainment only, nothing here is financial advice.
+    <a href="https://www.1800gambler.net/" target="_blank" rel="noopener">1-800-GAMBLER</a>
+  </p>
 </section>
 </main>
 
@@ -722,6 +800,6 @@
   </div>
 </aside>
 
-<script type="module" src="app.js?v=1.96"></script>
+<script type="module" src="app.js?v=1.97"></script>
 </body>
 </html>

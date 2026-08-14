@@ -29,6 +29,7 @@ import {
   bookIdFor,
   impliedProb,
   americanToDecimal,
+  combineLegs,
   suggestedParlayStake,
   suggestedStake,
   scoreCandidate,
@@ -61,6 +62,17 @@ const BANKROLL_KEY = 'pixelpick.bankroll.v1';
 const SLATE_LEAGUE_KEY = 'pixelpick.slateLeague.v2';
 const PIXEL_SORT_KEY = 'pixelpick.sort.v1';
 const DAY_FILTER_KEY = 'pixelpick.dayFilter.v1';
+// Parlay Builder's filter setup persists (it's a configuration the user tunes
+// and re-uses), but the generated ticket itself deliberately does not — a
+// parlay is priced against a specific moment's odds, and restoring one from a
+// previous session would show stale prices as though they were live.
+const PARLAY_LEAGUES_KEY = 'pixelpick.parlayLeagues.v1';
+const PARLAY_LEGS_KEY = 'pixelpick.parlayLegCount.v1';
+const PARLAY_CONF_ON_KEY = 'pixelpick.parlayConfOn.v1';
+const PARLAY_CONF_KEY = 'pixelpick.parlayMinScore.v1';
+const PARLAY_SORT_KEY = 'pixelpick.parlaySort.v1';
+/** Hard ceiling on ticket length, per product decision. */
+const PARLAY_MAX_LEGS = 12;
 // The Tracking Dashboard's user-dragged width in px, or null for its default
 // (fills the viewport). Only ever set by actually dragging the resize
 // handle — there's no other UI that writes to this.
@@ -235,6 +247,10 @@ function setDayFilter(which) {
   }
   renderDayToggle();
   renderSlateLeagueOptions();
+  // The parlay pool is day-scoped too (parlayPool -> dayFilteredCandidates),
+  // so a day change moves its counter and invalidates the re-roll history the
+  // same way a league or confidence change does.
+  onParlayFiltersChanged();
   if (state.candidates.length || state.rawEvents.length) {
     renderFullSlate();
     // Pixel's Picks is a fixed daily set locked server-side (see
@@ -693,6 +709,26 @@ const el = {
   boardView: document.getElementById('boardView'),
   potdView: document.getElementById('potdView'),
   potdBody: document.getElementById('potdBody'),
+  tabParlay: document.getElementById('tabParlay'),
+  parlayView: document.getElementById('parlayView'),
+  parlayLeagueGrid: document.getElementById('parlayLeagueGrid'),
+  parlayLeagueAll: document.getElementById('parlayLeagueAll'),
+  parlayPoolLegs: document.getElementById('parlayPoolLegs'),
+  parlayPoolGames: document.getElementById('parlayPoolGames'),
+  parlayLegCount: document.getElementById('parlayLegCount'),
+  parlayLegCountValue: document.getElementById('parlayLegCountValue'),
+  parlayConfToggle: document.getElementById('parlayConfToggle'),
+  parlayConfRow: document.getElementById('parlayConfRow'),
+  parlayConfSlider: document.getElementById('parlayConfSlider'),
+  parlayConfValue: document.getElementById('parlayConfValue'),
+  parlayShortfall: document.getElementById('parlayShortfall'),
+  parlayGenerate: document.getElementById('parlayGenerate'),
+  parlayGenerateLabel: document.getElementById('parlayGenerateLabel'),
+  parlayGenerateSub: document.getElementById('parlayGenerateSub'),
+  parlayTicket: document.getElementById('parlayTicket'),
+  parlaySortRow: document.getElementById('parlaySortRow'),
+  parlaySort: document.getElementById('parlaySort'),
+  parlayBody: document.getElementById('parlayBody'),
   learningPanel: document.getElementById('learningPanel'),
   learningPanelResize: document.getElementById('learningPanelResize'),
   learningPanelClose: document.getElementById('learningPanelClose'),
@@ -860,6 +896,34 @@ const state = {
   pixelSort: loadJSON(PIXEL_SORT_KEY, 'confidence'),
   // Track when odds were last refreshed (timestamp ms) to rate-limit refreshes
   slateRefreshTime: 0,
+
+  /* --- Parlay Builder ------------------------------------------------ */
+  // Which League Groups the leg pool draws from. Defaults to every in-season
+  // group rather than one, since a parlay's whole point is spanning games —
+  // unlike Full Slate, which is a one-league-at-a-time browsing view.
+  parlayLeagues: new Set(
+    loadJSON(PARLAY_LEAGUES_KEY, null)
+      ?? LEAGUE_GROUPS.filter((g) => !g.offSeason).map((g) => g.id),
+  ),
+  parlayLegCount: loadJSON(PARLAY_LEGS_KEY, 3),
+  // The confidence floor is opt-in: off by default so a first Generate draws
+  // from everything priced, rather than silently hiding most of the board
+  // behind a threshold the user never chose.
+  parlayConfOn: loadJSON(PARLAY_CONF_ON_KEY, false),
+  parlayMinScore: loadJSON(PARLAY_CONF_KEY, 50),
+  parlaySort: loadJSON(PARLAY_SORT_KEY, 'confidence'),
+  // [{ candidate, locked }] — the ticket currently on screen. Empty until
+  // Generate is pressed for the first time (see state.parlayGenerated), which
+  // is what makes "zero picks until you ask" the real initial state rather
+  // than a board that auto-fills itself.
+  parlayLegs: [],
+  parlayGenerated: false,
+  // Candidate ids already offered and then re-rolled away. Pressing Generate
+  // again should surface *different* options for the unlocked slots, not hand
+  // back the identical top-N — topPicks() is deterministic, so without this a
+  // re-roll would be a no-op. Cleared whenever the filters change, since a new
+  // filter setup is a fresh question, not a continuation of the old one.
+  parlaySeen: new Set(),
 };
 
 // A bankroll saved before `confirmed` existed had no opinion on it — treat an
@@ -3957,6 +4021,296 @@ function renderPixelPicksBoard() {
 
 let pixelPicksRecords = [];
 
+/* ---------------------------------------------------------------- */
+/* Parlay Builder                                                    */
+/* ---------------------------------------------------------------- */
+
+/**
+ * Every raw sport key the currently-checked League Groups cover. Off-season
+ * groups contribute nothing even if a stale saved selection still lists them
+ * — refreshAllLeagues() never fetches those keys, so counting them would
+ * promise legs that can't exist.
+ */
+function parlaySportKeys() {
+  const keys = new Set();
+  for (const id of state.parlayLeagues) {
+    const group = LEAGUE_GROUP_BY_ID.get(id);
+    if (group && !group.offSeason) group.keys.forEach((k) => keys.add(k));
+  }
+  return keys;
+}
+
+/** The confidence floor actually in effect — 0 when the slider is toggled off. */
+function parlayFloor() {
+  return state.parlayConfOn ? state.parlayMinScore : 0;
+}
+
+/**
+ * The exact pool both the leg counter and Generate draw from. Deliberately
+ * one function rather than two similar filters: the counter's whole job is to
+ * promise what Generate can actually deliver, and the fastest way for that
+ * promise to start lying is for the two to drift apart.
+ */
+function parlayPool() {
+  const keys = parlaySportKeys();
+  const floor = parlayFloor();
+  return dayFilteredCandidates().filter((c) => keys.has(c.sportKey) && c.score >= floor);
+}
+
+/**
+ * Live "what could I build right now" readout, recomputed on every filter
+ * change. Two numbers because they answer different questions: how many legs
+ * exist at all, and how long a ticket they can actually make. Those diverge —
+ * a parlay takes at most one leg per game (correlated legs break the
+ * independence assumption the combined price is built on, see combineLegs),
+ * so eight legs spread across three games can only ever build a 3-leg ticket.
+ * Showing only the raw leg count would overpromise exactly in the case the
+ * user most needs warning about.
+ */
+function parlayCounts() {
+  const pool = parlayPool();
+  const games = new Set(pool.map((c) => c.eventId)).size;
+  return { legs: pool.length, games, maxTicket: Math.min(games, PARLAY_MAX_LEGS) };
+}
+
+function renderParlayCounter() {
+  const { legs, games } = parlayCounts();
+  el.parlayPoolLegs.textContent = String(legs);
+  el.parlayPoolGames.textContent = `across ${games} game${games === 1 ? '' : 's'}`;
+}
+
+/** Per-league leg tallies, so the checkboxes say what checking each one buys. */
+function renderParlayLeagues() {
+  const day = dayFilteredCandidates();
+  const floor = parlayFloor();
+
+  el.parlayLeagueGrid.innerHTML = LEAGUE_GROUPS.map((group) => {
+    const inGroup = group.offSeason ? [] : day.filter((c) => group.keys.includes(c.sportKey));
+    const count = inGroup.filter((c) => c.score >= floor).length;
+    // Disabled means "this league has nothing on the board today" — NOT
+    // "nothing here clears your current confidence bar." Those look identical
+    // in the tally but are very different states: a high floor can zero out
+    // every league at once, and disabling on the filtered count would then
+    // freeze the whole grid, stranding anyone who unchecks a league while the
+    // floor is up with no way to re-check it short of guessing that the
+    // slider is what unlocks them.
+    const disabled = group.offSeason || inGroup.length === 0;
+    const tally = group.offSeason ? 'off-season' : String(count);
+    return `
+      <label class="check">
+        <input type="checkbox" data-parlay-league="${esc(group.id)}"
+               ${state.parlayLeagues.has(group.id) ? 'checked' : ''}
+               ${disabled ? 'disabled' : ''}>
+        <span>${esc(group.label)}</span>
+        <span class="check-tally">${esc(tally)}</span>
+      </label>`;
+  }).join('');
+}
+
+/**
+ * Filters changed — the pool moved, so the previously-offered set is no
+ * longer the right answer to re-roll against, and any generated ticket was
+ * built against a pool that no longer exists. Locked legs survive
+ * deliberately: locking is the user saying "keep this one regardless," which
+ * a filter tweak shouldn't silently override.
+ */
+function onParlayFiltersChanged() {
+  state.parlaySeen = new Set();
+  renderParlayLeagues();
+  renderParlayCounter();
+  renderParlayControls();
+}
+
+/** Button label/hint and the shortfall warning, all derived from current state. */
+function renderParlayControls() {
+  const { maxTicket } = parlayCounts();
+  const lockedCount = state.parlayLegs.filter((l) => l.locked).length;
+  const want = state.parlayLegCount;
+
+  el.parlayLegCountValue.textContent = String(want);
+  el.parlayLegCount.value = String(want);
+  el.parlayConfValue.textContent = String(state.parlayMinScore);
+  el.parlayConfSlider.value = String(state.parlayMinScore);
+  el.parlayConfToggle.checked = state.parlayConfOn;
+  el.parlayConfRow.hidden = !state.parlayConfOn;
+  el.parlaySort.value = state.parlaySort;
+
+  el.parlayGenerateLabel.textContent = state.parlayGenerated
+    ? (lockedCount ? 'Generate more' : 'Regenerate')
+    : 'Generate';
+  el.parlayGenerateSub.textContent = lockedCount
+    ? `${lockedCount} locked · re-rolling ${Math.max(0, want - lockedCount)}`
+    : `${want}-leg parlay`;
+
+  // An honest, specific reason beats a disabled button with no explanation.
+  if (!maxTicket) {
+    el.parlayShortfall.hidden = false;
+    el.parlayShortfall.textContent = state.candidates.length
+      ? 'No legs match these filters. Check more leagues, lower the confidence floor, or try another day.'
+      : 'Still loading odds…';
+    el.parlayGenerate.disabled = true;
+  } else if (want > maxTicket) {
+    el.parlayShortfall.hidden = false;
+    el.parlayShortfall.textContent =
+      `Only ${maxTicket} leg${maxTicket === 1 ? '' : 's'} can be built from these filters — a ticket takes at most one leg per game. Generate will hand back ${maxTicket}.`;
+    el.parlayGenerate.disabled = false;
+  } else {
+    el.parlayShortfall.hidden = true;
+    el.parlayGenerate.disabled = false;
+  }
+}
+
+/**
+ * Fill the ticket: keep every locked leg, re-roll the rest.
+ *
+ * Locked legs' games are removed from the pool before topPicks() ever sees
+ * it — topPicks only enforces one-leg-per-game within a single call, so
+ * without this a re-roll could hand back the other side of a game the user
+ * had already locked.
+ */
+function generateParlay() {
+  const locked = state.parlayLegs.filter((l) => l.locked);
+
+  // Everything currently on offer and not locked has now been seen; the next
+  // roll should move past it. topPicks() recycles once its exclude set covers
+  // the whole pool, so a thin board loops rather than dead-ending on empty.
+  for (const leg of state.parlayLegs) {
+    if (!leg.locked) state.parlaySeen.add(leg.candidate.id);
+  }
+
+  const lockedEvents = new Set(locked.map((l) => l.candidate.eventId));
+  const pool = parlayPool().filter((c) => !lockedEvents.has(c.eventId));
+  const need = Math.max(0, state.parlayLegCount - locked.length);
+
+  const fresh = need
+    ? topPicks(pool, {
+        count: need,
+        // The user's own filters are the only gate here. topPicks' default
+        // band is Pixel's Picks' sharp standard (-250/+150), which would
+        // silently drop longshots a parlay builder exists to let people take
+        // — and would make the leg counter above a lie.
+        oddsMin: -Infinity,
+        oddsMax: Infinity,
+        minScore: parlayFloor(),
+        exclude: state.parlaySeen,
+      }).picks.map((pick) => ({ candidate: pick.legs[0], locked: false }))
+    : [];
+
+  state.parlayLegs = [...locked, ...fresh];
+  state.parlayGenerated = true;
+  renderParlay();
+}
+
+function sortedParlayLegs() {
+  const legs = [...state.parlayLegs];
+  if (state.parlaySort === 'chrono') {
+    legs.sort((a, b) => a.candidate.commenceMs - b.candidate.commenceMs);
+  } else if (state.parlaySort === 'locked') {
+    legs.sort(
+      (a, b) => Number(b.locked) - Number(a.locked) || b.candidate.score - a.candidate.score,
+    );
+  } else {
+    legs.sort((a, b) => b.candidate.score - a.candidate.score);
+  }
+  return legs;
+}
+
+/** Combined price and suggested stake for the whole ticket. */
+function renderParlayTicket() {
+  const legs = state.parlayLegs.map((l) => l.candidate);
+  if (legs.length < 2) {
+    el.parlayTicket.hidden = true;
+    return;
+  }
+
+  const combined = combineLegs(legs.map((c) => c.american));
+  const stake = stakeLineHtml(suggestedParlayStake(legs, combined.decimal), 'stake-line');
+  const avgScore = legs.reduce((sum, c) => sum + c.score, 0) / legs.length;
+
+  el.parlayTicket.hidden = false;
+  el.parlayTicket.innerHTML = `
+    <div class="parlay-ticket-head">
+      <span class="chip"><strong>${legs.length}-leg parlay</strong></span>
+      <span class="price">${esc(formatAmerican(combined.american))}</span>
+    </div>
+    <div class="parlay-ticket-meta">
+      <span>Avg confidence ${Math.round(avgScore)}/100</span>
+      <span>Returns ${combined.decimal.toFixed(2)}× your stake</span>
+    </div>
+    ${stake}`;
+}
+
+function renderParlayLegCard(entry, index) {
+  const c = entry.candidate;
+  const color = confidenceColor(c.score, parlayFloor() || RULES.MIN_SCORE);
+
+  return `
+    <article class="pick parlay-leg-card ${entry.locked ? 'is-locked' : ''}">
+      <div class="pick-head">
+        <span class="pick-head-left">
+          <span class="chip"><strong>${esc(c.sportTitle ?? c.sportKey)}</strong> · Leg ${index + 1}</span>
+        </span>
+        <span class="price">${esc(formatAmerican(c.american))}</span>
+      </div>
+
+      <div class="parlay-leg-actions">
+        <button type="button" class="parlay-lock-btn ${entry.locked ? 'is-locked' : ''}"
+                data-parlay-lock="${esc(c.id)}" aria-pressed="${entry.locked}">
+          ${entry.locked ? 'Locked' : 'Lock this leg'}
+        </button>
+        <button type="button" class="link-btn" data-parlay-remove="${esc(c.id)}">Remove</button>
+      </div>
+
+      <div class="confidence" style="--conf:${color}">
+        <div class="conf-track">
+          <span class="conf-fill" style="width:${Math.round(c.score)}%"></span>
+        </div>
+        <div class="conf-label">
+          <span>Confidence <span class="conf-score">${Math.round(c.score)}</span>/100</span>
+        </div>
+      </div>
+
+      ${renderLeg(c, index, false)}
+    </article>`;
+}
+
+function renderParlay() {
+  renderParlayControls();
+  renderParlayTicket();
+
+  el.parlaySortRow.hidden = state.parlayLegs.length < 2;
+
+  if (!state.parlayGenerated) {
+    el.parlayBody.innerHTML = '';
+    return;
+  }
+  if (!state.parlayLegs.length) {
+    el.parlayBody.innerHTML = `<p class="empty">Nothing matched those filters. Check more leagues or lower the confidence floor.</p>`;
+    return;
+  }
+
+  // renderLeg() indexes into this module-global for hydrateInsights, so it has
+  // to be reset immediately before the legs that will populate it — same
+  // contract renderSlate/renderFullSlate already follow.
+  renderedLegs.length = 0;
+  el.parlayBody.innerHTML = sortedParlayLegs().map(renderParlayLegCard).join('');
+  hydrateInsights(el.parlayBody);
+}
+
+/**
+ * Re-point every leg at its freshest candidate. A leg holds a snapshot from
+ * whenever it was generated; once new odds land in state.candidates, matching
+ * by id swaps in the current price, book, and quote table without disturbing
+ * which selections are on the ticket. A leg whose market has since fallen off
+ * the board keeps its last-known snapshot rather than vanishing mid-build.
+ */
+function relinkParlayLegs() {
+  for (const leg of state.parlayLegs) {
+    const live = state.candidates.find((c) => c.id === leg.candidate.id);
+    if (live) leg.candidate = live;
+  }
+}
+
 /**
  * Pixel's Picks: the worker's own locked, server-generated set for today
  * (2am ET — see worker/src/tracking.js's runTop5Batch), fetched once and
@@ -4592,8 +4946,8 @@ async function loadPotd({ force = false } = {}) {
 }
 
 function setActiveTab(tab) {
-  const views = { slate: el.slateView, board: el.boardView, potd: el.potdView };
-  const tabs = { slate: el.tabSlate, board: el.tabBoard, potd: el.tabPotd };
+  const views = { slate: el.slateView, board: el.boardView, potd: el.potdView, parlay: el.parlayView };
+  const tabs = { slate: el.tabSlate, board: el.tabBoard, potd: el.tabPotd, parlay: el.tabParlay };
 
   for (const [name, view] of Object.entries(views)) {
     const active = name === tab;
@@ -4630,11 +4984,98 @@ function setActiveTab(tab) {
     renderSlateLeagueOptions();
     if (state.candidates.length) renderFullSlate();
   }
+  // Counter and tallies are derived from the live pool, which keeps loading
+  // after boot — recompute on entry so a tab opened early doesn't sit on a
+  // stale "0 legs available" until something else happens to re-render it.
+  if (tab === 'parlay') {
+    renderParlayLeagues();
+    renderParlayCounter();
+    renderParlay();
+  }
 }
 
 el.tabSlate.addEventListener('click', () => setActiveTab('slate'));
 el.tabBoard.addEventListener('click', () => setActiveTab('board'));
 el.tabPotd.addEventListener('click', () => setActiveTab('potd'));
+el.tabParlay.addEventListener('click', () => setActiveTab('parlay'));
+
+/* ---------------------------------------------------------------- */
+/* Parlay Builder — controls                                         */
+/* ---------------------------------------------------------------- */
+
+el.parlayLeagueGrid.addEventListener('change', (event) => {
+  const box = event.target.closest('[data-parlay-league]');
+  if (!box) return;
+  const id = box.dataset.parlayLeague;
+  if (box.checked) state.parlayLeagues.add(id);
+  else state.parlayLeagues.delete(id);
+  saveJSON(PARLAY_LEAGUES_KEY, [...state.parlayLeagues]);
+  onParlayFiltersChanged();
+});
+
+el.parlayLeagueAll.addEventListener('click', () => {
+  const selectable = LEAGUE_GROUPS.filter((g) => !g.offSeason).map((g) => g.id);
+  // Toggle against "everything selectable is already on" rather than a
+  // remembered mode, so the button's effect is always predictable from what's
+  // currently on screen.
+  const allOn = selectable.every((id) => state.parlayLeagues.has(id));
+  state.parlayLeagues = new Set(allOn ? [] : selectable);
+  saveJSON(PARLAY_LEAGUES_KEY, [...state.parlayLeagues]);
+  onParlayFiltersChanged();
+});
+
+el.parlayLegCount.addEventListener('input', () => {
+  state.parlayLegCount = Math.min(PARLAY_MAX_LEGS, Math.max(2, Number(el.parlayLegCount.value) || 2));
+  saveJSON(PARLAY_LEGS_KEY, state.parlayLegCount);
+  // Leg count doesn't change which legs qualify, only how many are asked for
+  // — so the seen-set and any locked legs stay put; only the labels move.
+  renderParlayControls();
+});
+
+el.parlayConfToggle.addEventListener('change', () => {
+  state.parlayConfOn = el.parlayConfToggle.checked;
+  saveJSON(PARLAY_CONF_ON_KEY, state.parlayConfOn);
+  onParlayFiltersChanged();
+});
+
+el.parlayConfSlider.addEventListener('input', () => {
+  state.parlayMinScore = Number(el.parlayConfSlider.value) || 0;
+  el.parlayConfValue.textContent = String(state.parlayMinScore);
+  saveJSON(PARLAY_CONF_KEY, state.parlayMinScore);
+  onParlayFiltersChanged();
+});
+
+el.parlaySort.addEventListener('change', () => {
+  state.parlaySort = el.parlaySort.value;
+  saveJSON(PARLAY_SORT_KEY, state.parlaySort);
+  // A pure display re-sort of the same ticket — never a re-roll.
+  renderParlay();
+});
+
+el.parlayGenerate.addEventListener('click', () => generateParlay());
+
+el.parlayBody.addEventListener('click', (event) => {
+  const lock = event.target.closest('[data-parlay-lock]');
+  if (lock) {
+    const entry = state.parlayLegs.find((l) => l.candidate.id === lock.dataset.parlayLock);
+    if (entry) {
+      entry.locked = !entry.locked;
+      // A leg the user just locked must not still be in the re-roll-away set,
+      // or the next Generate would treat it as already-discarded.
+      if (entry.locked) state.parlaySeen.delete(entry.candidate.id);
+      renderParlay();
+    }
+    return;
+  }
+
+  const remove = event.target.closest('[data-parlay-remove]');
+  if (remove) {
+    const id = remove.dataset.parlayRemove;
+    state.parlayLegs = state.parlayLegs.filter((l) => l.candidate.id !== id);
+    state.parlaySeen.add(id);
+    renderParlay();
+  }
+});
 
 /* ---------------------------------------------------------------- */
 /* Tracking Dashboard                                                */
@@ -5719,7 +6160,12 @@ el.whatsNewHintClose.addEventListener('click', () => {
     CONFIG.WORKER_URL ? '' : 'demo',
   );
 
+  renderParlayLeagues();
+  renderParlayCounter();
+  renderParlayControls();
+
   startSlateAutoRefresh();
+  startParlayOddsRefresh();
   startUpdateChecks();
 })();
 
@@ -5786,6 +6232,44 @@ async function checkForAppUpdate() {
   } catch {
     // Network hiccup or offline — try again on the next tick.
   }
+}
+
+/**
+ * Keeps a built parlay's prices current.
+ *
+ * Unlike startSlateAutoRefresh (which only re-renders from whatever's already
+ * in state.candidates), this genuinely re-fetches — a ticket you're about to
+ * bet is the one place in the app where a 15-minute-old number is actually
+ * misleading rather than merely stale. The cost is bounded on every axis:
+ * only the sport keys actually on the ticket (typically one to three, not all
+ * ~11 leagues), only while the Parlay tab is the one showing AND the browser
+ * tab is foregrounded, and only once a ticket exists at all. The worker's own
+ * 15-minute edge cache (DEFAULT_CACHE_SECONDS in worker/src/odds.js) absorbs
+ * most of these, so at a 5-minute poll roughly two of every three ticks cost
+ * no upstream credit — a backgrounded or idle tab costs nothing at all.
+ */
+const PARLAY_ODDS_REFRESH_MS = 5 * 60 * 1000;
+function startParlayOddsRefresh() {
+  let inFlight = false;
+  const tick = async () => {
+    if (document.visibilityState !== 'visible') return;
+    if (el.parlayView.hidden) return;
+    if (!state.parlayLegs.length) return;
+    // A slow fetch outlasting the interval would otherwise stack requests.
+    if (inFlight) return;
+
+    inFlight = true;
+    try {
+      const keys = [...new Set(state.parlayLegs.map((l) => l.candidate.sportKey))];
+      await Promise.allSettled(keys.map((key) => fetchSingleLeague(key)));
+      relinkParlayLegs();
+      renderParlay();
+    } finally {
+      inFlight = false;
+    }
+  };
+  setInterval(tick, PARLAY_ODDS_REFRESH_MS);
+  document.addEventListener('visibilitychange', tick);
 }
 
 function startUpdateChecks() {
