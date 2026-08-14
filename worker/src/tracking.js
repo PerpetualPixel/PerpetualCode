@@ -46,9 +46,8 @@ import {
   dedupeTennisEvents,
   isMarketAllowedForTier,
   tierLiquidityBlock,
-  hasSecondarySettlementSource,
 } from '../../docs/tennis-tiers.js';
-import { settleTennisGameMarket } from './tennis-results.js';
+import { fetchTennisResults, gradeTennisPickWithEspn } from './tennis-espn.js';
 import { retractedRecord } from './retraction.js';
 
 export const TOP5_COUNT = 5;
@@ -866,7 +865,11 @@ export async function runGrading(
   env,
   ctx,
   now = Date.now(),
-  { fetchScoresFn = (s) => fetchScores(s, env, ctx), fetchMmaResultsFn = () => fetchMmaResults(ctx, now) } = {},
+  {
+    fetchScoresFn = (s) => fetchScores(s, env, ctx),
+    fetchMmaResultsFn = () => fetchMmaResults(ctx, now),
+    fetchTennisResultsFn = () => fetchTennisResults(ctx, now),
+  } = {},
 ) {
   const dateKeys = [...new Set(
     Array.from({ length: GRADING_LOOKBACK_DAYS }, (_, i) => etDate(now - i * 86400000)),
@@ -880,6 +883,10 @@ export async function runGrading(
   const fetched = await Promise.all(sportsNeeded.map((s) => fetchScoresFn(s)));
   const scoreEventsBySport = new Map(sportsNeeded.map((s, i) => [s, fetched[i].events ?? []]));
   const mmaResults = pending.some((p) => isMma(p.sportKey)) ? await fetchMmaResultsFn() : [];
+  // The odds feed has never once posted a tennis result (see
+  // worker/src/tennis-espn.js's header) — ESPN's scoreboard is what actually
+  // settles these. One fetch per pass covers every tournament in play.
+  const tennisResults = pending.some((p) => isTennis(p.sportKey)) ? await fetchTennisResultsFn() : [];
 
   let graded = 0;
   let rescheduled = 0;
@@ -911,11 +918,11 @@ export async function runGrading(
     let outcome;
     if (isMma(pick.sportKey)) {
       outcome = gradeMmaPickWithFallback(pick, scoreEvent, mmaResults);
-    } else if (isTennis(pick.sportKey) && hasSecondarySettlementSource(pick.sportKey, pick.marketKey)) {
-      // A metered second source can turn this specific void into a real
-      // grade (see worker/src/tennis-results.js) — null falls through to
-      // the same gradePick() void every other tennis spread/total gets.
-      outcome = (await settleTennisGameMarket(pick, scoreEvent, env, ctx, now)) ?? gradePick(pick, scoreEvent, now);
+    } else if (isTennis(pick.sportKey)) {
+      // ESPN's scoreboard supplies the sets the odds feed never posts, and
+      // the metered second source still layers on top for TIER_1
+      // spreads/totals — see worker/src/tennis-espn.js.
+      outcome = await gradeTennisPickWithEspn(pick, scoreEvent, tennisResults, env, ctx, now);
     } else {
       outcome = gradePick(pick, scoreEvent, now);
     }

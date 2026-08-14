@@ -27,7 +27,7 @@ import { fetchSport, fetchScores } from './odds.js';
 import { pickRecordFrom, fetchFullSlateEvents, isPickWindowOpen } from './tracking.js';
 import { fetchMmaResults, gradeMmaPickWithFallback } from './ufc-events.js';
 import { isSettleableTennisMarket, hasSecondarySettlementSource } from '../../docs/tennis-tiers.js';
-import { settleTennisGameMarket } from './tennis-results.js';
+import { fetchTennisResults, gradeTennisPickWithEspn, findTennisMatch } from './tennis-espn.js';
 import { getAllWnbaPropsTracked } from './wnba-props.js';
 import { getAllMlbPropsTracked } from './mlb-props.js';
 import { getAllNflPropsTracked } from './nfl-props.js';
@@ -418,6 +418,107 @@ export async function runFullSlateClvSnapshot(
 const GRADING_LOOKBACK_DAYS = 2;
 
 /**
+ * Why every still-pending Full Slate pick hasn't graded yet.
+ *
+ * Grading fails SILENTLY by construction: gradePick() returns null for
+ * anything it can't settle and the pick simply stays pending, and a failed
+ * scores fetch surfaces as `events ?? []` — an empty list indistinguishable
+ * from "nothing has finished yet." That's the right runtime behavior (never
+ * guess a result) but it leaves no way to answer "why is a whole day's board
+ * still pending," which is exactly the question a stuck board raises. This
+ * reports the four things that can independently break settlement, per sport:
+ *
+ *   - the scores fetch itself errored (quota exhausted, bad key, dead key)
+ *   - the feed returned events, but none whose id matches the tracked pick
+ *     (grading joins on event id; a feed that ids the same match differently
+ *     from the odds feed can never settle it)
+ *   - the event matched but isn't `completed` yet
+ *   - it's completed, but `scores[].name` doesn't match the stored
+ *     home/away, so gradePick can't read a number for either side
+ *
+ * Tennis additionally reports `espnMatched` — how many of that sport's
+ * pending picks resolve to a completed ESPN match (see
+ * worker/src/tennis-espn.js). Without it this diagnostic would keep
+ * reporting the odds feed's own "0 completed" for tennis and point at a
+ * dead end, since that feed has never posted a tennis result and is no
+ * longer what settles them.
+ *
+ * Read-only — fetches nothing but the same short-cached scores and ESPN
+ * scoreboards grading itself uses, and writes nothing.
+ */
+export async function diagnosePendingFullSlate(
+  env,
+  ctx,
+  now = Date.now(),
+  { fetchScoresFn = (s) => fetchScores(s, env, ctx), fetchTennisResultsFn = () => fetchTennisResults(ctx, now) } = {},
+) {
+  const dateKeys = [...new Set(
+    Array.from({ length: GRADING_LOOKBACK_DAYS }, (_, i) => etDate(now - i * 86400000)),
+  )];
+  const loaded = await Promise.all(dateKeys.map((dk) => loadFullSlateTracked(env, dk)));
+  const pending = loaded.flatMap((d) => d.picks).filter((p) => p.status === 'pending');
+  if (!pending.length) return { window: dateKeys, pending: 0, bySport: [] };
+
+  const sportsNeeded = [...new Set(pending.map((p) => p.sportKey))];
+  const fetched = await Promise.all(sportsNeeded.map((s) => fetchScoresFn(s)));
+  const tennisResults = pending.some((p) => isTennis(p.sportKey)) ? await fetchTennisResultsFn() : [];
+
+  const bySport = sportsNeeded.map((sportKey, i) => {
+    const result = fetched[i] ?? {};
+    const events = result.events ?? [];
+    const mine = pending.filter((p) => p.sportKey === sportKey);
+
+    let foundById = 0;
+    let completed = 0;
+    let namesUsable = 0;
+    let espnMatched = 0;
+    const samples = [];
+
+    for (const pick of mine) {
+      const event = events.find((e) => e.id === pick.eventId);
+      if (event) foundById++;
+      const isDone = Boolean(event?.completed);
+      if (isDone) completed++;
+      const feedNames = Array.isArray(event?.scores) ? event.scores.map((s) => s.name) : [];
+      const usable = feedNames.includes(pick.home) && feedNames.includes(pick.away);
+      if (usable) namesUsable++;
+      const espnMatch = isTennis(sportKey) ? findTennisMatch(pick, tennisResults) : null;
+      if (espnMatch) espnMatched++;
+      // A few concrete rows beat any summary when the failure turns out to
+      // be a name/id mismatch — the exact strings are the whole diagnosis.
+      if (samples.length < 3) {
+        samples.push({
+          eventId: pick.eventId,
+          pickNames: [pick.away, pick.home],
+          foundById: Boolean(event),
+          completed: isDone,
+          feedNames,
+          // What ESPN says about this exact match, when tennis. A pick left
+          // pending with an espn line present means the settlement rules
+          // declined it (a walkover inside its grace window, say), not that
+          // the result was missing — a genuinely useful distinction.
+          espn: espnMatch ? { status: espnMatch.statusName, sets: [espnMatch.setsA, espnMatch.setsB], note: espnMatch.note } : undefined,
+        });
+      }
+    }
+
+    return {
+      sportKey,
+      pending: mine.length,
+      scoresReturned: events.length,
+      scoresError: result.error ?? null,
+      foundById,
+      completed,
+      namesUsable,
+      espnMatched: isTennis(sportKey) ? espnMatched : undefined,
+      samples,
+    };
+  });
+
+  return { window: dateKeys, pending: pending.length, bySport };
+}
+
+/**
  * Same continuous, idempotent grading as tracking.js's own runGrading, keyed
  * under slate: instead of track: — including the same ESPN fallback for MMA
  * picks (see worker/src/ufc-events.js's gradeMmaPickWithFallback), since
@@ -430,7 +531,11 @@ export async function runFullSlateGrading(
   env,
   ctx,
   now = Date.now(),
-  { fetchScoresFn = (s) => fetchScores(s, env, ctx), fetchMmaResultsFn = () => fetchMmaResults(ctx, now) } = {},
+  {
+    fetchScoresFn = (s) => fetchScores(s, env, ctx),
+    fetchMmaResultsFn = () => fetchMmaResults(ctx, now),
+    fetchTennisResultsFn = () => fetchTennisResults(ctx, now),
+  } = {},
 ) {
   const dateKeys = [...new Set(
     Array.from({ length: GRADING_LOOKBACK_DAYS }, (_, i) => etDate(now - i * 86400000)),
@@ -444,6 +549,10 @@ export async function runFullSlateGrading(
   const fetched = await Promise.all(sportsNeeded.map((s) => fetchScoresFn(s)));
   const scoreEventsBySport = new Map(sportsNeeded.map((s, i) => [s, fetched[i].events ?? []]));
   const mmaResults = pending.some((p) => isMma(p.sportKey)) ? await fetchMmaResultsFn() : [];
+  // Fetched once for the whole pass, not per pick: one scoreboard request
+  // returns a tournament's entire draw, so a 40-pick tennis day costs the
+  // same two free requests per tour as a one-pick day.
+  const tennisResults = pending.some((p) => isTennis(p.sportKey)) ? await fetchTennisResultsFn() : [];
 
   let graded = 0;
   let rescheduled = 0;
@@ -501,8 +610,8 @@ export async function runFullSlateGrading(
     let outcome;
     if (isMma(pick.sportKey)) {
       outcome = gradeMmaPickWithFallback(pick, scoreEvent, mmaResults);
-    } else if (isTennis(pick.sportKey) && hasSecondarySettlementSource(pick.sportKey, pick.marketKey)) {
-      outcome = (await settleTennisGameMarket(pick, scoreEvent, env, ctx, now)) ?? gradePick(pick, scoreEvent, now);
+    } else if (isTennis(pick.sportKey)) {
+      outcome = await gradeTennisPickWithEspn(pick, scoreEvent, tennisResults, env, ctx, now);
     } else {
       outcome = gradePick(pick, scoreEvent, now);
     }
