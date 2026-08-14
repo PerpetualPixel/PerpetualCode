@@ -17,7 +17,7 @@
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Syne:wght@600;700;800&family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
-<link rel="stylesheet" href="styles.css?v=1.129">
+<link rel="stylesheet" href="styles.css?v=1.130">
 </head>
 <body>
 
@@ -523,6 +523,19 @@
        in app.js; clicking scrolls to the Daily Learning section's details. -->
   <button id="algoChangeBanner" class="algo-change-banner" type="button" hidden></button>
 
+  <!-- Shown while the tracked-pick histories are still being fetched, in
+       place of the dashboard rather than on top of it. The metric cards
+       below default to "0" and "—", which is indistinguishable from a real
+       account that has no picks yet — so a bare spinner over them would
+       still leave the panel reading as empty-but-loaded for the seconds it
+       takes four history requests to land. Replacing the content is what
+       actually answers "is this loading, or is there nothing here?" -->
+  <div id="trackerLoading" class="tracker-loading" role="status" aria-live="polite" hidden>
+    <img src="assets/logo-icon-180.png" alt="" class="tracker-loading-logo" width="150" height="150">
+    <p class="tracker-loading-title">Loading tracking data…</p>
+    <p class="tracker-loading-note">Pulling every tracked pick, grade and closing line from the server. This can take a few seconds.</p>
+  </div>
+
   <div class="learning-content">
     <!-- Server-Tracked: Full Slate / Pixel's Picks / Play of the Day -->
     <section class="learning-section">
@@ -741,6 +754,6 @@
   </div>
 </aside>
 
-<script type="module" src="app.js?v=1.129"></script>
+<script type="module" src="app.js?v=1.130"></script>
 </body>
 </html>

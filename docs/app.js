@@ -713,6 +713,8 @@ const el = {
   potdView: document.getElementById('potdView'),
   potdBody: document.getElementById('potdBody'),
   learningPanel: document.getElementById('learningPanel'),
+  trackerLoading: document.getElementById('trackerLoading'),
+  learningContent: document.querySelector('.learning-content'),
   learningPanelResize: document.getElementById('learningPanelResize'),
   learningPanelClose: document.getElementById('learningPanelClose'),
   trackerRefreshBtn: document.getElementById('trackerRefreshBtn'),
@@ -4628,9 +4630,11 @@ el.learningPanelClose.addEventListener('click', () => {
 el.trackerRefreshBtn?.addEventListener('click', async () => {
   el.trackerRefreshBtn.disabled = true;
   el.trackerRefreshBtn.style.opacity = '0.5';
+  setTrackerLoading(true);
   try {
     await loadTrackerHistories();
   } finally {
+    setTrackerLoading(false);
     el.trackerRefreshBtn.disabled = false;
     el.trackerRefreshBtn.style.opacity = '1';
   }
@@ -5266,6 +5270,24 @@ const TRACKER_EMPTY_MESSAGES = {
  * Calibration & Audit stays Pixel's-Picks-scoped regardless of which
  * tracker tab is active (see renderTrackerSection's own comment).
  */
+/**
+ * Swaps the dashboard for the loading state, and back.
+ *
+ * Swap rather than overlay: the metric cards render "0" and "—" before any
+ * data arrives, which is exactly what a real account with no picks yet looks
+ * like. A spinner floating over that still leaves the panel reading as
+ * empty-but-loaded — reported from the live app as "it just sits there and
+ * loads but there is no indicator it's loading."
+ *
+ * Never leaves the panel stuck on the loader: every caller wraps its fetch
+ * in try/finally, so a failed request lands the user on the dashboard's own
+ * empty/error states instead of an animation that never ends.
+ */
+function setTrackerLoading(isLoading) {
+  if (el.trackerLoading) el.trackerLoading.hidden = !isLoading;
+  if (el.learningContent) el.learningContent.hidden = isLoading;
+}
+
 async function loadTrackerHistories() {
   const [fullSlate, top5, potd, propplay] = await Promise.all([
     fetchFullSlateHistory(), fetchTop5History(), fetchPotdHistory(), fetchPropPlayHistory(),
@@ -5815,7 +5837,17 @@ async function renderAlgoHealthSection() {
  * truth for pick performance.
  */
 async function renderLearningDashboard() {
-  const top5Picks = await loadTrackerHistories();
+  // Only the tracked-pick histories are covered by the loading state. The
+  // sections below have their own empty/error copy and fill in behind it —
+  // holding the whole panel back until the slowest of six requests lands
+  // would make the wait longer than it needs to be for no added clarity.
+  setTrackerLoading(true);
+  let top5Picks;
+  try {
+    top5Picks = await loadTrackerHistories();
+  } finally {
+    setTrackerLoading(false);
+  }
   renderCalibrationReport(top5Picks);
   await Promise.all([renderDailyLearningSection(), renderAlgoHealthSection(), renderMlbPropsSection(), renderNflPropsSection(), renderWnbaPropsSection(), renderNhlPropsSection()]);
 }
