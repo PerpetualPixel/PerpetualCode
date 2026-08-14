@@ -310,8 +310,25 @@ export function buildCandidates(events, { now = Date.now() } = {}) {
 
       // Benchmark against the REST of the market, so the outlier we're about to
       // bet doesn't get to vote on whether it's a good bet.
+      //
+      // Unless it's the only book pricing the side at all — which the MMA
+      // minBooks=1 exception above deliberately allows, and which leaves
+      // `others` empty. median([]) is NaN, and that NaN propagated straight
+      // through consensusProb into the slate row as a literal "NaN%" next to
+      // the fighter's name (confirmed live on thinly-priced MMA cards:
+      // Richie Lewis, Rasul Magomedov, Sidney Outlaw). The lone book's own
+      // de-vigged number is the only market read that exists for that side,
+      // so it stands in as the consensus. It cannot manufacture an edge:
+      // when the benchmark and the bet are the same price, EV reduces to
+      // 1/overround − 1, which is always negative — a single-book side still
+      // fails the EV floor exactly as it did while NaN, it just displays an
+      // honest probability instead of a broken one.
       const others = quotes.filter((q) => q !== best);
-      const consensusProb = median(others.map((q) => q.fairProb));
+      const benchmark = others.length ? others : quotes;
+      const consensusProb = median(benchmark.map((q) => q.fairProb));
+      // Still measured across `others` only: one book cannot disagree with
+      // itself, and stdev([]) is already 0 — the same "no measurable
+      // disagreement" a perfectly aligned multi-book market reports.
       const disagreement = stdev(others.map((q) => q.fairProb));
 
       // Expected value per $1 staked, at the best price, under consensus.

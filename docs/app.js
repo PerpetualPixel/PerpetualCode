@@ -3374,7 +3374,13 @@ function slateTeamRow(game, side, { gameState, scoreEvent, recommendedId, hideMa
   // already built from, just read as a probability instead of a price —
   // only useful pregame, so it's swapped for the actual score once the game
   // has started.
-  const winPct = h2h && gameState === 'upcoming' ? `${Math.round(h2h.consensusProb * 100)}%` : null;
+  // Number.isFinite, not just a truthiness check on h2h: a candidate whose
+  // consensus probability couldn't be computed used to render the words
+  // "NaN%" beside the fighter's name. No number at all is the honest answer
+  // there — the row still shows the price, which is what's actually known.
+  const winPct = h2h && gameState === 'upcoming' && Number.isFinite(h2h.consensusProb)
+    ? `${Math.round(h2h.consensusProb * 100)}%`
+    : null;
   const logo = teamLogoUrl(game.sportKey, team);
   const suppressRec = gameState !== 'upcoming';
   const score = gameState === 'upcoming' ? null : slateScoreFor(scoreEvent, team);
