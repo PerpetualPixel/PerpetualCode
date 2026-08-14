@@ -44,8 +44,7 @@ import { getPausedSegments, isSegmentPaused } from './algo-health.js';
 import { getLearningProfile, applyLearningToCandidates } from './daily-learning.js';
 import { fetchMmaResults, gradeMmaPickWithFallback } from './ufc-events.js';
 import { getOrGenerateAnalysis } from './analysis.js';
-import { hasSecondarySettlementSource } from '../../docs/tennis-tiers.js';
-import { settleTennisGameMarket } from './tennis-results.js';
+import { fetchTennisResults, gradeTennisPickWithEspn } from './tennis-espn.js';
 import { isPickWindowOpen } from './tracking.js';
 import { applyTennisFormSignal } from '../../docs/qualitative.js';
 import { loadTennisArchive, loadTennisArchivesFor } from './tennis-archive.js';
@@ -580,14 +579,16 @@ export async function backfillPotdAnalysis(env, ctx, now = Date.now()) {
  * window. Returns false without touching anything for a missing/already-
  * graded/still-pending-with-no-result record, same idempotent shape as
  * every other grading pass here. */
-async function gradePotdForDate(env, ctx, now, dateKey, pick, record, fetchScoresFn, fetchMmaResultsFn) {
+async function gradePotdForDate(env, ctx, now, dateKey, pick, record, fetchScoresFn, fetchMmaResultsFn, fetchTennisResultsFn) {
   const { events } = await fetchScoresFn(pick.sportKey);
   const scoreEvent = (events ?? []).find((e) => e.id === pick.eventId);
   let outcome;
   if (isMma(pick.sportKey)) {
     outcome = gradeMmaPickWithFallback(pick, scoreEvent, await fetchMmaResultsFn());
-  } else if (isTennis(pick.sportKey) && hasSecondarySettlementSource(pick.sportKey, pick.marketKey)) {
-    outcome = (await settleTennisGameMarket(pick, scoreEvent, env, ctx, now)) ?? gradePick(pick, scoreEvent);
+  } else if (isTennis(pick.sportKey)) {
+    // ESPN's scoreboard, not the odds feed, is what settles tennis at all —
+    // see worker/src/tennis-espn.js.
+    outcome = await gradeTennisPickWithEspn(pick, scoreEvent, await fetchTennisResultsFn(), env, ctx, now);
   } else {
     outcome = gradePick(pick, scoreEvent);
   }
@@ -623,7 +624,11 @@ const GRADING_LOOKBACK_DAYS = 2;
  * Slate and Pixel's Picks grading do, for the same reason: the Odds API's
  * /scores routinely lags real MMA results by hours.
  */
-export async function runPotdGrading(env, ctx, now = Date.now(), { fetchScoresFn = (s) => fetchScores(s, env, ctx), fetchMmaResultsFn = () => fetchMmaResults(ctx, now) } = {}) {
+export async function runPotdGrading(env, ctx, now = Date.now(), {
+  fetchScoresFn = (s) => fetchScores(s, env, ctx),
+  fetchMmaResultsFn = () => fetchMmaResults(ctx, now),
+  fetchTennisResultsFn = () => fetchTennisResults(ctx, now),
+} = {}) {
   const dateKeys = [...new Set(
     Array.from({ length: GRADING_LOOKBACK_DAYS }, (_, i) => etDatePlusDays(now, -i)),
   )];
@@ -634,7 +639,7 @@ export async function runPotdGrading(env, ctx, now = Date.now(), { fetchScoresFn
     if (!raw) continue;
     const record = JSON.parse(raw);
     if (record.pick.status !== 'pending') continue;
-    if (await gradePotdForDate(env, ctx, now, dateKey, record.pick, record, fetchScoresFn, fetchMmaResultsFn)) {
+    if (await gradePotdForDate(env, ctx, now, dateKey, record.pick, record, fetchScoresFn, fetchMmaResultsFn, fetchTennisResultsFn)) {
       graded = true;
     }
   }

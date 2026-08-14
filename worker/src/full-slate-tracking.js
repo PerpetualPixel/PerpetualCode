@@ -27,7 +27,7 @@ import { fetchSport, fetchScores } from './odds.js';
 import { pickRecordFrom, fetchFullSlateEvents, isPickWindowOpen } from './tracking.js';
 import { fetchMmaResults, gradeMmaPickWithFallback } from './ufc-events.js';
 import { isSettleableTennisMarket, hasSecondarySettlementSource } from '../../docs/tennis-tiers.js';
-import { settleTennisGameMarket } from './tennis-results.js';
+import { fetchTennisResults, gradeTennisPickWithEspn, findTennisMatch } from './tennis-espn.js';
 import { getAllWnbaPropsTracked } from './wnba-props.js';
 import { getAllMlbPropsTracked } from './mlb-props.js';
 import { getAllNflPropsTracked } from './nfl-props.js';
@@ -436,14 +436,21 @@ const GRADING_LOOKBACK_DAYS = 2;
  *   - it's completed, but `scores[].name` doesn't match the stored
  *     home/away, so gradePick can't read a number for either side
  *
- * Read-only — fetches nothing but the same 5-minute-cached scores grading
- * itself uses, and writes nothing.
+ * Tennis additionally reports `espnMatched` — how many of that sport's
+ * pending picks resolve to a completed ESPN match (see
+ * worker/src/tennis-espn.js). Without it this diagnostic would keep
+ * reporting the odds feed's own "0 completed" for tennis and point at a
+ * dead end, since that feed has never posted a tennis result and is no
+ * longer what settles them.
+ *
+ * Read-only — fetches nothing but the same short-cached scores and ESPN
+ * scoreboards grading itself uses, and writes nothing.
  */
 export async function diagnosePendingFullSlate(
   env,
   ctx,
   now = Date.now(),
-  { fetchScoresFn = (s) => fetchScores(s, env, ctx) } = {},
+  { fetchScoresFn = (s) => fetchScores(s, env, ctx), fetchTennisResultsFn = () => fetchTennisResults(ctx, now) } = {},
 ) {
   const dateKeys = [...new Set(
     Array.from({ length: GRADING_LOOKBACK_DAYS }, (_, i) => etDate(now - i * 86400000)),
@@ -454,6 +461,7 @@ export async function diagnosePendingFullSlate(
 
   const sportsNeeded = [...new Set(pending.map((p) => p.sportKey))];
   const fetched = await Promise.all(sportsNeeded.map((s) => fetchScoresFn(s)));
+  const tennisResults = pending.some((p) => isTennis(p.sportKey)) ? await fetchTennisResultsFn() : [];
 
   const bySport = sportsNeeded.map((sportKey, i) => {
     const result = fetched[i] ?? {};
@@ -463,6 +471,7 @@ export async function diagnosePendingFullSlate(
     let foundById = 0;
     let completed = 0;
     let namesUsable = 0;
+    let espnMatched = 0;
     const samples = [];
 
     for (const pick of mine) {
@@ -473,6 +482,8 @@ export async function diagnosePendingFullSlate(
       const feedNames = Array.isArray(event?.scores) ? event.scores.map((s) => s.name) : [];
       const usable = feedNames.includes(pick.home) && feedNames.includes(pick.away);
       if (usable) namesUsable++;
+      const espnMatch = isTennis(sportKey) ? findTennisMatch(pick, tennisResults) : null;
+      if (espnMatch) espnMatched++;
       // A few concrete rows beat any summary when the failure turns out to
       // be a name/id mismatch — the exact strings are the whole diagnosis.
       if (samples.length < 3) {
@@ -482,6 +493,11 @@ export async function diagnosePendingFullSlate(
           foundById: Boolean(event),
           completed: isDone,
           feedNames,
+          // What ESPN says about this exact match, when tennis. A pick left
+          // pending with an espn line present means the settlement rules
+          // declined it (a walkover inside its grace window, say), not that
+          // the result was missing — a genuinely useful distinction.
+          espn: espnMatch ? { status: espnMatch.statusName, sets: [espnMatch.setsA, espnMatch.setsB], note: espnMatch.note } : undefined,
         });
       }
     }
@@ -494,6 +510,7 @@ export async function diagnosePendingFullSlate(
       foundById,
       completed,
       namesUsable,
+      espnMatched: isTennis(sportKey) ? espnMatched : undefined,
       samples,
     };
   });
@@ -514,7 +531,11 @@ export async function runFullSlateGrading(
   env,
   ctx,
   now = Date.now(),
-  { fetchScoresFn = (s) => fetchScores(s, env, ctx), fetchMmaResultsFn = () => fetchMmaResults(ctx, now) } = {},
+  {
+    fetchScoresFn = (s) => fetchScores(s, env, ctx),
+    fetchMmaResultsFn = () => fetchMmaResults(ctx, now),
+    fetchTennisResultsFn = () => fetchTennisResults(ctx, now),
+  } = {},
 ) {
   const dateKeys = [...new Set(
     Array.from({ length: GRADING_LOOKBACK_DAYS }, (_, i) => etDate(now - i * 86400000)),
@@ -528,6 +549,10 @@ export async function runFullSlateGrading(
   const fetched = await Promise.all(sportsNeeded.map((s) => fetchScoresFn(s)));
   const scoreEventsBySport = new Map(sportsNeeded.map((s, i) => [s, fetched[i].events ?? []]));
   const mmaResults = pending.some((p) => isMma(p.sportKey)) ? await fetchMmaResultsFn() : [];
+  // Fetched once for the whole pass, not per pick: one scoreboard request
+  // returns a tournament's entire draw, so a 40-pick tennis day costs the
+  // same two free requests per tour as a one-pick day.
+  const tennisResults = pending.some((p) => isTennis(p.sportKey)) ? await fetchTennisResultsFn() : [];
 
   let graded = 0;
   let rescheduled = 0;
@@ -585,8 +610,8 @@ export async function runFullSlateGrading(
     let outcome;
     if (isMma(pick.sportKey)) {
       outcome = gradeMmaPickWithFallback(pick, scoreEvent, mmaResults);
-    } else if (isTennis(pick.sportKey) && hasSecondarySettlementSource(pick.sportKey, pick.marketKey)) {
-      outcome = (await settleTennisGameMarket(pick, scoreEvent, env, ctx, now)) ?? gradePick(pick, scoreEvent, now);
+    } else if (isTennis(pick.sportKey)) {
+      outcome = await gradeTennisPickWithEspn(pick, scoreEvent, tennisResults, env, ctx, now);
     } else {
       outcome = gradePick(pick, scoreEvent, now);
     }
