@@ -998,7 +998,7 @@ input[type="range"]:focus-visible {
 /* Pick cards                                                        */
 /* ---------------------------------------------------------------- */
 
-.picks { margin-top: 22px; display: grid; gap: 16px; align-items: start; }
+.picks { margin-top: 22px; display: grid; gap: 16px; align-items: stretch; }
 
 .pick {
   background:
