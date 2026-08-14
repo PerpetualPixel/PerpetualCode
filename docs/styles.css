@@ -4622,13 +4622,155 @@ input[type="range"]:focus-visible {
 
 .tracker-loading[hidden] { display: none; }
 
-.tracker-loading-logo {
+/* The logo box. The mark itself no longer moves — it used to rotate, which
+   turned the wordmark upside down for half of every cycle and read as a
+   generic spinner with the brand along for the ride. The motion is now a
+   neon racer running the logo's own infinity as a track, which keeps the
+   logo upright and legible the whole time. */
+.tracker-loading-mark {
+  position: relative;
   width: min(45vw, 150px);
-  height: auto;
-  /* Slow on purpose: a fast spinner reads as "working hard / nearly done"
-     and makes a multi-second wait feel broken when it doesn't end. At this
-     speed it reads as a steady heartbeat instead. */
-  animation: tracker-loading-spin 3.2s linear infinite;
+  /* The logo's own proportions, so the FX overlay stretched across this box
+     lands exactly on the artwork underneath it. */
+  aspect-ratio: 180 / 155;
+  /* Timing shared by every layer below. One lap of the track is deliberately
+     unhurried: a fast loop reads as "nearly done" and makes a multi-second
+     wait feel broken when it doesn't end. */
+  --lap: 2.9s;
+  /* How far ahead of the dash pattern's start the lit segment's leading edge
+     sits — dash gap 240 + dash 120 out of a ~1600-unit path. Everything that
+     has to appear AT the racer (the head, the shed pixels, the sparks) is
+     phased off this, so the parts stay locked together if --lap changes. */
+  --head-lead: 0.225;
+}
+
+.tracker-loading-logo {
+  width: 100%;
+  height: 100%;
+  display: block;
+}
+
+.tracker-loading-fx {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  /* The bloom filter and the shed pixels both leave the logo's box. */
+  overflow: visible;
+  pointer-events: none;
+  /* Light adds, it doesn't paint over: screen blending is what makes the
+     racer look like it's lighting the logo's own neon tube up as it passes
+     rather than sliding across on top of it. Safe on this panel — the
+     backdrop behind the logo is the app's near-black. */
+  mix-blend-mode: screen;
+}
+
+/* The unlit track: the racer's route, dim, so the loop still reads as a
+   closed circuit between passes rather than a light appearing from nowhere. */
+.fx-tail,
+.fx-racer {
+  fill: none;
+  stroke-linecap: round;
+}
+
+/* Violet, not magenta or laser: the logo's own loops are already magenta on
+   the left and cyan on the right, so a trail in either of those colors
+   vanishes for half the lap. The brand's third accent reads against both. */
+.fx-tail {
+  stroke: #A855F7;
+  stroke-width: 11;
+  opacity: 0.8;
+  /* 360 lit of ~1600 — a long, soft comet tail. */
+  stroke-dasharray: 360 1240;
+  animation: fx-lap var(--lap) linear infinite;
+}
+
+.fx-racer {
+  stroke: #fff;
+  stroke-width: 6;
+  /* The hot core, sitting at the leading 120 units of the tail above. */
+  stroke-dasharray: 120 1480;
+  animation: fx-lap-core var(--lap) linear infinite;
+}
+
+@keyframes fx-lap {
+  from { stroke-dashoffset: 0; }
+  to { stroke-dashoffset: -1600; }
+}
+
+@keyframes fx-lap-core {
+  from { stroke-dashoffset: -240; }
+  to { stroke-dashoffset: -1840; }
+}
+
+/* Anything that rides the track — the head and every shed pixel — follows
+   the same path, phased by its own --at. Chrome, Safari and Firefox all
+   support offset-path on SVG elements; where it isn't supported the riders
+   would all pile up at the origin, so they're hidden instead and the racing
+   dash above carries the effect on its own. */
+.fx-rider {
+  offset-path: path("M324 321C300 252 240 186 158 190C80 194 48 255 54 308C60 374 102 430 174 426C252 420 300 372 324 321C352 272 402 206 482 203C558 200 604 258 602 326C600 398 546 456 468 452C394 448 350 390 324 321Z");
+  /* Pixels stay square to the viewport rather than banking into the turns —
+     they're pixels, not sparks trailing a rocket. */
+  offset-rotate: 0deg;
+  animation: fx-ride var(--lap) linear infinite;
+  /* A negative delay is a phase offset: the rider starts the lap already
+     --at of the way around, which is what puts it under the lit dash
+     instead of behind it. */
+  animation-delay: calc(var(--at, var(--head-lead)) * var(--lap) * -1);
+}
+
+.fx-rider-head circle {
+  fill: #fff;
+}
+
+@keyframes fx-ride {
+  from { offset-distance: 0%; }
+  to { offset-distance: 100%; }
+}
+
+@supports not (offset-path: path("M0 0L1 1")) {
+  .fx-rider { display: none; }
+}
+
+/* The shed itself: the rider carries the pixel along the track, and the
+   pixel flicks outward and dies on its own shorter cycle, so pixels keep
+   peeling off the racer for the whole lap instead of four of them orbiting
+   it forever. */
+.fx-pixel {
+  fill: var(--laser);
+  animation: fx-shed var(--shed, 0.5s) linear infinite;
+}
+
+@keyframes fx-shed {
+  0% { opacity: 0.95; transform: translate(0, 0) scale(1); }
+  100% {
+    opacity: 0;
+    transform: translate(calc(var(--drift, 20) * 1px), calc(var(--drift, 20) * -0.8px)) scale(0.35);
+  }
+}
+
+/* Sparks: a hard white flash at a fixed point on the track, timed to the
+   frame the racer arrives there. --at is the point's fraction along the
+   path, so the delay is however long the racer needs to reach it. */
+.fx-spark {
+  fill: #fff;
+  opacity: 0;
+  transform-box: fill-box;
+  transform-origin: center;
+  animation: fx-spark var(--lap) linear infinite;
+  /* Flash lands at progress 0, so the delay is exactly how long the racer
+     (already --head-lead around the track) takes to reach this point. */
+  animation-delay: calc((var(--at, 0) - var(--head-lead)) * var(--lap));
+}
+
+.fx-spark:nth-child(even) { fill: var(--laser); }
+
+@keyframes fx-spark {
+  0% { opacity: 0; transform: scale(0.3); }
+  3% { opacity: 1; transform: scale(2.6); }
+  14% { opacity: 0; transform: scale(0.6); }
+  100% { opacity: 0; transform: scale(0.3); }
 }
 
 .tracker-loading-title {
@@ -4647,21 +4789,30 @@ input[type="range"]:focus-visible {
   color: var(--muted);
 }
 
-@keyframes tracker-loading-spin {
-  from { transform: rotate(0deg); }
-  to { transform: rotate(360deg); }
-}
-
-/* A rotating logo is exactly the kind of sustained motion that triggers
-   vestibular symptoms, and this one runs for the whole load. Reduced-motion
-   users get a gentle opacity pulse — still obviously "working," no
-   rotation. */
+/* Sustained motion for the whole length of a load is exactly what triggers
+   vestibular symptoms, and a racing light with sparks firing off it is a
+   stronger version of that than the rotation this replaced. Reduced-motion
+   users get the track lit whole, at a gentle brightness pulse — still
+   obviously "working", nothing chasing around the screen, and no flashing
+   at all (the sparks are hidden outright rather than slowed, since a
+   repeated hard flash is its own accessibility problem). */
 @media (prefers-reduced-motion: reduce) {
-  .tracker-loading-logo {
-    animation: tracker-loading-pulse 1.8s ease-in-out infinite;
+  .fx-racer,
+  .fx-rider,
+  .fx-sparks {
+    display: none;
+  }
+  /* Hidden riders don't paint, but their shed animation would still tick for
+     the whole load. */
+  .fx-pixel {
+    animation: none;
+  }
+  .fx-tail {
+    stroke-dasharray: none;
+    animation: tracker-loading-pulse 2.4s ease-in-out infinite;
   }
   @keyframes tracker-loading-pulse {
-    0%, 100% { opacity: 1; }
-    50% { opacity: 0.45; }
+    0%, 100% { opacity: 0.65; }
+    50% { opacity: 0.2; }
   }
 }
