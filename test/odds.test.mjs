@@ -50,14 +50,22 @@ test('enrichMmaEvents fetches the ESPN schedule once, not once per fight', async
 
   // A 20-fight slate — big enough that the old per-fight fetch pattern would
   // have made 40 outbound calls (20 fights x 2 promotions).
-  const events = Array.from({ length: 20 }, (_, i) =>
+  const slate = (n) => Array.from({ length: n }, (_, i) =>
     makeOddsEvent(`fight-${i}`, 'Mateusz Gamrot', 'Quillan Salkilld', '2026-08-08T00:00:00Z'),
   );
 
-  await enrichMmaEvents(events, ctx);
+  await enrichMmaEvents(slate(20), ctx);
+  const twenty = fetchCalls;
+  fetchCalls = 0;
+  await enrichMmaEvents(slate(2), ctx);
+  const two = fetchCalls;
 
-  // Exactly one fetch per promotion (UFC + PFL), regardless of slate size.
-  assert.equal(fetchCalls, 2, `expected 2 total fetches (one per promotion), got ${fetchCalls}`);
+  // The cost is fixed per slate, not per fight: two league-directory reads
+  // (see discoverMmaLeagues) plus one scoreboard per discovered promotion —
+  // here just the seeded UFC + PFL, since this stub answers every URL with a
+  // scoreboard body that carries no league list.
+  assert.equal(twenty, 4, `expected 4 total fetches (2 directories + 2 promotions), got ${twenty}`);
+  assert.equal(two, twenty, 'fetch count must not scale with slate size');
 });
 
 test('enrichMmaEvents still tags every fight with the real event name from the shared schedule', async () => {
@@ -94,7 +102,10 @@ test('enrichMmaEvents falls back to date grouping for every fight when both scor
 
   const enriched = await enrichMmaEvents(events, ctx);
   assert.ok(enriched.every((e) => e.ufc_event.event === 'Card - 08/09'));
-  assert.equal(fetchCalls, 2, `a total failure should still only attempt 2 fetches, got ${fetchCalls}`);
+  // Everything failing (both league directories, then both seeded
+  // promotions' scoreboards) is still one attempt each for the whole slate —
+  // no per-fight retry storm.
+  assert.equal(fetchCalls, 4, `a total failure should still only attempt 4 fetches, got ${fetchCalls}`);
 });
 
 /* --- tennis region expansion --------------------------------------------- */

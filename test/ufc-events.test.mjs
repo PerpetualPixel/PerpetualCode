@@ -1,6 +1,8 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { getUfcEventDetails, fetchMmaResults, buildMmaScoreEvent, gradeMmaPickWithFallback } from '../worker/src/ufc-events.js';
+import {
+  getUfcEventDetails, fetchMmaResults, buildMmaScoreEvent, gradeMmaPickWithFallback, discoverMmaLeagues,
+} from '../worker/src/ufc-events.js';
 
 /**
  * getUfcEventDetails calls fetch() directly (module-scope, not injected —
@@ -240,6 +242,168 @@ test('card-window fallback never fires when ESPN omits a date on every event', a
   const commenceMs = Date.parse('2026-08-15T22:00:00Z');
   const result = await getUfcEventDetails('Unknown Fighter A', 'Unknown Fighter B', commenceMs, ctx);
   assert.equal(result.event, 'Card - 08/15');
+});
+
+/* ------------------------------------------------------------------ */
+/* League discovery                                                     */
+/* ------------------------------------------------------------------ */
+
+/**
+ * A fetch stub that answers ESPN's league directories and each promotion's
+ * scoreboard separately — the shape discovery actually runs against, unlike
+ * stubEspnScoreboard's one-answer-for-every-URL stub.
+ *
+ * `directories` maps a URL fragment to that directory's JSON body;
+ * `boards` maps a league slug to the events its scoreboard carries. Any URL
+ * neither covers answers with an empty card list (a real promotion with
+ * nothing scheduled in the window), never an error, so a test only has to
+ * describe the promotions it cares about.
+ */
+function stubEspnDiscovery({ directories = {}, boards = {} } = {}) {
+  globalThis.caches = { default: { async match() { return null; }, async put() {} } };
+  globalThis.fetch = async (url) => {
+    const u = String(url);
+    for (const [fragment, body] of Object.entries(directories)) {
+      if (u.includes(fragment)) return { ok: true, text: async () => JSON.stringify(body) };
+    }
+    const slug = u.match(/\/sports\/mma\/([^/]+)\/scoreboard/)?.[1];
+    const events = (slug && boards[slug]) || [];
+    return { ok: true, text: async () => JSON.stringify({ events }) };
+  };
+}
+
+const HEADER_FRAGMENT = '/apis/v2/scoreboard/header';
+const CORE_FRAGMENT = '/v2/sports/mma/leagues';
+
+test('a non-UFC/PFL card gets its real name from a promotion discovered off ESPN\'s league header', async () => {
+  // The whole point of discovery: the Odds API blends promotions under one
+  // key with no promotion tag, so a Bellator fight used to have no source at
+  // all for its name and displayed as a bare "Card - MM/DD".
+  stubEspnDiscovery({
+    directories: {
+      [HEADER_FRAGMENT]: { sports: [{ leagues: [{ slug: 'ufc' }, { slug: 'pfl' }, { slug: 'bellator' }] }] },
+    },
+    boards: {
+      bellator: [makeEspnEvent('Bellator 302: Nurmagomedov vs. Primus', [['Usman Nurmagomedov', 'Brent Primus']])],
+    },
+  });
+
+  const result = await getUfcEventDetails('Usman Nurmagomedov', 'Brent Primus', Date.parse('2026-08-15T22:00:00Z'), ctx);
+  assert.equal(result.event, 'Bellator 302: Nurmagomedov vs. Primus');
+});
+
+test('a promotion is discovered from the core league index\'s $ref slugs too', async () => {
+  stubEspnDiscovery({
+    directories: {
+      [CORE_FRAGMENT]: {
+        items: [
+          { $ref: 'https://sports.core.api.espn.com/v2/sports/mma/leagues/ufc?lang=en&region=us' },
+          { $ref: 'https://sports.core.api.espn.com/v2/sports/mma/leagues/one?lang=en&region=us' },
+        ],
+      },
+    },
+    boards: {
+      one: [makeEspnEvent('ONE Fight Night 28: Superlek vs. Nabil', [['Superlek Kiatmoo9', 'Nabil Anane']])],
+    },
+  });
+
+  const result = await getUfcEventDetails('Superlek Kiatmoo9', 'Nabil Anane', Date.now(), ctx);
+  assert.equal(result.event, 'ONE Fight Night 28: Superlek vs. Nabil');
+});
+
+test('discovery keeps the seeded promotions first and bounds how many are queried', async () => {
+  stubEspnDiscovery({
+    directories: {
+      [HEADER_FRAGMENT]: {
+        sports: [{
+          leagues: Array.from({ length: 30 }, (_, i) => ({ slug: `promo-${String(i).padStart(2, '0')}` })),
+        }],
+      },
+    },
+  });
+
+  const leagues = await discoverMmaLeagues(ctx);
+  // A directory that suddenly lists dozens of leagues must not turn one
+  // slate into dozens of subrequests — the cap has bitten this path before.
+  assert.ok(leagues.length <= 8, `expected at most 8 leagues, got ${leagues.length}`);
+  // Truncation can only ever drop promotions the old fixed pair never
+  // covered: UFC and PFL survive any directory response.
+  assert.deepEqual(leagues.slice(0, 2), ['ufc', 'pfl']);
+  assert.equal(new Set(leagues).size, leagues.length, 'no duplicates');
+});
+
+test('discovery ignores anything that is not a plausible league slug', async () => {
+  stubEspnDiscovery({
+    directories: {
+      [HEADER_FRAGMENT]: {
+        sports: [{
+          leagues: [
+            { slug: 'bellator' },
+            { slug: '' },
+            { slug: null },
+            { slug: 'UFC Fight Night: Gamrot vs Salkilld' }, // an event name, not a league
+            { slug: '../../etc/passwd' },
+            { slug: 'x' }, // too short to be a real ESPN slug
+            { name: 'no slug or abbreviation at all' },
+          ],
+        }],
+      },
+    },
+  });
+
+  const leagues = await discoverMmaLeagues(ctx);
+  assert.deepEqual(leagues, ['ufc', 'pfl', 'bellator']);
+});
+
+test('promotions ESPN\'s site currently surfaces rank ahead of the core index\'s historical ones', async () => {
+  stubEspnDiscovery({
+    directories: {
+      [HEADER_FRAGMENT]: { sports: [{ leagues: [{ slug: 'bellator' }] }] },
+      // The core index still lists promotions that folded years ago; they
+      // are worth querying, but never at the expense of an active one when
+      // the cap bites.
+      [CORE_FRAGMENT]: { items: [{ $ref: 'https://sports.core.api.espn.com/v2/sports/mma/leagues/wsof?lang=en' }] },
+    },
+  });
+
+  assert.deepEqual(await discoverMmaLeagues(ctx), ['ufc', 'pfl', 'bellator', 'wsof']);
+});
+
+test('discovery failing entirely falls back to the seeded promotions, never fewer', async () => {
+  globalThis.caches = { default: { async match() { return null; }, async put() {} } };
+  globalThis.fetch = async (url) => {
+    if (String(url).includes(HEADER_FRAGMENT) || String(url).includes(CORE_FRAGMENT)) {
+      return { ok: false, status: 403 };
+    }
+    return { ok: true, text: async () => JSON.stringify({ events: [] }) };
+  };
+
+  // A discovery outage is never worse than the fixed { ufc, pfl } pair this
+  // replaced — that coverage is the floor, not the ceiling.
+  assert.deepEqual(await discoverMmaLeagues(ctx), ['ufc', 'pfl']);
+});
+
+test('one promotion\'s scoreboard failing does not cost the others their cards', async () => {
+  globalThis.caches = { default: { async match() { return null; }, async put() {} } };
+  globalThis.fetch = async (url) => {
+    const u = String(url);
+    if (u.includes(HEADER_FRAGMENT)) {
+      return { ok: true, text: async () => JSON.stringify({ sports: [{ leagues: [{ slug: 'bellator' }] }] }) };
+    }
+    // A slug ESPN lists but has no scoreboard for — a 404 here used to be
+    // impossible (both hardcoded slugs were known good) and must stay
+    // survivable now that the list is discovered rather than curated.
+    if (u.includes('/mma/ufc/') || u.includes('/mma/pfl/')) return { ok: false, status: 404 };
+    return {
+      ok: true,
+      text: async () => JSON.stringify({
+        events: [makeEspnEvent('Bellator 302: Nurmagomedov vs. Primus', [['Usman Nurmagomedov', 'Brent Primus']])],
+      }),
+    };
+  };
+
+  const result = await getUfcEventDetails('Usman Nurmagomedov', 'Brent Primus', Date.now(), ctx);
+  assert.equal(result.event, 'Bellator 302: Nurmagomedov vs. Primus');
 });
 
 /* ------------------------------------------------------------------ */

@@ -169,6 +169,46 @@ test('started and thinly-priced games are excluded', () => {
   assert.equal(buildCandidates([thin], { now: NOW }).length, 0);
 });
 
+test('a single-book MMA fight gets a real consensus probability, not NaN', () => {
+  // MMA is allowed through on one book (thin PFL/regional cards are often
+  // priced by a single sportsbook), which left nothing to benchmark
+  // against: median([]) is NaN, and it rendered beside the fighter's name
+  // as a literal "NaN%" — confirmed live on Richie Lewis, Rasul Magomedov
+  // and Sidney Outlaw.
+  const fight = makeEvent('mma1', -110, -110, { sport: 'mma_mixed_martial_arts', sportTitle: 'MMA' });
+  fight.bookmakers = fight.bookmakers.slice(0, 1);
+
+  const candidates = buildCandidates([fight], { now: NOW });
+  assert.equal(candidates.length, 2, 'both fighters still priced off the one book');
+
+  for (const c of candidates) {
+    assert.ok(Number.isFinite(c.consensusProb), `consensusProb must be a real number, got ${c.consensusProb}`);
+    assert.ok(c.consensusProb > 0 && c.consensusProb < 1);
+    assert.ok(Number.isFinite(c.fairAmerican), `fairAmerican must be a real number, got ${c.fairAmerican}`);
+    assert.ok(Number.isFinite(c.ev));
+    // The lone book is both the benchmark and the bet, so EV collapses to
+    // the vig — negative. A single-book side must never be able to invent
+    // an edge for itself out of its own price.
+    assert.ok(c.ev < 0, `single-book EV should be negative (the vig), got ${c.ev}`);
+    assert.equal(c.bookCount, 1);
+  }
+
+  // Both sides de-vigged against each other still sum to a whole market.
+  const total = candidates.reduce((sum, c) => sum + c.consensusProb, 0);
+  assert.ok(Math.abs(total - 1) < 1e-9, `two-way consensus should sum to 1, got ${total}`);
+});
+
+test('a multi-book market still benchmarks against the other books only', () => {
+  // Guards the fix above from over-reaching: the moment a second book
+  // exists, the bet's own price is excluded from its own benchmark again.
+  const [candidate] = buildCandidates([makeEvent('g2', -140, 120)], { now: NOW })
+    .filter((c) => c.selection.startsWith('g2 Home'));
+  const ownFairProb = candidate.quotes[0].american;
+  assert.equal(ownFairProb, -130, 'fixture: book 0 hangs the outlier best price');
+  // -130 de-vigged would sit above the consensus the other four books make.
+  assert.ok(candidate.consensusProb < 1 / americanToDecimal(-130));
+});
+
 /* ---------------------------------------------------------------- */
 /* Per-book quotes — what the sportsbook buttons render from           */
 /* ---------------------------------------------------------------- */

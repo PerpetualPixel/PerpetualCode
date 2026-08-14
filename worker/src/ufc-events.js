@@ -13,20 +13,73 @@
  * for weeks out, so this is read live and cached instead of hand-kept.
  *
  * The Odds API's "mma_mixed_martial_arts" market blends multiple promotions
- * (UFC and PFL both post fights under it), and each promotion has its own
- * separate ESPN scoreboard endpoint — a PFL fighter is never on UFC's board
- * or vice versa — so both are fetched and merged into one lookup index.
+ * under one key with no promotion tag on the event, and each promotion has
+ * its own separate ESPN scoreboard endpoint — a PFL fighter is never on
+ * UFC's board or vice versa — so every promotion is fetched and merged into
+ * one lookup index.
+ *
+ * Which promotions those are is discovered from ESPN rather than hardcoded.
+ * A fixed `{ ufc, pfl }` pair shipped first, and every card from any other
+ * promotion the odds feed carried (Bellator, ONE, Cage Warriors, LFA, RIZIN,
+ * Invicta — the feed doesn't say which) had no source at all for its name
+ * and displayed as a bare "Card - MM/DD". Hardcoding a longer list just
+ * moves the staleness: ESPN adds and retires MMA league slugs, and a
+ * promotion missing from a hand-kept list fails exactly the same silent way.
+ * See discoverMmaLeagues.
  */
 
 import { gradePick } from '../../docs/learning.js';
 
-const ESPN_MMA_SCOREBOARDS = {
-  ufc: 'https://site.web.api.espn.com/apis/site/v2/sports/mma/ufc/scoreboard',
-  pfl: 'https://site.web.api.espn.com/apis/site/v2/sports/mma/pfl/scoreboard',
-};
+/**
+ * Promotions proven live from a Cloudflare Worker, always queried regardless
+ * of what discovery returns — so a discovery outage can never be worse than
+ * the fixed pair this replaced.
+ */
+const SEED_MMA_LEAGUES = ['ufc', 'pfl'];
+const scoreboardUrl = (league) => `https://site.web.api.espn.com/apis/site/v2/sports/mma/${league}/scoreboard`;
+
+/**
+ * Where ESPN's own MMA league list is read from. Both are best-effort and
+ * merged: the header endpoint is on site.web.api.espn.com, the one host
+ * already proven reachable from a Worker, and the core endpoint is the
+ * canonical league index (broader, but a different host that may or may not
+ * answer). A source that fails, 403s, or changes shape contributes nothing
+ * and is not an error.
+ */
+const LEAGUE_DIRECTORIES = [
+  {
+    url: 'https://site.web.api.espn.com/apis/v2/scoreboard/header?sport=mma',
+    // { sports: [{ leagues: [{ slug: 'ufc', ... }] }] }
+    parse: (data) => (data?.sports ?? []).flatMap((s) => (s?.leagues ?? []).map((l) => l?.slug ?? l?.abbreviation)),
+  },
+  {
+    url: 'https://sports.core.api.espn.com/v2/sports/mma/leagues?limit=100',
+    // { items: [{ $ref: 'https://.../sports/mma/leagues/ufc?lang=en' }] } —
+    // the slug is read straight out of the ref so the index costs one
+    // request, not one per league.
+    parse: (data) => (data?.items ?? []).map((item) => {
+      const ref = typeof item === 'string' ? item : item?.$ref;
+      return String(ref ?? '').match(/\/leagues\/([^/?#]+)/)?.[1] ?? null;
+    }),
+  },
+];
+
+/** A slug shaped like a real ESPN league path segment — anything else is a parse artifact, not a promotion. */
+const LEAGUE_SLUG_PATTERN = /^[a-z0-9][a-z0-9-]{1,23}$/;
+/**
+ * Ceiling on promotions queried per pass. Every league is one more outbound
+ * request on a path that has already hit Cloudflare's per-invocation
+ * subrequest limit once (see enrichMmaEvents in worker/src/odds.js), and a
+ * directory that suddenly returns a hundred slugs must not be able to take
+ * the whole slate down with it. Seeds are kept first, so a truncation can
+ * only ever drop a promotion the fixed pair never covered anyway.
+ */
+const MAX_MMA_LEAGUES = 8;
+
 const SCHEDULE_TTL = 3600 * 6; // a card can still be adjusted; not worth caching longer
 const RESULTS_TTL = 300; // completed fights don't change, but this window also has to catch cards still airing
 const RESULTS_LOOKBACK_DAYS = 3; // matches worker/src/odds.js's own fetchScores daysFrom=3 convention
+const LEAGUES_TTL = 86400; // ESPN adds or retires an MMA promotion a few times a year, not a few times a day
 
 /**
  * Folds accents before stripping non-alphanumerics (NFD-normalize, then drop
@@ -152,6 +205,56 @@ function parseSchedule(data) {
 }
 
 /**
+ * Every MMA promotion ESPN publishes a scoreboard for — the seeds plus
+ * whatever its own league directories list, deduped, validated, and capped.
+ *
+ * This is what stops a non-UFC/PFL card from falling through to "Card -
+ * MM/DD": the Odds API hands over two fighter names and a start time with no
+ * promotion attached, so the only way to name the event is to have already
+ * asked the promotion's own scoreboard about it. Cached for LEAGUES_TTL —
+ * the list is near-static, and this runs on the same request path as the
+ * schedule fetch it feeds.
+ *
+ * Never throws: a total discovery failure returns the seeds, which is
+ * exactly the coverage this function replaced.
+ */
+export async function discoverMmaLeagues(ctx) {
+  const settled = await Promise.allSettled(
+    LEAGUE_DIRECTORIES.map(async ({ url, parse }) => parse(await cachedJson(url, LEAGUES_TTL, ctx))),
+  );
+
+  const leagues = [...SEED_MMA_LEAGUES];
+  // Directory order is priority order, and it decides who survives the cap:
+  // the header endpoint lists what ESPN's own site surfaces right now
+  // (active promotions), while the core index also carries long-dead ones
+  // no odds feed prices anymore. Within a directory the slugs are sorted, so
+  // the same directory response always yields the same list — a card named
+  // on one request must not be a bare date on the next.
+  for (const result of settled) {
+    if (result.status !== 'fulfilled') continue;
+    const slugs = (result.value ?? [])
+      .map((raw) => String(raw ?? '').trim().toLowerCase())
+      .filter((slug) => LEAGUE_SLUG_PATTERN.test(slug));
+    for (const slug of [...new Set(slugs)].sort()) {
+      if (!leagues.includes(slug)) leagues.push(slug);
+    }
+  }
+  return leagues.slice(0, MAX_MMA_LEAGUES);
+}
+
+/**
+ * One scoreboard request per discovered promotion for the same date range,
+ * settled independently — one promotion 404ing (a slug ESPN lists but has no
+ * scoreboard for) or timing out never costs the others their cards.
+ */
+async function fetchAllScoreboards(dates, ttl, ctx) {
+  const leagues = await discoverMmaLeagues(ctx);
+  return Promise.allSettled(
+    leagues.map((league) => cachedJson(`${scoreboardUrl(league)}?dates=${dates}`, ttl, ctx)),
+  );
+}
+
+/**
  * Both fighters' ESPN athlete ids for one specific matchup, resolved
  * against an already-fetched schedule (see fetchMmaSchedule) — the same
  * namesLikelyMatch tolerance getUfcEventDetails uses for event-card
@@ -192,19 +295,17 @@ export function resolveEspnAthleteIds(fighterA, fighterB, schedule) {
 }
 
 /**
- * Every upcoming UFC + PFL event ESPN has scheduled over the next 30 days,
- * each with its real name and the normalized fighter-pair for every fight on
- * the card — built once per cache window, not once per fight, since a single
- * request per promotion already covers the whole window. A promotion whose
+ * Every upcoming MMA event ESPN has scheduled over the next 30 days, across
+ * every promotion discoverMmaLeagues turns up, each with its real name and
+ * the normalized fighter-pair for every fight on the card — built once per
+ * cache window, not once per fight, since a single request per promotion
+ * already covers the whole window. A promotion whose
  * fetch fails is simply left out of the merged schedule rather than failing
  * the whole lookup; only a total failure across every promotion falls
  * through to the caller's date-grouping fallback.
  */
 export async function fetchMmaSchedule(ctx, now = Date.now()) {
-  const dates = dateRangeParam(now);
-  const results = await Promise.allSettled(
-    Object.values(ESPN_MMA_SCOREBOARDS).map((base) => cachedJson(`${base}?dates=${dates}`, SCHEDULE_TTL, ctx)),
-  );
+  const results = await fetchAllScoreboards(dateRangeParam(now), SCHEDULE_TTL, ctx);
 
   const schedule = results.filter((r) => r.status === 'fulfilled').flatMap((r) => parseSchedule(r.value));
   if (schedule.length === 0 && results.every((r) => r.status === 'rejected')) {
@@ -300,7 +401,7 @@ export async function getUfcEventDetails(fighterA, fighterB, commenceMs, ctx, sc
 }
 
 /**
- * Every completed fight from ESPN's UFC+PFL scoreboards over the last
+ * Every completed fight from every discovered MMA promotion's scoreboard over the last
  * RESULTS_LOOKBACK_DAYS, each with both competitors' names and which one
  * won — a fallback grading source for MMA specifically. The Odds API's own
  * /scores endpoint routinely lags real fight results by hours for
@@ -314,9 +415,7 @@ export async function getUfcEventDetails(fighterA, fighterB, commenceMs, ctx, sc
  */
 export async function fetchMmaResults(ctx, now = Date.now()) {
   const dates = lookbackDateRangeParam(now, RESULTS_LOOKBACK_DAYS);
-  const results = await Promise.allSettled(
-    Object.values(ESPN_MMA_SCOREBOARDS).map((base) => cachedJson(`${base}?dates=${dates}`, RESULTS_TTL, ctx)),
-  );
+  const results = await fetchAllScoreboards(dates, RESULTS_TTL, ctx);
 
   const fights = [];
   for (const r of results) {
