@@ -9,6 +9,8 @@ import {
   devig,
   buildCandidates,
   scoreCandidate,
+  isNflPreseason,
+  isNflPreseasonKey,
   QUALITATIVE,
   UNDERDOG_PROB_PENALTY,
   analyze,
@@ -989,4 +991,79 @@ test('topPicks caps +120-and-longer dogs at maxDogs, favorites fill the rest', (
     uncapped.picks.filter((p) => p.american >= 120).length >= 4,
     'maxDogs: Infinity must restore the uncapped behavior',
   );
+});
+
+/* ------------------------------------------------------------------ */
+/* NFL preseason                                                       */
+/* ------------------------------------------------------------------ */
+
+test('isNflPreseasonKey matches the preseason key and not the regular season', () => {
+  assert.equal(isNflPreseasonKey('americanfootball_nfl_preseason'), true);
+  assert.equal(isNflPreseasonKey('americanfootball_nfl'), false);
+  assert.equal(isNflPreseasonKey('americanfootball_ncaaf'), false);
+  assert.equal(isNflPreseasonKey('baseball_mlb'), false);
+  // Never throws on the shapes that legitimately reach it.
+  assert.equal(isNflPreseasonKey(undefined), false);
+  assert.equal(isNflPreseasonKey(null), false);
+});
+
+test('isNflPreseason reads both candidate (sportKey) and raw event (sport_key) shapes', () => {
+  // The bug this replaces: the old helper read a `season_type` field that
+  // analyze() never carries onto candidates, so it was always false.
+  assert.equal(isNflPreseason({ sportKey: 'americanfootball_nfl_preseason' }), true);
+  assert.equal(isNflPreseason({ sport_key: 'americanfootball_nfl_preseason' }), true);
+  assert.equal(isNflPreseason({ sportKey: 'americanfootball_nfl' }), false);
+  assert.equal(isNflPreseason({}), false);
+
+  // The real integration point: a candidate straight out of analyze() must
+  // be recognised, since that is the only shape topPicks ever sees.
+  const [candidate] = analyze(
+    [makeEvent('pre', -140, 120, { ...SHARP, sport: 'americanfootball_nfl_preseason', sportTitle: 'NFL Preseason' })],
+    { now: NOW },
+  );
+  assert.equal(isNflPreseason(candidate), true, 'analyze() output must be recognised as preseason');
+});
+
+test('topPicks never returns an NFL preseason pick', () => {
+  const candidates = analyze(
+    [
+      makeEvent('pre', -140, 120, { ...SHARP, sport: 'americanfootball_nfl_preseason', sportTitle: 'NFL Preseason' }),
+      makeEvent('reg', -140, 120, { ...SHARP, sport: 'americanfootball_nfl', sportTitle: 'NFL' }),
+    ],
+    { now: NOW },
+  );
+  const { picks } = topPicks(candidates, { oddsMin: -1000, oddsMax: 500, minScore: 0, count: 8 });
+
+  assert.ok(picks.length > 0, 'the regular-season game must still be pickable');
+  assert.ok(
+    picks.every((p) => !isNflPreseason(p.legs[0])),
+    'no preseason game may appear on the board',
+  );
+});
+
+test('the guaranteeCount fallback cannot pad a thin board with NFL preseason', () => {
+  // Regression: the fallback builds from the RAW candidate list, so filtering
+  // only the main pool left preseason reachable on exactly the quiet day the
+  // padding exists for — Pixel's Picks runs with guaranteeCount: true.
+  const candidates = analyze(
+    [makeEvent('pre', -140, 120, { ...SHARP, sport: 'americanfootball_nfl_preseason', sportTitle: 'NFL Preseason' })],
+    { now: NOW },
+  );
+  assert.ok(candidates.length > 0, 'fixture must produce candidates for the fallback to reach for');
+
+  const { picks } = topPicks(candidates, {
+    oddsMin: -1000, oddsMax: 500, minScore: 0, count: 5, guaranteeCount: true,
+  });
+  assert.equal(picks.length, 0, 'a board with only preseason available must come back empty, not padded');
+});
+
+test('analyze() still yields preseason candidates — Full Slate keeps them', () => {
+  // Full Slate is built from analyze() directly (worker/src/full-slate-tracking.js),
+  // never topPicks, and is the one surface preseason IS meant to appear on.
+  const candidates = analyze(
+    [makeEvent('pre', -140, 120, { ...SHARP, sport: 'americanfootball_nfl_preseason', sportTitle: 'NFL Preseason' })],
+    { now: NOW },
+  );
+  assert.ok(candidates.length > 0, 'analyze() must not filter preseason out');
+  assert.ok(candidates.every((c) => c.sportKey === 'americanfootball_nfl_preseason'));
 });

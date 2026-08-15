@@ -141,6 +141,26 @@ allowlisted in `src/index.js`; anything else is rejected with a 400. Tennis is
 allowed by prefix (`tennis_atp_`, `tennis_wta_`) because its keys are
 per-tournament and an exact list would go stale every few days.
 
+NFL preseason is allowed by the same discover-don't-hardcode reasoning, but
+matched separately from the tennis prefixes rather than added to them:
+`ALLOWED_SPORT_PREFIXES` doubles as `regionsFor()`'s "is this tennis" test,
+so anything listed there would also get priced off UK/EU books. The allowlist
+is the gate that matters — `fetchCatalogue` filters on `isAllowedSport`, so
+without it the client could never see the key to put preseason on the board
+at all.
+
+**Preseason reaches the Full Slate only.** It is excluded from Pixel's Picks
+(`tracking.js`) and Play of the Day (`potd.js`) by `isNflPreseason`, and from
+`topPicks()` itself as a hard rejection alongside the EV/Kelly floor — not as
+part of the relaxable odds band, because Pixel's Picks runs with
+`guaranteeCount: true` and that fallback pads a thin board from the *raw*
+candidate list. Filtering only the main pool left exactly that hole: a quiet
+day's padding could post the preseason game the rule exists to keep out
+(`test/engine.test.mjs` covers it, and fails without the fix). Starters play a
+series or two and roster churn is total, so the result says almost nothing
+about either team — the high-variance, low-information game those two curated
+surfaces exist to avoid.
+
 **Costs 3 credits per league, per cache miss.** Capped at 3 leagues a request —
 the browser enforces the same limit, but a spend ceiling doesn't belong only in
 a place the user can edit.

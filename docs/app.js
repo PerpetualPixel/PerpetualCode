@@ -33,6 +33,7 @@ import {
   suggestedParlayStake,
   suggestedStake,
   scoreCandidate,
+  isNflPreseasonKey,
   QUALITATIVE,
 } from './engine.js';
 import {
@@ -92,12 +93,23 @@ const RECOMMENDED_UNIT_PCT = 0.02;
  * The leagues the app always keeps loaded. Tennis has no single sport
  * key — the Odds API keys it per tournament (tennis_atp_canadian_open this
  * week, something else next) — so ATP/WTA start with an empty key list and
- * get populated from the catalogue once it loads (see populateTennisGroups).
+ * get populated from the catalogue once it loads (see
+ * populateDynamicGroups). NFL preseason is the same shape for a different
+ * reason: its key only exists while preseason is actually running, so it's
+ * discovered rather than hardcoded, and the group simply stays empty (and
+ * renders nothing) the rest of the year.
  * Everything else already has one stable key.
  */
 const LEAGUE_GROUPS = [
   { id: 'mlb', label: 'MLB', keys: ['baseball_mlb'] },
   { id: 'nfl', label: 'NFL', keys: ['americanfootball_nfl'] },
+  // Full Slate only — never Pixel's Picks or Play of the Day (see
+  // isNflPreseason in docs/engine.js). seasonal:true hides the group
+  // entirely whenever its discovered key list is empty, which is most of
+  // the year: unlike ATP/WTA (also key-discovered, but live nearly
+  // year-round), preseason runs about four weeks, and a permanent
+  // "NFL Pre: 0 games" token would read as broken rather than out of season.
+  { id: 'nflpre', label: 'NFL Pre', keys: [], seasonal: true },
   { id: 'ncaa', label: 'NCAA', keys: ['americanfootball_ncaaf'] },
   { id: 'atp', label: 'ATP', keys: [] },
   { id: 'wta', label: 'WTA', keys: [] },
@@ -129,16 +141,36 @@ const LEAGUE_GROUP_BY_ID = new Map(LEAGUE_GROUPS.map((g) => [g.id, g]));
 
 /** One glyph per league group, for the glowing quick-select token row (renderSlateLeagueOptions) — purely decorative, the underlying select is still the source of truth. */
 const LEAGUE_ICONS = {
-  mlb: '⚾', nfl: '🏈', ncaa: '🎓', atp: '🎾', wta: '🎾',
+  mlb: '⚾', nfl: '🏈', nflpre: '🏈', ncaa: '🎓', atp: '🎾', wta: '🎾',
   wnba: '🏀', mma: '🥊', mls: '⚽', nhl: '🏒', nba: '🏀', ncaab: '🎓',
 };
 
-/** Fill ATP/WTA's key lists from whatever tennis tournaments are currently live in the catalogue. */
-function populateTennisGroups() {
+/**
+ * Fill the key lists of every league group whose sport keys aren't stable
+ * year-round, from whatever the catalogue currently says is live: ATP/WTA
+ * (keyed per tournament, so they change weekly) and NFL preseason (keyed
+ * separately from the regular season, and only present while preseason is
+ * running). A group with nothing matching is left with an empty key list;
+ * whether that hides it is a separate question the `seasonal` flag answers
+ * (see visibleLeagueGroups).
+ */
+function populateDynamicGroups() {
   const atp = LEAGUE_GROUP_BY_ID.get('atp');
   const wta = LEAGUE_GROUP_BY_ID.get('wta');
+  const nflPre = LEAGUE_GROUP_BY_ID.get('nflpre');
   atp.keys = state.catalogue.filter((s) => s.key.startsWith('tennis_atp_')).map((s) => s.key);
   wta.keys = state.catalogue.filter((s) => s.key.startsWith('tennis_wta_')).map((s) => s.key);
+  nflPre.keys = state.catalogue.filter((s) => isNflPreseasonKey(s.key)).map((s) => s.key);
+}
+
+/**
+ * The league groups worth rendering right now. Only `seasonal` groups are
+ * ever hidden, and only when key discovery found nothing for them — every
+ * other group (including off-season NBA/NCAAB, which say so explicitly)
+ * stays put, so the row doesn't reshuffle as game counts move.
+ */
+function visibleLeagueGroups() {
+  return LEAGUE_GROUPS.filter((g) => !g.seasonal || g.keys.length > 0);
 }
 
 const ONE_DAY_MS = 24 * 60 * 60 * 1000;
@@ -984,7 +1016,7 @@ async function loadCatalogue() {
       key,
       title: DEMO_EVENTS.find((e) => e.sport_key === key)?.sport_title ?? key,
     }));
-    populateTennisGroups();
+    populateDynamicGroups();
     renderSlateLeagueOptions();
     return;
   }
@@ -1002,7 +1034,7 @@ async function loadCatalogue() {
     // catalogue comes back.
     state.catalogue = [];
   }
-  populateTennisGroups();
+  populateDynamicGroups();
   renderSlateLeagueOptions();
 }
 
@@ -1027,7 +1059,7 @@ async function refreshAllLeagues() {
     return;
   }
 
-  populateTennisGroups();
+  populateDynamicGroups();
   // offSeason groups (NBA/NCAAB placeholders — see LEAGUE_GROUPS) are
   // deliberately excluded here: no live fetch for either until someone
   // flips that flag off once the season actually starts.
@@ -1473,6 +1505,8 @@ function renderLeg(leg, index, isCombo) {
   // without having to escape bet ids into a CSS selector.
   const slot = renderedLegs.push(leg) - 1;
 
+  const cancelled = isMma(leg.sportKey) && fightCancelled(cachedConsensusFeed(), { home: leg.home, away: leg.away });
+
   return `
     <div class="leg">
       ${isCombo ? `<p class="chip">Leg ${index + 1}</p>` : ''}
@@ -1486,6 +1520,7 @@ function renderLeg(leg, index, isCombo) {
       </button>
 
       <div class="leg-detail" id="${detailId}" hidden>
+        ${cancelled ? `<p class="leg-cancelled">✕ This fight has been cancelled — it is no longer on the card.</p>` : ''}
         <dl class="meta">
           <div>
             <dt>When</dt>
@@ -3914,9 +3949,15 @@ function groupGameCount(group) {
  */
 function renderSlateLeagueOptions() {
   el.slateLeagueSelect.disabled = false;
-  if (!state.slateLeague) state.slateLeague = LEAGUE_GROUPS[0].id;
+  const groups = visibleLeagueGroups();
+  // A seasonal group can vanish underneath a user parked on it (preseason
+  // ends while the tab is open), so the selection is re-validated against
+  // what's actually visible, not just against "is anything selected."
+  if (!state.slateLeague || !groups.some((g) => g.id === state.slateLeague)) {
+    state.slateLeague = LEAGUE_GROUPS[0].id;
+  }
 
-  el.slateLeagueSelect.innerHTML = LEAGUE_GROUPS
+  el.slateLeagueSelect.innerHTML = groups
     .map((group) => {
       let label;
       if (group.offSeason) {
@@ -3930,7 +3971,7 @@ function renderSlateLeagueOptions() {
     .join('');
 
   if (el.slateLeagueTokens) {
-    el.slateLeagueTokens.innerHTML = LEAGUE_GROUPS
+    el.slateLeagueTokens.innerHTML = groups
       .map((group) => `
         <button type="button" class="league-token has-tooltip ${group.id === state.slateLeague ? 'is-active' : ''} ${group.offSeason ? 'is-off-season' : ''}"
                 data-league-token="${esc(group.id)}" data-tooltip="${esc(group.label)}" aria-label="${esc(group.label)}">
@@ -4280,7 +4321,7 @@ async function loadSlate() {
   el.slateLoad.disabled = true;
   el.slateBody.innerHTML = `<p class="empty">Refreshing ${esc(group.label)}…</p>`;
   try {
-    populateTennisGroups();
+    populateDynamicGroups();
     await Promise.all(group.keys.map((key) => fetchSingleLeague(key)));
     state.slateRefreshTime = Date.now();
     renderSlateLeagueOptions();
@@ -5748,12 +5789,12 @@ function renderTrackerGraph(days) {
     return { ...b, cumulative: running };
   });
 
-  const W = 720;
-  const H = 260;
+  const W = 920;
+  const H = 300;
   const PAD_L = 60;
-  const PAD_R = 16;
-  const PAD_T = 16;
-  const PAD_B = 32;
+  const PAD_R = 20;
+  const PAD_T = 20;
+  const PAD_B = 40;
   const values = series.map((p) => p.cumulative);
   const minV = Math.min(0, ...values);
   const maxV = Math.max(0, ...values);
@@ -5764,21 +5805,44 @@ function renderTrackerGraph(days) {
 
   const points = series.map((p, i) => `${xAt(i).toFixed(1)},${yAt(p.cumulative).toFixed(1)}`).join(' ');
   const lineColor = series[series.length - 1].cumulative >= 0 ? '#4ade80' : '#ef4444';
-  const dots = series.map((p, i) => `<circle cx="${xAt(i).toFixed(1)}" cy="${yAt(p.cumulative).toFixed(1)}" r="3.5" fill="${p.net >= 0 ? '#4ade80' : '#ef4444'}" />`).join('');
+  const dotRadius = 4;
+  const dots = series.map((p, i) => {
+    const x = xAt(i).toFixed(1);
+    const y = yAt(p.cumulative).toFixed(1);
+    const dotColor = p.net >= 0 ? '#4ade80' : '#ef4444';
+    return `<circle cx="${x}" cy="${y}" r="${dotRadius}" fill="${dotColor}" /><text x="${x}" y="${(y - 12).toFixed(1)}" font-size="9" fill="var(--muted)" text-anchor="middle" opacity="0.8">${esc(formatSignedMoney(p.cumulative))}</text>`;
+  }).join('');
 
-  const labelEvery = Math.max(1, Math.ceil(series.length / 8));
+  const labelEvery = Math.max(1, Math.ceil(series.length / 12));
   const xLabels = series.map((p, i) => (i % labelEvery === 0 || i === series.length - 1)
-    ? `<text x="${xAt(i).toFixed(1)}" y="${H - 8}" font-size="10" fill="var(--muted)" text-anchor="middle">${esc(formatGraphLabel(p.label, state.trackerGraphBucket))}</text>`
+    ? `<text x="${xAt(i).toFixed(1)}" y="${H - 10}" font-size="9" fill="var(--muted)" text-anchor="middle">${esc(formatGraphLabel(p.label, state.trackerGraphBucket))}</text>`
     : '').join('');
 
-  const yTicks = [...new Set([minV, 0, maxV])];
-  const yGrid = yTicks.map((v) => `<line x1="${PAD_L}" y1="${yAt(v).toFixed(1)}" x2="${W - PAD_R}" y2="${yAt(v).toFixed(1)}" stroke="var(--line)" stroke-width="1" ${v !== 0 ? 'stroke-dasharray="3,3"' : ''} />`).join('');
-  const yLabels = yTicks.map((v) => `<text x="${PAD_L - 8}" y="${(yAt(v) + 3).toFixed(1)}" font-size="10" fill="var(--muted)" text-anchor="end">${esc(formatSignedMoney(v))}</text>`).join('');
+  const smartTick = (min, max, targetCount = 5) => {
+    if (min === max) return [0];
+    const range = max - min;
+    const magnitude = Math.pow(10, Math.floor(Math.log10(range)));
+    const scaled = range / magnitude;
+    let step = magnitude;
+    if (scaled < 1.5) step = magnitude * 0.5;
+    else if (scaled < 3) step = magnitude;
+    else if (scaled < 7) step = magnitude * 2;
+    else step = magnitude * 5;
+    const ticks = [];
+    const start = Math.ceil(min / step) * step;
+    for (let t = start; t <= max; t += step) ticks.push(t);
+    if (!ticks.includes(0)) ticks.push(0);
+    return [...new Set(ticks)].sort((a, b) => a - b);
+  };
+
+  const yTicks = smartTick(minV, maxV);
+  const yGrid = yTicks.map((v) => `<line x1="${PAD_L}" y1="${yAt(v).toFixed(1)}" x2="${W - PAD_R}" y2="${yAt(v).toFixed(1)}" stroke="var(--line)" stroke-width="${v === 0 ? '1.5' : '0.5'}" ${v !== 0 ? 'stroke-dasharray="2,2"' : ''} />`).join('');
+  const yLabels = yTicks.map((v) => `<text x="${PAD_L - 10}" y="${(yAt(v) + 3).toFixed(1)}" font-size="9" fill="var(--muted)" text-anchor="end">${esc(formatSignedMoney(v))}</text>`).join('');
 
   el.trackerGraphSvgWrap.innerHTML = `
     <svg viewBox="0 0 ${W} ${H}" class="tracker-graph-svg" preserveAspectRatio="xMidYMid meet">
       ${yGrid}
-      <polyline points="${points}" fill="none" stroke="${lineColor}" stroke-width="2" />
+      <polyline points="${points}" fill="none" stroke="${lineColor}" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" />
       ${dots}
       ${xLabels}
       ${yLabels}
@@ -6024,14 +6088,96 @@ async function renderDailyLearningSection() {
       }).join('')
     : `<div class="rec-item low">No active adjustments — either every segment is performing within its expected range, or there isn't enough graded evidence yet (15 graded picks per segment before anything moves).</div>`;
 
-  const log = (data.log ?? []).slice(0, 14);
-  el.dailyLearnLog.innerHTML = log.length
-    ? log.map((e) => `
-      <div class="rec-item">
-        <strong>${esc(e.dateKey)}</strong>
-        ${(e.report ?? []).map((line) => `<div>${esc(line)}</div>`).join('')}
-      </div>`).join('')
-    : `<div class="rec-item">No reviews yet — the first one runs at the next 2am ET batch and reports here every morning after.</div>`;
+  const allEntries = data.log ?? [];
+  if (!allEntries.length) {
+    el.dailyLearnLog.innerHTML = `<div class="rec-item">No reviews yet — the first one runs at the next 2am ET batch and reports here every morning after.</div>`;
+    return;
+  }
+
+  const now = Date.now();
+  const WEEK_MS = 7 * 24 * 60 * 60 * 1000;
+  const ARCHIVE_THRESHOLD = 8 * WEEK_MS; // archive entries older than 8 weeks
+
+  const getWeekKey = (dateStr) => {
+    const d = new Date(`${dateStr}T00:00:00`);
+    const isoDay = (d.getDay() + 6) % 7;
+    d.setDate(d.getDate() - isoDay);
+    const y = d.getFullYear();
+    const m = String(d.getMonth() + 1).padStart(2, '0');
+    const day = String(d.getDate()).padStart(2, '0');
+    return `${y}-${m}-${day}`;
+  };
+
+  const parseDate = (dateStr) => new Date(`${dateStr}T00:00:00`).getTime();
+  const recentCutoff = now - (4 * WEEK_MS);
+  const archiveCutoff = now - ARCHIVE_THRESHOLD;
+
+  const recent = [];
+  const archived = [];
+
+  for (const e of allEntries) {
+    const entryTime = parseDate(e.dateKey);
+    if (entryTime >= recentCutoff) {
+      recent.push(e);
+    } else if (entryTime >= archiveCutoff) {
+      archived.push(e);
+    }
+  }
+
+  const weeksByKey = new Map();
+  for (const e of archived) {
+    const weekKey = getWeekKey(e.dateKey);
+    if (!weeksByKey.has(weekKey)) weeksByKey.set(weekKey, []);
+    weeksByKey.get(weekKey).push(e);
+  }
+
+  const recentHtml = recent.map((e) => `
+    <div class="rec-item">
+      <strong>${esc(e.dateKey)}</strong>
+      ${(e.report ?? []).map((line) => `<div>${esc(line)}</div>`).join('')}
+    </div>`).join('');
+
+  const archivedHtml = Array.from(weeksByKey.entries())
+    .sort(([a], [b]) => b.localeCompare(a))
+    .map(([weekKey, entries]) => {
+      const startDate = weekKey;
+      const endDate = new Date(parseDate(weekKey) + 6 * 24 * 60 * 60 * 1000);
+      const endStr = `${endDate.getFullYear()}-${String(endDate.getMonth() + 1).padStart(2, '0')}-${String(endDate.getDate()).padStart(2, '0')}`;
+      const adjustments = new Map();
+      const avgStats = {};
+
+      for (const e of entries) {
+        (e.report ?? []).forEach((line) => {
+          const match = line.match(/^([a-z_]+\s+\w+\s+\w+): x([\d.]+) → x([\d.]+)/);
+          if (match) {
+            const [, key, from, to] = match;
+            if (!adjustments.has(key)) adjustments.set(key, { from: parseFloat(from), to: parseFloat(to), count: 0 });
+            adjustments.get(key).count += 1;
+          }
+          const statsMatch = line.match(/(\d+)\/(\d+) vs ([\d.]+) expected/);
+          if (statsMatch) {
+            const [, wins, n, expected] = statsMatch;
+            if (!avgStats[key]) avgStats[key] = { wins: 0, n: 0, expected: 0 };
+            avgStats[key].wins += parseInt(wins);
+            avgStats[key].n += parseInt(n);
+            avgStats[key].expected += parseFloat(expected);
+          }
+        });
+      }
+
+      const summary = adjustments.size > 0
+        ? `${adjustments.size} adjustment${adjustments.size !== 1 ? 's' : ''}`
+        : `${entries.length} day${entries.length !== 1 ? 's' : ''} reviewed`;
+
+      return `<div class="rec-item is-archived" style="opacity:0.85">
+        <strong>${esc(startDate)} to ${esc(endStr)}</strong> — ${esc(summary)}
+      </div>`;
+    }).join('');
+
+  el.dailyLearnLog.innerHTML = [
+    recentHtml,
+    archived.length > 0 ? `<div style="margin-top:16px;padding-top:12px;border-top:1px solid var(--line)"><p style="font-size:0.85rem;color:var(--muted);margin:0 0 8px">Archived weeks (${Math.ceil(archived.length / 7)})</p>${archivedHtml}</div>` : '',
+  ].filter(Boolean).join('');
 }
 
 /** Current state of the weekly algorithm health review (see worker/src/algo-health.js). */

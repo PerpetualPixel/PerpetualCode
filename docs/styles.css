@@ -998,7 +998,7 @@ input[type="range"]:focus-visible {
 /* Pick cards                                                        */
 /* ---------------------------------------------------------------- */
 
-.picks { margin-top: 22px; display: grid; gap: 16px; align-items: start; }
+.picks { margin-top: 22px; display: grid; gap: 16px; align-items: stretch; }
 
 .pick {
   background:
@@ -1108,6 +1108,17 @@ input[type="range"]:focus-visible {
 .leg-banner[aria-expanded="true"] .leg-banner-chevron { transform: rotate(-135deg); margin-top: 6px; }
 
 .leg-detail { margin-top: 12px; }
+
+.leg-cancelled {
+  color: var(--danger);
+  background: rgba(239, 68, 68, 0.1);
+  border: 1px solid rgba(239, 68, 68, 0.35);
+  border-radius: 8px;
+  padding: 8px 10px;
+  font-weight: 600;
+  font-size: 0.85rem;
+  margin: 0 0 12px 0;
+}
 
 /* when / where / price grid */
 .meta {
@@ -3951,6 +3962,11 @@ input[type="range"]:focus-visible {
 .rec-item.low {
   border-left-color: var(--success);
   background: rgba(16, 185, 129, 0.05);
+}
+
+.rec-item.is-archived {
+  border-left-color: var(--line);
+  background: rgba(124, 58, 237, 0.02);
 }
 
 .action-btn {
