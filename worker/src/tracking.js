@@ -25,7 +25,7 @@
  * single, server-side, always-on history that doesn't depend on anyone
  * having the app open.
  */
-import { analyze, topPicks, clearsMaxJuice, isNflPreseason } from '../../docs/engine.js';
+import { analyze, topPicks, clearsMaxJuice, isNflPreseason, isNflPreseasonKey } from '../../docs/engine.js';
 import { fetchCapperConsensus, applyCapperConsensus, upgradeToValueStraight } from '../../docs/capper-consensus.js';
 import { getAllWnbaPropsTracked } from './wnba-props.js';
 import { getAllMlbPropsTracked } from './mlb-props.js';
@@ -356,16 +356,22 @@ export function scheduleStillOpen(events, dateKey, now) {
 /**
  * Every raw sport key the client's own League Groups cover: the fixed keys
  * plus whatever tennis_atp_/tennis_wta_ tournaments the catalogue says are
- * live this week — the same "discover, don't hardcode" approach the
- * client's own populateTennisGroups() uses, so a tour switching tournaments
- * doesn't silently drop tennis from the batch.
+ * live this week, plus NFL preseason while it's running — the same
+ * "discover, don't hardcode" approach the client's own
+ * populateDynamicGroups() uses, so a tour switching tournaments (or
+ * preseason starting and ending) doesn't silently drop a league from the
+ * batch.
+ *
+ * NFL preseason is tracked on the Full Slate ONLY. It is excluded from
+ * Pixel's Picks (runTop5Batch, below) and Play of the Day (potd.js) by
+ * isNflPreseason — see that helper's own comment for why.
  */
 async function fullSlateSportKeys(env, ctx) {
   const { sports } = await fetchCatalogue(env, ctx);
-  const tennisKeys = (sports ?? [])
-    .map((s) => s.key)
-    .filter((k) => k.startsWith('tennis_atp_') || k.startsWith('tennis_wta_'));
-  return [...FIXED_SPORT_KEYS, ...tennisKeys];
+  const keys = (sports ?? []).map((s) => s.key);
+  const tennisKeys = keys.filter((k) => k.startsWith('tennis_atp_') || k.startsWith('tennis_wta_'));
+  const preseasonKeys = keys.filter(isNflPreseasonKey);
+  return [...FIXED_SPORT_KEYS, ...tennisKeys, ...preseasonKeys];
 }
 
 // MLS's low-variance alternative markets (docs/soccer-markets.js) — not

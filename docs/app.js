@@ -33,6 +33,7 @@ import {
   suggestedParlayStake,
   suggestedStake,
   scoreCandidate,
+  isNflPreseasonKey,
   QUALITATIVE,
 } from './engine.js';
 import {
@@ -92,12 +93,23 @@ const RECOMMENDED_UNIT_PCT = 0.02;
  * The leagues the app always keeps loaded. Tennis has no single sport
  * key — the Odds API keys it per tournament (tennis_atp_canadian_open this
  * week, something else next) — so ATP/WTA start with an empty key list and
- * get populated from the catalogue once it loads (see populateTennisGroups).
+ * get populated from the catalogue once it loads (see
+ * populateDynamicGroups). NFL preseason is the same shape for a different
+ * reason: its key only exists while preseason is actually running, so it's
+ * discovered rather than hardcoded, and the group simply stays empty (and
+ * renders nothing) the rest of the year.
  * Everything else already has one stable key.
  */
 const LEAGUE_GROUPS = [
   { id: 'mlb', label: 'MLB', keys: ['baseball_mlb'] },
   { id: 'nfl', label: 'NFL', keys: ['americanfootball_nfl'] },
+  // Full Slate only — never Pixel's Picks or Play of the Day (see
+  // isNflPreseason in docs/engine.js). seasonal:true hides the group
+  // entirely whenever its discovered key list is empty, which is most of
+  // the year: unlike ATP/WTA (also key-discovered, but live nearly
+  // year-round), preseason runs about four weeks, and a permanent
+  // "NFL Pre: 0 games" token would read as broken rather than out of season.
+  { id: 'nflpre', label: 'NFL Pre', keys: [], seasonal: true },
   { id: 'ncaa', label: 'NCAA', keys: ['americanfootball_ncaaf'] },
   { id: 'atp', label: 'ATP', keys: [] },
   { id: 'wta', label: 'WTA', keys: [] },
@@ -129,16 +141,36 @@ const LEAGUE_GROUP_BY_ID = new Map(LEAGUE_GROUPS.map((g) => [g.id, g]));
 
 /** One glyph per league group, for the glowing quick-select token row (renderSlateLeagueOptions) — purely decorative, the underlying select is still the source of truth. */
 const LEAGUE_ICONS = {
-  mlb: '⚾', nfl: '🏈', ncaa: '🎓', atp: '🎾', wta: '🎾',
+  mlb: '⚾', nfl: '🏈', nflpre: '🏈', ncaa: '🎓', atp: '🎾', wta: '🎾',
   wnba: '🏀', mma: '🥊', mls: '⚽', nhl: '🏒', nba: '🏀', ncaab: '🎓',
 };
 
-/** Fill ATP/WTA's key lists from whatever tennis tournaments are currently live in the catalogue. */
-function populateTennisGroups() {
+/**
+ * Fill the key lists of every league group whose sport keys aren't stable
+ * year-round, from whatever the catalogue currently says is live: ATP/WTA
+ * (keyed per tournament, so they change weekly) and NFL preseason (keyed
+ * separately from the regular season, and only present while preseason is
+ * running). A group with nothing matching is left with an empty key list;
+ * whether that hides it is a separate question the `seasonal` flag answers
+ * (see visibleLeagueGroups).
+ */
+function populateDynamicGroups() {
   const atp = LEAGUE_GROUP_BY_ID.get('atp');
   const wta = LEAGUE_GROUP_BY_ID.get('wta');
+  const nflPre = LEAGUE_GROUP_BY_ID.get('nflpre');
   atp.keys = state.catalogue.filter((s) => s.key.startsWith('tennis_atp_')).map((s) => s.key);
   wta.keys = state.catalogue.filter((s) => s.key.startsWith('tennis_wta_')).map((s) => s.key);
+  nflPre.keys = state.catalogue.filter((s) => isNflPreseasonKey(s.key)).map((s) => s.key);
+}
+
+/**
+ * The league groups worth rendering right now. Only `seasonal` groups are
+ * ever hidden, and only when key discovery found nothing for them — every
+ * other group (including off-season NBA/NCAAB, which say so explicitly)
+ * stays put, so the row doesn't reshuffle as game counts move.
+ */
+function visibleLeagueGroups() {
+  return LEAGUE_GROUPS.filter((g) => !g.seasonal || g.keys.length > 0);
 }
 
 const ONE_DAY_MS = 24 * 60 * 60 * 1000;
@@ -984,7 +1016,7 @@ async function loadCatalogue() {
       key,
       title: DEMO_EVENTS.find((e) => e.sport_key === key)?.sport_title ?? key,
     }));
-    populateTennisGroups();
+    populateDynamicGroups();
     renderSlateLeagueOptions();
     return;
   }
@@ -1002,7 +1034,7 @@ async function loadCatalogue() {
     // catalogue comes back.
     state.catalogue = [];
   }
-  populateTennisGroups();
+  populateDynamicGroups();
   renderSlateLeagueOptions();
 }
 
@@ -1027,7 +1059,7 @@ async function refreshAllLeagues() {
     return;
   }
 
-  populateTennisGroups();
+  populateDynamicGroups();
   // offSeason groups (NBA/NCAAB placeholders — see LEAGUE_GROUPS) are
   // deliberately excluded here: no live fetch for either until someone
   // flips that flag off once the season actually starts.
@@ -3917,9 +3949,15 @@ function groupGameCount(group) {
  */
 function renderSlateLeagueOptions() {
   el.slateLeagueSelect.disabled = false;
-  if (!state.slateLeague) state.slateLeague = LEAGUE_GROUPS[0].id;
+  const groups = visibleLeagueGroups();
+  // A seasonal group can vanish underneath a user parked on it (preseason
+  // ends while the tab is open), so the selection is re-validated against
+  // what's actually visible, not just against "is anything selected."
+  if (!state.slateLeague || !groups.some((g) => g.id === state.slateLeague)) {
+    state.slateLeague = LEAGUE_GROUPS[0].id;
+  }
 
-  el.slateLeagueSelect.innerHTML = LEAGUE_GROUPS
+  el.slateLeagueSelect.innerHTML = groups
     .map((group) => {
       let label;
       if (group.offSeason) {
@@ -3933,7 +3971,7 @@ function renderSlateLeagueOptions() {
     .join('');
 
   if (el.slateLeagueTokens) {
-    el.slateLeagueTokens.innerHTML = LEAGUE_GROUPS
+    el.slateLeagueTokens.innerHTML = groups
       .map((group) => `
         <button type="button" class="league-token has-tooltip ${group.id === state.slateLeague ? 'is-active' : ''} ${group.offSeason ? 'is-off-season' : ''}"
                 data-league-token="${esc(group.id)}" data-tooltip="${esc(group.label)}" aria-label="${esc(group.label)}">
@@ -4283,7 +4321,7 @@ async function loadSlate() {
   el.slateLoad.disabled = true;
   el.slateBody.innerHTML = `<p class="empty">Refreshing ${esc(group.label)}…</p>`;
   try {
-    populateTennisGroups();
+    populateDynamicGroups();
     await Promise.all(group.keys.map((key) => fetchSingleLeague(key)));
     state.slateRefreshTime = Date.now();
     renderSlateLeagueOptions();

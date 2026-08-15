@@ -8,6 +8,7 @@
  * scheduled() handler, so tracking.js can't import from index.js).
  */
 import { getUfcEventDetails, fetchMmaSchedule } from './ufc-events.js';
+import { isNflPreseasonKey } from '../../docs/engine.js';
 
 export const UPSTREAM = 'https://api.the-odds-api.com/v4';
 
@@ -28,12 +29,23 @@ export const ALLOWED_SPORTS = new Set([
 // Tennis is keyed per tournament (tennis_atp_canadian_open, and a different key
 // next week), so an exact allowlist would go stale every few days. Prefixes let
 // the tour through without opening the door to arbitrary sport keys.
+//
+// Deliberately tennis-only: regionsFor() below reuses this exact list as its
+// "is this tennis" test to decide the UK/EU region set, so anything added
+// here would also be priced off non-US books. Non-tennis dynamic keys (NFL
+// preseason) are matched separately in isAllowedSport instead.
 export const ALLOWED_SPORT_PREFIXES = ['tennis_atp_', 'tennis_wta_'];
 
 export function isAllowedSport(key) {
   return (
     ALLOWED_SPORTS.has(key) ||
-    ALLOWED_SPORT_PREFIXES.some((prefix) => key.startsWith(prefix))
+    ALLOWED_SPORT_PREFIXES.some((prefix) => key.startsWith(prefix)) ||
+    // NFL preseason is keyed separately by The Odds API and only exists while
+    // preseason is live, so it's matched by pattern rather than listed above.
+    // This gate is what lets it reach the catalogue at all: fetchCatalogue
+    // filters on isAllowedSport, so without this the client could never
+    // discover the key to put preseason on the Full Slate.
+    isNflPreseasonKey(key)
   );
 }
 

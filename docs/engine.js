@@ -14,8 +14,41 @@
  * freshness — is a confidence weight on top of that edge.
  */
 
-export function isNflPreseason(event) {
-  return event.sportKey === 'americanfootball_nfl' && event.season_type === 'preseason';
+/**
+ * NFL preseason, identified by SPORT KEY rather than by any field on the
+ * event. The Odds API keys preseason as its own sport
+ * (`americanfootball_nfl_preseason`) and its events carry no `season_type`
+ * field to read — an earlier version of this checked `event.season_type`
+ * and was silently dead code, since analyze() builds candidates from an
+ * explicit field list that never carried such a field anyway.
+ *
+ * Matched by pattern, not by a literal string: the key only exists while
+ * preseason is actually live, and the exact suffix is discovered from the
+ * free /sports catalogue rather than hardcoded here (see
+ * populateDynamicGroups in docs/app.js and fullSlateSportKeys in
+ * worker/src/tracking.js — the same "discover, don't hardcode" approach
+ * tennis's per-tournament keys already use). If the key never appears, this
+ * simply never matches and nothing changes.
+ */
+export function isNflPreseasonKey(sportKey) {
+  return typeof sportKey === 'string'
+    && sportKey.startsWith('americanfootball_nfl')
+    && sportKey.includes('preseason');
+}
+
+/**
+ * The candidate/event form of isNflPreseasonKey. Reads both shapes because
+ * both reach this: analyzed candidates carry `sportKey`, raw feed events
+ * carry `sport_key`.
+ *
+ * Preseason belongs on the Full Slate as part of the raw record, but never
+ * in Pixel's Picks or Play of the Day: starters play a series or two, roster
+ * churn is total, and the result says almost nothing about either team —
+ * exactly the high-variance, low-information game those two curated surfaces
+ * exist to avoid.
+ */
+export function isNflPreseason(candidate) {
+  return isNflPreseasonKey(candidate?.sportKey ?? candidate?.sport_key);
 }
 
 export const RULES = {
@@ -855,8 +888,15 @@ export function topPicks(
   // genuinely not worth the stake should never surface, not even flagged as
   // a non-standard fallback pick (see guaranteeCount below).
   const clearsEdgeBar = (c) => c.ev > minEv && suggestedStake(c) >= minKelly;
+  // A hard rejection in the same category as clearsEdgeBar, deliberately NOT
+  // part of the relaxable odds/score band: NFL preseason is never a Pixel
+  // Picks lock, so it must also be unavailable to the guaranteeCount
+  // fallback below, which pads a thin board from the raw candidate list.
+  // Filtering only `pool` would leave exactly that hole — a quiet day's
+  // padding could post the preseason game this is meant to keep out.
+  const isPickable = (c) => !isNflPreseason(c);
   const pool = candidates.filter(
-    (c) => inRange(c.american) && withinHardBounds(c.american) && c.score >= minScore && clearsEdgeBar(c) && !isNflPreseason(c),
+    (c) => inRange(c.american) && withinHardBounds(c.american) && c.score >= minScore && clearsEdgeBar(c) && isPickable(c),
   );
 
   const fresh = pool.filter((c) => !exclude.has(c.id));
@@ -909,7 +949,7 @@ export function topPicks(
   // fallback lock wouldn't make it a better one.
   if (guaranteeCount && picks.length < count) {
     const fallbackSorted = [...candidates]
-      .filter((c) => !usedLegs.includes(c) && clearsEdgeBar(c) && withinHardBounds(c.american))
+      .filter((c) => !usedLegs.includes(c) && clearsEdgeBar(c) && withinHardBounds(c.american) && isPickable(c))
       .sort((a, b) => sortKey(b) - sortKey(a));
 
     for (const c of fallbackSorted) {
