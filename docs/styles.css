@@ -3964,6 +3964,11 @@ input[type="range"]:focus-visible {
   background: rgba(16, 185, 129, 0.05);
 }
 
+.rec-item.is-archived {
+  border-left-color: var(--line);
+  background: rgba(124, 58, 237, 0.02);
+}
+
 .action-btn {
   padding: 10px 16px;
   background: var(--accent);

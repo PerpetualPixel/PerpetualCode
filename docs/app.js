@@ -6050,14 +6050,96 @@ async function renderDailyLearningSection() {
       }).join('')
     : `<div class="rec-item low">No active adjustments — either every segment is performing within its expected range, or there isn't enough graded evidence yet (15 graded picks per segment before anything moves).</div>`;
 
-  const log = (data.log ?? []).slice(0, 14);
-  el.dailyLearnLog.innerHTML = log.length
-    ? log.map((e) => `
-      <div class="rec-item">
-        <strong>${esc(e.dateKey)}</strong>
-        ${(e.report ?? []).map((line) => `<div>${esc(line)}</div>`).join('')}
-      </div>`).join('')
-    : `<div class="rec-item">No reviews yet — the first one runs at the next 2am ET batch and reports here every morning after.</div>`;
+  const allEntries = data.log ?? [];
+  if (!allEntries.length) {
+    el.dailyLearnLog.innerHTML = `<div class="rec-item">No reviews yet — the first one runs at the next 2am ET batch and reports here every morning after.</div>`;
+    return;
+  }
+
+  const now = Date.now();
+  const WEEK_MS = 7 * 24 * 60 * 60 * 1000;
+  const ARCHIVE_THRESHOLD = 8 * WEEK_MS; // archive entries older than 8 weeks
+
+  const getWeekKey = (dateStr) => {
+    const d = new Date(`${dateStr}T00:00:00`);
+    const isoDay = (d.getDay() + 6) % 7;
+    d.setDate(d.getDate() - isoDay);
+    const y = d.getFullYear();
+    const m = String(d.getMonth() + 1).padStart(2, '0');
+    const day = String(d.getDate()).padStart(2, '0');
+    return `${y}-${m}-${day}`;
+  };
+
+  const parseDate = (dateStr) => new Date(`${dateStr}T00:00:00`).getTime();
+  const recentCutoff = now - (4 * WEEK_MS);
+  const archiveCutoff = now - ARCHIVE_THRESHOLD;
+
+  const recent = [];
+  const archived = [];
+
+  for (const e of allEntries) {
+    const entryTime = parseDate(e.dateKey);
+    if (entryTime >= recentCutoff) {
+      recent.push(e);
+    } else if (entryTime >= archiveCutoff) {
+      archived.push(e);
+    }
+  }
+
+  const weeksByKey = new Map();
+  for (const e of archived) {
+    const weekKey = getWeekKey(e.dateKey);
+    if (!weeksByKey.has(weekKey)) weeksByKey.set(weekKey, []);
+    weeksByKey.get(weekKey).push(e);
+  }
+
+  const recentHtml = recent.map((e) => `
+    <div class="rec-item">
+      <strong>${esc(e.dateKey)}</strong>
+      ${(e.report ?? []).map((line) => `<div>${esc(line)}</div>`).join('')}
+    </div>`).join('');
+
+  const archivedHtml = Array.from(weeksByKey.entries())
+    .sort(([a], [b]) => b.localeCompare(a))
+    .map(([weekKey, entries]) => {
+      const startDate = weekKey;
+      const endDate = new Date(parseDate(weekKey) + 6 * 24 * 60 * 60 * 1000);
+      const endStr = `${endDate.getFullYear()}-${String(endDate.getMonth() + 1).padStart(2, '0')}-${String(endDate.getDate()).padStart(2, '0')}`;
+      const adjustments = new Map();
+      const avgStats = {};
+
+      for (const e of entries) {
+        (e.report ?? []).forEach((line) => {
+          const match = line.match(/^([a-z_]+\s+\w+\s+\w+): x([\d.]+) → x([\d.]+)/);
+          if (match) {
+            const [, key, from, to] = match;
+            if (!adjustments.has(key)) adjustments.set(key, { from: parseFloat(from), to: parseFloat(to), count: 0 });
+            adjustments.get(key).count += 1;
+          }
+          const statsMatch = line.match(/(\d+)\/(\d+) vs ([\d.]+) expected/);
+          if (statsMatch) {
+            const [, wins, n, expected] = statsMatch;
+            if (!avgStats[key]) avgStats[key] = { wins: 0, n: 0, expected: 0 };
+            avgStats[key].wins += parseInt(wins);
+            avgStats[key].n += parseInt(n);
+            avgStats[key].expected += parseFloat(expected);
+          }
+        });
+      }
+
+      const summary = adjustments.size > 0
+        ? `${adjustments.size} adjustment${adjustments.size !== 1 ? 's' : ''}`
+        : `${entries.length} day${entries.length !== 1 ? 's' : ''} reviewed`;
+
+      return `<div class="rec-item is-archived" style="opacity:0.85">
+        <strong>${esc(startDate)} to ${esc(endStr)}</strong> — ${esc(summary)}
+      </div>`;
+    }).join('');
+
+  el.dailyLearnLog.innerHTML = [
+    recentHtml,
+    archived.length > 0 ? `<div style="margin-top:16px;padding-top:12px;border-top:1px solid var(--line)"><p style="font-size:0.85rem;color:var(--muted);margin:0 0 8px">Archived weeks (${Math.ceil(archived.length / 7)})</p>${archivedHtml}</div>` : '',
+  ].filter(Boolean).join('');
 }
 
 /** Current state of the weekly algorithm health review (see worker/src/algo-health.js). */
