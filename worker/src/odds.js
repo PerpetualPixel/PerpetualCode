@@ -272,7 +272,26 @@ export async function fetchScores(sport, env, ctx) {
  * than hardcoding a list that goes stale the moment the tour moves on.
  */
 export async function fetchCatalogue(env, ctx) {
-  const cacheKey = new Request('https://pixel-pick.cache/sports');
+  // The cache key is scoped to the deployed version, so a deploy that changes
+  // which sports are allowed serves a fresh catalogue immediately instead of
+  // the previously-filtered one.
+  //
+  // This is not hypothetical: isAllowedSport runs BEFORE the cache write
+  // below, so the stored list is already filtered. When NFL preseason was
+  // added to the allowlist, a successful deploy left the new key invisible —
+  // /sports kept replaying the hour-old list built by the previous code, and
+  // it read as a failed deploy rather than a stale cache.
+  //
+  // Deliberately scoped to THIS cache and not the odds cache in fetchSport:
+  // The Odds API doesn't bill /sports, so re-fetching it once per deploy
+  // costs nothing, whereas the odds cache is the single biggest lever on the
+  // credit bill (see CACHE_SECONDS in wrangler.toml) and busting it per
+  // deploy would repay full upstream price every time.
+  //
+  // CF_VERSION_METADATA is a wrangler binding; the fallback keeps local dev
+  // and any deployment without it working exactly as before.
+  const version = env.CF_VERSION_METADATA?.id ?? 'dev';
+  const cacheKey = new Request(`https://pixel-pick.cache/sports?v=${version}`);
   const cache = caches.default;
 
   const cached = await cache.match(cacheKey);

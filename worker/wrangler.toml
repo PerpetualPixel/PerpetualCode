@@ -60,6 +60,15 @@ name = "EMAIL"
 [observability]
 enabled = true
 
+# Exposes this deployment's version id as env.CF_VERSION_METADATA.id. Used
+# for exactly one thing: scoping the /sports catalogue cache key in
+# src/odds.js, so a deploy that changes the sport allowlist doesn't keep
+# serving the previously-filtered list for up to an hour. See that function's
+# comment — the odds cache is deliberately NOT version-scoped, since busting
+# it per deploy would cost real credits.
+[version_metadata]
+binding = "CF_VERSION_METADATA"
+
 # Durable Objects for quota enforcement
 [[durable_objects.bindings]]
 name = "QUOTA_MANAGER"
