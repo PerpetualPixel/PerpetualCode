@@ -319,6 +319,12 @@ read an undecided day and pass on an empty set — the ladder could post the
 exact pick it exists to avoid. A day with nothing in band posts nothing and
 the climb keeps its place; holding is a valid outcome, not a failure.
 
+NFL preseason is excluded the same way Pixel's Picks and Play of the Day
+are (`isNflPreseason`, `docs/engine.js`) — arguably more so here: this is the
+one surface that stakes its whole compounding bankroll on a single rung
+rather than one flat unit, so a low-information preseason game has more to
+lose against, not less.
+
 ```
 GET /weather?sport=baseball_mlb&home=Houston+Astros&commenceMs=1785953400000
 ```
