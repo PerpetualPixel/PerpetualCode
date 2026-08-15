@@ -5751,12 +5751,12 @@ function renderTrackerGraph(days) {
     return { ...b, cumulative: running };
   });
 
-  const W = 720;
-  const H = 260;
+  const W = 920;
+  const H = 300;
   const PAD_L = 60;
-  const PAD_R = 16;
-  const PAD_T = 16;
-  const PAD_B = 32;
+  const PAD_R = 20;
+  const PAD_T = 20;
+  const PAD_B = 40;
   const values = series.map((p) => p.cumulative);
   const minV = Math.min(0, ...values);
   const maxV = Math.max(0, ...values);
@@ -5767,21 +5767,44 @@ function renderTrackerGraph(days) {
 
   const points = series.map((p, i) => `${xAt(i).toFixed(1)},${yAt(p.cumulative).toFixed(1)}`).join(' ');
   const lineColor = series[series.length - 1].cumulative >= 0 ? '#4ade80' : '#ef4444';
-  const dots = series.map((p, i) => `<circle cx="${xAt(i).toFixed(1)}" cy="${yAt(p.cumulative).toFixed(1)}" r="3.5" fill="${p.net >= 0 ? '#4ade80' : '#ef4444'}" />`).join('');
+  const dotRadius = 4;
+  const dots = series.map((p, i) => {
+    const x = xAt(i).toFixed(1);
+    const y = yAt(p.cumulative).toFixed(1);
+    const dotColor = p.net >= 0 ? '#4ade80' : '#ef4444';
+    return `<circle cx="${x}" cy="${y}" r="${dotRadius}" fill="${dotColor}" /><text x="${x}" y="${(y - 12).toFixed(1)}" font-size="9" fill="var(--muted)" text-anchor="middle" opacity="0.8">${esc(formatSignedMoney(p.cumulative))}</text>`;
+  }).join('');
 
-  const labelEvery = Math.max(1, Math.ceil(series.length / 8));
+  const labelEvery = Math.max(1, Math.ceil(series.length / 12));
   const xLabels = series.map((p, i) => (i % labelEvery === 0 || i === series.length - 1)
-    ? `<text x="${xAt(i).toFixed(1)}" y="${H - 8}" font-size="10" fill="var(--muted)" text-anchor="middle">${esc(formatGraphLabel(p.label, state.trackerGraphBucket))}</text>`
+    ? `<text x="${xAt(i).toFixed(1)}" y="${H - 10}" font-size="9" fill="var(--muted)" text-anchor="middle">${esc(formatGraphLabel(p.label, state.trackerGraphBucket))}</text>`
     : '').join('');
 
-  const yTicks = [...new Set([minV, 0, maxV])];
-  const yGrid = yTicks.map((v) => `<line x1="${PAD_L}" y1="${yAt(v).toFixed(1)}" x2="${W - PAD_R}" y2="${yAt(v).toFixed(1)}" stroke="var(--line)" stroke-width="1" ${v !== 0 ? 'stroke-dasharray="3,3"' : ''} />`).join('');
-  const yLabels = yTicks.map((v) => `<text x="${PAD_L - 8}" y="${(yAt(v) + 3).toFixed(1)}" font-size="10" fill="var(--muted)" text-anchor="end">${esc(formatSignedMoney(v))}</text>`).join('');
+  const smartTick = (min, max, targetCount = 5) => {
+    if (min === max) return [0];
+    const range = max - min;
+    const magnitude = Math.pow(10, Math.floor(Math.log10(range)));
+    const scaled = range / magnitude;
+    let step = magnitude;
+    if (scaled < 1.5) step = magnitude * 0.5;
+    else if (scaled < 3) step = magnitude;
+    else if (scaled < 7) step = magnitude * 2;
+    else step = magnitude * 5;
+    const ticks = [];
+    const start = Math.ceil(min / step) * step;
+    for (let t = start; t <= max; t += step) ticks.push(t);
+    if (!ticks.includes(0)) ticks.push(0);
+    return [...new Set(ticks)].sort((a, b) => a - b);
+  };
+
+  const yTicks = smartTick(minV, maxV);
+  const yGrid = yTicks.map((v) => `<line x1="${PAD_L}" y1="${yAt(v).toFixed(1)}" x2="${W - PAD_R}" y2="${yAt(v).toFixed(1)}" stroke="var(--line)" stroke-width="${v === 0 ? '1.5' : '0.5'}" ${v !== 0 ? 'stroke-dasharray="2,2"' : ''} />`).join('');
+  const yLabels = yTicks.map((v) => `<text x="${PAD_L - 10}" y="${(yAt(v) + 3).toFixed(1)}" font-size="9" fill="var(--muted)" text-anchor="end">${esc(formatSignedMoney(v))}</text>`).join('');
 
   el.trackerGraphSvgWrap.innerHTML = `
     <svg viewBox="0 0 ${W} ${H}" class="tracker-graph-svg" preserveAspectRatio="xMidYMid meet">
       ${yGrid}
-      <polyline points="${points}" fill="none" stroke="${lineColor}" stroke-width="2" />
+      <polyline points="${points}" fill="none" stroke="${lineColor}" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" />
       ${dots}
       ${xLabels}
       ${yLabels}
