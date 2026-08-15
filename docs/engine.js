@@ -14,6 +14,10 @@
  * freshness — is a confidence weight on top of that edge.
  */
 
+export function isNflPreseason(event) {
+  return event.sportKey === 'americanfootball_nfl' && event.season_type === 'preseason';
+}
+
 export const RULES = {
   // Hard price band from the spec.
   MIN_AMERICAN: -250,
@@ -852,7 +856,7 @@ export function topPicks(
   // a non-standard fallback pick (see guaranteeCount below).
   const clearsEdgeBar = (c) => c.ev > minEv && suggestedStake(c) >= minKelly;
   const pool = candidates.filter(
-    (c) => inRange(c.american) && withinHardBounds(c.american) && c.score >= minScore && clearsEdgeBar(c),
+    (c) => inRange(c.american) && withinHardBounds(c.american) && c.score >= minScore && clearsEdgeBar(c) && !isNflPreseason(c),
   );
 
   const fresh = pool.filter((c) => !exclude.has(c.id));

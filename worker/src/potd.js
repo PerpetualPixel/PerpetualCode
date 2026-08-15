@@ -31,7 +31,7 @@
  * written, nothing overwrites it.
  */
 
-import { analyze, RULES, formatAmerican, suggestedStake, clearsMaxJuice } from '../../docs/engine.js';
+import { analyze, RULES, formatAmerican, suggestedStake, clearsMaxJuice, isNflPreseason } from '../../docs/engine.js';
 import { fetchCapperConsensus, applyCapperConsensus, upgradeToValueStraight } from '../../docs/capper-consensus.js';
 import { isPower4Matchup } from '../../docs/ncaaf-conferences.js';
 import { buildInsights, insightsByTier, isTennis, isMma } from '../../docs/insights.js';
@@ -448,6 +448,8 @@ export async function runPotdDaily(env, ctx, now = Date.now(), { fetchFullSlate 
     // their own tighter price ceiling on top of POTD's own band — see
     // docs/engine.js's LOW_VARIANCE_MAX_AMERICAN.
     if (!clearsMaxJuice(c)) return false;
+    // NFL preseason is excluded from Play of the Day — only regular season games.
+    if (isNflPreseason(c)) return false;
     // NCAAF: only Power 4 vs. Power 4 matchups — see docs/ncaaf-conferences.js
     // and tracking.js's own identical filter for the full reasoning.
     if (c.sportKey === 'americanfootball_ncaaf' && !isPower4Matchup(c.home, c.away)) return false;

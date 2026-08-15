@@ -25,7 +25,7 @@
  * single, server-side, always-on history that doesn't depend on anyone
  * having the app open.
  */
-import { analyze, topPicks, clearsMaxJuice } from '../../docs/engine.js';
+import { analyze, topPicks, clearsMaxJuice, isNflPreseason } from '../../docs/engine.js';
 import { fetchCapperConsensus, applyCapperConsensus, upgradeToValueStraight } from '../../docs/capper-consensus.js';
 import { getAllWnbaPropsTracked } from './wnba-props.js';
 import { getAllMlbPropsTracked } from './mlb-props.js';
@@ -686,6 +686,8 @@ export async function runTop5Batch(
       // passes through untouched. Full Slate deliberately does NOT apply
       // this (see its own comment) — it stays the unfiltered raw record.
       .filter((c) => c.sportKey !== 'americanfootball_ncaaf' || isPower4Matchup(c.home, c.away))
+      // NFL preseason is excluded from Pixel's Picks — only regular season games.
+      .filter((c) => !isNflPreseason(c))
       .filter((c) => !existingEventIds.has(c.eventId));
 
   // Tennis form gate (docs/qualitative.js): re-score tennis candidates with
