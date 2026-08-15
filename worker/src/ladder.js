@@ -48,7 +48,7 @@
  * `ladder:runs` is the archive of finished climbs.
  */
 
-import { analyze, RULES, clearsMaxJuice } from '../../docs/engine.js';
+import { analyze, RULES, clearsMaxJuice, isNflPreseason } from '../../docs/engine.js';
 import { isPower4Matchup } from '../../docs/ncaaf-conferences.js';
 import { isTennis, isMma } from '../../docs/insights.js';
 import { gradePick } from '../../docs/learning.js';
@@ -283,6 +283,11 @@ export async function runLadderDaily(env, ctx, now = Date.now(), { fetchFullSlat
     if (isExhibition(c)) return false;
     if (c.american < LADDER_MIN_AMERICAN || c.american > LADDER_MAX_AMERICAN) return false;
     if (!clearsMaxJuice(c)) return false;
+    // NFL preseason is excluded from the ladder for the same reason as
+    // Pixel's Picks and Play of the Day (see isNflPreseason in
+    // docs/engine.js) — and more so here, since the ladder stakes its whole
+    // compounding bankroll on a single rung rather than one flat unit.
+    if (isNflPreseason(c)) return false;
     if (c.sportKey === 'americanfootball_ncaaf' && !isPower4Matchup(c.home, c.away)) return false;
     if (c.commenceMs <= now) return false;
     if (isSegmentPaused(c, pausedSegments)) return false;

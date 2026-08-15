@@ -15,11 +15,92 @@ import {
   settleLadderPlay,
   chooseLadderPlay,
   contradictsPick,
+  runLadderDaily,
   LADDER_BASE,
   LADDER_TARGET,
 } from '../worker/src/ladder.js';
+import { seedTennisArchiveCacheForTests } from '../worker/src/tennis-archive.js';
+
+// Same reasoning as test/potd.test.mjs: the tennis form gate reads a static
+// archive, and unit tests must never touch the network.
+seedTennisArchiveCacheForTests({ atp: null, wta: null });
 
 const NOW = Date.parse('2026-08-14T18:00:00Z');
+
+/* ---------------------------------------------------------------- */
+/* runLadderDaily fixtures                                           */
+/* ---------------------------------------------------------------- */
+
+function makeKvStore() {
+  const store = new Map();
+  return {
+    env: {
+      POTD_KV: {
+        async get(key) { return store.get(key) ?? null; },
+        async put(key, value) { store.set(key, value); },
+        async delete(key) { store.delete(key); },
+      },
+    },
+  };
+}
+
+const ladderCtx = { waitUntil: (p) => p };
+
+/**
+ * A single-market h2h event priced dead center of the ladder's own band
+ * (-250..-165, nearest -200), one hour out — inside every sport's pick-
+ * window lead time, so a slate of just this one event never reads as
+ * "still comparing today's games." One book carries a real outlier price
+ * (same shape as test/potd.test.mjs's own fixture) so the candidate has a
+ * genuine line-shopping edge and actually clears RULES.MIN_SCORE — without
+ * it every book agreeing exactly produces zero edge and a score in the 30s,
+ * which would fail every fixture here regardless of the preseason filter.
+ */
+function makeLadderEvent(id, { sport = 'basketball_nba', sportTitle = 'NBA', favoritePrice = -195, outlier = 25 } = {}) {
+  const books = ['b0', 'b1', 'b2', 'b3', 'b4', 'b5', 'b6', 'b7'];
+  return {
+    id,
+    sport_key: sport,
+    sport_title: sportTitle,
+    commence_time: new Date(NOW + 3600000).toISOString(),
+    home_team: `${id} Home`,
+    away_team: `${id} Away`,
+    bookmakers: books.map((key, i) => ({
+      key,
+      title: key,
+      last_update: new Date(NOW - 600000).toISOString(),
+      markets: [{
+        key: 'h2h',
+        last_update: new Date(NOW - 600000).toISOString(),
+        outcomes: [
+          { name: `${id} Home`, price: favoritePrice + (i === 0 ? outlier : 0) },
+          { name: `${id} Away`, price: 160 },
+        ],
+      }],
+    })),
+  };
+}
+
+test('runLadderDaily never picks an NFL preseason game, even dead-center of the price band', async () => {
+  const { env } = makeKvStore();
+  const events = [
+    makeLadderEvent('pre', { sport: 'americanfootball_nfl_preseason', sportTitle: 'NFL Preseason' }),
+  ];
+  const result = await runLadderDaily(env, ladderCtx, NOW, { fetchFullSlate: async () => events });
+  assert.equal(result.skipped, true);
+  assert.equal(result.reason, 'no qualifying play in the ladder band today', 'the only in-band candidate is preseason, so the day must hold rather than post it');
+});
+
+test('runLadderDaily still picks a real regular-season NFL game — only preseason is excluded', async () => {
+  const { env } = makeKvStore();
+  const events = [
+    makeLadderEvent('pre', { sport: 'americanfootball_nfl_preseason', sportTitle: 'NFL Preseason' }),
+    makeLadderEvent('reg', { sport: 'americanfootball_nfl', sportTitle: 'NFL' }),
+  ];
+  const result = await runLadderDaily(env, ladderCtx, NOW, { fetchFullSlate: async () => events });
+  assert.equal(result.skipped, false);
+  assert.match(result.record.pick.selection ?? '', /reg Home/, 'must post the regular-season game, not hold the day for it');
+});
 
 /* ---------------------------------------------------------------- */
 /* The plan                                                          */
