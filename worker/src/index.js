@@ -31,6 +31,7 @@ import { fetchContext, hasContext } from './context.js';
 import { fetchBoxScore, hasBoxScore } from './boxscore.js';
 import { fetchWeather, hasVenue } from './weather.js';
 import { fetchMmaContext } from './mma.js';
+import { fetchMmaResults } from './ufc-events.js';
 import { fetchTennisPhotos } from './tennis-photo.js';
 import {
   fetchTeamStats,
@@ -1091,6 +1092,36 @@ export default {
         );
       } catch (error) {
         return json({ context: null, reason: String(error).slice(0, 120) }, { headers: cors });
+      }
+    }
+
+    // Finished MMA fights from ESPN's scoreboard (worker/src/ufc-events.js),
+    // the same source worker/src/full-slate-tracking.js's grading pass
+    // already trusts over the Odds API's own /scores for this sport — see
+    // that function's own comment for why. Full Slate's client-side live/
+    // finished badge (docs/app.js's slateGameState) had no equivalent: it
+    // could only key off Odds API completion (rarely set for MMA — books
+    // simply stop pricing a fight once it starts, they don't report a
+    // result) or a server-tracked pick already having graded to won/lost,
+    // which lags behind the actual finish and misses void grades entirely.
+    // A fight card sat labelled "Live" long after it ended. This route lets
+    // the client ask ESPN directly. Free — no odds credit — and cheap to
+    // call on every poll: fetchMmaResults's own scoreboard fetch is already
+    // cached (RESULTS_TTL, 300s) inside worker/src/ufc-events.js, so this
+    // is a KV/cache read on every call after the first per window, not a
+    // fresh ESPN hit per request.
+    if (pathname === '/mma-results') {
+      if (request.method !== 'GET') {
+        return json({ error: 'Method not allowed' }, { status: 405, headers: cors });
+      }
+      try {
+        const results = await fetchMmaResults(ctx);
+        return json(
+          { results },
+          { headers: { ...cors, 'Cache-Control': 'public, max-age=300' } },
+        );
+      } catch (error) {
+        return json({ results: [], reason: String(error).slice(0, 120) }, { headers: cors });
       }
     }
 
