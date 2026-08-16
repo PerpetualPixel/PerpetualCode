@@ -877,6 +877,115 @@ export function rankedLegs(reads, limit = 3) {
 }
 
 /**
+ * An anchor is the leg you build a ticket AROUND: likely enough to land that
+ * it is not what breaks the ticket, and not priced badly enough to be the
+ * reason the ticket is bad.
+ *
+ * Deliberately two conditions rather than one. Probability alone would
+ * nominate every heavy chalk price on the board, including the -450 that is
+ * paying you nothing for the risk it still carries; grade alone would
+ * nominate value bets that land 45% of the time, which is the opposite of
+ * what an anchor is for. A leg has to clear both to carry a parlay.
+ */
+export const ANCHOR_MIN_PROB = 0.68;
+
+export function anchorLegs(reads, limit = 3) {
+  return reads
+    .filter((r) => r.verdict !== NO_READ && r.verdict !== STRONG_FADE)
+    .filter((r) => Number.isFinite(r.pFair) && r.pFair >= ANCHOR_MIN_PROB)
+    .sort((a, b) => b.pFair - a.pFair)
+    .slice(0, limit);
+}
+
+/**
+ * The shortlist a sub-ticket is built from: best leg first, at most one per
+ * game.
+ *
+ * One-per-game is not a preference. Every correlation effect this engine
+ * knows about lives inside a single game, and ticketMath multiplies as
+ * though the legs were independent, so two legs off one match make the
+ * quoted joint probability wrong in a direction the number itself cannot
+ * show. Dropping the weaker of the pair keeps the arithmetic honest.
+ */
+export function subTicketPool(reads) {
+  const seen = new Set();
+  const pool = [];
+  for (const r of rankedLegs(reads, Infinity)) {
+    const id = r.candidate?.eventId;
+    if (id && seen.has(id)) continue;
+    if (id) seen.add(id);
+    pool.push(r);
+  }
+  return pool;
+}
+
+/**
+ * Every sub-ticket worth considering out of the legs posted, from two legs
+ * up, each with its real price and expectation.
+ *
+ * A ladder rather than a single recommendation, because the choice it
+ * presents is the actual one: each extra leg multiplies the payout and
+ * multiplies the bleed, and which trade a bettor wants is not something this
+ * engine can decide for them. What it CAN do is price every rung, which is
+ * the part that is otherwise invisible — the reason a ten-leg slip is a
+ * worse bet than the same handicapping in three legs is not that the picks
+ * got worse, it is that ten prices' worth of hold compounds.
+ *
+ * Note what this deliberately does NOT do: it never claims a rung is a good
+ * bet. If every leg is negative expectation then every combination of them
+ * is too, and no cut of a bad slip fixes it — it only bleeds less.
+ */
+export function subTicketLadder(reads, { max = 4 } = {}) {
+  const pool = subTicketPool(reads);
+  const rungs = [];
+  for (let n = 2; n <= Math.min(max, pool.length); n++) {
+    const legs = pool.slice(0, n);
+    const math = ticketMath(legs);
+    if (!Number.isFinite(math.jointProb)) continue;
+    rungs.push({ legs, size: n, ...math });
+  }
+  return rungs;
+}
+
+/**
+ * Keep / drop, as a straight answer.
+ *
+ * How many legs to keep is decided by the LEGS, not by comparing tickets.
+ * Comparing tickets sounds principled and is vacuous: every cut of a ten-leg
+ * slip beats the ten-leg, so "the largest cut that improves on what was
+ * posted" always returns the cap and the recommendation stops depending on
+ * the legs at all. A slip with two decent legs and eight bad ones would get
+ * the same four-leg answer as a slip of four good ones.
+ *
+ * So the bar is per-leg: keep the legs that reach the pass tier on their own
+ * merits, capped at four, and never fewer than the two it takes to be a
+ * parlay at all. That makes the size of the answer carry information — two
+ * legs back means only two were worth keeping.
+ */
+export const SUB_TICKET_MAX = 4;
+
+export function suggestSubTicket(reads, { max = SUB_TICKET_MAX } = {}) {
+  const ladder = subTicketLadder(reads, { max });
+  if (!ladder.length) return null;
+  const posted = ticketMath(reads);
+  const pool = subTicketPool(reads);
+
+  const worthKeeping = pool.filter((r) => r.tps >= VERDICT_THRESHOLDS.LEAN_PASS.tps);
+  const size = Math.min(max, Math.max(2, worthKeeping.length));
+  const best = ladder.find((r) => r.size === size) ?? ladder[ladder.length - 1];
+  const keptIds = new Set(best.legs);
+  return {
+    ...best,
+    ladder,
+    posted,
+    keep: best.legs,
+    drop: reads.filter((r) => r.verdict !== NO_READ && !keptIds.has(r)),
+    // How much of the posted ticket's expected loss the cut gives back.
+    evGain: Number.isFinite(posted.ev) && Number.isFinite(best.ev) ? best.ev - posted.ev : null,
+  };
+}
+
+/**
  * Why a ticket produced no takes, when the answer is the prices rather than
  * the picks.
  *
@@ -943,6 +1052,11 @@ export function evaluateParlay(reads) {
     marginalLegs,
     solidLegs,
     bestLegs: rankedLegs(graded),
+    anchors: anchorLegs(graded),
+    // The answer to "if this ten-leg is a fade, what SHOULD I play out of
+    // it" — which is a different question from "is this ticket good", and
+    // the one a bettor holding a built slip is actually asking.
+    suggestion: suggestSubTicket(reads),
     noTakeReason: noTakeReason(reads),
   };
 }

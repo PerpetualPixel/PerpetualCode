@@ -15,6 +15,11 @@ import {
   correlationFindings,
   rankedLegs,
   noTakeReason,
+  anchorLegs,
+  subTicketPool,
+  subTicketLadder,
+  suggestSubTicket,
+  ANCHOR_MIN_PROB,
   isTakeSide,
   keyNumberAnalysis,
   evaluatorFor,
@@ -383,6 +388,144 @@ test('noTakeReason blames the prices only when the prices are the cause', () => 
   const badPrices = [0, 1, 2].map((i) =>
     evaluateLeg({ selection: `Leg ${i}`, american: -260 }, { candidate: { ...m.fav, eventId: `g${i}` } }));
   assert.equal(noTakeReason(badPrices), null, 'these legs are bad on price, which the verdicts already say');
+});
+
+/* ---------------------------------------------------------------- */
+/* Anchors, and building a ticket out of the legs posted             */
+/* ---------------------------------------------------------------- */
+
+/** n legs, each its own game, at the posted price of a two-sided market. */
+function slip(specs) {
+  return specs.map((spec, i) => {
+    const { fav = -175, dog = 150, ...rest } = spec;
+    const sum = implied(fav) + implied(dog);
+    return evaluateLeg({ selection: spec.name ?? `Leg ${i}`, american: spec.took ?? fav }, {
+      candidate: cand({
+        sportKey: 'tennis_atp', eventId: `g${i}`, american: fav, decimal: americanToDecimal(fav),
+        consensusProb: implied(fav) / sum, disagreement: 0.012, bookCount: 8, shopGain: 0, ...rest,
+      }),
+    });
+  });
+}
+
+test('an anchor has to be likely to land AND not badly priced', () => {
+  const [heavyChalk, coinFlip] = slip([
+    { name: 'Heavy chalk', fav: -450, dog: 340 },
+    { name: 'Coin flip', fav: -110, dog: -110 },
+  ]);
+  assert.ok(heavyChalk.pFair > ANCHOR_MIN_PROB, 'precondition: chalk is likely');
+  assert.ok(coinFlip.pFair < ANCHOR_MIN_PROB, 'precondition: the coin flip is not');
+  const anchors = anchorLegs([heavyChalk, coinFlip]);
+  assert.deepEqual(anchors.map((r) => r.leg.selection), ['Heavy chalk']);
+});
+
+test('a likely leg taken at a terrible number is not an anchor', () => {
+  // Probability alone would nominate this. The whole point of an anchor is
+  // that it is not the reason the ticket is bad, and this one would be.
+  const [awful] = slip([{ name: 'Chalk at a bad price', fav: -450, dog: 340, took: -900 }]);
+  assert.ok(awful.pFair > ANCHOR_MIN_PROB, 'precondition: still likely to land');
+  assert.equal(awful.verdict, STRONG_FADE, 'precondition: but priced far off the board');
+  assert.deepEqual(anchorLegs([awful]), []);
+});
+
+test('the sub-ticket pool never takes two legs off one game', () => {
+  const reads = slip([{ name: 'A' }, { name: 'B' }, { name: 'C' }]);
+  // Force B onto A's game, as a same-match parlay would be.
+  reads[1].candidate = { ...reads[1].candidate, eventId: 'g0' };
+  const pool = subTicketPool(reads);
+  assert.equal(pool.length, 2, 'the weaker of the same-game pair is dropped');
+  assert.deepEqual([...new Set(pool.map((r) => r.candidate.eventId))].sort(), ['g0', 'g2']);
+});
+
+test('the ladder prices every cut, and each extra leg costs expectation', () => {
+  const reads = slip([{ name: 'A' }, { name: 'B' }, { name: 'C' }, { name: 'D' }, { name: 'E' }]);
+  const ladder = subTicketLadder(reads);
+  assert.deepEqual(ladder.map((r) => r.size), [2, 3, 4]);
+  for (const rung of ladder) {
+    assert.ok(Number.isFinite(rung.combinedAmerican) && Number.isFinite(rung.jointProb));
+  }
+  // The whole reason a ten-leg is worse than the same handicapping in three.
+  for (let i = 1; i < ladder.length; i++) {
+    assert.ok(ladder[i].ev < ladder[i - 1].ev, `${ladder[i].size} legs must bleed more than ${ladder[i - 1].size}`);
+    assert.ok(ladder[i].jointProb < ladder[i - 1].jointProb);
+  }
+});
+
+test('the suggestion improves on the posted ticket and says what to drop', () => {
+  const reads = slip(Array.from({ length: 10 }, (_, i) => ({ name: `Leg ${i}` })));
+  const s = suggestSubTicket(reads);
+  assert.ok(s, 'a ten-leg slip must produce a recommendation');
+  assert.ok(s.ev > s.posted.ev, 'the cut has to be better than what was posted, or it is not advice');
+  assert.ok(s.evGain > 0);
+  assert.equal(s.keep.length + s.drop.length, 10, 'every posted leg is either kept or dropped');
+  assert.equal(s.keep.length, 4, 'capped at four — past that the payout is buying pure variance');
+  assert.ok(s.drop.every((r) => !s.keep.includes(r)));
+});
+
+test('how many legs come back depends on how many are worth keeping', () => {
+  // The recommendation has to be a function of the legs. A rule phrased as
+  // "the biggest cut that beats what was posted" is always the cap, because
+  // every cut beats a ten-leg — so a slip with two decent legs and eight bad
+  // ones would get the same four-leg answer as a slip of four good ones.
+  const mostlyBad = suggestSubTicket(slip([
+    { name: 'Good A', formSignal: 0.6 }, { name: 'Good B', formSignal: 0.5 },
+    { name: 'Bad C', formSignal: -0.9 }, { name: 'Bad D', formSignal: -0.9 },
+    { name: 'Bad E', formSignal: -0.9 }, { name: 'Bad F', formSignal: -0.9 },
+  ]));
+  const mostlyGood = suggestSubTicket(slip([
+    { name: 'Good A', formSignal: 0.6 }, { name: 'Good B', formSignal: 0.5 },
+    { name: 'Good C', formSignal: 0.5 }, { name: 'Good D', formSignal: 0.45 },
+    { name: 'Bad E', formSignal: -0.9 }, { name: 'Bad F', formSignal: -0.9 },
+  ]));
+  assert.equal(mostlyBad.keep.length, 2, 'only two legs clear the bar, so only two come back');
+  assert.equal(mostlyGood.keep.length, 4);
+  assert.ok(mostlyBad.keep.every((r) => /Good/.test(r.leg.selection)));
+});
+
+test('a slip where nothing clears the bar still returns the two least bad', () => {
+  const s = suggestSubTicket(slip(Array.from({ length: 5 }, (_, i) => ({ name: `Leg ${i}`, formSignal: -0.9 }))));
+  assert.ok(s.keep.every((r) => r.tps < 48), 'precondition: nothing reaches the pass tier');
+  assert.equal(s.keep.length, 2, 'a parlay needs two, and refusing to answer helps nobody');
+});
+
+test('the suggested ticket is the best legs, not an arbitrary four', () => {
+  const reads = slip([
+    { name: 'Weak', formSignal: -0.6 }, { name: 'Strong', formSignal: 0.6 },
+    { name: 'Middling', formSignal: 0 }, { name: 'Good', formSignal: 0.4 },
+    { name: 'Bad', formSignal: -0.4 },
+  ]);
+  const s = suggestSubTicket(reads);
+  assert.equal(s.keep[0].leg.selection, 'Strong');
+  assert.ok(s.drop.some((r) => r.leg.selection === 'Weak'));
+});
+
+test('cutting a slip of negative legs never manufactures a positive ticket', () => {
+  // The honest limit. If every leg is priced at the hold then every
+  // combination of them is negative, and a recommendation that implied
+  // otherwise would be the tool lying about arithmetic it just did.
+  const reads = slip(Array.from({ length: 8 }, (_, i) => ({ name: `Leg ${i}` })));
+  assert.ok(reads.every((r) => r.pillars.market.ev < 0), 'precondition');
+  const s = suggestSubTicket(reads);
+  assert.ok(s.ev < 0, 'the cut bleeds less, it does not turn a fade into a take');
+  for (const rung of s.ladder) assert.ok(rung.ev < 0);
+});
+
+test('a two-leg slip still gets a recommendation rather than nothing', () => {
+  const s = suggestSubTicket(slip([{ name: 'A' }, { name: 'B' }]));
+  assert.ok(s);
+  assert.equal(s.size, 2);
+  assert.equal(s.drop.length, 0, 'nothing to drop when the ticket is already the shortlist');
+});
+
+test('a single-leg slip has no sub-ticket to suggest', () => {
+  assert.equal(suggestSubTicket(slip([{ name: 'Only' }])), null);
+});
+
+test('evaluateParlay carries the anchors and the recommendation', () => {
+  const result = evaluateParlay(slip(Array.from({ length: 6 }, (_, i) => ({ name: `Leg ${i}` }))));
+  assert.ok(result.suggestion, 'the "what should I actually play" answer travels with the verdict');
+  assert.ok(Array.isArray(result.anchors));
+  assert.ok(result.suggestion.keep.length >= 2);
 });
 
 test('noTakeReason stays quiet when something did clear the bar', () => {

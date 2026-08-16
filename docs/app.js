@@ -7446,7 +7446,66 @@ function renderTailFadeResult(audit) {
       </div>
       <p class="tf-group-note">Joint probability assumes the legs are independent. Any correlation flagged above moves the real number off it — synergy upward, cannibalization downward.</p>
     </div>` : '';
-    modeBlocks = t
+    // The question a bettor holding a built slip is actually asking: not
+    // "is this good" but "what should I play out of it". Every rung is
+    // priced, because the cost of each extra leg is the invisible part —
+    // a ten-leg is worse than the same handicapping in three not because
+    // the picks got worse but because ten prices' worth of hold compounds.
+    const s = audit.suggestion;
+    const cut = s && s.ladder.length ? `<div class="tail-fade-section is-suggestion">
+      <h3>Cut it down to</h3>
+      <p class="tf-group-note">Your ${audit.reads.length} legs pay
+        ${esc(formatAmerican(audit.combinedAmerican))} and land ${(audit.jointProb * 100).toFixed(1)}% of the time.
+        Each leg you drop takes a price&rsquo;s worth of the book&rsquo;s hold out of the ticket:</p>
+      <table class="tf-ladder">
+        <thead><tr><th>Ticket</th><th>Pays</th><th>Lands</th><th>EV</th></tr></thead>
+        <tbody>${s.ladder.map((r) => `<tr class="${r.size === s.size ? 'is-pick' : ''}">
+          <td>${r.size} leg${r.size === 1 ? '' : 's'}${r.size === s.size ? ' <span class="tf-ladder-flag">best cut</span>' : ''}</td>
+          <td>${esc(formatAmerican(r.combinedAmerican))}</td>
+          <td>${(r.jointProb * 100).toFixed(1)}%</td>
+          <td class="${r.ev >= 0 ? 'is-good' : 'is-bad'}">${(r.ev * 100).toFixed(1)}%</td>
+        </tr>`).join('')}
+        <tr class="is-posted"><td>${audit.reads.length} legs <span class="tf-ladder-flag">as posted</span></td>
+          <td>${esc(formatAmerican(audit.combinedAmerican))}</td>
+          <td>${(audit.jointProb * 100).toFixed(1)}%</td>
+          <td class="is-bad">${(audit.ev * 100).toFixed(1)}%</td></tr>
+        </tbody>
+      </table>
+      <p class="tf-keep"><strong>Keep:</strong> ${s.keep.map((r) => esc(r.leg.selection)).join(', ')}</p>
+      ${s.drop.length ? `<p class="tf-drop"><strong>Drop:</strong> ${s.drop.map((r) => esc(r.leg.selection)).join(', ')}</p>` : ''}
+      ${s.keep.every((r) => isFadeSide(r.verdict)) ? `<p class="tf-group-note tf-honest">
+        This is the least bad version of your ticket, not a good one. Every leg here is priced at
+        the hold, so every combination of them is negative too — the cut bleeds
+        ${Number.isFinite(s.evGain) ? `${(s.evGain * 100).toFixed(1)} points` : 'less'}, it does not turn a
+        fade into a take. Betting the top leg straight bleeds least of all.</p>` : ''}
+    </div>` : '';
+
+    // Anchors answer "what is most likely to land", which is NOT the same
+    // question as "what should I keep" and does not always give the same
+    // legs. Parlay expectation depends only on each leg's own expectation,
+    // so the cut above maximises it by taking the best-priced legs;
+    // probability drives how often the ticket actually hits. Where the two
+    // lists disagree, that disagreement is the useful part, so it is named
+    // rather than smoothed over.
+    const anchorsNotKept = (audit.anchors ?? []).filter((r) => !s?.keep?.includes(r));
+    const anchorBlock = audit.anchors?.length ? `<div class="tail-fade-section">
+      <h3>Anchors <span class="tf-count">${audit.anchors.length}</span></h3>
+      <p class="tf-group-note">The legs most likely to actually land, filtered to ones not priced badly enough to be
+      why the ticket is bad. ${anchorsNotKept.length ? `Note these are not all in the cut above — expectation depends
+      on each leg&rsquo;s price, hit rate depends on its probability, and the two do not pick the same legs. Swap
+      ${anchorsNotKept.map((r) => esc(r.leg.selection)).join(' or ')} in if you would rather the ticket landed more
+      often than paid more.` : 'All of them are in the cut above.'}</p>
+      <ul class="tf-group-list">${audit.anchors.map((r) =>
+        `<li><strong>${esc(r.leg.selection)}</strong>
+          <span class="tf-rank-score">${(r.pFair * 100).toFixed(0)}% to land</span>
+          <span class="tf-leg-verdict ${tailFadeTone(r.verdict)}">${esc(r.verdict)}</span></li>`).join('')}</ul>
+    </div>` : `<div class="tail-fade-section">
+      <h3>Anchors</h3>
+      <p class="tf-group-note">No leg here is both likely enough to land and priced well enough to build around —
+      nothing on this slip is a lock. A ticket with no anchor is one where every leg is a coin you are paying to flip.</p>
+    </div>`;
+
+    modeBlocks = t + cut + anchorBlock
       + renderTailFadeGroup('Legs dragging the ticket down', audit.badLegs,
         'A parlay needs every leg, so these are what make it a fade. Drop them or bet the rest straight.')
       + renderTailFadeGroup('Legs worth keeping', audit.solidLegs,

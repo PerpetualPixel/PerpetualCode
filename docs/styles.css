@@ -5601,6 +5601,22 @@ input[type="range"]:focus-visible {
    cannot itself answer, so it is set apart from the summary above it. */
 .tf-no-take { margin-top: 8px; padding-top: 8px; border-top: 1px solid var(--line); }
 
+/* The keep/drop recommendation: the one block that answers "so what do I
+   actually play", so it is lifted off the surrounding sections. */
+.is-suggestion { border-left: 2px solid var(--accent); padding-left: 12px; }
+.tf-ladder { width: 100%; border-collapse: collapse; margin: 8px 0; font-size: 0.78rem; }
+.tf-ladder th { text-align: left; font-size: 0.68rem; text-transform: uppercase; letter-spacing: 0.06em; color: var(--muted); padding: 3px 6px 3px 0; font-weight: 700; }
+.tf-ladder td { padding: 4px 6px 4px 0; font-variant-numeric: tabular-nums; border-top: 1px solid var(--line); }
+.tf-ladder .is-pick { font-weight: 700; }
+.tf-ladder .is-posted td { color: var(--muted); }
+.tf-ladder .is-good { color: var(--success); }
+.tf-ladder .is-bad { color: var(--danger); }
+.tf-ladder-flag { font-size: 0.62rem; text-transform: uppercase; letter-spacing: 0.06em; color: var(--muted); font-weight: 700; margin-left: 4px; }
+.tf-keep, .tf-drop { margin: 4px 0 0; font-size: 0.78rem; line-height: 1.45; }
+.tf-drop { color: var(--muted); }
+/* Set apart so the caveat cannot read as part of the recommendation. */
+.tf-honest { margin-top: 8px; font-style: italic; }
+
 .tf-leg-card {
   margin-bottom: 10px;
   padding: 10px 12px;
