@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import {
   segmentStats,
   segmentBreakdown,
+  sourceBreakdown,
   evaluateSegment,
   evaluateGlobalTuning,
   isSegmentPaused,
@@ -264,6 +265,54 @@ test('runAlgoHealthReview: pauses an underperforming segment and persists it to 
   const persisted = await getPausedSegments(env);
   assert.equal(persisted.length, 1);
   assert.equal(persisted[0].key, 'mma_mixed_martial_arts|h2h');
+});
+
+/* --- per-board attribution (sourceBreakdown) --- */
+
+test('sourceBreakdown: splits one segment\'s picks by the board each came from', () => {
+  const picks = [
+    ...Array.from({ length: 3 }, () => makePick({ status: 'won' })).map((p) => ({ ...p, source: 'top5' })),
+    ...Array.from({ length: 4 }, () => makePick({ status: 'lost' })).map((p) => ({ ...p, source: 'fullslate' })),
+  ];
+  const out = sourceBreakdown(picks);
+  assert.deepEqual(Object.keys(out).sort(), ['fullslate', 'top5']);
+  assert.equal(out.top5.n, 3);
+  assert.equal(out.top5.wins, 3);
+  assert.equal(out.fullslate.n, 4);
+  assert.equal(out.fullslate.wins, 0);
+});
+
+test('sourceBreakdown: untagged picks are grouped as "unknown", never dropped', () => {
+  const out = sourceBreakdown([makePick(), makePick(), { ...makePick(), source: 'top5' }]);
+  assert.equal(out.unknown.n, 2);
+  assert.equal(out.top5.n, 1);
+});
+
+test('runAlgoHealthReview: a pause records which board\'s record drove it', async () => {
+  const { env } = makeKvStore();
+  // The Full Slate is deep in the red; Pixel's Picks in the same segment is
+  // fine and, on its own, nowhere near MIN_SEGMENT_SAMPLE — precisely the
+  // case the old Pixel's-Picks-only evidence base could not see at all.
+  const picks = [
+    ...Array.from({ length: 25 }, (_, i) => ({
+      ...makePick({ sportKey: 'basketball_wnba', marketKey: 'h2h', status: i < 4 ? 'won' : 'lost', consensusProb: 0.7 }),
+      source: 'fullslate',
+    })),
+    ...Array.from({ length: 3 }, () => ({
+      ...makePick({ sportKey: 'basketball_wnba', marketKey: 'h2h', status: 'won', consensusProb: 0.7 }),
+      source: 'top5',
+    })),
+  ];
+
+  const result = await runAlgoHealthReview(env, ctx, NOW, { getPicks: async () => picks });
+  assert.equal(result.paused.length, 1);
+  assert.equal(result.paused[0].key, 'basketball_wnba|h2h');
+
+  const { bySource } = result.paused[0];
+  assert.equal(bySource.fullslate.n, 25, 'the board that actually carried the losses is named');
+  assert.equal(bySource.fullslate.wins, 4);
+  assert.equal(bySource.top5.n, 3);
+  assert.equal(bySource.top5.wins, 3, 'and the board that was fine is visibly separate, not blended away');
 });
 
 test('runAlgoHealthReview: is idempotent within the same ISO week', async () => {

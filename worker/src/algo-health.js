@@ -136,6 +136,33 @@ export function segmentStats(picks) {
   };
 }
 
+/**
+ * Per-board split of one segment's picks, keyed on the `source` label the
+ * caller tags each pick with (see index.js's getPicks). Recorded alongside
+ * every pause/proposal so a human reading the health log can tell WHICH
+ * board's record drove the decision — the review's evidence base spans the
+ * curated boards (Pixel's Picks, Play of the Day's pool, the prop pools)
+ * and the deliberately-unfiltered Full Slate, and those are different
+ * questions: "our best picks in this segment are losing" and "the engine's
+ * raw lean in this segment is wrong" both deserve a pause, but they call
+ * for different fixes, and a single blended z-score can't tell them apart.
+ *
+ * Untagged picks (anything a caller didn't label) group under 'unknown'
+ * rather than being dropped — this is diagnostic metadata, and losing a
+ * board from the accounting would be worse than showing it unnamed.
+ */
+export function sourceBreakdown(picks) {
+  const bySource = new Map();
+  for (const p of picks ?? []) {
+    const source = p?.source ?? 'unknown';
+    if (!bySource.has(source)) bySource.set(source, []);
+    bySource.get(source).push(p);
+  }
+  return Object.fromEntries(
+    [...bySource.entries()].map(([source, srcPicks]) => [source, segmentStats(srcPicks)]),
+  );
+}
+
 /** Groups a flat pick array into one segmentStats() result per sport+market-type segment. */
 export function segmentBreakdown(picks) {
   const bySegment = new Map();
@@ -145,7 +172,11 @@ export function segmentBreakdown(picks) {
     if (!bySegment.has(key)) bySegment.set(key, []);
     bySegment.get(key).push(p);
   }
-  return [...bySegment.entries()].map(([key, segPicks]) => ({ key, stats: segmentStats(segPicks) }));
+  return [...bySegment.entries()].map(([key, segPicks]) => ({
+    key,
+    stats: segmentStats(segPicks),
+    bySource: sourceBreakdown(segPicks),
+  }));
 }
 
 /**
@@ -322,18 +353,18 @@ export async function runAlgoHealthReview(env, ctx, now = Date.now(), { getPicks
   const entries = [];
   const nextPaused = [...paused];
 
-  for (const { key, stats } of segmentBreakdown(picks)) {
+  for (const { key, stats, bySource } of segmentBreakdown(picks)) {
     const isPaused = paused.some((p) => p.key === key);
     const decision = evaluateSegment(stats, isPaused);
     if (decision.action === 'pause') {
-      nextPaused.push({ key, pausedAt: now, reason: decision.reason, stats });
-      entries.push({ week, at: now, action: 'pause', segment: key, reason: decision.reason, stats });
+      nextPaused.push({ key, pausedAt: now, reason: decision.reason, stats, bySource });
+      entries.push({ week, at: now, action: 'pause', segment: key, reason: decision.reason, stats, bySource });
     } else if (decision.action === 'resume') {
       const idx = nextPaused.findIndex((p) => p.key === key);
       if (idx >= 0) nextPaused.splice(idx, 1);
-      entries.push({ week, at: now, action: 'resume', segment: key, reason: decision.reason, stats });
+      entries.push({ week, at: now, action: 'resume', segment: key, reason: decision.reason, stats, bySource });
     } else if (decision.action === 'proposal') {
-      entries.push({ week, at: now, action: 'proposal', segment: key, reason: decision.reason, stats });
+      entries.push({ week, at: now, action: 'proposal', segment: key, reason: decision.reason, stats, bySource });
     }
   }
 

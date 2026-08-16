@@ -41,6 +41,7 @@ import { getAllMlbPropsTracked } from './mlb-props.js';
 import { getAllNflPropsTracked } from './nfl-props.js';
 import { getAllNhlPropsTracked } from './nhl-props.js';
 import { applyTennisFormSignal } from '../../docs/qualitative.js';
+import { getPausedSegments, isSegmentPaused } from './algo-health.js';
 import { loadTennisArchivesFor } from './tennis-archive.js';
 import { retractedRecord } from './retraction.js';
 
@@ -173,6 +174,12 @@ export async function runFullSlateBatch(
     ].map((id) => id.split(':')[0]),
   );
 
+  // Benched segments are read once per batch and applied per-game below.
+  // Best-effort: a KV read failure here must never cost the day's board, so
+  // it degrades to "nothing is benched" — exactly the behaviour this batch
+  // had before the demotion existed.
+  const pausedSegments = await getPausedSegments(env).catch(() => []);
+
   const events = await fetchFullSlate();
   const analyzed = analyze(events, { now })
     .filter((c) => {
@@ -210,7 +217,21 @@ export async function runFullSlateBatch(
   // source can't ultimately settle still falls back to the existing void,
   // same as it always has; this only ever adds a chance at a real grade; it
   // never removes coverage a match already had.
+  //
+  // Benched segments (worker/src/algo-health.js's weekly review) are
+  // DEMOTED here rather than blocked the way they are on the curated boards
+  // — a deliberate difference, and the reason is recovery. A pause is only
+  // ever lifted by evidence that the segment started working again
+  // (evaluateSegment's RESUME_Z), and after this change the Full Slate is
+  // the largest source of that evidence. Blocking it outright would end the
+  // segment's record on the day it was paused, drop its sample below
+  // MIN_SEGMENT_SAMPLE as the window rolled forward, and leave it benched
+  // permanently with nothing able to argue otherwise. Demoting keeps a
+  // measurable record: the segment loses every game where a real
+  // alternative exists, and keeps only the games where it's the sole
+  // option.
   const bestPerGame = new Map();
+  const benchedPerGame = new Map(); // paused-segment leans — only used for games with no alternative
   for (const c of candidates) {
     const settleable = isSettleableTennisMarket(c.marketKey) || hasSecondarySettlementSource(c.sportKey, c.marketKey);
     if (isTennis(c.sportKey) && !settleable) continue;
@@ -219,7 +240,18 @@ export async function runFullSlateBatch(
     // LOW_VARIANCE_MAX_AMERICAN) — an overpriced one simply isn't eligible
     // to be this game's one pick, same as an unsettleable tennis line above.
     if (!clearsMaxJuice(c)) continue;
+    if (isSegmentPaused(c, pausedSegments)) {
+      if (!benchedPerGame.has(c.eventId)) benchedPerGame.set(c.eventId, c);
+      continue;
+    }
     if (!bestPerGame.has(c.eventId)) bestPerGame.set(c.eventId, c);
+  }
+  // A game whose ONLY candidates are all from benched segments still gets
+  // its pick — the Full Slate's contract is one pick per game, and an empty
+  // card would be a worse answer than a flagged one. Recorded with
+  // `benchedSegment` so the record says why it's there.
+  for (const [eventId, c] of benchedPerGame) {
+    if (!bestPerGame.has(eventId)) bestPerGame.set(eventId, { ...c, benchedSegment: true });
   }
 
   // A player prop can be the game's Main Play (explicit product direction:
@@ -252,7 +284,14 @@ export async function runFullSlateBatch(
     const gameProps = todaysProps.filter((p) =>
       p.eventId === eventId || (p.home === teamCandidate.home && p.away === teamCandidate.away));
     const bestProp = gameProps.sort((x, y) => y.score - x.score)[0];
-    if (!bestProp || bestProp.score <= teamCandidate.score) continue;
+    if (!bestProp) continue;
+    // Normally the prop has to genuinely outscore the team market to take
+    // the slot. The exception is a team candidate that only holds the slot
+    // because its whole segment is benched and the game had no other market
+    // to fall to: there, the score comparison is being made against a grade
+    // the weekly review has already measured as not meaning what it claims,
+    // so a qualifying prop wins by default rather than on points.
+    if (!teamCandidate.benchedSegment && bestProp.score <= teamCandidate.score) continue;
     bestPerGame.set(eventId, {
       ...bestProp,
       eventId,
@@ -276,6 +315,12 @@ export async function runFullSlateBatch(
     const wrapped = { legs: [candidate], score: candidate.score, meetsStandard: true, flagReason: null };
     const record = pickRecordFrom(wrapped, dateKey, now, 1); // Full Slate stays 1U
     if (candidate.propRef) { record.propRef = candidate.propRef; record.teamLean = candidate.teamLean; }
+    // Stamped only on the picks that held their slot despite a benched
+    // segment (see the demotion above) — so a later read of this board can
+    // separate "the engine liked this" from "this was the only thing left
+    // on the board," and so the segment's recovery evidence is identifiable
+    // as coming exclusively from games with no alternative.
+    if (candidate.benchedSegment) record.benchedSegment = true;
     newPickIds.push(record.pickId);
     ctx.waitUntil(
       env.POTD_KV.put(`slate:${dateKey}:pick:${record.pickId}`, JSON.stringify(record), {

@@ -682,6 +682,17 @@ const el = {
   pixelSortRow: document.getElementById('pixelSortRow'),
   pixelSort: document.getElementById('pixelSort'),
   scrim: document.getElementById('scrim'),
+  tailFadeToggle: document.getElementById('tailFadeToggle'),
+  tailFadePanel: document.getElementById('tailFadePanel'),
+  tailFadeClose: document.getElementById('tailFadeClose'),
+  tailFadeText: document.getElementById('tailFadeText'),
+  tailFadeDrop: document.getElementById('tailFadeDrop'),
+  tailFadeFile: document.getElementById('tailFadeFile'),
+  tailFadePreview: document.getElementById('tailFadePreview'),
+  tailFadeSlatePick: document.getElementById('tailFadeSlatePick'),
+  tailFadeLegs: document.getElementById('tailFadeLegs'),
+  tailFadeAudit: document.getElementById('tailFadeAudit'),
+  tailFadeResult: document.getElementById('tailFadeResult'),
   accountLink: document.getElementById('accountLink'),
   welcomeToast: document.getElementById('welcomeToast'),
   updateBanner: document.getElementById('updateBanner'),
@@ -6905,4 +6916,372 @@ el.updateBannerDismiss.addEventListener('click', () => {
   dismissedVersion = pendingUpdateVersion;
   updateAvailable = false;
   el.updateBanner.hidden = true;
+});
+
+/* ------------------------------------------------------------------ */
+/* Tail or Fade — bet audit                                            */
+/* ------------------------------------------------------------------ */
+
+/**
+ * A second opinion on a bet the user is already looking at, from anywhere
+ * on the Full Slate: paste the text, drop a screenshot of a sportsbook
+ * slip, or pull a leg straight off the board.
+ *
+ * The OCR/vision extraction and the analysis itself are BOTH mocked here
+ * (see mockExtractLegsFromImage / mockAuditLegs). That is deliberate and
+ * temporary: it lets the whole flow — every input mode, the loaders, the
+ * parsed-leg list, the verdict rendering, the error paths — be exercised
+ * end to end before either real service exists, so the integration work is
+ * a swap of two functions rather than a rebuild. Every mocked run says so
+ * on screen (renderTailFadeResult's mock note); this app's rule that a
+ * number on screen traces to a real source doesn't get suspended just
+ * because the backing service isn't built yet.
+ */
+
+/** Which input mode the drawer is on, and whatever legs are currently loaded. */
+const tailFade = {
+  mode: 'text',
+  legs: [],
+  imageName: null,
+  busy: false,
+};
+
+/** American odds out of free text: "-115", "+105", "115" (bare = plus money by convention). */
+function parseAmericanFromText(text) {
+  const m = String(text).match(/([+-]\d{3,4})(?!\d)/) ?? String(text).match(/(?:^|\s)(\d{3,4})(?:\s|$)/);
+  if (!m) return null;
+  const n = Number(m[1]);
+  return Number.isFinite(n) && n !== 0 ? n : null;
+}
+
+/**
+ * One typed/pasted line into a leg. Deliberately forgiving — this is free
+ * text a human typed, so anything that isn't clearly a price is kept as the
+ * selection rather than dropped. A line with no readable price gets
+ * american: null, and enrichment fills it from the live market later.
+ */
+function parseLegFromLine(line) {
+  const raw = line.trim();
+  if (!raw) return null;
+  const american = parseAmericanFromText(raw);
+  const selection = american == null
+    ? raw
+    : raw.replace(/([+-]?\d{3,4})(?!\d)\s*$/, '').replace(/[@,]\s*$/, '').trim() || raw;
+  return { selection, american, source: 'text' };
+}
+
+/** Every leg the user has typed, one per non-empty line. */
+function parseLegsFromText(text) {
+  return String(text).split('\n').map(parseLegFromLine).filter(Boolean);
+}
+
+/**
+ * MOCK — stands in for the OCR/vision layer that will read a real bet slip.
+ * Shaped exactly like the real extractor's contract ({ legs: [...] }) so
+ * swapping it out touches nothing else. The delay is real so the loading
+ * state is actually exercised rather than flashing past in tests.
+ */
+async function mockExtractLegsFromImage(file) {
+  await new Promise((r) => setTimeout(r, 900));
+  if (!file || !String(file.type ?? '').startsWith('image/')) {
+    throw new Error('That file does not look like an image.');
+  }
+  return {
+    legs: [
+      { selection: "A'ja Wilson over 24.5 points", american: -118, source: 'image' },
+      { selection: 'Kelsey Mitchell over 18.5 points', american: -110, source: 'image' },
+      { selection: 'Aces / Fever over 165.5', american: null, source: 'image' },
+    ],
+  };
+}
+
+/**
+ * MOCK — stands in for the analysis engine. Same contract the real one will
+ * return, so renderTailFadeResult never changes: a verdict, a confidence,
+ * and the four evidence sections the spec calls for.
+ *
+ * The verdict is derived from the legs rather than hardcoded, so clicking
+ * through with different inputs visibly changes the output — a mock that
+ * always says the same thing hides bugs in the render path.
+ */
+async function mockAuditLegs(legs) {
+  await new Promise((r) => setTimeout(r, 1100));
+  const priced = legs.filter((l) => l.american != null);
+  const avg = priced.length
+    ? priced.reduce((s, l) => s + l.american, 0) / priced.length
+    : 0;
+  // Heavier juice across the slip reads as worse value — enough of a rule
+  // to make the mock's answer track its input.
+  const tail = avg > -125;
+  const confidence = Math.max(1, Math.min(10, Math.round(tail ? 6 + priced.length : 7 - priced.length)));
+
+  return {
+    verdict: tail ? 'TAIL' : 'FADE',
+    confidence,
+    statistical: [
+      `Primary leg has hit in 7 of its last 10 (70%), against a season rate of 61%.`,
+      `Line sits 1.4 below the L10 average — the number is a touch soft versus recent output.`,
+      `Usage up to 28.9% over the last five, with minutes trending 31.2 → 34.6.`,
+    ],
+    contextual: [
+      `Recent form: 4-1 to the over across the last five with the same starting five available.`,
+      `Matchup: opponent concedes the 3rd-most to the position, and plays at the 5th-fastest pace.`,
+      `Home / away: 63% hit rate at home versus 48% on the road — this one is at home.`,
+      `Head-to-head: cleared this number in 3 of the last 4 meetings.`,
+      `Injuries: no new listings on either side as of the latest report.`,
+    ],
+    risk: [
+      `Blowout risk — a 12+ point spread pulls starters and caps fourth-quarter minutes.`,
+      `Foul trouble is the main single-game tail risk given the matchup's physicality.`,
+      `Opponent has switched to a drop-coverage scheme in the last three, which suppresses this exact shot profile.`,
+    ],
+    summary: tail
+      ? `The number lags where recent usage and minutes actually are, and the matchup is the friendliest of the week. Worth tailing at this price, with blowout risk the one thing that beats it.`
+      : `The price already accounts for the recent hot stretch, and the matchup profile works directly against this line. Not enough edge left at this number — fade it.`,
+    mocked: true,
+  };
+}
+
+/** Whether the Audit Bet button should be live: something real is loaded and nothing is in flight. */
+function refreshTailFadeAuditState() {
+  el.tailFadeAudit.disabled = tailFade.busy || tailFade.legs.length === 0;
+}
+
+function renderTailFadeLegs() {
+  if (!tailFade.legs.length) {
+    el.tailFadeLegs.hidden = true;
+    el.tailFadeLegs.innerHTML = '';
+    refreshTailFadeAuditState();
+    return;
+  }
+  el.tailFadeLegs.hidden = false;
+  el.tailFadeLegs.innerHTML = `
+    <p class="tail-fade-legs-title">${tailFade.legs.length} leg${tailFade.legs.length === 1 ? '' : 's'} loaded</p>
+    ${tailFade.legs.map((leg) => `
+      <div class="tail-fade-leg">
+        <span>${esc(leg.selection)}</span>
+        <span class="tail-fade-leg-price">${
+          leg.american == null
+            ? '<span class="tail-fade-leg-sourced">price pending lookup</span>'
+            : esc(formatAmerican(leg.american)) + (leg.priceSourced
+              ? '<span class="tail-fade-leg-sourced">from live market</span>'
+              : '')
+        }</span>
+      </div>`).join('')}`;
+  refreshTailFadeAuditState();
+}
+
+/**
+ * Fills in any leg the user didn't give a price for, from whatever the
+ * board already has loaded. Live market data the app has already paid for —
+ * no extra odds call, and no invented number: a leg that can't be matched
+ * keeps american: null and is analysed without a price rather than given a
+ * plausible-looking one.
+ */
+function enrichTailFadeLegPrices() {
+  const pool = state.candidates ?? [];
+  if (!pool.length) return;
+  for (const leg of tailFade.legs) {
+    if (leg.american != null) continue;
+    const needle = leg.selection.toLowerCase();
+    const hit = pool.find((c) => {
+      const sel = String(c.selection ?? '').toLowerCase();
+      return sel && (needle.includes(sel) || sel.includes(needle));
+    });
+    if (hit) {
+      leg.american = hit.american;
+      leg.priceSourced = true;
+    }
+  }
+}
+
+function setTailFadeMode(mode) {
+  tailFade.mode = mode;
+  el.tailFadePanel.querySelectorAll('[data-tf-mode]').forEach((b) => {
+    const active = b.dataset.tfMode === mode;
+    b.classList.toggle('is-active', active);
+    b.setAttribute('aria-selected', String(active));
+  });
+  el.tailFadePanel.querySelectorAll('[data-tf-pane]').forEach((pane) => {
+    pane.hidden = pane.dataset.tfPane !== mode;
+  });
+  if (mode === 'slate') populateTailFadeSlateOptions();
+}
+
+/** Every market currently rendered on the Full Slate, as pickable options. */
+function populateTailFadeSlateOptions() {
+  const opts = [];
+  for (const game of renderedSlateGames) {
+    for (const key of ['h2h', 'spreads', 'totals']) {
+      for (const side of ['away', 'home']) {
+        const cand = game[key]?.[side];
+        if (!cand) continue;
+        opts.push({
+          label: `${cand.selection} (${formatAmerican(cand.american)}) — ${game.away} @ ${game.home}`,
+          selection: cand.selection,
+          american: cand.american,
+        });
+      }
+    }
+  }
+  el.tailFadeSlatePick.innerHTML = opts.length
+    ? ['<option value="">Choose a leg…</option>', ...opts.map((o, i) => `<option value="${i}">${esc(o.label)}</option>`)].join('')
+    : '<option value="">Nothing on the board right now</option>';
+  el.tailFadeSlatePick._opts = opts;
+}
+
+function showTailFadeLoading(message) {
+  el.tailFadeResult.innerHTML = `
+    <div class="tail-fade-loading">
+      <span class="tail-fade-spinner" aria-hidden="true"></span>
+      <span>${esc(message)}</span>
+    </div>`;
+}
+
+function showTailFadeError(message) {
+  el.tailFadeResult.innerHTML = `<div class="tail-fade-error">${esc(message)}</div>`;
+}
+
+function renderTailFadeResult(audit) {
+  const isTail = audit.verdict === 'TAIL';
+  const section = (title, items, cls = '') => `
+    <div class="tail-fade-section ${cls}">
+      <h3>${esc(title)}</h3>
+      <ul>${items.map((i) => `<li>${esc(i)}</li>`).join('')}</ul>
+    </div>`;
+
+  el.tailFadeResult.innerHTML = `
+    <div class="tail-fade-verdict ${isTail ? 'is-tail' : 'is-fade'}">
+      <span class="tail-fade-badge">${esc(audit.verdict)}</span>
+      <p class="tail-fade-confidence">Confidence<br><strong>${esc(String(audit.confidence))}/10</strong></p>
+    </div>
+    ${section('Key statistical backing', audit.statistical)}
+    ${section('Contextual factors', audit.contextual)}
+    ${section('Risk analysis', audit.risk, 'is-risk')}
+    <div class="tail-fade-section">
+      <h3>Executive summary</h3>
+      <p class="tail-fade-summary">${esc(audit.summary)}</p>
+    </div>
+    ${audit.mocked ? `<p class="tail-fade-mock-note">
+      Sample output — the OCR and analysis services aren't wired up yet, so these
+      numbers are placeholders, not a real read on your bet.
+    </p>` : ''}`;
+}
+
+async function handleTailFadeImage(file) {
+  if (!file) return;
+  tailFade.busy = true;
+  refreshTailFadeAuditState();
+  tailFade.imageName = file.name || 'pasted image';
+
+  const url = URL.createObjectURL(file);
+  el.tailFadePreview.hidden = false;
+  el.tailFadePreview.innerHTML = `
+    <img src="${url}" alt="Uploaded bet slip">
+    <p class="tail-fade-preview-name">${esc(tailFade.imageName)}</p>`;
+
+  showTailFadeLoading('Reading the bet slip…');
+  try {
+    const { legs } = await mockExtractLegsFromImage(file);
+    tailFade.legs = legs;
+    enrichTailFadeLegPrices();
+    renderTailFadeLegs();
+    el.tailFadeResult.innerHTML = '';
+  } catch (error) {
+    tailFade.legs = [];
+    renderTailFadeLegs();
+    showTailFadeError(error.message || 'Could not read that image.');
+  } finally {
+    tailFade.busy = false;
+    refreshTailFadeAuditState();
+  }
+}
+
+function setTailFadeOpen(open) {
+  setAsideOpen(el.tailFadePanel, el.tailFadeToggle, open, {
+    focusEl: el.tailFadeClose,
+    onOpen: () => {
+      if (tailFade.mode === 'slate') populateTailFadeSlateOptions();
+    },
+  });
+}
+
+el.tailFadeToggle?.addEventListener('click', () => {
+  setTailFadeOpen(el.tailFadePanel.hidden);
+});
+el.tailFadeClose?.addEventListener('click', () => setTailFadeOpen(false));
+
+el.tailFadePanel?.addEventListener('click', (event) => {
+  const modeBtn = event.target.closest('[data-tf-mode]');
+  if (modeBtn) setTailFadeMode(modeBtn.dataset.tfMode);
+});
+
+el.tailFadeText?.addEventListener('input', () => {
+  tailFade.legs = parseLegsFromText(el.tailFadeText.value);
+  enrichTailFadeLegPrices();
+  renderTailFadeLegs();
+});
+
+el.tailFadeSlatePick?.addEventListener('change', () => {
+  const opts = el.tailFadeSlatePick._opts ?? [];
+  const chosen = opts[Number(el.tailFadeSlatePick.value)];
+  tailFade.legs = chosen
+    ? [{ selection: chosen.selection, american: chosen.american, source: 'slate' }]
+    : [];
+  renderTailFadeLegs();
+});
+
+el.tailFadeDrop?.addEventListener('click', () => el.tailFadeFile.click());
+el.tailFadeDrop?.addEventListener('keydown', (event) => {
+  if (event.key === 'Enter' || event.key === ' ') {
+    event.preventDefault();
+    el.tailFadeFile.click();
+  }
+});
+el.tailFadeFile?.addEventListener('change', () => handleTailFadeImage(el.tailFadeFile.files?.[0]));
+
+['dragenter', 'dragover'].forEach((evt) => {
+  el.tailFadeDrop?.addEventListener(evt, (e) => {
+    e.preventDefault();
+    el.tailFadeDrop.classList.add('is-dragging');
+  });
+});
+['dragleave', 'drop'].forEach((evt) => {
+  el.tailFadeDrop?.addEventListener(evt, (e) => {
+    e.preventDefault();
+    el.tailFadeDrop.classList.remove('is-dragging');
+  });
+});
+el.tailFadeDrop?.addEventListener('drop', (e) => {
+  handleTailFadeImage(e.dataTransfer?.files?.[0]);
+});
+
+// Paste anywhere while the drawer is open — a screenshot is almost always
+// on the clipboard rather than saved to disk, so requiring a file picker
+// would be the slower path for the common case. Scoped to the drawer being
+// open so it never hijacks a paste into some other field on the page.
+document.addEventListener('paste', (event) => {
+  if (el.tailFadePanel?.hidden) return;
+  const item = [...(event.clipboardData?.items ?? [])].find((i) => i.type.startsWith('image/'));
+  if (!item) return;
+  event.preventDefault();
+  setTailFadeMode('image');
+  handleTailFadeImage(item.getAsFile());
+});
+
+el.tailFadeAudit?.addEventListener('click', async () => {
+  if (!tailFade.legs.length || tailFade.busy) return;
+  tailFade.busy = true;
+  refreshTailFadeAuditState();
+  showTailFadeLoading('Auditing the bet…');
+  try {
+    enrichTailFadeLegPrices();
+    renderTailFadeLegs();
+    renderTailFadeResult(await mockAuditLegs(tailFade.legs));
+  } catch (error) {
+    showTailFadeError(error.message || 'Could not audit that bet.');
+  } finally {
+    tailFade.busy = false;
+    refreshTailFadeAuditState();
+  }
 });

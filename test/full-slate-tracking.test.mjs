@@ -157,6 +157,61 @@ test('runFullSlateBatch has no odds-band or score floor — a near-coin-flip gam
   assert.equal(picks[0].meetsStandard, true, 'Full Slate picks always carry meetsStandard: true — there is no standard to fail here');
 });
 
+/* --- benched-segment demotion (worker/src/algo-health.js) --- */
+
+test('runFullSlateBatch: a benched segment loses the game slot to the next-best market', async () => {
+  const { env, store } = makeKvStore();
+  store.set('algo:paused', JSON.stringify([{ key: 'baseball_mlb|h2h', pausedAt: NOW, reason: 'test' }]));
+  // h2h has by far the bigger outlier, so it would normally win the slot
+  // outright (see the "tracks the h2h side instead" test above with these
+  // exact numbers) — the pause is the only thing that can change the answer.
+  const events = [makeMultiMarketEvent('benched', { h2hOutlier: 60, spreadOutlier: 5 })];
+
+  await runFullSlateBatch(env, ctx, NOW, { fetchFullSlate: async () => events });
+  const picks = await getFullSlateTracked(env, { dateKey: '2026-08-05' });
+  assert.equal(picks.length, 1, 'the game still gets exactly one pick');
+  assert.equal(picks[0].marketKey, 'spreads', 'the benched h2h should be demoted in favour of the spread');
+  assert.ok(!picks[0].benchedSegment, 'a pick that won on merit is not stamped as a benched fallback');
+});
+
+test('runFullSlateBatch: a game whose only market is benched still gets a pick, stamped benchedSegment', async () => {
+  const { env, store } = makeKvStore();
+  store.set('algo:paused', JSON.stringify([{ key: 'baseball_mlb|h2h', pausedAt: NOW, reason: 'test' }]));
+  const events = [makeEvent('onlybenched')]; // h2h is this game's only market
+
+  const result = await runFullSlateBatch(env, ctx, NOW, { fetchFullSlate: async () => events });
+  assert.equal(result.count, 1, 'blocking outright would end the segment\'s record and strand it benched forever');
+
+  const picks = await getFullSlateTracked(env, { dateKey: '2026-08-05' });
+  assert.equal(picks[0].marketKey, 'h2h');
+  assert.equal(picks[0].benchedSegment, true, 'the record says why this pick is here');
+});
+
+test('runFullSlateBatch: an unrelated benched segment changes nothing', async () => {
+  const { env, store } = makeKvStore();
+  store.set('algo:paused', JSON.stringify([{ key: 'basketball_wnba|h2h', pausedAt: NOW, reason: 'test' }]));
+  const events = [makeMultiMarketEvent('unrelated', { h2hOutlier: 60, spreadOutlier: 5 })];
+
+  await runFullSlateBatch(env, ctx, NOW, { fetchFullSlate: async () => events });
+  const picks = await getFullSlateTracked(env, { dateKey: '2026-08-05' });
+  assert.equal(picks[0].marketKey, 'h2h', 'a pause on another sport must not touch this one');
+});
+
+test('runFullSlateBatch: a KV failure reading benched segments degrades to picking normally', async () => {
+  const { env } = makeKvStore();
+  const realGet = env.POTD_KV.get;
+  env.POTD_KV.get = async (key) => {
+    if (key === 'algo:paused') throw new Error('KV down');
+    return realGet(key);
+  };
+  const events = [makeMultiMarketEvent('kvfail', { h2hOutlier: 60, spreadOutlier: 5 })];
+
+  const result = await runFullSlateBatch(env, ctx, NOW, { fetchFullSlate: async () => events });
+  assert.equal(result.count, 1, 'the day\'s board must not depend on the health-review state being readable');
+  const picks = await getFullSlateTracked(env, { dateKey: '2026-08-05' });
+  assert.equal(picks[0].marketKey, 'h2h');
+});
+
 test('runFullSlateBatch tracks a game topPicks() would reject on price alone (outside -250..+150)', async () => {
   const { env } = makeKvStore();
   const events = [{
