@@ -782,16 +782,56 @@ export default {
 
     // Monday 7am ET: the weekly algorithm health review (worker/src/
     // algo-health.js) — looks at the last HEALTH_WINDOW_DAYS of graded
-    // Pixel's Picks history, auto-pauses a sport+bet-type segment that's
-    // significantly underperforming its own no-vig expectation, auto-
-    // resumes one that's recovered, and can tighten (never loosen below the
-    // shipped default) one global EV/Kelly/score floor if overall
-    // performance is weak. runAlgoHealthReview is itself idempotent per ISO
-    // week, so a retried or overlapping tick can't double-act.
+    // history, auto-pauses a sport+bet-type segment that's significantly
+    // underperforming its own no-vig expectation, auto-resumes one that's
+    // recovered, and can tighten (never loosen below the shipped default)
+    // one global EV/Kelly/score floor if overall performance is weak.
+    // runAlgoHealthReview is itself idempotent per ISO week, so a retried
+    // or overlapping tick can't double-act.
+    //
+    // Reads the SAME six boards runDailyLearning already reads (see its own
+    // getPicks above), not Pixel's Picks alone as it originally did. That
+    // narrowness was a real hole rather than a scoping choice: the Full
+    // Slate takes one pick per game per day and the prop pools take several
+    // more, so the overwhelming majority of this app's graded record was
+    // invisible to the one mechanism whose entire job is noticing a market
+    // that stopped working. A segment could run deep into the red across
+    // hundreds of Full Slate picks while its handful of Pixel's Picks
+    // entries never reached MIN_SEGMENT_SAMPLE, and nothing would fire.
+    //
+    // Mixing a curated board with the deliberately-unfiltered Full Slate is
+    // sound here specifically because the test is relative, not absolute:
+    // segmentStats z-tests actual wins against the sum of each pick's OWN
+    // consensusProb, so a Full Slate pick on a game with no real edge is
+    // measured against the modest expectation it actually carried. What the
+    // combined sample answers is "is the engine's read on this segment
+    // wrong," which is the right question for both boards — and each pick
+    // is tagged with its `source` so a pause names the board that drove it
+    // (see algo-health.js's sourceBreakdown). The tag is added here, in
+    // memory, and never written back to the stored record.
     if (etWeekday(now) === ALGO_HEALTH_WEEKDAY && etHour(now) === ALGO_HEALTH_HOUR && isTopOfHour(now)) {
       ctx.waitUntil(
         runAlgoHealthReview(env, ctx, now, {
-          getPicks: () => getAllTrackedPicks(env, { now, days: HEALTH_WINDOW_DAYS }),
+          getPicks: async () => {
+            const tagged = (picks, source) => (picks ?? []).map((p) => ({ ...p, source }));
+            const opts = { now, days: HEALTH_WINDOW_DAYS };
+            const [top5, slate, mlbProps, nflProps, wnbaProps, nhlProps] = await Promise.all([
+              getAllTrackedPicks(env, opts),
+              getAllFullSlateTracked(env, opts),
+              getAllMlbPropsTracked(env, opts),
+              getAllNflPropsTracked(env, opts),
+              getAllWnbaPropsTracked(env, opts),
+              getAllNhlPropsTracked(env, opts),
+            ]);
+            return [
+              ...tagged(top5, 'top5'),
+              ...tagged(slate, 'fullslate'),
+              ...tagged(mlbProps, 'mlbprops'),
+              ...tagged(nflProps, 'nflprops'),
+              ...tagged(wnbaProps, 'wnbaprops'),
+              ...tagged(nhlProps, 'nhlprops'),
+            ];
+          },
         }),
       );
 
