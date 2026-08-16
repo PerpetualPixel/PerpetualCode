@@ -17,7 +17,7 @@
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Syne:wght@600;700;800&family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
-<link rel="stylesheet" href="styles.css?v=1.149">
+<link rel="stylesheet" href="styles.css?v=1.150">
 </head>
 <body>
 
@@ -535,6 +535,25 @@
       is unaffected.
     </p>
 
+    <!-- How a multi-leg entry is meant. Separate from the input-method tabs
+         below: those answer "how are you giving me the bet", this answers
+         "what IS the bet" — several independent wagers, or one ticket that
+         needs all of them. Every leg is graded individually either way; the
+         toggle changes what the overall verdict means and what the
+         recommendations are for. -->
+    <div class="tail-fade-shape">
+      <span class="tail-fade-shape-label" id="tailFadeShapeLabel">Grade as</span>
+      <div class="tail-fade-shape-toggle" role="radiogroup" aria-labelledby="tailFadeShapeLabel">
+        <button type="button" class="tail-fade-shape-btn is-active" data-tf-shape="slate"
+                role="radio" aria-checked="true">Slate</button>
+        <button type="button" class="tail-fade-shape-btn" data-tf-shape="parlay"
+                role="radio" aria-checked="false">Parlay</button>
+      </div>
+      <p class="tail-fade-shape-hint" id="tailFadeShapeHint">
+        Separate bets — each leg graded on its own, with what to bet straight and what can be parlayed.
+      </p>
+    </div>
+
     <div class="tail-fade-modes" role="tablist" aria-label="How to enter the bet">
       <button class="tail-fade-mode is-active" role="tab" aria-selected="true" data-tf-mode="text" type="button">Type / paste</button>
       <button class="tail-fade-mode" role="tab" aria-selected="false" data-tf-mode="image" type="button">Bet slip image</button>
@@ -904,6 +923,6 @@
   </div>
 </aside>
 
-<script type="module" src="app.js?v=1.149"></script>
+<script type="module" src="app.js?v=1.150"></script>
 </body>
 </html>

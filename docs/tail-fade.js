@@ -1,53 +1,60 @@
 /**
- * Tail or Fade — the audit itself, as pure functions.
+ * Tail or Fade — matching a typed bet to this app's board, and dispatching
+ * it to the grading engine (docs/take-or-fade.js) as either a slate of
+ * independent bets or one parlay ticket.
  *
- * WHY THIS EXISTS AS A REWRITE RATHER THAN A NEW FEATURE
- * -----------------------------------------------------
- * The first version of this shipped with a placeholder verdict:
+ * WHY THE ENGINE IS A SEPARATE FILE
+ * ---------------------------------
+ * This file answers "which market is the user talking about". take-or-fade.js
+ * answers "is that bet any good". They fail in completely different ways — a
+ * bad match attaches the right numbers to the wrong bet, a bad grade attaches
+ * wrong numbers to the right one — so each is tested against its own failure
+ * mode rather than through the other.
  *
- *     const tail = avg > -125;
+ * WHAT THIS REPLACED, AND WHY IT MATTERS
+ * --------------------------------------
+ * The first version graded with `const tail = avg > -125` — the mean American
+ * price against a made-up cutoff. Play of the Day is drawn from a -200..+150
+ * band, so every Play of the Day heavier than -125 came back FADE,
+ * deterministically, while the app itself was recommending it. The evidence
+ * sections beneath were hardcoded strings, identical for every bet.
  *
- * — the average American price across the slip, against a made-up cutoff,
- * with no connection to the engine at all. That is not merely imprecise, it
- * is actively wrong in a specific and damaging way: Play of the Day is
- * selected from a -200..+150 band, so ANY Play of the Day priced heavier
- * than -125 was guaranteed to come back FADE. The app told the user to take
- * a bet and this tool told them to fade it, every single time, and the
- * disagreement carried exactly zero information about the bet.
+ * Two structural properties now make that class of bug unrepresentable
+ * rather than merely fixed:
  *
- * The fix is not a better heuristic. It is that a second opinion on this
- * app's own board has to be computed from the same evidence the board was
- * computed from. So:
+ *   1. A leg matching one of our own posted picks cannot grade below TAKE,
+ *      and its opposite side cannot grade above FADE (the floors in
+ *      take-or-fade.js's evaluateLeg). The selection pipeline already applied
+ *      every gate that engine re-derives, to the same numbers.
+ *   2. A bet matching nothing on the board returns NO READ with no
+ *      confidence number, rather than a verdict invented from nothing.
  *
- *   1. A leg that IS one of the app's own posted picks returns TAIL, and
- *      says which surface posted it. Not "usually" — by construction. The
- *      app contradicting itself is now unrepresentable rather than
- *      unlikely.
- *   2. A leg that is the OPPOSITE side of one of our posted picks returns
- *      FADE, for the same reason and with the same certainty.
- *   3. Anything else is judged against the live engine numbers already in
- *      the browser — score, EV, no-vig consensus probability, form signal —
- *      using RULES, the same thresholds every other surface uses.
- *   4. A bet that matches nothing the app has priced returns NO READ. It
- *      does not return a guess. "I can't see this market" is a real answer
- *      and the honest one; inventing a verdict there is what produced the
- *      original bug.
- *
- * Everything reported traces to a number the app already holds. There are
- * no invented statistics in this module — the previous version's
- * "hit in 7 of its last 10 (70%)" and "usage up to 28.9%" were literal
- * string constants, shown to a user as if they were a read on their bet.
- *
- * Pure and synchronous — no DOM, no network, no fetches. Same contract as
- * engine.js, so it is unit-testable without a browser.
+ * Pure and synchronous — no DOM, no network.
  */
 
-import { RULES, formatAmerican, impliedProb } from './engine.js';
+import {
+  evaluateLeg,
+  evaluateSlate,
+  evaluateParlay,
+  CORRELATION_CONFLICT,
+  CORRELATION_CANNIBAL,
+  NO_READ,
+  STRONG_TAKE,
+  TAKE,
+  LEAN_PASS,
+  FADE,
+  STRONG_FADE,
+  isTakeSide,
+  isFadeSide,
+} from './take-or-fade.js';
 
-/** Verdicts this can return. NO_READ is a real outcome, not an error. */
-export const TAIL = 'TAIL';
-export const FADE = 'FADE';
-export const NO_READ = 'NO READ';
+export {
+  NO_READ, STRONG_TAKE, TAKE, LEAN_PASS, FADE, STRONG_FADE, isTakeSide, isFadeSide,
+};
+
+/** The two ways a multi-leg entry can be meant. */
+export const MODE_SLATE = 'slate';
+export const MODE_PARLAY = 'parlay';
 
 /** Words that carry no identifying information when matching free text to a market. */
 const STOP_WORDS = new Set([
@@ -123,19 +130,16 @@ export function findPostedMatch(leg, postedPicks) {
   const same = bestMatch(leg, postedPicks, (p) => p.selection);
   if (same) return { pick: same.item, side: 'same', strength: same.strength };
 
-  // Not our selection — but is it the same game? If the leg names both
-  // teams of a game we posted, and doesn't match our selection, it's the
-  // other side of it.
   for (const pick of postedPicks ?? []) {
     if (!pick.home || !pick.away) continue;
+    // Only meaningful for two-outcome team markets; a prop naming a team
+    // isn't the opposite of that team's moneyline.
+    if (pick.marketKey !== 'h2h') continue;
     const legTokens = new Set(tokens(leg.selection));
     const namesOther = (team) => {
       const t = tokens(team);
       return t.length > 0 && t.every((w) => legTokens.has(w));
     };
-    // Only meaningful for two-outcome team markets; a prop naming a team
-    // isn't the opposite of that team's moneyline.
-    if (pick.marketKey !== 'h2h') continue;
     if (namesOther(pick.home) || namesOther(pick.away)) {
       return { pick, side: 'opposite', strength: 1 };
     }
@@ -148,226 +152,114 @@ export function findCandidateMatch(leg, candidates) {
   return bestMatch(leg, candidates, (c) => c.selection)?.item ?? null;
 }
 
-/** A 0-100 engine score onto the 1-10 confidence the card shows. */
-function confidenceFromScore(score) {
-  if (!Number.isFinite(score)) return 5;
-  return Math.max(1, Math.min(10, Math.round(score / 10)));
+/**
+ * Grade every leg individually, then judge the ticket as a whole under the
+ * chosen mode.
+ *
+ * Per-leg grading happens in BOTH modes and the per-leg reads are always
+ * returned. That is the point of a mode toggle rather than two tools: a
+ * parlay that grades FADE on one bad leg still has to say which of its other
+ * legs were fine and worth betting straight, and a slate still has to say
+ * which of its legs could reasonably be parlayed together. Discarding the
+ * per-leg detail in parlay mode would leave the verdict actionable only as
+ * "don't", which is the least useful true thing it could say.
+ */
+export function auditLegs(legs, {
+  postedPicks = [],
+  candidates = [],
+  mode = MODE_SLATE,
+  now = Date.now(),
+} = {}) {
+  const reads = (legs ?? []).map((leg, index) => {
+    const posted = findPostedMatch(leg, postedPicks);
+    const candidate = findCandidateMatch(leg, candidates);
+    return {
+      ...evaluateLeg(leg, {
+        candidate,
+        postedSide: posted?.side ?? null,
+        postedLabel: posted?.pick?.surfaceLabel ?? null,
+        now,
+      }),
+      posted: posted?.pick ?? null,
+      index,
+    };
+  });
+
+  const result = mode === MODE_PARLAY ? evaluateParlay(reads) : evaluateSlate(reads);
+  const unmatchedCount = reads.filter((r) => r.verdict === NO_READ).length;
+
+  return { ...result, mode, unmatchedCount, summary: summarize(result, unmatchedCount) };
 }
 
 /**
- * One leg's read. `stance` is 'tail' | 'fade' | 'unknown' — deliberately
- * three-valued, because "the board has no opinion on this" is different
- * from "the board dislikes this" and collapsing them is what the old mock
- * did.
+ * The executive summary — written from the result rather than from a
+ * template, so it says what actually happened to these legs.
  */
-export function readLeg(leg, { postedPicks = [], candidates = [] } = {}) {
-  const posted = findPostedMatch(leg, postedPicks);
-
-  if (posted?.side === 'same') {
-    return {
-      leg,
-      posted: posted.pick,
-      side: 'same',
-      candidate: findCandidateMatch(leg, candidates),
-      stance: 'tail',
-      confidence: confidenceFromScore(posted.pick.score),
-      why: `This is our own ${posted.pick.surfaceLabel}${
-        Number.isFinite(posted.pick.score) ? ` (confidence ${Math.round(posted.pick.score)}/100)` : ''
-      }.`,
-    };
+function summarize(result, unmatchedCount) {
+  const { reads } = result;
+  if (result.verdict === NO_READ) {
+    return 'None of these legs match a market currently on the board, so there is nothing here to check them against. '
+      + 'Rather than guess, this returns no read — load the slate for the right league and day, or enter the bet as it appears on the board.';
   }
 
-  if (posted?.side === 'opposite') {
-    return {
-      leg,
-      posted: posted.pick,
-      side: 'opposite',
-      candidate: findCandidateMatch(leg, candidates),
-      stance: 'fade',
-      confidence: confidenceFromScore(posted.pick.score),
-      why: `This is the other side of our ${posted.pick.surfaceLabel} on ${posted.pick.away} @ ${posted.pick.home}, which is on ${posted.pick.selection}.`,
-    };
-  }
+  const ours = reads.filter((r) => r.postedSide === 'same');
+  const against = reads.filter((r) => r.postedSide === 'opposite');
+  const parts = [];
 
-  const candidate = findCandidateMatch(leg, candidates);
-  if (!candidate) {
-    return {
-      leg,
-      posted: null,
-      side: null,
-      candidate: null,
-      stance: 'unknown',
-      confidence: null,
-      why: 'No market on the current board matches this leg, so there is nothing to check it against.',
-    };
-  }
-
-  const clearsScore = Number(candidate.score) >= RULES.MIN_SCORE;
-  const positiveEv = Number(candidate.ev) > 0;
-  const stance = clearsScore && positiveEv ? 'tail' : 'fade';
-  return {
-    leg,
-    posted: null,
-    side: null,
-    candidate,
-    stance,
-    confidence: confidenceFromScore(candidate.score),
-    why: stance === 'tail'
-      ? `Grades ${Math.round(candidate.score)}/100 with ${(candidate.ev * 100).toFixed(1)}% expected value — above the ${RULES.MIN_SCORE} bar this app takes a pick at.`
-      : `Grades ${Math.round(candidate.score)}/100 with ${(candidate.ev * 100).toFixed(1)}% expected value — ${
-        clearsScore ? 'no positive expected value at this price' : `below the ${RULES.MIN_SCORE} confidence bar`
-      }.`,
-  };
-}
-
-/** Real price facts, from numbers analyze() already computed. Never invented. */
-function statisticalFor(reads) {
-  const out = [];
-  for (const r of reads) {
-    const c = r.candidate;
-    const name = r.leg.selection;
-    if (!c) {
-      out.push(`${name}: not on the current board, so no market read is available.`);
-      continue;
-    }
-    out.push(
-      `${name}: market's no-vig consensus makes this a ${(c.consensusProb * 100).toFixed(1)}% shot ` +
-      `(fair value ${formatAmerican(c.fairAmerican)}); best price on the board is ${formatAmerican(c.american)} at ${c.book}.`,
-    );
-    out.push(
-      `${name}: ${c.bookCount} books priced it, disagreeing by ±${(c.disagreement * 100).toFixed(1)}% — ` +
-      `${c.disagreement < 0.015 ? 'a tight consensus, so an outlier price means something' : 'a soft market, so the edge is less reliable'}.`,
-    );
-    if (r.leg.american != null && Number.isFinite(c.american) && r.leg.american !== c.american) {
-      const yours = impliedProb(r.leg.american);
-      const bestAvailable = impliedProb(c.american);
-      out.push(
-        `${name}: you have ${formatAmerican(r.leg.american)} against ${formatAmerican(c.american)} available — ` +
-        `${yours > bestAvailable ? `worse than the board's best price by ${((yours - bestAvailable) * 100).toFixed(1)} points of implied probability` : 'better than the board\'s best price'}.`,
-      );
-    }
-  }
-  return out.length ? out : ['Nothing on this slip could be matched to a priced market.'];
-}
-
-/** Context that actually exists: our own posted reasoning, and the form signal. */
-function contextualFor(reads) {
-  const out = [];
-  for (const r of reads) {
-    if (r.posted) {
-      out.push(`${r.leg.selection}: ${r.why}`);
-      for (const reason of (r.posted.reasons ?? []).slice(0, 3)) out.push(`${r.leg.selection}: ${reason}`);
-      for (const section of (r.posted.sections ?? [])) {
-        for (const bullet of (section.bullets ?? []).slice(0, 2)) out.push(`${r.leg.selection}: ${bullet}`);
-      }
-    }
-    const c = r.candidate;
-    if (c && Number.isFinite(c.formSignal)) {
-      out.push(
-        `${r.leg.selection}: recent form and injuries score this side ${c.formSignal > 0 ? 'ahead of' : 'behind'} ` +
-        `its opponent (${c.formSignal > 0 ? '+' : ''}${c.formSignal.toFixed(2)} on a -1 to +1 scale).`,
-      );
-    }
-    if (c && Number.isFinite(c.commenceMs)) {
-      out.push(`${r.leg.selection}: ${c.marketLabel ?? c.marketKey} on ${c.away} @ ${c.home}.`);
-    }
-  }
-  return out.length ? out : ['No contextual data is available for this bet on the current board.'];
-}
-
-/** Risks that are actually present in this specific slip, not stock copy. */
-function riskFor(reads) {
-  const out = [];
-  const unmatched = reads.filter((r) => r.stance === 'unknown');
-  if (unmatched.length) {
-    out.push(
-      `${unmatched.length} of ${reads.length} leg${reads.length === 1 ? '' : 's'} could not be matched to a priced market, ` +
-      `so ${unmatched.length === reads.length ? 'this verdict rests on nothing' : 'the verdict only covers the legs that did match'}.`,
+  if (against.length) {
+    parts.push(
+      `${against.length === 1 ? 'One leg is' : `${against.length} legs are`} the opposite side of a bet this app has published today `
+      + `(${[...new Set(against.map((r) => r.postedLabel))].join(', ')}), which is a fade on its own.`,
     );
   }
-  if (reads.length > 1) {
-    const priced = reads.filter((r) => r.candidate);
-    if (priced.length > 1) {
-      const joint = priced.reduce((p, r) => p * Number(r.candidate.consensusProb ?? 0), 1);
-      out.push(
-        `A ${reads.length}-leg parlay needs every leg to land: the market's own numbers put that at about ` +
-        `${(joint * 100).toFixed(1)}%, so one leg going wrong loses the whole ticket.`,
+  if (ours.length) {
+    parts.push(
+      `${ours.length === 1 ? 'One leg is' : `${ours.length} legs are`} already on our own board `
+      + `(${[...new Set(ours.map((r) => r.postedLabel))].join(', ')}), so the grade there agrees with the app by construction.`,
+    );
+  }
+
+  if (result.mode === MODE_PARLAY) {
+    const bad = result.badLegs?.length ?? 0;
+    const solid = result.solidLegs?.length ?? 0;
+    if (result.findings?.some((f) => f.kind === CORRELATION_CONFLICT)) {
+      parts.push('Two legs are opposite sides of the same game, so this ticket cannot win as constructed — that alone is a strong fade.');
+    } else if (bad) {
+      parts.push(
+        `${bad} of ${reads.length} legs fall short, and a parlay needs every one of them, so the ticket is a fade as built.`
+        + (solid ? ` The ${solid} that do clear the bar are worth taking straight instead — they're marked above.` : ''),
+      );
+    } else if (result.findings?.some((f) => f.kind === CORRELATION_CANNIBAL)) {
+      parts.push('The legs are individually fine, but two of them draw from the same pool of possessions, so the real joint probability is lower than the combined price implies.');
+    } else if (Number.isFinite(result.ev) && Number.isFinite(result.jointProb)) {
+      parts.push(
+        `Every leg clears the bar. At the market's own numbers the ticket lands about ${(result.jointProb * 100).toFixed(1)}% of the time, `
+        + `worth ${(result.ev * 100).toFixed(1)}% expected value per unit.`,
       );
     }
-    const sameGame = new Set(priced.map((r) => r.candidate.eventId));
-    if (sameGame.size < priced.length) {
-      out.push('Two or more legs are on the same game, so they are correlated — the combined price does not reflect that.');
-    }
-  }
-  for (const r of reads) {
-    const c = r.candidate;
-    if (c && Number(c.consensusProb) < 0.4) {
-      out.push(
-        `${r.leg.selection} is a genuine underdog at ${(c.consensusProb * 100).toFixed(1)}% — this app's own record ` +
-        `on long shots is why it discounts them (see the long-shot penalty in the engine).`,
+  } else {
+    const s = result.straights?.length ?? 0;
+    const a = result.avoid?.length ?? 0;
+    const m = result.marginal?.length ?? 0;
+    parts.push(
+      `Of ${reads.length} leg${reads.length === 1 ? '' : 's'}, ${s} ${s === 1 ? 'clears' : 'clear'} the bar this app takes its own picks at`
+      + `${m ? `, ${m} ${m === 1 ? 'is' : 'are'} marginal` : ''}${a ? `, and ${a} should be avoided` : ''}.`,
+    );
+    if (result.suggestedTicket) {
+      parts.push(
+        `The ${result.suggestedTicket.legCount} best are in different games, so they can be parlayed without correlation — `
+        + `about ${(result.suggestedTicket.jointProb * 100).toFixed(1)}% to land together.`,
       );
-    }
-    if (c && Number(c.disagreement) >= 0.05) {
-      out.push(`${r.leg.selection} is priced across a wide spread of books, which usually means late news the market has not settled on.`);
+    } else if (s === 1) {
+      parts.push('Only one leg clears, so there is no parlay worth building here — bet it straight.');
     }
   }
-  return out.length ? out : ['No specific structural risk stands out on this slip beyond the price itself.'];
-}
 
-/**
- * The audit. Returns the same shape the drawer has always rendered, so the
- * render path is unchanged — but every value in it now traces to something
- * the app actually computed.
- */
-export function auditLegs(legs, { postedPicks = [], candidates = [] } = {}) {
-  const reads = (legs ?? []).map((leg) => readLeg(leg, { postedPicks, candidates }));
+  if (unmatchedCount) {
+    parts.push(
+      `${unmatchedCount} leg${unmatchedCount === 1 ? '' : 's'} could not be matched to a priced market and ${unmatchedCount === 1 ? 'is' : 'are'} not covered by this.`,
+    );
+  }
 
-  const anyOpposite = reads.some((r) => r.side === 'opposite');
-  const matched = reads.filter((r) => r.stance !== 'unknown');
-  const anyFade = matched.some((r) => r.stance === 'fade');
-
-  let verdict;
-  if (!matched.length) verdict = NO_READ;
-  else if (anyOpposite || anyFade) verdict = FADE;
-  else verdict = TAIL;
-
-  // A slip is only as good as its weakest matched leg, which is also how
-  // the rest of the app reasons about a parlay — so confidence is the
-  // minimum across matched legs, not an average that lets one strong leg
-  // paper over a weak one.
-  const confidences = matched.map((r) => r.confidence).filter(Number.isFinite);
-  const confidence = verdict === NO_READ ? 0 : (confidences.length ? Math.min(...confidences) : 5);
-
-  const ourPicks = reads.filter((r) => r.side === 'same').map((r) => r.posted.surfaceLabel);
-  const summary = (() => {
-    if (verdict === NO_READ) {
-      return 'None of these legs match a market currently on the board, so there is nothing here to check them against. '
-        + 'Rather than guess, this returns no read — load the slate for the right league and day, or enter the bet as it appears on the board.';
-    }
-    if (anyOpposite) {
-      const opp = reads.find((r) => r.side === 'opposite');
-      return `This is the opposite side of our own ${opp.posted.surfaceLabel}, which is on ${opp.posted.selection}. `
-        + 'Fading it means betting against a pick this app has already published, so the call here is FADE for exactly that reason.';
-    }
-    if (ourPicks.length) {
-      return `${ourPicks.length === reads.length ? 'Every leg here is' : 'This includes'} a pick this app has already posted — `
-        + `${[...new Set(ourPicks)].join(', ')} — so the verdict agrees with the board by construction rather than by coincidence. `
-        + 'The confidence shown is the pick\'s own grade, not a separate opinion.';
-    }
-    const worst = matched.reduce((a, b) => (a.confidence <= b.confidence ? a : b));
-    return verdict === TAIL
-      ? `Every matched leg clears the same bar this app takes its own picks at. The weakest is ${worst.leg.selection}, which ${worst.why.toLowerCase()}`
-      : `At least one leg falls short of the bar this app takes its own picks at. ${worst.leg.selection}: ${worst.why.toLowerCase()}`;
-  })();
-
-  return {
-    verdict,
-    confidence,
-    statistical: statisticalFor(reads),
-    contextual: contextualFor(reads),
-    risk: riskFor(reads),
-    summary,
-    reads,
-    unmatchedCount: reads.length - matched.length,
-  };
+  return parts.join(' ');
 }

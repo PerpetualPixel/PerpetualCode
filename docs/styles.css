@@ -5458,6 +5458,11 @@ input[type="range"]:focus-visible {
   background: rgba(239, 68, 68, 0.12);
   border: 1px solid rgba(239, 68, 68, 0.45);
 }
+.tail-fade-verdict.is-lean {
+  background: rgba(251, 191, 36, 0.12);
+  border: 1px solid rgba(251, 191, 36, 0.45);
+}
+.tail-fade-verdict.is-lean .tail-fade-badge { color: var(--warn); font-size: 1.2rem; }
 .tail-fade-verdict.is-noread {
   background: rgba(148, 163, 184, 0.10);
   border: 1px solid rgba(148, 163, 184, 0.35);
@@ -5522,6 +5527,146 @@ input[type="range"]:focus-visible {
    read as a tag rather than part of the label, and given its own baseline
    nudge so it sits with the cap-height of the text it follows rather than
    on it. */
+/* --- Slate / Parlay shape toggle --- */
+.tail-fade-shape {
+  margin: 0 0 14px;
+  padding: 10px 12px;
+  border-radius: 10px;
+  background: rgba(255, 255, 255, 0.03);
+  border: 1px solid var(--line);
+}
+.tail-fade-shape-label {
+  display: block;
+  margin-bottom: 7px;
+  color: var(--muted);
+  font-size: 0.7rem;
+  font-weight: 600;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+.tail-fade-shape-toggle { display: flex; gap: 6px; }
+.tail-fade-shape-btn {
+  flex: 1;
+  padding: 8px 10px;
+  border-radius: 8px;
+  border: 1px solid var(--line);
+  background: transparent;
+  color: var(--muted);
+  font: inherit;
+  font-size: 0.82rem;
+  font-weight: 600;
+  cursor: pointer;
+}
+.tail-fade-shape-btn:hover { color: var(--text); border-color: var(--accent); }
+.tail-fade-shape-btn.is-active {
+  background: rgba(99, 102, 241, 0.16);
+  border-color: rgba(99, 102, 241, 0.55);
+  color: var(--text);
+}
+.tail-fade-shape-hint {
+  margin: 8px 0 0;
+  color: var(--muted);
+  font-size: 0.72rem;
+  line-height: 1.45;
+}
+
+/* --- Per-leg grade cards --- */
+.tf-mode-note {
+  margin: 10px 0 0;
+  color: var(--muted);
+  font-size: 0.73rem;
+  font-style: italic;
+}
+.tf-count {
+  margin-left: 6px;
+  padding: 1px 6px;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.07);
+  color: var(--muted);
+  font-size: 0.68rem;
+  font-weight: 700;
+}
+.tf-group-note {
+  margin: 0 0 8px;
+  color: var(--muted);
+  font-size: 0.73rem;
+  line-height: 1.45;
+}
+.tf-group-list { margin: 0; padding-left: 18px; }
+.tf-group-list li { margin-bottom: 5px; font-size: 0.78rem; line-height: 1.45; }
+
+.tf-leg-card {
+  margin-bottom: 10px;
+  padding: 10px 12px;
+  border-radius: 10px;
+  background: rgba(255, 255, 255, 0.025);
+  /* The verdict colour lives on the left edge rather than the whole card:
+     ten of these stacked in a full slate would be unreadable as ten tinted
+     blocks, but a rail still scans instantly. */
+  border: 1px solid var(--line);
+  border-left: 3px solid var(--line);
+}
+.tf-leg-card.is-tail { border-left-color: var(--success); }
+.tf-leg-card.is-fade { border-left-color: var(--danger); }
+.tf-leg-card.is-lean { border-left-color: var(--warn); }
+.tf-leg-card.is-noread { border-left-color: rgba(148, 163, 184, 0.5); }
+
+.tf-leg-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 10px;
+}
+.tf-leg-name { font-size: 0.82rem; line-height: 1.4; }
+.tf-leg-price { margin-left: 6px; color: var(--muted); font-size: 0.76rem; }
+.tf-leg-verdict {
+  flex-shrink: 0;
+  padding: 2px 8px;
+  border-radius: 999px;
+  font-size: 0.62rem;
+  font-weight: 800;
+  letter-spacing: 0.05em;
+  white-space: nowrap;
+}
+.tf-leg-verdict.is-tail { background: rgba(16, 185, 129, 0.16); color: var(--success); }
+.tf-leg-verdict.is-fade { background: rgba(239, 68, 68, 0.16); color: var(--danger); }
+.tf-leg-verdict.is-lean { background: rgba(251, 191, 36, 0.16); color: var(--warn); }
+.tf-leg-verdict.is-noread { background: rgba(148, 163, 184, 0.14); color: var(--muted); }
+
+.tf-leg-numbers {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px 14px;
+  margin-top: 8px;
+  color: var(--muted);
+  font-size: 0.7rem;
+}
+.tf-leg-numbers strong { color: var(--text); font-size: 0.76rem; }
+.tf-leg-coverage {
+  margin: 7px 0 0;
+  color: var(--muted);
+  font-size: 0.68rem;
+  line-height: 1.4;
+  font-style: italic;
+}
+.tf-leg-signals { margin: 8px 0 0; padding-left: 16px; }
+.tf-sig { margin-bottom: 5px; font-size: 0.73rem; line-height: 1.45; color: var(--muted); }
+.tf-sig.is-good { color: var(--success); }
+.tf-sig.is-bad { color: var(--danger); }
+.tf-sig.is-warn { color: var(--warn); }
+
+.tf-ticket {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px 18px;
+  padding: 10px 12px;
+  border-radius: 8px;
+  background: rgba(255, 255, 255, 0.03);
+  color: var(--muted);
+  font-size: 0.73rem;
+}
+.tf-ticket strong { color: var(--text); font-size: 0.82rem; }
+
 .tail-fade-beta {
   display: inline-block;
   margin-left: 6px;

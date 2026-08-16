@@ -1,0 +1,459 @@
+import { test } from 'node:test';
+import assert from 'node:assert/strict';
+import {
+  devigMultiplicative,
+  devigPower,
+  fairProbability,
+  expectedValue,
+  fractionalKelly,
+  juiceCheck,
+  compositeScore,
+  classify,
+  evaluateLeg,
+  evaluateParlay,
+  evaluateSlate,
+  correlationFindings,
+  keyNumberAnalysis,
+  evaluatorFor,
+  ticketMath,
+  PILLAR_WEIGHTS,
+  MERIT_PILLARS,
+  MODIFIER_PILLARS,
+  MODIFIER_PILLAR_CEILING,
+  JUICE_THRESHOLD_AMERICAN,
+  STRONG_TAKE,
+  TAKE,
+  LEAN_PASS,
+  FADE,
+  STRONG_FADE,
+  NO_READ,
+} from '../docs/take-or-fade.js';
+import { RULES, KELLY, americanToDecimal, impliedProb, kellyFraction } from '../docs/engine.js';
+
+const close = (a, b, tol = 1e-9) => Math.abs(a - b) < tol;
+
+/* ---------------------------------------------------------------- */
+/* De-vigging                                                        */
+/* ---------------------------------------------------------------- */
+
+test('devigMultiplicative: strips the overround and the result sums to exactly 1', () => {
+  // -110 both sides: 0.5238 each, overround 1.0476.
+  const implied = [impliedProb(-110), impliedProb(-110)];
+  const fair = devigMultiplicative(implied);
+  assert.ok(close(fair[0] + fair[1], 1));
+  assert.ok(close(fair[0], 0.5), 'a symmetric market de-vigs to a coin flip');
+});
+
+test('devigMultiplicative: preserves the RATIO between the two sides', () => {
+  const implied = [impliedProb(-200), impliedProb(160)];
+  const fair = devigMultiplicative(implied);
+  assert.ok(close(fair[0] / fair[1], implied[0] / implied[1], 1e-12),
+    'that ratio preservation is the definition of the multiplicative method');
+});
+
+test('devigPower: also sums to 1, and agrees with multiplicative on a symmetric market', () => {
+  const implied = [impliedProb(-110), impliedProb(-110)];
+  const fair = devigPower(implied);
+  assert.ok(close(fair[0] + fair[1], 1, 1e-9));
+  assert.ok(close(fair[0], 0.5, 1e-9), 'with nothing lopsided the two methods must not disagree');
+});
+
+test('devigPower: assigns the longshot a LOWER fair probability than multiplicative', () => {
+  // The whole reason both exist. Books load more vig onto the longshot, so
+  // the proportional method overstates it; the power method corrects that.
+  const implied = [impliedProb(-400), impliedProb(300)];
+  const mult = devigMultiplicative(implied);
+  const power = devigPower(implied);
+  assert.ok(power[1] < mult[1], `power ${power[1]} should be below multiplicative ${mult[1]}`);
+  assert.ok(power[0] > mult[0], 'and the favourite correspondingly higher');
+  assert.ok(close(power[0] + power[1], 1, 1e-9));
+});
+
+test('devigPower: solves k such that the exponentiated probabilities sum to 1', () => {
+  const implied = [impliedProb(-250), impliedProb(200)];
+  const fair = devigPower(implied);
+  // Recover k from the first outcome and confirm it reproduces the second.
+  const k = Math.log(fair[0]) / Math.log(implied[0]);
+  assert.ok(close(implied[0] ** k + implied[1] ** k, 1, 1e-6), `k=${k} did not solve the constraint`);
+});
+
+test('fairProbability: returns null for a one-sided quote rather than inventing a fair price', () => {
+  assert.equal(fairProbability([-110]), null);
+  assert.equal(fairProbability(null), null);
+  assert.equal(fairProbability([-110, NaN]), null);
+});
+
+test('fairProbability: honours the method argument', () => {
+  const pair = [-400, 300];
+  assert.notEqual(fairProbability(pair, { method: 'power' }), fairProbability(pair, { method: 'multiplicative' }));
+});
+
+/* ---------------------------------------------------------------- */
+/* EV and Kelly                                                      */
+/* ---------------------------------------------------------------- */
+
+test('expectedValue: p x decimal - 1', () => {
+  assert.ok(close(expectedValue(0.55, 2.0), 0.10));
+  assert.ok(close(expectedValue(0.5, 2.0), 0));
+  assert.ok(close(expectedValue(0.45, 2.0), -0.10));
+});
+
+test('expectedValue: null for an unusable price rather than NaN', () => {
+  assert.equal(expectedValue(0.5, 1), null);
+  assert.equal(expectedValue(NaN, 2), null);
+});
+
+test('fractionalKelly: is exactly a quarter of full Kelly', () => {
+  const p = 0.6;
+  const d = 2.0;
+  assert.ok(close(fractionalKelly(p, d), kellyFraction(p, d) * KELLY.FRACTION));
+  // (b*p - q)/b with b=1, p=0.6, q=0.4 => 0.2 full, 0.05 quarter.
+  assert.ok(close(fractionalKelly(p, d), 0.05));
+});
+
+test('fractionalKelly: never exceeds the single-bet cap, however large the edge', () => {
+  assert.ok(fractionalKelly(0.99, 5.0) <= KELLY.MAX_STAKE);
+});
+
+test('fractionalKelly: a negative edge stakes nothing, never a negative amount', () => {
+  assert.equal(fractionalKelly(0.4, 2.0), 0);
+});
+
+test('fractionalKelly and the app\'s own stake sizing cannot drift apart', () => {
+  // Delegating to engine.js's kellyFraction rather than restating the
+  // formula is what guarantees this; the test pins it.
+  assert.ok(close(fractionalKelly(0.62, 1.9), Math.min(kellyFraction(0.62, 1.9) * KELLY.FRACTION, KELLY.MAX_STAKE)));
+});
+
+/* ---------------------------------------------------------------- */
+/* Juice                                                             */
+/* ---------------------------------------------------------------- */
+
+test('juiceCheck: never flags a price at or better than the threshold', () => {
+  for (const american of [JUICE_THRESHOLD_AMERICAN, -110, 100, 250]) {
+    assert.equal(juiceCheck(american, 0).flagged, false, `flagged at ${american}`);
+  }
+});
+
+test('juiceCheck: heavier juice demands proportionally more Kelly', () => {
+  const at150 = juiceCheck(-150, 0);
+  const at300 = juiceCheck(-300, 0);
+  assert.ok(at300.required > at150.required, 'a heavier price must require a bigger edge');
+  // b(-125) = 0.8, b(-300) = 0.3333 -> ratio 2.4
+  assert.ok(close(at300.ratio, 0.8 / (americanToDecimal(-300) - 1), 1e-9));
+  assert.ok(close(at300.required, RULES.MIN_KELLY_FRACTION * at300.ratio, 1e-12));
+});
+
+test('juiceCheck: a heavy price with a genuinely big edge is NOT flagged', () => {
+  const check = juiceCheck(-300, 0.05);
+  assert.equal(check.flagged, false, 'proportional edge is exactly what makes heavy juice payable');
+});
+
+test('juiceCheck: a heavy price with a thin edge IS flagged', () => {
+  assert.equal(juiceCheck(-300, RULES.MIN_KELLY_FRACTION).flagged, true);
+});
+
+/* ---------------------------------------------------------------- */
+/* Composite scoring                                                 */
+/* ---------------------------------------------------------------- */
+
+const p = (score) => ({ score, signals: [], unavailable: [] });
+
+test('compositeScore: with every pillar present, applies the spec weights exactly', () => {
+  const { score, coverage } = compositeScore({
+    market: p(100), matchup: p(0), distribution: p(0), context: p(0), variance: p(0),
+  });
+  assert.ok(close(score, 100 * PILLAR_WEIGHTS.market, 1e-9));
+  assert.ok(close(coverage, 1, 1e-9));
+});
+
+test('compositeScore: the five weights sum to 1', () => {
+  assert.ok(close(Object.values(PILLAR_WEIGHTS).reduce((s, w) => s + w, 0), 1, 1e-12));
+});
+
+test('compositeScore: a missing pillar is not scored as zero', () => {
+  const allGood = compositeScore({
+    market: p(80), matchup: p(80), distribution: p(80), context: p(80), variance: p(80),
+  });
+  const someMissing = compositeScore({
+    market: p(80), matchup: p(null), distribution: p(null), context: p(80), variance: p(80),
+  });
+  assert.ok(close(allGood.score, 80, 1e-9));
+  assert.ok(close(someMissing.score, 80, 1e-9),
+    'redistribution means missing data does not drag the score down, it just narrows the evidence');
+});
+
+test('compositeScore: coverage reports the real fraction of designed weight that had data', () => {
+  const { coverage } = compositeScore({
+    market: p(80), matchup: p(null), distribution: p(null), context: p(80), variance: p(80),
+  });
+  assert.ok(close(coverage, PILLAR_WEIGHTS.market + PILLAR_WEIGHTS.context + PILLAR_WEIGHTS.variance, 1e-9));
+});
+
+test('compositeScore: missing MERIT weight goes to merit, not to the modifiers', () => {
+  // The defect this split fixes: with matchup and distribution missing, the
+  // modifiers were inheriting 45% of the model and holding a bad bet up.
+  const { weights } = compositeScore({
+    market: p(50), matchup: p(null), distribution: p(null), context: p(85), variance: p(85),
+  });
+  assert.ok(close(weights.market, MERIT_PILLARS.reduce((s, k) => s + PILLAR_WEIGHTS[k], 0), 1e-9),
+    'market absorbs the whole merit share');
+  assert.ok(close(weights.context, PILLAR_WEIGHTS.context, 1e-9), 'modifiers keep their designed weight');
+  assert.ok(close(weights.variance, PILLAR_WEIGHTS.variance, 1e-9));
+});
+
+test('compositeScore: modifier weight crosses over only when no merit pillar survives', () => {
+  const { weights } = compositeScore({
+    market: p(null), matchup: p(null), distribution: p(null), context: p(60), variance: p(60),
+  });
+  assert.ok(close(weights.context + weights.variance, 1, 1e-9),
+    'discarding the model entirely would be worse than letting the modifiers carry it');
+});
+
+test('compositeScore: nothing scored yields null, not zero', () => {
+  const { score } = compositeScore({
+    market: p(null), matchup: p(null), distribution: p(null), context: p(null), variance: p(null),
+  });
+  assert.equal(score, null, 'a zero would sort below a genuinely terrible bet');
+});
+
+/* ---------------------------------------------------------------- */
+/* Classification                                                    */
+/* ---------------------------------------------------------------- */
+
+test('classify: negative expected value is never a take, at any composite score', () => {
+  assert.ok([FADE, STRONG_FADE].includes(classify(99, -0.01)));
+  assert.ok([FADE, STRONG_FADE].includes(classify(99, -0.10)));
+});
+
+test('classify: the five tiers are reachable and ordered', () => {
+  assert.equal(classify(80, 0.05), STRONG_TAKE);
+  assert.equal(classify(65, 0.01), TAKE);
+  assert.equal(classify(55, 0.001), LEAN_PASS);
+  assert.equal(classify(45, 0.01), FADE);
+  assert.equal(classify(30, 0.01), STRONG_FADE);
+});
+
+test('classify: a flagged juice price cannot reach a take tier', () => {
+  assert.equal(classify(90, 0.05, { juiceFlagged: true }), LEAN_PASS);
+});
+
+test('classify: an unscoreable bet is NO READ rather than the bottom tier', () => {
+  assert.equal(classify(null, 0.05), NO_READ);
+  assert.equal(classify(NaN, null), NO_READ);
+});
+
+/* ---------------------------------------------------------------- */
+/* Pillars: only-what's-real                                         */
+/* ---------------------------------------------------------------- */
+
+const cand = (o = {}) => ({
+  eventId: 'g1', selection: 'X to win', marketKey: 'h2h', outcomeName: 'X',
+  home: 'X', away: 'Y', sportKey: 'basketball_wnba',
+  consensusProb: 0.68, american: -150, decimal: americanToDecimal(-150),
+  fairAmerican: -190, book: 'DraftKings', bookCount: 9, disagreement: 0.008, shopGain: 0.02,
+  commenceMs: Date.now() + 6 * 3.6e6, updatedMs: Date.now() - 6e5, ...o,
+});
+
+test('a sport with no matchup feed reports the matchup pillar as unavailable, not average', () => {
+  const read = evaluateLeg({ selection: 'X to win', american: -150 }, { candidate: cand() });
+  assert.equal(read.pillars.matchup.score, null);
+  assert.ok(read.pillars.matchup.unavailable.length > 0, 'and it names what is missing');
+  assert.ok(read.unavailable.some((u) => /play-type defence ranks/.test(u)));
+});
+
+test('the matchup pillar activates the moment a real form signal exists', () => {
+  const without = evaluateLeg({ selection: 'X to win' }, { candidate: cand() });
+  const with_ = evaluateLeg({ selection: 'X to win' }, { candidate: cand({ formSignal: 0.5 }) });
+  assert.equal(without.pillars.matchup.score, null);
+  assert.ok(Number.isFinite(with_.pillars.matchup.score));
+  assert.ok(with_.coverage > without.coverage, 'and coverage rises to say so');
+});
+
+test('the distribution pillar reads a real hit-rate profile when one exists', () => {
+  const read = evaluateLeg(
+    { selection: 'A 24+ points', american: -118, profile: { season: 0.8, l10: 0.9, l5: 1.0, avgSeason: 26, avgL5: 27 } },
+    { candidate: cand({ selection: 'A 24+ points', marketKey: 'prop' }) },
+  );
+  assert.ok(Number.isFinite(read.pillars.distribution.score));
+  assert.ok(read.pillars.distribution.signals.some((s) => /80% of games this season/.test(s.text)));
+});
+
+test('the distribution pillar warns when a recent average is a spike rather than a trend', () => {
+  const read = evaluateLeg(
+    { selection: 'A 24+ points', profile: { season: 0.6, l10: 0.8, l5: 0.8, avgSeason: 20, avgL5: 30 } },
+    { candidate: cand({ marketKey: 'prop' }) },
+  );
+  assert.ok(read.pillars.distribution.signals.some((s) => /spike/.test(s.text)));
+});
+
+test('the modifier pillars are capped so absence-of-problems cannot read as maximal evidence', () => {
+  const read = evaluateLeg({ selection: 'X to win' }, { candidate: cand() });
+  assert.ok(read.pillars.context.score <= MODIFIER_PILLAR_CEILING);
+  assert.ok(read.pillars.variance.score <= MODIFIER_PILLAR_CEILING);
+});
+
+test('preseason and a benched segment both push the context pillar down, with a stated reason', () => {
+  const preseason = evaluateLeg({ selection: 'X to win' },
+    { candidate: cand({ sportKey: 'americanfootball_nfl_preseason' }) });
+  const benched = evaluateLeg({ selection: 'X to win' }, { candidate: cand({ benchedSegment: true }) });
+  const plain = evaluateLeg({ selection: 'X to win' }, { candidate: cand() });
+  assert.ok(preseason.pillars.context.score < plain.pillars.context.score);
+  assert.ok(benched.pillars.context.score < plain.pillars.context.score);
+  assert.ok(benched.pillars.context.signals.some((s) => /benched/.test(s.text)));
+});
+
+/* ---------------------------------------------------------------- */
+/* Key numbers — real, computable football structure                 */
+/* ---------------------------------------------------------------- */
+
+test('keyNumberAnalysis: only applies to football spreads', () => {
+  assert.equal(keyNumberAnalysis(cand({ marketKey: 'h2h' })), null);
+  assert.equal(keyNumberAnalysis(cand({ marketKey: 'spreads', sportKey: 'basketball_wnba', point: -3 })), null);
+  assert.ok(keyNumberAnalysis(cand({ marketKey: 'spreads', sportKey: 'americanfootball_nfl', point: -3 })));
+});
+
+test('keyNumberAnalysis: sitting exactly on a key number is a push warning', () => {
+  const r = keyNumberAnalysis(cand({ marketKey: 'spreads', sportKey: 'americanfootball_nfl', point: -3 }));
+  assert.ok(r.signals.some((s) => /pushes far more often/.test(s.text)));
+});
+
+test('keyNumberAnalysis: laying under a key number scores above laying across it', () => {
+  const under = keyNumberAnalysis(cand({ marketKey: 'spreads', sportKey: 'americanfootball_nfl', point: -2.5 }));
+  const across = keyNumberAnalysis(cand({ marketKey: 'spreads', sportKey: 'americanfootball_nfl', point: -3.5 }));
+  assert.ok(under.score > across.score, 'the key number on your side of the line is worth real points');
+});
+
+test('the football evaluator still names the feeds it does not have', () => {
+  const r = keyNumberAnalysis(cand({ marketKey: 'spreads', sportKey: 'americanfootball_nfl', point: -3.5 }));
+  assert.ok(r.unavailable.some((u) => /EPA/.test(u)));
+});
+
+test('every sport dispatches to its own evaluator', () => {
+  assert.equal(evaluatorFor('tennis_atp_wimbledon').name, 'Tennis (singles)');
+  assert.equal(evaluatorFor('mma_mixed_martial_arts').name, 'MMA');
+  assert.equal(evaluatorFor('basketball_wnba').name, 'Basketball');
+  assert.equal(evaluatorFor('baseball_mlb').name, 'Baseball');
+  assert.equal(evaluatorFor('americanfootball_nfl').name, 'Football');
+  assert.equal(evaluatorFor('icehockey_nhl').name, 'Hockey / Soccer');
+  assert.equal(evaluatorFor('soccer_usa_mls').name, 'Hockey / Soccer');
+});
+
+test('MMA reads capper consensus, which is the evidence source it actually has', () => {
+  const read = evaluateLeg({ selection: 'Fighter A' },
+    { candidate: cand({ sportKey: 'mma_mixed_martial_arts', consensusSignal: 0.7 }) });
+  assert.ok(Number.isFinite(read.pillars.matchup.score));
+  assert.ok(read.pillars.matchup.signals.some((s) => /[Cc]apper consensus/.test(s.text)));
+  assert.ok(read.pillars.matchup.unavailable.some((u) => /SLpM/.test(u)));
+});
+
+/* ---------------------------------------------------------------- */
+/* Correlation                                                       */
+/* ---------------------------------------------------------------- */
+
+const read = (selection, o = {}) => evaluateLeg({ selection, american: o.american ?? -150 }, {
+  candidate: cand({ selection, ...o }),
+});
+
+test('correlationFindings: legs in different games produce no findings', () => {
+  const findings = correlationFindings([read('A to win'), read('B to win', { eventId: 'g2' })]);
+  assert.deepEqual(findings, []);
+});
+
+test('correlationFindings: same side of one game is synergy the book is not paying for', () => {
+  const findings = correlationFindings([
+    read('A to win', { outcomeName: 'A' }),
+    read('A -3.5', { marketKey: 'spreads', outcomeName: 'A' }),
+  ]);
+  assert.equal(findings.length, 1);
+  assert.equal(findings[0].kind, 'synergy');
+});
+
+test('correlationFindings: opposite sides of one game is a conflict', () => {
+  const findings = correlationFindings([
+    read('A to win', { outcomeName: 'A' }),
+    read('B to win', { outcomeName: 'B' }),
+  ]);
+  assert.equal(findings[0].kind, 'conflict');
+  assert.match(findings[0].text, /cannot both land/i);
+});
+
+test('correlationFindings: two props on one game cannibalize each other', () => {
+  const a = evaluateLeg({ selection: 'P1 20+ pts', profile: { season: 0.8, l10: 0.8 } },
+    { candidate: cand({ selection: 'P1 20+ pts', marketKey: 'prop' }) });
+  const b = evaluateLeg({ selection: 'P2 8+ ast', profile: { season: 0.8, l10: 0.8 } },
+    { candidate: cand({ selection: 'P2 8+ ast', marketKey: 'prop' }) });
+  const findings = correlationFindings([a, b]);
+  assert.equal(findings[0].kind, 'cannibalization');
+  assert.match(findings[0].text, /same pool of possessions/i);
+});
+
+/* ---------------------------------------------------------------- */
+/* Ticket maths                                                      */
+/* ---------------------------------------------------------------- */
+
+test('ticketMath: joint probability is the product, combined price the product of decimals', () => {
+  const legs = [
+    read('A to win', { consensusProb: 0.6, american: -150 }),
+    read('B to win', { eventId: 'g2', consensusProb: 0.5, american: 100 }),
+  ];
+  const t = ticketMath(legs);
+  assert.ok(close(t.jointProb, 0.30, 1e-9));
+  assert.ok(close(t.combinedDecimal, americanToDecimal(-150) * 2, 1e-9));
+  assert.equal(t.legCount, 2);
+});
+
+test('ticketMath: a ticket with nothing priced returns nulls rather than 1', () => {
+  const t = ticketMath([]);
+  assert.equal(t.jointProb, null);
+  assert.equal(t.combinedDecimal, null);
+});
+
+/* ---------------------------------------------------------------- */
+/* Parlay vs slate                                                   */
+/* ---------------------------------------------------------------- */
+
+test('evaluateParlay: a conflict is a STRONG FADE regardless of how good the legs are', () => {
+  const result = evaluateParlay([
+    read('A to win', { outcomeName: 'A', consensusProb: 0.8 }),
+    read('B to win', { outcomeName: 'B', consensusProb: 0.8 }),
+  ]);
+  assert.equal(result.verdict, STRONG_FADE);
+});
+
+test('evaluateParlay: keeps the per-leg reads so good legs survive a bad ticket', () => {
+  const result = evaluateParlay([
+    read('A to win', { consensusProb: 0.80 }),
+    read('B to win', { eventId: 'g2', consensusProb: 0.45 }),
+  ]);
+  assert.ok([FADE, STRONG_FADE].includes(result.verdict));
+  assert.equal(result.reads.length, 2, 'the ticket verdict never replaces the leg detail');
+  assert.equal(result.solidLegs.length, 1);
+});
+
+test('evaluateSlate: ranks the straights best-first', () => {
+  const result = evaluateSlate([
+    read('A to win', { consensusProb: 0.70 }),
+    read('B to win', { eventId: 'g2', consensusProb: 0.85 }),
+  ]);
+  assert.ok(result.straights.length >= 2);
+  assert.ok(result.straights[0].tps >= result.straights[1].tps);
+});
+
+test('evaluateSlate: the suggested ticket never contains two legs from one game', () => {
+  const result = evaluateSlate([
+    read('A to win', { consensusProb: 0.85 }),
+    read('A -3.5', { marketKey: 'spreads', consensusProb: 0.85 }),
+    read('B to win', { eventId: 'g2', consensusProb: 0.85 }),
+  ]);
+  const ids = result.parlayable.map((r) => r.candidate.eventId);
+  assert.equal(new Set(ids).size, ids.length);
+});
+
+test('an unmatched leg is NO READ with no score, in either aggregation', () => {
+  const orphan = evaluateLeg({ selection: 'nothing' }, { candidate: null });
+  assert.equal(orphan.verdict, NO_READ);
+  assert.equal(orphan.tps, null);
+  assert.equal(evaluateParlay([orphan]).verdict, NO_READ);
+  assert.equal(evaluateSlate([orphan]).verdict, NO_READ);
+});

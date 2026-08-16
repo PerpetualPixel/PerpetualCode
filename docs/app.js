@@ -42,7 +42,14 @@ import {
   supportsQualitativeSignal,
   tennisUnderdogBlocked,
 } from './qualitative.js';
-import { auditLegs, TAIL, FADE, NO_READ } from './tail-fade.js';
+import {
+  auditLegs,
+  MODE_SLATE,
+  MODE_PARLAY,
+  NO_READ,
+  isTakeSide,
+  isFadeSide,
+} from './tail-fade.js';
 import {
   fetchCapperConsensus,
   capperConsensusSignal,
@@ -6996,6 +7003,11 @@ el.updateBannerDismiss.addEventListener('click', () => {
 /** Which input mode the drawer is on, and whatever legs are currently loaded. */
 const tailFade = {
   mode: 'text',
+  // How a multi-leg entry is meant: MODE_SLATE grades each leg as its own
+  // bet, MODE_PARLAY grades them as one ticket that needs all of them.
+  // Every leg is graded individually under both — the shape changes what the
+  // headline verdict means and which recommendations are worth making.
+  shape: MODE_SLATE,
   legs: [],
   imageName: null,
   busy: false,
@@ -7173,6 +7185,35 @@ function setTailFadeMode(mode) {
   if (mode === 'slate') populateTailFadeSlateOptions();
 }
 
+/**
+ * Slate vs parlay. Re-audits immediately when a result is already on
+ * screen, because the toggle's whole purpose is comparing the two readings
+ * of the same legs — making the user re-click Audit to see the other one
+ * would hide the comparison behind a step.
+ */
+function setTailFadeShape(shape) {
+  if (shape !== MODE_SLATE && shape !== MODE_PARLAY) return;
+  tailFade.shape = shape;
+  el.tailFadePanel.querySelectorAll('[data-tf-shape]').forEach((b) => {
+    const active = b.dataset.tfShape === shape;
+    b.classList.toggle('is-active', active);
+    b.setAttribute('aria-checked', String(active));
+  });
+  const hint = document.getElementById('tailFadeShapeHint');
+  if (hint) {
+    hint.textContent = shape === MODE_PARLAY
+      ? 'One ticket — it needs every leg, so one bad leg fades the whole thing. Each leg is still graded on its own below.'
+      : 'Separate bets — each leg graded on its own, with what to bet straight and what can be parlayed.';
+  }
+  if (tailFade.legs.length && el.tailFadeResult?.querySelector('.tail-fade-verdict')) {
+    renderTailFadeResult(auditLegs(tailFade.legs, {
+      postedPicks,
+      candidates: state.candidates ?? [],
+      mode: tailFade.shape,
+    }));
+  }
+}
+
 /** Every market currently rendered on the Full Slate, as pickable options. */
 function populateTailFadeSlateOptions() {
   const opts = [];
@@ -7207,13 +7248,65 @@ function showTailFadeError(message) {
   el.tailFadeResult.innerHTML = `<div class="tail-fade-error">${esc(message)}</div>`;
 }
 
-function renderTailFadeResult(audit) {
-  const tone = audit.verdict === TAIL ? 'is-tail' : audit.verdict === FADE ? 'is-fade' : 'is-noread';
-  const section = (title, items, cls = '') => `
-    <div class="tail-fade-section ${cls}">
-      <h3>${esc(title)}</h3>
-      <ul>${items.map((i) => `<li>${esc(i)}</li>`).join('')}</ul>
+/** Tone class for a verdict — the five tiers collapse to three colours. */
+function tailFadeTone(verdict) {
+  if (isTakeSide(verdict)) return 'is-tail';
+  if (isFadeSide(verdict)) return 'is-fade';
+  return verdict === NO_READ ? 'is-noread' : 'is-lean';
+}
+
+/**
+ * One leg's own grade card. Rendered in BOTH modes: the whole reason the
+ * slate/parlay toggle exists rather than two separate tools is that a
+ * ticket's overall verdict and its individual legs are different questions,
+ * and a user who pastes ten legs needs the answer to both.
+ */
+function renderTailFadeLegCard(read) {
+  const badge = `<span class="tf-leg-verdict ${tailFadeTone(read.verdict)}">${esc(read.verdict)}</span>`;
+  const price = read.leg.american != null ? esc(formatAmerican(read.leg.american)) : '—';
+  const numbers = read.verdict === NO_READ ? '' : `
+    <div class="tf-leg-numbers">
+      <span title="Take/Fade Score — the weighted composite">TPS <strong>${Math.round(read.tps)}</strong></span>
+      ${Number.isFinite(read.ev) ? `<span title="Expected value per unit staked">EV <strong>${(read.ev * 100).toFixed(2)}%</strong></span>` : ''}
+      ${Number.isFinite(read.kelly) ? `<span title="Quarter-Kelly stake as a fraction of bankroll">Kelly <strong>${(read.kelly * 100).toFixed(2)}%</strong></span>` : ''}
+      ${Number.isFinite(read.pFair) ? `<span title="De-vigged fair win probability">Fair <strong>${(read.pFair * 100).toFixed(1)}%</strong></span>` : ''}
     </div>`;
+
+  // Coverage is shown because a 78 built on 55% of the model's weight and a
+  // 78 built on all of it are not the same claim, and only one of them
+  // should be acted on with confidence.
+  const coverage = read.verdict === NO_READ || !Number.isFinite(read.coverage) ? '' : `
+    <p class="tf-leg-coverage">Graded on ${Math.round(read.coverage * 100)}% of the model's weight${
+      read.unavailable.length ? ` — no data for ${esc(read.unavailable.slice(0, 3).join(', '))}${read.unavailable.length > 3 ? `, +${read.unavailable.length - 3} more` : ''}` : ''
+    }.</p>`;
+
+  const signals = (read.signals ?? []).map((sg) =>
+    `<li class="tf-sig is-${esc(sg.tone)}">${esc(sg.text)}</li>`).join('');
+
+  return `<div class="tf-leg-card ${tailFadeTone(read.verdict)}">
+    <div class="tf-leg-head">
+      <div class="tf-leg-name"><strong>${esc(read.leg.selection)}</strong> <span class="tf-leg-price">${price}</span></div>
+      ${badge}
+    </div>
+    ${numbers}
+    ${coverage}
+    ${signals ? `<ul class="tf-leg-signals">${signals}</ul>` : ''}
+  </div>`;
+}
+
+/** A named group of legs in the slate recommendation. */
+function renderTailFadeGroup(title, reads, note) {
+  if (!reads?.length) return '';
+  return `<div class="tail-fade-section">
+    <h3>${esc(title)} <span class="tf-count">${reads.length}</span></h3>
+    ${note ? `<p class="tf-group-note">${esc(note)}</p>` : ''}
+    <ul class="tf-group-list">${reads.map((r) =>
+      `<li><strong>${esc(r.leg.selection)}</strong> <span class="tf-leg-verdict ${tailFadeTone(r.verdict)}">${esc(r.verdict)}</span></li>`).join('')}</ul>
+  </div>`;
+}
+
+function renderTailFadeResult(audit) {
+  const tone = tailFadeTone(audit.verdict);
 
   // NO READ carries no confidence number at all rather than a low one: a
   // "2/10" would still read as a judgement about the bet, when the actual
@@ -7222,18 +7315,65 @@ function renderTailFadeResult(audit) {
     ? `<p class="tail-fade-confidence">Nothing on the<br>board to check</p>`
     : `<p class="tail-fade-confidence">Confidence<br><strong>${esc(String(audit.confidence))}/10</strong></p>`;
 
+  const legCards = `<div class="tail-fade-section">
+    <h3>${audit.reads.length === 1 ? 'The leg' : `Every leg, graded on its own`} <span class="tf-count">${audit.reads.length}</span></h3>
+    ${audit.reads.map(renderTailFadeLegCard).join('')}
+  </div>`;
+
+  // Correlation findings are the one thing that is genuinely about the
+  // ticket rather than any single leg, so they get their own block in both
+  // modes — a slate needs them to know what NOT to combine.
+  const findings = audit.findings?.length ? `<div class="tail-fade-section is-risk">
+    <h3>Correlation</h3>
+    <ul>${audit.findings.map((f) =>
+      `<li class="tf-sig is-${f.kind === 'synergy' ? 'good' : 'bad'}">${esc(f.text)}</li>`).join('')}</ul>
+  </div>` : '';
+
+  let modeBlocks = '';
+  if (audit.mode === 'parlay') {
+    const t = Number.isFinite(audit.jointProb) ? `<div class="tail-fade-section">
+      <h3>The ticket</h3>
+      <div class="tf-ticket">
+        <span>Combined <strong>${esc(formatAmerican(audit.combinedAmerican))}</strong></span>
+        <span>Lands <strong>${(audit.jointProb * 100).toFixed(1)}%</strong></span>
+        <span>EV <strong>${(audit.ev * 100).toFixed(1)}%</strong></span>
+        <span>Kelly <strong>${(audit.kelly * 100).toFixed(2)}%</strong></span>
+      </div>
+      <p class="tf-group-note">Joint probability assumes the legs are independent. Any correlation flagged above moves the real number off it — synergy upward, cannibalization downward.</p>
+    </div>` : '';
+    modeBlocks = t
+      + renderTailFadeGroup('Legs dragging the ticket down', audit.badLegs,
+        'A parlay needs every leg, so these are what make it a fade. Drop them or bet the rest straight.')
+      + renderTailFadeGroup('Legs worth keeping', audit.solidLegs,
+        'These clear the bar on their own — worth betting straight even if the ticket as built is not.')
+      + renderTailFadeGroup('Marginal legs', audit.marginalLegs,
+        'Neither a take nor a fade on their own; inside a parlay they are dead weight.');
+  } else {
+    modeBlocks = renderTailFadeGroup('Bet these straight', audit.straights,
+      'Each clears the bar this app takes its own picks at.')
+      + (audit.suggestedTicket ? `<div class="tail-fade-section">
+        <h3>Safe to parlay together</h3>
+        <p class="tf-group-note">Different games, so no correlation between them — roughly ${(audit.suggestedTicket.jointProb * 100).toFixed(1)}% to land as a ${audit.suggestedTicket.legCount}-leg ticket at ${esc(formatAmerican(audit.suggestedTicket.combinedAmerican))}.</p>
+        <ul class="tf-group-list">${audit.parlayable.slice(0, 4).map((r) =>
+          `<li><strong>${esc(r.leg.selection)}</strong></li>`).join('')}</ul>
+      </div>` : '')
+      + renderTailFadeGroup('Marginal', audit.marginal, 'Playable but not recommended — no real edge either way.')
+      + renderTailFadeGroup('Avoid', audit.avoid, 'These grade below the bar. Leave them off.');
+  }
+
   el.tailFadeResult.innerHTML = `
     <div class="tail-fade-verdict ${tone}">
       <span class="tail-fade-badge">${esc(audit.verdict)}</span>
       ${confidenceBlock}
     </div>
-    ${section('Key statistical backing', audit.statistical)}
-    ${section('Contextual factors', audit.contextual)}
-    ${section('Risk analysis', audit.risk, 'is-risk')}
+    <p class="tf-mode-note">Graded as ${audit.mode === 'parlay' ? 'one parlay ticket — it needs every leg' : 'a slate of separate bets — each leg stands alone'}.</p>
     <div class="tail-fade-section">
       <h3>Executive summary</h3>
       <p class="tail-fade-summary">${esc(audit.summary)}</p>
     </div>
+    ${modeBlocks}
+    ${findings}
+    ${legCards}
     ${audit.unmatchedCount > 0 && audit.verdict !== NO_READ ? `<p class="tail-fade-mock-note">
       ${audit.unmatchedCount} leg${audit.unmatchedCount === 1 ? '' : 's'} couldn't be matched to a market on the
       current board and ${audit.unmatchedCount === 1 ? 'is' : 'are'} not covered by this verdict.
@@ -7286,6 +7426,8 @@ el.tailFadeClose?.addEventListener('click', () => setTailFadeOpen(false));
 el.tailFadePanel?.addEventListener('click', (event) => {
   const modeBtn = event.target.closest('[data-tf-mode]');
   if (modeBtn) setTailFadeMode(modeBtn.dataset.tfMode);
+  const shapeBtn = event.target.closest('[data-tf-shape]');
+  if (shapeBtn) setTailFadeShape(shapeBtn.dataset.tfShape);
 });
 
 el.tailFadeText?.addEventListener('input', () => {
@@ -7356,6 +7498,7 @@ el.tailFadeAudit?.addEventListener('click', async () => {
     renderTailFadeResult(auditLegs(tailFade.legs, {
       postedPicks,
       candidates: state.candidates ?? [],
+      mode: tailFade.shape,
     }));
   } catch (error) {
     showTailFadeError(error.message || 'Could not audit that bet.');
