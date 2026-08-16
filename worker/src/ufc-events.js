@@ -508,6 +508,14 @@ export function findMmaFight(homeTeam, awayTeam, results) {
   ) ?? null;
 }
 
+/**
+ * A gradePick()-compatible synthetic scoreEvent for one MMA h2h pick, built
+ * from ESPN's completed-fight results. h2h ONLY — gradeGeneric's h2h branch
+ * just compares which side scored higher, so a plain win/loss flag (1 vs 0)
+ * is all it needs. Do not reuse this for a totals (rounds) market: see
+ * buildMmaRoundsScoreEvent below and gradeMmaPickWithFallback's own comment
+ * for why a 1/0 win flag silently breaks that market instead of erroring.
+ */
 export function buildMmaScoreEvent(homeTeam, awayTeam, results) {
   const normHome = normalizeName(homeTeam);
   const normAway = normalizeName(awayTeam);
@@ -524,6 +532,30 @@ export function buildMmaScoreEvent(homeTeam, awayTeam, results) {
     scores: [
       { name: homeTeam, score: homeWon ? 1 : 0 },
       { name: awayTeam, score: awayWon ? 1 : 0 },
+    ],
+  };
+}
+
+/**
+ * The rounds-total counterpart to buildMmaScoreEvent above — a synthetic
+ * scoreEvent whose homeScore+awayScore sums to the fight's own ending
+ * round (fetchMmaResults' `round`, from ESPN's status.period), which is
+ * what gradeGeneric's totals branch actually reads for an Over/Under
+ * comparison against the pick's point. Which side carries the number
+ * doesn't matter — gradeGeneric only ever reads the sum for a totals
+ * market — so it's put entirely on the home side for simplicity. Null when
+ * no fight matches, or when ESPN never carried a round for this one (a
+ * push-or-guess is worse than staying pending — same "never fabricate"
+ * rule every other ESPN-backed settlement in this app already follows).
+ */
+export function buildMmaRoundsScoreEvent(homeTeam, awayTeam, results) {
+  const fight = findMmaFight(homeTeam, awayTeam, results);
+  if (!fight || !Number.isFinite(fight.round) || fight.round <= 0) return null;
+  return {
+    completed: true,
+    scores: [
+      { name: homeTeam, score: fight.round },
+      { name: awayTeam, score: 0 },
     ],
   };
 }
@@ -640,7 +672,20 @@ export function gradeMmaPickWithFallback(pick, primaryScoreEvent, results) {
     const direct = gradePick(pick, primaryScoreEvent);
     if (direct) return direct;
     if (!results?.length) return null;
-    const fallbackScoreEvent = buildMmaScoreEvent(pick.home, pick.away, results);
+    // buildMmaScoreEvent's score is a plain win/loss flag (1 vs 0) — exactly
+    // right for h2h (gradeGeneric compares which side scored higher), but
+    // WRONG for a rounds total: gradeGeneric's totals branch reads
+    // homeScore+awayScore, which a 1/0 win flag always sums to 0 or 1,
+    // below any realistic rounds line — "Under" would always grade WON and
+    // "Over" always LOST regardless of how long the fight actually went.
+    // Confirmed live: Charles Johnson vs Eduardo Henrique (UFC 330) went to
+    // Round 3 by submission, and the old path graded "Under 2.5" as a win.
+    // buildMmaRoundsScoreEvent instead sums to the fight's real ending
+    // round, so gradeGeneric's existing Over/Under/push math (already
+    // correct, already tested) reads the actual fight length.
+    const fallbackScoreEvent = pick.marketKey === 'totals'
+      ? buildMmaRoundsScoreEvent(pick.home, pick.away, results)
+      : buildMmaScoreEvent(pick.home, pick.away, results);
     return fallbackScoreEvent ? gradePick(pick, fallbackScoreEvent) : null;
   })();
   if (!outcome || outcome.void) return outcome;

@@ -101,6 +101,7 @@ import {
   regradeFullSlateTennisVoids,
   backfillMmaFinishDetail,
   manualMmaResult,
+  auditMmaTotalsGrading,
 } from './full-slate-tracking.js';
 import { isWtaPick } from './retraction.js';
 import {
@@ -848,6 +849,7 @@ export default {
       '/admin/regrade-tennis',
       '/admin/backfill-mma-detail',
       '/admin/manual-mma-result',
+      '/admin/audit-mma-totals',
     ]);
     if (request.method === 'POST' && (AUTH_LIMITED_PATHS.has(pathname) || pathname === '/api/report-bug' || OWNER_LIMITED_PATHS.has(pathname))) {
       const ip = request.headers.get('CF-Connecting-IP') ?? 'unknown';
@@ -1698,6 +1700,28 @@ export default {
         }
         const result = await manualMmaResult(env, body);
         if (result.error) return json(result, { status: 400, headers: cors });
+        return json(result, { headers: cors });
+      } catch (error) {
+        return json({ error: String(error).slice(0, 200) }, { status: 500, headers: cors });
+      }
+    }
+
+    // Read-only — writes nothing. Reports every already-graded MMA rounds-
+    // total pick whose current status disagrees with a fresh recompute
+    // using the fixed grading path (see buildMmaRoundsScoreEvent's own
+    // comment for the bug this checks for). A disagreement here is
+    // something to look at, not something this route ever corrects on its
+    // own — use /admin/manual-mma-result's judgment call for that, deliberately
+    // by hand. ?days=N controls the lookback window (default 14); a pick
+    // older than ESPN's own 3-day results retention is reported separately
+    // as unauditable rather than silently skipped.
+    if (pathname === '/admin/audit-mma-totals' && request.method === 'POST') {
+      const auth = authorizeSettings(request, env);
+      if (!auth.ok) return json({ error: auth.error }, { status: auth.status, headers: cors });
+      try {
+        const { searchParams } = new URL(request.url);
+        const days = Math.min(90, Math.max(1, Number(searchParams.get('days')) || 14));
+        const result = await auditMmaTotalsGrading(env, ctx, Date.now(), { days });
         return json(result, { headers: cors });
       } catch (error) {
         return json({ error: String(error).slice(0, 200) }, { status: 500, headers: cors });

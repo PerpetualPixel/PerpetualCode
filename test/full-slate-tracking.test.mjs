@@ -11,6 +11,7 @@ import {
   regradeFullSlateTennisVoids,
   backfillMmaFinishDetail,
   manualMmaResult,
+  auditMmaTotalsGrading,
 } from '../worker/src/full-slate-tracking.js';
 import { seedTennisArchiveCacheForTests } from '../worker/src/tennis-archive.js';
 import { UNSETTLEABLE_TENNIS_GAME_MARKET } from '../docs/learning.js';
@@ -776,4 +777,90 @@ test('manualMmaResult can find a pick by home/away instead of pickId', async () 
   });
   assert.ok(!result.error, result.error);
   assert.equal(result.pick.status, 'lost');
+});
+
+/* ---------------------------------------------------------------- */
+/* MMA rounds-totals audit                                           */
+/* ---------------------------------------------------------------- */
+
+function seedMmaTotalsPick(store, dateKey, pickId, { status, home = 'Charles Johnson', away = 'Eduardo Henrique', outcomeName = 'Under', point = 2.5 } = {}) {
+  store.set(`slate:${dateKey}:manifest`, JSON.stringify({ date: dateKey, pickIds: [pickId] }));
+  store.set(`slate:${dateKey}:pick:${pickId}`, JSON.stringify({
+    pickId,
+    dateKey,
+    eventId: `ev-${pickId}`,
+    sportKey: 'mma_mixed_martial_arts',
+    marketKey: 'totals',
+    home,
+    away,
+    outcomeName,
+    point,
+    decimal: 1.9,
+    suggested_stake: 20,
+    commenceMs: Date.parse(`${dateKey}T20:00:00Z`),
+    status,
+    result: { payout: status === 'won' ? 18 : -20, roiPercent: 0, detail: null },
+  }));
+}
+
+test('auditMmaTotalsGrading flags a pick the old bug would have graded wrong', async () => {
+  const { env, store } = makeKvStore();
+  const dateKey = etDateOf(NOW);
+  // Under 2.5 stored as WON — exactly what the old bug always produced,
+  // regardless of the real fight length. The real fight went to Round 3.
+  seedMmaTotalsPick(store, dateKey, 'p1', { status: 'won', outcomeName: 'Under', point: 2.5 });
+
+  const fetchMmaResultsFn = async () => ([{
+    a: 'charles johnson', b: 'eduardo henrique', aWon: true, bWon: false,
+    displayA: 'Charles Johnson', displayB: 'Eduardo Henrique', method: 'Submission', round: 3,
+  }]);
+  const result = await auditMmaTotalsGrading(env, ctx, NOW, { days: 1, fetchMmaResultsFn });
+
+  assert.equal(result.checked, 1);
+  assert.equal(result.disagreements.length, 1);
+  assert.equal(result.disagreements[0].storedStatus, 'won');
+  assert.equal(result.disagreements[0].recomputedStatus, 'lost');
+  assert.equal(result.disagreements[0].espnRound, 3);
+});
+
+test('auditMmaTotalsGrading reports no disagreement when the stored grade is already correct', async () => {
+  const { env, store } = makeKvStore();
+  const dateKey = etDateOf(NOW);
+  // Over 2.5 stored as WON — correct, since the fight actually went to Round 3.
+  seedMmaTotalsPick(store, dateKey, 'p1', { status: 'won', outcomeName: 'Over', point: 2.5 });
+
+  const fetchMmaResultsFn = async () => ([{
+    a: 'charles johnson', b: 'eduardo henrique', aWon: true, bWon: false,
+    displayA: 'Charles Johnson', displayB: 'Eduardo Henrique', method: 'Submission', round: 3,
+  }]);
+  const result = await auditMmaTotalsGrading(env, ctx, NOW, { days: 1, fetchMmaResultsFn });
+
+  assert.equal(result.checked, 1);
+  assert.deepEqual(result.disagreements, []);
+});
+
+test('auditMmaTotalsGrading reports a pick outside ESPN\'s lookback as unauditable, never silently skipped', async () => {
+  const { env, store } = makeKvStore();
+  const dateKey = etDateOf(NOW);
+  seedMmaTotalsPick(store, dateKey, 'p1', { status: 'won' });
+
+  const result = await auditMmaTotalsGrading(env, ctx, NOW, { days: 1, fetchMmaResultsFn: async () => [] });
+  assert.equal(result.checked, 1);
+  assert.deepEqual(result.disagreements, []);
+  assert.equal(result.unauditable.length, 1);
+  assert.equal(result.unauditable[0].pickId, 'p1');
+});
+
+test('auditMmaTotalsGrading never writes anything — read-only', async () => {
+  const { env, store } = makeKvStore();
+  const dateKey = etDateOf(NOW);
+  seedMmaTotalsPick(store, dateKey, 'p1', { status: 'won' });
+  const before = store.get(`slate:${dateKey}:pick:p1`);
+
+  await auditMmaTotalsGrading(env, ctx, NOW, {
+    days: 1,
+    fetchMmaResultsFn: async () => ([{ a: 'charles johnson', b: 'eduardo henrique', aWon: true, bWon: false, round: 3 }]),
+  });
+
+  assert.equal(store.get(`slate:${dateKey}:pick:p1`), before, 'the stored pick must be byte-identical after an audit');
 });
