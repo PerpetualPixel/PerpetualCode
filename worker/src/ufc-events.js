@@ -433,10 +433,9 @@ export async function fetchMmaResults(ctx, now = Date.now()) {
           aWon: a.winner === true,
           bWon: b.winner === true,
           // Real display names + finish method carried for the finished
-          // card's "Gamrot by Decision" line. The method is read across
-          // the fields ESPN has been seen to use, defensively — null
-          // (never a guess) when none is present, and the card then shows
-          // just the winner with no method rather than a fabricated one.
+          // card's "Gamrot by Decision" line. Null (never a guess) when
+          // ESPN's own feed has no method for this fight either — see
+          // mmaFinishMethod's own comment.
           displayA: nameA,
           displayB: nameB,
           method: mmaFinishMethod(c),
@@ -453,27 +452,38 @@ export async function fetchMmaResults(ctx, now = Date.now()) {
   return fights;
 }
 
+// ESPN's own label for a KO/TKO finish, confirmed against a live scoreboard
+// (UFC 330, 2026-08-15) — read verbatim it looks like a typo, but three of
+// three fights carrying this label also carried an explicit "Knockdown"
+// entry elsewhere in the same competition's details array, so it is what
+// it looks like it is, not noise. Normalized to the real name on the way
+// out; the raw value is never shown to a user.
+const ESPN_METHOD_ALIASES = { kotko: 'KO/TKO' };
+
 /**
- * Best-effort finish method from an ESPN MMA competition — "KO/TKO",
- * "Submission", "Decision - Unanimous", etc. ESPN carries this
- * inconsistently across cards (status.result on some, competitor-level
- * result on others), so several homes are checked in order and null is the
- * honest answer when none carries it.
+ * Finish method from an ESPN MMA competition — "KO/TKO", "Submission",
+ * "Decision", etc. Confirmed live (UFC 330, 2026-08-15): there is no
+ * `status.result` and no per-competitor `result` field on this feed at
+ * all — an earlier version of this read both and always got null as a
+ * result, silently. The real signal is one entry in the competition's own
+ * `details` array (the same play-by-play list "Round Start"/"Takedown
+ * Attempt"/etc. live in), text-prefixed "Unofficial Winner " — e.g.
+ * "Unofficial Winner Submission", "Unofficial Winner Decision". Matched by
+ * that prefix rather than a fixed `details` index or a numeric `type.id`:
+ * position isn't reliable (confirmed on the same card — one fight's winner
+ * entry sat at details[0], another's had no such entry anywhere in the
+ * array at all), and new numeric ids are exactly the kind of thing ESPN
+ * adds without notice. Two of the eight fights on the confirming card had
+ * no "Unofficial Winner" entry at all — a genuine gap in ESPN's own
+ * play-by-play, not a parsing miss — and null is the honest answer for
+ * those, same as ESPN's own answer.
  */
 export function mmaFinishMethod(competition) {
-  const candidates = [
-    competition?.status?.result?.displayName,
-    competition?.status?.result?.description,
-    competition?.status?.result?.name,
-    (competition?.competitors ?? []).map((cc) => cc?.result?.displayName).find(Boolean),
-  ];
-  const raw = candidates.find((v) => typeof v === 'string' && v.trim());
+  const entry = (competition?.details ?? []).find((d) => /^unofficial winner\s+/i.test(d?.type?.text ?? ''));
+  if (!entry) return null;
+  const raw = entry.type.text.replace(/^unofficial winner\s+/i, '').trim();
   if (!raw) return null;
-  const cleaned = raw.trim();
-  // ESPN sometimes reports the generic completion state here rather than a
-  // real method — that's not a finish method, so treat it as absent.
-  if (/^(final|full time|completed?)$/i.test(cleaned)) return null;
-  return cleaned;
+  return ESPN_METHOD_ALIASES[raw.toLowerCase()] ?? raw;
 }
 
 /**
