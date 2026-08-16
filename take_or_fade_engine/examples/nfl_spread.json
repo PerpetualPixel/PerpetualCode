@@ -1,0 +1,27 @@
+{
+  "ticket_id": "NFL-SPREAD-KEY-NUMBER",
+  "slip_type": "STRAIGHT",
+  "offered_odds_american": -110,
+  "legs": [
+    {
+      "event_id": "nfl-kc-buf",
+      "sport": "NFL",
+      "matchup": "Chiefs @ Bills",
+      "market_type": "SPREAD",
+      "selection": "Chiefs -2.5",
+      "odds_american": -110,
+      "sharp_fair_prob": 0.556,
+      "metrics": {
+        "subject": "Chiefs",
+        "spread_point": -2.5,
+        "epa_per_play_diff": 0.14,
+        "success_rate_vs_havoc": 0.05,
+        "prwr_minus_pbwr": 0.06,
+        "rest_days_diff": 3,
+        "turnover_margin_expected": 0.4,
+        "rest_days": 3,
+        "game_script_stability": 0.65
+      }
+    }
+  ]
+}

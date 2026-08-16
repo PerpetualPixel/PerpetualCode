@@ -178,6 +178,48 @@ const convictionOf = (p) =>
   p.season * 0.35 + p.l10 * 0.35 + p.l5 * 0.15 + (Math.min(p.streak, 15) / 15) * 0.15;
 
 /**
+ * This play's own claimed win probability, stored on the record so the
+ * weekly health review (worker/src/algo-health.js) can actually judge it.
+ *
+ * Until this existed, Prop Play of the Day was UNMEASURABLE: getAllPropPlays
+ * emits one record per play with no consensusProb, and segmentStats requires
+ * a numeric consensusProb to run its z-test, so every prop play was silently
+ * dropped from the sample. Nothing in this app could answer "is the Prop
+ * Play any good" — not the circuit breaker, not the learning review. The
+ * question could only ever be answered by eyeballing a win/loss column.
+ *
+ * Deliberately NOT convictionOf(): that blend includes a streak kicker,
+ * which ranks legs sensibly but is not a probability and would make the
+ * z-test compare wins against a number that never claimed to be one. This
+ * is an even blend of two real measured hit rates over real gamelogs —
+ * season-long and last-10 — which is exactly the claim the play is making
+ * about itself.
+ *
+ * A moneyline leg has no gamelog profile; it carries `implied`, the median
+ * price's implied probability across books. That is a VIGGED number, so it
+ * runs a couple of points high, which makes expected wins slightly
+ * overstated and the resulting z slightly more negative. The bias is toward
+ * benching rather than away from it, which is the safe direction for a
+ * circuit breaker, but it is a real bias and not a rounding detail.
+ *
+ * Returns null rather than a fabricated value when any leg has neither — a
+ * play that can't state its own probability stays out of the sample, same
+ * as before, instead of entering it with a guess.
+ */
+export function playConsensusProb(legs) {
+  let joint = 1;
+  for (const leg of legs ?? []) {
+    const p = leg?.profile;
+    const legProb = p && Number.isFinite(p.season) && Number.isFinite(p.l10)
+      ? 0.5 * p.season + 0.5 * p.l10
+      : (Number.isFinite(leg?.implied) ? leg.implied : null);
+    if (legProb == null) return null;
+    joint *= legProb;
+  }
+  return legs?.length ? Math.round(joint * 1e6) / 1e6 : null;
+}
+
+/**
  * Heavy-favorite moneyline legs from an already-fetched (cached — no new
  * credits) odds payload: each pregame side priced in the safe band, with the
  * median price across books and its implied probability as the conviction
@@ -409,12 +451,17 @@ export async function runPropPlayDaily(env, ctx, now = Date.now(), { debug = fal
   const legs = bestPair ? bestPair.legs : [qualified[0]];
   const combinedDecimal = legs.reduce((d, leg) => d * leg.decimal, 1);
   const combinedAmerican = toAmerican(combinedDecimal);
+  const consensusProb = playConsensusProb(legs);
 
   const record = {
     date: dateKey,
     kind: legs.length === 2 ? 'parlay' : 'straight',
     combinedAmerican,
     combinedDecimal: Math.round(combinedDecimal * 1000) / 1000,
+    // See playConsensusProb: this is what makes the play measurable by the
+    // weekly health review at all. Records written before this field existed
+    // simply stay out of the sample, exactly as they already did.
+    consensusProb,
     legs: await Promise.all(legs.map(async (leg) => ({
       kind: leg.kind ?? 'prop',
       sportKey: leg.game.sportKey ?? 'basketball_wnba',
@@ -577,6 +624,10 @@ export async function getAllPropPlays(env, { now = Date.now(), days = 90 } = {})
       decimal: record.combinedDecimal,
       suggested_stake: record.suggested_stake ?? UNIT_STAKE * PLAY_UNITS,
       units: record.units ?? PLAY_UNITS,
+      // Absent on records written before playConsensusProb existed; those
+      // are skipped by segmentStats rather than counted with a made-up
+      // number, which is the correct handling of "we never recorded it".
+      consensusProb: record.consensusProb ?? null,
       status: record.status,
       result: record.result ?? null,
       clv: null,

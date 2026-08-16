@@ -26,6 +26,12 @@ import { seedTennisArchiveCacheForTests } from '../worker/src/tennis-archive.js'
 // Same reasoning as test/potd.test.mjs: the tennis form gate reads a static
 // archive, and unit tests must never touch the network.
 seedTennisArchiveCacheForTests({ atp: null, wta: null });
+import { seedTeamContextCacheForTests } from '../worker/src/team-form.js';
+// Same reasoning for team sports: seeding SEALS the memo, so no fixture in
+// these slates reaches cdn.espn.com. An empty seed is the honest degraded
+// mode — no context, so no form re-score and no underdog gate, exactly what
+// an unreachable ESPN produces in production.
+seedTeamContextCacheForTests({});
 
 const NOW = Date.parse('2026-08-14T18:00:00Z');
 

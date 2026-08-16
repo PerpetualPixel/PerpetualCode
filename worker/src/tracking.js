@@ -40,6 +40,7 @@ import { getAlgoConfig, getPausedSegments, isSegmentPaused } from './algo-health
 import { getLearningProfile, applyLearningToCandidates } from './daily-learning.js';
 import { fetchMmaResults, gradeMmaPickWithFallback } from './ufc-events.js';
 import { applyTennisFormSignal } from '../../docs/qualitative.js';
+import { loadTeamContextsFor, applyTeamFormSignal } from './team-form.js';
 import { loadTennisArchivesFor } from './tennis-archive.js';
 import {
   tennisTier,
@@ -704,8 +705,17 @@ export async function runTop5Batch(
   // upset calls confirmed. Applied BEFORE the learning weights so the
   // reliability multiplier scales the form-adjusted grade, same order the
   // browser's own enrichment implies.
+  // Team-sport form gate (worker/src/team-form.js) — the same evidential
+  // principle as the tennis gate above, extended to the leagues ESPN
+  // actually covers. Applied in the same position, before the learning
+  // multiplier, so the reliability weight scales a form-adjusted grade
+  // rather than a pure-price one.
   const eligibleToday = applyLearningToCandidates(
-    applyTennisFormSignal(analyzed, await loadTennisArchivesFor(analyzed), { now }),
+    applyTeamFormSignal(
+      applyTennisFormSignal(analyzed, await loadTennisArchivesFor(analyzed), { now }),
+      await loadTeamContextsFor(analyzed, ctx, { now }),
+      { now },
+    ),
     learningProfile,
   );
 

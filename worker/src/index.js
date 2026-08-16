@@ -49,6 +49,8 @@ import { runMlbPropsScan, runMlbPropsGrading, getAllMlbPropsTracked } from './ml
 import { runNflPropsScan, runNflPropsGrading, getAllNflPropsTracked } from './nfl-props.js';
 import { runWnbaPropsScan, runWnbaPropsGrading, getAllWnbaPropsTracked } from './wnba-props.js';
 import { runPropPlayDaily, runPropPlayGrading, getAllPropPlays } from './prop-play.js';
+import { extractSlipFromImage } from './slip-vision.js';
+import { consumeQuota, getQuotaUsage } from './tail-fade-quota.js';
 import { runNhlPropsScan, runNhlPropsGrading, getAllNhlPropsTracked } from './nhl-props.js';
 import { runPotdDaily, runPotdClvSnapshot, runPotdGrading, backfillPotdAnalysis, getPotd, getPotdLeaning, getPotdHistory, retractPotd, regradePotdTennisVoids } from './potd.js';
 import { runLadderDaily, runLadderGrading, getLadder, getLadderHistory } from './ladder.js';
@@ -815,14 +817,25 @@ export default {
           getPicks: async () => {
             const tagged = (picks, source) => (picks ?? []).map((p) => ({ ...p, source }));
             const opts = { now, days: HEALTH_WINDOW_DAYS };
-            const [top5, slate, mlbProps, nflProps, wnbaProps, nhlProps] = await Promise.all([
-              getAllTrackedPicks(env, opts),
-              getAllFullSlateTracked(env, opts),
-              getAllMlbPropsTracked(env, opts),
-              getAllNflPropsTracked(env, opts),
-              getAllWnbaPropsTracked(env, opts),
-              getAllNhlPropsTracked(env, opts),
-            ]);
+            const [top5, slate, mlbProps, nflProps, wnbaProps, nhlProps, propPlays, ladder] =
+              await Promise.all([
+                getAllTrackedPicks(env, opts),
+                getAllFullSlateTracked(env, opts),
+                getAllMlbPropsTracked(env, opts),
+                getAllNflPropsTracked(env, opts),
+                getAllWnbaPropsTracked(env, opts),
+                getAllNhlPropsTracked(env, opts),
+                // Prop Play of the Day and the ladder are posted, graded
+                // surfaces like any other, and were the last two boards
+                // still invisible here. Prop plays only entered the sample
+                // at all once their records started carrying consensusProb
+                // (worker/src/prop-play.js's playConsensusProb) — without
+                // it segmentStats has no expectation to test wins against
+                // and drops every one, which is why "is the Prop Play any
+                // good" had no mechanical answer before.
+                getAllPropPlays(env, opts),
+                getLadderHistory(env, opts),
+              ]);
             return [
               ...tagged(top5, 'top5'),
               ...tagged(slate, 'fullslate'),
@@ -830,6 +843,8 @@ export default {
               ...tagged(nflProps, 'nflprops'),
               ...tagged(wnbaProps, 'wnbaprops'),
               ...tagged(nhlProps, 'nhlprops'),
+              ...tagged(propPlays, 'propplay'),
+              ...tagged(ladder, 'ladder'),
             ];
           },
         }),
@@ -920,9 +935,16 @@ export default {
       '/admin/audit-mma-totals',
       '/admin/regrade-mma-totals',
     ]);
-    if (request.method === 'POST' && (AUTH_LIMITED_PATHS.has(pathname) || pathname === '/api/report-bug' || OWNER_LIMITED_PATHS.has(pathname))) {
+    // Bet-slip extraction spends real model credits on every call, and the
+    // request body is an image, so an unthrottled endpoint is both a cost
+    // and a bandwidth exposure. Its own key prefix, same as the others, so a
+    // burst here can never eat the auth or bug-report budgets.
+    const VISION_LIMITED_PATHS = new Set(['/tail-fade/extract']);
+    if (request.method === 'POST' && (AUTH_LIMITED_PATHS.has(pathname) || pathname === '/api/report-bug' || OWNER_LIMITED_PATHS.has(pathname) || VISION_LIMITED_PATHS.has(pathname))) {
       const ip = request.headers.get('CF-Connecting-IP') ?? 'unknown';
-      const prefix = pathname === '/api/report-bug' ? 'bug' : OWNER_LIMITED_PATHS.has(pathname) ? 'owner' : 'auth';
+      const prefix = pathname === '/api/report-bug' ? 'bug'
+        : VISION_LIMITED_PATHS.has(pathname) ? 'vision'
+        : OWNER_LIMITED_PATHS.has(pathname) ? 'owner' : 'auth';
       if (await rateLimited(`${prefix}:${ip}`)) {
         return json({ error: 'Too many attempts — try again in a minute.' }, { status: 429, headers: cors });
       }
@@ -1239,6 +1261,69 @@ export default {
         return json({ picks }, { headers: { ...cors, 'Cache-Control': 'public, max-age=300' } });
       } catch (error) {
         return json({ picks: [], reason: String(error).slice(0, 120) }, { headers: cors });
+      }
+    }
+
+    // Bet-slip image extraction for Tail or Fade (worker/src/slip-vision.js).
+    // POST rather than GET because the payload is an image, and server-side
+    // because the API key cannot go to the browser and the alternative —
+    // shipping a WASM OCR bundle to every visitor for a feature most never
+    // open — is a far worse trade.
+    // Read-only: what's left today. Lets the drawer show the allowance
+    // before a user commits to an upload, rather than after it is refused.
+    if (pathname === '/tail-fade/quota') {
+      if (request.method !== 'GET') {
+        return json({ error: 'Method not allowed' }, { status: 405, headers: cors });
+      }
+      try {
+        return json(await getQuotaUsage(request, env, { authenticate: authenticateRequest }), { headers: cors });
+      } catch (error) {
+        return json({ error: error.message }, { status: 500, headers: cors });
+      }
+    }
+
+    if (pathname === '/tail-fade/extract') {
+      if (request.method !== 'POST') {
+        return json({ error: 'Method not allowed' }, { status: 405, headers: cors });
+      }
+      // Daily per-user ceiling on top of the per-minute burst limiter above
+      // — those answer different questions (a loop vs. a costly day), and
+      // the owner is exempt so a debugging session can't be stopped by the
+      // feature it is debugging. Consumed BEFORE the paid call: a request
+      // that fails upstream has already cost the spend.
+      const quota = await consumeQuota(request, env, { authenticate: authenticateRequest });
+      if (!quota.allowed) {
+        return json(
+          { error: quota.message, legs: [], quota: { used: quota.used, limit: quota.limit, remaining: 0 } },
+          { status: 429, headers: cors },
+        );
+      }
+
+      try {
+        const body = await request.json();
+        // Accepts either a full data: URL or a bare base64 string plus a
+        // mediaType — the browser produces the former naturally from
+        // FileReader, and hand-written callers tend to send the latter.
+        let image = String(body?.image ?? '');
+        let mediaType = String(body?.mediaType ?? '');
+        const dataUrl = image.match(/^data:([^;,]+);base64,(.*)$/s);
+        if (dataUrl) {
+          mediaType = mediaType || dataUrl[1];
+          image = dataUrl[2];
+        }
+        const result = await extractSlipFromImage(image, mediaType, env);
+        // Echoed so the drawer can show what's left without a second call.
+        return json({
+          ...result,
+          quota: quota.exempt
+            ? { exempt: true }
+            : { used: quota.used, limit: quota.limit, remaining: quota.remaining },
+        }, { headers: cors });
+      } catch (error) {
+        // 422 rather than 500: every throw from extractSlipFromImage is a
+        // problem with what was sent (wrong type, too large, unconfigured),
+        // and the message is written to be shown to the user as-is.
+        return json({ error: error.message, legs: [] }, { status: 422, headers: cors });
       }
     }
 

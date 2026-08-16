@@ -17,7 +17,7 @@
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Syne:wght@600;700;800&family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
-<link rel="stylesheet" href="styles.css?v=1.147">
+<link rel="stylesheet" href="styles.css?v=1.153">
 </head>
 <body>
 
@@ -122,6 +122,10 @@
             aria-haspopup="dialog" aria-expanded="false" aria-controls="tailFadePanel">
       <span class="tail-fade-btn-icon" aria-hidden="true">⚖️</span>
       <span>Tail or Fade</span>
+      <!-- Visible on the entry point, not only once the drawer is open: the
+           label has to reach someone deciding whether to trust the answer
+           BEFORE they've spent the effort entering a bet. -->
+      <span class="tail-fade-beta">BETA</span>
     </button>
   </div>
 
@@ -516,7 +520,7 @@
 <aside id="tailFadePanel" class="history tail-fade-panel" role="dialog"
        aria-label="Tail or Fade bet audit" aria-modal="true" hidden>
   <div class="history-head">
-    <h2>Tail or Fade</h2>
+    <h2>Tail or Fade <span class="tail-fade-beta">BETA</span></h2>
     <button id="tailFadeClose" class="icon-btn overlay-close-btn" aria-label="Close Tail or Fade">✕</button>
   </div>
   <div class="tail-fade-body">
@@ -524,6 +528,31 @@
       Paste a bet, drop a screenshot of a slip, or pull a leg straight off the slate.
       You get a straight <strong>TAIL</strong> or <strong>FADE</strong> call with the numbers behind it.
     </p>
+    <p class="tail-fade-beta-note">
+      <strong>Beta — still being worked on.</strong> Screenshots are read by a model, so
+      check the legs it pulls out against your slip before trusting the call — anything
+      it wasn't sure of is flagged. Treat the verdict as a second opinion in progress,
+      not a finished one. Everything else on this app is unaffected.
+    </p>
+
+    <!-- How a multi-leg entry is meant. Separate from the input-method tabs
+         below: those answer "how are you giving me the bet", this answers
+         "what IS the bet" — several independent wagers, or one ticket that
+         needs all of them. Every leg is graded individually either way; the
+         toggle changes what the overall verdict means and what the
+         recommendations are for. -->
+    <div class="tail-fade-shape">
+      <span class="tail-fade-shape-label" id="tailFadeShapeLabel">Grade as</span>
+      <div class="tail-fade-shape-toggle" role="radiogroup" aria-labelledby="tailFadeShapeLabel">
+        <button type="button" class="tail-fade-shape-btn is-active" data-tf-shape="slate"
+                role="radio" aria-checked="true">Slate</button>
+        <button type="button" class="tail-fade-shape-btn" data-tf-shape="parlay"
+                role="radio" aria-checked="false">Parlay</button>
+      </div>
+      <p class="tail-fade-shape-hint" id="tailFadeShapeHint">
+        Separate bets — each leg graded on its own, with what to bet straight and what can be parlayed.
+      </p>
+    </div>
 
     <div class="tail-fade-modes" role="tablist" aria-label="How to enter the bet">
       <button class="tail-fade-mode is-active" role="tab" aria-selected="true" data-tf-mode="text" type="button">Type / paste</button>
@@ -544,8 +573,10 @@
         <span class="tail-fade-drop-icon" aria-hidden="true">⬆︎</span>
         <p class="tail-fade-drop-title">Drop a bet slip screenshot</p>
         <p class="tail-fade-drop-sub">or click to choose · or press <kbd>Ctrl</kbd>+<kbd>V</kbd> to paste</p>
+        <p class="tail-fade-drop-sub">Your legs are read off the image and analysed automatically.</p>
         <input id="tailFadeFile" type="file" accept="image/*" hidden>
       </div>
+      <p id="tailFadeQuota" class="tail-fade-quota" role="status" hidden></p>
       <div id="tailFadePreview" class="tail-fade-preview" hidden></div>
     </div>
 
@@ -894,6 +925,6 @@
   </div>
 </aside>
 
-<script type="module" src="app.js?v=1.147"></script>
+<script type="module" src="app.js?v=1.153"></script>
 </body>
 </html>

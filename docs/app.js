@@ -43,6 +43,14 @@ import {
   tennisUnderdogBlocked,
 } from './qualitative.js';
 import {
+  auditLegs,
+  MODE_SLATE,
+  MODE_PARLAY,
+  NO_READ,
+  isTakeSide,
+  isFadeSide,
+} from './tail-fade.js';
+import {
   fetchCapperConsensus,
   capperConsensusSignal,
   surnamesMatch,
@@ -4523,6 +4531,19 @@ async function loadPixelPicks() {
       ...(data.leaning ?? []).map((r) => ({ ...r, isLean: true })),
     ];
     updateNewIndicator(el.tabBoard, 'pp_picks_seen_date', pixelPicksRecords[0]?.dateKey ?? null);
+    // Leans are excluded: a lean is explicitly the algorithm's current best
+    // guess that can still change (see the LEAN badge), so vouching for one
+    // as a settled recommendation would be claiming more than the board
+    // itself does.
+    registerPostedPicks('top5', (data.picks ?? []).map((r) => ({
+      surfaceLabel: "one of Pixel's Picks",
+      selection: r.selection,
+      marketKey: r.marketKey,
+      american: r.american ?? null,
+      score: r.score ?? null,
+      home: r.home ?? null,
+      away: r.away ?? null,
+    })));
   } catch (error) {
     el.picks.innerHTML = `<p class="empty">Couldn't reach the odds feed.
       ${esc(error.message)}</p>`;
@@ -5128,14 +5149,22 @@ function renderPotd(potd, leaning) {
 
   if (potd) {
     const { writeup, generatedAt, stale } = potd;
+    // A stale pick (yesterday's, shown because today's hasn't posted) is
+    // deliberately NOT registered for the audit: it isn't a live
+    // recommendation, and treating it as one would have Tail or Fade vouch
+    // for a bet whose game has already been played.
+    registerPostedPicks('potd', stale ? [] : [postedPickFromPotdWriteup(writeup, 'Play of the Day')].filter(Boolean));
     el.potdBody.innerHTML = renderPotdCard(writeup, generatedAt, stale);
     return;
   }
 
   if (leaning) {
+    registerPostedPicks('potd', []);
     el.potdBody.innerHTML = renderPotdLeanCard(leaning);
     return;
   }
+
+  registerPostedPicks('potd', []);
 
   el.potdBody.innerHTML = `<p class="empty">
     Nothing to show yet — check back once today's slate is underway.</p>`;
@@ -5168,7 +5197,25 @@ async function loadPotd({ force = false } = {}) {
   try {
     const res = await fetch(new URL('/prop-play', CONFIG.WORKER_URL), { headers: { Accept: 'application/json' } });
     const { propPlay } = await res.json();
-    if (propPlay) el.potdBody.insertAdjacentHTML('beforeend', renderPropPlayCard(propPlay));
+    if (propPlay) {
+      // Registered leg by leg rather than as one combined ticket: someone
+      // pasting "A'ja Wilson 24+ points" is asking about that leg, and the
+      // audit should recognise it as ours even though we posted it inside a
+      // parlay. Only a pending play counts — a settled one is history, not
+      // a recommendation.
+      registerPostedPicks('propplay', propPlay.status === 'pending'
+        ? (propPlay.legs ?? []).map((leg) => ({
+            surfaceLabel: 'Prop Play of the Day',
+            selection: leg.label,
+            marketKey: 'prop',
+            american: leg.american ?? null,
+            score: null,
+            home: leg.home ?? null,
+            away: leg.away ?? null,
+          }))
+        : []);
+      el.potdBody.insertAdjacentHTML('beforeend', renderPropPlayCard(propPlay));
+    }
   } catch { /* prop play is a bonus, never a blocker */ }
 }
 
@@ -5304,6 +5351,21 @@ async function loadLadder({ force = false } = {}) {
   try {
     const res = await fetch(new URL('/ladder', CONFIG.WORKER_URL), { headers: { Accept: 'application/json' } });
     const { ladder } = await res.json();
+    // Same two exclusions as the other surfaces: a stale rung is the last
+    // one played rather than today's recommendation, and a settled pick is
+    // history. Only a live, pending rung is something to vouch for.
+    const pick = ladder?.play?.stale ? null : ladder?.play?.pick;
+    registerPostedPicks('ladder', pick && (!pick.status || pick.status === 'pending')
+      ? [{
+          surfaceLabel: "today's Ladder Challenge rung",
+          selection: pick.selection,
+          marketKey: pick.marketKey,
+          american: pick.american ?? null,
+          score: pick.score ?? null,
+          home: pick.home ?? null,
+          away: pick.away ?? null,
+        }]
+      : []);
     renderLadder(ladder ?? null);
   } catch {
     ladderLoaded = false; // same as the other loaders: a hiccup isn't permanent
@@ -6927,22 +6989,31 @@ el.updateBannerDismiss.addEventListener('click', () => {
  * on the Full Slate: paste the text, drop a screenshot of a sportsbook
  * slip, or pull a leg straight off the board.
  *
- * The OCR/vision extraction and the analysis itself are BOTH mocked here
- * (see mockExtractLegsFromImage / mockAuditLegs). That is deliberate and
- * temporary: it lets the whole flow — every input mode, the loaders, the
- * parsed-leg list, the verdict rendering, the error paths — be exercised
- * end to end before either real service exists, so the integration work is
- * a swap of two functions rather than a rebuild. Every mocked run says so
- * on screen (renderTailFadeResult's mock note); this app's rule that a
- * number on screen traces to a real source doesn't get suspended just
- * because the backing service isn't built yet.
+ * Every path is real now. The ANALYSIS reads this app's own engine and its
+ * own posted picks (docs/tail-fade.js); the IMAGE route reads the actual
+ * uploaded screenshot through the worker's vision endpoint
+ * (worker/src/slip-vision.js), having previously returned three fixed sample
+ * legs regardless of what was dropped.
+ *
+ * The image route also chains straight into the audit rather than stopping
+ * at a populated leg list. Dropping a slip is already the user's whole
+ * input; making them press Audit afterwards adds a step to the one path
+ * that was meant to have none.
  */
 
 /** Which input mode the drawer is on, and whatever legs are currently loaded. */
 const tailFade = {
   mode: 'text',
+  // How a multi-leg entry is meant: MODE_SLATE grades each leg as its own
+  // bet, MODE_PARLAY grades them as one ticket that needs all of them.
+  // Every leg is graded individually under both — the shape changes what the
+  // headline verdict means and which recommendations are worth making.
+  shape: MODE_SLATE,
   legs: [],
   imageName: null,
+  // The reader's own explanation when a slip could not be parsed — shown
+  // instead of a generic failure, because it says what was actually wrong.
+  extractionNote: '',
   busy: false,
 };
 
@@ -6975,70 +7046,139 @@ function parseLegsFromText(text) {
   return String(text).split('\n').map(parseLegFromLine).filter(Boolean);
 }
 
-/**
- * MOCK — stands in for the OCR/vision layer that will read a real bet slip.
- * Shaped exactly like the real extractor's contract ({ legs: [...] }) so
- * swapping it out touches nothing else. The delay is real so the loading
- * state is actually exercised rather than flashing past in tests.
- */
-async function mockExtractLegsFromImage(file) {
-  await new Promise((r) => setTimeout(r, 900));
-  if (!file || !String(file.type ?? '').startsWith('image/')) {
-    throw new Error('That file does not look like an image.');
-  }
-  return {
-    legs: [
-      { selection: "A'ja Wilson over 24.5 points", american: -118, source: 'image' },
-      { selection: 'Kelsey Mitchell over 18.5 points', american: -110, source: 'image' },
-      { selection: 'Aces / Fever over 165.5', american: null, source: 'image' },
-    ],
-  };
+/** A File into the bare base64 the worker's extractor expects. */
+function fileToBase64(file) {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onerror = () => reject(new Error('Could not read that file.'));
+    reader.onload = () => {
+      const result = String(reader.result ?? '');
+      const comma = result.indexOf(',');
+      resolve(comma >= 0 ? result.slice(comma + 1) : result);
+    };
+    reader.readAsDataURL(file);
+  });
 }
 
 /**
- * MOCK — stands in for the analysis engine. Same contract the real one will
- * return, so renderTailFadeResult never changes: a verdict, a confidence,
- * and the four evidence sections the spec calls for.
+ * Read a real bet slip screenshot, via the worker's vision endpoint
+ * (worker/src/slip-vision.js).
  *
- * The verdict is derived from the legs rather than hardcoded, so clicking
- * through with different inputs visibly changes the output — a mock that
- * always says the same thing hides bugs in the render path.
+ * Server-side because the API key cannot go to the browser, and because the
+ * alternative — shipping a multi-megabyte WASM OCR bundle to every visitor
+ * for a feature most will never open — is a far worse trade.
+ *
+ * Throws with a message written to be shown to the user as-is. A slip the
+ * reader genuinely could not parse comes back as zero legs plus a `note`
+ * rather than an exception, because "I could not read this" is an answer the
+ * UI has to render, not an error it has to interpret.
  */
-async function mockAuditLegs(legs) {
-  await new Promise((r) => setTimeout(r, 1100));
-  const priced = legs.filter((l) => l.american != null);
-  const avg = priced.length
-    ? priced.reduce((s, l) => s + l.american, 0) / priced.length
-    : 0;
-  // Heavier juice across the slip reads as worse value — enough of a rule
-  // to make the mock's answer track its input.
-  const tail = avg > -125;
-  const confidence = Math.max(1, Math.min(10, Math.round(tail ? 6 + priced.length : 7 - priced.length)));
+async function extractLegsFromImage(file) {
+  if (!file || !String(file.type ?? '').startsWith('image/')) {
+    throw new Error('That file does not look like an image.');
+  }
+  if (!CONFIG.WORKER_URL) {
+    throw new Error('Bet slip reading needs the odds worker. Set WORKER_URL in config.js.');
+  }
 
+  const image = await fileToBase64(file);
+  const response = await fetch(new URL('/tail-fade/extract', CONFIG.WORKER_URL), {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', Accept: 'application/json' },
+    body: JSON.stringify({ image, mediaType: file.type }),
+  });
+
+  let payload = null;
+  try { payload = await response.json(); } catch { /* handled below */ }
+  if (payload?.quota) renderTailFadeQuota(payload.quota);
+  if (!response.ok) {
+    throw new Error(payload?.error || `The slip reader returned ${response.status}.`);
+  }
+  if (!payload) {
+    throw new Error('The slip reader returned something unreadable.');
+  }
+  return payload;
+}
+
+/**
+ * How many slip reads are left today.
+ *
+ * Shown on the drop zone BEFORE an upload rather than only in the refusal,
+ * because a user who has budgeted their last read for a bet that matters
+ * should not discover the ceiling by hitting it. Silent for the owner, who
+ * has none, and silent when it can't be determined — an unknown allowance
+ * displayed as a number would be a worse lie than no number.
+ */
+function renderTailFadeQuota(quota) {
+  const el_ = document.getElementById('tailFadeQuota');
+  if (!el_) return;
+  if (!quota || quota.exempt || !Number.isFinite(Number(quota.limit))) {
+    el_.hidden = true;
+    return;
+  }
+  const remaining = Math.max(0, Number(quota.remaining ?? 0));
+  el_.hidden = false;
+  el_.textContent = remaining > 0
+    ? `${remaining} of ${quota.limit} slip reads left today`
+    : `No slip reads left today — typing the bet in still works, with no limit.`;
+  el_.classList.toggle('is-spent', remaining === 0);
+}
+
+/** Ask what's left, without spending one. Best-effort: never blocks the drawer. */
+async function loadTailFadeQuota() {
+  if (!CONFIG.WORKER_URL) return;
+  try {
+    const res = await fetch(new URL('/tail-fade/quota', CONFIG.WORKER_URL), {
+      headers: { Accept: 'application/json' },
+    });
+    if (res.ok) renderTailFadeQuota(await res.json());
+  } catch { /* the allowance is a courtesy, never a blocker */ }
+}
+
+/**
+ * Every pick this app has itself published today, in one place, so the
+ * audit can recognise its own board.
+ *
+ * This registry is the mechanism that makes "the app says take it, the tool
+ * says fade it" impossible rather than merely unlikely: auditLegs matches a
+ * leg against these first, and a leg that IS one of our posted picks cannot
+ * grade below TAKE. Each surface registers as it loads; re-registering the
+ * same surface replaces its entry rather than stacking, so a re-fetch can't
+ * leave a stale pick behind to be matched against.
+ */
+const postedPicks = [];
+
+function registerPostedPicks(surface, picks) {
+  for (let i = postedPicks.length - 1; i >= 0; i--) {
+    if (postedPicks[i].surface === surface) postedPicks.splice(i, 1);
+  }
+  for (const pick of picks ?? []) {
+    if (!pick?.selection) continue;
+    postedPicks.push({ ...pick, surface });
+  }
+}
+
+/**
+ * A Play of the Day write-up into the shape the audit matches on. The
+ * write-up's headline is `${selection} (${price})` (worker/src/potd.js's
+ * buildWriteup), and its matchup is `${away} @ ${home}` — parsed back out
+ * here rather than changing the stored shape, which several other surfaces
+ * already render from.
+ */
+function postedPickFromPotdWriteup(writeup, surfaceLabel) {
+  if (!writeup?.headline) return null;
+  const selection = String(writeup.headline).replace(/\s*\([^)]*\)\s*$/, '').trim();
+  const [away, home] = String(writeup.matchup ?? '').split('@').map((s) => s.trim());
   return {
-    verdict: tail ? 'TAIL' : 'FADE',
-    confidence,
-    statistical: [
-      `Primary leg has hit in 7 of its last 10 (70%), against a season rate of 61%.`,
-      `Line sits 1.4 below the L10 average — the number is a touch soft versus recent output.`,
-      `Usage up to 28.9% over the last five, with minutes trending 31.2 → 34.6.`,
-    ],
-    contextual: [
-      `Recent form: 4-1 to the over across the last five with the same starting five available.`,
-      `Matchup: opponent concedes the 3rd-most to the position, and plays at the 5th-fastest pace.`,
-      `Home / away: 63% hit rate at home versus 48% on the road — this one is at home.`,
-      `Head-to-head: cleared this number in 3 of the last 4 meetings.`,
-      `Injuries: no new listings on either side as of the latest report.`,
-    ],
-    risk: [
-      `Blowout risk — a 12+ point spread pulls starters and caps fourth-quarter minutes.`,
-      `Foul trouble is the main single-game tail risk given the matchup's physicality.`,
-      `Opponent has switched to a drop-coverage scheme in the last three, which suppresses this exact shot profile.`,
-    ],
-    summary: tail
-      ? `The number lags where recent usage and minutes actually are, and the matchup is the friendliest of the week. Worth tailing at this price, with blowout risk the one thing that beats it.`
-      : `The price already accounts for the recent hot stretch, and the matchup profile works directly against this line. Not enough edge left at this number — fade it.`,
-    mocked: true,
+    surfaceLabel,
+    selection,
+    marketKey: writeup.marketKey ?? 'h2h',
+    american: writeup.american ?? null,
+    score: writeup.score ?? null,
+    home: home ?? null,
+    away: away ?? null,
+    reasons: writeup.reasons ?? null,
+    sections: writeup.sections ?? null,
   };
 }
 
@@ -7055,8 +7195,19 @@ function renderTailFadeLegs() {
     return;
   }
   el.tailFadeLegs.hidden = false;
+  // A slip is a photograph of numbers that decide money, so a leg the reader
+  // was unsure about has to say so at the LEG LIST — this is the moment a
+  // misread would be believed, and it is also the moment it is cheapest to
+  // correct by hand. Only genuinely low-confidence reads are flagged;
+  // warning on every image would train the user to ignore the warning.
+  const shaky = tailFade.legs.filter((l) => l.source === 'image' && Number(l.confidence) < 0.7);
   el.tailFadeLegs.innerHTML = `
     <p class="tail-fade-legs-title">${tailFade.legs.length} leg${tailFade.legs.length === 1 ? '' : 's'} loaded</p>
+    ${shaky.length ? `<p class="tail-fade-mock-note">
+      ${shaky.length === 1 ? 'One leg was' : `${shaky.length} legs were`} hard to read off that
+      image — check ${shaky.length === 1 ? 'it' : 'them'} against your slip before trusting the verdict.
+    </p>` : ''}
+    ${tailFade.extractionNote ? `<p class="tail-fade-mock-note">${esc(tailFade.extractionNote)}</p>` : ''}
     ${tailFade.legs.map((leg) => `
       <div class="tail-fade-leg">
         <span>${esc(leg.selection)}</span>
@@ -7106,6 +7257,36 @@ function setTailFadeMode(mode) {
     pane.hidden = pane.dataset.tfPane !== mode;
   });
   if (mode === 'slate') populateTailFadeSlateOptions();
+  if (mode === 'image') loadTailFadeQuota();
+}
+
+/**
+ * Slate vs parlay. Re-audits immediately when a result is already on
+ * screen, because the toggle's whole purpose is comparing the two readings
+ * of the same legs — making the user re-click Audit to see the other one
+ * would hide the comparison behind a step.
+ */
+function setTailFadeShape(shape) {
+  if (shape !== MODE_SLATE && shape !== MODE_PARLAY) return;
+  tailFade.shape = shape;
+  el.tailFadePanel.querySelectorAll('[data-tf-shape]').forEach((b) => {
+    const active = b.dataset.tfShape === shape;
+    b.classList.toggle('is-active', active);
+    b.setAttribute('aria-checked', String(active));
+  });
+  const hint = document.getElementById('tailFadeShapeHint');
+  if (hint) {
+    hint.textContent = shape === MODE_PARLAY
+      ? 'One ticket — it needs every leg, so one bad leg fades the whole thing. Each leg is still graded on its own below.'
+      : 'Separate bets — each leg graded on its own, with what to bet straight and what can be parlayed.';
+  }
+  if (tailFade.legs.length && el.tailFadeResult?.querySelector('.tail-fade-verdict')) {
+    renderTailFadeResult(auditLegs(tailFade.legs, {
+      postedPicks,
+      candidates: state.candidates ?? [],
+      mode: tailFade.shape,
+    }));
+  }
 }
 
 /** Every market currently rendered on the Full Slate, as pickable options. */
@@ -7142,29 +7323,135 @@ function showTailFadeError(message) {
   el.tailFadeResult.innerHTML = `<div class="tail-fade-error">${esc(message)}</div>`;
 }
 
-function renderTailFadeResult(audit) {
-  const isTail = audit.verdict === 'TAIL';
-  const section = (title, items, cls = '') => `
-    <div class="tail-fade-section ${cls}">
-      <h3>${esc(title)}</h3>
-      <ul>${items.map((i) => `<li>${esc(i)}</li>`).join('')}</ul>
+/** Tone class for a verdict — the five tiers collapse to three colours. */
+function tailFadeTone(verdict) {
+  if (isTakeSide(verdict)) return 'is-tail';
+  if (isFadeSide(verdict)) return 'is-fade';
+  return verdict === NO_READ ? 'is-noread' : 'is-lean';
+}
+
+/**
+ * One leg's own grade card. Rendered in BOTH modes: the whole reason the
+ * slate/parlay toggle exists rather than two separate tools is that a
+ * ticket's overall verdict and its individual legs are different questions,
+ * and a user who pastes ten legs needs the answer to both.
+ */
+function renderTailFadeLegCard(read) {
+  const badge = `<span class="tf-leg-verdict ${tailFadeTone(read.verdict)}">${esc(read.verdict)}</span>`;
+  const price = read.leg.american != null ? esc(formatAmerican(read.leg.american)) : '—';
+  const numbers = read.verdict === NO_READ ? '' : `
+    <div class="tf-leg-numbers">
+      <span title="Take/Fade Score — the weighted composite">TPS <strong>${Math.round(read.tps)}</strong></span>
+      ${Number.isFinite(read.ev) ? `<span title="Expected value per unit staked">EV <strong>${(read.ev * 100).toFixed(2)}%</strong></span>` : ''}
+      ${Number.isFinite(read.kelly) ? `<span title="Quarter-Kelly stake as a fraction of bankroll">Kelly <strong>${(read.kelly * 100).toFixed(2)}%</strong></span>` : ''}
+      ${Number.isFinite(read.pFair) ? `<span title="De-vigged fair win probability">Fair <strong>${(read.pFair * 100).toFixed(1)}%</strong></span>` : ''}
     </div>`;
 
-  el.tailFadeResult.innerHTML = `
-    <div class="tail-fade-verdict ${isTail ? 'is-tail' : 'is-fade'}">
-      <span class="tail-fade-badge">${esc(audit.verdict)}</span>
-      <p class="tail-fade-confidence">Confidence<br><strong>${esc(String(audit.confidence))}/10</strong></p>
+  // Coverage is shown because a 78 built on 55% of the model's weight and a
+  // 78 built on all of it are not the same claim, and only one of them
+  // should be acted on with confidence.
+  const coverage = read.verdict === NO_READ || !Number.isFinite(read.coverage) ? '' : `
+    <p class="tf-leg-coverage">Graded on ${Math.round(read.coverage * 100)}% of the model's weight${
+      read.unavailable.length ? ` — no data for ${esc(read.unavailable.slice(0, 3).join(', '))}${read.unavailable.length > 3 ? `, +${read.unavailable.length - 3} more` : ''}` : ''
+    }.</p>`;
+
+  const signals = (read.signals ?? []).map((sg) =>
+    `<li class="tf-sig is-${esc(sg.tone)}">${esc(sg.text)}</li>`).join('');
+
+  return `<div class="tf-leg-card ${tailFadeTone(read.verdict)}">
+    <div class="tf-leg-head">
+      <div class="tf-leg-name"><strong>${esc(read.leg.selection)}</strong> <span class="tf-leg-price">${price}</span></div>
+      ${badge}
     </div>
-    ${section('Key statistical backing', audit.statistical)}
-    ${section('Contextual factors', audit.contextual)}
-    ${section('Risk analysis', audit.risk, 'is-risk')}
+    ${numbers}
+    ${coverage}
+    ${signals ? `<ul class="tf-leg-signals">${signals}</ul>` : ''}
+  </div>`;
+}
+
+/** A named group of legs in the slate recommendation. */
+function renderTailFadeGroup(title, reads, note) {
+  if (!reads?.length) return '';
+  return `<div class="tail-fade-section">
+    <h3>${esc(title)} <span class="tf-count">${reads.length}</span></h3>
+    ${note ? `<p class="tf-group-note">${esc(note)}</p>` : ''}
+    <ul class="tf-group-list">${reads.map((r) =>
+      `<li><strong>${esc(r.leg.selection)}</strong> <span class="tf-leg-verdict ${tailFadeTone(r.verdict)}">${esc(r.verdict)}</span></li>`).join('')}</ul>
+  </div>`;
+}
+
+function renderTailFadeResult(audit) {
+  const tone = tailFadeTone(audit.verdict);
+
+  // NO READ carries no confidence number at all rather than a low one: a
+  // "2/10" would still read as a judgement about the bet, when the actual
+  // state is that there was nothing to judge it against.
+  const confidenceBlock = audit.verdict === NO_READ
+    ? `<p class="tail-fade-confidence">Nothing on the<br>board to check</p>`
+    : `<p class="tail-fade-confidence">Confidence<br><strong>${esc(String(audit.confidence))}/10</strong></p>`;
+
+  const legCards = `<div class="tail-fade-section">
+    <h3>${audit.reads.length === 1 ? 'The leg' : `Every leg, graded on its own`} <span class="tf-count">${audit.reads.length}</span></h3>
+    ${audit.reads.map(renderTailFadeLegCard).join('')}
+  </div>`;
+
+  // Correlation findings are the one thing that is genuinely about the
+  // ticket rather than any single leg, so they get their own block in both
+  // modes — a slate needs them to know what NOT to combine.
+  const findings = audit.findings?.length ? `<div class="tail-fade-section is-risk">
+    <h3>Correlation</h3>
+    <ul>${audit.findings.map((f) =>
+      `<li class="tf-sig is-${f.kind === 'synergy' ? 'good' : 'bad'}">${esc(f.text)}</li>`).join('')}</ul>
+  </div>` : '';
+
+  let modeBlocks = '';
+  if (audit.mode === 'parlay') {
+    const t = Number.isFinite(audit.jointProb) ? `<div class="tail-fade-section">
+      <h3>The ticket</h3>
+      <div class="tf-ticket">
+        <span>Combined <strong>${esc(formatAmerican(audit.combinedAmerican))}</strong></span>
+        <span>Lands <strong>${(audit.jointProb * 100).toFixed(1)}%</strong></span>
+        <span>EV <strong>${(audit.ev * 100).toFixed(1)}%</strong></span>
+        <span>Kelly <strong>${(audit.kelly * 100).toFixed(2)}%</strong></span>
+      </div>
+      <p class="tf-group-note">Joint probability assumes the legs are independent. Any correlation flagged above moves the real number off it — synergy upward, cannibalization downward.</p>
+    </div>` : '';
+    modeBlocks = t
+      + renderTailFadeGroup('Legs dragging the ticket down', audit.badLegs,
+        'A parlay needs every leg, so these are what make it a fade. Drop them or bet the rest straight.')
+      + renderTailFadeGroup('Legs worth keeping', audit.solidLegs,
+        'These clear the bar on their own — worth betting straight even if the ticket as built is not.')
+      + renderTailFadeGroup('Marginal legs', audit.marginalLegs,
+        'Neither a take nor a fade on their own; inside a parlay they are dead weight.');
+  } else {
+    modeBlocks = renderTailFadeGroup('Bet these straight', audit.straights,
+      'Each clears the bar this app takes its own picks at.')
+      + (audit.suggestedTicket ? `<div class="tail-fade-section">
+        <h3>Safe to parlay together</h3>
+        <p class="tf-group-note">Different games, so no correlation between them — roughly ${(audit.suggestedTicket.jointProb * 100).toFixed(1)}% to land as a ${audit.suggestedTicket.legCount}-leg ticket at ${esc(formatAmerican(audit.suggestedTicket.combinedAmerican))}.</p>
+        <ul class="tf-group-list">${audit.parlayable.slice(0, 4).map((r) =>
+          `<li><strong>${esc(r.leg.selection)}</strong></li>`).join('')}</ul>
+      </div>` : '')
+      + renderTailFadeGroup('Marginal', audit.marginal, 'Playable but not recommended — no real edge either way.')
+      + renderTailFadeGroup('Avoid', audit.avoid, 'These grade below the bar. Leave them off.');
+  }
+
+  el.tailFadeResult.innerHTML = `
+    <div class="tail-fade-verdict ${tone}">
+      <span class="tail-fade-badge">${esc(audit.verdict)}</span>
+      ${confidenceBlock}
+    </div>
+    <p class="tf-mode-note">Graded as ${audit.mode === 'parlay' ? 'one parlay ticket — it needs every leg' : 'a slate of separate bets — each leg stands alone'}.</p>
     <div class="tail-fade-section">
       <h3>Executive summary</h3>
       <p class="tail-fade-summary">${esc(audit.summary)}</p>
     </div>
-    ${audit.mocked ? `<p class="tail-fade-mock-note">
-      Sample output — the OCR and analysis services aren't wired up yet, so these
-      numbers are placeholders, not a real read on your bet.
+    ${modeBlocks}
+    ${findings}
+    ${legCards}
+    ${audit.unmatchedCount > 0 && audit.verdict !== NO_READ ? `<p class="tail-fade-mock-note">
+      ${audit.unmatchedCount} leg${audit.unmatchedCount === 1 ? '' : 's'} couldn't be matched to a market on the
+      current board and ${audit.unmatchedCount === 1 ? 'is' : 'are'} not covered by this verdict.
     </p>` : ''}`;
 }
 
@@ -7182,19 +7469,66 @@ async function handleTailFadeImage(file) {
 
   showTailFadeLoading('Reading the bet slip…');
   try {
-    const { legs } = await mockExtractLegsFromImage(file);
-    tailFade.legs = legs;
+    const extraction = await extractLegsFromImage(file);
+    tailFade.legs = extraction.legs ?? [];
+    tailFade.extractionNote = extraction.note || '';
+
+    if (!tailFade.legs.length) {
+      renderTailFadeLegs();
+      // A slip the reader genuinely could not parse is not an error state —
+      // it is an answer, and the reader's own reason for it is more useful
+      // than any message this function could invent.
+      showTailFadeError(tailFade.extractionNote || 'No bet legs were readable in that image.');
+      return;
+    }
+
+    // A parlay screenshot usually names a combined price rather than each
+    // leg's own. Treating a multi-leg slip as one ticket matches what the
+    // user is actually holding.
+    if (tailFade.legs.length > 1 && extraction.slipType !== 'SINGLE') {
+      setTailFadeShape(MODE_PARLAY);
+    }
+
     enrichTailFadeLegPrices();
     renderTailFadeLegs();
-    el.tailFadeResult.innerHTML = '';
+
+    // Drop a parlay in and it analyses — no second click. The whole point of
+    // the image route is that the user has already done their input by
+    // taking the screenshot; making them press Audit afterwards adds a step
+    // to the one path that was supposed to have none.
+    await runTailFadeAudit();
   } catch (error) {
     tailFade.legs = [];
+    tailFade.extractionNote = '';
     renderTailFadeLegs();
     showTailFadeError(error.message || 'Could not read that image.');
   } finally {
     tailFade.busy = false;
     refreshTailFadeAuditState();
   }
+}
+
+/**
+ * Run the audit over whatever legs are currently loaded.
+ *
+ * Extracted from the Audit button's own handler so the image route can chain
+ * straight into it: two callers running the same analysis through two code
+ * paths is how they drift apart.
+ */
+async function runTailFadeAudit() {
+  if (!tailFade.legs.length) return;
+  showTailFadeLoading('Auditing the bet…');
+  enrichTailFadeLegPrices();
+  renderTailFadeLegs();
+  // Synchronous and local — it reads the board and our own posted picks,
+  // both already in memory. The brief delay is only so the loading state is
+  // visible rather than flashing; there is no service being called.
+  await new Promise((r) => setTimeout(r, 250));
+  renderTailFadeResult(auditLegs(tailFade.legs, {
+    postedPicks,
+    candidates: state.candidates ?? [],
+    mode: tailFade.shape,
+  }));
 }
 
 function setTailFadeOpen(open) {
@@ -7214,6 +7548,8 @@ el.tailFadeClose?.addEventListener('click', () => setTailFadeOpen(false));
 el.tailFadePanel?.addEventListener('click', (event) => {
   const modeBtn = event.target.closest('[data-tf-mode]');
   if (modeBtn) setTailFadeMode(modeBtn.dataset.tfMode);
+  const shapeBtn = event.target.closest('[data-tf-shape]');
+  if (shapeBtn) setTailFadeShape(shapeBtn.dataset.tfShape);
 });
 
 el.tailFadeText?.addEventListener('input', () => {
@@ -7273,11 +7609,8 @@ el.tailFadeAudit?.addEventListener('click', async () => {
   if (!tailFade.legs.length || tailFade.busy) return;
   tailFade.busy = true;
   refreshTailFadeAuditState();
-  showTailFadeLoading('Auditing the bet…');
   try {
-    enrichTailFadeLegPrices();
-    renderTailFadeLegs();
-    renderTailFadeResult(await mockAuditLegs(tailFade.legs));
+    await runTailFadeAudit();
   } catch (error) {
     showTailFadeError(error.message || 'Could not audit that bet.');
   } finally {

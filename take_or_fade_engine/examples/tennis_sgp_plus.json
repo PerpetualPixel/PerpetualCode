@@ -1,0 +1,104 @@
+{
+  "ticket_id": "RUBLEV-FRITZ-SGP-PLUS",
+  "slip_type": "SGP_PLUS",
+  "offered_odds_american": -150,
+  "legs": [
+    {
+      "event_id": "atp-rublev-carreno",
+      "sport": "TENNIS",
+      "matchup": "Rublev v Carreno Busta",
+      "market_type": "MONEYLINE",
+      "selection": "Rublev ML",
+      "odds_american": -225,
+      "sharp_fair_prob": 0.76,
+      "metrics": {
+        "subject": "Rublev",
+        "dominance_ratio": 1.24,
+        "cpi_alignment": 0.55,
+        "rally_tolerance": 0.56,
+        "surface_win_pct": 0.74,
+        "h2h_win_pct": 1.0,
+        "prior_round_hours": 1.6,
+        "rest_days": 2,
+        "game_script_stability": 0.8
+      }
+    },
+    {
+      "event_id": "atp-rublev-carreno",
+      "sport": "TENNIS",
+      "matchup": "Rublev v Carreno Busta",
+      "market_type": "SET_WIN",
+      "selection": "Rublev to win at least one set",
+      "odds_american": -1600,
+      "sharp_fair_prob": 0.955,
+      "metrics": {
+        "subject": "Rublev",
+        "dominance_ratio": 1.24,
+        "surface_win_pct": 0.74,
+        "prior_round_hours": 1.6
+      }
+    },
+    {
+      "event_id": "atp-rublev-carreno",
+      "sport": "TENNIS",
+      "matchup": "Rublev v Carreno Busta",
+      "market_type": "PROP_MILESTONE",
+      "selection": "Rublev 5+ Aces",
+      "odds_american": -140,
+      "sharp_fair_prob": 0.52,
+      "metrics": {
+        "subject": "Rublev",
+        "volume_dependent": true,
+        "game_dominance_expected": true,
+        "milestone_line": 5,
+        "recent_samples": [4, 3, 6, 2, 5, 3, 4, 2, 7, 3],
+        "dominance_ratio": 1.24,
+        "surface_win_pct": 0.74,
+        "prior_round_hours": 1.6,
+        "elevation_market": "SET_SPREAD",
+        "elevation_label": "-1.5 sets",
+        "elevation_odds_american": -130,
+        "elevation_fair_prob": 0.62
+      }
+    },
+    {
+      "event_id": "atp-fritz-opponent",
+      "sport": "TENNIS",
+      "matchup": "Fritz v Opponent",
+      "market_type": "PROP_MILESTONE",
+      "selection": "Fritz 5+ Aces",
+      "odds_american": -190,
+      "sharp_fair_prob": 0.84,
+      "metrics": {
+        "subject": "Fritz",
+        "milestone_line": 5,
+        "recent_samples": [11, 9, 14, 7, 12, 8, 15, 6, 10, 13],
+        "dominance_ratio": 1.18,
+        "cpi_alignment": 0.8,
+        "surface_win_pct": 0.71,
+        "h2h_win_pct": 1.0,
+        "prior_round_hours": 1.4,
+        "rest_days": 2,
+        "game_script_stability": 0.75
+      }
+    },
+    {
+      "event_id": "atp-fritz-opponent",
+      "sport": "TENNIS",
+      "matchup": "Fritz v Opponent",
+      "market_type": "SET_WIN",
+      "selection": "Fritz to Win a Set",
+      "odds_american": -260,
+      "sharp_fair_prob": 0.88,
+      "metrics": {
+        "subject": "Fritz",
+        "dominance_ratio": 1.18,
+        "cpi_alignment": 0.8,
+        "surface_win_pct": 0.71,
+        "prior_round_hours": 1.4,
+        "rest_days": 2,
+        "game_script_stability": 0.75
+      }
+    }
+  ]
+}
