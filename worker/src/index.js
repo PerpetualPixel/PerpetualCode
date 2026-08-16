@@ -49,6 +49,7 @@ import { runMlbPropsScan, runMlbPropsGrading, getAllMlbPropsTracked } from './ml
 import { runNflPropsScan, runNflPropsGrading, getAllNflPropsTracked } from './nfl-props.js';
 import { runWnbaPropsScan, runWnbaPropsGrading, getAllWnbaPropsTracked } from './wnba-props.js';
 import { runPropPlayDaily, runPropPlayGrading, getAllPropPlays } from './prop-play.js';
+import { extractSlipFromImage } from './slip-vision.js';
 import { runNhlPropsScan, runNhlPropsGrading, getAllNhlPropsTracked } from './nhl-props.js';
 import { runPotdDaily, runPotdClvSnapshot, runPotdGrading, backfillPotdAnalysis, getPotd, getPotdLeaning, getPotdHistory, retractPotd, regradePotdTennisVoids } from './potd.js';
 import { runLadderDaily, runLadderGrading, getLadder, getLadderHistory } from './ladder.js';
@@ -933,9 +934,16 @@ export default {
       '/admin/audit-mma-totals',
       '/admin/regrade-mma-totals',
     ]);
-    if (request.method === 'POST' && (AUTH_LIMITED_PATHS.has(pathname) || pathname === '/api/report-bug' || OWNER_LIMITED_PATHS.has(pathname))) {
+    // Bet-slip extraction spends real model credits on every call, and the
+    // request body is an image, so an unthrottled endpoint is both a cost
+    // and a bandwidth exposure. Its own key prefix, same as the others, so a
+    // burst here can never eat the auth or bug-report budgets.
+    const VISION_LIMITED_PATHS = new Set(['/tail-fade/extract']);
+    if (request.method === 'POST' && (AUTH_LIMITED_PATHS.has(pathname) || pathname === '/api/report-bug' || OWNER_LIMITED_PATHS.has(pathname) || VISION_LIMITED_PATHS.has(pathname))) {
       const ip = request.headers.get('CF-Connecting-IP') ?? 'unknown';
-      const prefix = pathname === '/api/report-bug' ? 'bug' : OWNER_LIMITED_PATHS.has(pathname) ? 'owner' : 'auth';
+      const prefix = pathname === '/api/report-bug' ? 'bug'
+        : VISION_LIMITED_PATHS.has(pathname) ? 'vision'
+        : OWNER_LIMITED_PATHS.has(pathname) ? 'owner' : 'auth';
       if (await rateLimited(`${prefix}:${ip}`)) {
         return json({ error: 'Too many attempts — try again in a minute.' }, { status: 429, headers: cors });
       }
@@ -1252,6 +1260,37 @@ export default {
         return json({ picks }, { headers: { ...cors, 'Cache-Control': 'public, max-age=300' } });
       } catch (error) {
         return json({ picks: [], reason: String(error).slice(0, 120) }, { headers: cors });
+      }
+    }
+
+    // Bet-slip image extraction for Tail or Fade (worker/src/slip-vision.js).
+    // POST rather than GET because the payload is an image, and server-side
+    // because the API key cannot go to the browser and the alternative —
+    // shipping a WASM OCR bundle to every visitor for a feature most never
+    // open — is a far worse trade.
+    if (pathname === '/tail-fade/extract') {
+      if (request.method !== 'POST') {
+        return json({ error: 'Method not allowed' }, { status: 405, headers: cors });
+      }
+      try {
+        const body = await request.json();
+        // Accepts either a full data: URL or a bare base64 string plus a
+        // mediaType — the browser produces the former naturally from
+        // FileReader, and hand-written callers tend to send the latter.
+        let image = String(body?.image ?? '');
+        let mediaType = String(body?.mediaType ?? '');
+        const dataUrl = image.match(/^data:([^;,]+);base64,(.*)$/s);
+        if (dataUrl) {
+          mediaType = mediaType || dataUrl[1];
+          image = dataUrl[2];
+        }
+        const result = await extractSlipFromImage(image, mediaType, env);
+        return json(result, { headers: cors });
+      } catch (error) {
+        // 422 rather than 500: every throw from extractSlipFromImage is a
+        // problem with what was sent (wrong type, too large, unconfigured),
+        // and the message is written to be shown to the user as-is.
+        return json({ error: error.message, legs: [] }, { status: 422, headers: cors });
       }
     }
 

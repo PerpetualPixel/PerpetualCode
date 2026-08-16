@@ -6989,15 +6989,16 @@ el.updateBannerDismiss.addEventListener('click', () => {
  * on the Full Slate: paste the text, drop a screenshot of a sportsbook
  * slip, or pull a leg straight off the board.
  *
- * The ANALYSIS is real (docs/tail-fade.js) and reads this app's own engine
- * and its own posted picks — see that file's header for why it had to be,
- * and for the specific way the placeholder version it replaced was wrong.
+ * Every path is real now. The ANALYSIS reads this app's own engine and its
+ * own posted picks (docs/tail-fade.js); the IMAGE route reads the actual
+ * uploaded screenshot through the worker's vision endpoint
+ * (worker/src/slip-vision.js), having previously returned three fixed sample
+ * legs regardless of what was dropped.
  *
- * The OCR/vision extraction is still mocked (mockExtractLegsFromImage), and
- * that mock is now clearly marked in the UI as sample legs rather than a
- * read of the uploaded image. The two are separable on purpose: a bet typed
- * or pulled off the slate goes through a fully real path today, and only
- * the image route waits on a service that doesn't exist yet.
+ * The image route also chains straight into the audit rather than stopping
+ * at a populated leg list. Dropping a slip is already the user's whole
+ * input; making them press Audit afterwards adds a step to the one path
+ * that was meant to have none.
  */
 
 /** Which input mode the drawer is on, and whatever legs are currently loaded. */
@@ -7010,6 +7011,9 @@ const tailFade = {
   shape: MODE_SLATE,
   legs: [],
   imageName: null,
+  // The reader's own explanation when a slip could not be parsed — shown
+  // instead of a generic failure, because it says what was actually wrong.
+  extractionNote: '',
   busy: false,
 };
 
@@ -7042,24 +7046,57 @@ function parseLegsFromText(text) {
   return String(text).split('\n').map(parseLegFromLine).filter(Boolean);
 }
 
+/** A File into the bare base64 the worker's extractor expects. */
+function fileToBase64(file) {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onerror = () => reject(new Error('Could not read that file.'));
+    reader.onload = () => {
+      const result = String(reader.result ?? '');
+      const comma = result.indexOf(',');
+      resolve(comma >= 0 ? result.slice(comma + 1) : result);
+    };
+    reader.readAsDataURL(file);
+  });
+}
+
 /**
- * MOCK — stands in for the OCR/vision layer that will read a real bet slip.
- * Shaped exactly like the real extractor's contract ({ legs: [...] }) so
- * swapping it out touches nothing else. The delay is real so the loading
- * state is actually exercised rather than flashing past in tests.
+ * Read a real bet slip screenshot, via the worker's vision endpoint
+ * (worker/src/slip-vision.js).
+ *
+ * Server-side because the API key cannot go to the browser, and because the
+ * alternative — shipping a multi-megabyte WASM OCR bundle to every visitor
+ * for a feature most will never open — is a far worse trade.
+ *
+ * Throws with a message written to be shown to the user as-is. A slip the
+ * reader genuinely could not parse comes back as zero legs plus a `note`
+ * rather than an exception, because "I could not read this" is an answer the
+ * UI has to render, not an error it has to interpret.
  */
-async function mockExtractLegsFromImage(file) {
-  await new Promise((r) => setTimeout(r, 900));
+async function extractLegsFromImage(file) {
   if (!file || !String(file.type ?? '').startsWith('image/')) {
     throw new Error('That file does not look like an image.');
   }
-  return {
-    legs: [
-      { selection: "A'ja Wilson over 24.5 points", american: -118, source: 'image' },
-      { selection: 'Kelsey Mitchell over 18.5 points', american: -110, source: 'image' },
-      { selection: 'Aces / Fever over 165.5', american: null, source: 'image' },
-    ],
-  };
+  if (!CONFIG.WORKER_URL) {
+    throw new Error('Bet slip reading needs the odds worker. Set WORKER_URL in config.js.');
+  }
+
+  const image = await fileToBase64(file);
+  const response = await fetch(new URL('/tail-fade/extract', CONFIG.WORKER_URL), {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', Accept: 'application/json' },
+    body: JSON.stringify({ image, mediaType: file.type }),
+  });
+
+  let payload = null;
+  try { payload = await response.json(); } catch { /* handled below */ }
+  if (!response.ok) {
+    throw new Error(payload?.error || `The slip reader returned ${response.status}.`);
+  }
+  if (!payload) {
+    throw new Error('The slip reader returned something unreadable.');
+  }
+  return payload;
 }
 
 /**
@@ -7068,10 +7105,10 @@ async function mockExtractLegsFromImage(file) {
  *
  * This registry is the mechanism that makes "the app says take it, the tool
  * says fade it" impossible rather than merely unlikely: auditLegs matches a
- * leg against these first, and a leg that IS one of our posted picks
- * returns TAIL by construction. Each surface registers as it loads;
- * re-registering the same surface replaces its entry rather than stacking,
- * so a re-fetch can't leave a stale pick behind to be matched against.
+ * leg against these first, and a leg that IS one of our posted picks cannot
+ * grade below TAKE. Each surface registers as it loads; re-registering the
+ * same surface replaces its entry rather than stacking, so a re-fetch can't
+ * leave a stale pick behind to be matched against.
  */
 const postedPicks = [];
 
@@ -7122,18 +7159,19 @@ function renderTailFadeLegs() {
     return;
   }
   el.tailFadeLegs.hidden = false;
-  // The image route is the one part of this flow still standing on a mock,
-  // and it is the part where a user would least expect it — they uploaded a
-  // real slip, so silence here would read as "these are your legs." Said at
-  // the legs list rather than only at the verdict, because this is the
-  // moment the wrong legs would be believed.
-  const mockedLegs = tailFade.legs.some((l) => l.source === 'image');
+  // A slip is a photograph of numbers that decide money, so a leg the reader
+  // was unsure about has to say so at the LEG LIST — this is the moment a
+  // misread would be believed, and it is also the moment it is cheapest to
+  // correct by hand. Only genuinely low-confidence reads are flagged;
+  // warning on every image would train the user to ignore the warning.
+  const shaky = tailFade.legs.filter((l) => l.source === 'image' && Number(l.confidence) < 0.7);
   el.tailFadeLegs.innerHTML = `
     <p class="tail-fade-legs-title">${tailFade.legs.length} leg${tailFade.legs.length === 1 ? '' : 's'} loaded</p>
-    ${mockedLegs ? `<p class="tail-fade-mock-note">
-      Bet slip reading isn't wired up yet — these are sample legs, not your screenshot.
-      Type or paste the bet, or pull it off the slate, for a real read.
+    ${shaky.length ? `<p class="tail-fade-mock-note">
+      ${shaky.length === 1 ? 'One leg was' : `${shaky.length} legs were`} hard to read off that
+      image — check ${shaky.length === 1 ? 'it' : 'them'} against your slip before trusting the verdict.
     </p>` : ''}
+    ${tailFade.extractionNote ? `<p class="tail-fade-mock-note">${esc(tailFade.extractionNote)}</p>` : ''}
     ${tailFade.legs.map((leg) => `
       <div class="tail-fade-leg">
         <span>${esc(leg.selection)}</span>
@@ -7394,19 +7432,66 @@ async function handleTailFadeImage(file) {
 
   showTailFadeLoading('Reading the bet slip…');
   try {
-    const { legs } = await mockExtractLegsFromImage(file);
-    tailFade.legs = legs;
+    const extraction = await extractLegsFromImage(file);
+    tailFade.legs = extraction.legs ?? [];
+    tailFade.extractionNote = extraction.note || '';
+
+    if (!tailFade.legs.length) {
+      renderTailFadeLegs();
+      // A slip the reader genuinely could not parse is not an error state —
+      // it is an answer, and the reader's own reason for it is more useful
+      // than any message this function could invent.
+      showTailFadeError(tailFade.extractionNote || 'No bet legs were readable in that image.');
+      return;
+    }
+
+    // A parlay screenshot usually names a combined price rather than each
+    // leg's own. Treating a multi-leg slip as one ticket matches what the
+    // user is actually holding.
+    if (tailFade.legs.length > 1 && extraction.slipType !== 'SINGLE') {
+      setTailFadeShape(MODE_PARLAY);
+    }
+
     enrichTailFadeLegPrices();
     renderTailFadeLegs();
-    el.tailFadeResult.innerHTML = '';
+
+    // Drop a parlay in and it analyses — no second click. The whole point of
+    // the image route is that the user has already done their input by
+    // taking the screenshot; making them press Audit afterwards adds a step
+    // to the one path that was supposed to have none.
+    await runTailFadeAudit();
   } catch (error) {
     tailFade.legs = [];
+    tailFade.extractionNote = '';
     renderTailFadeLegs();
     showTailFadeError(error.message || 'Could not read that image.');
   } finally {
     tailFade.busy = false;
     refreshTailFadeAuditState();
   }
+}
+
+/**
+ * Run the audit over whatever legs are currently loaded.
+ *
+ * Extracted from the Audit button's own handler so the image route can chain
+ * straight into it: two callers running the same analysis through two code
+ * paths is how they drift apart.
+ */
+async function runTailFadeAudit() {
+  if (!tailFade.legs.length) return;
+  showTailFadeLoading('Auditing the bet…');
+  enrichTailFadeLegPrices();
+  renderTailFadeLegs();
+  // Synchronous and local — it reads the board and our own posted picks,
+  // both already in memory. The brief delay is only so the loading state is
+  // visible rather than flashing; there is no service being called.
+  await new Promise((r) => setTimeout(r, 250));
+  renderTailFadeResult(auditLegs(tailFade.legs, {
+    postedPicks,
+    candidates: state.candidates ?? [],
+    mode: tailFade.shape,
+  }));
 }
 
 function setTailFadeOpen(open) {
@@ -7487,19 +7572,8 @@ el.tailFadeAudit?.addEventListener('click', async () => {
   if (!tailFade.legs.length || tailFade.busy) return;
   tailFade.busy = true;
   refreshTailFadeAuditState();
-  showTailFadeLoading('Auditing the bet…');
   try {
-    enrichTailFadeLegPrices();
-    renderTailFadeLegs();
-    // Synchronous and local — it reads the board and our own posted picks,
-    // both already in memory. The brief delay is only so the loading state
-    // is visible rather than flashing; there is no service being called.
-    await new Promise((r) => setTimeout(r, 250));
-    renderTailFadeResult(auditLegs(tailFade.legs, {
-      postedPicks,
-      candidates: state.candidates ?? [],
-      mode: tailFade.shape,
-    }));
+    await runTailFadeAudit();
   } catch (error) {
     showTailFadeError(error.message || 'Could not audit that bet.');
   } finally {

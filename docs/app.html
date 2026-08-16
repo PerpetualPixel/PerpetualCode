@@ -17,7 +17,7 @@
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Syne:wght@600;700;800&family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
-<link rel="stylesheet" href="styles.css?v=1.150">
+<link rel="stylesheet" href="styles.css?v=1.152">
 </head>
 <body>
 
@@ -529,10 +529,10 @@
       You get a straight <strong>TAIL</strong> or <strong>FADE</strong> call with the numbers behind it.
     </p>
     <p class="tail-fade-beta-note">
-      <strong>Beta — still being worked on.</strong> The read-back of your bet and the
-      analysis behind the call are both still being built out, so treat what comes back
-      as a second opinion in progress, not a finished one. Everything else on this app
-      is unaffected.
+      <strong>Beta — still being worked on.</strong> Screenshots are read by a model, so
+      check the legs it pulls out against your slip before trusting the call — anything
+      it wasn't sure of is flagged. Treat the verdict as a second opinion in progress,
+      not a finished one. Everything else on this app is unaffected.
     </p>
 
     <!-- How a multi-leg entry is meant. Separate from the input-method tabs
@@ -573,6 +573,7 @@
         <span class="tail-fade-drop-icon" aria-hidden="true">⬆︎</span>
         <p class="tail-fade-drop-title">Drop a bet slip screenshot</p>
         <p class="tail-fade-drop-sub">or click to choose · or press <kbd>Ctrl</kbd>+<kbd>V</kbd> to paste</p>
+        <p class="tail-fade-drop-sub">Your legs are read off the image and analysed automatically.</p>
         <input id="tailFadeFile" type="file" accept="image/*" hidden>
       </div>
       <div id="tailFadePreview" class="tail-fade-preview" hidden></div>
@@ -923,6 +924,6 @@
   </div>
 </aside>
 
-<script type="module" src="app.js?v=1.150"></script>
+<script type="module" src="app.js?v=1.152"></script>
 </body>
 </html>
