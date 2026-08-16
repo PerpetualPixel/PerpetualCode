@@ -25,7 +25,7 @@ import { gradePick } from '../../docs/learning.js';
 import { isMma, isTennis } from '../../docs/insights.js';
 import { fetchSport, fetchScores } from './odds.js';
 import { pickRecordFrom, fetchFullSlateEvents, isPickWindowOpen } from './tracking.js';
-import { fetchMmaResults, gradeMmaPickWithFallback } from './ufc-events.js';
+import { fetchMmaResults, gradeMmaPickWithFallback, findMmaFight, normalizeName } from './ufc-events.js';
 import { isSettleableTennisMarket, hasSecondarySettlementSource } from '../../docs/tennis-tiers.js';
 import {
   fetchTennisResults,
@@ -678,6 +678,137 @@ export async function runFullSlateGrading(
   // picks as still pending, because the writes above are waitUntil'd and KV
   // is eventually consistent on top of that.
   return { graded, remaining: pending.length - graded, rescheduled, settledPickIds };
+}
+
+/**
+ * One-time repair for a specific gap: an MMA pick that graded won/lost
+ * BEFORE the finish-method fix (worker/src/ufc-events.js's mmaFinishMethod,
+ * reading the real "Unofficial Winner X" details[] entry instead of a
+ * status.result field that never existed) shipped has its result.detail
+ * frozen with method:null forever — the grading pass writes detail once, at
+ * grading time, and never revisits an already-settled pick. This patches
+ * ONLY that display detail on already-correct records; it never touches
+ * status, payout, or voidReason, so a pick that graded correctly stays
+ * exactly as correct after this runs. Safe to call repeatedly — a pick
+ * that already carries a method is left untouched.
+ *
+ * Deliberately does not attempt to change any pick's win/loss/void status:
+ * this is a cosmetic backfill for picks that were already graded right,
+ * not a re-grading pass. See manualMmaResult below for the separate,
+ * much more careful path that actually changes an outcome.
+ */
+export async function backfillMmaFinishDetail(
+  env,
+  ctx,
+  now = Date.now(),
+  { days = 14, fetchMmaResultsFn = () => fetchMmaResults(ctx, now) } = {},
+) {
+  const dateKeys = Array.from({ length: days }, (_, i) => etDate(now - i * 86400000));
+  const loaded = await Promise.all(dateKeys.map((dk) => loadFullSlateTracked(env, dk)));
+  const picks = loaded.flatMap((d) => d.picks);
+  const candidates = picks.filter((p) => (
+    isMma(p.sportKey) && p.status !== 'pending' && !p.result?.detail?.method
+  ));
+  if (!candidates.length) return { checked: 0, patched: [], noMatch: [] };
+
+  const results = await fetchMmaResultsFn();
+  const patched = [];
+  const noMatch = [];
+
+  for (const pick of candidates) {
+    const fight = findMmaFight(pick.home, pick.away, results);
+    if (!fight?.method) {
+      noMatch.push({ pickId: pick.pickId, home: pick.home, away: pick.away });
+      continue;
+    }
+    pick.result = {
+      ...pick.result,
+      detail: {
+        ...pick.result.detail,
+        method: fight.method,
+        winner: pick.result.detail?.winner
+          ?? (fight.aWon ? fight.displayA : fight.bWon ? fight.displayB : null),
+      },
+    };
+    ctx.waitUntil(
+      env.POTD_KV.put(`slate:${pick.dateKey}:pick:${pick.pickId}`, JSON.stringify(pick), {
+        expirationTtl: KV_TTL_SECONDS,
+      }),
+    );
+    patched.push({ pickId: pick.pickId, home: pick.home, away: pick.away, method: fight.method });
+  }
+
+  return { checked: candidates.length, patched, noMatch };
+}
+
+/**
+ * Manually settles ONE pending MMA pick from a result that no automated
+ * source has — the same structural ESPN gap documented at
+ * worker/src/ufc-events.js's getUfcEventDetails (an untelevised/early-
+ * prelim bout, or a fight from a promotion outside ESPN's UFC/PFL/
+ * discovered-league coverage entirely, e.g. a regional promotion bundled
+ * into the Odds API's own blended mma_mixed_martial_arts key with no
+ * promotion tag). Confirmed live: a fight on this exact gap tonight
+ * (Rasul Magomedov, ACA 206) was never in Odds API's own /scores
+ * (foundById: false) NOR in ESPN's /mma-results — both checked directly
+ * before this existed, not assumed.
+ *
+ * Deliberately narrow: only ever touches a pick still `pending`. A pick
+ * that already graded (right or wrong) needs a human decision to correct,
+ * not a route that can silently overwrite an existing outcome — that is
+ * why this refuses rather than reinterpreting an already-settled record.
+ *
+ * Reuses gradeMmaPickWithFallback with a synthetic single-fight result
+ * array shaped exactly like fetchMmaResults' own output, so a manually
+ * entered result is graded through the identical win/loss/payout math
+ * every automated MMA grade already goes through — no parallel logic to
+ * keep in sync.
+ */
+export async function manualMmaResult(
+  env,
+  { dateKey, pickId, home, away, winnerName, method = null, round = null },
+) {
+  const targetDateKey = dateKey ?? etDate(Date.now());
+  const { picks } = await loadFullSlateTracked(env, targetDateKey);
+  const pick = pickId
+    ? picks.find((p) => p.pickId === pickId)
+    : picks.find((p) => p.home === home && p.away === away);
+  if (!pick) return { error: 'pick not found', dateKey: targetDateKey, pickId, home, away };
+  if (pick.status !== 'pending') {
+    return { error: `pick is already ${pick.status}, refusing to overwrite`, pickId: pick.pickId };
+  }
+
+  const winnerIsHome = normalizeName(winnerName) === normalizeName(pick.home);
+  const winnerIsAway = normalizeName(winnerName) === normalizeName(pick.away);
+  if (!winnerIsHome && !winnerIsAway) {
+    return { error: `winnerName "${winnerName}" matches neither ${pick.home} nor ${pick.away}`, pickId: pick.pickId };
+  }
+
+  const syntheticResult = [{
+    a: normalizeName(pick.home),
+    b: normalizeName(pick.away),
+    aWon: winnerIsHome,
+    bWon: winnerIsAway,
+    displayA: pick.home,
+    displayB: pick.away,
+    method,
+    round,
+  }];
+
+  const outcome = gradeMmaPickWithFallback(pick, null, syntheticResult);
+  if (!outcome) return { error: 'grading produced no outcome — this should not happen given a matched winner', pickId: pick.pickId };
+
+  pick.status = outcome.void ? 'void' : outcome.won ? 'won' : 'lost';
+  pick.result = {
+    payout: outcome.payout,
+    roiPercent: outcome.void ? 0 : (outcome.payout / pick.suggested_stake) * 100,
+    voidReason: outcome.void ? outcome.reason : undefined,
+    detail: outcome.detail ?? undefined,
+  };
+  await env.POTD_KV.put(`slate:${targetDateKey}:pick:${pick.pickId}`, JSON.stringify(pick), {
+    expirationTtl: KV_TTL_SECONDS,
+  });
+  return { pick };
 }
 
 /** Today's tracked Full Slate picks (or a specific date's). */
