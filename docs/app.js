@@ -7090,6 +7090,7 @@ async function extractLegsFromImage(file) {
 
   let payload = null;
   try { payload = await response.json(); } catch { /* handled below */ }
+  if (payload?.quota) renderTailFadeQuota(payload.quota);
   if (!response.ok) {
     throw new Error(payload?.error || `The slip reader returned ${response.status}.`);
   }
@@ -7097,6 +7098,41 @@ async function extractLegsFromImage(file) {
     throw new Error('The slip reader returned something unreadable.');
   }
   return payload;
+}
+
+/**
+ * How many slip reads are left today.
+ *
+ * Shown on the drop zone BEFORE an upload rather than only in the refusal,
+ * because a user who has budgeted their last read for a bet that matters
+ * should not discover the ceiling by hitting it. Silent for the owner, who
+ * has none, and silent when it can't be determined — an unknown allowance
+ * displayed as a number would be a worse lie than no number.
+ */
+function renderTailFadeQuota(quota) {
+  const el_ = document.getElementById('tailFadeQuota');
+  if (!el_) return;
+  if (!quota || quota.exempt || !Number.isFinite(Number(quota.limit))) {
+    el_.hidden = true;
+    return;
+  }
+  const remaining = Math.max(0, Number(quota.remaining ?? 0));
+  el_.hidden = false;
+  el_.textContent = remaining > 0
+    ? `${remaining} of ${quota.limit} slip reads left today`
+    : `No slip reads left today — typing the bet in still works, with no limit.`;
+  el_.classList.toggle('is-spent', remaining === 0);
+}
+
+/** Ask what's left, without spending one. Best-effort: never blocks the drawer. */
+async function loadTailFadeQuota() {
+  if (!CONFIG.WORKER_URL) return;
+  try {
+    const res = await fetch(new URL('/tail-fade/quota', CONFIG.WORKER_URL), {
+      headers: { Accept: 'application/json' },
+    });
+    if (res.ok) renderTailFadeQuota(await res.json());
+  } catch { /* the allowance is a courtesy, never a blocker */ }
 }
 
 /**
@@ -7221,6 +7257,7 @@ function setTailFadeMode(mode) {
     pane.hidden = pane.dataset.tfPane !== mode;
   });
   if (mode === 'slate') populateTailFadeSlateOptions();
+  if (mode === 'image') loadTailFadeQuota();
 }
 
 /**

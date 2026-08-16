@@ -5667,6 +5667,16 @@ input[type="range"]:focus-visible {
 }
 .tf-ticket strong { color: var(--text); font-size: 0.82rem; }
 
+/* Slip-read allowance. Muted by default — it is information, not a warning
+   — and only turns amber once it is actually spent. */
+.tail-fade-quota {
+  margin: 8px 0 0;
+  color: var(--muted);
+  font-size: 0.72rem;
+  text-align: center;
+}
+.tail-fade-quota.is-spent { color: var(--warn); }
+
 .tail-fade-beta {
   display: inline-block;
   margin-left: 6px;

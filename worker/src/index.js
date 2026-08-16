@@ -50,6 +50,7 @@ import { runNflPropsScan, runNflPropsGrading, getAllNflPropsTracked } from './nf
 import { runWnbaPropsScan, runWnbaPropsGrading, getAllWnbaPropsTracked } from './wnba-props.js';
 import { runPropPlayDaily, runPropPlayGrading, getAllPropPlays } from './prop-play.js';
 import { extractSlipFromImage } from './slip-vision.js';
+import { consumeQuota, getQuotaUsage } from './tail-fade-quota.js';
 import { runNhlPropsScan, runNhlPropsGrading, getAllNhlPropsTracked } from './nhl-props.js';
 import { runPotdDaily, runPotdClvSnapshot, runPotdGrading, backfillPotdAnalysis, getPotd, getPotdLeaning, getPotdHistory, retractPotd, regradePotdTennisVoids } from './potd.js';
 import { runLadderDaily, runLadderGrading, getLadder, getLadderHistory } from './ladder.js';
@@ -1268,10 +1269,36 @@ export default {
     // because the API key cannot go to the browser and the alternative —
     // shipping a WASM OCR bundle to every visitor for a feature most never
     // open — is a far worse trade.
+    // Read-only: what's left today. Lets the drawer show the allowance
+    // before a user commits to an upload, rather than after it is refused.
+    if (pathname === '/tail-fade/quota') {
+      if (request.method !== 'GET') {
+        return json({ error: 'Method not allowed' }, { status: 405, headers: cors });
+      }
+      try {
+        return json(await getQuotaUsage(request, env, { authenticate: authenticateRequest }), { headers: cors });
+      } catch (error) {
+        return json({ error: error.message }, { status: 500, headers: cors });
+      }
+    }
+
     if (pathname === '/tail-fade/extract') {
       if (request.method !== 'POST') {
         return json({ error: 'Method not allowed' }, { status: 405, headers: cors });
       }
+      // Daily per-user ceiling on top of the per-minute burst limiter above
+      // — those answer different questions (a loop vs. a costly day), and
+      // the owner is exempt so a debugging session can't be stopped by the
+      // feature it is debugging. Consumed BEFORE the paid call: a request
+      // that fails upstream has already cost the spend.
+      const quota = await consumeQuota(request, env, { authenticate: authenticateRequest });
+      if (!quota.allowed) {
+        return json(
+          { error: quota.message, legs: [], quota: { used: quota.used, limit: quota.limit, remaining: 0 } },
+          { status: 429, headers: cors },
+        );
+      }
+
       try {
         const body = await request.json();
         // Accepts either a full data: URL or a bare base64 string plus a
@@ -1285,7 +1312,13 @@ export default {
           image = dataUrl[2];
         }
         const result = await extractSlipFromImage(image, mediaType, env);
-        return json(result, { headers: cors });
+        // Echoed so the drawer can show what's left without a second call.
+        return json({
+          ...result,
+          quota: quota.exempt
+            ? { exempt: true }
+            : { used: quota.used, limit: quota.limit, remaining: quota.remaining },
+        }, { headers: cors });
       } catch (error) {
         // 422 rather than 500: every throw from extractSlipFromImage is a
         // problem with what was sent (wrong type, too large, unconfigured),
