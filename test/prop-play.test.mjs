@@ -9,6 +9,7 @@ import assert from 'node:assert/strict';
 import {
   parseGamelogValues,
   hitProfile,
+  playConsensusProb,
   extractAltCandidates,
   legWriteup,
   gradePropLeg,
@@ -41,6 +42,45 @@ test('parseGamelogValues returns the stat most-recent-first by game date', () =>
 });
 
 /* ── hit profiles ───────────────────────────────────────────────── */
+
+/* --- playConsensusProb: what makes a prop play measurable at all --- */
+
+test('playConsensusProb: a straight play claims the even blend of its season and L10 rates', () => {
+  // Until this field existed, getAllPropPlays emitted no consensusProb, so
+  // algo-health's segmentStats dropped every prop play from its sample and
+  // nothing in this app could judge the surface at all.
+  assert.equal(playConsensusProb([{ profile: { season: 0.8, l10: 0.9 } }]), 0.85);
+});
+
+test('playConsensusProb: a 2-leg parlay claims the product, not the average', () => {
+  const p = playConsensusProb([
+    { profile: { season: 0.8, l10: 0.8 } },
+    { profile: { season: 0.5, l10: 0.5 } },
+  ]);
+  assert.equal(p, 0.4, 'both legs have to land, so the claim must be the joint probability');
+});
+
+test('playConsensusProb: a moneyline leg falls back to its implied probability', () => {
+  assert.equal(playConsensusProb([{ implied: 0.76 }]), 0.76);
+});
+
+test('playConsensusProb: a leg with neither a profile nor an implied price yields null', () => {
+  // Null keeps the play out of the sample, which is the honest handling —
+  // entering it with a guessed probability would corrupt the z-test that
+  // the whole circuit breaker rests on.
+  assert.equal(playConsensusProb([{ profile: { season: 0.8, l10: 0.8 } }, {}]), null);
+  assert.equal(playConsensusProb([]), null);
+});
+
+test('playConsensusProb: is NOT the conviction score — no streak kicker leaks in', () => {
+  // convictionOf() blends in a streak term, which ranks legs sensibly but
+  // is not a probability; using it here would have the z-test compare wins
+  // against a number that never claimed to be one.
+  const noStreak = playConsensusProb([{ profile: { season: 0.8, l10: 0.8, l5: 0.8, streak: 0 } }]);
+  const longStreak = playConsensusProb([{ profile: { season: 0.8, l10: 0.8, l5: 0.8, streak: 15 } }]);
+  assert.equal(noStreak, longStreak);
+  assert.equal(noStreak, 0.8);
+});
 
 test('hitProfile measures season/L10/L5 rates, the streak, and averages', () => {
   // 12 games, most recent first: clears 10+ in 10 of 12, first 4 straight.

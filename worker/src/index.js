@@ -815,14 +815,25 @@ export default {
           getPicks: async () => {
             const tagged = (picks, source) => (picks ?? []).map((p) => ({ ...p, source }));
             const opts = { now, days: HEALTH_WINDOW_DAYS };
-            const [top5, slate, mlbProps, nflProps, wnbaProps, nhlProps] = await Promise.all([
-              getAllTrackedPicks(env, opts),
-              getAllFullSlateTracked(env, opts),
-              getAllMlbPropsTracked(env, opts),
-              getAllNflPropsTracked(env, opts),
-              getAllWnbaPropsTracked(env, opts),
-              getAllNhlPropsTracked(env, opts),
-            ]);
+            const [top5, slate, mlbProps, nflProps, wnbaProps, nhlProps, propPlays, ladder] =
+              await Promise.all([
+                getAllTrackedPicks(env, opts),
+                getAllFullSlateTracked(env, opts),
+                getAllMlbPropsTracked(env, opts),
+                getAllNflPropsTracked(env, opts),
+                getAllWnbaPropsTracked(env, opts),
+                getAllNhlPropsTracked(env, opts),
+                // Prop Play of the Day and the ladder are posted, graded
+                // surfaces like any other, and were the last two boards
+                // still invisible here. Prop plays only entered the sample
+                // at all once their records started carrying consensusProb
+                // (worker/src/prop-play.js's playConsensusProb) — without
+                // it segmentStats has no expectation to test wins against
+                // and drops every one, which is why "is the Prop Play any
+                // good" had no mechanical answer before.
+                getAllPropPlays(env, opts),
+                getLadderHistory(env, opts),
+              ]);
             return [
               ...tagged(top5, 'top5'),
               ...tagged(slate, 'fullslate'),
@@ -830,6 +841,8 @@ export default {
               ...tagged(nflProps, 'nflprops'),
               ...tagged(wnbaProps, 'wnbaprops'),
               ...tagged(nhlProps, 'nhlprops'),
+              ...tagged(propPlays, 'propplay'),
+              ...tagged(ladder, 'ladder'),
             ];
           },
         }),

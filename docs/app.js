@@ -42,6 +42,7 @@ import {
   supportsQualitativeSignal,
   tennisUnderdogBlocked,
 } from './qualitative.js';
+import { auditLegs, TAIL, FADE, NO_READ } from './tail-fade.js';
 import {
   fetchCapperConsensus,
   capperConsensusSignal,
@@ -4523,6 +4524,19 @@ async function loadPixelPicks() {
       ...(data.leaning ?? []).map((r) => ({ ...r, isLean: true })),
     ];
     updateNewIndicator(el.tabBoard, 'pp_picks_seen_date', pixelPicksRecords[0]?.dateKey ?? null);
+    // Leans are excluded: a lean is explicitly the algorithm's current best
+    // guess that can still change (see the LEAN badge), so vouching for one
+    // as a settled recommendation would be claiming more than the board
+    // itself does.
+    registerPostedPicks('top5', (data.picks ?? []).map((r) => ({
+      surfaceLabel: "one of Pixel's Picks",
+      selection: r.selection,
+      marketKey: r.marketKey,
+      american: r.american ?? null,
+      score: r.score ?? null,
+      home: r.home ?? null,
+      away: r.away ?? null,
+    })));
   } catch (error) {
     el.picks.innerHTML = `<p class="empty">Couldn't reach the odds feed.
       ${esc(error.message)}</p>`;
@@ -5128,14 +5142,22 @@ function renderPotd(potd, leaning) {
 
   if (potd) {
     const { writeup, generatedAt, stale } = potd;
+    // A stale pick (yesterday's, shown because today's hasn't posted) is
+    // deliberately NOT registered for the audit: it isn't a live
+    // recommendation, and treating it as one would have Tail or Fade vouch
+    // for a bet whose game has already been played.
+    registerPostedPicks('potd', stale ? [] : [postedPickFromPotdWriteup(writeup, 'Play of the Day')].filter(Boolean));
     el.potdBody.innerHTML = renderPotdCard(writeup, generatedAt, stale);
     return;
   }
 
   if (leaning) {
+    registerPostedPicks('potd', []);
     el.potdBody.innerHTML = renderPotdLeanCard(leaning);
     return;
   }
+
+  registerPostedPicks('potd', []);
 
   el.potdBody.innerHTML = `<p class="empty">
     Nothing to show yet — check back once today's slate is underway.</p>`;
@@ -5168,7 +5190,25 @@ async function loadPotd({ force = false } = {}) {
   try {
     const res = await fetch(new URL('/prop-play', CONFIG.WORKER_URL), { headers: { Accept: 'application/json' } });
     const { propPlay } = await res.json();
-    if (propPlay) el.potdBody.insertAdjacentHTML('beforeend', renderPropPlayCard(propPlay));
+    if (propPlay) {
+      // Registered leg by leg rather than as one combined ticket: someone
+      // pasting "A'ja Wilson 24+ points" is asking about that leg, and the
+      // audit should recognise it as ours even though we posted it inside a
+      // parlay. Only a pending play counts — a settled one is history, not
+      // a recommendation.
+      registerPostedPicks('propplay', propPlay.status === 'pending'
+        ? (propPlay.legs ?? []).map((leg) => ({
+            surfaceLabel: 'Prop Play of the Day',
+            selection: leg.label,
+            marketKey: 'prop',
+            american: leg.american ?? null,
+            score: null,
+            home: leg.home ?? null,
+            away: leg.away ?? null,
+          }))
+        : []);
+      el.potdBody.insertAdjacentHTML('beforeend', renderPropPlayCard(propPlay));
+    }
   } catch { /* prop play is a bonus, never a blocker */ }
 }
 
@@ -5304,6 +5344,21 @@ async function loadLadder({ force = false } = {}) {
   try {
     const res = await fetch(new URL('/ladder', CONFIG.WORKER_URL), { headers: { Accept: 'application/json' } });
     const { ladder } = await res.json();
+    // Same two exclusions as the other surfaces: a stale rung is the last
+    // one played rather than today's recommendation, and a settled pick is
+    // history. Only a live, pending rung is something to vouch for.
+    const pick = ladder?.play?.stale ? null : ladder?.play?.pick;
+    registerPostedPicks('ladder', pick && (!pick.status || pick.status === 'pending')
+      ? [{
+          surfaceLabel: "today's Ladder Challenge rung",
+          selection: pick.selection,
+          marketKey: pick.marketKey,
+          american: pick.american ?? null,
+          score: pick.score ?? null,
+          home: pick.home ?? null,
+          away: pick.away ?? null,
+        }]
+      : []);
     renderLadder(ladder ?? null);
   } catch {
     ladderLoaded = false; // same as the other loaders: a hiccup isn't permanent
@@ -6927,15 +6982,15 @@ el.updateBannerDismiss.addEventListener('click', () => {
  * on the Full Slate: paste the text, drop a screenshot of a sportsbook
  * slip, or pull a leg straight off the board.
  *
- * The OCR/vision extraction and the analysis itself are BOTH mocked here
- * (see mockExtractLegsFromImage / mockAuditLegs). That is deliberate and
- * temporary: it lets the whole flow — every input mode, the loaders, the
- * parsed-leg list, the verdict rendering, the error paths — be exercised
- * end to end before either real service exists, so the integration work is
- * a swap of two functions rather than a rebuild. Every mocked run says so
- * on screen (renderTailFadeResult's mock note); this app's rule that a
- * number on screen traces to a real source doesn't get suspended just
- * because the backing service isn't built yet.
+ * The ANALYSIS is real (docs/tail-fade.js) and reads this app's own engine
+ * and its own posted picks — see that file's header for why it had to be,
+ * and for the specific way the placeholder version it replaced was wrong.
+ *
+ * The OCR/vision extraction is still mocked (mockExtractLegsFromImage), and
+ * that mock is now clearly marked in the UI as sample legs rather than a
+ * read of the uploaded image. The two are separable on purpose: a bet typed
+ * or pulled off the slate goes through a fully real path today, and only
+ * the image route waits on a service that doesn't exist yet.
  */
 
 /** Which input mode the drawer is on, and whatever legs are currently loaded. */
@@ -6996,49 +7051,49 @@ async function mockExtractLegsFromImage(file) {
 }
 
 /**
- * MOCK — stands in for the analysis engine. Same contract the real one will
- * return, so renderTailFadeResult never changes: a verdict, a confidence,
- * and the four evidence sections the spec calls for.
+ * Every pick this app has itself published today, in one place, so the
+ * audit can recognise its own board.
  *
- * The verdict is derived from the legs rather than hardcoded, so clicking
- * through with different inputs visibly changes the output — a mock that
- * always says the same thing hides bugs in the render path.
+ * This registry is the mechanism that makes "the app says take it, the tool
+ * says fade it" impossible rather than merely unlikely: auditLegs matches a
+ * leg against these first, and a leg that IS one of our posted picks
+ * returns TAIL by construction. Each surface registers as it loads;
+ * re-registering the same surface replaces its entry rather than stacking,
+ * so a re-fetch can't leave a stale pick behind to be matched against.
  */
-async function mockAuditLegs(legs) {
-  await new Promise((r) => setTimeout(r, 1100));
-  const priced = legs.filter((l) => l.american != null);
-  const avg = priced.length
-    ? priced.reduce((s, l) => s + l.american, 0) / priced.length
-    : 0;
-  // Heavier juice across the slip reads as worse value — enough of a rule
-  // to make the mock's answer track its input.
-  const tail = avg > -125;
-  const confidence = Math.max(1, Math.min(10, Math.round(tail ? 6 + priced.length : 7 - priced.length)));
+const postedPicks = [];
 
+function registerPostedPicks(surface, picks) {
+  for (let i = postedPicks.length - 1; i >= 0; i--) {
+    if (postedPicks[i].surface === surface) postedPicks.splice(i, 1);
+  }
+  for (const pick of picks ?? []) {
+    if (!pick?.selection) continue;
+    postedPicks.push({ ...pick, surface });
+  }
+}
+
+/**
+ * A Play of the Day write-up into the shape the audit matches on. The
+ * write-up's headline is `${selection} (${price})` (worker/src/potd.js's
+ * buildWriteup), and its matchup is `${away} @ ${home}` — parsed back out
+ * here rather than changing the stored shape, which several other surfaces
+ * already render from.
+ */
+function postedPickFromPotdWriteup(writeup, surfaceLabel) {
+  if (!writeup?.headline) return null;
+  const selection = String(writeup.headline).replace(/\s*\([^)]*\)\s*$/, '').trim();
+  const [away, home] = String(writeup.matchup ?? '').split('@').map((s) => s.trim());
   return {
-    verdict: tail ? 'TAIL' : 'FADE',
-    confidence,
-    statistical: [
-      `Primary leg has hit in 7 of its last 10 (70%), against a season rate of 61%.`,
-      `Line sits 1.4 below the L10 average — the number is a touch soft versus recent output.`,
-      `Usage up to 28.9% over the last five, with minutes trending 31.2 → 34.6.`,
-    ],
-    contextual: [
-      `Recent form: 4-1 to the over across the last five with the same starting five available.`,
-      `Matchup: opponent concedes the 3rd-most to the position, and plays at the 5th-fastest pace.`,
-      `Home / away: 63% hit rate at home versus 48% on the road — this one is at home.`,
-      `Head-to-head: cleared this number in 3 of the last 4 meetings.`,
-      `Injuries: no new listings on either side as of the latest report.`,
-    ],
-    risk: [
-      `Blowout risk — a 12+ point spread pulls starters and caps fourth-quarter minutes.`,
-      `Foul trouble is the main single-game tail risk given the matchup's physicality.`,
-      `Opponent has switched to a drop-coverage scheme in the last three, which suppresses this exact shot profile.`,
-    ],
-    summary: tail
-      ? `The number lags where recent usage and minutes actually are, and the matchup is the friendliest of the week. Worth tailing at this price, with blowout risk the one thing that beats it.`
-      : `The price already accounts for the recent hot stretch, and the matchup profile works directly against this line. Not enough edge left at this number — fade it.`,
-    mocked: true,
+    surfaceLabel,
+    selection,
+    marketKey: writeup.marketKey ?? 'h2h',
+    american: writeup.american ?? null,
+    score: writeup.score ?? null,
+    home: home ?? null,
+    away: away ?? null,
+    reasons: writeup.reasons ?? null,
+    sections: writeup.sections ?? null,
   };
 }
 
@@ -7055,8 +7110,18 @@ function renderTailFadeLegs() {
     return;
   }
   el.tailFadeLegs.hidden = false;
+  // The image route is the one part of this flow still standing on a mock,
+  // and it is the part where a user would least expect it — they uploaded a
+  // real slip, so silence here would read as "these are your legs." Said at
+  // the legs list rather than only at the verdict, because this is the
+  // moment the wrong legs would be believed.
+  const mockedLegs = tailFade.legs.some((l) => l.source === 'image');
   el.tailFadeLegs.innerHTML = `
     <p class="tail-fade-legs-title">${tailFade.legs.length} leg${tailFade.legs.length === 1 ? '' : 's'} loaded</p>
+    ${mockedLegs ? `<p class="tail-fade-mock-note">
+      Bet slip reading isn't wired up yet — these are sample legs, not your screenshot.
+      Type or paste the bet, or pull it off the slate, for a real read.
+    </p>` : ''}
     ${tailFade.legs.map((leg) => `
       <div class="tail-fade-leg">
         <span>${esc(leg.selection)}</span>
@@ -7143,17 +7208,24 @@ function showTailFadeError(message) {
 }
 
 function renderTailFadeResult(audit) {
-  const isTail = audit.verdict === 'TAIL';
+  const tone = audit.verdict === TAIL ? 'is-tail' : audit.verdict === FADE ? 'is-fade' : 'is-noread';
   const section = (title, items, cls = '') => `
     <div class="tail-fade-section ${cls}">
       <h3>${esc(title)}</h3>
       <ul>${items.map((i) => `<li>${esc(i)}</li>`).join('')}</ul>
     </div>`;
 
+  // NO READ carries no confidence number at all rather than a low one: a
+  // "2/10" would still read as a judgement about the bet, when the actual
+  // state is that there was nothing to judge it against.
+  const confidenceBlock = audit.verdict === NO_READ
+    ? `<p class="tail-fade-confidence">Nothing on the<br>board to check</p>`
+    : `<p class="tail-fade-confidence">Confidence<br><strong>${esc(String(audit.confidence))}/10</strong></p>`;
+
   el.tailFadeResult.innerHTML = `
-    <div class="tail-fade-verdict ${isTail ? 'is-tail' : 'is-fade'}">
+    <div class="tail-fade-verdict ${tone}">
       <span class="tail-fade-badge">${esc(audit.verdict)}</span>
-      <p class="tail-fade-confidence">Confidence<br><strong>${esc(String(audit.confidence))}/10</strong></p>
+      ${confidenceBlock}
     </div>
     ${section('Key statistical backing', audit.statistical)}
     ${section('Contextual factors', audit.contextual)}
@@ -7162,9 +7234,9 @@ function renderTailFadeResult(audit) {
       <h3>Executive summary</h3>
       <p class="tail-fade-summary">${esc(audit.summary)}</p>
     </div>
-    ${audit.mocked ? `<p class="tail-fade-mock-note">
-      Sample output — the OCR and analysis services aren't wired up yet, so these
-      numbers are placeholders, not a real read on your bet.
+    ${audit.unmatchedCount > 0 && audit.verdict !== NO_READ ? `<p class="tail-fade-mock-note">
+      ${audit.unmatchedCount} leg${audit.unmatchedCount === 1 ? '' : 's'} couldn't be matched to a market on the
+      current board and ${audit.unmatchedCount === 1 ? 'is' : 'are'} not covered by this verdict.
     </p>` : ''}`;
 }
 
@@ -7277,7 +7349,14 @@ el.tailFadeAudit?.addEventListener('click', async () => {
   try {
     enrichTailFadeLegPrices();
     renderTailFadeLegs();
-    renderTailFadeResult(await mockAuditLegs(tailFade.legs));
+    // Synchronous and local — it reads the board and our own posted picks,
+    // both already in memory. The brief delay is only so the loading state
+    // is visible rather than flashing; there is no service being called.
+    await new Promise((r) => setTimeout(r, 250));
+    renderTailFadeResult(auditLegs(tailFade.legs, {
+      postedPicks,
+      candidates: state.candidates ?? [],
+    }));
   } catch (error) {
     showTailFadeError(error.message || 'Could not audit that bet.');
   } finally {
