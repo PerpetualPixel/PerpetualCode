@@ -219,12 +219,45 @@ test('gradeTennisGameMarket carries the same detail on spreads/totals settlement
 
 /* ── MMA winner + method detail ─────────────────────────────────── */
 
-test('mmaFinishMethod reads the method across ESPN field variants and never invents one', () => {
-  assert.equal(mmaFinishMethod({ status: { result: { displayName: 'Decision - Unanimous' } } }), 'Decision - Unanimous');
-  assert.equal(mmaFinishMethod({ status: { result: { description: 'KO/TKO' } } }), 'KO/TKO');
-  assert.equal(mmaFinishMethod({ competitors: [{ result: { displayName: 'Submission' } }] }), 'Submission');
-  assert.equal(mmaFinishMethod({ status: { result: { displayName: 'Final' } } }), null, 'a generic completion state is not a finish method');
+// details() fixtures below mirror the real shape confirmed live off UFC 330
+// (2026-08-15) — ESPN's finish-method signal lives in the competition's own
+// details[] play-by-play array, not on status.result or a per-competitor
+// result field (neither exists on the real feed at all).
+function details(entries) {
+  return entries.map((text, i) => ({ id: String(1000 + i), type: { id: String(i), text } }));
+}
+
+test('mmaFinishMethod reads the "Unofficial Winner X" details entry and never invents one', () => {
+  assert.equal(
+    mmaFinishMethod({ details: details(['Unofficial Winner Decision', 'Results', 'Fight Over']) }),
+    'Decision',
+  );
+  assert.equal(
+    mmaFinishMethod({ details: details(['Unofficial Winner Submission', 'Results']) }),
+    'Submission',
+  );
+  // ESPN's own literal label for a KO/TKO finish — normalized on the way
+  // out, confirmed against three real fights on the same card, each also
+  // carrying an explicit "Knockdown" details entry elsewhere.
+  assert.equal(
+    mmaFinishMethod({ details: details(['Unofficial Winner Kotko', 'Results', 'Knockdown']) }),
+    'KO/TKO',
+  );
+  // Position isn't reliable — confirmed on the same card, one fight's entry
+  // wasn't first in the array.
+  assert.equal(
+    mmaFinishMethod({ details: details(['Takedown Attempt', 'Results', 'Unofficial Winner Decision']) }),
+    'Decision',
+  );
+  // A genuine gap in ESPN's own play-by-play — confirmed live, two of eight
+  // fights on the same card had no "Unofficial Winner" entry at all — is
+  // null, the same honest answer ESPN itself gives, not a parsing failure.
+  assert.equal(
+    mmaFinishMethod({ details: details(['Results', 'Fight Over', 'Round End', 'Takedown Attempt']) }),
+    null,
+  );
   assert.equal(mmaFinishMethod({}), null);
+  assert.equal(mmaFinishMethod({ details: [] }), null);
 });
 
 test('gradeMmaPickWithFallback attaches winner + method detail to a graded fight', () => {

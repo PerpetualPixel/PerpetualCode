@@ -276,6 +276,26 @@ synthetic session before this fix, not a hypothetical. `/mma-results` gives
 the client the same authoritative signal server-side grading already
 trusts, directly, without waiting on either a tracked pick or a grading pass.
 
+The finish method (`worker/src/ufc-events.js`'s `mmaFinishMethod`) does NOT
+live on `status.result` or a per-competitor `result` field — a first version
+read those and silently got `null` every time, since neither field exists
+on the real feed at all. Confirmed against a live payload (UFC 330,
+2026-08-15): the actual signal is one entry in the competition's own
+`details` array — the same play-by-play list "Round Start"/"Takedown
+Attempt"/etc. live in — text-prefixed `"Unofficial Winner "`, e.g.
+`"Unofficial Winner Submission"`. Matched by that text prefix rather than a
+fixed array position or numeric `type.id`: position isn't reliable
+(confirmed on the same card — one fight's winner entry sat at index 0,
+another's had no such entry anywhere in the array), and a new numeric id is
+exactly the kind of thing ESPN adds without notice. Two of the eight fights
+on the confirming card had no `"Unofficial Winner"` entry at all — a
+genuine gap in ESPN's own play-by-play, not a parsing miss — and `null` is
+the honest answer for those. `"Unofficial Winner Kotko"` is ESPN's own
+literal label for a KO/TKO finish — read verbatim it looks like a typo, but
+all three fights carrying it on the confirming card also carried an
+explicit `"Knockdown"` entry elsewhere in the same fight's details, so it's
+normalized to `"KO/TKO"` rather than shown raw.
+
 **No Method of Victory market — confirmed at the schema level, not just "not
 populated yet."** Requesting a guessed market key like `method_of_victory`
 against The Odds API's own event-odds endpoint returns a distinct
