@@ -11,7 +11,7 @@ Read [step 3](#3-check-the-secret--the-one-that-actually-matters) before deployi
 
 PR #58 → https://github.com/PerpetualPixel/PerpetualCode/pull/58
 
-It's a draft; mark it ready, then merge. Five commits.
+It's a draft; mark it ready, then merge. Six commits.
 
 ---
 
