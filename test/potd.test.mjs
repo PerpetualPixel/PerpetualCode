@@ -14,6 +14,12 @@ import { seedTennisArchiveCacheForTests } from '../worker/src/tennis-archive.js'
 // tests must never hit the network, and a null archive is the honest
 // degraded mode (favorites pass unscored, unsupported dogs are blocked).
 seedTennisArchiveCacheForTests({ atp: null, wta: null });
+import { seedTeamContextCacheForTests } from '../worker/src/team-form.js';
+// Same reasoning for team sports: seeding SEALS the memo, so no fixture in
+// these slates reaches cdn.espn.com. An empty seed is the honest degraded
+// mode — no context, so no form re-score and no underdog gate, exactly what
+// an unreachable ESPN produces in production.
+seedTeamContextCacheForTests({});
 
 /* ---------------------------------------------------------------- */
 /* Fixtures                                                          */

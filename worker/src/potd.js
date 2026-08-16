@@ -53,6 +53,7 @@ import {
 } from './tennis-espn.js';
 import { isPickWindowOpen } from './tracking.js';
 import { applyTennisFormSignal } from '../../docs/qualitative.js';
+import { loadTeamContextsFor, applyTeamFormSignal } from './team-form.js';
 import { loadTennisArchive, loadTennisArchivesFor } from './tennis-archive.js';
 import { retractedRecord } from './retraction.js';
 
@@ -435,9 +436,15 @@ export async function runPotdDaily(env, ctx, now = Date.now(), { fetchFullSlate 
   // moneyline underdogs — same gate the Top 5 and Full Slate batches apply,
   // in the same order (form first, then the learning multiplier scales the
   // form-adjusted grade).
+  // Team sports get their own form/injury gate (worker/src/team-form.js)
+  // alongside the tennis one, in the same position for the same reason.
   const analyzed = analyze(events, { now });
   const candidates = applyLearningToCandidates(
-    applyTennisFormSignal(analyzed, await loadTennisArchivesFor(analyzed), { now }),
+    applyTeamFormSignal(
+      applyTennisFormSignal(analyzed, await loadTennisArchivesFor(analyzed), { now }),
+      await loadTeamContextsFor(analyzed, ctx, { now }),
+      { now },
+    ),
     learningProfile,
   );
   const eligibleToday = candidates.filter((c) => {

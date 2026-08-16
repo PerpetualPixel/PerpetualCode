@@ -17,7 +17,7 @@
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Syne:wght@600;700;800&family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
-<link rel="stylesheet" href="styles.css?v=1.147">
+<link rel="stylesheet" href="styles.css?v=1.148">
 </head>
 <body>
 
@@ -122,6 +122,10 @@
             aria-haspopup="dialog" aria-expanded="false" aria-controls="tailFadePanel">
       <span class="tail-fade-btn-icon" aria-hidden="true">⚖️</span>
       <span>Tail or Fade</span>
+      <!-- Visible on the entry point, not only once the drawer is open: the
+           label has to reach someone deciding whether to trust the answer
+           BEFORE they've spent the effort entering a bet. -->
+      <span class="tail-fade-beta">BETA</span>
     </button>
   </div>
 
@@ -516,13 +520,19 @@
 <aside id="tailFadePanel" class="history tail-fade-panel" role="dialog"
        aria-label="Tail or Fade bet audit" aria-modal="true" hidden>
   <div class="history-head">
-    <h2>Tail or Fade</h2>
+    <h2>Tail or Fade <span class="tail-fade-beta">BETA</span></h2>
     <button id="tailFadeClose" class="icon-btn overlay-close-btn" aria-label="Close Tail or Fade">✕</button>
   </div>
   <div class="tail-fade-body">
     <p class="tail-fade-intro">
       Paste a bet, drop a screenshot of a slip, or pull a leg straight off the slate.
       You get a straight <strong>TAIL</strong> or <strong>FADE</strong> call with the numbers behind it.
+    </p>
+    <p class="tail-fade-beta-note">
+      <strong>Beta — still being worked on.</strong> The read-back of your bet and the
+      analysis behind the call are both still being built out, so treat what comes back
+      as a second opinion in progress, not a finished one. Everything else on this app
+      is unaffected.
     </p>
 
     <div class="tail-fade-modes" role="tablist" aria-label="How to enter the bet">
@@ -894,6 +904,6 @@
   </div>
 </aside>
 
-<script type="module" src="app.js?v=1.147"></script>
+<script type="module" src="app.js?v=1.148"></script>
 </body>
 </html>

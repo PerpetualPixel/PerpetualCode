@@ -42,6 +42,7 @@ import { getAllNflPropsTracked } from './nfl-props.js';
 import { getAllNhlPropsTracked } from './nhl-props.js';
 import { applyTennisFormSignal } from '../../docs/qualitative.js';
 import { getPausedSegments, isSegmentPaused } from './algo-health.js';
+import { loadTeamContextsFor, applyTeamFormSignal } from './team-form.js';
 import { loadTennisArchivesFor } from './tennis-archive.js';
 import { retractedRecord } from './retraction.js';
 
@@ -199,8 +200,24 @@ export async function runFullSlateBatch(
   // favorite's moneyline) rather than going empty. Re-sorted afterwards
   // because the form re-score can reorder tennis candidates, and the
   // per-game loop below depends on score-descending order.
-  const candidates = applyTennisFormSignal(analyzed, await loadTennisArchivesFor(analyzed), { now })
-    .sort((a, b) => b.score - a.score);
+  // Team-sport form gate (worker/src/team-form.js), the direct counterpart
+  // to the tennis one above and applied for the same stated reason: when a
+  // real evidence source contradicts a pure-price read, the recommendation
+  // follows the evidence and the game's slot falls to its next-best
+  // candidate. Until this existed, that principle was honoured for tennis
+  // and MMA and for no team sport at all — form and injuries were consulted
+  // in the browser at render time, after the pick here had already locked.
+  //
+  // The context load is bounded (MAX_CONTEXT_FETCHES) and only ever sees
+  // candidates this batch might actually lock: `analyzed` has already
+  // dropped every event tracked on a previous tick, so a typical tick asks
+  // about a handful of newly-lockable games rather than the whole day.
+  const teamContexts = await loadTeamContextsFor(analyzed, ctx, { now });
+  const candidates = applyTeamFormSignal(
+    applyTennisFormSignal(analyzed, await loadTennisArchivesFor(analyzed), { now }),
+    teamContexts,
+    { now },
+  ).sort((a, b) => b.score - a.score);
 
   // analyze() is already sorted by score descending (re-sorted above after
   // the tennis form re-score), so the first candidate seen for a given

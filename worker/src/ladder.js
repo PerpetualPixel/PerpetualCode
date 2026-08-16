@@ -58,6 +58,7 @@ import { getLearningProfile, applyLearningToCandidates } from './daily-learning.
 import { fetchMmaResults, gradeMmaPickWithFallback } from './ufc-events.js';
 import { fetchTennisResults, gradeTennisPickWithEspn, isRegradableTennisVoid, isNoOpTennisRegrade } from './tennis-espn.js';
 import { applyTennisFormSignal } from '../../docs/qualitative.js';
+import { loadTeamContextsFor, applyTeamFormSignal } from './team-form.js';
 import { loadTennisArchivesFor } from './tennis-archive.js';
 import { isPickWindowOpen } from './tracking.js';
 import { scheduleStillOpen, isExhibition, isEligibleTennisMatch, etParts, etDatePlusDays } from './potd.js';
@@ -308,9 +309,15 @@ export async function runLadderDaily(env, ctx, now = Date.now(), { fetchFullSlat
     fetchFullSlate(),
   ]);
 
+  // Team sports get their own form/injury gate (worker/src/team-form.js)
+  // alongside the tennis one, in the same position for the same reason.
   const analyzed = analyze(events, { now });
   const candidates = applyLearningToCandidates(
-    applyTennisFormSignal(analyzed, await loadTennisArchivesFor(analyzed), { now }),
+    applyTeamFormSignal(
+      applyTennisFormSignal(analyzed, await loadTennisArchivesFor(analyzed), { now }),
+      await loadTeamContextsFor(analyzed, ctx, { now }),
+      { now },
+    ),
     learningProfile,
   );
 

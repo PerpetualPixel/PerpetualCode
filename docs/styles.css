@@ -5511,6 +5511,37 @@ input[type="range"]:focus-visible {
 
 /* Every number on screen traces to a real source; a mocked run says so
    plainly rather than letting placeholder analysis read as a real read. */
+/* BETA marker — on the entry-point button and the drawer heading. Sized to
+   read as a tag rather than part of the label, and given its own baseline
+   nudge so it sits with the cap-height of the text it follows rather than
+   on it. */
+.tail-fade-beta {
+  display: inline-block;
+  margin-left: 6px;
+  padding: 1px 5px;
+  border-radius: 4px;
+  background: rgba(251, 191, 36, 0.16);
+  border: 1px solid rgba(251, 191, 36, 0.38);
+  color: var(--warn);
+  font-size: 0.58rem;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  line-height: 1.5;
+  vertical-align: middle;
+  text-transform: uppercase;
+}
+
+.tail-fade-beta-note {
+  margin: 0 0 14px;
+  padding: 9px 11px;
+  border-radius: 8px;
+  background: rgba(251, 191, 36, 0.08);
+  border: 1px solid rgba(251, 191, 36, 0.3);
+  color: var(--warn);
+  font-size: 0.74rem;
+  line-height: 1.5;
+}
+
 .tail-fade-mock-note {
   margin-top: 14px;
   padding: 9px 11px;

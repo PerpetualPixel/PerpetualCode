@@ -21,6 +21,12 @@ import { UNSETTLEABLE_TENNIS_GAME_MARKET } from '../docs/learning.js';
 // tests must never hit the network, and a null archive is the honest
 // degraded mode (favorites pass unscored, unsupported dogs are blocked).
 seedTennisArchiveCacheForTests({ atp: null, wta: null });
+import { seedTeamContextCacheForTests } from '../worker/src/team-form.js';
+// Same reasoning for team sports: seeding SEALS the memo, so no fixture in
+// these slates reaches cdn.espn.com. An empty seed is the honest degraded
+// mode — no context, so no form re-score and no underdog gate, exactly what
+// an unreachable ESPN produces in production.
+seedTeamContextCacheForTests({});
 
 function makeKvStore() {
   const store = new Map();
@@ -155,6 +161,106 @@ test('runFullSlateBatch has no odds-band or score floor — a near-coin-flip gam
   const picks = await getFullSlateTracked(env, { dateKey: '2026-08-05' });
   assert.equal(picks.length, 1);
   assert.equal(picks[0].meetsStandard, true, 'Full Slate picks always carry meetsStandard: true — there is no standard to fail here');
+});
+
+/* --- team-sport form gate (worker/src/team-form.js) --- */
+
+/**
+ * A WNBA game where the market UNDERDOG carries the outlier price, so it is
+ * the game's top h2h candidate on price alone — the exact structural tilt
+ * docs/engine.js's UNDERDOG_PROB_PENALTY describes, and the shape the WNBA
+ * record was full of. A spreads market gives the game somewhere to fall to.
+ */
+function makeWnbaDogEvent(id, { hoursOut = 2, dogOutlier = 45 } = {}) {
+  return {
+    id,
+    sport_key: 'basketball_wnba',
+    sport_title: 'WNBA',
+    commence_time: new Date(NOW + hoursOut * 3.6e6).toISOString(),
+    home_team: 'Atlanta Dream',
+    away_team: 'Indiana Fever',
+    bookmakers: BOOKS.map((title, i) => ({
+      key: BOOK_KEYS[title],
+      title,
+      last_update: new Date(NOW - 600000).toISOString(),
+      markets: [
+        {
+          key: 'h2h',
+          last_update: new Date(NOW - 600000).toISOString(),
+          outcomes: [
+            { name: 'Atlanta Dream', price: -140 },
+            { name: 'Indiana Fever', price: 120 + (i === 0 ? dogOutlier : 0) },
+          ],
+        },
+        {
+          key: 'spreads',
+          last_update: new Date(NOW - 600000).toISOString(),
+          outcomes: [
+            { name: 'Atlanta Dream', price: -110 + (i === 0 ? 8 : 0), point: -3.5 },
+            { name: 'Indiana Fever', price: -110, point: 3.5 },
+          ],
+        },
+      ],
+    })),
+  };
+}
+
+/** One ESPN-shaped context, as worker/src/context.js's fetchContext returns it. */
+function wnbaContext({ dreamWins, feverWins }) {
+  const side = (name, wins) => ({
+    id: name, name, shortName: name,
+    lastFive: [
+      ...Array.from({ length: wins }, () => ({ result: 'W' })),
+      ...Array.from({ length: 5 - wins }, () => ({ result: 'L' })),
+    ],
+    injuries: [],
+  });
+  return { home: side('Atlanta Dream', dreamWins), away: side('Indiana Fever', feverWins) };
+}
+
+const WNBA_FIXTURE = 'basketball_wnba|Atlanta Dream|Indiana Fever';
+
+test('runFullSlateBatch: an outlier-priced underdog with no form behind it loses the slot', async () => {
+  const { env } = makeKvStore();
+  // Fever 1-4, Dream 4-1 — nothing supports the upset the price implies.
+  seedTeamContextCacheForTests({ [WNBA_FIXTURE]: wnbaContext({ dreamWins: 4, feverWins: 1 }) });
+
+  await runFullSlateBatch(env, ctx, NOW, { fetchFullSlate: async () => [makeWnbaDogEvent('dog')] });
+  const picks = await getFullSlateTracked(env, { dateKey: '2026-08-05' });
+
+  assert.equal(picks.length, 1, 'the game still gets a pick — the gate redirects, it does not empty the board');
+  assert.ok(
+    !(picks[0].marketKey === 'h2h' && picks[0].outcomeName === 'Indiana Fever'),
+    `unbacked dog moneyline should have been dropped, got ${picks[0].marketKey} ${picks[0].outcomeName}`,
+  );
+  seedTeamContextCacheForTests({});
+});
+
+test('runFullSlateBatch: the same underdog IS taken when recent form backs the upset', async () => {
+  const { env } = makeKvStore();
+  // Fever 4-1, Dream 1-4 — the upset call has real evidence behind it.
+  seedTeamContextCacheForTests({ [WNBA_FIXTURE]: wnbaContext({ dreamWins: 1, feverWins: 4 }) });
+
+  await runFullSlateBatch(env, ctx, NOW, { fetchFullSlate: async () => [makeWnbaDogEvent('dog2')] });
+  const picks = await getFullSlateTracked(env, { dateKey: '2026-08-05' });
+
+  assert.equal(picks[0].marketKey, 'h2h');
+  assert.equal(picks[0].outcomeName, 'Indiana Fever', 'a form-backed dog is exactly the pick we DO want to keep');
+  seedTeamContextCacheForTests({});
+});
+
+test('runFullSlateBatch: with no ESPN context the underdog is taken, same as before the gate existed', async () => {
+  const { env } = makeKvStore();
+  seedTeamContextCacheForTests({}); // sealed and empty — every fixture resolves to null
+
+  await runFullSlateBatch(env, ctx, NOW, { fetchFullSlate: async () => [makeWnbaDogEvent('dog3')] });
+  const picks = await getFullSlateTracked(env, { dateKey: '2026-08-05' });
+
+  assert.equal(picks[0].marketKey, 'h2h');
+  assert.equal(
+    picks[0].outcomeName, 'Indiana Fever',
+    'an unreachable data source must not silently change which side gets picked',
+  );
 });
 
 /* --- benched-segment demotion (worker/src/algo-health.js) --- */
