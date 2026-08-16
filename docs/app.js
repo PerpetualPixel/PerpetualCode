@@ -3306,12 +3306,19 @@ function isGameFinished(eventId) {
  * through that feed). Matched by fighter name, both orderings, the same
  * rule worker/src/ufc-events.js's findMmaFight uses server-side — ESPN's
  * scoreboard carries no Odds API event id to key on directly.
+ *
+ * Presence in the array alone is the signal — worker/src/ufc-events.js's
+ * fetchMmaResults only ever includes a fight once ESPN marks its own
+ * competition `completed`, regardless of outcome. An earlier version also
+ * required aWon/bWon, which meant a draw or no-contest (a genuinely
+ * finished fight where ESPN correctly marks neither side the winner) could
+ * never be recognized as concluded and stayed stuck on "Live" forever.
  */
 function mmaFightConcluded(game) {
   return state.mmaResults.some((f) => (
     (surnamesMatch(f.a, game.home) && surnamesMatch(f.b, game.away))
     || (surnamesMatch(f.a, game.away) && surnamesMatch(f.b, game.home))
-  ) && (f.aWon || f.bWon));
+  ));
 }
 
 /** 'upcoming' | 'live' | 'finished' for a game, from whatever /scores, tracked-pick, and (for MMA) ESPN result data is currently cached. */
