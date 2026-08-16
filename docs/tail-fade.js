@@ -227,7 +227,15 @@ function summarize(result, unmatchedCount) {
     } else if (bad) {
       parts.push(
         `${bad} of ${reads.length} legs fall short, and a parlay needs every one of them, so the ticket is a fade as built.`
-        + (solid ? ` The ${solid} that do clear the bar are worth taking straight instead — they're marked above.` : ''),
+        + (solid
+          ? ` The ${solid} that do clear the bar are worth taking straight instead — they're marked above.`
+          // Nothing clearing the bar is the common case for a slip taken at
+          // one book, and "all of them fall short" on its own is a dead end.
+          // The legs are not equal, so say which ones are carrying it.
+          : (result.bestLegs?.length > 1
+            ? ` None clear the bar, but they are not equal: ${result.bestLegs.slice(0, 2).map((r) => r.leg.selection).join(' and ')} `
+              + `grade highest of the ${reads.length}, and a ticket cut down to those is a smaller mistake than this one.`
+            : '')),
       );
     } else if (result.findings?.some((f) => f.kind === CORRELATION_CANNIBAL)) {
       parts.push('The legs are individually fine, but two of them draw from the same pool of possessions, so the real joint probability is lower than the combined price implies.');

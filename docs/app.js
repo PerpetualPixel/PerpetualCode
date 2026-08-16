@@ -7395,6 +7395,36 @@ function renderTailFadeResult(audit) {
     ${audit.reads.map(renderTailFadeLegCard).join('')}
   </div>`;
 
+  // When nothing clears the bar, every verdict-filtered group above is empty
+  // and the entire answer is a wall of fades — which is what a thirteen-leg
+  // slip taken at one book's posted prices always produces, since no leg can
+  // beat a consensus the prices came from. The legs still differ by twenty
+  // points of TPS, so ranking them is the only actionable thing left to say.
+  const nothingClears = !(audit.solidLegs?.length || audit.straights?.length);
+  const strongest = nothingClears && (audit.bestLegs?.length ?? 0) > 1
+    ? `<div class="tail-fade-section">
+      <h3>Strongest legs here <span class="tf-count">${audit.bestLegs.length}</span></h3>
+      <p class="tf-group-note">Ranked against each other on the same five pillars. This is an ordering, not an
+      endorsement — ${audit.bestLegs.every((r) => isFadeSide(r.verdict))
+        ? 'all of these still grade as fades'
+        : 'they still grade below the bar'}, so the honest reading is
+      &ldquo;least bad first&rdquo;. If you are betting this ticket regardless, ${audit.mode === 'parlay'
+        ? 'these are the legs carrying it, and cutting to the top two or three is the version of it worth the smallest stake'
+        : 'these are the ones to keep'}.</p>
+      <ol class="tf-group-list tf-ranked">${audit.bestLegs.map((r) =>
+        `<li><strong>${esc(r.leg.selection)}</strong>
+          <span class="tf-leg-verdict ${tailFadeTone(r.verdict)}">${esc(r.verdict)}</span>
+          <span class="tf-rank-score">${r.tps.toFixed(0)}/100</span></li>`).join('')}</ol>
+    </div>`
+    : '';
+
+  // Why there are no takes, when the answer is the prices rather than the
+  // picks. Those two causes look identical in the output above and call for
+  // opposite responses — shop, or handicap differently.
+  const noTake = audit.noTakeReason
+    ? `<p class="tf-group-note tf-no-take">${esc(audit.noTakeReason)}</p>`
+    : '';
+
   // Correlation findings are the one thing that is genuinely about the
   // ticket rather than any single leg, so they get their own block in both
   // modes — a slate needs them to know what NOT to combine.
@@ -7445,8 +7475,10 @@ function renderTailFadeResult(audit) {
     <div class="tail-fade-section">
       <h3>Executive summary</h3>
       <p class="tail-fade-summary">${esc(audit.summary)}</p>
+      ${noTake}
     </div>
     ${modeBlocks}
+    ${strongest}
     ${findings}
     ${legCards}
     ${audit.unmatchedCount > 0 && audit.verdict !== NO_READ ? `<p class="tail-fade-mock-note">

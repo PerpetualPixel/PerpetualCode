@@ -13,6 +13,9 @@ import {
   evaluateParlay,
   evaluateSlate,
   correlationFindings,
+  rankedLegs,
+  noTakeReason,
+  isTakeSide,
   keyNumberAnalysis,
   evaluatorFor,
   ticketMath,
@@ -241,6 +244,153 @@ test('classify: a flagged juice price cannot reach a take tier', () => {
 test('classify: an unscoreable bet is NO READ rather than the bottom tier', () => {
   assert.equal(classify(null, 0.05), NO_READ);
   assert.equal(classify(NaN, null), NO_READ);
+});
+
+test('classify: paying the hold is a fade, but not the bottom tier', () => {
+  // De-vigging removes the hold, so every side of every ordinary market
+  // prices out at roughly minus the hold. A bottom tier that fires there has
+  // nothing left to say about a bet that is genuinely bad.
+  assert.equal(classify(55, -0.035, { evVsMarket: 0 }), FADE);
+  assert.equal(classify(55, -0.045, { evVsMarket: 0 }), FADE);
+});
+
+test('classify: the bottom tier is for a price materially worse than the board offers', () => {
+  assert.equal(classify(55, -0.08, { evVsMarket: -0.045 }), STRONG_FADE);
+});
+
+test('classify: an expectation the hold cannot explain is the bottom tier even at the best price', () => {
+  // Holding the best number on the board and STILL being 12% under the
+  // de-vigged consensus is not the vig, it is the consensus disagreeing with
+  // the price. Relaxing the bottom tier to make room for ordinary bets must
+  // not lose this case.
+  assert.equal(classify(55, -0.12, { evVsMarket: 0 }), STRONG_FADE);
+  assert.equal(classify(55, -0.05, { evVsMarket: 0 }), FADE, 'but a plausible hold is not');
+});
+
+test('classify: without a matched board it still falls back to absolute EV', () => {
+  // The relative reading needs a board to be relative to. Absent one, the
+  // stricter absolute gate is the honest default rather than a free pass.
+  assert.equal(classify(55, -0.08), STRONG_FADE);
+});
+
+/* ---------------------------------------------------------------- */
+/* The 13/13 STRONG FADE defect                                      */
+/* ---------------------------------------------------------------- */
+
+const implied = (a) => (a > 0 ? 100 / (a + 100) : Math.abs(a) / (Math.abs(a) + 100));
+
+/** Both sides of one ordinary two-sided market, de-vigged off its own prices. */
+function twoSided(favAmerican, dogAmerican, extra = {}) {
+  const sum = implied(favAmerican) + implied(dogAmerican);
+  const side = (american, fair) => cand({
+    sportKey: 'tennis_atp', american, decimal: americanToDecimal(american),
+    consensusProb: fair, disagreement: 0.012, bookCount: 8, shopGain: 0, ...extra,
+  });
+  return {
+    fav: side(favAmerican, implied(favAmerican) / sum),
+    dog: side(dogAmerican, implied(dogAmerican) / sum),
+    hold: sum - 1,
+  };
+}
+
+test('both sides of an ordinary market are not both the worst grade available', () => {
+  // The defect, exactly as reported: a 13-leg tennis slip came back 13/13
+  // STRONG FADE. The cause was not the picks — backing the -175 favourite
+  // and backing the +150 dog in the SAME match both graded STRONG FADE,
+  // because the verdict gate sat inside the vig the de-vig had just removed.
+  // A scale on which no bet available at any book can score above the floor
+  // is not grading anything.
+  const m = twoSided(-175, 150);
+  const fav = evaluateLeg({ selection: 'Fav', american: -175 }, { candidate: m.fav });
+  const dog = evaluateLeg({ selection: 'Dog', american: 150 }, { candidate: m.dog });
+  assert.ok(m.hold > 0.03 && m.hold < 0.05, 'a completely ordinary hold');
+  assert.notEqual(fav.verdict, STRONG_FADE, 'the favourite at the posted price');
+  assert.notEqual(dog.verdict, STRONG_FADE, 'the dog at the posted price');
+  assert.equal(fav.verdict, FADE, 'still a fade — paying the hold is still negative expectation');
+  assert.equal(dog.verdict, FADE);
+});
+
+test('a whole slip taken at posted prices still separates its legs', () => {
+  // The second half of the defect: with the EV term clamped at the floor for
+  // every posted price, TPS collapsed into a three-point band and the legs
+  // could not be ranked against each other at all.
+  const m = twoSided(-175, 150);
+  const spread = [-0.5, 0, 0.5].map((formSignal) =>
+    evaluateLeg({ selection: 'P', american: -175 },
+      { candidate: { ...m.fav, formSignal } }).tps);
+  assert.ok(Math.max(...spread) - Math.min(...spread) > 15,
+    `legs must be separable to be rankable, got a ${(Math.max(...spread) - Math.min(...spread)).toFixed(1)}-point spread`);
+});
+
+test('taking a worse number than the board offers is what earns the bottom tier', () => {
+  const m = twoSided(-175, 150);
+  const atBest = evaluateLeg({ selection: 'P', american: -175 }, { candidate: m.fav });
+  const worse = evaluateLeg({ selection: 'P', american: -220 }, { candidate: m.fav });
+  assert.equal(atBest.verdict, FADE);
+  assert.equal(worse.verdict, STRONG_FADE, 'same pick, worse price, worse grade');
+  assert.ok(worse.pillars.market.evVsMarket < atBest.pillars.market.evVsMarket);
+  assert.equal(atBest.pillars.market.evVsMarket, 0, 'holding the best number is the zero point');
+});
+
+test('beating the de-vigged consensus is still what earns a take', () => {
+  // The recalibration must not have made the tool generous: a take still
+  // requires a price the consensus says is wrong.
+  const m = twoSided(-175, 150);
+  const read = evaluateLeg({ selection: 'P', american: -145 }, { candidate: { ...m.fav, american: -145, decimal: americanToDecimal(-145) } });
+  assert.ok(read.pillars.market.ev > 0);
+  assert.ok([TAKE, STRONG_TAKE].includes(read.verdict));
+});
+
+test('rankedLegs orders every graded leg, including a ticket with no takes', () => {
+  const m = twoSided(-175, 150);
+  const reads = [0.5, -0.5, 0.1].map((formSignal, i) =>
+    evaluateLeg({ selection: `Leg ${i}`, american: -175 }, { candidate: { ...m.fav, formSignal } }));
+  const ranked = rankedLegs(reads);
+  assert.equal(ranked.length, 3);
+  assert.ok(reads.every((r) => r.verdict === FADE), 'precondition: nothing clears the bar');
+  assert.equal(ranked[0].leg.selection, 'Leg 0', 'best form first');
+  assert.equal(ranked[2].leg.selection, 'Leg 1', 'worst form last');
+  assert.ok(ranked[0].tps > ranked[1].tps && ranked[1].tps > ranked[2].tps);
+});
+
+test('rankedLegs leaves out legs there was nothing to grade', () => {
+  const m = twoSided(-175, 150);
+  const graded = evaluateLeg({ selection: 'Real', american: -175 }, { candidate: m.fav });
+  const unmatched = evaluateLeg({ selection: 'Unmatched', american: -175 }, { candidate: null });
+  assert.equal(unmatched.verdict, NO_READ, 'precondition');
+  assert.deepEqual(rankedLegs([graded, unmatched]).map((r) => r.leg.selection), ['Real']);
+});
+
+test('a parlay with no takes still names its strongest legs', () => {
+  const m = twoSided(-175, 150);
+  const reads = [0.5, -0.5, 0.1].map((formSignal, i) =>
+    evaluateLeg({ selection: `Leg ${i}`, american: -175 },
+      { candidate: { ...m.fav, eventId: `g${i}`, formSignal } }));
+  const result = evaluateParlay(reads);
+  assert.equal(result.solidLegs.length, 0, 'precondition: the verdict-filtered list is empty');
+  assert.ok(result.bestLegs.length > 1, 'so the ranking is the only actionable output left');
+  assert.equal(result.bestLegs[0].leg.selection, 'Leg 0');
+});
+
+test('noTakeReason blames the prices only when the prices are the cause', () => {
+  const m = twoSided(-175, 150);
+  const atMarket = [0, 1, 2].map((i) =>
+    evaluateLeg({ selection: `Leg ${i}`, american: -175 }, { candidate: { ...m.fav, eventId: `g${i}` } }));
+  const reason = noTakeReason(atMarket);
+  assert.ok(reason, 'every leg holds the best number, so the hold is the whole story');
+  assert.match(reason, /line-shopping/i, 'and it names the response that would actually change the answer');
+
+  const badPrices = [0, 1, 2].map((i) =>
+    evaluateLeg({ selection: `Leg ${i}`, american: -260 }, { candidate: { ...m.fav, eventId: `g${i}` } }));
+  assert.equal(noTakeReason(badPrices), null, 'these legs are bad on price, which the verdicts already say');
+});
+
+test('noTakeReason stays quiet when something did clear the bar', () => {
+  const m = twoSided(-175, 150);
+  const take = evaluateLeg({ selection: 'Good', american: -145 },
+    { candidate: { ...m.fav, american: -145, decimal: americanToDecimal(-145) } });
+  assert.ok(isTakeSide(take.verdict), 'precondition');
+  assert.equal(noTakeReason([take]), null);
 });
 
 /* ---------------------------------------------------------------- */
