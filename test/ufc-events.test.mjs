@@ -1,7 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import {
-  getUfcEventDetails, fetchMmaResults, buildMmaScoreEvent, gradeMmaPickWithFallback, discoverMmaLeagues,
+  getUfcEventDetails, fetchMmaResults, buildMmaScoreEvent, buildMmaRoundsScoreEvent, gradeMmaPickWithFallback, discoverMmaLeagues,
 } from '../worker/src/ufc-events.js';
 
 /**
@@ -547,6 +547,85 @@ test('gradeMmaPickWithFallback returns null (stays pending) when neither source 
   };
   const outcome = gradeMmaPickWithFallback(pick, undefined, []);
   assert.equal(outcome, null);
+});
+
+/* ------------------------------------------------------------------ */
+/* buildMmaRoundsScoreEvent / totals-market grading                    */
+/*                                                                     */
+/* Regression coverage for a real bug: gradeMmaPickWithFallback used to */
+/* run EVERY market — including rounds totals — through                */
+/* buildMmaScoreEvent's plain win/loss (1/0) score. gradeGeneric's      */
+/* totals branch reads homeScore+awayScore, which a 1/0 flag always     */
+/* sums to 0 or 1 — below any realistic rounds line — so "Under" always */
+/* graded WON and "Over" always graded LOST regardless of how long the  */
+/* fight actually went. Confirmed live: Charles Johnson vs Eduardo      */
+/* Henrique (UFC 330) went to Round 3 by submission (per Flashscore),   */
+/* and the old path graded "Under 2.5" as a win.                        */
+/* ------------------------------------------------------------------ */
+
+test('buildMmaRoundsScoreEvent sums to the fight\'s real ending round, not a win/loss flag', () => {
+  const results = [{ a: 'charles johnson', b: 'eduardo henrique', aWon: true, bWon: false, round: 3 }];
+  const scoreEvent = buildMmaRoundsScoreEvent('Charles Johnson', 'Eduardo Henrique', results);
+  assert.equal(scoreEvent.completed, true);
+  const total = scoreEvent.scores.reduce((sum, s) => sum + s.score, 0);
+  assert.equal(total, 3, 'the sum gradeGeneric reads for a totals market must be the real round, not 0 or 1');
+});
+
+test('buildMmaRoundsScoreEvent returns null rather than guess when ESPN carries no round', () => {
+  const results = [{ a: 'charles johnson', b: 'eduardo henrique', aWon: true, bWon: false, round: null }];
+  assert.equal(buildMmaRoundsScoreEvent('Charles Johnson', 'Eduardo Henrique', results), null);
+});
+
+test('gradeMmaPickWithFallback grades a rounds-total pick against the real round — the exact bug this fixes', () => {
+  // The real case that surfaced this: fight went to Round 3, so "Under 2.5"
+  // must lose. Before the fix this graded WON every time, unconditionally.
+  const results = [{
+    a: 'charles johnson', b: 'eduardo henrique', aWon: true, bWon: false,
+    displayA: 'Charles Johnson', displayB: 'Eduardo Henrique', method: 'Submission', round: 3,
+  }];
+  const base = { home: 'Charles Johnson', away: 'Eduardo Henrique', marketKey: 'totals', decimal: 1.9, suggested_stake: 20 };
+
+  const under = gradeMmaPickWithFallback({ ...base, outcomeName: 'Under', point: 2.5 }, undefined, results);
+  assert.equal(under.won, false, 'the fight ran past round 2.5, so Under 2.5 must lose');
+  assert.equal(under.payout, -20);
+
+  const over = gradeMmaPickWithFallback({ ...base, outcomeName: 'Over', point: 2.5 }, undefined, results);
+  assert.equal(over.won, true, 'the fight ran past round 2.5, so Over 2.5 must win');
+  assert.equal(over.payout, (1.9 - 1) * 20);
+});
+
+test('gradeMmaPickWithFallback voids an exact push on a rounds total, same as any other totals market', () => {
+  const results = [{ a: 'charles johnson', b: 'eduardo henrique', aWon: true, bWon: false, round: 3 }];
+  const pick = {
+    home: 'Charles Johnson', away: 'Eduardo Henrique', marketKey: 'totals',
+    outcomeName: 'Under', point: 3, decimal: 1.9, suggested_stake: 20,
+  };
+  const outcome = gradeMmaPickWithFallback(pick, undefined, results);
+  assert.equal(outcome.void, true);
+  assert.equal(outcome.payout, 0);
+});
+
+test('gradeMmaPickWithFallback leaves a rounds-total pick pending when ESPN never carried a round', () => {
+  const results = [{ a: 'charles johnson', b: 'eduardo henrique', aWon: true, bWon: false, round: null }];
+  const pick = {
+    home: 'Charles Johnson', away: 'Eduardo Henrique', marketKey: 'totals',
+    outcomeName: 'Under', point: 2.5, decimal: 1.9, suggested_stake: 20,
+  };
+  assert.equal(gradeMmaPickWithFallback(pick, undefined, results), null);
+});
+
+test('h2h grading is completely unaffected by the totals fix — same fight, same results array', () => {
+  const results = [{
+    a: 'charles johnson', b: 'eduardo henrique', aWon: true, bWon: false,
+    displayA: 'Charles Johnson', displayB: 'Eduardo Henrique', method: 'Submission', round: 3,
+  }];
+  const base = { home: 'Charles Johnson', away: 'Eduardo Henrique', marketKey: 'h2h', point: null, decimal: 1.9, suggested_stake: 20 };
+
+  const winner = gradeMmaPickWithFallback({ ...base, outcomeName: 'Charles Johnson' }, undefined, results);
+  assert.equal(winner.won, true);
+
+  const loser = gradeMmaPickWithFallback({ ...base, outcomeName: 'Eduardo Henrique' }, undefined, results);
+  assert.equal(loser.won, false);
 });
 
 test('gradeMmaStraight grades method, round, and distance straights from the fight record', async () => {

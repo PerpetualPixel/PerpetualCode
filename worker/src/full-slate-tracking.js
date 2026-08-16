@@ -811,6 +811,76 @@ export async function manualMmaResult(
   return { pick };
 }
 
+/**
+ * Read-only audit for a real, now-fixed bug: gradeMmaPickWithFallback used
+ * to grade a rounds-total pick ("Under 2.5") through the same synthetic
+ * win/loss score (1 or 0) built for h2h — gradeGeneric's totals branch sums
+ * homeScore+awayScore, which a 1/0 flag always sums below any realistic
+ * rounds line, so "Under" always graded WON and "Over" always graded LOST
+ * regardless of the fight's real length. See buildMmaRoundsScoreEvent's own
+ * comment for the fix. This checks whether that bug already corrupted a
+ * real, already-graded pick before the fix shipped.
+ *
+ * Deliberately writes nothing — recomputes each already-graded MMA totals
+ * pick's outcome with the FIXED grading path and reports every disagreement
+ * for a human to review, the same reasoning manualMmaResult already applies
+ * to any change that touches an existing outcome. "Disagrees" is reported
+ * as exactly that, not asserted as definitely wrong: a pick that happened
+ * to grade from a real Odds API scoreEvent (rare for MMA, but not
+ * impossible) rather than the buggy ESPN fallback would also show up here,
+ * since this always recomputes via the ESPN fallback alone with no way to
+ * know after the fact which source the original grade actually used.
+ *
+ * Bounded by fetchMmaResults' own RESULTS_LOOKBACK_DAYS (3 days): a pick
+ * older than that has no fresh ESPN data to recheck against and is
+ * reported separately as unauditable, not silently skipped.
+ */
+export async function auditMmaTotalsGrading(
+  env,
+  ctx,
+  now = Date.now(),
+  { days = 14, fetchMmaResultsFn = () => fetchMmaResults(ctx, now) } = {},
+) {
+  const dateKeys = Array.from({ length: days }, (_, i) => etDate(now - i * 86400000));
+  const loaded = await Promise.all(dateKeys.map((dk) => loadFullSlateTracked(env, dk)));
+  const picks = loaded.flatMap((d) => d.picks);
+  const candidates = picks.filter((p) => (
+    isMma(p.sportKey) && p.marketKey === 'totals' && p.status !== 'pending'
+  ));
+  if (!candidates.length) return { checked: 0, disagreements: [], unauditable: [] };
+
+  const results = await fetchMmaResultsFn();
+  const disagreements = [];
+  const unauditable = [];
+
+  for (const pick of candidates) {
+    const fight = findMmaFight(pick.home, pick.away, results);
+    if (!fight || !Number.isFinite(fight.round)) {
+      unauditable.push({ pickId: pick.pickId, home: pick.home, away: pick.away, dateKey: pick.dateKey, reason: 'no ESPN round data in the current lookback window' });
+      continue;
+    }
+    const recomputed = gradeMmaPickWithFallback(pick, null, results);
+    const recomputedStatus = recomputed == null ? null : recomputed.void ? 'void' : recomputed.won ? 'won' : 'lost';
+    if (recomputedStatus !== null && recomputedStatus !== pick.status) {
+      disagreements.push({
+        pickId: pick.pickId,
+        dateKey: pick.dateKey,
+        home: pick.home,
+        away: pick.away,
+        outcomeName: pick.outcomeName,
+        point: pick.point,
+        storedStatus: pick.status,
+        storedPayout: pick.result?.payout,
+        recomputedStatus,
+        recomputedPayout: recomputed.payout,
+        espnRound: fight.round,
+      });
+    }
+  }
+
+  return { checked: candidates.length, disagreements, unauditable };
+}
+
 /** Today's tracked Full Slate picks (or a specific date's). */
 export async function getFullSlateTracked(env, { now = Date.now(), dateKey } = {}) {
   const { picks } = await loadFullSlateTracked(env, dateKey ?? etDate(now));
