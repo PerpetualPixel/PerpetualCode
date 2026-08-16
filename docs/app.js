@@ -244,13 +244,19 @@ function withinDayFilter(commenceMs, sportKey, isFinished = false) {
 /**
  * A tracked pick's raw sport key (e.g. 'tennis_wta_canadian_open',
  * 'baseball_mlb') mapped to its League Group label ('WTA', 'MLB') for the
- * tracker's sport filter. Pattern-matches tennis rather than checking the
- * live ATP/WTA group's keys — those rotate to a new tournament every week,
- * so a historical pick's key is often no longer in the current group.
+ * tracker's sport filter. Pattern-matches tennis and NFL preseason rather
+ * than checking the live ATP/WTA/nflpre group's keys — those are only
+ * populated while their tournament/season is actually live in the current
+ * catalogue (see populateDynamicGroups), so a historical pick's key, or one
+ * viewed in a session that hasn't fetched the catalogue yet, is often not
+ * in the current group at all. Without this, the filter fell through to
+ * showing the raw sport key itself ("americanfootball_nfl_preseason")
+ * instead of a real label.
  */
 function sportGroupLabel(sportKey) {
   if (sportKey.startsWith('tennis_atp_')) return 'ATP';
   if (sportKey.startsWith('tennis_wta_')) return 'WTA';
+  if (isNflPreseasonKey(sportKey)) return 'NFL Pre';
   const group = LEAGUE_GROUPS.find((g) => g.keys.includes(sportKey));
   return group ? group.label : sportKey;
 }
