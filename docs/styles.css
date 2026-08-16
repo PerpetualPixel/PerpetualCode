@@ -5193,3 +5193,331 @@ input[type="range"]:focus-visible {
     50% { opacity: 0.2; }
   }
 }
+
+/* ================================================================ */
+/* Tail or Fade — bet audit                                          */
+/* ================================================================ */
+
+/* The tokens row keeps its own centred flex layout; this wrapper adds the
+   Tail or Fade button beside it without shifting the tokens off centre.
+   The button is absolutely positioned at wide widths so the tokens stay
+   centred against the viewport rather than against the leftover space. */
+.slate-token-row {
+  position: relative;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+.slate-token-row .slate-league-tokens { flex: 1; }
+
+.tail-fade-btn {
+  position: absolute;
+  right: 0;
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  padding: 10px 16px;
+  border-radius: 999px;
+  border: 1px solid transparent;
+  background:
+    linear-gradient(rgba(8, 6, 20, 0.85), rgba(8, 6, 20, 0.85)) padding-box,
+    var(--card-border-gradient) border-box;
+  color: var(--text);
+  font-family: var(--sans);
+  font-size: 0.82rem;
+  font-weight: 700;
+  letter-spacing: 0.02em;
+  cursor: pointer;
+  white-space: nowrap;
+  transition: box-shadow 180ms ease, transform 180ms ease;
+}
+.tail-fade-btn:hover {
+  box-shadow: var(--glow-violet);
+  transform: translateY(-1px);
+}
+.tail-fade-btn:focus-visible {
+  outline: 2px solid var(--laser);
+  outline-offset: 2px;
+}
+.tail-fade-btn-icon { font-size: 1rem; }
+
+/* Below the width where an absolutely-positioned button would overlap the
+   tokens, it drops into normal flow on its own centred line instead. */
+@media (max-width: 900px) {
+  .slate-token-row { flex-direction: column; gap: 10px; }
+  .tail-fade-btn { position: static; }
+}
+
+.tail-fade-panel { width: min(94vw, 460px); }
+
+.tail-fade-body {
+  flex: 1;
+  overflow-y: auto;
+  padding: 16px;
+  -webkit-overflow-scrolling: touch;
+}
+
+.tail-fade-intro {
+  margin: 0 0 16px;
+  color: var(--muted);
+  font-size: 0.84rem;
+  line-height: 1.5;
+}
+.tail-fade-intro strong { color: var(--text); }
+
+.tail-fade-modes {
+  display: flex;
+  gap: 6px;
+  margin-bottom: 14px;
+}
+.tail-fade-mode {
+  flex: 1;
+  padding: 9px 8px;
+  border-radius: 10px;
+  border: 1px solid var(--line);
+  background: var(--surface);
+  color: var(--muted);
+  font-family: var(--sans);
+  font-size: 0.74rem;
+  font-weight: 600;
+  cursor: pointer;
+  transition: background 150ms ease, color 150ms ease;
+}
+.tail-fade-mode:hover { background: var(--surface-2); color: var(--text); }
+.tail-fade-mode.is-active {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: var(--on-accent);
+}
+
+.tail-fade-label {
+  display: block;
+  margin-bottom: 6px;
+  font-family: var(--mono);
+  font-size: 0.62rem;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: var(--muted);
+}
+
+.tail-fade-textarea,
+.tail-fade-select {
+  width: 100%;
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  color: var(--text);
+  font-family: var(--sans);
+  font-size: 0.85rem;
+  padding: 10px 12px;
+  resize: vertical;
+}
+.tail-fade-textarea:focus,
+.tail-fade-select:focus {
+  outline: none;
+  border-color: var(--accent);
+  box-shadow: 0 0 0 3px rgba(124, 58, 237, 0.2);
+}
+
+.tail-fade-hint {
+  margin: 8px 0 0;
+  color: var(--muted);
+  font-size: 0.74rem;
+  line-height: 1.45;
+}
+
+/* Drop zone */
+.tail-fade-drop {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 4px;
+  padding: 28px 16px;
+  border: 2px dashed var(--line);
+  border-radius: 14px;
+  background: var(--surface);
+  text-align: center;
+  cursor: pointer;
+  transition: border-color 150ms ease, background 150ms ease;
+}
+.tail-fade-drop:hover,
+.tail-fade-drop:focus-visible,
+.tail-fade-drop.is-dragging {
+  border-color: var(--accent);
+  background: var(--accent-dim);
+  outline: none;
+}
+.tail-fade-drop-icon { font-size: 1.5rem; color: var(--accent); }
+.tail-fade-drop-title { margin: 4px 0 0; font-weight: 700; font-size: 0.88rem; }
+.tail-fade-drop-sub { margin: 0; color: var(--muted); font-size: 0.74rem; }
+.tail-fade-drop kbd {
+  background: var(--surface-2);
+  border: 1px solid var(--line);
+  border-radius: 4px;
+  padding: 1px 5px;
+  font-family: var(--mono);
+  font-size: 0.7rem;
+}
+
+.tail-fade-preview { margin-top: 12px; }
+.tail-fade-preview img {
+  width: 100%;
+  border-radius: 10px;
+  border: 1px solid var(--line);
+}
+.tail-fade-preview-name {
+  margin: 6px 0 0;
+  color: var(--muted);
+  font-size: 0.74rem;
+  word-break: break-all;
+}
+
+/* Parsed legs */
+.tail-fade-legs { margin-top: 16px; }
+.tail-fade-legs-title {
+  margin: 0 0 8px;
+  font-family: var(--mono);
+  font-size: 0.62rem;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: var(--muted);
+}
+.tail-fade-leg {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 9px 11px;
+  margin-bottom: 6px;
+  border-radius: 9px;
+  background: var(--surface);
+  border: 1px solid var(--line);
+  font-size: 0.82rem;
+}
+.tail-fade-leg-price {
+  font-family: var(--mono);
+  font-weight: 700;
+  color: var(--laser);
+  white-space: nowrap;
+}
+/* A price the app filled in from the live market rather than reading off
+   the user's own input — labelled so a looked-up number is never mistaken
+   for the price they actually got. */
+.tail-fade-leg-sourced {
+  display: block;
+  color: var(--muted);
+  font-size: 0.66rem;
+  font-weight: 400;
+  letter-spacing: 0.02em;
+}
+
+.tail-fade-audit { width: 100%; margin-top: 16px; }
+.tail-fade-audit:disabled { opacity: 0.45; cursor: not-allowed; }
+
+/* Loading */
+.tail-fade-loading {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 18px 0;
+  color: var(--muted);
+  font-size: 0.84rem;
+}
+.tail-fade-spinner {
+  width: 16px;
+  height: 16px;
+  border: 2px solid var(--line);
+  border-top-color: var(--accent);
+  border-radius: 50%;
+  animation: tailFadeSpin 700ms linear infinite;
+  flex: none;
+}
+@keyframes tailFadeSpin { to { transform: rotate(360deg); } }
+@media (prefers-reduced-motion: reduce) {
+  .tail-fade-spinner { animation-duration: 2.4s; }
+  .tail-fade-btn { transition: none; }
+}
+
+/* Verdict */
+.tail-fade-result { margin-top: 18px; }
+
+.tail-fade-verdict {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 14px;
+  border-radius: 12px;
+  margin-bottom: 14px;
+}
+.tail-fade-verdict.is-tail {
+  background: rgba(16, 185, 129, 0.12);
+  border: 1px solid rgba(16, 185, 129, 0.45);
+}
+.tail-fade-verdict.is-fade {
+  background: rgba(239, 68, 68, 0.12);
+  border: 1px solid rgba(239, 68, 68, 0.45);
+}
+.tail-fade-badge {
+  font-family: var(--display);
+  font-size: 1.5rem;
+  font-weight: 800;
+  letter-spacing: 0.04em;
+  line-height: 1;
+}
+.tail-fade-verdict.is-tail .tail-fade-badge { color: var(--success); }
+.tail-fade-verdict.is-fade .tail-fade-badge { color: var(--danger); }
+.tail-fade-confidence {
+  margin: 0;
+  color: var(--muted);
+  font-size: 0.76rem;
+}
+.tail-fade-confidence strong { color: var(--text); font-size: 0.95rem; }
+
+.tail-fade-section { margin-bottom: 16px; }
+.tail-fade-section h3 {
+  margin: 0 0 8px;
+  font-family: var(--mono);
+  font-size: 0.62rem;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: var(--muted);
+}
+.tail-fade-section ul { margin: 0; padding-left: 18px; }
+.tail-fade-section li {
+  margin-bottom: 5px;
+  font-size: 0.83rem;
+  line-height: 1.5;
+}
+.tail-fade-section.is-risk li { color: #ffb4b4; }
+
+.tail-fade-summary {
+  padding: 12px 14px;
+  border-radius: 10px;
+  background: var(--surface-2);
+  border-left: 3px solid var(--accent);
+  font-size: 0.86rem;
+  line-height: 1.55;
+}
+
+.tail-fade-error {
+  padding: 12px 14px;
+  border-radius: 10px;
+  background: rgba(239, 68, 68, 0.1);
+  border: 1px solid rgba(239, 68, 68, 0.35);
+  color: var(--danger);
+  font-size: 0.83rem;
+}
+
+/* Every number on screen traces to a real source; a mocked run says so
+   plainly rather than letting placeholder analysis read as a real read. */
+.tail-fade-mock-note {
+  margin-top: 14px;
+  padding: 9px 11px;
+  border-radius: 8px;
+  background: rgba(251, 191, 36, 0.08);
+  border: 1px solid rgba(251, 191, 36, 0.3);
+  color: var(--warn);
+  font-size: 0.72rem;
+  line-height: 1.45;
+}

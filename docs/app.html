@@ -17,7 +17,7 @@
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Syne:wght@600;700;800&family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
-<link rel="stylesheet" href="styles.css?v=1.146">
+<link rel="stylesheet" href="styles.css?v=1.147">
 </head>
 <body>
 
@@ -113,7 +113,17 @@
     That's what the Pixel's Picks tab is for.
   </div>
 
-  <div id="slateLeagueTokens" class="slate-league-tokens" role="group" aria-label="Quick league select"></div>
+  <!-- The league tokens keep their own centred flex row; the Tail or Fade
+       button sits in a wrapper alongside it so it stays pinned to the right
+       of that row at every width without disturbing the tokens' centring. -->
+  <div class="slate-token-row">
+    <div id="slateLeagueTokens" class="slate-league-tokens" role="group" aria-label="Quick league select"></div>
+    <button id="tailFadeToggle" class="tail-fade-btn" type="button"
+            aria-haspopup="dialog" aria-expanded="false" aria-controls="tailFadePanel">
+      <span class="tail-fade-btn-icon" aria-hidden="true">⚖️</span>
+      <span>Tail or Fade</span>
+    </button>
+  </div>
 
   <div class="slate-controls">
     <!-- The league tokens above are now the actual UI for this; this pair
@@ -503,6 +513,56 @@
   </div>
 </aside>
 
+<aside id="tailFadePanel" class="history tail-fade-panel" role="dialog"
+       aria-label="Tail or Fade bet audit" aria-modal="true" hidden>
+  <div class="history-head">
+    <h2>Tail or Fade</h2>
+    <button id="tailFadeClose" class="icon-btn overlay-close-btn" aria-label="Close Tail or Fade">✕</button>
+  </div>
+  <div class="tail-fade-body">
+    <p class="tail-fade-intro">
+      Paste a bet, drop a screenshot of a slip, or pull a leg straight off the slate.
+      You get a straight <strong>TAIL</strong> or <strong>FADE</strong> call with the numbers behind it.
+    </p>
+
+    <div class="tail-fade-modes" role="tablist" aria-label="How to enter the bet">
+      <button class="tail-fade-mode is-active" role="tab" aria-selected="true" data-tf-mode="text" type="button">Type / paste</button>
+      <button class="tail-fade-mode" role="tab" aria-selected="false" data-tf-mode="image" type="button">Bet slip image</button>
+      <button class="tail-fade-mode" role="tab" aria-selected="false" data-tf-mode="slate" type="button">From the slate</button>
+    </div>
+
+    <div class="tail-fade-pane" data-tf-pane="text">
+      <label class="tail-fade-label" for="tailFadeText">Bet or prop line</label>
+      <textarea id="tailFadeText" class="tail-fade-textarea" rows="4"
+                placeholder="e.g. Kelsey Mitchell over 18.5 points -115&#10;A'ja Wilson 10+ rebounds +105"></textarea>
+      <p class="tail-fade-hint">One leg per line. Odds are optional — we'll look up the current market price if you leave them out.</p>
+    </div>
+
+    <div class="tail-fade-pane" data-tf-pane="image" hidden>
+      <div id="tailFadeDrop" class="tail-fade-drop" tabindex="0" role="button"
+           aria-label="Upload or paste a bet slip screenshot">
+        <span class="tail-fade-drop-icon" aria-hidden="true">⬆︎</span>
+        <p class="tail-fade-drop-title">Drop a bet slip screenshot</p>
+        <p class="tail-fade-drop-sub">or click to choose · or press <kbd>Ctrl</kbd>+<kbd>V</kbd> to paste</p>
+        <input id="tailFadeFile" type="file" accept="image/*" hidden>
+      </div>
+      <div id="tailFadePreview" class="tail-fade-preview" hidden></div>
+    </div>
+
+    <div class="tail-fade-pane" data-tf-pane="slate" hidden>
+      <label class="tail-fade-label" for="tailFadeSlatePick">Pick a leg already on the board</label>
+      <select id="tailFadeSlatePick" class="slate-league-select tail-fade-select"></select>
+      <p class="tail-fade-hint">Every market currently on the Full Slate for the league you're viewing.</p>
+    </div>
+
+    <div id="tailFadeLegs" class="tail-fade-legs" hidden></div>
+
+    <button id="tailFadeAudit" class="generate tail-fade-audit" type="button" disabled>Audit Bet</button>
+
+    <div id="tailFadeResult" class="tail-fade-result" aria-live="polite"></div>
+  </div>
+</aside>
+
 <aside id="statsDrawer" class="history stats-drawer" aria-label="More stats" hidden>
   <div class="history-head">
     <h2 id="statsDrawerTitle">More Stats</h2>
@@ -834,6 +894,6 @@
   </div>
 </aside>
 
-<script type="module" src="app.js?v=1.146"></script>
+<script type="module" src="app.js?v=1.147"></script>
 </body>
 </html>
