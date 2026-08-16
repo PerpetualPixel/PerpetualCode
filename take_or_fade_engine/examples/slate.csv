@@ -1,0 +1,4 @@
+ticket_id,event_id,sport,matchup,market_type,selection,odds_american,sharp_fair_prob,offered_odds_american,m_subject,m_dominance_ratio,m_surface_win_pct,m_prior_round_hours,m_epa_per_play_diff,m_spread_point
+T1,atp-1,TENNIS,Sinner v Rune,MONEYLINE,Sinner ML,-180,0.70,-180,Sinner,1.31,0.78,1.5,,
+T2,nfl-1,NFL,Ravens @ Steelers,SPREAD,Ravens -2.5,-110,0.562,-110,Ravens,,,,0.16,-2.5
+T3,mma-1,MMA,Fighter A v Fighter B,MONEYLINE,Fighter A ML,-150,0.58,-150,Fighter A,,,,,

@@ -1,0 +1,30 @@
+{
+  "ticket_id": "NBA-PRA-SINGLE",
+  "slip_type": "STRAIGHT",
+  "offered_odds_american": -115,
+  "legs": [
+    {
+      "event_id": "nba-bos-mia",
+      "sport": "NBA",
+      "matchup": "Celtics @ Heat",
+      "market_type": "PROP_MILESTONE",
+      "selection": "Jaylen Brown 25+ PRA",
+      "odds_american": -115,
+      "sharp_fair_prob": 0.615,
+      "metrics": {
+        "subject": "Jaylen Brown",
+        "milestone_line": 25,
+        "recent_samples": [31, 27, 24, 33, 29, 22, 35, 28, 26, 30],
+        "opp_playtype_def_rank": 24,
+        "usage_reallocation": 6.5,
+        "pace_delta": 3.2,
+        "minutes_trend": 2.4,
+        "opp_def_rating": 116.8,
+        "game_spread": -4.5,
+        "rest_days": 2,
+        "travel_miles": 1250,
+        "game_script_stability": 0.7
+      }
+    }
+  ]
+}

@@ -1,0 +1,19 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "take-or-fade-engine"
+version = "1.0.0"
+description = "Quantitative sports betting decision engine and slip optimizer"
+requires-python = ">=3.11"
+dependencies = ["pydantic>=2.0", "fastapi>=0.100", "numpy>=1.24", "uvicorn>=0.23"]
+
+[project.optional-dependencies]
+test = ["pytest>=7.0", "httpx>=0.24"]
+
+[project.scripts]
+take-or-fade = "take_or_fade_engine.cli:main"
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
