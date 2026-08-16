@@ -18,6 +18,8 @@ import {
   runLadderDaily,
   LADDER_BASE,
   LADDER_TARGET,
+  LADDER_MIN_AMERICAN,
+  LADDER_MAX_AMERICAN,
 } from '../worker/src/ladder.js';
 import { seedTennisArchiveCacheForTests } from '../worker/src/tennis-archive.js';
 
@@ -56,7 +58,7 @@ const ladderCtx = { waitUntil: (p) => p };
  * it every book agreeing exactly produces zero edge and a score in the 30s,
  * which would fail every fixture here regardless of the preseason filter.
  */
-function makeLadderEvent(id, { sport = 'basketball_nba', sportTitle = 'NBA', favoritePrice = -195, outlier = 25 } = {}) {
+function makeLadderEvent(id, { sport = 'basketball_nba', sportTitle = 'NBA', favoritePrice = -195, awayPrice = 160, outlier = 25 } = {}) {
   const books = ['b0', 'b1', 'b2', 'b3', 'b4', 'b5', 'b6', 'b7'];
   return {
     id,
@@ -74,7 +76,7 @@ function makeLadderEvent(id, { sport = 'basketball_nba', sportTitle = 'NBA', fav
         last_update: new Date(NOW - 600000).toISOString(),
         outcomes: [
           { name: `${id} Home`, price: favoritePrice + (i === 0 ? outlier : 0) },
-          { name: `${id} Away`, price: 160 },
+          { name: `${id} Away`, price: awayPrice },
         ],
       }],
     })),
@@ -307,4 +309,52 @@ test('the other number on the same side of a total is a contradiction', () => {
 
 test('a different game is never a contradiction', () => {
   assert.equal(contradictsPick({ ...posted, eventId: 'e-2', outcomeName: 'Celtics' }, posted), false);
+});
+
+/* ---------------------------------------------------------------- */
+/* The selection band                                                */
+/* ---------------------------------------------------------------- */
+
+test('the band is -200..+120 — a plus-money underdog now qualifies, unlike the old favorites-only band', async () => {
+  assert.equal(LADDER_MIN_AMERICAN, -200);
+  assert.equal(LADDER_MAX_AMERICAN, 120);
+
+  // +110 would have been excluded outright by the old favorites-only
+  // (-250..-165) band; under the current one it is a legitimate rung.
+  const { env } = makeKvStore();
+  // Two fixture details that matter: awayPrice must be a real other side
+  // (leaving the +160 default would put BOTH sides on plus money, a
+  // negative-vig market that cannot exist), and the tracked price is the
+  // BEST book's, so 90 + the 25 outlier = +115 is what actually gets graded
+  // against the band's +120 ceiling.
+  const events = [makeLadderEvent('dog', { favoritePrice: 90, awayPrice: -130 })];
+  const result = await runLadderDaily(env, ladderCtx, NOW, { fetchFullSlate: async () => events });
+  assert.equal(result.skipped, false, 'a +115 candidate must be pickable');
+  assert.equal(result.record.pick.american, 115);
+});
+
+test('a price heavier than -200 is refused — the band floor is a hard edge', async () => {
+  const { env } = makeKvStore();
+  const events = [makeLadderEvent('heavy', { favoritePrice: -260 })];
+  const result = await runLadderDaily(env, ladderCtx, NOW, { fetchFullSlate: async () => events });
+  assert.equal(result.skipped, true);
+  assert.equal(result.reason, 'no qualifying play in the ladder band today');
+});
+
+test('among near-tied candidates the tie breaks toward -200, the safe edge of the band', () => {
+  // Same score, different prices: the one closest to -200 wins, which under
+  // this band means the heaviest-favoured of the two.
+  const chosen = chooseLadderPlay([
+    { id: 'dog', score: 70, american: 115 },
+    { id: 'fav', score: 70, american: -190 },
+  ]);
+  assert.equal(chosen.id, 'fav', 'a compounding bankroll leans to the safer price on a tie');
+});
+
+test('a genuinely better score still wins outright, regardless of price', () => {
+  const chosen = chooseLadderPlay([
+    { id: 'dog', score: 85, american: 115 },
+    { id: 'fav', score: 60, american: -195 },
+  ]);
+  assert.equal(chosen.id, 'dog', 'the tie-break only applies to near-ties, never overriding a real edge');
 });

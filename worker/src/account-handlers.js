@@ -229,6 +229,7 @@ export async function handleUpdateNotifications(request, env) {
     const values = [];
     if ('potdEmail' in body) { fields.push('notify_potd_email = ?'); values.push(body.potdEmail ? 1 : 0); }
     if ('picksEmail' in body) { fields.push('notify_picks_email = ?'); values.push(body.picksEmail ? 1 : 0); }
+    if ('ladderEmail' in body) { fields.push('notify_ladder_email = ?'); values.push(body.ladderEmail ? 1 : 0); }
     if ('trackingReportEmail' in body) {
       fields.push('notify_tracking_report_email = ?');
       values.push(body.trackingReportEmail ? 1 : 0);

@@ -2,8 +2,8 @@ import { formatAmerican } from '../../docs/engine.js';
 import { EMAIL_LOGO_HTML } from './auth-handlers.js';
 
 /**
- * Email notifications for users opted into Play of the Day / Pixel's Picks
- * alerts (worker/src/account-handlers.js's handleUpdateNotifications is
+ * Email notifications for users opted into Play of the Day / Pixel's Picks /
+ * Ladder Challenge alerts (worker/src/account-handlers.js's handleUpdateNotifications is
  * where those preferences get set). Called every hourly tick from
  * index.js's scheduled(), after runPotdDaily/runTop5Batch have run — never
  * on the page-view path, so a slow or failed send never affects anyone
@@ -110,6 +110,43 @@ export async function sendPotdNotifications(env, record) {
       <p style="margin-bottom: 20px; color: #a0a0cc;">${matchup} &middot; ${pick.selection} <span style="color: #00d9ff;">${price}</span></p>
     `),
     text: `Hi ${user.username}, Play of the Day: ${pick.selection} (${price})\n${matchup}\n\nOpen: https://perpetualpicks.com/app.html`,
+  }));
+}
+
+/**
+ * The ladder's daily rung. Deliberately says the stake and what the rung
+ * returns rather than just the pick: the ladder compounds, so "which rung
+ * am I on and how much is riding" is the part that actually differs from
+ * every other notification this app sends — a $240 rung and a $20 rung are
+ * the same pick shape but very different information.
+ */
+export async function sendLadderNotifications(env, record, state) {
+  if (!env.EMAIL || !record?.pick) return;
+  const users = await fetchOptedInUsers(env, 'notify_ladder_email');
+  if (!users.length) return;
+
+  const { pick, stake, toReturn, step } = record;
+  const matchup = `${pick.away} @ ${pick.home}`;
+  const price = formatAmerican(pick.american);
+  const money = (n) => `$${Number(n).toFixed(2)}`;
+  const banked = state?.banked ? ` &middot; ${money(state.banked)} already banked` : '';
+
+  await sendBatch(env, users, (user) => ({
+    to: user.email,
+    from: FROM,
+    subject: `Ladder Day ${step}: ${pick.selection} (${price}) — ${money(stake)} riding`,
+    html: emailShell(user.username, `Ladder Challenge &middot; Day ${step}`, `
+      <p style="margin-bottom: 8px; font-size: 18px; font-weight: bold;">${pick.selection} <span style="color: #00d9ff;">${price}</span></p>
+      <p style="margin-bottom: 20px; color: #a0a0cc;">${matchup}</p>
+      <p style="margin-bottom: 8px; color: #a0a0cc;">
+        Staking <strong style="color: #fff;">${money(stake)}</strong> to return
+        <strong style="color: #fff;">${money(toReturn)}</strong>${banked}
+      </p>
+      <p style="margin: 0; color: #7070aa; font-size: 12px;">
+        The whole bankroll rides each rung — a loss ends the climb and starts the next one back at $20.
+      </p>
+    `),
+    text: `Hi ${user.username}, Ladder Day ${step}: ${pick.selection} (${price})\n${matchup}\nStaking ${money(stake)} to return ${money(toReturn)}\n\nOpen: https://perpetualpicks.com/app.html`,
   }));
 }
 

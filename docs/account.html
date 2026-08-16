@@ -341,7 +341,7 @@
       <!-- Notifications -->
       <div class="card">
         <h2>Notifications</h2>
-        <p class="card-desc">Get notified the moment Play of the Day and Pixel's Picks lock in for the day.</p>
+        <p class="card-desc">Get notified the moment Play of the Day, Pixel's Picks, and the Ladder Challenge lock in for the day.</p>
         <div id="notif-message"></div>
 
         <div class="toggle-row">
@@ -355,6 +355,13 @@
           <span class="toggle-label">Pixel's Picks &mdash; Email</span>
           <label class="switch">
             <input type="checkbox" id="notif-picks-email" data-field="picksEmail">
+            <span class="switch-track"></span>
+          </label>
+        </div>
+        <div class="toggle-row">
+          <span class="toggle-label">Ladder Challenge &mdash; Email<small>The day's rung, the stake riding on it, and what it returns</small></span>
+          <label class="switch">
+            <input type="checkbox" id="notif-ladder-email" data-field="ladderEmail">
             <span class="switch-track"></span>
           </label>
         </div>
@@ -462,6 +469,7 @@
 
       document.getElementById('notif-potd-email').checked = !!data.notifications.potdEmail;
       document.getElementById('notif-picks-email').checked = !!data.notifications.picksEmail;
+      document.getElementById('notif-ladder-email').checked = !!data.notifications.ladderEmail;
       document.getElementById('notif-potd-sms').checked = !!data.notifications.potdSms;
       document.getElementById('notif-picks-sms').checked = !!data.notifications.picksSms;
       document.getElementById('notif-tracking-report').checked = !!data.notifications.trackingReportEmail;

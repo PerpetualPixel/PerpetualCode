@@ -19,6 +19,7 @@ import {
 import {
   sendPotdNotifications,
   sendPicksNotifications,
+  sendLadderNotifications,
   getNotifiedTop5PickIds,
   markTop5PickIdsNotified,
 } from './notifications.js';
@@ -102,6 +103,7 @@ import {
   backfillMmaFinishDetail,
   manualMmaResult,
   auditMmaTotalsGrading,
+  regradeMmaTotals,
 } from './full-slate-tracking.js';
 import { runStalePickAudit, getStalePickReport } from './stale-picks.js';
 import { isWtaPick } from './retraction.js';
@@ -577,7 +579,18 @@ export default {
             runLadderDaily(env, ctx, now, {
               fetchFullSlate,
               getTop5Picks: () => getTop5(env, { now }),
-            }).catch((e) => console.error('Ladder Challenge selection failed:', e)),
+            })
+              .then(async (ladderResult) => {
+                // Only when a rung actually posted on THIS tick. Safe against
+                // double-sending by runLadderDaily's own one-shot guard: once
+                // today's play exists it returns skipped:true on every later
+                // tick, so this branch can only ever be entered once a day.
+                if (ladderResult?.skipped === false && ladderResult.record) {
+                  const { state } = await getLadder(env, now);
+                  await sendLadderNotifications(env, ladderResult.record, state);
+                }
+              })
+              .catch((e) => console.error('Ladder Challenge selection failed:', e)),
           );
 
           // Notify whoever opted in (see worker/src/account-handlers.js's
@@ -865,6 +878,7 @@ export default {
       '/admin/backfill-mma-detail',
       '/admin/manual-mma-result',
       '/admin/audit-mma-totals',
+      '/admin/regrade-mma-totals',
     ]);
     if (request.method === 'POST' && (AUTH_LIMITED_PATHS.has(pathname) || pathname === '/api/report-bug' || OWNER_LIMITED_PATHS.has(pathname))) {
       const ip = request.headers.get('CF-Connecting-IP') ?? 'unknown';
@@ -1755,6 +1769,29 @@ export default {
         const { searchParams } = new URL(request.url);
         const days = Math.min(90, Math.max(1, Number(searchParams.get('days')) || 14));
         const result = await auditMmaTotalsGrading(env, ctx, Date.now(), { days });
+        return json(result, { headers: cors });
+      } catch (error) {
+        return json({ error: String(error).slice(0, 200) }, { status: 500, headers: cors });
+      }
+    }
+
+    // The write half of the audit above: corrects MMA rounds-total picks the
+    // now-fixed grading bug settled wrong. DRY RUN BY DEFAULT — pass
+    // ?apply=true to actually write, so the natural first call shows exactly
+    // what would change before anything does. See regradeMmaTotals' own
+    // comment for why this is allowed to overwrite a settled outcome when
+    // manualMmaResult deliberately refuses to: this only ever touches picks
+    // where the shared, fixed grading math provably disagrees with what's
+    // stored, and every rewritten record carries regradedAt/regradedReason
+    // so a changed outcome always says why.
+    if (pathname === '/admin/regrade-mma-totals' && request.method === 'POST') {
+      const auth = authorizeSettings(request, env);
+      if (!auth.ok) return json({ error: auth.error }, { status: auth.status, headers: cors });
+      try {
+        const { searchParams } = new URL(request.url);
+        const days = Math.min(90, Math.max(1, Number(searchParams.get('days')) || 14));
+        const apply = searchParams.get('apply') === 'true';
+        const result = await regradeMmaTotals(env, ctx, Date.now(), { days, apply });
         return json(result, { headers: cors });
       } catch (error) {
         return json({ error: String(error).slice(0, 200) }, { status: 500, headers: cors });
