@@ -436,7 +436,7 @@ export async function handleMe(request, env) {
 
     const user = await env.DB.prepare(
       `SELECT id, email, email_verified, username, pending_email,
-              notify_potd_email, notify_picks_email,
+              notify_potd_email, notify_picks_email, notify_ladder_email,
               notify_potd_sms, notify_picks_sms,
               notify_tracking_report_email
        FROM users WHERE id = ?`,
@@ -457,6 +457,7 @@ export async function handleMe(request, env) {
       notifications: {
         potdEmail: Boolean(user.notify_potd_email),
         picksEmail: Boolean(user.notify_picks_email),
+        ladderEmail: Boolean(user.notify_ladder_email),
         potdSms: Boolean(user.notify_potd_sms),
         picksSms: Boolean(user.notify_picks_sms),
         trackingReportEmail: Boolean(user.notify_tracking_report_email),

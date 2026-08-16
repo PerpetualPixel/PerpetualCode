@@ -19,6 +19,7 @@ import {
 import {
   sendPotdNotifications,
   sendPicksNotifications,
+  sendLadderNotifications,
   getNotifiedTop5PickIds,
   markTop5PickIdsNotified,
 } from './notifications.js';
@@ -578,7 +579,18 @@ export default {
             runLadderDaily(env, ctx, now, {
               fetchFullSlate,
               getTop5Picks: () => getTop5(env, { now }),
-            }).catch((e) => console.error('Ladder Challenge selection failed:', e)),
+            })
+              .then(async (ladderResult) => {
+                // Only when a rung actually posted on THIS tick. Safe against
+                // double-sending by runLadderDaily's own one-shot guard: once
+                // today's play exists it returns skipped:true on every later
+                // tick, so this branch can only ever be entered once a day.
+                if (ladderResult?.skipped === false && ladderResult.record) {
+                  const { state } = await getLadder(env, now);
+                  await sendLadderNotifications(env, ladderResult.record, state);
+                }
+              })
+              .catch((e) => console.error('Ladder Challenge selection failed:', e)),
           );
 
           // Notify whoever opted in (see worker/src/account-handlers.js's

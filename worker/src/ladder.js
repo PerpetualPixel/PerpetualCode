@@ -35,7 +35,7 @@
  *
  * The pick
  * --------
- * LADDER_MIN_AMERICAN..LADDER_MAX_AMERICAN (-250..-165), nearest -200
+ * LADDER_MIN_AMERICAN..LADDER_MAX_AMERICAN (-200..+120), nearest -200
  * preferred among comparable candidates, and never the day's Play of the Day
  * or Prop Play of the Day, nor anything contradicting a pick the app has
  * already posted today. It MAY be a Pixel's Pick — the ladder is a different
@@ -69,8 +69,23 @@ export const LADDER_MILESTONES = [40, 120, 240];
 export const LADDER_TARGET = 360;
 /** The price the ladder is designed around — every win pays 1.5x at -200. */
 export const LADDER_TARGET_AMERICAN = -200;
-export const LADDER_MIN_AMERICAN = -250;
-export const LADDER_MAX_AMERICAN = -165;
+/**
+ * The selection band: no heavier than -200, no longer than +120.
+ *
+ * Widened from an earlier -250..-165 on explicit product direction. Two
+ * consequences worth knowing, since this is the one surface that compounds:
+ *
+ * 1. -200 is now the SAFE edge of the band rather than its centre, so the
+ *    near-tie rule below (break toward LADDER_TARGET_AMERICAN) now always
+ *    resolves a tie toward the heaviest-favoured candidate available. For a
+ *    bankroll that rides every rung, that is the right direction to lean.
+ * 2. The plan (ladderPlan) still models 1.5x per rung because that is what
+ *    -200 pays. A rung actually taken at +120 pays 2.2x, so real bankroll
+ *    can run AHEAD of plan — which is exactly why tracked bankroll and plan
+ *    are stored separately and always have been.
+ */
+export const LADDER_MIN_AMERICAN = -200;
+export const LADDER_MAX_AMERICAN = 120;
 /**
  * Two candidates within this much of each other on score are treated as
  * equally good, and the tie breaks toward whichever is priced closest to
@@ -89,6 +104,15 @@ const STATE_KEY = 'ladder:state';
 const RUNS_KEY = 'ladder:runs';
 const playKey = (dateKey) => `ladder:play:${dateKey}`;
 const poolKey = (dateKey) => `ladder-pool:${dateKey}`;
+/**
+ * Why today has no rung yet. runLadderDaily already returned this as a
+ * {skipped, reason} on every tick, but that value only ever went to the
+ * cron's own return — so from outside, "the ladder is holding because the
+ * day's field hasn't settled" and "the ladder found nothing it could bet"
+ * and "something is broken" all looked identical: an empty section. This
+ * persists the reason so /ladder can say which it is.
+ */
+const statusKey = (dateKey) => `ladder:status:${dateKey}`;
 
 /** Money is compared and stored to the cent; floating point is not allowed to invent a third decimal. */
 const money = (n) => Math.round(n * 100) / 100;
@@ -263,6 +287,18 @@ export function chooseLadderPlay(candidates) {
  */
 export async function runLadderDaily(env, ctx, now = Date.now(), { fetchFullSlate, getTop5Picks = async () => [] } = {}) {
   const dateKey = etParts(now).date;
+  // Records why the day has no rung, so /ladder can explain an empty
+  // section instead of leaving "holding on purpose" and "broken" looking
+  // identical. Written on every skip, cleared once a rung actually posts.
+  const hold = async (reason, detail = {}) => {
+    await env.POTD_KV.put(
+      statusKey(dateKey),
+      JSON.stringify({ dateKey, reason, checkedAt: now, ...detail }),
+      { expirationTtl: KV_TTL_SECONDS },
+    );
+    return { skipped: true, reason, dateKey, ...detail };
+  };
+
   const existing = await env.POTD_KV.get(playKey(dateKey));
   if (existing) return { skipped: true, reason: 'already posted today', dateKey };
 
@@ -297,7 +333,7 @@ export async function runLadderDaily(env, ctx, now = Date.now(), { fetchFullSlat
 
   await updateLadderPool(env, ctx, dateKey, inBand.filter((c) => isPickWindowOpen(c, now)), now);
   if (scheduleStillOpen(events, dateKey, now)) {
-    return { skipped: true, reason: "still comparing today's games", dateKey };
+    return hold("still comparing today's games", { inBandSoFar: inBand.length });
   }
 
   const poolRaw = await env.POTD_KV.get(poolKey(dateKey));
@@ -314,7 +350,10 @@ export async function runLadderDaily(env, ctx, now = Date.now(), { fetchFullSlat
     // Deliberately not written to KV: a hold isn't a play, and tomorrow's
     // tick should be free to post one. The reason is returned for the cron
     // log and for /ladder to explain the empty day.
-    return { skipped: true, reason: 'no qualifying play in the ladder band today', dateKey };
+    return hold('no qualifying play in the ladder band today', {
+      poolSize: pool.length,
+      blockedByExclusion: pool.length - eligible.length,
+    });
   }
 
   const state = await getLadderState(env, now);
@@ -499,10 +538,11 @@ export async function runLadderGrading(env, ctx, now = Date.now(), {
  */
 export async function getLadder(env, now = Date.now()) {
   const today = etParts(now).date;
-  const [state, todayRaw, yesterdayRaw] = await Promise.all([
+  const [state, todayRaw, yesterdayRaw, statusRaw] = await Promise.all([
     getLadderState(env, now),
     env.POTD_KV.get(playKey(today)),
     env.POTD_KV.get(playKey(etDatePlusDays(now, -1))),
+    env.POTD_KV.get(statusKey(today)),
   ]);
 
   const todayPlay = todayRaw ? JSON.parse(todayRaw) : null;
@@ -515,6 +555,9 @@ export async function getLadder(env, now = Date.now()) {
     target: LADDER_TARGET,
     milestones: LADDER_MILESTONES,
     band: { min: LADDER_MIN_AMERICAN, max: LADDER_MAX_AMERICAN },
+    // Why there's no rung today, when there isn't one. Null once today's
+    // play posts — at that point the play itself is the answer.
+    todayStatus: todayPlay ? null : (statusRaw ? JSON.parse(statusRaw) : null),
   };
 }
 

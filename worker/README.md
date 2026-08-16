@@ -355,8 +355,8 @@ GET /ladder
 GET /ladder-history
 ```
 
-The Ladder Challenge (`worker/src/ladder.js`): one lower-risk play a day in
-the −250..−165 band, staking the entire ladder bankroll each time. **Free** —
+The Ladder Challenge (`worker/src/ladder.js`): one play a day in the
+−200..+120 band, staking the entire ladder bankroll each time. **Free** —
 KV only on both paths. `/ladder` returns the live climb, the ideal plan, and
 today's rung (or yesterday's, labelled `stale`, before today's posts);
 `/ladder-history` returns every settled rung plus every finished climb, which
@@ -377,6 +377,15 @@ KV. Run in parallel with the batch that writes them and the exclusions would
 read an undecided day and pass on an empty set — the ladder could post the
 exact pick it exists to avoid. A day with nothing in band posts nothing and
 the climb keeps its place; holding is a valid outcome, not a failure.
+
+`/ladder` also returns `todayStatus` — why there is no rung yet, when there
+isn't one. Without it, "holding because the day's field hasn't settled yet",
+"nothing cleared the band", and "something is broken" were indistinguishable
+from outside: all three rendered as the same empty section. The ladder waits
+on the same signal Play of the Day locks on (every one of today's games
+inside its own pick window), so on a normal day it decides in the evening,
+not the morning — an empty ladder at 9am is the system working, and
+`todayStatus` is what makes that legible rather than alarming.
 
 NFL preseason is excluded the same way Pixel's Picks and Play of the Day
 are (`isNflPreseason`, `docs/engine.js`) — arguably more so here: this is the
