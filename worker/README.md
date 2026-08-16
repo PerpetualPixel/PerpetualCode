@@ -237,6 +237,45 @@ several rows after the first one it couldn't match. Splitting into row chunks
 first, then reading each field independently, means one odd row loses a field
 or two and nothing else.
 
+```
+GET /mma-results
+```
+
+Every finished MMA fight ESPN's scoreboard currently carries — winner, finish
+method, and round — for the card grouping and live/finished state Full Slate
+draws on the client (`docs/app.js`'s `mmaFightConcluded`/`slateGameState`).
+**Free** — no odds credit. Returns `{ results: [...] }`, one entry per
+completed fight across every promotion `worker/src/ufc-events.js` discovers
+(UFC and PFL always, plus whatever else ESPN's own league list currently
+carries — see that file's own comment on why promotions are discovered
+rather than hardcoded).
+
+This is `site.web.api.espn.com`, **not** the `cdn.espn.com` host the
+`/mma-context` section above just called a dead end for MMA — that claim is
+specific to `cdn.espn.com`, which genuinely has no MMA pages at all.
+`site.web.api.espn.com` is a separate, already-proven-reachable host
+(`worker/src/ufc-events.js`'s own top comment: confirmed live from a
+Cloudflare Worker, unlike the 403-blocked `site.api.espn.com`), used for
+MMA card/event names since before this route existed; `/mma-results` is the
+same source, just exposing its completed-fight data too.
+
+This exists because the Odds API's own `/scores` is a poor fit for MMA: a
+sportsbook stops pricing a fight the moment it starts rather than ever
+reporting a result through that feed, so `completed:true` for an MMA event
+is rare to the point of being nearly useless. `worker/src/full-slate-tracking.js`'s
+grading pass already solved this for TRACKED picks, with the exact same
+ESPN source, as a fallback ahead of `/scores`
+(`gradeMmaPickWithFallback`) — but that only resolves a fight once it's both
+been tracked (an MMA event's market can vanish from the odds feed before a
+candidate is ever built for it) and graded (the grading cron runs on its own
+schedule, and a void grade never resolves through it at all). The client had
+no equivalent for the untracked, ungraded, or still-pending gap, so a
+finished MMA fight could sit under "Live" on the Full Slate long after it
+actually ended — reported live off the deployed site, then reproduced in a
+synthetic session before this fix, not a hypothetical. `/mma-results` gives
+the client the same authoritative signal server-side grading already
+trusts, directly, without waiting on either a tracked pick or a grading pass.
+
 **No Method of Victory market — confirmed at the schema level, not just "not
 populated yet."** Requesting a guessed market key like `method_of_victory`
 against The Odds API's own event-odds endpoint returns a distinct

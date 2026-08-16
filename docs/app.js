@@ -862,6 +862,20 @@ const state = {
   // from at all — the tracked record survives that.
   slateTrackedPicks: new Map(),
   slateTrackedPicksFetchedAt: 0,
+  // Finished MMA fights from ESPN's own scoreboard (worker's /mma-results,
+  // backed by worker/src/ufc-events.js's fetchMmaResults) — the same source
+  // full-slate-tracking.js's grading pass already trusts over the Odds
+  // API's own /scores for this sport, since books simply stop pricing a
+  // fight once it starts rather than ever reporting a result through that
+  // feed. Without this, an MMA card's Live/Finished state had only
+  // slateScores (rarely populated for MMA) and slateTrackedPicks (lags
+  // until grading runs, and never fires for a void grade at all) to go on,
+  // so a card sat labelled "Live" long after every fight on it had ended.
+  // A flat array, not a Map — matched by fighter name (see
+  // findMmaResultFor), not by eventId, since ESPN's scoreboard has no Odds
+  // API event id to key on.
+  mmaResults: [],
+  mmaResultsFetchedAt: 0,
   // Full Slate's Upcoming/Live/Finished toggle — defaults to Upcoming each
   // fresh load rather than persisting, since "what's live right now" isn't
   // something you'd want stuck from a prior session.
@@ -3266,11 +3280,16 @@ function slateScoreFor(scoreEvent, teamName) {
  * Whether an eventId is finished, from either data source that can say so:
  * the Odds API's /scores (completed:true) or the server's own tracked Full
  * Slate pick once graded (won/lost — see worker/src/full-slate-tracking.js).
- * The tracked pick is checked too, not just /scores, because it's graded
- * via an ESPN fallback for MMA that covers fights /scores has no record of
- * at all (see buildSlateGames' trackedOnlyGames tier) — a pick can only
- * ever reach won/lost once the fight has actually concluded, so treating
- * that as authoritative here can't misclassify a still-live fight.
+ * A pick can only ever reach won/lost once the fight has actually
+ * concluded, so treating that as authoritative here can't misclassify a
+ * still-live fight — but for MMA specifically it's a lagging signal, not a
+ * timely one: it needs a pick to have been tracked at all (odds vanish the
+ * moment a fight starts, so a late-tracked card can miss the window
+ * entirely), the grading cron to have already run, AND the outcome to have
+ * graded won/lost rather than void (a void tracked pick never satisfies
+ * this check, even though the fight itself is long over). See
+ * mmaFightConcluded below for the direct ESPN-backed check that closes
+ * that gap.
  */
 function isGameFinished(eventId) {
   if (state.slateScores.get(eventId)?.completed === true) return true;
@@ -3278,9 +3297,27 @@ function isGameFinished(eventId) {
   return status === 'won' || status === 'lost';
 }
 
-/** 'upcoming' | 'live' | 'finished' for a game, from whatever /scores and tracked-pick data is currently cached. */
+/**
+ * Whether an MMA fight has concluded, per ESPN's own scoreboard
+ * (state.mmaResults, from the worker's /mma-results — the same source
+ * worker/src/full-slate-tracking.js's grading pass already trusts over the
+ * Odds API's own /scores for this sport, since sportsbooks simply stop
+ * pricing a fight once it starts rather than ever reporting a result
+ * through that feed). Matched by fighter name, both orderings, the same
+ * rule worker/src/ufc-events.js's findMmaFight uses server-side — ESPN's
+ * scoreboard carries no Odds API event id to key on directly.
+ */
+function mmaFightConcluded(game) {
+  return state.mmaResults.some((f) => (
+    (surnamesMatch(f.a, game.home) && surnamesMatch(f.b, game.away))
+    || (surnamesMatch(f.a, game.away) && surnamesMatch(f.b, game.home))
+  ) && (f.aWon || f.bWon));
+}
+
+/** 'upcoming' | 'live' | 'finished' for a game, from whatever /scores, tracked-pick, and (for MMA) ESPN result data is currently cached. */
 function slateGameState(game) {
   if (isGameFinished(game.eventId)) return 'finished';
+  if (isMmaSportKey(game.sportKey) && mmaFightConcluded(game)) return 'finished';
   if (game.commenceMs <= Date.now()) return 'live';
   return 'upcoming';
 }
@@ -3368,6 +3405,28 @@ async function refreshSlateTrackedPicks() {
     return true;
   } catch {
     return false; // tracked picks are an enhancement; live re-derivation still covers most games
+  }
+}
+
+/**
+ * Finished MMA fights, from ESPN's own scoreboard via the worker's
+ * /mma-results — see mmaFightConcluded's own comment for why this exists
+ * separately from refreshSlateScores/refreshSlateTrackedPicks. Same once-
+ * a-minute throttle, scoped to MMA only: there's no reason to ask for fight
+ * results while looking at any other league's board.
+ */
+async function refreshMmaResults(group) {
+  if (!CONFIG.WORKER_URL || group.id !== 'mma') return false;
+  if (Date.now() - state.mmaResultsFetchedAt < 60000) return false;
+  state.mmaResultsFetchedAt = Date.now();
+  try {
+    const res = await fetch(new URL('/mma-results', CONFIG.WORKER_URL), { headers: { Accept: 'application/json' } });
+    if (!res.ok) return false;
+    const data = await res.json();
+    state.mmaResults = data.results ?? [];
+    return true;
+  } catch {
+    return false; // results are an enhancement; the odds-based live/finished read still covers most cards
   }
 }
 
@@ -4137,6 +4196,11 @@ function renderFullSlate() {
     }
   });
   refreshSlateTrackedPicks().then((updated) => {
+    if (updated && (LEAGUE_GROUP_BY_ID.get(state.slateLeague) ?? LEAGUE_GROUPS[0]) === group) {
+      renderFullSlate();
+    }
+  });
+  refreshMmaResults(group).then((updated) => {
     if (updated && (LEAGUE_GROUP_BY_ID.get(state.slateLeague) ?? LEAGUE_GROUPS[0]) === group) {
       renderFullSlate();
     }
