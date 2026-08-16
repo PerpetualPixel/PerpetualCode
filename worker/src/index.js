@@ -103,6 +103,7 @@ import {
   manualMmaResult,
   auditMmaTotalsGrading,
 } from './full-slate-tracking.js';
+import { runStalePickAudit, getStalePickReport } from './stale-picks.js';
 import { isWtaPick } from './retraction.js';
 import {
   runDailyLearning,
@@ -695,6 +696,20 @@ export default {
     // admin migration call to fix.
     ctx.waitUntil(runFullSlateDateResync(env, ctx, now));
     ctx.waitUntil(runTop5DateResync(env, ctx, now));
+    // Watchdog, every tick: scans every tracker for picks still `pending`
+    // whose game started long enough ago that they should have settled, and
+    // caches the report for GET /stale-picks. Detection only — it grades
+    // nothing and writes no pick (see worker/src/stale-picks.js's own
+    // header for why that separation is deliberate).
+    //
+    // The graders above are all self-healing in the normal case; what was
+    // missing was any signal for the ABNORMAL case. A stuck pending pick is
+    // invisible by design — it looks identical to one whose game simply
+    // hasn't started — so every such incident so far was caught by a human
+    // noticing it on the dashboard. Same reasoning as the reconciliation
+    // pass below: that belongs on a timer, not on someone remembering to
+    // look.
+    ctx.waitUntil(runStalePickAudit(env, ctx, now));
     // 4am ET daily: reconciliation — the same three graders, but looking
     // back RECONCILE_LOOKBACK_DAYS instead of the every-tick default of 2,
     // plus a re-settle of tennis voids that a since-improved rule can now
@@ -1318,6 +1333,24 @@ export default {
         );
       } catch (error) {
         return json({ picks: [], reason: String(error).slice(0, 120) }, { headers: cors });
+      }
+    }
+
+    // The stuck-pick watchdog's latest report (worker/src/stale-picks.js),
+    // written by the hourly cron. Read-only, KV only, no odds credit — and
+    // deliberately public like the other history routes, since it exposes
+    // nothing /full-slate-history and friends don't already serve. Returns
+    // { report: null } before the first cron tick has ever run: a real
+    // "nothing scanned yet" answer, not an error.
+    if (pathname === '/stale-picks' && request.method === 'GET') {
+      try {
+        const report = await getStalePickReport(env);
+        return json(
+          { report },
+          { headers: { ...cors, 'Cache-Control': 'public, max-age=300' } },
+        );
+      } catch (error) {
+        return json({ report: null, reason: String(error).slice(0, 120) }, { headers: cors });
       }
     }
 
