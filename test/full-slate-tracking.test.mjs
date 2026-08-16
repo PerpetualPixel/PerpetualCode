@@ -12,6 +12,7 @@ import {
   backfillMmaFinishDetail,
   manualMmaResult,
   auditMmaTotalsGrading,
+  regradeMmaTotals,
 } from '../worker/src/full-slate-tracking.js';
 import { seedTennisArchiveCacheForTests } from '../worker/src/tennis-archive.js';
 import { UNSETTLEABLE_TENNIS_GAME_MARKET } from '../docs/learning.js';
@@ -863,4 +864,78 @@ test('auditMmaTotalsGrading never writes anything — read-only', async () => {
   });
 
   assert.equal(store.get(`slate:${dateKey}:pick:p1`), before, 'the stored pick must be byte-identical after an audit');
+});
+
+/* ---------------------------------------------------------------- */
+/* MMA rounds-totals regrade (the write half of the audit)           */
+/* ---------------------------------------------------------------- */
+
+/** The real corruption shape: "Under 1.5" stored WON on a fight that reached Round 2. */
+const BARBOZA_RESULTS = [{
+  a: 'edson barboza', b: 'esteban ribovics', aWon: false, bWon: true,
+  displayA: 'Edson Barboza', displayB: 'Esteban Ribovics', method: 'KO/TKO', round: 2,
+}];
+
+function seedBadTotalsPick(store, dateKey, pickId) {
+  seedMmaTotalsPick(store, dateKey, pickId, {
+    status: 'won', home: 'Edson Barboza', away: 'Esteban Ribovics', outcomeName: 'Under', point: 1.5,
+  });
+}
+
+test('regradeMmaTotals defaults to a dry run and writes nothing', async () => {
+  const { env, store } = makeKvStore();
+  const dateKey = etDateOf(NOW);
+  seedBadTotalsPick(store, dateKey, 'p1');
+  const before = store.get(`slate:${dateKey}:pick:p1`);
+
+  const result = await regradeMmaTotals(env, ctx, NOW, { days: 1, fetchMmaResultsFn: async () => BARBOZA_RESULTS });
+
+  assert.equal(result.apply, false);
+  assert.equal(result.corrected.length, 1, 'it still reports exactly what it would change');
+  assert.equal(result.corrected[0].before.status, 'won');
+  assert.equal(result.corrected[0].after.status, 'lost');
+  assert.equal(store.get(`slate:${dateKey}:pick:p1`), before, 'a dry run must leave the record byte-identical');
+});
+
+test('regradeMmaTotals with apply:true corrects the outcome and records why', async () => {
+  const { env, store } = makeKvStore();
+  const dateKey = etDateOf(NOW);
+  seedBadTotalsPick(store, dateKey, 'p1');
+
+  const result = await regradeMmaTotals(env, ctx, NOW, { days: 1, apply: true, fetchMmaResultsFn: async () => BARBOZA_RESULTS });
+  assert.equal(result.corrected.length, 1);
+
+  const stored = JSON.parse(store.get(`slate:${dateKey}:pick:p1`));
+  assert.equal(stored.status, 'lost', 'Under 1.5 on a Round-2 finish is a loss');
+  assert.equal(stored.result.payout, -20);
+  assert.equal(stored.result.regradedReason, 'mma rounds-total grading fix (see buildMmaRoundsScoreEvent)');
+  assert.equal(stored.result.regradedAt, NOW, 'a changed settled record must say when it changed');
+});
+
+test('regradeMmaTotals never touches a totals pick that already graded correctly', async () => {
+  const { env, store } = makeKvStore();
+  const dateKey = etDateOf(NOW);
+  // Under 2.5 on a Round-2 finish is genuinely a WIN — must be left alone.
+  seedMmaTotalsPick(store, dateKey, 'good', {
+    status: 'won', home: 'Edson Barboza', away: 'Esteban Ribovics', outcomeName: 'Under', point: 2.5,
+  });
+  const before = store.get(`slate:${dateKey}:pick:good`);
+
+  const result = await regradeMmaTotals(env, ctx, NOW, { days: 1, apply: true, fetchMmaResultsFn: async () => BARBOZA_RESULTS });
+
+  assert.deepEqual(result.corrected, []);
+  assert.equal(store.get(`slate:${dateKey}:pick:good`), before);
+});
+
+test('regradeMmaTotals leaves a settled pick alone when ESPN has no round to judge it by', async () => {
+  const { env, store } = makeKvStore();
+  const dateKey = etDateOf(NOW);
+  seedBadTotalsPick(store, dateKey, 'p1');
+  const before = store.get(`slate:${dateKey}:pick:p1`);
+
+  const result = await regradeMmaTotals(env, ctx, NOW, { days: 1, apply: true, fetchMmaResultsFn: async () => [] });
+
+  assert.deepEqual(result.corrected, []);
+  assert.equal(result.unauditable.length, 1, 'reported, not silently skipped');
+  assert.equal(store.get(`slate:${dateKey}:pick:p1`), before, 'missing data must never flip a settled outcome');
 });

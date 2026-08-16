@@ -881,6 +881,93 @@ export async function auditMmaTotalsGrading(
   return { checked: candidates.length, disagreements, unauditable };
 }
 
+/**
+ * Corrects MMA rounds-total picks that the now-fixed grading bug settled
+ * wrong — the write half of auditMmaTotalsGrading above, which finds them
+ * but deliberately cannot fix them.
+ *
+ * This is the one path in this module that overwrites an ALREADY-SETTLED
+ * outcome, so it is scoped as narrowly as the problem it exists for:
+ *   - MMA rounds-total picks only, never any other sport or market;
+ *   - only picks where the FIXED grading path disagrees with what's stored,
+ *     so a pick that already graded correctly is never rewritten;
+ *   - only where ESPN currently carries a real ending round, so a
+ *     disagreement caused by missing data can't flip a settled pick.
+ *
+ * That narrowness is what separates this from manualMmaResult's blanket
+ * refusal to touch a graded pick. The refusal is right for a human-entered
+ * result, which is a judgment call. This is a provably-wrong arithmetic
+ * result from a known, fixed bug, recomputed by the same shared grading math
+ * every other pick uses — not an opinion about who won.
+ *
+ * Defaults to a dry run. The caller must pass apply:true to write anything,
+ * so the natural first invocation shows exactly what would change.
+ */
+export async function regradeMmaTotals(
+  env,
+  ctx,
+  now = Date.now(),
+  { days = 14, apply = false, fetchMmaResultsFn = () => fetchMmaResults(ctx, now) } = {},
+) {
+  const audit = await auditMmaTotalsGrading(env, ctx, now, { days, fetchMmaResultsFn });
+  if (!audit.disagreements.length) {
+    return { apply, checked: audit.checked, corrected: [], unauditable: audit.unauditable };
+  }
+
+  // Re-read by date so each corrected pick is written from the same record
+  // the audit judged, rather than a second, possibly-drifted copy.
+  const byDate = new Map();
+  for (const d of audit.disagreements) {
+    if (!byDate.has(d.dateKey)) byDate.set(d.dateKey, []);
+    byDate.get(d.dateKey).push(d);
+  }
+
+  const results = await fetchMmaResultsFn();
+  const corrected = [];
+
+  for (const [dateKey, items] of byDate) {
+    const { picks } = await loadFullSlateTracked(env, dateKey);
+    for (const item of items) {
+      const pick = picks.find((p) => p.pickId === item.pickId);
+      if (!pick) continue;
+      const outcome = gradeMmaPickWithFallback(pick, null, results);
+      if (!outcome) continue;
+      const newStatus = outcome.void ? 'void' : outcome.won ? 'won' : 'lost';
+      if (newStatus === pick.status) continue; // agreed after all — leave it alone
+
+      const before = { status: pick.status, payout: pick.result?.payout };
+      if (apply) {
+        pick.status = newStatus;
+        pick.result = {
+          payout: outcome.payout,
+          roiPercent: outcome.void ? 0 : (outcome.payout / pick.suggested_stake) * 100,
+          voidReason: outcome.void ? outcome.reason : undefined,
+          detail: outcome.detail ?? pick.result?.detail ?? undefined,
+          // Provenance, so a settled record that changed after the fact
+          // always says why — a silently-rewritten outcome is exactly the
+          // thing that makes a tracker untrustworthy.
+          regradedAt: now,
+          regradedReason: 'mma rounds-total grading fix (see buildMmaRoundsScoreEvent)',
+        };
+        await env.POTD_KV.put(`slate:${dateKey}:pick:${pick.pickId}`, JSON.stringify(pick), {
+          expirationTtl: KV_TTL_SECONDS,
+        });
+      }
+      corrected.push({
+        pickId: pick.pickId,
+        dateKey,
+        matchup: [pick.away, pick.home].filter(Boolean).join(' @ '),
+        selection: `${pick.outcomeName} ${pick.point}`,
+        espnRound: item.espnRound,
+        before,
+        after: { status: newStatus, payout: outcome.payout },
+      });
+    }
+  }
+
+  return { apply, checked: audit.checked, corrected, unauditable: audit.unauditable };
+}
+
 /** Today's tracked Full Slate picks (or a specific date's). */
 export async function getFullSlateTracked(env, { now = Date.now(), dateKey } = {}) {
   const { picks } = await loadFullSlateTracked(env, dateKey ?? etDate(now));
