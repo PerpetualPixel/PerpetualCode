@@ -91,7 +91,7 @@ const LEAGUES_TTL = 86400; // ESPN adds or retires an MMA promotion a few times 
  * Álvarez" (ESPN) vs "Joel Alvarez" (Odds API) silently failed to match
  * before this fix.
  */
-function normalizeName(name) {
+export function normalizeName(name) {
   return String(name ?? '')
     .normalize('NFD')
     .replace(/[̀-ͯ]/g, '')

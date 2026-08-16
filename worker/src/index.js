@@ -99,6 +99,8 @@ import {
   retractFullSlatePicks,
   diagnosePendingFullSlate,
   regradeFullSlateTennisVoids,
+  backfillMmaFinishDetail,
+  manualMmaResult,
 } from './full-slate-tracking.js';
 import { isWtaPick } from './retraction.js';
 import {
@@ -844,6 +846,8 @@ export default {
       '/admin/retract-wta',
       '/admin/grade-now',
       '/admin/regrade-tennis',
+      '/admin/backfill-mma-detail',
+      '/admin/manual-mma-result',
     ]);
     if (request.method === 'POST' && (AUTH_LIMITED_PATHS.has(pathname) || pathname === '/api/report-bug' || OWNER_LIMITED_PATHS.has(pathname))) {
       const ip = request.headers.get('CF-Connecting-IP') ?? 'unknown';
@@ -1646,6 +1650,55 @@ export default {
           justSettledPickIds: fullSlate?.settledPickIds ?? [],
         }).catch((e) => ({ error: String(e).slice(0, 200) }));
         return json({ graded: { top5, fullSlate, potd }, diagnostics }, { headers: cors });
+      } catch (error) {
+        return json({ error: String(error).slice(0, 200) }, { status: 500, headers: cors });
+      }
+    }
+
+    // One-time repair: patches result.detail.method onto already-graded MMA
+    // picks that settled before worker/src/ufc-events.js's finish-method fix
+    // shipped, and so have that detail frozen at null forever otherwise —
+    // see backfillMmaFinishDetail's own comment. Never changes status,
+    // payout, or voidReason on any pick; a pick already carrying a method is
+    // left untouched, so this is safe to call more than once. ?days=N
+    // controls the lookback window (default 14).
+    if (pathname === '/admin/backfill-mma-detail' && request.method === 'POST') {
+      const auth = authorizeSettings(request, env);
+      if (!auth.ok) return json({ error: auth.error }, { status: auth.status, headers: cors });
+      try {
+        const { searchParams } = new URL(request.url);
+        const days = Math.min(90, Math.max(1, Number(searchParams.get('days')) || 14));
+        const result = await backfillMmaFinishDetail(env, ctx, Date.now(), { days });
+        return json(result, { headers: cors });
+      } catch (error) {
+        return json({ error: String(error).slice(0, 200) }, { status: 500, headers: cors });
+      }
+    }
+
+    // Manually settles ONE pending MMA pick from a result no automated
+    // source has — see manualMmaResult's own comment for exactly when this
+    // is the right tool (an untelevised/early-prelim bout, or a promotion
+    // outside ESPN's UFC/PFL/discovered-league coverage, both confirmed by
+    // this app's own README as real, recurring gaps, not hypothetical).
+    // Deliberately refuses anything but a still-pending pick — this can
+    // never overwrite an existing grade, right or wrong.
+    //
+    // Body: { dateKey?, pickId?, home?, away?, winnerName, method?, round? }
+    // Either pickId, or dateKey+home+away, identifies the pick; dateKey
+    // defaults to today. winnerName must match pick.home or pick.away
+    // (by the same name-normalization every other MMA match in this app
+    // uses) or the request is refused rather than guessed.
+    if (pathname === '/admin/manual-mma-result' && request.method === 'POST') {
+      const auth = authorizeSettings(request, env);
+      if (!auth.ok) return json({ error: auth.error }, { status: auth.status, headers: cors });
+      try {
+        const body = await request.json();
+        if (!body?.winnerName) {
+          return json({ error: 'winnerName is required' }, { status: 400, headers: cors });
+        }
+        const result = await manualMmaResult(env, body);
+        if (result.error) return json(result, { status: 400, headers: cors });
+        return json(result, { headers: cors });
       } catch (error) {
         return json({ error: String(error).slice(0, 200) }, { status: 500, headers: cors });
       }

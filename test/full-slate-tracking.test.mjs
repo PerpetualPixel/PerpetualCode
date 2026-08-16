@@ -9,6 +9,8 @@ import {
   resetFullSlateTracking,
   diagnosePendingFullSlate,
   regradeFullSlateTennisVoids,
+  backfillMmaFinishDetail,
+  manualMmaResult,
 } from '../worker/src/full-slate-tracking.js';
 import { seedTennisArchiveCacheForTests } from '../worker/src/tennis-archive.js';
 import { UNSETTLEABLE_TENNIS_GAME_MARKET } from '../docs/learning.js';
@@ -614,3 +616,164 @@ function finishedEventFor(pickId) {
     scores: [{ name: 'Home Team', score: '5' }, { name: 'Away Team', score: '2' }],
   };
 }
+
+/* ---------------------------------------------------------------- */
+/* MMA finish-detail backfill + manual result entry                  */
+/* ---------------------------------------------------------------- */
+
+/** Seeds one day's manifest + a single already-graded MMA pick straight into KV. */
+function seedGradedMmaPick(store, dateKey, pickId, { status = 'won', home = 'Fighter Home', away = 'Fighter Away', outcomeName = 'Fighter Home', detail = { winner: 'Fighter Home', method: null } } = {}) {
+  store.set(`slate:${dateKey}:manifest`, JSON.stringify({ date: dateKey, pickIds: [pickId] }));
+  store.set(`slate:${dateKey}:pick:${pickId}`, JSON.stringify({
+    pickId,
+    dateKey,
+    eventId: `ev-${pickId}`,
+    sportKey: 'mma_mixed_martial_arts',
+    marketKey: 'h2h',
+    home,
+    away,
+    outcomeName,
+    decimal: 1.9,
+    suggested_stake: 20,
+    commenceMs: Date.parse(`${dateKey}T20:00:00Z`),
+    status,
+    result: status === 'pending' ? null : { payout: status === 'won' ? 18 : -20, roiPercent: 0, detail },
+  }));
+}
+
+test('backfillMmaFinishDetail patches method onto an already-graded pick, without touching status or payout', async () => {
+  const { env, store } = makeKvStore();
+  const dateKey = etDateOf(NOW);
+  seedGradedMmaPick(store, dateKey, 'p1');
+
+  const fetchMmaResultsFn = async () => ([{
+    a: 'fighter home', b: 'fighter away', aWon: true, bWon: false,
+    displayA: 'Fighter Home', displayB: 'Fighter Away', method: 'Submission', round: 2,
+  }]);
+  const result = await backfillMmaFinishDetail(env, ctx, NOW, { days: 1, fetchMmaResultsFn });
+
+  assert.equal(result.checked, 1);
+  assert.deepEqual(result.patched.map((p) => p.pickId), ['p1']);
+  assert.deepEqual(result.noMatch, []);
+
+  const stored = JSON.parse(store.get(`slate:${dateKey}:pick:p1`));
+  assert.equal(stored.status, 'won', 'status must never change');
+  assert.equal(stored.result.payout, 18, 'payout must never change');
+  assert.equal(stored.result.detail.method, 'Submission');
+  assert.equal(stored.result.detail.winner, 'Fighter Home', 'an existing winner is kept, not overwritten');
+});
+
+test('backfillMmaFinishDetail leaves a pick with no ESPN match untouched', async () => {
+  const { env, store } = makeKvStore();
+  const dateKey = etDateOf(NOW);
+  seedGradedMmaPick(store, dateKey, 'p1', { home: 'Nobody ESPN Has', away: 'Also Uncovered' });
+
+  const result = await backfillMmaFinishDetail(env, ctx, NOW, { days: 1, fetchMmaResultsFn: async () => [] });
+
+  assert.equal(result.checked, 1);
+  assert.deepEqual(result.patched, []);
+  assert.deepEqual(result.noMatch.map((p) => p.pickId), ['p1']);
+
+  const stored = JSON.parse(store.get(`slate:${dateKey}:pick:p1`));
+  assert.equal(stored.result.detail.method, null, 'left exactly as it was — no fabricated method');
+});
+
+test('backfillMmaFinishDetail ignores a pick that already has a method (idempotent)', async () => {
+  const { env, store } = makeKvStore();
+  const dateKey = etDateOf(NOW);
+  seedGradedMmaPick(store, dateKey, 'p1', { detail: { winner: 'Fighter Home', method: 'Decision' } });
+
+  let fetchCalled = false;
+  const result = await backfillMmaFinishDetail(env, ctx, NOW, {
+    days: 1,
+    fetchMmaResultsFn: async () => { fetchCalled = true; return []; },
+  });
+
+  assert.equal(result.checked, 0, 'a pick that already has a method is never a candidate');
+  assert.equal(fetchCalled, false, 're-running costs nothing once every pick is already patched');
+});
+
+test('backfillMmaFinishDetail never touches a still-pending pick', async () => {
+  const { env, store } = makeKvStore();
+  const dateKey = etDateOf(NOW);
+  seedGradedMmaPick(store, dateKey, 'p1', { status: 'pending' });
+
+  const result = await backfillMmaFinishDetail(env, ctx, NOW, { days: 1, fetchMmaResultsFn: async () => [] });
+  assert.equal(result.checked, 0);
+});
+
+test('manualMmaResult settles a pending pick correctly when the picked side wins', async () => {
+  const { env, store } = makeKvStore();
+  const dateKey = etDateOf(NOW);
+  seedGradedMmaPick(store, dateKey, 'p1', { status: 'pending', outcomeName: 'Fighter Home' });
+
+  const result = await manualMmaResult(env, {
+    dateKey, pickId: 'p1', winnerName: 'Fighter Home', method: 'Rear Naked Choke', round: 2,
+  });
+
+  assert.ok(!result.error, result.error);
+  assert.equal(result.pick.status, 'won');
+  assert.equal(result.pick.result.payout, (1.9 - 1) * 20);
+  assert.equal(result.pick.result.detail.method, 'Rear Naked Choke');
+  assert.equal(result.pick.result.detail.winner, 'Fighter Home');
+
+  const stored = JSON.parse(store.get(`slate:${dateKey}:pick:p1`));
+  assert.equal(stored.status, 'won');
+});
+
+test('manualMmaResult settles a pending pick correctly when the picked side loses — the exact Outlaw/Magomedov shape', async () => {
+  const { env, store } = makeKvStore();
+  const dateKey = etDateOf(NOW);
+  // Mirrors the real case this was built for: the tracked pick is on the
+  // HOME side (the algorithm's lean), but the away fighter is the one who
+  // actually won.
+  seedGradedMmaPick(store, dateKey, 'p1', { home: 'Sidney Outlaw', away: 'Rasul Magomedov', outcomeName: 'Sidney Outlaw', status: 'pending' });
+
+  const result = await manualMmaResult(env, {
+    dateKey, pickId: 'p1', winnerName: 'Rasul Magomedov', method: 'Rear Naked Choke', round: 2,
+  });
+
+  assert.ok(!result.error, result.error);
+  assert.equal(result.pick.status, 'lost', 'the pick was on the fighter who lost');
+  assert.equal(result.pick.result.payout, -20);
+  assert.equal(result.pick.result.detail.winner, 'Rasul Magomedov');
+});
+
+test('manualMmaResult refuses a pick that already graded, rather than overwrite it', async () => {
+  const { env, store } = makeKvStore();
+  const dateKey = etDateOf(NOW);
+  seedGradedMmaPick(store, dateKey, 'p1', { status: 'won' });
+
+  const result = await manualMmaResult(env, { dateKey, pickId: 'p1', winnerName: 'Fighter Away' });
+  assert.match(result.error, /already won/);
+
+  const stored = JSON.parse(store.get(`slate:${dateKey}:pick:p1`));
+  assert.equal(stored.status, 'won', 'untouched');
+});
+
+test('manualMmaResult refuses a winnerName matching neither fighter', async () => {
+  const { env, store } = makeKvStore();
+  const dateKey = etDateOf(NOW);
+  seedGradedMmaPick(store, dateKey, 'p1', { status: 'pending' });
+
+  const result = await manualMmaResult(env, { dateKey, pickId: 'p1', winnerName: 'Someone Else Entirely' });
+  assert.match(result.error, /matches neither/);
+});
+
+test('manualMmaResult refuses when the pick cannot be found', async () => {
+  const { env } = makeKvStore();
+  const result = await manualMmaResult(env, { dateKey: etDateOf(NOW), pickId: 'does-not-exist', winnerName: 'Anyone' });
+  assert.match(result.error, /not found/);
+});
+
+test('manualMmaResult can find a pick by home/away instead of pickId', async () => {
+  const { env, store } = makeKvStore();
+  const dateKey = etDateOf(NOW);
+  seedGradedMmaPick(store, dateKey, 'p1', { status: 'pending', home: 'Sidney Outlaw', away: 'Rasul Magomedov', outcomeName: 'Sidney Outlaw' });
+
+  const result = await manualMmaResult(env, {
+    dateKey, home: 'Sidney Outlaw', away: 'Rasul Magomedov', winnerName: 'Rasul Magomedov', method: 'Rear Naked Choke', round: 2,
+  });
+  assert.ok(!result.error, result.error);
+  assert.equal(result.pick.status, 'lost');
+});
