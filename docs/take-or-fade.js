@@ -241,11 +241,34 @@ export function marketPillar(leg, candidate) {
   const kelly = fractionalKelly(pFair, decimal);
   const juice = juiceCheck(leg?.american ?? candidate.american, kelly);
 
+  // The best price actually on the board for this same side, and what the
+  // bet would be worth at it. The gap between the two is EXECUTION — did you
+  // take the number you could have — as distinct from EDGE, which is whether
+  // that number beats the de-vigged consensus at all.
+  //
+  // Keeping them apart matters more than it looks. De-vigging removes the
+  // hold, so every side of an ordinary market prices out at roughly minus
+  // the hold: a -175 favourite and the +150 dog in the same match are both
+  // about -3.5% EV. Judging a leg on absolute EV alone therefore said
+  // STRONG FADE about every bet available at any book, both sides of every
+  // market, which is true in the sense that the vig is real and useless in
+  // the sense that it cannot tell a bad leg from an ordinary one. Caught by
+  // a 13-leg tennis slip that came back 13/13 STRONG FADE.
+  const bestDecimal = Number(candidate.decimal) || americanToDecimal(candidate.american);
+  const evAtBest = expectedValue(pFair, bestDecimal);
+  const evVsMarket = Number.isFinite(ev) && Number.isFinite(evAtBest) ? ev - evAtBest : null;
+
   const signals = [];
   // -3% to +6% EV spans terrible to genuinely strong — the same span
   // engine.js's own scoreCandidate normalises its edge component over, so
   // the two surfaces agree about what a big edge is.
   const evScore = norm100(ev, -0.03, 0.06);
+  // Execution, on its own scale: 0 means you hold the best number on the
+  // board, and five points of implied probability worse than that is as bad
+  // as this term gets. Unlike the edge term it is not pinned to the floor by
+  // an ordinary price, so it is what separates the legs of a slip that were
+  // all taken at one book.
+  const executionScore = norm100(evVsMarket, -0.05, 0);
   const agreementScore = norm100(-Number(candidate.disagreement), -0.05, -0.005);
   const liquidityScore = norm100(Number(candidate.bookCount), RULES.MIN_BOOKS, 10);
   const shopScore = norm100(Number(candidate.shopGain), 0, 0.04);
@@ -290,15 +313,19 @@ export function marketPillar(leg, candidate) {
     ));
   }
 
-  const parts = [evScore, agreementScore, liquidityScore, shopScore].filter(Number.isFinite);
-  // EV carries half the pillar on its own; the rest is confidence that the
-  // edge is real rather than an artifact of a thin or stale market.
+  const parts = [evScore, executionScore, agreementScore, liquidityScore, shopScore].filter(Number.isFinite);
+  // Edge still carries the largest single share, because beating the
+  // consensus is the only thing that makes a bet genuinely profitable. But
+  // execution now carries real weight beside it: on a slip where no leg
+  // beats the consensus, which is most slips, the number you took is the
+  // only price information left to rank the legs by.
   const score = parts.length
     ? Math.max(0, Math.min(100,
-      0.50 * (evScore ?? 0) + 0.20 * (agreementScore ?? 0) + 0.15 * (liquidityScore ?? 0) + 0.15 * (shopScore ?? 0)))
+      0.35 * (evScore ?? 0) + 0.20 * (executionScore ?? 0) + 0.15 * (agreementScore ?? 0)
+      + 0.15 * (liquidityScore ?? 0) + 0.15 * (shopScore ?? 0)))
     : null;
 
-  return { ...pillar(score, signals, []), ev, kelly, pFair, juice, decimal };
+  return { ...pillar(score, signals, []), ev, evAtBest, evVsMarket, kelly, pFair, juice, decimal };
 }
 
 /**
@@ -635,7 +662,17 @@ export const VERDICT_THRESHOLDS = {
   STRONG_TAKE: { tps: 74, ev: 0.02 },
   TAKE: { tps: 60, ev: 0 },
   LEAN_PASS: { tps: 48 },
-  STRONG_FADE: { tps: 36, ev: -0.03 },
+  // Two ways into the bottom tier, because there are two ways to be there.
+  //
+  //   ev  — how far below the best number on the board this price is. Zero
+  //         when you hold the best number, so paying the hold does not
+  //         trigger it.
+  //   evAbsolute — a price so far below the de-vigged consensus that the
+  //         hold cannot explain it. No ordinary two-way market pushes a side
+  //         past about -5% by vig alone (checked across holds from 2.6% to
+  //         the -1000/+600 range), so -7% means the consensus genuinely
+  //         disagrees with the price rather than the book taking its cut.
+  STRONG_FADE: { tps: 36, ev: -0.03, evAbsolute: -0.07 },
 };
 
 /**
@@ -646,11 +683,23 @@ export const VERDICT_THRESHOLDS = {
  * blends in things (liquidity, freshness, form) that describe how sound the
  * read is, not whether the price pays for it.
  */
-export function classify(tps, ev, { juiceFlagged = false } = {}) {
+export function classify(tps, ev, { juiceFlagged = false, evVsMarket = null } = {}) {
   if (!Number.isFinite(tps)) return NO_READ;
   const e = Number.isFinite(ev) ? ev : 0;
+  // The bottom tier asks a different question from the rest: not "does this
+  // price beat the consensus" but "is this price materially worse than one
+  // you could have had". Paying the hold is what every bet at every book
+  // costs, and a scale whose worst grade fires on that has no room left to
+  // say anything about a bet that is actually bad.
+  //
+  // Absolute EV is the fallback when no board is matched, so a caller with
+  // no market context still gets the old, stricter reading rather than a
+  // free pass for being unmeasurable.
+  const shortfall = Number.isFinite(evVsMarket) ? evVsMarket : e;
 
-  if (e <= VERDICT_THRESHOLDS.STRONG_FADE.ev || tps < VERDICT_THRESHOLDS.STRONG_FADE.tps) return STRONG_FADE;
+  if (shortfall <= VERDICT_THRESHOLDS.STRONG_FADE.ev
+    || e <= VERDICT_THRESHOLDS.STRONG_FADE.evAbsolute
+    || tps < VERDICT_THRESHOLDS.STRONG_FADE.tps) return STRONG_FADE;
   if (e < 0 || tps < VERDICT_THRESHOLDS.LEAN_PASS.tps) return FADE;
   if (tps >= VERDICT_THRESHOLDS.STRONG_TAKE.tps && e >= VERDICT_THRESHOLDS.STRONG_TAKE.ev && !juiceFlagged) return STRONG_TAKE;
   if (tps >= VERDICT_THRESHOLDS.TAKE.tps && e > VERDICT_THRESHOLDS.TAKE.ev && !juiceFlagged) return TAKE;
@@ -680,7 +729,10 @@ export function evaluateLeg(leg, { candidate = null, postedSide = null, postedLa
 
   const { score: tps, coverage } = compositeScore(pillars);
   const ev = market.ev ?? null;
-  let verdict = classify(tps, ev, { juiceFlagged: market.juice?.flagged });
+  let verdict = classify(tps, ev, {
+    juiceFlagged: market.juice?.flagged,
+    evVsMarket: market.evVsMarket ?? null,
+  });
 
   // Floors, and why they are not a fudge: the app's own selection pipeline
   // already applied every gate this engine re-derives — the score floor, the
@@ -805,6 +857,157 @@ export function ticketMath(reads) {
 }
 
 /**
+ * The legs ranked against each other, best first, whatever they graded.
+ *
+ * A verdict-filtered list goes empty exactly when it is most needed: a slip
+ * taken entirely at one book's posted prices has no leg that beats the
+ * de-vigged consensus, so `solidLegs` and `straights` are both empty and the
+ * tool answers a thirteen-leg ticket with nothing but "fade". The legs are
+ * not equal, though — the pillars separate them by twenty-odd points — and
+ * naming the strongest is the difference between a verdict and advice.
+ *
+ * This is an ORDERING, not an endorsement, and every caller that renders it
+ * has to say so: the top leg of a bad ticket is still a bad bet.
+ */
+export function rankedLegs(reads, limit = 3) {
+  return reads
+    .filter((r) => r.verdict !== NO_READ && Number.isFinite(r.tps))
+    .sort((a, b) => b.tps - a.tps)
+    .slice(0, limit);
+}
+
+/**
+ * An anchor is the leg you build a ticket AROUND: likely enough to land that
+ * it is not what breaks the ticket, and not priced badly enough to be the
+ * reason the ticket is bad.
+ *
+ * Deliberately two conditions rather than one. Probability alone would
+ * nominate every heavy chalk price on the board, including the -450 that is
+ * paying you nothing for the risk it still carries; grade alone would
+ * nominate value bets that land 45% of the time, which is the opposite of
+ * what an anchor is for. A leg has to clear both to carry a parlay.
+ */
+export const ANCHOR_MIN_PROB = 0.68;
+
+export function anchorLegs(reads, limit = 3) {
+  return reads
+    .filter((r) => r.verdict !== NO_READ && r.verdict !== STRONG_FADE)
+    .filter((r) => Number.isFinite(r.pFair) && r.pFair >= ANCHOR_MIN_PROB)
+    .sort((a, b) => b.pFair - a.pFair)
+    .slice(0, limit);
+}
+
+/**
+ * The shortlist a sub-ticket is built from: best leg first, at most one per
+ * game.
+ *
+ * One-per-game is not a preference. Every correlation effect this engine
+ * knows about lives inside a single game, and ticketMath multiplies as
+ * though the legs were independent, so two legs off one match make the
+ * quoted joint probability wrong in a direction the number itself cannot
+ * show. Dropping the weaker of the pair keeps the arithmetic honest.
+ */
+export function subTicketPool(reads) {
+  const seen = new Set();
+  const pool = [];
+  for (const r of rankedLegs(reads, Infinity)) {
+    const id = r.candidate?.eventId;
+    if (id && seen.has(id)) continue;
+    if (id) seen.add(id);
+    pool.push(r);
+  }
+  return pool;
+}
+
+/**
+ * Every sub-ticket worth considering out of the legs posted, from two legs
+ * up, each with its real price and expectation.
+ *
+ * A ladder rather than a single recommendation, because the choice it
+ * presents is the actual one: each extra leg multiplies the payout and
+ * multiplies the bleed, and which trade a bettor wants is not something this
+ * engine can decide for them. What it CAN do is price every rung, which is
+ * the part that is otherwise invisible — the reason a ten-leg slip is a
+ * worse bet than the same handicapping in three legs is not that the picks
+ * got worse, it is that ten prices' worth of hold compounds.
+ *
+ * Note what this deliberately does NOT do: it never claims a rung is a good
+ * bet. If every leg is negative expectation then every combination of them
+ * is too, and no cut of a bad slip fixes it — it only bleeds less.
+ */
+export function subTicketLadder(reads, { max = 4 } = {}) {
+  const pool = subTicketPool(reads);
+  const rungs = [];
+  for (let n = 2; n <= Math.min(max, pool.length); n++) {
+    const legs = pool.slice(0, n);
+    const math = ticketMath(legs);
+    if (!Number.isFinite(math.jointProb)) continue;
+    rungs.push({ legs, size: n, ...math });
+  }
+  return rungs;
+}
+
+/**
+ * Keep / drop, as a straight answer.
+ *
+ * How many legs to keep is decided by the LEGS, not by comparing tickets.
+ * Comparing tickets sounds principled and is vacuous: every cut of a ten-leg
+ * slip beats the ten-leg, so "the largest cut that improves on what was
+ * posted" always returns the cap and the recommendation stops depending on
+ * the legs at all. A slip with two decent legs and eight bad ones would get
+ * the same four-leg answer as a slip of four good ones.
+ *
+ * So the bar is per-leg: keep the legs that reach the pass tier on their own
+ * merits, capped at four, and never fewer than the two it takes to be a
+ * parlay at all. That makes the size of the answer carry information — two
+ * legs back means only two were worth keeping.
+ */
+export const SUB_TICKET_MAX = 4;
+
+export function suggestSubTicket(reads, { max = SUB_TICKET_MAX } = {}) {
+  const ladder = subTicketLadder(reads, { max });
+  if (!ladder.length) return null;
+  const posted = ticketMath(reads);
+  const pool = subTicketPool(reads);
+
+  const worthKeeping = pool.filter((r) => r.tps >= VERDICT_THRESHOLDS.LEAN_PASS.tps);
+  const size = Math.min(max, Math.max(2, worthKeeping.length));
+  const best = ladder.find((r) => r.size === size) ?? ladder[ladder.length - 1];
+  const keptIds = new Set(best.legs);
+  return {
+    ...best,
+    ladder,
+    posted,
+    keep: best.legs,
+    drop: reads.filter((r) => r.verdict !== NO_READ && !keptIds.has(r)),
+    // How much of the posted ticket's expected loss the cut gives back.
+    evGain: Number.isFinite(posted.ev) && Number.isFinite(best.ev) ? best.ev - posted.ev : null,
+  };
+}
+
+/**
+ * Why a ticket produced no takes, when the answer is the prices rather than
+ * the picks.
+ *
+ * Worth saying out loud because the two causes look identical in the output
+ * and call for opposite responses: picks the model dislikes are fixed by
+ * picking differently, whereas prices that merely carry the standard hold
+ * are fixed by shopping — or not at all, if the user is happy to pay it.
+ */
+export function noTakeReason(reads) {
+  const graded = reads.filter((r) => r.verdict !== NO_READ);
+  if (!graded.length || graded.some((r) => isTakeSide(r.verdict))) return null;
+  const priced = graded.filter((r) => Number.isFinite(r.pillars?.market?.ev));
+  if (!priced.length) return null;
+  const atMarket = priced.filter((r) => (r.pillars.market.evVsMarket ?? 0) > -0.01);
+  if (atMarket.length < priced.length / 2) return null;
+  return `No leg here grades as a take, and the reason is the prices rather than the picks: `
+    + `${atMarket.length} of ${priced.length} are at or near the best number on the board, which still means paying `
+    + `the book's hold. This tool only calls TAKE when a price beats the de-vigged consensus — that is a line-shopping `
+    + `result, not a handicapping one, so a stronger opinion on these matches would not change it.`;
+}
+
+/**
  * Grade a ticket as ONE parlay.
  *
  * A parlay's verdict is not an average — it needs every leg, so one bad leg
@@ -848,6 +1051,13 @@ export function evaluateParlay(reads) {
     badLegs,
     marginalLegs,
     solidLegs,
+    bestLegs: rankedLegs(graded),
+    anchors: anchorLegs(graded),
+    // The answer to "if this ten-leg is a fade, what SHOULD I play out of
+    // it" — which is a different question from "is this ticket good", and
+    // the one a bettor holding a built slip is actually asking.
+    suggestion: suggestSubTicket(reads),
+    noTakeReason: noTakeReason(reads),
   };
 }
 
@@ -893,6 +1103,8 @@ export function evaluateSlate(reads) {
     avoid,
     parlayable,
     suggestedTicket,
+    bestLegs: rankedLegs(graded),
+    noTakeReason: noTakeReason(reads),
     // A slate has no single verdict, but the headline still has to say
     // something true: the best available action across the board.
     verdict: straights.length
