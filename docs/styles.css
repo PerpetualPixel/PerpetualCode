@@ -5633,14 +5633,41 @@ input[type="range"]:focus-visible {
 .tf-leg-card.is-lean { border-left-color: var(--warn); }
 .tf-leg-card.is-noread { border-left-color: rgba(148, 163, 184, 0.5); }
 
-.tf-leg-head {
+/* The whole card head is a button now — click anywhere on it to expand.
+   Collapsed by default (see renderTailFadeLegCard): a 25-leg slip rendered
+   fully open would bury the one thing worth scanning first, which verdict
+   each leg got. */
+.tf-leg-toggle {
   display: flex;
   align-items: flex-start;
   justify-content: space-between;
   gap: 10px;
+  width: 100%;
+  background: none;
+  border: none;
+  padding: 0;
+  margin: 0;
+  text-align: left;
+  cursor: pointer;
+  font: inherit;
+  color: inherit;
 }
+.tf-leg-toggle-info { min-width: 0; display: flex; flex-wrap: wrap; align-items: baseline; column-gap: 6px; }
+.tf-leg-toggle-right { display: flex; align-items: center; gap: 8px; flex-shrink: 0; }
+.tf-leg-chevron {
+  width: 8px;
+  height: 8px;
+  margin-top: 2px;
+  border-right: 2px solid var(--muted);
+  border-bottom: 2px solid var(--muted);
+  transform: rotate(45deg);
+  transition: transform 120ms ease;
+  flex: none;
+}
+.tf-leg-toggle[aria-expanded="true"] .tf-leg-chevron { transform: rotate(-135deg); margin-top: 5px; }
+.tf-leg-body { margin-top: 8px; }
 .tf-leg-name { font-size: 0.82rem; line-height: 1.4; }
-.tf-leg-price { margin-left: 6px; color: var(--muted); font-size: 0.76rem; }
+.tf-leg-price { color: var(--muted); font-size: 0.76rem; }
 .tf-leg-verdict {
   flex-shrink: 0;
   padding: 2px 8px;
@@ -5676,6 +5703,32 @@ input[type="range"]:focus-visible {
 .tf-sig.is-good { color: var(--success); }
 .tf-sig.is-bad { color: var(--danger); }
 .tf-sig.is-warn { color: var(--warn); }
+
+/* The qualitative "why" — recent form, head-to-head, matchup context — that
+   fills in on first expand of a leg card (see loadTailFadeLegWhy). Set apart
+   from the price-based signals above it with a rule, since the two answer
+   different questions (is this priced well vs. is this side actually
+   favoured) and shouldn't read as one continuous list. */
+.tf-why { margin-top: 10px; padding-top: 9px; border-top: 1px dashed var(--line); }
+.tf-why-label {
+  margin: 0 0 4px;
+  font-family: var(--mono);
+  font-size: 0.6rem;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: var(--muted);
+}
+.tf-why-list { margin-top: 0; }
+.tf-why-loading,
+.tf-why-empty {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin: 0;
+  font-size: 0.73rem;
+  font-style: italic;
+  color: var(--muted);
+}
 
 .tf-ticket {
   display: flex;

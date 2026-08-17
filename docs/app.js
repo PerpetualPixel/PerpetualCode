@@ -1307,13 +1307,20 @@ function prefetchMmaContext(games) {
  * context for this event, or the model call itself failed) — the caller
  * falls back to the existing quantitative price case in that case, never
  * shows a broken section.
+ *
+ * `audit: true` requests the Tail or Fade per-leg "why" variant instead of
+ * the regular Full Slate one (see worker/src/analysis.js's isAudit) — same
+ * underlying facts, but 5-to-8 quickTake reasons instead of 3, and framed as
+ * the user's own bet rather than this app's pick. Kept in its own
+ * state.context slot so it never collides with (or overwrites) the regular
+ * 3-bullet write-up cached for the same event/pick elsewhere in the app.
  */
-function matchupAnalysisFor(leg) {
+function matchupAnalysisFor(leg, { audit = false } = {}) {
   // Keyed per pick (eventId + outcomeName), not just per game — the model
   // now writes its case around a specific given pick (see
   // worker/src/analysis.js), so a game's h2h favorite and its underdog
   // can't share one cached write-up written for the other side.
-  const key = `analysis:${leg.eventId}:${leg.outcomeName}`;
+  const key = `analysis:${audit ? 'audit:' : ''}${leg.eventId}:${leg.outcomeName}`;
   if (!state.context.has(key)) {
     if (!CONFIG.WORKER_URL) {
       state.context.set(key, Promise.resolve(null));
@@ -1325,6 +1332,7 @@ function matchupAnalysisFor(leg) {
       url.searchParams.set('home', leg.home);
       url.searchParams.set('away', leg.away);
       url.searchParams.set('outcomeName', leg.outcomeName);
+      if (audit) url.searchParams.set('isAudit', 'true');
       state.context.set(
         key,
         fetch(url, { headers: { Accept: 'application/json' } })
@@ -7015,6 +7023,11 @@ const tailFade = {
   // instead of a generic failure, because it says what was actually wrong.
   extractionNote: '',
   busy: false,
+  // The most recent audit's per-leg graded reads, keyed by index — set by
+  // renderTailFadeResult, read back by the leg-card expand handler (see
+  // toggleTailFadeLegCard) so expanding a card can reach its matched
+  // candidate without re-deriving it from the DOM.
+  reads: [],
 };
 
 /** American odds out of free text: "-115", "+105", "115" (bare = plus money by convention). */
@@ -7358,15 +7371,100 @@ function renderTailFadeLegCard(read) {
   const signals = (read.signals ?? []).map((sg) =>
     `<li class="tf-sig is-${esc(sg.tone)}">${esc(sg.text)}</li>`).join('');
 
+  // Collapsed to a single scannable row by default — a slip can run to 25
+  // legs, and showing every card's full price breakdown and qualitative
+  // "why" write-up open at once would bury the one thing a reader actually
+  // needs first: which legs are which verdict. Expanding is what triggers
+  // the qualitative fetch below (see loadTailFadeLegWhy) rather than firing
+  // it for every leg on render.
   return `<div class="tf-leg-card ${tailFadeTone(read.verdict)}">
-    <div class="tf-leg-head">
-      <div class="tf-leg-name"><strong>${esc(read.leg.selection)}</strong> <span class="tf-leg-price">${price}</span></div>
-      ${badge}
+    <button type="button" class="tf-leg-toggle" aria-expanded="false" aria-controls="tf-leg-body-${read.index}">
+      <span class="tf-leg-toggle-info">
+        <strong class="tf-leg-name">${esc(read.leg.selection)}</strong>
+        <span class="tf-leg-price">${price}</span>
+      </span>
+      <span class="tf-leg-toggle-right">
+        ${badge}
+        <span class="tf-leg-chevron" aria-hidden="true"></span>
+      </span>
+    </button>
+    <div class="tf-leg-body" id="tf-leg-body-${read.index}" hidden>
+      ${numbers}
+      ${coverage}
+      ${signals ? `<ul class="tf-leg-signals">${signals}</ul>` : ''}
+      <div class="tf-why" data-tf-why="${read.index}"></div>
     </div>
-    ${numbers}
-    ${coverage}
-    ${signals ? `<ul class="tf-leg-signals">${signals}</ul>` : ''}
   </div>`;
+}
+
+/**
+ * Expands/collapses one leg card and, on first expansion, kicks off its
+ * qualitative "why" fetch (see loadTailFadeLegWhy) — delegated to the result
+ * container rather than bound per-card, since renderTailFadeResult replaces
+ * the whole container's innerHTML on every audit.
+ */
+function toggleTailFadeLegCard(event) {
+  const button = event.target.closest('.tf-leg-toggle');
+  if (!button) return;
+  const body = document.getElementById(button.getAttribute('aria-controls'));
+  if (!body) return;
+  const open = button.getAttribute('aria-expanded') === 'true';
+  button.setAttribute('aria-expanded', String(!open));
+  body.hidden = open;
+  if (!open) loadTailFadeLegWhy(body);
+}
+
+/**
+ * Fetches and renders the qualitative "why" for one leg, once, the first
+ * time its card is expanded. Reads the graded leg back out of
+ * tailFade.reads (set by renderTailFadeResult) by the same index the card
+ * was rendered with, rather than re-deriving it from the DOM.
+ */
+async function loadTailFadeLegWhy(body) {
+  const container = body.querySelector('.tf-why');
+  if (!container || container.dataset.loaded) return;
+  container.dataset.loaded = 'pending';
+
+  const index = Number(container.dataset.tfWhy);
+  const candidate = tailFade.reads?.[index]?.candidate;
+  if (!candidate?.eventId || !candidate?.outcomeName) {
+    container.innerHTML = `<p class="tf-why-empty">This leg didn't match a live market, so there's no matchup data to check it against.</p>`;
+    container.dataset.loaded = 'done';
+    return;
+  }
+
+  container.innerHTML = `<p class="tf-why-loading"><span class="tail-fade-spinner" aria-hidden="true"></span> Pulling recent form, head-to-head, and matchup context…</p>`;
+  let parsed = null;
+  try {
+    const raw = await matchupAnalysisFor(candidate, { audit: true });
+    parsed = raw ? JSON.parse(raw) : null;
+  } catch {
+    parsed = null;
+  }
+  container.innerHTML = renderTailFadeWhy(parsed);
+  container.dataset.loaded = 'done';
+}
+
+/**
+ * quickTake (the case for this leg) and devilsAdvocate (the real risks to
+ * it) rendered as one flat bullet list, tail-toned and fade-toned exactly
+ * like the price-based signals above them — together they're the 5-to-8 +
+ * 2 grounded reasons worker/src/analysis.js's isAudit variant asks for.
+ * Never fabricated: a leg with no research context (no ANTHROPIC_API_KEY,
+ * no archive match, or the model call failed) says so plainly instead of
+ * showing nothing or inventing a take.
+ */
+function renderTailFadeWhy(parsed) {
+  const tail = Array.isArray(parsed?.quickTake) ? parsed.quickTake : [];
+  const fade = Array.isArray(parsed?.devilsAdvocate) ? parsed.devilsAdvocate : [];
+  if (!tail.length && !fade.length) {
+    return `<p class="tf-why-empty">No qualitative matchup analysis available for this leg — the price-based read above is all this app has for it.</p>`;
+  }
+  const items = [
+    ...tail.map((t) => `<li class="tf-sig is-good">${esc(t)}</li>`),
+    ...fade.map((t) => `<li class="tf-sig is-bad">${esc(t)}</li>`),
+  ].join('');
+  return `<p class="tf-why-label">Why, beyond the price</p><ul class="tf-leg-signals tf-why-list">${items}</ul>`;
 }
 
 /** A named group of legs in the slate recommendation. */
@@ -7381,6 +7479,11 @@ function renderTailFadeGroup(title, reads, note) {
 }
 
 function renderTailFadeResult(audit) {
+  // Looked up by index from the delegated leg-card click handler (see
+  // toggleTailFadeLegCard/loadTailFadeLegWhy) — set here rather than passed
+  // through the DOM so expanding a card can get back its full graded read,
+  // including the matched candidate the qualitative fetch needs.
+  tailFade.reads = audit.reads;
   const tone = tailFadeTone(audit.verdict);
 
   // NO READ carries no confidence number at all rather than a low one: a
@@ -7709,3 +7812,8 @@ el.tailFadeAudit?.addEventListener('click', async () => {
     refreshTailFadeAuditState();
   }
 });
+
+// Delegated rather than bound per-card: renderTailFadeResult replaces
+// el.tailFadeResult's whole innerHTML on every audit, which would orphan
+// any listener attached directly to a leg card.
+el.tailFadeResult?.addEventListener('click', toggleTailFadeLegCard);
