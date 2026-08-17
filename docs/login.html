@@ -482,14 +482,17 @@
             <label for="register-notify-sms">Text me when Play of the Day and Pixel's Picks are ready<span class="coming-soon-tag">Coming soon</span></label>
           </div>
 
+          <div class="checkbox-group">
+            <input type="checkbox" id="register-agree-21" required>
+            <label for="register-agree-21">I'm 21+ and I agree to the
+              <a href="/terms.html" target="_blank" style="color: #a0a0cc;">Terms</a> &amp;
+              <a href="/privacy.html" target="_blank" style="color: #a0a0cc;">Privacy Policy</a>
+            </label>
+          </div>
+
           <div class="cf-turnstile" data-sitekey="0x4AAAAAAELYZU9_G_O_LO_M" data-action="signup" data-theme="dark" style="margin-bottom: 16px;"></div>
 
           <button type="submit" class="button">Create Account</button>
-          <p style="color: #7070aa; font-size: 11px; margin-top: 12px; text-align: center; line-height: 1.5;">
-            By creating an account you confirm you are 21 or older and agree to the
-            <a href="/terms.html" target="_blank" style="color: #a0a0cc;">Terms of Service</a> and
-            <a href="/privacy.html" target="_blank" style="color: #a0a0cc;">Privacy Policy</a>.
-          </p>
         </form>
 
         <div class="toggle-auth">
@@ -557,12 +560,18 @@
       const email = document.getElementById('register-email').value;
       const password = document.getElementById('register-password').value;
       const notifyEmail = document.getElementById('register-notify-email').checked;
+      const agree21 = document.getElementById('register-agree-21').checked;
       // The Turnstile widget injects this hidden input into the form once
       // the challenge passes; the server re-verifies it (tokens are
       // single-use and mean nothing until siteverify confirms them).
       const turnstileToken = e.target.querySelector('[name="cf-turnstile-response"]')?.value ?? '';
       const btn = e.target.querySelector('button[type="submit"]');
       const originalText = btn.textContent;
+
+      if (!agree21) {
+        showMessage('register-message', "Please confirm you're 21+ and agree to the Terms & Privacy Policy.", true);
+        return;
+      }
 
       if (!turnstileToken) {
         showMessage('register-message', 'Please complete the verification challenge first.', true);
