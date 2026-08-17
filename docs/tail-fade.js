@@ -93,6 +93,25 @@ export function matchStrength(legText, targetText) {
   if (!target.length) return 0;
   const leg = new Set(tokens(legText));
   if (!leg.size) return 0;
+
+  // A short spread/total selection is mostly its point number ("Athletics
+  // +1.5" tokenises to ['athletics', '1', '5']) — two of those three tokens
+  // are shared by ANY other bet at the same point, on any game, in any
+  // sport. Coverage alone let a tennis leg like "Boitan +1.5 Sets" clear
+  // MATCH_MIN against that unrelated MLB spread on the number alone (2/3 =
+  // 0.667), attaching the wrong game's real price and matchup facts to it —
+  // caught when the qualitative "why" (see docs/app.js's
+  // loadTailFadeLegWhy) came back describing an MLB pitching matchup for a
+  // tennis set-spread leg. Requiring the actual identifying word to appear
+  // somewhere in the user's text closes that off while still allowing a
+  // dropped/abbreviated name (real teams are usually multiple words; only
+  // one has to show up) and leaving numeric-only targets — a single-letter
+  // placeholder name is the one real case, see test fixtures — untouched,
+  // since there's no name token for the rule to require in the first place.
+  const nonNumericTarget = target.filter((w) => !/^\d+$/.test(w));
+  const nameOk = nonNumericTarget.length === 0 || nonNumericTarget.some((w) => leg.has(w));
+  if (!nameOk) return 0;
+
   const covered = target.filter((w) => leg.has(w)).length;
   return covered / target.length;
 }

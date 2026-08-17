@@ -180,6 +180,46 @@ test('terse input still matches — the asymmetric coverage rule', () => {
     'naming the team in full is enough, even with the shorthand "ML"');
 });
 
+test('a dropped/abbreviated name is still fine, as long as one real word of it survives', () => {
+  assert.ok(matchStrength('Yankees -1.5', 'New York Yankees -1.5') >= MATCH_MIN,
+    'the nickname alone still identifies the team even with the city dropped');
+});
+
+test('two unrelated bets sharing only a point number do not match — the reported cross-sport bug', () => {
+  // A tennis leg and an MLB spread that happen to share "+1.5" used to
+  // clear MATCH_MIN on the number alone (2 of the target's 3 tokens),
+  // attaching the wrong game's price AND its qualitative "why" to a leg
+  // that never named it. Real report: a tennis "Boitan +1.5 Sets" leg came
+  // back with an MLB pitching matchup underneath it.
+  assert.ok(matchStrength('Boitan +1.5 Sets', 'Athletics +1.5') < MATCH_MIN,
+    'no shared name token — a shared point number alone must not be enough');
+  assert.ok(matchStrength('Boitan +1.5 Sets', 'Kansas City Royals +1.5') < MATCH_MIN);
+});
+
+test('a target with no real name token (a single-letter placeholder) still matches on the number alone', () => {
+  // "A"/"B" are stopwords, so these targets carry no non-numeric token for
+  // the name rule above to require — the fix must not block the one
+  // legitimate case where there's genuinely no name to check.
+  assert.ok(matchStrength('A -3.5', 'A -3.5') >= MATCH_MIN);
+});
+
+test('end to end: a tennis leg sharing a point number with an unrelated MLB spread goes NO READ, not misgraded against the wrong game', () => {
+  const audit = run(
+    [leg('Boitan +1.5 Sets', -119)],
+    {
+      postedPicks: [],
+      candidates: [
+        candidate({
+          selection: 'Athletics +1.5', marketKey: 'spreads', eventId: 'mlb1',
+          sportKey: 'baseball_mlb', american: -119,
+        }),
+      ],
+    },
+  );
+  assert.equal(audit.verdict, NO_READ, 'an unrelated game must never stand in for an unmatched leg');
+  assert.equal(audit.reads[0].candidate, null);
+});
+
 test('matching ignores case, punctuation and accents', () => {
   assert.equal(normalizeSelection("A'ja Wilson — Over 24.5!"), 'a ja wilson over 24 5');
   assert.ok(matchStrength("a'ja wilson 24+ points", "A'ja Wilson 24+ Points") >= MATCH_MIN);
