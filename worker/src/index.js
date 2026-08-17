@@ -1158,9 +1158,12 @@ export default {
         // (longer prompt, higher maxTokens, separate cache namespace)
         // directly rather than the regular per-game one — useful for
         // reproducing a POTD-specific write-up failure without waiting for
-        // the 2am batch.
+        // the 2am batch. &isAudit=true is Tail or Fade's per-leg "why" —
+        // same depth as POTD, its own cache namespace, but framed as the
+        // user's own bet rather than this app's pick (see analysis.js).
         const isPotd = searchParams.get('isPotd') === 'true';
-        const analysis = await getOrGenerateAnalysis(candidate, env, ctx, Date.now(), { isPotd });
+        const isAudit = searchParams.get('isAudit') === 'true';
+        const analysis = await getOrGenerateAnalysis(candidate, env, ctx, Date.now(), { isPotd, isAudit });
         return json(
           { analysis },
           { headers: { ...cors, 'Cache-Control': 'public, max-age=3600' } },

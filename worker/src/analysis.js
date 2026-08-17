@@ -171,15 +171,24 @@ function tennisFactSheet(data, awayName, homeName) {
   return lines.join('\n');
 }
 
-function buildPrompt({ away, home, sportTitle, factSheet, pick, isMma = false, isBaseball = false, isPotd = false }) {
+function buildPrompt({ away, home, sportTitle, factSheet, pick, isMma = false, isBaseball = false, isPotd = false, isAudit = false }) {
   // Play of the Day is the single showcase pick across the whole day's
   // slate, not one game write-up among many — the persona and depth step up
   // accordingly (a sharp bettor's featured-pick column, not a routine game
   // preview), and the JSON below asks for at least 5 reasons instead of 3
   // for exactly that reason.
+  //
+  // isAudit is Tail or Fade's per-leg "why" — a user auditing their own bet
+  // slip, not this app's own featured pick. It gets the same depth step-up
+  // as POTD (5-to-8 reasons instead of 3) because that's the whole point of
+  // expanding a leg, but a plain analyst persona rather than POTD's "featured
+  // pick" one, since an audited leg is the USER's bet, not something this
+  // app is endorsing.
   const persona = isPotd
     ? `You are a sharp, highly experienced sports betting analyst with years of expertise specifically in ${sportTitle}, writing the daily "Play of the Day" breakdown — the single best value pick this app is featuring across its ENTIRE slate today, not just one game among many. Write with the voice and confidence of someone who has handicapped this sport professionally for years.`
-    : `You are a sports analyst writing a short, strictly factual matchup breakdown for a sports app.`;
+    : isAudit
+      ? `You are a sharp, highly experienced sports betting analyst with years of expertise specifically in ${sportTitle}, giving a detailed matchup breakdown for a user auditing one leg of their own bet slip. Write with the depth of someone who has handicapped this sport professionally, covering multiple distinct angles rather than a quick take.`
+      : `You are a sports analyst writing a short, strictly factual matchup breakdown for a sports app.`;
 
   let basePrompt = `${persona} Nobody reading this is asking about betting odds, point spreads, moneylines, or market pricing — only about the actual teams or players (this app shows the real sportsbook prices separately, in its own section).
 
@@ -188,7 +197,9 @@ Matchup: ${away} at ${home} (${sportTitle})
 Known facts (this is the ONLY information you have — there is no other source):
 ${factSheet}
 
-This app's own pricing model has already identified "${pick}" as today's pick for this matchup, based on the betting market's own numbers (not shown to you here). Your job is NOT to independently decide who's favored — it's to explain, using only the facts above, why "${pick}" makes sense, and to be honest about the real risks to it. Do not contradict this pick or name the other side as your own lean anywhere in your answer.
+${isAudit
+    ? `A user is auditing "${pick}" as one leg of their own bet slip (this is their bet, not one this app is recommending). Your job is NOT to independently decide who's favored — it's to explain, using only the facts above, the honest case for "${pick}", and to be equally honest about the real risks to it. Do not claim this app picked or endorsed it, and do not name the other side as your own lean anywhere in your answer.`
+    : `This app's own pricing model has already identified "${pick}" as today's pick for this matchup, based on the betting market's own numbers (not shown to you here). Your job is NOT to independently decide who's favored — it's to explain, using only the facts above, why "${pick}" makes sense, and to be honest about the real risks to it. Do not contradict this pick or name the other side as your own lean anywhere in your answer.`}
 
 RULES — read carefully, these are not optional:
 1. Use ONLY the facts given above. Do not state, imply, or assume any statistic, record, ranking, or result that is not explicitly written above.
@@ -214,7 +225,7 @@ Explicitly consider pitcher matchup advantages, home/away pitcher performance sp
 
 PART 2 — Structured summary: after Part 1, on the very last line and ONLY the last line, output one JSON object (no other text on that line, and none of Part 1's prose repeated inside it) with this exact structure:
 {
-  "quickTake": [${isPotd ? '<at least 5 reasons, see below>' : '"<short reason 1 \'' + pick + '\' has the edge>", "<short reason 2>", "<short reason 3>"'}],
+  "quickTake": [${isPotd || isAudit ? '<5 to 8 reasons, see below>' : '"<short reason 1 \'' + pick + '\' has the edge>", "<short reason 2>", "<short reason 3>"'}],
   "devilsAdvocate": ["<a genuine weakness or risk in "${pick}" that could cause it to lose>", "<a second genuine vulnerability or way this specific pick could fail>"]${isMma ? ',\n  "victoryMethods": { ...see MMA requirement below... }' : ''}
 }
 `;
@@ -222,7 +233,10 @@ PART 2 — Structured summary: after Part 1, on the very last line and ONLY the 
   basePrompt += isPotd
     ? `- quickTake: AT LEAST 5 substantive sentences (a full sentence each, not a fragment) on why "${pick}" is today's featured pick, each traceable to a fact given above. Vary the angle across the list rather than restating the same point five ways — draw from whichever of these actually apply here: recent form, head-to-head history, a statistical or stylistic tendency, an injury or availability factor, a situational note (rest, layoff, travel, surface, home/away split). At least ONE entry must be genuinely predictive, not just historical — a concrete claim about how you expect THIS specific matchup to play out (who controls the pace, which side's strength dictates the pattern of play, where the deciding edge shows up), not a restatement of a past record.
 - devilsAdvocate: exactly 2 short sentences on genuine weaknesses or risks in "${pick}" specifically — not a case for the other side winning, but honest reasons this exact pick could still lose (a real vulnerability, a matchup risk, a form concern), grounded only in the facts above. Not a token "anything can happen" disclaimer.`
-    : `- quickTake: exactly 3 short, punchy sentences (under ~18 words each) on why "${pick}" has the edge — a form/statistical driver, a head-to-head or matchup factor, and a situational note — each traceable to a fact given above.
+    : isAudit
+      ? `- quickTake: 5 to 8 substantive sentences (a full sentence each, not a fragment) on why "${pick}" has the edge, each traceable to a fact given above. Vary the angle across the list rather than restating the same point several ways — draw from whichever of these actually apply here: recent form, head-to-head history, a statistical or stylistic tendency, an injury or availability factor, a situational note (rest, layoff, travel, surface, home/away split, weather). At least ONE entry must be genuinely predictive, not just historical — a concrete claim about how you expect THIS specific matchup to play out, not a restatement of a past record. If the facts above only support 5 distinct angles, give 5 rather than padding with a repeated point.
+- devilsAdvocate: exactly 2 short sentences on genuine weaknesses or risks in "${pick}" specifically — not a case for the other side winning, but honest reasons this exact pick could still lose (a real vulnerability, a matchup risk, a form concern), grounded only in the facts above. Not a token "anything can happen" disclaimer.`
+      : `- quickTake: exactly 3 short, punchy sentences (under ~18 words each) on why "${pick}" has the edge — a form/statistical driver, a head-to-head or matchup factor, and a situational note — each traceable to a fact given above.
 - devilsAdvocate: exactly 2 short sentences on genuine weaknesses or risks in "${pick}" specifically — not a case for the other side winning, but honest reasons this exact pick could still lose (a real vulnerability, a matchup risk, a form concern), grounded only in the facts above. Not a token "anything can happen" disclaimer.`;
 
   if (isMma) {
@@ -276,6 +290,31 @@ function asStringBullets(value, maxItems) {
 }
 
 /**
+ * How many quickTake bullets each variant is allowed to keep, matching what
+ * buildPrompt actually asked the model for (see its quickTake instructions
+ * above) — POTD and audit both ask for more than the default 3, so both cap
+ * higher. Exported and pure so the wiring between "what we asked for" and
+ * "what we keep" is independently testable without a network call.
+ */
+export function quickTakeCap(isPotd, isAudit) {
+  return isPotd || isAudit ? 8 : 4;
+}
+
+/**
+ * The KV cache key for one game/pick's write-up. Three disjoint namespaces —
+ * one per variant — so a Full Slate card's 3-bullet write-up, a Play of the
+ * Day's 5+-bullet showcase write-up, and Tail or Fade's 5-to-8-bullet audit
+ * write-up for the SAME event/pick never collide and overwrite one another;
+ * each surface always gets back the text shaped for it. Exported and pure
+ * for the same reason as quickTakeCap above.
+ */
+export function analysisCacheKey({ isPotd, isAudit, dateKey, eventId, outcomeName }) {
+  if (isPotd) return `potd-analysis:v2:${dateKey}:${eventId}:${outcomeName}`;
+  if (isAudit) return `audit-analysis:v1:${dateKey}:${eventId}:${outcomeName}`;
+  return `analysis:v8:${dateKey}:${eventId}:${outcomeName}`;
+}
+
+/**
  * MMA's victoryMethods, validated method-by-method: method must be one of
  * the three real values, percentage must be a finite 0-100 number (clamped,
  * or null if the model didn't give a usable one — never fabricated), and
@@ -310,14 +349,22 @@ function sanitizeVictoryMethods(raw) {
  * `isPotd` requests the richer Play of the Day variant (see buildPrompt): a
  * sharp-bettor persona, a longer Part 1, and at least 5 quickTake reasons
  * instead of 3 — Play of the Day is the one showcase pick across the whole
- * slate, not a routine per-game preview, so it gets a fuller write-up. Kept
- * in its own cache namespace (potd-analysis: vs analysis:) rather than
- * sharing a key with the regular per-game analysis: the two are genuinely
- * different text for the same event/pick, and a POTD game that also shows
- * up on a regular Full Slate card must never silently swap one write-up in
- * for the other depending on which code path asked first.
+ * slate, not a routine per-game preview, so it gets a fuller write-up.
+ *
+ * `isAudit` requests Tail or Fade's per-leg "why" variant: same 5-to-8
+ * quickTake depth as POTD, but a plain analyst persona and framing that
+ * never claims this app picked or endorsed the leg (it's the user's own bet,
+ * pasted from their own slip). Mutually exclusive with isPotd in practice —
+ * a POTD pick is never routed through Tail or Fade's audit path — and if
+ * both were somehow passed, isPotd wins (see analysisCacheKey/quickTakeCap).
+ *
+ * Each variant is kept in its own cache namespace (see analysisCacheKey)
+ * rather than sharing a key with the others: the three are genuinely
+ * different text for the same event/pick, and a game that shows up on more
+ * than one surface must never silently swap one write-up in for another
+ * depending on which code path asked first.
  */
-export async function getOrGenerateAnalysis(candidate, env, ctx, now = Date.now(), { isPotd = false } = {}) {
+export async function getOrGenerateAnalysis(candidate, env, ctx, now = Date.now(), { isPotd = false, isAudit = false } = {}) {
   if (!env.ANTHROPIC_API_KEY) return null;
 
   const dateKey = etDate(now);
@@ -345,9 +392,7 @@ export async function getOrGenerateAnalysis(candidate, env, ctx, now = Date.now(
   // git history) onto mlb-stats.js's already-working ESPN calls. Bumped so
   // a null result cached under the old, broken path doesn't shadow the fix
   // for the rest of its TTL.
-  const kvKey = isPotd
-    ? `potd-analysis:v2:${dateKey}:${candidate.eventId}:${candidate.outcomeName}`
-    : `analysis:v8:${dateKey}:${candidate.eventId}:${candidate.outcomeName}`;
+  const kvKey = analysisCacheKey({ isPotd, isAudit, dateKey, eventId: candidate.eventId, outcomeName: candidate.outcomeName });
   const cached = await env.POTD_KV.get(kvKey);
   if (cached) return cached;
 
@@ -421,6 +466,7 @@ export async function getOrGenerateAnalysis(candidate, env, ctx, now = Date.now(
     isMma,
     isBaseball,
     isPotd,
+    isAudit,
   });
 
   // MMA's reply carries a lot more than prose: two fighters x 3 victory
@@ -430,9 +476,9 @@ export async function getOrGenerateAnalysis(candidate, env, ctx, now = Date.now(
   // every MMA analysis fail to parse and fall back to dumping the raw
   // truncated text (JSON fragment included) on screen. Every sport's reply
   // grew with quickTake/devilsAdvocate too, hence the non-MMA bump as well.
-  // POTD's own longer Part 1 (8-14 sentences) and 5+-item quickTake need
-  // more headroom again on top of that.
-  const maxTokens = isMma ? (isPotd ? 1800 : 1400) : (isPotd ? 1300 : 900);
+  // POTD's and audit's own longer Part 1 and 5+-item quickTake need more
+  // headroom again on top of that.
+  const maxTokens = isMma ? (isPotd || isAudit ? 1800 : 1400) : (isPotd || isAudit ? 1300 : 900);
   let text;
   try {
     text = await callClaude(prompt, env, { maxTokens });
@@ -461,7 +507,7 @@ export async function getOrGenerateAnalysis(candidate, env, ctx, now = Date.now(
     try {
       const parsed = JSON.parse(trimmed.slice(idx));
       analysis = trimmed.slice(0, idx).trim();
-      quickTake = asStringBullets(parsed.quickTake, isPotd ? 8 : 4);
+      quickTake = asStringBullets(parsed.quickTake, quickTakeCap(isPotd, isAudit));
       devilsAdvocate = asStringBullets(parsed.devilsAdvocate, 3);
       if (isMma && parsed.victoryMethods) victoryMethods = sanitizeVictoryMethods(parsed.victoryMethods);
       break;
