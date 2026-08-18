@@ -3969,6 +3969,30 @@ input[type="range"]:focus-visible {
   background: rgba(124, 58, 237, 0.02);
 }
 
+.algo-health-entry-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.algo-health-week {
+  font-size: 11px;
+  color: var(--muted);
+  white-space: nowrap;
+}
+
+.algo-health-entry-bullets {
+  margin: 6px 0 0;
+  padding-left: 16px;
+  list-style: disc;
+}
+
+.algo-health-entry-bullets li {
+  margin: 2px 0;
+  color: var(--muted);
+}
+
 .action-btn {
   padding: 10px 16px;
   background: var(--accent);
