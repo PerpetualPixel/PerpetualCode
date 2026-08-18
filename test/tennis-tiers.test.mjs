@@ -5,7 +5,7 @@ import {
   TIER_1, TIER_2, TIER_CHALLENGER,
   tennisTier, canonicalSlug, matchIdentity, dedupeTennisEvents,
   isMarketAllowedForTier, tierLiquidityBlock, capStakeForTier,
-  TIER_2_MIN_BOOKS,
+  TIER_2_MIN_BOOKS, surfaceOfEvent,
 } from '../docs/tennis-tiers.js';
 import { gradePick, summarizePicks } from '../docs/learning.js';
 
@@ -232,4 +232,26 @@ test('voids are excluded from win rate, ROI, and money at risk', () => {
   assert.equal(summary.pending, 1);
   assert.equal(summary.staked, 40);  // the void's stake was never at risk
   assert.equal(summary.roi, 0);
+});
+
+/* ---------------------------------------------------------------- */
+/* Surface lookup                                                     */
+/* ---------------------------------------------------------------- */
+
+test('surfaceOfEvent names the surface for tournaments this app can be confident about', () => {
+  assert.equal(surfaceOfEvent('tennis_atp_wimbledon'), 'Grass');
+  assert.equal(surfaceOfEvent('tennis_wta_french_open'), 'Clay');
+  assert.equal(surfaceOfEvent('tennis_atp_italian_open'), 'Clay');
+  assert.equal(surfaceOfEvent('tennis_wta_us_open'), 'Hard');
+  assert.equal(surfaceOfEvent('tennis_atp_canadian_open'), 'Hard');
+});
+
+test('surfaceOfEvent resolves aliases the same as canonicalSlug does', () => {
+  // Roland Garros trades under its own name in some feeds — same tournament as french_open.
+  assert.equal(surfaceOfEvent('tennis_atp_roland_garros'), 'Clay');
+});
+
+test('surfaceOfEvent returns null rather than guessing for an unlisted (typically TIER_2) tournament', () => {
+  assert.equal(surfaceOfEvent('tennis_atp_some_250_event'), null);
+  assert.equal(surfaceOfEvent(null), null);
 });

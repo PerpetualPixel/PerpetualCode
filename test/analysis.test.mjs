@@ -1,7 +1,10 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 
-import { quickTakeCap, analysisCacheKey, getOrGenerateAnalysis } from '../worker/src/analysis.js';
+import { quickTakeCap, analysisCacheKey, getOrGenerateAnalysis, tennisFactSheet } from '../worker/src/analysis.js';
+
+const EPOCH = Date.UTC(2000, 0, 1);
+const day = (iso) => Math.round((Date.parse(iso) - EPOCH) / 86400000);
 
 /**
  * quickTakeCap and analysisCacheKey are the two pure pieces of the
@@ -62,4 +65,55 @@ test('getOrGenerateAnalysis: isAudit still returns null with no ANTHROPIC_API_KE
   };
   const result = await getOrGenerateAnalysis(candidate, env, ctx, Date.parse('2026-08-17T12:00:00Z'), { isAudit: true });
   assert.equal(result, null);
+});
+
+/* ---------------------------------------------------------------- */
+/* tennisFactSheet — the LLM "known facts" block                     */
+/* ---------------------------------------------------------------- */
+
+// Fields: [day, surface, court, round, winner, loser, wRank, lRank, retired,
+//          sets, tbWinnerSets, tbLoserSets]
+const TENNIS_DATA = {
+  tour: 'atp',
+  seasons: [2026],
+  surfaces: ['Hard', 'Clay'],
+  courts: ['Outdoor'],
+  rounds: ['R1'],
+  players: ['Alpha A.', 'Bravo B.', 'Opp1 O.', 'Opp2 O.', 'Opp3 O.', 'Opp4 O.', 'Opp5 O.', 'Opp6 O.'],
+  matches: [
+    [day('2026-07-01'), 0, 0, 0, 0, 2, 10, 50, 0, 2, 0, 0],
+    [day('2026-07-02'), 0, 0, 0, 0, 3, 10, 50, 0, 3, 1, 0],
+    [day('2026-07-03'), 0, 0, 0, 0, 4, 10, 50, 0, 3, 0, 1],
+    [day('2026-07-04'), 0, 0, 0, 0, 5, 10, 50, 0, 2, 0, 0],
+    [day('2026-07-05'), 0, 0, 0, 6, 0, 50, 10, 0, 2, 0, 0],
+    [day('2026-07-06'), 0, 0, 0, 0, 1, 10, 20, 0, 3, 1, 0],
+  ],
+};
+
+test('tennisFactSheet adds surface form, tiebreak record, and grind load for a tournament with a known surface', () => {
+  const sheet = tennisFactSheet(TENNIS_DATA, 'Alpha A.', 'Bravo B.', 'tennis_atp_us_open'); // US Open -> Hard
+  assert.match(sheet, /on Hard:/);
+  assert.match(sheet, /in tiebreaks/);
+  assert.match(sheet, /averaged .* sets/);
+});
+
+test('tennisFactSheet skips surface-form lines entirely for a tournament with no known surface', () => {
+  const sheet = tennisFactSheet(TENNIS_DATA, 'Alpha A.', 'Bravo B.', 'tennis_atp_some_250_event');
+  // The surface-form line's own distinct shape ("<name> on <Surface>: ..."),
+  // not the generic recent-form line's parenthetical "(Hard, R1)" mentions.
+  assert.doesNotMatch(sheet, /on Hard:/);
+  assert.doesNotMatch(sheet, /on Clay:/);
+  // Non-surface facts are unaffected by an unknown tournament.
+  assert.match(sheet, /recent form/);
+  assert.match(sheet, /in tiebreaks/);
+});
+
+test('tennisFactSheet still always states the head-to-head situation, even absent', () => {
+  const sheet = tennisFactSheet(TENNIS_DATA, 'Alpha A.', 'Bravo B.', 'tennis_atp_us_open');
+  assert.match(sheet, /Head-to-head/);
+});
+
+test('tennisFactSheet returns null when the archive has no matches at all', () => {
+  assert.equal(tennisFactSheet({ matches: [] }, 'Alpha A.', 'Bravo B.', 'tennis_atp_us_open'), null);
+  assert.equal(tennisFactSheet(null, 'Alpha A.', 'Bravo B.', 'tennis_atp_us_open'), null);
 });

@@ -23,8 +23,9 @@
 import { fetchContext, hasContext } from './context.js';
 import { fetchMmaContext } from './mma.js';
 import { fetchStartingPitchers, fetchSituationalSplits } from './mlb-stats.js';
-import { tennisRecentForm, tennisHeadToHead } from '../../docs/insights.js';
+import { tennisRecentForm, tennisHeadToHead, tennisSurfaceForm, tennisTiebreakForm, tennisGrindLoad } from '../../docs/insights.js';
 import { loadTennisArchive } from './tennis-archive.js';
+import { surfaceOfEvent } from '../../docs/tennis-tiers.js';
 
 const MODEL = 'claude-haiku-4-5-20251001';
 const CACHE_TTL_DAYS = 2;
@@ -146,7 +147,7 @@ function baseballFactSheet({ pitchers, awaySplits, homeSplits }, awayTeam, homeT
   return lines.length ? lines.join('\n') : null;
 }
 
-function tennisFactSheet(data, awayName, homeName) {
+export function tennisFactSheet(data, awayName, homeName, sportKey) {
   if (!data?.matches?.length) return null;
   const form = (name) => {
     const recent = tennisRecentForm(data, name, { limit: 5 });
@@ -155,6 +156,28 @@ function tennisFactSheet(data, awayName, homeName) {
     return `${name}: recent form — ${list}.`;
   };
   const lines = [form(awayName), form(homeName)];
+
+  // Surface-specific form, tiebreak record, and grind load — real, computed
+  // facts (docs/insights.js) that used to have no source at all; previously
+  // this write-up only ever saw blanket last-5 form regardless of what
+  // surface today's match is actually on. surface is null for any
+  // tournament docs/tennis-tiers.js's surfaceOfEvent isn't confident about
+  // (most 250s) — the two lines below are simply skipped for that player
+  // rather than guessed at.
+  const surface = surfaceOfEvent(sportKey);
+  if (surface) {
+    for (const name of [awayName, homeName]) {
+      const sf = tennisSurfaceForm(data, name, surface);
+      if (sf) lines.push(`${name} on ${surface}: ${sf.wins}-${sf.matches - sf.wins} in their last ${sf.matches} ${surface}-court matches on file (${(sf.winRate * 100).toFixed(0)}% win rate).`);
+    }
+  }
+  for (const name of [awayName, homeName]) {
+    const tb = tennisTiebreakForm(data, name);
+    if (tb) lines.push(`${name} in tiebreaks: ${tb.won}-${tb.total - tb.won} across their recent matches on file (${(tb.rate * 100).toFixed(0)}% of tiebreak sets won).`);
+    const grind = tennisGrindLoad(data, name);
+    if (grind) lines.push(`${name}'s last ${grind.matches} matches averaged ${grind.avgSets.toFixed(1)} sets — ${grind.avgSets >= 2.6 ? 'a heavier recent physical load than closing matches in straight sets' : 'mostly straightforward, not a heavy recent physical load'}.`);
+  }
+
   // Always state the head-to-head situation explicitly, even when there
   // isn't one — leaving it out entirely when matchPlayer/tennisHeadToHead
   // comes up empty left the model to guess, and it guessed wrong (claiming
@@ -401,7 +424,7 @@ export async function getOrGenerateAnalysis(candidate, env, ctx, now = Date.now(
   try {
     if (isTennisSport(candidate.sportKey)) {
       const data = await loadTennisArchive(candidate.sportKey);
-      factSheet = tennisFactSheet(data, candidate.away, candidate.home);
+      factSheet = tennisFactSheet(data, candidate.away, candidate.home, candidate.sportKey);
     } else if (isMmaSport(candidate.sportKey)) {
       const mmaContext = await fetchMmaContext({ fighterA: candidate.away, fighterB: candidate.home }, ctx);
       factSheet = mmaFactSheet(mmaContext);

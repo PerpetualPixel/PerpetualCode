@@ -6,6 +6,9 @@ import {
   tennisSurfaceFilters,
   tennisRecentForm,
   tennisHeadToHead,
+  tennisSurfaceForm,
+  tennisTiebreakForm,
+  tennisGrindLoad,
   teamInsights,
   mmaInsights,
   resolveMmaFighters,
@@ -186,6 +189,79 @@ test('head-to-head tallies match the bullets\' own head-to-head count', () => {
 test('head-to-head returns null for a player never in the archive', () => {
   assert.equal(tennisHeadToHead(ARCHIVE, 'Nobody At All', 'Ben Bravo'), null);
   assert.equal(tennisHeadToHead(null, 'Aaron Alpha', 'Ben Bravo'), null);
+});
+
+/* ---------------------------------------------------------------- */
+/* Set/tiebreak-derived form (surface form, tiebreak record, grind)   */
+/* ---------------------------------------------------------------- */
+
+// Fields: [day, surface, court, round, winner, loser, wRank, lRank, retired,
+//          sets, tbWinnerSets, tbLoserSets]
+const ARCHIVE_SETS = {
+  tour: 'test',
+  seasons: [2026],
+  surfaces: ['Hard', 'Clay'],
+  courts: ['Outdoor'],
+  rounds: ['R1'],
+  players: ['Alpha A.', 'Bravo B.', 'Charlie C.', 'Delta D.', 'Echo E.', 'Foxtrot F.', 'Golf G.'],
+  matches: [
+    [day('2026-06-01'), 1, 0, 0, 0, 1, 10, 20, 0, 2, 0, 0], // Alpha bt Bravo, Clay, straight sets
+    [day('2026-06-05'), 1, 0, 0, 0, 2, 10, 20, 0, 2, 0, 0], // Alpha bt Charlie, Clay, straight sets
+    [day('2026-07-01'), 0, 0, 0, 0, 1, 10, 20, 0, 2, 0, 0], // Alpha bt Bravo, Hard, straight sets
+    [day('2026-07-05'), 0, 0, 0, 0, 2, 10, 20, 0, 3, 1, 0], // Alpha bt Charlie, Hard, won 1 TB
+    [day('2026-07-10'), 0, 0, 0, 3, 0, 10, 20, 0, 3, 0, 1], // Delta bt Alpha, Hard, Alpha won a TB set
+    [day('2026-07-15'), 0, 0, 0, 0, 4, 10, 20, 0, 2, 0, 0], // Alpha bt Echo, Hard, straight sets
+    [day('2026-07-20'), 0, 0, 0, 0, 5, 10, 20, 0, 2, 0, 0], // Alpha bt Foxtrot, Hard, straight sets
+    [day('2026-07-22'), 0, 0, 0, 0, 6, 10, 20, 0, 3, 1, 0], // Alpha bt Golf, Hard, won 1 TB
+  ],
+};
+
+test('tennisSurfaceForm reports a real win rate once a player clears the surface sample minimum', () => {
+  const hard = tennisSurfaceForm(ARCHIVE_SETS, 'Alpha A.', 'Hard', { limit: 10 });
+  assert.equal(hard.matches, 6);
+  assert.equal(hard.wins, 5); // 5-1 on Hard in this fixture
+  assert.equal(Math.round(hard.winRate * 100), 83);
+});
+
+test('tennisSurfaceForm is case-insensitive against the archive\'s own surface label', () => {
+  const lower = tennisSurfaceForm(ARCHIVE_SETS, 'Alpha A.', 'hard', { limit: 10 });
+  assert.equal(lower.matches, 6);
+});
+
+test('tennisSurfaceForm returns null rather than a padded guess below the sample minimum', () => {
+  // Only 2 Clay matches on file for Alpha — below the default minSample of 5.
+  assert.equal(tennisSurfaceForm(ARCHIVE_SETS, 'Alpha A.', 'Clay'), null);
+  assert.equal(tennisSurfaceForm(ARCHIVE_SETS, 'Alpha A.', 'Grass'), null); // surface not even in this archive
+  assert.equal(tennisSurfaceForm(ARCHIVE_SETS, 'Nobody At All', 'Hard'), null);
+});
+
+test('tennisTiebreakForm counts tiebreak sets won even in matches the player lost overall', () => {
+  // Across the 6 Hard matches: 3 tiebreak sets total, Alpha won all 3 — two
+  // as the match winner, one as the match LOSER who still won that set.
+  const tb = tennisTiebreakForm(ARCHIVE_SETS, 'Alpha A.', { limit: 10 });
+  assert.equal(tb.total, 3);
+  assert.equal(tb.won, 3);
+  assert.equal(tb.rate, 1);
+});
+
+test('tennisTiebreakForm returns null below the minimum tiebreak-set sample', () => {
+  // Only 2 tiebreak sets in the last 3 matches (M4/Echo has none).
+  assert.equal(tennisTiebreakForm(ARCHIVE_SETS, 'Alpha A.', { limit: 3, minTiebreaks: 3 }), null);
+});
+
+test('tennisGrindLoad averages sets played over recent matches', () => {
+  // Last 3 by date: Foxtrot (2), Golf (3), and — wait, limit counts newest
+  // first — Echo(2), Foxtrot(2), Golf(3) => (2+2+3)/3 = 2.33.
+  const grind = tennisGrindLoad(ARCHIVE_SETS, 'Alpha A.', { limit: 3 });
+  assert.equal(grind.matches, 3);
+  assert.equal(Math.round(grind.avgSets * 100), 233);
+});
+
+test('tennisGrindLoad returns null for an unmatched player or an archive with no set data', () => {
+  assert.equal(tennisGrindLoad(ARCHIVE_SETS, 'Nobody At All'), null);
+  // The original ARCHIVE fixture predates the sets/tiebreak fields entirely
+  // — this is the "archive built before this existed" case, not an error.
+  assert.equal(tennisGrindLoad(ARCHIVE, 'Aaron Alpha'), null);
 });
 
 /* ---------------------------------------------------------------- */

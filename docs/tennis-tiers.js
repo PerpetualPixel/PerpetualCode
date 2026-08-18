@@ -140,6 +140,48 @@ export function canonicalSlug(sportKey) {
 }
 
 /**
+ * Court surface for the subset of tournaments this app can name with real
+ * confidence — the Slams and the Masters 1000/WTA 1000 tier already
+ * enumerated above. Deliberately NOT extended to guess at every TIER_2 250:
+ * most of those this app has never resolved a slug for, and "probably hard
+ * court" would be an assumption dressed up as a fact — the same "no
+ * inference" rule docs/insights.js's own header states applies here too.
+ * Grass and Clay are the informative cases (recent hard-court form doesn't
+ * transfer to either); every other entry below is genuinely Hard, not a
+ * default filled in for the unlisted ones.
+ */
+const SURFACE_BY_SLUG = new Map([
+  ['french_open', 'Clay'],
+  ['monte_carlo_masters', 'Clay'],
+  ['madrid_open', 'Clay'],
+  ['italian_open', 'Clay'],
+  ['wimbledon', 'Grass'],
+  ['aus_open', 'Hard'],
+  ['us_open', 'Hard'],
+  ['indian_wells', 'Hard'],
+  ['miami_open', 'Hard'],
+  ['canadian_open', 'Hard'],
+  ['cincinnati_open', 'Hard'],
+  ['shanghai_masters', 'Hard'],
+  ['paris_masters', 'Hard'],
+  ['china_open', 'Hard'],
+  ['wuhan_open', 'Hard'],
+  ['qatar_open', 'Hard'],
+  ['dubai_championships', 'Hard'],
+]);
+
+/**
+ * 'Hard' | 'Clay' | 'Grass' | null for one event's tournament, matched
+ * against the archive's own surface labels (docs/data/tennis-{tour}.json's
+ * `surfaces` table) so a caller can hand this straight to
+ * insights.js's tennisSurfaceForm. null for anything not confidently known
+ * — see this map's own comment for why that's not filled in with a guess.
+ */
+export function surfaceOfEvent(sportKey) {
+  return SURFACE_BY_SLUG.get(canonicalSlug(sportKey)) ?? null;
+}
+
+/**
  * A stable identity for one MATCH, independent of which tournament name it
  * arrived under. Player names are order-normalized so a feed listing the
  * same match with home/away swapped doesn't read as two events.

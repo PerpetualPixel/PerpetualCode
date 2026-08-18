@@ -541,9 +541,52 @@ function formSignalPillar(candidate, missing) {
 export const EVALUATORS = {
   tennis: {
     name: 'Tennis (singles)',
-    matchup: (leg, c) => formSignalPillar(c, [
-      'court speed index', 'surface hold/break dominance ratio', 'tiebreak regression', 'prior-round fatigue (>2.5h)',
-    ]),
+    // ctx (docs/qualitative.js's applyTennisFormSignal) carries the real
+    // per-player facts its own single blended formSignal number was built
+    // from — surfaced here individually rather than only as that one
+    // number. 'tiebreak regression' drops off the missing list once real
+    // data exists to say something about it; 'court speed index' and
+    // 'surface hold/break dominance ratio' stay honestly missing (this
+    // archive has surface labels and match results, not point-by-point
+    // serve data or a real speed index) even though the surface WIN-RATE
+    // signal below is a related, genuinely different, and genuinely real
+    // substitute — see docs/insights.js's tennisSurfaceForm for why the two
+    // aren't the same claim.
+    matchup: (leg, c) => {
+      const ctx = c?.tennisContext;
+      const haveTiebreak = ctx?.subjectTiebreak && ctx?.opponentTiebreak;
+      const missing = ['court speed index', 'surface hold/break dominance ratio', 'prior-round fatigue (>2.5h)'];
+      const base = formSignalPillar(c, haveTiebreak ? missing : ['tiebreak regression', ...missing]);
+      if (!ctx) return base;
+
+      const signals = [...base.signals];
+      if (ctx.subjectSurfaceForm && ctx.opponentSurfaceForm) {
+        const mine = ctx.subjectSurfaceForm;
+        const theirs = ctx.opponentSurfaceForm;
+        signals.push(sig(
+          `On ${ctx.surface}: ${(mine.winRate * 100).toFixed(0)}% over their last ${mine.matches} matches on file, `
+          + `opponent ${(theirs.winRate * 100).toFixed(0)}% over their last ${theirs.matches}.`,
+          mine.winRate > theirs.winRate ? 'good' : mine.winRate < theirs.winRate ? 'bad' : 'neutral',
+        ));
+      }
+      if (haveTiebreak) {
+        const mine = ctx.subjectTiebreak;
+        const theirs = ctx.opponentTiebreak;
+        signals.push(sig(
+          `Tiebreaks recently: ${mine.won}-${mine.total - mine.won} (${(mine.rate * 100).toFixed(0)}%) vs. opponent's ${theirs.won}-${theirs.total - theirs.won} (${(theirs.rate * 100).toFixed(0)}%).`,
+          mine.rate > theirs.rate ? 'good' : mine.rate < theirs.rate ? 'bad' : 'neutral',
+        ));
+      }
+      if (ctx.subjectGrind && ctx.opponentGrind) {
+        const diff = ctx.subjectGrind.avgSets - ctx.opponentGrind.avgSets;
+        signals.push(sig(
+          `Recent grind load: averaging ${ctx.subjectGrind.avgSets.toFixed(1)} sets/match over their last ${ctx.subjectGrind.matches}, `
+          + `opponent ${ctx.opponentGrind.avgSets.toFixed(1)} over their last ${ctx.opponentGrind.matches}.`,
+          diff < -0.15 ? 'good' : diff > 0.15 ? 'bad' : 'neutral',
+        ));
+      }
+      return { ...base, signals };
+    },
   },
   basketball: {
     name: 'Basketball',
@@ -559,9 +602,25 @@ export const EVALUATORS = {
   },
   football: {
     name: 'Football',
-    matchup: (leg, c) => formSignalPillar(c, [
-      'EPA/play', 'success rate vs havoc', 'pass rush win rate vs pass block win rate',
-    ]),
+    // c.epaDiff (worker/src/team-form.js's applyTeamFormSignal, via
+    // worker/src/nfl-efficiency.js) is real rolling EPA/play, offense
+    // against this specific opponent's actual defense — not a placeholder.
+    // 'success rate vs havoc' and pass-rush/pass-block win rate stay
+    // honestly missing: neither is computable from the free data source
+    // this app has (see nfl-efficiency.js's header for exactly why).
+    matchup: (leg, c) => {
+      const epaDiff = Number(c?.epaDiff);
+      const hasEpa = Number.isFinite(epaDiff);
+      const missing = ['success rate vs havoc', 'pass rush win rate vs pass block win rate'];
+      const base = formSignalPillar(c, hasEpa ? missing : ['EPA/play', ...missing]);
+      if (!hasEpa) return base;
+      const epaSig = sig(
+        `Rolling EPA/play (this side's offense vs. the opponent's actual defense, ~8-game window) `
+        + `favors this side by ${epaDiff >= 0 ? '+' : ''}${epaDiff.toFixed(2)} on a -1 to +1 scale.`,
+        epaDiff > 0.1 ? 'good' : epaDiff < -0.1 ? 'bad' : 'neutral',
+      );
+      return { ...base, signals: [epaSig, ...base.signals] };
+    },
   },
   mma: {
     name: 'MMA',

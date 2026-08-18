@@ -640,6 +640,59 @@ test('MMA reads capper consensus, which is the evidence source it actually has',
   assert.ok(read.pillars.matchup.unavailable.some((u) => /SLpM/.test(u)));
 });
 
+test('football reads a real epaDiff when the candidate carries one, and drops EPA/play from missing', () => {
+  const withEpa = evaluateLeg({ selection: 'X to win' },
+    { candidate: cand({ sportKey: 'americanfootball_nfl', epaDiff: 0.3 }) });
+  assert.ok(withEpa.pillars.matchup.signals.some((s) => /EPA\/play/.test(s.text) && /\+0\.30/.test(s.text)));
+  assert.ok(!withEpa.pillars.matchup.unavailable.some((u) => u === 'EPA/play'));
+  assert.ok(withEpa.pillars.matchup.unavailable.some((u) => /pass rush win rate/.test(u)), 'still honestly missing');
+});
+
+test('football without an epaDiff still names EPA/play as missing, same as before', () => {
+  const noEpa = evaluateLeg({ selection: 'X to win' },
+    { candidate: cand({ sportKey: 'americanfootball_nfl' }) });
+  assert.equal(noEpa.pillars.matchup.score, null);
+  assert.ok(noEpa.pillars.matchup.unavailable.includes('EPA/play'));
+});
+
+test('football still reports formSignal alongside a real epaDiff — they are independent facts', () => {
+  const read = evaluateLeg({ selection: 'X to win' },
+    { candidate: cand({ sportKey: 'americanfootball_nfl', epaDiff: 0.2, formSignal: 0.5 }) });
+  assert.ok(read.pillars.matchup.signals.some((s) => /recent form and injuries/i.test(s.text)));
+  assert.ok(read.pillars.matchup.signals.some((s) => /EPA\/play/.test(s.text)));
+});
+
+test('tennis reports surface form, tiebreak record, and grind load as real signals when the context has them', () => {
+  const tennisContext = {
+    surface: 'Hard',
+    subjectSurfaceForm: { matches: 6, wins: 5, winRate: 5 / 6 },
+    opponentSurfaceForm: { matches: 6, wins: 2, winRate: 2 / 6 },
+    subjectTiebreak: { won: 3, total: 4, rate: 0.75 },
+    opponentTiebreak: { won: 1, total: 4, rate: 0.25 },
+    subjectGrind: { matches: 5, avgSets: 2.0 },
+    opponentGrind: { matches: 5, avgSets: 2.8 },
+  };
+  const read = evaluateLeg({ selection: 'X to win' },
+    { candidate: cand({ sportKey: 'tennis_atp_wimbledon', formSignal: 0.4, tennisContext }) });
+  assert.ok(read.pillars.matchup.signals.some((s) => /On Hard/.test(s.text)), 'surface form signal');
+  assert.ok(read.pillars.matchup.signals.some((s) => /Tiebreaks recently/.test(s.text)), 'tiebreak signal');
+  assert.ok(read.pillars.matchup.signals.some((s) => /grind load/.test(s.text)), 'grind load signal');
+  // Tiebreak evidence exists, so it's no longer named as a gap.
+  assert.ok(!read.pillars.matchup.unavailable.includes('tiebreak regression'));
+  // Still honestly missing — no true speed index or serve-point data exists.
+  assert.ok(read.pillars.matchup.unavailable.includes('court speed index'));
+  assert.ok(read.pillars.matchup.unavailable.includes('surface hold/break dominance ratio'));
+});
+
+test('tennis with no tennisContext at all falls back to the original four missing factors', () => {
+  const read = evaluateLeg({ selection: 'X to win' },
+    { candidate: cand({ sportKey: 'tennis_atp_wimbledon' }) });
+  assert.equal(read.pillars.matchup.score, null);
+  for (const factor of ['court speed index', 'surface hold/break dominance ratio', 'tiebreak regression', 'prior-round fatigue (>2.5h)']) {
+    assert.ok(read.pillars.matchup.unavailable.includes(factor), factor);
+  }
+});
+
 /* ---------------------------------------------------------------- */
 /* Correlation                                                       */
 /* ---------------------------------------------------------------- */

@@ -39,14 +39,16 @@ function candidate({
   outcomeName = 'Indiana Fever',
   consensusProb = 0.40,
   score = 60,
+  home = 'Atlanta Dream',
+  away = 'Indiana Fever',
 } = {}) {
   return {
     eventId: 'g1',
     sportKey,
     marketKey,
     outcomeName,
-    home: 'Atlanta Dream',
-    away: 'Indiana Fever',
+    home,
+    away,
     consensusProb,
     score,
     ev: 0.02,
@@ -163,6 +165,45 @@ test('applyTeamFormSignal: a malformed context degrades to pure price rather tha
   const out = applyTeamFormSignal([candidate({ score: 60 })], contexts, { now: NOW });
   assert.equal(out.length, 1);
   assert.equal(out[0].score, 60);
+});
+
+/* ---------------------------------------------------------------- */
+/* NFL EPA/play (nfl-efficiency.js)                                  */
+/* ---------------------------------------------------------------- */
+
+const nflCandidate = (over = {}) => candidate({
+  sportKey: 'americanfootball_nfl',
+  outcomeName: 'Kansas City Chiefs',
+  ...over,
+});
+
+test('applyTeamFormSignal: NFL candidates blend a real epaDiff and attach it to the candidate', () => {
+  const nflEfficiency = {
+    teams: {
+      'Kansas City Chiefs': { offEpaPerPlay: 0.15, defEpaPerPlayAllowed: -0.10, games: 8 },
+      'Las Vegas Raiders': { offEpaPerPlay: -0.10, defEpaPerPlayAllowed: 0.15, games: 8 },
+    },
+  };
+  const c = nflCandidate({ home: 'Kansas City Chiefs', away: 'Las Vegas Raiders', score: 60 });
+  const [kept] = applyTeamFormSignal([c], new Map(), { now: NOW, nflEfficiency });
+  assert.ok(kept, 'a real epaDiff must produce a signal even with no ESPN context match');
+  assert.ok(Number.isFinite(kept.epaDiff) && kept.epaDiff > 0, 'the stronger side gets a positive EPA differential');
+  assert.ok(kept.score > 60, 'the EPA swing is applied, not merely recorded');
+});
+
+test('applyTeamFormSignal: NFL candidate with no nflEfficiency snapshot behaves exactly like before', () => {
+  const c = nflCandidate({ home: 'Kansas City Chiefs', away: 'Las Vegas Raiders', score: 60 });
+  const [kept] = applyTeamFormSignal([c], new Map(), { now: NOW });
+  assert.equal(kept.score, 60);
+  assert.equal(kept.formSignal, null);
+  assert.equal(kept.epaDiff, null);
+});
+
+test('applyTeamFormSignal: a non-NFL sport never reads nflEfficiency, even when one is supplied', () => {
+  const nflEfficiency = { teams: { 'Atlanta Dream': { offEpaPerPlay: 0.2, defEpaPerPlayAllowed: -0.2 }, 'Indiana Fever': { offEpaPerPlay: -0.2, defEpaPerPlayAllowed: 0.2 } } };
+  const [kept] = applyTeamFormSignal([candidate({ score: 60 })], new Map(), { now: NOW, nflEfficiency });
+  assert.equal(kept.score, 60);
+  assert.equal(kept.epaDiff, null, 'WNBA must not pick up an NFL-shaped efficiency snapshot');
 });
 
 /* ---------------------------------------------------------------- */

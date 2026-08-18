@@ -142,6 +142,28 @@ async function buildTour(tour, years) {
       const day = excelDateToDayNum(row.Date);
       if (!Number.isFinite(day)) continue;
 
+      // W1..W5/L1..L5 are per-set games for the match winner/loser — the
+      // feed's own set-by-set scoreline. Used to derive two things this
+      // dataset otherwise has no way to know: how many sets a match actually
+      // took (a fatigue/grind proxy — a player closing matches in straight
+      // sets recently is carrying a different physical load than one needing
+      // five), and which sets went to a tiebreak, and who won it (7-6 for
+      // that set means the winner's-column player took the breaker; 6-7
+      // means the match's overall LOSER won that particular set's breaker).
+      // Previously discarded entirely — the only thing kept from these rows
+      // was the retirement flag below.
+      let sets = 0;
+      let tbWinnerSets = 0;
+      let tbLoserSets = 0;
+      for (let i = 1; i <= 5; i++) {
+        const w = Number(row[`W${i}`]);
+        const l = Number(row[`L${i}`]);
+        if (!Number.isFinite(w) || !Number.isFinite(l) || (row[`W${i}`] ?? '') === '' || (row[`L${i}`] ?? '') === '') continue;
+        sets++;
+        if (w === 7 && l === 6) tbWinnerSets++;
+        else if (w === 6 && l === 7) tbLoserSets++;
+      }
+
       matches.push([
         day,
         intern(surfaces, surfaceIndex, row.Surface),
@@ -157,6 +179,9 @@ async function buildTour(tour, years) {
         // "Completed" | "Retired" | "Walkover" — a retirement is the closest
         // thing to an injury signal this feed carries.
         /retired|walkover/i.test(row.Comment ?? '') ? 1 : 0,
+        sets,
+        tbWinnerSets,
+        tbLoserSets,
       ]);
       kept++;
     }

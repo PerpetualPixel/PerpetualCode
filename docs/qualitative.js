@@ -15,8 +15,9 @@
  * never a fabricated "neutral" value standing in for missing data.
  */
 
-import { tennisRecentForm, tennisHeadToHead, matchTeamSide, isUnavailable, isTennis } from './insights.js';
+import { tennisRecentForm, tennisHeadToHead, tennisSurfaceForm, tennisTiebreakForm, tennisGrindLoad, matchTeamSide, isUnavailable, isTennis } from './insights.js';
 import { clamp, scoreCandidate } from './engine.js';
+import { surfaceOfEvent } from './tennis-tiers.js';
 
 /**
  * Recent-form win-rate differential (65%) blended with a confidence-
@@ -25,19 +26,37 @@ import { clamp, scoreCandidate } from './engine.js';
  * swing as hard as a deep rivalry, so head-to-head confidence scales up to a
  * full 5 meetings before it counts at face value.
  *
+ * `surface` ('Hard'/'Clay'/'Grass', from docs/tennis-tiers.js's
+ * surfaceOfEvent) is optional. When given and BOTH players clear
+ * `minSurfaceSample` matches on that specific surface, their surface-form
+ * win-rate differential is used IN PLACE OF the generic last-10-matches
+ * differential — strictly more specific evidence for the match actually
+ * being bet than blanket recent form, which counts a hard-court run just as
+ * heavily walking into a clay final. Falls back to the generic differential
+ * whenever the surface is unknown or either player's surface sample is too
+ * thin, exactly like every other "prefer the more specific evidence when
+ * there's enough of it" fallback in this module.
+ *
  * Returns null when neither recent form (minFormSample games for BOTH
  * players) nor any head-to-head meetings are available.
  */
-export function tennisQualitativeSignal(data, subjectName, opponentName, { minFormSample = 3 } = {}) {
-  const subjectForm = tennisRecentForm(data, subjectName, { limit: 10 });
-  const opponentForm = tennisRecentForm(data, opponentName, { limit: 10 });
-
+export function tennisQualitativeSignal(data, subjectName, opponentName, { minFormSample = 3, surface = null, minSurfaceSample = 5 } = {}) {
   let formDiff = 0;
   let haveForm = false;
-  if (subjectForm.length >= minFormSample && opponentForm.length >= minFormSample) {
-    const winRate = (games) => games.filter((g) => g.result === 'W').length / games.length;
-    formDiff = winRate(subjectForm) - winRate(opponentForm);
+
+  const subjectSurfaceForm = surface ? tennisSurfaceForm(data, subjectName, surface, { minSample: minSurfaceSample }) : null;
+  const opponentSurfaceForm = surface ? tennisSurfaceForm(data, opponentName, surface, { minSample: minSurfaceSample }) : null;
+  if (subjectSurfaceForm && opponentSurfaceForm) {
+    formDiff = subjectSurfaceForm.winRate - opponentSurfaceForm.winRate;
     haveForm = true;
+  } else {
+    const subjectForm = tennisRecentForm(data, subjectName, { limit: 10 });
+    const opponentForm = tennisRecentForm(data, opponentName, { limit: 10 });
+    if (subjectForm.length >= minFormSample && opponentForm.length >= minFormSample) {
+      const winRate = (games) => games.filter((g) => g.result === 'W').length / games.length;
+      formDiff = winRate(subjectForm) - winRate(opponentForm);
+      haveForm = true;
+    }
   }
 
   // tennisHeadToHead(data, subjectName, opponentName) always resolves aName/
@@ -62,38 +81,67 @@ export function tennisQualitativeSignal(data, subjectName, opponentName, { minFo
  * Recent-form points differential (65%, draws worth half a win — same
  * convention docs/insights.js's teamInsights() tally already uses) blended
  * with an injury-count differential (35%, capped at maxInjuryDiff so a
- * single extra unavailable player doesn't dominate).
+ * single extra unavailable player doesn't dominate), and — for NFL, via the
+ * optional `epaDiff` — a third, independent efficiency signal.
  *
  * Head-to-head is deliberately NOT attempted for team sports:
  * context.seriesSummary is free-text prose with no stable structured shape
  * to parse without risking a silent misread — the exact "vibes, not data"
  * this whole feature exists to avoid.
  *
- * Returns null when the subject team can't be matched to either side, or
- * when neither recent form nor any injury data is available for either side.
+ * `epaDiff` (-1..1, from worker/src/nfl-efficiency.js's nflEpaDifferential)
+ * is computed by the caller from a completely separate source (nflverse's
+ * play-by-play-derived team stats) and needs no ESPN context match at all —
+ * unlike form/injury, it can still contribute when `context` is null or
+ * unmatched.
+ *
+ * Returns null only when NOTHING is available: no ESPN match AND no epaDiff.
  */
-export function teamQualitativeSignal(context, subjectTeamName, { minFormSample = 3, maxInjuryDiff = 3 } = {}) {
+export function teamQualitativeSignal(context, subjectTeamName, { minFormSample = 3, maxInjuryDiff = 3, epaDiff = null } = {}) {
   const { me, them } = matchTeamSide(context, subjectTeamName);
-  if (!me || !them) return null;
+  const haveEpa = Number.isFinite(epaDiff);
 
-  const formPct = (side) => {
-    const games = side?.lastFive ?? [];
-    if (games.length < minFormSample) return null;
-    const points = games.reduce((sum, g) => sum + (g.result === 'W' ? 1 : g.result === 'D' ? 0.5 : 0), 0);
-    return points / games.length;
-  };
-  const myForm = formPct(me);
-  const theirForm = formPct(them);
-  const haveForm = myForm != null && theirForm != null;
-  const formDiff = haveForm ? myForm - theirForm : 0;
+  let haveForm = false;
+  let formDiff = 0;
+  let haveInjury = false;
+  let injuryDiff = 0;
 
-  const outCount = (side) => (side?.injuries ?? []).filter(isUnavailable).length;
-  const myOut = outCount(me);
-  const theirOut = outCount(them);
-  const haveInjury = myOut > 0 || theirOut > 0;
-  const injuryDiff = haveInjury ? clamp((theirOut - myOut) / maxInjuryDiff, -1, 1) : 0;
+  if (me && them) {
+    const formPct = (side) => {
+      const games = side?.lastFive ?? [];
+      if (games.length < minFormSample) return null;
+      const points = games.reduce((sum, g) => sum + (g.result === 'W' ? 1 : g.result === 'D' ? 0.5 : 0), 0);
+      return points / games.length;
+    };
+    const myForm = formPct(me);
+    const theirForm = formPct(them);
+    haveForm = myForm != null && theirForm != null;
+    formDiff = haveForm ? myForm - theirForm : 0;
 
-  if (!haveForm && !haveInjury) return null;
+    const outCount = (side) => (side?.injuries ?? []).filter(isUnavailable).length;
+    const myOut = outCount(me);
+    const theirOut = outCount(them);
+    haveInjury = myOut > 0 || theirOut > 0;
+    injuryDiff = haveInjury ? clamp((theirOut - myOut) / maxInjuryDiff, -1, 1) : 0;
+  }
+
+  if (!haveForm && !haveInjury && !haveEpa) return null;
+
+  if (haveEpa) {
+    // EPA/play differential is real per-play efficiency evidence, not a
+    // more specific version of recent form or injuries — a third,
+    // independent signal, blended rather than substituted for the other
+    // two. Weighted highest of the three: in the public NFL analytics
+    // literature, EPA/play is one of the stronger single-season predictors
+    // of team strength, meaningfully more so than a 5-game W/L record or an
+    // injury count alone.
+    const parts = [[epaDiff, 0.45]];
+    if (haveForm) parts.push([formDiff, 0.35]);
+    if (haveInjury) parts.push([injuryDiff, 0.20]);
+    const totalWeight = parts.reduce((s, [, w]) => s + w, 0);
+    return clamp(parts.reduce((s, [v, w]) => s + v * w, 0) / totalWeight, -1, 1);
+  }
+
   if (haveForm && haveInjury) return clamp(0.65 * formDiff + 0.35 * injuryDiff, -1, 1);
   return clamp(haveForm ? formDiff : injuryDiff, -1, 1);
 }
@@ -160,9 +208,27 @@ export function applyTennisFormSignal(candidates, archives, { now = Date.now() }
     if (!isTennis(c.sportKey) || !supportsQualitativeSignal(c.marketKey)) return [c];
     const data = archives?.[/wta/i.test(c.sportKey) ? 'wta' : 'atp'] ?? null;
     const opponent = c.outcomeName === c.home ? c.away : c.home;
-    const signal = data ? tennisQualitativeSignal(data, c.outcomeName, opponent) : null;
+    const surface = surfaceOfEvent(c.sportKey);
+    const signal = data ? tennisQualitativeSignal(data, c.outcomeName, opponent, { surface }) : null;
     if (tennisUnderdogBlocked(c, signal)) return [];
-    if (signal == null) return [{ ...c, formSignal: null }];
-    return [{ ...c, ...scoreCandidate(c, { now, qualitative: signal }), formSignal: signal }];
+
+    // The same raw per-player facts tennisQualitativeSignal already reads
+    // to build its single blended number, kept alongside it — so a display
+    // layer (docs/take-or-fade.js's tennis evaluator) can report the actual
+    // surface/tiebreak/grind facts instead of only the one number they were
+    // folded into. Computed here (data is only in scope in this function)
+    // rather than re-derived downstream.
+    const tennisContext = data ? {
+      surface,
+      subjectSurfaceForm: surface ? tennisSurfaceForm(data, c.outcomeName, surface) : null,
+      opponentSurfaceForm: surface ? tennisSurfaceForm(data, opponent, surface) : null,
+      subjectTiebreak: tennisTiebreakForm(data, c.outcomeName),
+      opponentTiebreak: tennisTiebreakForm(data, opponent),
+      subjectGrind: tennisGrindLoad(data, c.outcomeName),
+      opponentGrind: tennisGrindLoad(data, opponent),
+    } : null;
+
+    if (signal == null) return [{ ...c, formSignal: null, tennisContext }];
+    return [{ ...c, ...scoreCandidate(c, { now, qualitative: signal }), formSignal: signal, tennisContext }];
   });
 }

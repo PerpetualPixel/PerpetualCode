@@ -39,6 +39,10 @@
 import { fetchContext, hasContext } from './context.js';
 import { teamQualitativeSignal, supportsQualitativeSignal } from '../../docs/qualitative.js';
 import { scoreCandidate } from '../../docs/engine.js';
+import { nflEpaDifferential } from './nfl-efficiency.js';
+
+/** The one sport nflEpaDifferential has real data for — see nfl-efficiency.js's header. */
+const isNfl = (sportKey) => sportKey === 'americanfootball_nfl';
 
 /**
  * Minimum form/injury signal a market underdog needs before a straight
@@ -217,22 +221,36 @@ export function teamUnderdogBlocked(candidate, signal) {
  * have their own evidence layers already applied by the caller, and NHL has
  * no page on this ESPN host at all (see context.js's LEAGUE_PATHS).
  *
+ * `nflEfficiency` is the { teams: {...} } snapshot from
+ * worker/src/nfl-efficiency.js's getNflEfficiency — optional (every caller
+ * that doesn't pass it gets exactly today's form/injury-only behavior). For
+ * an NFL candidate specifically, its per-play EPA differential is computed
+ * here (from the candidate's own home/away names, no ESPN match required)
+ * and handed to teamQualitativeSignal as a third, independent component —
+ * see that function's own comment for why it's weighted highest of the
+ * three when present.
+ *
  * Returns a new array; does NOT re-sort — same contract as
  * applyTennisFormSignal, so callers that depend on score order must sort
  * afterwards, since re-scoring reorders candidates.
  */
-export function applyTeamFormSignal(candidates, contexts, { now = Date.now() } = {}) {
+export function applyTeamFormSignal(candidates, contexts, { now = Date.now(), nflEfficiency = null } = {}) {
   return (candidates ?? []).flatMap((c) => {
     if (!hasContext(c?.sportKey) || !supportsQualitativeSignal(c.marketKey)) return [c];
     const context = contexts?.get?.(fixtureKey(c)) ?? null;
+    let epaDiff = null;
+    if (isNfl(c.sportKey) && nflEfficiency?.teams) {
+      const opponent = c.outcomeName === c.home ? c.away : c.home;
+      epaDiff = nflEpaDifferential(nflEfficiency.teams, c.outcomeName, opponent);
+    }
     let signal = null;
     try {
-      signal = teamQualitativeSignal(context, c.outcomeName);
+      signal = teamQualitativeSignal(context, c.outcomeName, { epaDiff });
     } catch {
       /* a malformed context is missing data, not a reason to lose the board */
     }
     if (teamUnderdogBlocked(c, signal)) return [];
-    if (signal == null) return [{ ...c, formSignal: null }];
-    return [{ ...c, ...scoreCandidate(c, { now, qualitative: signal }), formSignal: signal }];
+    if (signal == null) return [{ ...c, formSignal: null, epaDiff }];
+    return [{ ...c, ...scoreCandidate(c, { now, qualitative: signal }), formSignal: signal, epaDiff }];
   });
 }

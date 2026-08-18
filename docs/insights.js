@@ -108,7 +108,15 @@ export function matchPlayer(oddsName, players) {
 const EPOCH_MS = Date.UTC(2000, 0, 1);
 const toDayNum = (ms) => Math.round((ms - EPOCH_MS) / 86400000);
 
-const F = { DAY: 0, SURFACE: 1, COURT: 2, ROUND: 3, WINNER: 4, LOSER: 5, WRANK: 6, LRANK: 7, RETIRED: 8 };
+// SETS/TB_WINNER_SETS/TB_LOSER_SETS are only present in archives built by
+// scripts/build-tennis-data.mjs from this point forward — an older archive's
+// match tuples simply don't have indices 9-11, which JS array access reads
+// as `undefined` rather than throwing. Every reader below treats that the
+// same as "no set data for this match," never as zero.
+const F = {
+  DAY: 0, SURFACE: 1, COURT: 2, ROUND: 3, WINNER: 4, LOSER: 5, WRANK: 6, LRANK: 7, RETIRED: 8,
+  SETS: 9, TB_WINNER_SETS: 10, TB_LOSER_SETS: 11,
+};
 
 const pct = (n, d) => (d ? Math.round((n / d) * 100) : 0);
 const plural = (n, word) =>
@@ -354,6 +362,7 @@ export function tennisRecentForm(data, playerName, { limit = 10, filter = null }
   return mine.slice(-limit).reverse().map((m) => {
     const won = m[F.WINNER] === me.index;
     const opponentIndex = won ? m[F.LOSER] : m[F.WINNER];
+    const hasSetData = Number.isFinite(m[F.SETS]);
     return {
       day: m[F.DAY],
       dateLabel: shortDate(m[F.DAY]),
@@ -363,8 +372,88 @@ export function tennisRecentForm(data, playerName, { limit = 10, filter = null }
       court: data.courts?.[m[F.COURT]] ?? null,
       result: won ? 'W' : 'L',
       retired: m[F.RETIRED] === 1,
+      // Sets played, and — of any that went to a breaker — how many THIS
+      // player won. From the winner's-column perspective a 7-6 set means
+      // the match winner won that breaker; a 6-7 set means the match's
+      // overall loser actually won that particular set's breaker. Null
+      // (not 0) when this archive has no set-score data for the match at
+      // all — see the F comment above.
+      sets: hasSetData ? m[F.SETS] : null,
+      tiebreaksWon: hasSetData ? (won ? m[F.TB_WINNER_SETS] : m[F.TB_LOSER_SETS]) : null,
+      tiebreaksLost: hasSetData ? (won ? m[F.TB_LOSER_SETS] : m[F.TB_WINNER_SETS]) : null,
     };
   });
+}
+
+/**
+ * A player's tiebreak win rate over their last `limit` matches that actually
+ * contained at least one tiebreak set — a straight-sets win says nothing
+ * about tiebreak performance either way, so it doesn't count toward the
+ * sample. Requires at least `minTiebreaks` tiebreak sets before reporting
+ * anything: one close set is a single data point, not a trend.
+ *
+ * Returns null when the player is unmatched or the sample is too thin —
+ * the honest "nothing to say" outcome, same as every other export here.
+ */
+export function tennisTiebreakForm(data, playerName, { limit = 20, minTiebreaks = 3 } = {}) {
+  const games = tennisRecentForm(data, playerName, { limit });
+  let won = 0;
+  let total = 0;
+  for (const g of games) {
+    if (!Number.isFinite(g.tiebreaksWon) || !Number.isFinite(g.tiebreaksLost)) continue;
+    won += g.tiebreaksWon;
+    total += g.tiebreaksWon + g.tiebreaksLost;
+  }
+  if (total < minTiebreaks) return null;
+  return { won, total, rate: won / total };
+}
+
+/**
+ * Average sets played per match over a player's last `limit` matches — a
+ * grind-load proxy. Not the same claim as "hours on court in the current
+ * tournament's own previous round": this archive carries no match duration
+ * and no live tournament state, only historical results. But it's real,
+ * computable evidence in the same direction — a player who has needed extra
+ * sets to close out matches recently is carrying more physical load than
+ * one winning in straight sets, regardless of which specific tournament
+ * that was in.
+ *
+ * Returns null when there's no set data for any recent match (an
+ * unmatched player, or an archive built before this field existed).
+ */
+export function tennisGrindLoad(data, playerName, { limit = 5 } = {}) {
+  const games = tennisRecentForm(data, playerName, { limit });
+  const withSets = games.filter((g) => Number.isFinite(g.sets));
+  if (!withSets.length) return null;
+  return {
+    matches: withSets.length,
+    avgSets: withSets.reduce((sum, g) => sum + g.sets, 0) / withSets.length,
+  };
+}
+
+/**
+ * Win rate on a given surface over a player's recent archived matches — the
+ * honestly-available substitute for a true serve hold/break dominance
+ * ratio (this feed carries no point-by-point serve data to compute that
+ * from). `surfaceLabel` is matched against the archive's own surface names
+ * ('Hard'/'Clay'/'Grass', case-insensitive) — pass the value from
+ * docs/tennis-tiers.js's surfaceOfEvent.
+ *
+ * `minSample` matches are required on THAT surface specifically before this
+ * returns anything — a player with two career grass matches doesn't have a
+ * real "grass form" to report, and null is the honest answer, not a guess
+ * padded out from their overall record.
+ */
+export function tennisSurfaceForm(data, playerName, surfaceLabel, { limit = 20, minSample = 5 } = {}) {
+  if (!surfaceLabel || !data?.surfaces) return null;
+  const surfaceIdx = data.surfaces.findIndex((s) => s.toLowerCase() === String(surfaceLabel).toLowerCase());
+  if (surfaceIdx < 0) return null;
+  const filter = { test: (m) => m[F.SURFACE] === surfaceIdx };
+
+  const games = tennisRecentForm(data, playerName, { limit, filter });
+  if (games.length < minSample) return null;
+  const wins = games.filter((g) => g.result === 'W').length;
+  return { matches: games.length, wins, winRate: wins / games.length };
 }
 
 /**

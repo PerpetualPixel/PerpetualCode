@@ -54,6 +54,7 @@ import {
 import { isPickWindowOpen } from './tracking.js';
 import { applyTennisFormSignal } from '../../docs/qualitative.js';
 import { loadTeamContextsFor, applyTeamFormSignal } from './team-form.js';
+import { getNflEfficiency } from './nfl-efficiency.js';
 import { loadTennisArchive, loadTennisArchivesFor } from './tennis-archive.js';
 import { retractedRecord } from './retraction.js';
 
@@ -443,7 +444,7 @@ export async function runPotdDaily(env, ctx, now = Date.now(), { fetchFullSlate 
     applyTeamFormSignal(
       applyTennisFormSignal(analyzed, await loadTennisArchivesFor(analyzed), { now }),
       await loadTeamContextsFor(analyzed, ctx, { now }),
-      { now },
+      { now, nflEfficiency: await getNflEfficiency(env) },
     ),
     learningProfile,
   );
