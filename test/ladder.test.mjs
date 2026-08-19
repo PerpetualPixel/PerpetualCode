@@ -96,7 +96,10 @@ test('runLadderDaily never picks an NFL preseason game, even dead-center of the 
   ];
   const result = await runLadderDaily(env, ladderCtx, NOW, { fetchFullSlate: async () => events });
   assert.equal(result.skipped, true);
-  assert.equal(result.reason, 'no qualifying play in the ladder band today', 'the only in-band candidate is preseason, so the day must hold rather than post it');
+  assert.equal(
+    result.reason, "nothing on today's slate clears the ladder's basic eligibility checks",
+    'preseason is a structural exclusion, not a price/quality one — the fallback must not reach past it',
+  );
 });
 
 test('runLadderDaily still picks a real regular-season NFL game — only preseason is excluded', async () => {
@@ -339,12 +342,33 @@ test('the band is -200..+120 — a plus-money underdog now qualifies, unlike the
   assert.equal(result.record.pick.american, 115);
 });
 
-test('a price heavier than -200 is refused — the band floor is a hard edge', async () => {
+test('a price heavier than -200 is still posted via the fallback — the ladder plays every day, not just in-band days', async () => {
   const { env } = makeKvStore();
   const events = [makeLadderEvent('heavy', { favoritePrice: -260 })];
   const result = await runLadderDaily(env, ladderCtx, NOW, { fetchFullSlate: async () => events });
+  assert.equal(result.skipped, false, 'nothing in the preferred band must fall back to the best available game, not hold');
+  // -260 base + the fixture's default +25 outlier on the best book = -235.
+  assert.equal(result.record.pick.american, -235);
+  assert.equal(result.record.pick.viaFallback, true, 'the pick must be honestly marked as outside the preferred band');
+});
+
+test('when something clears the preferred band, the fallback never fires even if a worse-priced candidate also exists', async () => {
+  const { env } = makeKvStore();
+  const events = [
+    makeLadderEvent('inband', { favoritePrice: -195 }),
+    makeLadderEvent('heavy', { favoritePrice: -260 }),
+  ];
+  const result = await runLadderDaily(env, ladderCtx, NOW, { fetchFullSlate: async () => events });
+  assert.equal(result.skipped, false);
+  assert.equal(result.record.pick.viaFallback, false);
+  assert.equal(result.record.pick.eventId, 'inband');
+});
+
+test('only a slate with nothing structurally eligible at all still holds', async () => {
+  const { env } = makeKvStore();
+  const result = await runLadderDaily(env, ladderCtx, NOW, { fetchFullSlate: async () => [] });
   assert.equal(result.skipped, true);
-  assert.equal(result.reason, 'no qualifying play in the ladder band today');
+  assert.equal(result.reason, "nothing on today's slate clears the ladder's basic eligibility checks");
 });
 
 test('among near-tied candidates the tie breaks toward -200, the safe edge of the band', () => {

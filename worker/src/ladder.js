@@ -35,13 +35,27 @@
  *
  * The pick
  * --------
- * LADDER_MIN_AMERICAN..LADDER_MAX_AMERICAN (-200..+120), nearest -200
- * preferred among comparable candidates, and never the day's Play of the Day
- * or Prop Play of the Day, nor anything contradicting a pick the app has
- * already posted today. It MAY be a Pixel's Pick — the ladder is a different
- * stake plan over the same board, not a promise of a different game. On a day
- * where nothing clears those bars the ladder simply holds: no rung, no
- * bankroll change, and the run keeps its place.
+ * Preferred band is LADDER_MIN_AMERICAN..LADDER_MAX_AMERICAN (-200..+120),
+ * nearest -200 preferred among comparable candidates, and never the day's
+ * Play of the Day or Prop Play of the Day, nor anything contradicting a pick
+ * the app has already posted today. It MAY be a Pixel's Pick — the ladder is
+ * a different stake plan over the same board, not a promise of a different
+ * game.
+ *
+ * The ladder posts every day the slate has ANY real game on it. When nothing
+ * clears the preferred band (or the app's own RULES.MIN_SCORE floor), the
+ * best-SCORING candidate on the whole eligible slate is taken instead — off
+ * the app's usual price/quality bar, but a deliberate product decision: a
+ * daily challenge that sometimes has no entry isn't the product. What never
+ * gets relaxed, band or no band, are the integrity checks that aren't about
+ * price at all — no exhibitions, no NFL preseason, no non-Power-4 NCAAF, no
+ * paused segment (worker/src/algo-health.js), no market this app can't
+ * settle, nothing already spoken for by today's other picks. Only a day with
+ * literally no eligible game anywhere on the slate holds with no rung at all
+ * — see chooseLadderPlay and the fallback logic in runLadderDaily. A rung
+ * taken via the fallback is marked `viaFallback: true` on the stored pick, so
+ * every surface that reads it can say so honestly rather than presenting it
+ * as an ordinary in-band rung.
  *
  * Storage: Workers KV (the same POTD_KV binding the other daily surfaces
  * use). `ladder:state` is the live run, `ladder:play:<date>` is a day's play,
@@ -322,10 +336,14 @@ export async function runLadderDaily(env, ctx, now = Date.now(), { fetchFullSlat
     learningProfile,
   );
 
-  const inBand = candidates.filter((c) => {
-    if (c.score < RULES.MIN_SCORE) return false;
+  // Every check here is about the GAME's legitimacy, not its price — these
+  // are what stay non-negotiable even when nothing clears the preferred band
+  // below and the fallback has to reach past it. Renamed from the old
+  // in-band-only `inBand`: this app used to pool nothing outside the price
+  // band at all, which meant a day where the only real games were priced
+  // outside -200..+120 had literally no fallback pool to reach into.
+  const structurallyEligible = candidates.filter((c) => {
     if (isExhibition(c)) return false;
-    if (c.american < LADDER_MIN_AMERICAN || c.american > LADDER_MAX_AMERICAN) return false;
     if (!clearsMaxJuice(c)) return false;
     // NFL preseason is excluded from the ladder for the same reason as
     // Pixel's Picks and Play of the Day (see isNflPreseason in
@@ -339,9 +357,9 @@ export async function runLadderDaily(env, ctx, now = Date.now(), { fetchFullSlat
     return etParts(c.commenceMs).date === dateKey;
   });
 
-  await updateLadderPool(env, ctx, dateKey, inBand.filter((c) => isPickWindowOpen(c, now)), now);
+  await updateLadderPool(env, ctx, dateKey, structurallyEligible.filter((c) => isPickWindowOpen(c, now)), now);
   if (scheduleStillOpen(events, dateKey, now)) {
-    return hold("still comparing today's games", { inBandSoFar: inBand.length });
+    return hold("still comparing today's games", { inBandSoFar: structurallyEligible.length });
   }
 
   const poolRaw = await env.POTD_KV.get(poolKey(dateKey));
@@ -353,16 +371,29 @@ export async function runLadderDaily(env, ctx, now = Date.now(), { fetchFullSlat
     && !contradictable.some((pick) => contradictsPick(c, pick))
   ));
 
-  const chosen = chooseLadderPlay(eligible);
-  if (!chosen) {
-    // Deliberately not written to KV: a hold isn't a play, and tomorrow's
-    // tick should be free to post one. The reason is returned for the cron
-    // log and for /ladder to explain the empty day.
-    return hold('no qualifying play in the ladder band today', {
+  if (!eligible.length) {
+    // The one hold that can still happen: nothing on the ENTIRE slate today
+    // cleared even the integrity checks (an off day, or everything today got
+    // excluded). Deliberately not written to KV: a hold isn't a play, and
+    // tomorrow's tick should be free to post one.
+    return hold("nothing on today's slate clears the ladder's basic eligibility checks", {
       poolSize: pool.length,
       blockedByExclusion: pool.length - eligible.length,
     });
   }
+
+  // Preferred: the app's own quality floor and the -200..+120 band. Falling
+  // back to the full eligible slate only when NOTHING clears that — the
+  // ladder posts a rung every day the slate has a real game on it, taking
+  // the best-scoring candidate available rather than holding. chooseLadderPlay
+  // still applies its own near-tie-toward--200 rule inside whichever pool it
+  // gets, so a fallback pick is still the best AVAILABLE approximation of the
+  // ladder's own preferred shape, not an arbitrary pick.
+  const preferredBand = eligible.filter((c) => (
+    c.score >= RULES.MIN_SCORE && c.american >= LADDER_MIN_AMERICAN && c.american <= LADDER_MAX_AMERICAN
+  ));
+  const viaFallback = preferredBand.length === 0;
+  const chosen = chooseLadderPlay(viaFallback ? eligible : preferredBand);
 
   const state = await getLadderState(env, now);
   const stake = money(state.bankroll);
@@ -399,6 +430,11 @@ export async function runLadderDaily(env, ctx, now = Date.now(), { fetchFullSlat
       suggested_stake: stake,
       status: 'pending',
       result: null,
+      // True when nothing today cleared the preferred -200..+120/MIN_SCORE
+      // band and this is the best-scoring candidate on the rest of the
+      // slate instead — every surface that reads this pick should say so
+      // rather than presenting a fallback rung as an ordinary one.
+      viaFallback,
     },
   };
   await env.POTD_KV.put(playKey(dateKey), JSON.stringify(record), { expirationTtl: KV_TTL_SECONDS });
