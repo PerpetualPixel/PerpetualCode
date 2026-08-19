@@ -6367,6 +6367,81 @@ const ALGO_HEALTH_ACTION_LABELS = {
 };
 
 /**
+ * Plain-English record/ROI line for a segmentStats() object, or '' when the
+ * entry carries none (the two manual actions — a human resuming a segment
+ * early, or resetting tuning — have no sample behind them to report).
+ */
+function algoHealthStatsLine(stats) {
+  if (!stats || !Number.isFinite(stats.n) || stats.n <= 0) return '';
+  const roi = `${stats.roi >= 0 ? '+' : ''}${stats.roi.toFixed(1)}%`;
+  return `${stats.wins}-${stats.losses} (${stats.n} picks), ${roi} ROI`;
+}
+
+/**
+ * Short, human headline for one health-log entry — what changed, not why.
+ * The "why" is the bullets from algoHealthBullets() below it.
+ */
+function algoHealthHeadline(e) {
+  const seg = e.segment ? algoSegmentLabel(e.segment) : null;
+  if (e.action === 'tighten') {
+    const meta = ALGO_HEALTH_PARAM_LABELS[e.param];
+    const fmt = meta?.fmt ?? ((v) => v);
+    return `${meta?.label ?? e.param} raised: ${fmt(e.before)} → ${fmt(e.after)}`;
+  }
+  if (e.action === 'reset') return 'Settings reset to defaults';
+  if (e.action === 'proposal') return `${seg} flagged for review`;
+  if (e.action === 'pause') return `${seg} paused`;
+  if (e.action === 'resume') return `${seg} resumed`;
+  return seg ? `${seg}: ${e.action}` : e.action;
+}
+
+/**
+ * The z-scores and ROI that actually drive every decision here stay exactly
+ * as computed (worker/src/algo-health.js) — this only translates them into
+ * short, jargon-free bullets for the dashboard. Nothing here is a second
+ * source of truth: it reads the same `stats`/`before`/`after` fields the raw
+ * `reason` string was built from, just phrased for someone who isn't going
+ * to parse "z=-2.65, ROI=-12.3%" at a glance.
+ */
+function algoHealthBullets(e) {
+  const statsLine = algoHealthStatsLine(e.stats);
+
+  if (e.action === 'pause') {
+    return [
+      statsLine
+        ? `Its last ${statsLine} — worse than the fair-odds math expected.`
+        : 'Underperforming its own fair-odds expectation.',
+      'No new picks from this segment until it recovers.',
+    ];
+  }
+  if (e.action === 'resume') {
+    return statsLine
+      ? [`Its last ${statsLine} — back within the normal range.`, 'New picks from this segment are active again.']
+      : ['Manually resumed by a human before the automatic recovery bar was met.'];
+  }
+  if (e.action === 'proposal') {
+    return [
+      statsLine
+        ? `Its last ${statsLine} — underperforming, but not badly enough to pause automatically.`
+        : 'Underperforming, but not badly enough to pause automatically.',
+      'Worth a manual look — is this the right market for this segment?',
+    ];
+  }
+  if (e.action === 'tighten') {
+    return [
+      statsLine
+        ? `Across all active picks, the last ${statsLine} — below what the math expected overall.`
+        : 'Overall picks underperformed their fair-odds expectation.',
+      'The app now needs a bigger edge before it will take a bet.',
+    ];
+  }
+  if (e.action === 'reset') {
+    return ['A human manually reset every auto-tuned threshold back to its shipped default.'];
+  }
+  return [e.reason ?? ''];
+}
+
+/**
  * Renders the Algorithm Health panel: current tuned config vs. shipped
  * defaults (with a "tightened" indicator when they differ), the paused-
  * segment list with a manual "Resume now" per segment, and a scrollable log
@@ -6410,8 +6485,11 @@ async function renderAlgoHealthSection() {
   el.algoHealthLog.innerHTML = logEntries.length
     ? logEntries.map((e) => {
         const meta = ALGO_HEALTH_ACTION_LABELS[e.action] ?? { label: e.action, cls: '' };
-        const segmentPart = e.segment ? `${esc(algoSegmentLabel(e.segment))}: ` : '';
-        return `<div class="rec-item ${meta.cls}"><strong>${esc(meta.label)}</strong> (${esc(e.week)}): ${segmentPart}${esc(e.reason ?? '')}</div>`;
+        const bullets = algoHealthBullets(e).filter(Boolean);
+        return `<div class="rec-item ${meta.cls}">
+          <div class="algo-health-entry-head"><strong>${esc(algoHealthHeadline(e))}</strong><span class="algo-health-week">${esc(e.week)}</span></div>
+          <ul class="algo-health-entry-bullets">${bullets.map((b) => `<li>${esc(b)}</li>`).join('')}</ul>
+        </div>`;
       }).join('')
     : `<div class="rec-item">No actions or proposals yet. The first weekly review runs the next Monday 7am ET after enough graded history accumulates.</div>`;
 }

@@ -92,6 +92,7 @@ import {
   TUNABLE_BOUNDS,
   HEALTH_WINDOW_DAYS,
 } from './algo-health.js';
+import { refreshNflEfficiency, getNflEfficiency } from './nfl-efficiency.js';
 import {
   runFullSlateBatch,
   runFullSlateClvSnapshot,
@@ -364,6 +365,15 @@ const MORNING_PREWARM_HOUR = 4; // 4am ET
 const MLB_LEAGUE_STATS_HOUR = 3; // 3am ET
 const ALGO_HEALTH_HOUR = 7; // Monday 7am ET
 const ALGO_HEALTH_WEEKDAY = 1; // Monday (0=Sunday per Intl's 'short' weekday index below)
+// Wednesday 5am ET: nflverse's team-week release is generated nightly, but
+// its own doc calls out Wednesday/Thursday as when a game week's numbers are
+// fully corrected (stat corrections, official credit changes) — refreshing
+// any earlier would risk locking in Tuesday's still-being-corrected numbers
+// for the rest of the week. A once-a-week cadence is enough: this feeds a
+// rolling multi-game window (see nfl-efficiency.js's ROLLING_GAMES), which
+// doesn't meaningfully move day to day even when it could refresh more often.
+const NFL_EFFICIENCY_HOUR = 5;
+const NFL_EFFICIENCY_WEEKDAY = 3; // Wednesday
 const ADMIN_REPORT_HOUR = 20; // 8pm ET daily — owner-only onboarding digest
 
 // 4am ET daily: the reconciliation pass. Deliberately the quietest hour on
@@ -482,6 +492,16 @@ export default {
     // a live /mlb-stats request only ever reads it, never re-fetches it.
     if (etHour(now) === MLB_LEAGUE_STATS_HOUR && isTopOfHour(now)) {
       ctx.waitUntil(refreshMlbLeagueStats(env, ctx));
+    }
+
+    // Wednesday 5am ET: refresh the NFL team EPA/play snapshot (offense and
+    // defense, rolling 8-game window) that team-form.js's applyTeamFormSignal
+    // blends into NFL picks, and that docs/take-or-fade.js's football
+    // evaluator reads for Tail or Fade. See nfl-efficiency.js's header for
+    // why Wednesday and why this specific source. A failed fetch is a no-op
+    // — refreshNflEfficiency leaves the previous week's cache in place.
+    if (etWeekday(now) === NFL_EFFICIENCY_WEEKDAY && etHour(now) === NFL_EFFICIENCY_HOUR && isTopOfHour(now)) {
+      ctx.waitUntil(refreshNflEfficiency(env));
     }
 
     // Every cron tick (15 min, not gated to the top of the hour — see

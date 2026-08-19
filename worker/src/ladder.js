@@ -59,6 +59,7 @@ import { fetchMmaResults, gradeMmaPickWithFallback } from './ufc-events.js';
 import { fetchTennisResults, gradeTennisPickWithEspn, isRegradableTennisVoid, isNoOpTennisRegrade } from './tennis-espn.js';
 import { applyTennisFormSignal } from '../../docs/qualitative.js';
 import { loadTeamContextsFor, applyTeamFormSignal } from './team-form.js';
+import { getNflEfficiency } from './nfl-efficiency.js';
 import { loadTennisArchivesFor } from './tennis-archive.js';
 import { isPickWindowOpen } from './tracking.js';
 import { scheduleStillOpen, isExhibition, isEligibleTennisMatch, etParts, etDatePlusDays } from './potd.js';
@@ -316,7 +317,7 @@ export async function runLadderDaily(env, ctx, now = Date.now(), { fetchFullSlat
     applyTeamFormSignal(
       applyTennisFormSignal(analyzed, await loadTennisArchivesFor(analyzed), { now }),
       await loadTeamContextsFor(analyzed, ctx, { now }),
-      { now },
+      { now, nflEfficiency: await getNflEfficiency(env) },
     ),
     learningProfile,
   );

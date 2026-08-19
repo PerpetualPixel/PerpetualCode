@@ -96,6 +96,58 @@ test('the Osaka/Mertens shape: a single head-to-head meeting is confidence-disco
   close(signal, 0.65 * formDiff + 0.35 * 0.2, 'blended signal with discounted H2H');
 });
 
+/**
+ * Alpha and Bravo never play each other directly (isolates the form
+ * component from head-to-head). Each has 5 Hard matches and 2 Clay matches
+ * with OPPOSITE surface splits from their blanket record, so surface-form
+ * and blanket-form give visibly different answers — the only way to prove
+ * one is actually being preferred over the other rather than coincidentally
+ * matching.
+ */
+const SURFACE_ARCHIVE = {
+  tour: 'test',
+  seasons: [2026],
+  surfaces: ['Hard', 'Clay'],
+  courts: ['Outdoor'],
+  rounds: ['1st Round'],
+  players: ['Alpha A.', 'Bravo B.', 'Opp1 O.', 'Opp2 O.', 'Opp3 O.', 'Opp4 O.', 'Opp5 O.', 'Opp6 O.', 'Opp7 O.'],
+  matches: [
+    // Alpha: 4-1 on Hard (strong), 0-2 on Clay (weak). Overall 4-3.
+    [day('2026-07-01'), 0, 0, 0, 0, 2, 10, 50, 0],
+    [day('2026-07-02'), 0, 0, 0, 0, 3, 10, 50, 0],
+    [day('2026-07-03'), 0, 0, 0, 0, 4, 10, 50, 0],
+    [day('2026-07-04'), 0, 0, 0, 0, 5, 10, 50, 0],
+    [day('2026-07-05'), 0, 0, 0, 6, 0, 50, 10, 0],
+    [day('2026-07-06'), 1, 0, 0, 7, 0, 50, 10, 0],
+    [day('2026-07-07'), 1, 0, 0, 8, 0, 50, 10, 0],
+    // Bravo: 1-4 on Hard (weak), 2-0 on Clay (strong). Overall 3-4.
+    [day('2026-07-01'), 0, 0, 0, 2, 1, 50, 10, 0],
+    [day('2026-07-02'), 0, 0, 0, 3, 1, 50, 10, 0],
+    [day('2026-07-03'), 0, 0, 0, 4, 1, 50, 10, 0],
+    [day('2026-07-04'), 0, 0, 0, 5, 1, 50, 10, 0],
+    [day('2026-07-05'), 0, 0, 0, 1, 6, 10, 50, 0],
+    [day('2026-07-06'), 1, 0, 0, 1, 7, 10, 50, 0],
+    [day('2026-07-07'), 1, 0, 0, 1, 8, 10, 50, 0],
+  ],
+};
+
+test('tennisQualitativeSignal prefers surface-specific form over blanket recent form when both players clear the surface sample', () => {
+  const surfaceSignal = tennisQualitativeSignal(SURFACE_ARCHIVE, 'Alpha A.', 'Bravo B.', { surface: 'Hard' });
+  close(surfaceSignal, 0.8 - 0.2, 'must use the Hard-only 4-1/1-4 split, not the blanket 4-3/3-4 record');
+
+  const blanketSignal = tennisQualitativeSignal(SURFACE_ARCHIVE, 'Alpha A.', 'Bravo B.');
+  close(blanketSignal, 4 / 7 - 3 / 7, 'with no surface hint, falls back to blanket recent form as before');
+
+  assert.notEqual(Math.round(surfaceSignal * 100), Math.round(blanketSignal * 100));
+});
+
+test('tennisQualitativeSignal falls back to blanket form when the surface sample is too thin', () => {
+  // Only 2 matches each on Clay — below the default minSurfaceSample of 5.
+  const surfaceSignal = tennisQualitativeSignal(SURFACE_ARCHIVE, 'Alpha A.', 'Bravo B.', { surface: 'Clay' });
+  const blanketSignal = tennisQualitativeSignal(SURFACE_ARCHIVE, 'Alpha A.', 'Bravo B.');
+  close(surfaceSignal, blanketSignal, 'a thin surface sample must not stand in for real evidence');
+});
+
 test('supportsQualitativeSignal excludes totals, includes everything else', () => {
   assert.equal(supportsQualitativeSignal('totals'), false);
   assert.equal(supportsQualitativeSignal('h2h'), true);
@@ -183,6 +235,11 @@ test('applyTennisFormSignal drops an unsupported dog, keeps and boosts a form-ba
   close(kept.formSignal, 1, 'stored form signal');
   const priceOnly = scoreCandidate(alphaDog, { now: GATE_NOW }).score;
   assert.ok(kept.score > priceOnly, 'the form swing must lift the kept dog above its price-only score');
+
+  // The raw per-player facts formSignal was built from ride along too, for
+  // a display layer (docs/take-or-fade.js) to report individually.
+  assert.ok(kept.tennisContext, 'tennisContext must be attached whenever an archive was available');
+  assert.equal(kept.tennisContext.surface, 'Hard'); // tennis_wta_canadian_open
 });
 
 test('applyTennisFormSignal with no archive: dogs blocked, favorites pass through unscored', () => {
@@ -254,4 +311,26 @@ test('teamQualitativeSignal returns null when neither side has enough form or an
     away: { name: 'Away Team', lastFive: [{ result: 'L' }], injuries: [] },
   };
   assert.equal(teamQualitativeSignal(thin, 'Home Team'), null);
+});
+
+test('teamQualitativeSignal blends epaDiff as a third, higher-weighted component alongside form/injury', () => {
+  const formDiff = 2 / 5 - 1 / 5;
+  const injuryDiff = (0 - 2) / 3;
+  const epaDiff = 0.4;
+  const signal = teamQualitativeSignal(CONTEXT, 'Baltimore Orioles', { epaDiff });
+  close(signal, 0.45 * epaDiff + 0.35 * formDiff + 0.20 * injuryDiff, 'three-way blend with EPA weighted highest');
+});
+
+test('teamQualitativeSignal: epaDiff alone can produce a signal even with no ESPN context at all', () => {
+  // Unlike form/injury, an EPA differential needs no context match — the one
+  // case that used to return null outright regardless of what else existed.
+  assert.equal(teamQualitativeSignal(null, 'Baltimore Orioles', { epaDiff: 0.3 }), 0.3);
+  assert.equal(teamQualitativeSignal(CONTEXT, 'Some Team Not Playing', { epaDiff: -0.2 }), -0.2);
+});
+
+test('teamQualitativeSignal without epaDiff behaves exactly as before — non-NFL sports are unaffected', () => {
+  const signal = teamQualitativeSignal(CONTEXT, 'Baltimore Orioles');
+  const formDiff = 2 / 5 - 1 / 5;
+  const injuryDiff = (0 - 2) / 3;
+  close(signal, 0.65 * formDiff + 0.35 * injuryDiff, 'unchanged two-way blend when epaDiff is absent');
 });
