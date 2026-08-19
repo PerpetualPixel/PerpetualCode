@@ -10,6 +10,6 @@
  */
 export const BUILD_INFO = {
   version: '1.159',
-  commit: '4e992ac',
-  builtAt: 'Aug 18, 2026, 11:10:59 AM EDT',
+  commit: 'ebea79c',
+  builtAt: 'Aug 18, 2026, 11:36:32 PM EDT',
 };
