@@ -5264,13 +5264,15 @@ function renderLadderTrack(plan, state) {
 function renderLadderPlay(ladder) {
   const { play } = ladder;
   if (!play) {
+    // The only hold left is a slate with nothing structurally eligible at
+    // all (an off day, or everything today already excluded) — the band
+    // itself no longer causes a hold; see worker/src/ladder.js's fallback.
+    const reason = ladder.todayStatus?.reason;
     return `<div class="ladder-play is-holding">
       <p class="ladder-play-title">Holding today</p>
       <p class="ladder-play-note">
-        Nothing on today's board cleared the ladder's band
-        (${esc(formatAmerican(ladder.band.min))} to ${esc(formatAmerican(ladder.band.max))})
-        without clashing with a play already posted. The climb keeps its place —
-        no rung is played on a day that doesn't offer one.
+        ${reason ? esc(reason.charAt(0).toUpperCase() + reason.slice(1)) : "Nothing on today's slate is eligible for a rung yet."}
+        The climb keeps its place — no rung is played on a day that doesn't offer one.
       </p>
     </div>`;
   }
@@ -5283,12 +5285,20 @@ function renderLadderPlay(ladder) {
   const staleNote = play.stale
     ? `<p class="ladder-play-note">Today's rung hasn't posted yet — this is the last one played.</p>`
     : '';
+  // Posted only when nothing cleared the preferred -200..+120/MIN_SCORE band
+  // and this is the best-scoring game on the rest of the slate instead — see
+  // worker/src/ladder.js's runLadderDaily. Said plainly rather than shown as
+  // an ordinary in-band rung.
+  const fallbackNote = pick.viaFallback
+    ? `<p class="ladder-play-note">Nothing today was priced in the ladder's usual ${esc(formatAmerican(ladder.band.min))} to ${esc(formatAmerican(ladder.band.max))} band — this is the best-scoring game on the rest of the slate instead.</p>`
+    : '';
   return `<div class="ladder-play">
     <div class="ladder-play-head">
       <span class="ladder-play-title">Rung ${play.step} · ${esc(formatAmerican(pick.american))}</span>
       ${statusChip}
     </div>
     ${staleNote}
+    ${fallbackNote}
     <p class="ladder-play-pick">${esc(pick.selection)}</p>
     <p class="ladder-play-sub">
       ${esc(pick.away)} @ ${esc(pick.home)} · ${esc(potdDateTimeFmt.format(new Date(pick.commenceMs)))}
