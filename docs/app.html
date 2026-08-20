@@ -17,7 +17,7 @@
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Syne:wght@600;700;800&family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
-<link rel="stylesheet" href="styles.css?v=1.160">
+<link rel="stylesheet" href="styles.css?v=1.161">
 </head>
 <body>
 
@@ -31,20 +31,39 @@
 
 <header class="topbar">
   <h1 class="wordmark"><img src="assets/logo-icon-64.png" alt="" class="wordmark-icon" width="26" height="26">PERPETUAL<span>PICKS</span></h1>
+  <!-- Grouped by what the buttons actually are, rather than five identical
+       pills in a row: reference material (Guide/About) reads as quiet ghost
+       buttons, the two tools you open mid-session (Bankroll/Tracking) carry
+       the accent, and Account is separated off as identity. Same five
+       controls and same ids — this is weighting, not a re-plumb. -->
   <div class="topbar-actions">
-    <button id="guideToggle" class="icon-btn" aria-expanded="false" aria-controls="guidePanel">
-      Guide
-    </button>
-    <button id="aboutToggle" class="icon-btn" aria-expanded="false" aria-controls="aboutPanel">
-      About
-    </button>
-    <button id="bankrollToggle" class="icon-btn" aria-expanded="false" aria-controls="bankrollPanel">
-      Bankroll
-    </button>
-    <button id="learningToggle" class="icon-btn" aria-expanded="false" aria-controls="learningPanel">
-      Tracking
-    </button>
-    <a id="accountLink" href="/account.html" class="icon-btn" hidden>Account</a>
+    <div class="topbar-group topbar-group-quiet">
+      <button id="guideToggle" class="icon-btn" aria-expanded="false" aria-controls="guidePanel">
+        Guide
+      </button>
+      <button id="aboutToggle" class="icon-btn" aria-expanded="false" aria-controls="aboutPanel">
+        About
+      </button>
+    </div>
+    <div class="topbar-group">
+      <button id="bankrollToggle" class="icon-btn is-primary" aria-expanded="false" aria-controls="bankrollPanel">
+        Bankroll
+      </button>
+      <button id="learningToggle" class="icon-btn is-primary" aria-expanded="false" aria-controls="learningPanel">
+        Tracking
+      </button>
+    </div>
+    <!-- Icon plus text; the text drops out below 620px, where five full-width
+         labels can't fit on one row and Account was being pushed onto a
+         second row of its own. aria-label carries the name either way. -->
+    <a id="accountLink" href="/account.html" class="icon-btn topbar-account" aria-label="Account" hidden>
+      <svg class="topbar-account-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+           stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false">
+        <circle cx="12" cy="8" r="3.6"/>
+        <path d="M4.8 20.2a7.4 7.4 0 0114.4 0"/>
+      </svg>
+      <span class="topbar-account-text">Account</span>
+    </a>
   </div>
 </header>
 
@@ -60,10 +79,22 @@
   </button>
 </nav>
 
-<div id="whatsNewHint" class="whats-new-hint" hidden role="status">
-  <div class="whats-new-hint-body">
-    <p class="whats-new-hint-title">What's new: picks now lock throughout the day</p>
-    <p class="whats-new-hint-text">
+<!-- Both notices collapse to a single line and open on demand. The copy is
+     unchanged and still one click away — but mounted open above every board
+     these two cost 231px of desktop and 620px of a 844px phone screen
+     before a single game was visible, which made the product read as a
+     document. A <details> rather than a JS popover: keyboard and screen
+     reader behaviour comes free, and it degrades to open-by-default if the
+     stylesheet never lands. -->
+<details id="whatsNewHint" class="notice" hidden>
+  <summary class="notice-summary">
+    <span class="notice-tag">New</span>
+    <span class="notice-title">Picks now lock throughout the day, not all at once at 2am</span>
+    <span class="notice-more" aria-hidden="true">Details</span>
+    <button type="button" id="whatsNewHintClose" class="icon-btn notice-close" aria-label="Dismiss">✕</button>
+  </summary>
+  <div class="notice-body">
+    <p>
       Pixel's Picks and Play of the Day used to post all at once at 2am. Now each pick locks
       individually, closer to its own game's start time, so the numbers are fresher. Before a
       slot locks you'll see a <span class="whats-new-badge is-lean">LEAN</span> badge — the
@@ -71,13 +102,17 @@
       <span class="whats-new-badge is-final">PICK LOCKED IN</span> once it's set for good.
     </p>
   </div>
-  <button type="button" id="whatsNewHintClose" class="icon-btn overlay-close-btn" aria-label="Dismiss">✕</button>
-</div>
+</details>
 
-<div id="retractionNotice" class="whats-new-hint is-notice" hidden role="status">
-  <div class="whats-new-hint-body">
-    <p class="whats-new-hint-title">Notice: today's WTA picks were retracted and re-run</p>
-    <p class="whats-new-hint-text">
+<details id="retractionNotice" class="notice is-notice" hidden>
+  <summary class="notice-summary">
+    <span class="notice-tag">Notice</span>
+    <span class="notice-title">Today's WTA picks were retracted and re-run — they settle as a void</span>
+    <span class="notice-more" aria-hidden="true">Details</span>
+    <button type="button" id="retractionNoticeClose" class="icon-btn notice-close" aria-label="Dismiss">✕</button>
+  </summary>
+  <div class="notice-body">
+    <p>
       WTA picks were calling too many straight-up upsets against in-form favourites. A recent-form
       check now sits in front of every tennis moneyline: the algorithm can only take an underdog
       when that player's recent results and head-to-head actually back the upset. Because the
@@ -89,8 +124,7 @@
       pick — a match in progress can't honestly be re-picked.
     </p>
   </div>
-  <button type="button" id="retractionNoticeClose" class="icon-btn overlay-close-btn" aria-label="Dismiss">✕</button>
-</div>
+</details>
 
 <div id="dayFilterBar" class="day-toggle-bar">
   <span class="day-toggle-label">Showing</span>
@@ -103,73 +137,90 @@
       Tomorrow <span id="tomorrowDateLabel"></span>
     </button>
   </div>
-  <span class="day-toggle-hint">MMA always shows every card in the next week, regardless of this toggle.</span>
+  <!-- Was a full sentence sitting in the bar, which at 1400px stranded it
+       ~1200px from the toggle it describes. Same text, on demand. -->
+  <span class="info-dot has-tooltip" tabindex="0" role="note"
+        data-tooltip="MMA always shows every card in the next week, regardless of this toggle."
+        aria-label="MMA always shows every card in the next week, regardless of this toggle.">i</span>
 </div>
 
 <main id="main">
 <section id="slateView" role="tabpanel" aria-labelledby="tabSlate">
+  <!-- One toolbar instead of the four separate rows this used to be (a
+       centred token row, a lone Refresh button, a Status row, an Event/Sort
+       row). Those had three different alignments and four different gaps
+       between them, which is what made the page read as unstructured: the
+       eye couldn't find a grid. Everything lives on a shared left edge now,
+       with the two actions pinned right. -->
+  <div class="slate-toolbar">
+    <!-- Leagues get their own line and scroll sideways rather than wrapping:
+         12 chips wrapped to 2-3 ragged rows on a phone, which was 167px of
+         picker before any game. -->
+    <div class="slate-toolbar-leagues">
+      <div id="slateLeagueTokens" class="slate-league-tokens" role="group" aria-label="Quick league select"></div>
+    </div>
+
+    <div class="slate-toolbar-row">
+      <div class="slate-toolbar-group">
+        <!-- The league chips above are the actual UI for this; this pair
+             stays functional (app.js still reads/writes it, and a chip click
+             still just sets its value and fires 'change') but visually hidden
+             rather than shown twice — sr-only, not [hidden], so it's still
+             reachable by keyboard/screen reader as a fallback. -->
+        <label class="slate-league-label sr-only" for="slateLeagueSelect">League</label>
+        <select id="slateLeagueSelect" class="slate-league-select sr-only"></select>
+
+        <div class="day-toggle" role="group" aria-label="Which games to show">
+          <button id="slateStateUpcoming" class="day-toggle-btn is-active" type="button" aria-pressed="true">Upcoming / Live</button>
+          <button id="slateStateFinished" class="day-toggle-btn" type="button" aria-pressed="false">Finished</button>
+        </div>
+
+        <div class="slate-toolbar-field" id="slateEventRow" hidden>
+          <label class="slate-league-label" id="slateEventLabel" for="slateEventTrigger">Event</label>
+          <!-- Native <select>'s open option-list is drawn by the browser/OS and
+               can't be reached by this page's dark theme (see the color-scheme
+               comment in styles.css) — kept sr-only as the accessible/keyboard
+               source of truth, same pattern as slateLeagueSelect above. The
+               button+list beside it is the actual on-brand UI; picking an item
+               just sets the select's value and fires 'change'. -->
+          <select id="slateEventSelect" class="slate-league-select sr-only"></select>
+          <div class="custom-select" id="slateEventCustom">
+            <button type="button" id="slateEventTrigger" class="custom-select-btn" aria-haspopup="listbox" aria-expanded="false">
+              <span id="slateEventTriggerText" class="custom-select-value"></span>
+              <svg class="custom-select-caret" viewBox="0 0 12 8" aria-hidden="true"><path d="M1 1l5 5 5-5" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/></svg>
+            </button>
+            <ul id="slateEventMenu" class="custom-select-menu" role="listbox" hidden></ul>
+          </div>
+        </div>
+
+        <div class="slate-toolbar-field">
+          <label class="slate-league-label" for="slateSortSelect">Sort</label>
+          <select id="slateSortSelect" class="slate-league-select">
+            <option value="time">Chronological</option>
+            <option value="confidence">Highest Confidence</option>
+            <option value="both">Confidence + Time</option>
+          </select>
+        </div>
+      </div>
+
+      <div class="slate-toolbar-actions">
+        <button id="slateLoad" class="icon-btn slate-load-btn" type="button">Refresh</button>
+        <button id="tailFadeToggle" class="tail-fade-btn" type="button"
+                aria-haspopup="dialog" aria-expanded="false" aria-controls="tailFadePanel">
+          <span class="tail-fade-btn-icon" aria-hidden="true">⚖️</span>
+          <span>Tail or Fade</span>
+          <!-- Visible on the entry point, not only once the drawer is open: the
+               label has to reach someone deciding whether to trust the answer
+               BEFORE they've spent the effort entering a bet. -->
+          <span class="tail-fade-beta">BETA</span>
+        </button>
+      </div>
+    </div>
+  </div>
+
   <div id="slateStatus" class="status" role="status" aria-live="polite">
     Every game, every market. Nothing here is filtered by odds or confidence.
     That's what the Pixel's Picks tab is for.
-  </div>
-
-  <!-- The league tokens keep their own centred flex row; the Tail or Fade
-       button sits in a wrapper alongside it so it stays pinned to the right
-       of that row at every width without disturbing the tokens' centring. -->
-  <div class="slate-token-row">
-    <div id="slateLeagueTokens" class="slate-league-tokens" role="group" aria-label="Quick league select"></div>
-    <button id="tailFadeToggle" class="tail-fade-btn" type="button"
-            aria-haspopup="dialog" aria-expanded="false" aria-controls="tailFadePanel">
-      <span class="tail-fade-btn-icon" aria-hidden="true">⚖️</span>
-      <span>Tail or Fade</span>
-      <!-- Visible on the entry point, not only once the drawer is open: the
-           label has to reach someone deciding whether to trust the answer
-           BEFORE they've spent the effort entering a bet. -->
-      <span class="tail-fade-beta">BETA</span>
-    </button>
-  </div>
-
-  <div class="slate-controls">
-    <!-- The league tokens above are now the actual UI for this; this pair
-         stays functional (app.js still reads/writes it, and a token click
-         still just sets its value and fires 'change') but visually hidden
-         rather than shown twice — sr-only, not [hidden], so it's still
-         reachable by keyboard/screen reader as a fallback. -->
-    <label class="slate-league-label sr-only" for="slateLeagueSelect">League</label>
-    <select id="slateLeagueSelect" class="slate-league-select sr-only"></select>
-    <button id="slateLoad" class="icon-btn slate-load-btn" type="button">Refresh slate</button>
-  </div>
-
-  <div class="slate-controls">
-    <span class="slate-league-label">Status</span>
-    <div class="day-toggle" role="group" aria-label="Which games to show">
-      <button id="slateStateUpcoming" class="day-toggle-btn is-active" type="button" aria-pressed="true">Upcoming / Live</button>
-      <button id="slateStateFinished" class="day-toggle-btn" type="button" aria-pressed="false">Finished</button>
-    </div>
-  </div>
-
-  <div class="slate-controls" id="slateEventRow" hidden>
-    <label class="slate-league-label" id="slateEventLabel" for="slateEventTrigger">Event</label>
-    <!-- Native <select>'s open option-list is drawn by the browser/OS and
-         can't be reached by this page's dark theme (see the color-scheme
-         comment in styles.css) — kept sr-only as the accessible/keyboard
-         source of truth, same pattern as slateLeagueSelect above. The
-         button+list beside it is the actual on-brand UI; picking an item
-         just sets the select's value and fires 'change'. -->
-    <select id="slateEventSelect" class="slate-league-select sr-only"></select>
-    <div class="custom-select" id="slateEventCustom">
-      <button type="button" id="slateEventTrigger" class="custom-select-btn" aria-haspopup="listbox" aria-expanded="false">
-        <span id="slateEventTriggerText" class="custom-select-value"></span>
-        <svg class="custom-select-caret" viewBox="0 0 12 8" aria-hidden="true"><path d="M1 1l5 5 5-5" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/></svg>
-      </button>
-      <ul id="slateEventMenu" class="custom-select-menu" role="listbox" hidden></ul>
-    </div>
-    <label class="slate-league-label" for="slateSortSelect">Sort</label>
-    <select id="slateSortSelect" class="slate-league-select">
-      <option value="time">Chronological</option>
-      <option value="confidence">Highest Confidence</option>
-      <option value="both">Confidence + Time</option>
-    </select>
   </div>
 
   <section id="slateBody" class="slate-body" aria-live="polite">
@@ -178,15 +229,22 @@
 </section>
 
 <section id="boardView" role="tabpanel" aria-labelledby="tabBoard" hidden>
-  <p class="filter-hint tab-intro">
-    5 locks: sharp range −250/+250, positive EV, and a real Kelly edge
-    required, drawn from every league and every sportsbook. Each slot locks
-    individually, closer to its own game's start time — before that you'll
-    see the algorithm's current <strong>LEAN</strong>, which can still
-    change; once <strong>PICK LOCKED IN</strong>, a pick is never re-picked. Nothing
-    here ever pads out with a bet that isn't actually worth taking. Every
-    game regardless of price lives on the Full Slate tab.
-  </p>
+  <!-- One line visible, the full standard on demand. The paragraph is the
+       same one that used to sit open above the board on every visit. -->
+  <details class="explainer tab-intro">
+    <summary class="explainer-summary">
+      <span class="explainer-lede">5 locks a day — sharp range −250/+250, positive EV, real Kelly edge.</span>
+      <span class="explainer-more" aria-hidden="true">How they're chosen</span>
+    </summary>
+    <p class="explainer-body">
+      Drawn from every league and every sportsbook. Each slot locks
+      individually, closer to its own game's start time — before that you'll
+      see the algorithm's current <strong>LEAN</strong>, which can still
+      change; once <strong>PICK LOCKED IN</strong>, a pick is never re-picked. Nothing
+      here ever pads out with a bet that isn't actually worth taking. Every
+      game regardless of price lives on the Full Slate tab.
+    </p>
+  </details>
   <div id="status" class="status" role="status" aria-live="polite">Loading the board…</div>
 
   <div class="sort-row" hidden id="pixelSortRow">
@@ -925,6 +983,6 @@
   </div>
 </aside>
 
-<script type="module" src="app.js?v=1.160"></script>
+<script type="module" src="app.js?v=1.161"></script>
 </body>
 </html>

@@ -36,6 +36,11 @@
   --laser: #00F0FF;              /* Laser Blue — glow accent, "this is a real edge" signal */
   --warn: #fbbf24;
   --radius: 14px;
+  /* The one shared content width. Every top-level band (topbar, tabs, day
+     bar, notices, #main) reads this instead of repeating its own number, so
+     they line up by construction rather than by four rules agreeing. Widened
+     at breakpoints below. */
+  --shell: 620px;
   --mono: 'Inter', 'Inter Fallback', -apple-system, sans-serif; /* name kept for the ~150 call sites already using var(--mono) for data/stats; value now points at the spec's actual "data/stats" font instead of a monospace stack */
   --sans: 'Inter', 'Inter Fallback', -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif;
   --display: 'Syne', 'Inter', sans-serif; /* headings/logo only */
@@ -283,7 +288,7 @@ body {
   justify-content: space-between;
   gap: 12px;
   padding: 18px 20px 12px;
-  max-width: 620px;
+  max-width: var(--shell);
   margin: 0 auto;
 }
 
@@ -314,7 +319,7 @@ body {
    otherwise always lose to them regardless of viewport, since source order
    breaks the tie when specificity is equal. */
 .day-toggle-bar {
-  max-width: 620px;
+  max-width: var(--shell);
   margin: 0 auto;
 }
 
@@ -345,7 +350,59 @@ body {
   display: inline-block;
 }
 
-.topbar-actions { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; justify-content: flex-end; }
+/* Three weights, not five identical pills: reference material (Guide/About)
+   sits quiet, the two mid-session tools (Bankroll/Tracking) carry the
+   accent, and Account is separated off as identity. The gaps do the
+   grouping — 6px within a group, 14px between them. */
+.topbar-actions {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+}
+.topbar-group { display: flex; align-items: center; gap: 6px; }
+
+.topbar-account { display: inline-flex; align-items: center; gap: 6px; }
+.topbar-account-icon { width: 15px; height: 15px; flex: none; }
+
+.topbar-group-quiet .icon-btn {
+  border-color: transparent;
+  background: transparent;
+  color: var(--muted);
+}
+.topbar-group-quiet .icon-btn:hover {
+  color: var(--text);
+  background: var(--surface);
+  border-color: var(--line);
+}
+
+.icon-btn.is-primary {
+  border-color: rgba(124, 58, 237, 0.5);
+  background: var(--accent-dim);
+  color: var(--text);
+}
+.icon-btn.is-primary:hover {
+  border-color: var(--accent);
+  box-shadow: var(--glow-violet);
+}
+
+@media (max-width: 620px) {
+  /* All five on one row at phone width. The old flat list of five equal
+     pills wrapped to two rows and stranded Account alone on the second —
+     so the buttons tighten here rather than the row growing. */
+  .topbar-actions { gap: 10px; width: 100%; justify-content: space-between; flex-wrap: nowrap; }
+  .topbar-group { gap: 4px; }
+  .topbar-actions .icon-btn {
+    padding: 7px 9px;
+    font-size: 0.65rem;
+    letter-spacing: 0.04em;
+  }
+  /* Account goes icon-only here — that's the ~70px that lets the other four
+     keep their labels on a single row. */
+  .topbar-account-text { display: none; }
+  .topbar-account { padding: 7px 8px; }
+}
 
 /* Utility links (Guide/About/Bankroll/Tracking) — subtle, futuristic text
    style: understated glass chip, uppercase micro-tracking, a violet glow
@@ -438,7 +495,7 @@ body {
 .top-tabs {
   display: flex;
   gap: 8px;
-  max-width: 620px;
+  max-width: var(--shell);
   margin: 0 auto;
   padding: 0 20px 14px;
 }
@@ -448,7 +505,11 @@ body {
    a button, closer to a HUD than a form control. */
 .top-tab {
   position: relative;
+  /* Equal thirds on a phone, content-width from tablet up (see below).
+     Stretched across the full shell on a desktop the three tabs ended up
+     hundreds of pixels apart and stopped reading as one control. */
   flex: 1;
+  white-space: nowrap;
   background: transparent;
   border: 1px solid transparent;
   border-radius: var(--radius);
@@ -489,6 +550,13 @@ body {
   animation: bounceIn 0.4s ease-out;
 }
 .top-tab.is-active::after { opacity: 1; }
+
+/* From tablet up the tabs hug their labels and sit together at the left,
+   rather than each taking a third of a 1280px shell. */
+@media (min-width: 620px) {
+  .top-tabs { gap: 4px; }
+  .top-tab { flex: none; padding: 12px 22px; }
+}
 
 /* A new day's Play of the Day / Pixel's Picks the user hasn't opened that
    tab to see yet — see updateNewIndicator()/markTabSeen() in app.js. A
@@ -669,7 +737,7 @@ body {
 /* ---------------------------------------------------------------- */
 
 #main {
-  max-width: 620px;
+  max-width: var(--shell);
   margin: 0 auto;
   padding: 0 20px 48px;
 }
@@ -2525,12 +2593,7 @@ input[type="range"]:focus-visible {
 /* ---------------------------------------------------------------- */
 
 @media (min-width: 900px) {
-  .topbar,
-  .top-tabs,
-  .day-toggle-bar,
-  #main {
-    max-width: 1400px;
-  }
+  :root { --shell: 1100px; }
 
   .picks {
     grid-template-columns: repeat(auto-fill, minmax(360px, 1fr));
@@ -2550,12 +2613,11 @@ input[type="range"]:focus-visible {
 }
 
 @media (min-width: 1400px) {
-  .topbar,
-  .top-tabs,
-  .day-toggle-bar,
-  #main {
-    max-width: 1760px;
-  }
+  /* Capped at 1280 rather than the 1760 this used to reach. Past about this
+     width the toolbar's controls end up a foot apart and the empty-state
+     text floats alone in the middle of a very large box — the layout stops
+     reading as designed and starts reading as unbounded. */
+  :root { --shell: 1280px; }
 
   .picks {
     grid-template-columns: repeat(auto-fill, minmax(380px, 1fr));
@@ -2586,11 +2648,69 @@ input[type="range"]:focus-visible {
 /* Full Slate                                                         */
 /* ---------------------------------------------------------------- */
 
-.slate-controls {
+/* One toolbar, replacing the four separately-aligned control rows that used
+   to stack here. Everything shares a left edge; the two actions pin right. */
+.slate-toolbar {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  margin: 12px 0 10px;
+  padding-bottom: 12px;
+  border-bottom: 1px solid var(--line);
+}
+
+/* Full-bleed at the shell's edges so the scrolling chip row runs to the
+   viewport edge instead of stopping short — the cut-off chip is the cue
+   that there's more to scroll to. */
+.slate-toolbar-leagues {
+  margin: 0 -20px;
+  padding: 0 20px;
+  /* Fades the last chip out at the right edge rather than clipping it dead,
+     so the row reads as continuing. */
+  -webkit-mask-image: linear-gradient(to right, #000 0, #000 calc(100% - 28px), transparent 100%);
+  mask-image: linear-gradient(to right, #000 0, #000 calc(100% - 28px), transparent 100%);
+}
+
+.slate-toolbar-row {
   display: flex;
   align-items: center;
-  gap: 10px;
-  margin: 14px 0;
+  justify-content: space-between;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+.slate-toolbar-group {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  flex-wrap: wrap;
+  min-width: 0;
+}
+.slate-toolbar-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-left: auto;
+}
+.slate-toolbar-field {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  min-width: 0;
+}
+
+@media (max-width: 620px) {
+  .slate-toolbar-leagues { margin: 0 -14px; padding: 0 14px; }
+  /* One control per line rather than four squeezed onto one: crammed side
+     by side at this width, "Upcoming / Live" wrapped to two lines and the
+     Sort label collided with it. Each row is full-width and obviously
+     tappable instead. */
+  .slate-toolbar-group { width: 100%; gap: 8px; }
+  .slate-toolbar-group > .day-toggle { width: 100%; }
+  .slate-toolbar-group > .day-toggle .day-toggle-btn { flex: 1; }
+  .slate-toolbar-field { width: 100%; }
+  /* Actions go full-width rather than squeezing beside the toggles. */
+  .slate-toolbar-actions { width: 100%; margin-left: 0; }
+  .slate-toolbar-actions .tail-fade-btn { flex: 1; justify-content: center; }
 }
 
 .slate-league-label {
@@ -2716,65 +2836,82 @@ input[type="range"]:focus-visible {
    of truth (and still works standalone); clicking a token just sets its
    value and fires the same 'change' event, so there is exactly one place
    that actually changes state (see app.js). */
+/* League chips — glyph + league name, on one sideways-scrolling line.
+   Replaces the old 44px icon-only tokens, which wrapped to two or three
+   ragged rows on a phone and, worse, couldn't distinguish leagues that
+   share a sport: ATP/WTA, NBA/WNBA/NCAAB and NFL/NCAAF collided on the
+   same emoji. The glyph names the sport, the label names the league. */
 .slate-league-tokens {
   display: flex;
-  flex-wrap: wrap;
-  justify-content: center;
-  gap: 10px;
-  margin: 14px 0 4px;
+  gap: 8px;
+  /* One line that scrolls rather than wrapping — a wrapped picker pushes
+     the board itself off-screen, and the scroll cue reads as "more here"
+     where a ragged second row just reads as mess. */
+  overflow-x: auto;
+  scroll-snap-type: x proximity;
+  scrollbar-width: none;
+  padding: 2px 0;
+  margin: 0;
 }
+.slate-league-tokens::-webkit-scrollbar { display: none; }
 
-.league-token {
+.league-chip {
   position: relative;
-  width: 44px;
-  height: 44px;
-  border-radius: 12px;
+  flex: none;
+  scroll-snap-align: start;
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  height: 36px;
+  padding: 0 13px 0 11px;
+  border-radius: 999px;
   background: var(--surface);
   backdrop-filter: blur(12px);
   -webkit-backdrop-filter: blur(12px);
   border: 1px solid var(--line);
-  display: flex;
-  align-items: center;
-  justify-content: center;
+  color: var(--muted);
+  font-family: var(--sans);
+  font-size: 0.75rem;
+  font-weight: 600;
+  letter-spacing: 0.03em;
+  white-space: nowrap;
   cursor: pointer;
-  transition: all 180ms cubic-bezier(0.34, 1.56, 0.64, 1);
+  transition: color 160ms ease, border-color 160ms ease, background 160ms ease;
 }
-.league-token-icon {
-  font-size: 1.15rem;
-  line-height: 1;
-  filter: grayscale(0.4);
-  transition: filter 180ms ease;
+.league-chip-icon {
+  width: 17px;
+  height: 17px;
+  flex: none;
+  opacity: 0.9;
 }
-.league-token:hover {
-  border-color: var(--accent);
-  transform: translateY(-2px);
-  box-shadow: var(--glow-violet);
-}
-.league-token:hover .league-token-icon { filter: grayscale(0); }
+.league-chip-label { line-height: 1; }
 
-.league-token.is-active {
+.league-chip:hover {
+  color: var(--text);
+  border-color: var(--accent);
+  background: var(--surface-2);
+}
+.league-chip:hover .league-chip-icon { opacity: 1; }
+
+.league-chip.is-active {
+  color: var(--text);
   border-color: transparent;
   background:
-    linear-gradient(rgba(8, 6, 20, 0.7), rgba(8, 6, 20, 0.7)) padding-box,
+    linear-gradient(rgba(8, 6, 20, 0.72), rgba(8, 6, 20, 0.72)) padding-box,
     var(--card-border-gradient) border-box;
-  border: 1px solid transparent;
   box-shadow: var(--glow-magenta);
 }
-.league-token.is-active .league-token-icon { filter: grayscale(0); }
+.league-chip.is-active .league-chip-icon { opacity: 1; }
 
-/* Off-season placeholders (NBA/NCAAB) read as dormant, not broken — no
-   glow, no hover lift, just a dimmer token sitting in the row until the
+/* Off-season placeholders (NBA/NCAAB/NHL) read as dormant, not broken — no
+   glow, no hover lift, just a dimmer chip sitting in the row until the
    season actually starts. */
-.league-token.is-off-season {
-  opacity: 0.45;
-}
-.league-token.is-off-season .league-token-icon { filter: grayscale(1); }
-.league-token.is-off-season:hover {
+.league-chip.is-off-season { opacity: 0.42; }
+.league-chip.is-off-season:hover {
   border-color: var(--line);
-  transform: none;
-  box-shadow: none;
+  background: var(--surface);
+  color: var(--muted);
 }
-.league-token.is-off-season:hover .league-token-icon { filter: grayscale(1); }
 
 /* Themed stand-in for the browser's own title="" tooltip (a plain black-on-
    white box that clashes with everything else here) — CSS-only, driven off
@@ -4115,29 +4252,181 @@ input[type="range"]:focus-visible {
 /* One-time "what's new" hint for the lean/final pick-timing change — shown
    once per browser (see showWhatsNewHintIfFresh in app.js), dismissible,
    never shown again after. */
-.whats-new-hint {
+/* ================================================================ */
+/* Notices — collapsed to one line, expandable                       */
+/* ================================================================ */
+
+/* A <details> styled as a single-line strip. Closed, it's one row of about
+   40px; open, it's the same copy that used to be permanently mounted. The
+   pair of them used to cost 231px on desktop and 620px on a 390px phone
+   before the first game card. */
+.notice {
+  position: relative;
+  max-width: var(--shell);
+  margin: 0 auto 10px;
+  border-radius: 10px;
+  background: linear-gradient(135deg, rgba(124, 58, 237, 0.1), rgba(0, 240, 255, 0.05));
+  border: 1px solid rgba(124, 58, 237, 0.3);
+}
+
+.notice-summary {
   display: flex;
-  align-items: flex-start;
-  gap: 12px;
-  margin: 0 0 16px;
-  padding: 14px 16px;
-  border-radius: var(--radius);
-  background: linear-gradient(135deg, rgba(124, 58, 237, 0.12), rgba(0, 240, 255, 0.08));
-  border: 1px solid rgba(124, 58, 237, 0.35);
+  align-items: center;
+  gap: 10px;
+  /* Right padding clears the absolutely-positioned dismiss button. */
+  padding: 10px 44px 10px 14px;
+  cursor: pointer;
+  list-style: none;
+  font-size: 0.78rem;
 }
-.whats-new-hint-body { flex: 1; min-width: 0; }
-.whats-new-hint-title {
-  margin: 0 0 4px;
-  font-size: 0.85rem;
+.notice-summary::-webkit-details-marker { display: none; }
+.notice-summary:hover .notice-title { color: var(--text); }
+
+.notice-tag {
+  flex: none;
+  padding: 2px 8px;
+  border-radius: 999px;
+  background: rgba(124, 58, 237, 0.22);
+  color: #C4B5FD;
+  font-size: 0.62rem;
   font-weight: 700;
-  color: var(--text);
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
 }
-.whats-new-hint-text {
-  margin: 0;
+.notice-title {
+  flex: 1;
+  min-width: 0;
+  color: var(--muted);
+  font-weight: 600;
+  /* One line, always — a notice that wraps to three is the problem this
+     collapse was meant to solve. */
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  transition: color 160ms ease;
+}
+.notice-more {
+  flex: none;
+  color: var(--accent);
+  font-size: 0.7rem;
+  font-weight: 600;
+}
+.notice-more::after {
+  content: ' ▸';
+  display: inline-block;
+  transition: transform 160ms ease;
+}
+.notice[open] .notice-more::after { content: ' ▾'; }
+
+.notice-body {
+  padding: 0 16px 13px 14px;
   font-size: 0.8rem;
   line-height: 1.6;
   color: var(--muted);
 }
+.notice-body p { margin: 0; }
+
+.notice-close {
+  position: absolute;
+  top: 7px;
+  right: 8px;
+  width: 26px;
+  height: 26px;
+  min-height: 26px;
+  padding: 0;
+  font-size: 0.8rem;
+  flex: none;
+}
+
+/* A correction notice, not a new-feature hint — amber rather than the
+   purple/cyan "what's new" wash, so the two read as different kinds of
+   message even when both happen to be showing. */
+.notice.is-notice {
+  background: linear-gradient(135deg, rgba(251, 191, 36, 0.1), rgba(251, 191, 36, 0.03));
+  border-color: rgba(251, 191, 36, 0.32);
+}
+.notice.is-notice .notice-tag {
+  background: rgba(251, 191, 36, 0.18);
+  color: var(--warn);
+}
+.notice.is-notice .notice-more { color: var(--warn); }
+
+@media (max-width: 620px) {
+  /* The lede is the thing worth keeping at this width; "Details" is
+     redundant once the whole strip is obviously tappable. */
+  .notice-more { display: none; }
+  .notice { margin-left: 14px; margin-right: 14px; }
+}
+
+/* ================================================================ */
+/* Explainer — an inline "why this board works this way" disclosure  */
+/* ================================================================ */
+
+.explainer {
+  margin: 0 0 14px;
+  border-bottom: 1px solid var(--line);
+  padding-bottom: 10px;
+}
+.explainer-summary {
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+  cursor: pointer;
+  list-style: none;
+}
+.explainer-summary::-webkit-details-marker { display: none; }
+.explainer-lede {
+  flex: 1;
+  min-width: 0;
+  color: var(--muted);
+  font-size: 0.8rem;
+  line-height: 1.5;
+}
+.explainer-more {
+  flex: none;
+  color: var(--accent);
+  font-size: 0.7rem;
+  font-weight: 600;
+  white-space: nowrap;
+}
+.explainer-more::after { content: ' ▸'; }
+.explainer[open] .explainer-more::after { content: ' ▾'; }
+.explainer-summary:hover .explainer-lede { color: var(--text); }
+.explainer-body {
+  margin: 8px 0 0;
+  font-size: 0.78rem;
+  line-height: 1.65;
+  color: var(--muted);
+}
+
+/* ================================================================ */
+/* Info dot — a tooltip target for a sentence that was inline prose  */
+/* ================================================================ */
+
+.info-dot {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 17px;
+  height: 17px;
+  flex: none;
+  border-radius: 50%;
+  border: 1px solid var(--line);
+  background: var(--surface);
+  color: var(--muted);
+  font-family: var(--display);
+  font-size: 0.62rem;
+  font-weight: 700;
+  font-style: italic;
+  cursor: help;
+  transition: color 160ms ease, border-color 160ms ease;
+}
+.info-dot:hover,
+.info-dot:focus-visible {
+  color: var(--text);
+  border-color: var(--accent);
+}
+
 .whats-new-badge {
   display: inline-flex;
   align-items: center;
@@ -4160,20 +4449,10 @@ input[type="range"]:focus-visible {
   color: var(--warn);
 }
 
-/* A correction notice, not a new-feature hint — amber rather than the
-   purple/cyan "what's new" wash, so the two read as different kinds of
-   message even when both happen to be showing. */
-.whats-new-hint.is-notice {
-  background: linear-gradient(135deg, rgba(251, 191, 36, 0.12), rgba(251, 191, 36, 0.04));
-  border-color: rgba(251, 191, 36, 0.35);
-}
-.whats-new-hint .overlay-close-btn {
-  width: 28px;
-  height: 28px;
-  min-height: 28px;
-  font-size: 0.85rem;
-  flex: none;
-}
+/* (The .whats-new-hint container rules that used to live here are gone —
+   both notices are .notice disclosures now, styled further up. The
+   .whats-new-badge classes above stay: they're still used inside the
+   notice bodies and by the pick cards themselves.) */
 
 /* ================================================================ */
 /* Day toggle (Today / Tomorrow)                                    */
@@ -4223,15 +4502,21 @@ input[type="range"]:focus-visible {
   color: var(--on-accent);
 }
 
-.day-toggle-hint {
-  font-size: 0.7rem;
-  color: var(--muted);
-  margin-left: auto;
+@media (max-width: 620px) {
+  /* "Showing" is what the three date buttons plainly are; dropping the word
+     keeps the toggle and its info dot together on one line instead of
+     wrapping the dot onto a third row of its own. */
+  .day-toggle-bar { flex-wrap: nowrap; padding: 8px 14px; }
+  .day-toggle-label { display: none; }
+  /* Sized to its labels, not stretched — flexing it to fill squeezed
+     "Yesterday (Aug 19)" onto two lines. */
+  .day-toggle-bar > .day-toggle { flex: none; }
 }
 
-@media (max-width: 640px) {
-  .day-toggle-hint { display: none; }
-}
+/* (.day-toggle-hint is gone — that sentence is the .info-dot's tooltip now.
+   Pushed to `margin-left: auto` it ended up ~1200px from the toggle it
+   described on a wide screen, and was display:none'd below 640px anyway,
+   so on a phone it wasn't saying anything at all.) */
 
 /* ================================================================ */
 /* Learning Dashboard: Daily History                                 */
@@ -5226,21 +5511,16 @@ input[type="range"]:focus-visible {
    Tail or Fade button beside it without shifting the tokens off centre.
    The button is absolutely positioned at wide widths so the tokens stay
    centred against the viewport rather than against the leftover space. */
-.slate-token-row {
-  position: relative;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-}
-.slate-token-row .slate-league-tokens { flex: 1; }
+/* (.slate-token-row is gone — the chip row and the Tail or Fade button both
+   live in .slate-toolbar now, which lays them out in normal flow. The
+   button no longer needs to be absolutely positioned out of a centred row
+   to sit at the right edge.) */
 
 .tail-fade-btn {
-  position: absolute;
-  right: 0;
   display: inline-flex;
   align-items: center;
   gap: 8px;
-  padding: 10px 16px;
+  padding: 9px 15px;
   border-radius: 999px;
   border: 1px solid transparent;
   background:
@@ -5263,14 +5543,7 @@ input[type="range"]:focus-visible {
   outline: 2px solid var(--laser);
   outline-offset: 2px;
 }
-.tail-fade-btn-icon { font-size: 1rem; }
-
-/* Below the width where an absolutely-positioned button would overlap the
-   tokens, it drops into normal flow on its own centred line instead. */
-@media (max-width: 900px) {
-  .slate-token-row { flex-direction: column; gap: 10px; }
-  .tail-fade-btn { position: static; }
-}
+.tail-fade-btn-icon { font-size: 0.95rem; }
 
 .tail-fade-panel { width: min(94vw, 460px); }
 

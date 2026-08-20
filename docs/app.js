@@ -14,6 +14,7 @@ if (!window.location.hostname.includes('perpetualpicks.com')) {
 import { CONFIG } from './config.js';
 import { DEMO_EVENTS } from './demo.js';
 import { teamLogoUrl } from './team-logos.js';
+import { leagueIconSvg } from './league-icons.js';
 import { BUILD_INFO } from './version.js';
 import { summarizePicks, gradePick } from './learning.js';
 import { liveSetsLabel } from './tennis-results.js';
@@ -118,7 +119,10 @@ const LEAGUE_GROUPS = [
   // year-round), preseason runs about four weeks, and a permanent
   // "NFL Pre: 0 games" token would read as broken rather than out of season.
   { id: 'nflpre', label: 'NFL Pre', keys: [], seasonal: true },
-  { id: 'ncaa', label: 'NCAA', keys: ['americanfootball_ncaaf'] },
+  // Labelled NCAAF, not "NCAA": it sits in the same picker as NCAAB, and
+  // the bare "NCAA" read as ambiguous next to it. Id stays `ncaa` — that's
+  // what saved league preferences are keyed on.
+  { id: 'ncaa', label: 'NCAAF', keys: ['americanfootball_ncaaf'] },
   { id: 'atp', label: 'ATP', keys: [] },
   { id: 'wta', label: 'WTA', keys: [] },
   { id: 'wnba', label: 'WNBA', keys: ['basketball_wnba'] },
@@ -147,11 +151,11 @@ const LEAGUE_GROUPS = [
 ];
 const LEAGUE_GROUP_BY_ID = new Map(LEAGUE_GROUPS.map((g) => [g.id, g]));
 
-/** One glyph per league group, for the glowing quick-select token row (renderSlateLeagueOptions) — purely decorative, the underlying select is still the source of truth. */
-const LEAGUE_ICONS = {
-  mlb: '⚾', nfl: '🏈', nflpre: '🏈', ncaa: '🎓', atp: '🎾', wta: '🎾',
-  wnba: '🏀', mma: '🥊', mls: '⚽', nhl: '🏒', nba: '🏀', ncaab: '🎓',
-};
+/* Sport glyphs for the league chip row now live in ./league-icons.js — see
+   leagueIconSvg's import above. The chips pair that glyph with the group's
+   own text label, which is what actually distinguishes leagues sharing a
+   sport (ATP/WTA, NBA/WNBA/NCAAB, NFL/NCAAF). The underlying select is
+   still the source of truth for the selection itself. */
 
 /**
  * Fill the key lists of every league group whose sport keys aren't stable
@@ -4070,11 +4074,15 @@ function renderSlateLeagueOptions() {
     .join('');
 
   if (el.slateLeagueTokens) {
+    /* The label is real text in the chip now rather than a hover tooltip:
+       a glyph alone can't tell ATP from WTA (same sport, same ball), and a
+       tooltip is no help on touch, where most of this gets used. */
     el.slateLeagueTokens.innerHTML = groups
       .map((group) => `
-        <button type="button" class="league-token has-tooltip ${group.id === state.slateLeague ? 'is-active' : ''} ${group.offSeason ? 'is-off-season' : ''}"
-                data-league-token="${esc(group.id)}" data-tooltip="${esc(group.label)}" aria-label="${esc(group.label)}">
-          <span class="league-token-icon" aria-hidden="true">${LEAGUE_ICONS[group.id] ?? '●'}</span>
+        <button type="button" class="league-chip ${group.id === state.slateLeague ? 'is-active' : ''} ${group.offSeason ? 'is-off-season' : ''}"
+                data-league-token="${esc(group.id)}"
+                aria-pressed="${group.id === state.slateLeague ? 'true' : 'false'}">
+          ${leagueIconSvg(group.id)}<span class="league-chip-label">${esc(group.label)}</span>
         </button>`)
       .join('');
   }
@@ -6866,7 +6874,13 @@ function showWhatsNewHintIfFresh() {
   el.whatsNewHint.hidden = false;
 }
 
-el.whatsNewHintClose.addEventListener('click', () => {
+// The button lives inside the <summary> (anything outside it isn't
+// rendered while the notice is collapsed, which is its normal state),
+// so the click has to be stopped from also toggling the disclosure open
+// on its way out.
+el.whatsNewHintClose.addEventListener('click', (event) => {
+  event.preventDefault();
+  event.stopPropagation();
   localStorage.setItem(WHATS_NEW_LEAN_FINAL_KEY, '1');
   el.whatsNewHint.hidden = true;
 });
@@ -6893,7 +6907,13 @@ function showRetractionNoticeIfFresh() {
   el.retractionNotice.hidden = false;
 }
 
-el.retractionNoticeClose.addEventListener('click', () => {
+// The button lives inside the <summary> (anything outside it isn't
+// rendered while the notice is collapsed, which is its normal state),
+// so the click has to be stopped from also toggling the disclosure open
+// on its way out.
+el.retractionNoticeClose.addEventListener('click', (event) => {
+  event.preventDefault();
+  event.stopPropagation();
   localStorage.setItem(RETRACTION_NOTICE_KEY, '1');
   el.retractionNotice.hidden = true;
 });
