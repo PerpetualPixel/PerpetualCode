@@ -2697,9 +2697,18 @@ input[type="range"]:focus-visible {
   gap: 7px;
   min-width: 0;
 }
+/* Scoped to the Sort dropdown by adjacency, NOT to .slate-toolbar-field —
+   the Event picker is a .slate-toolbar-field too, and it has to keep
+   flex: 1 so a long name ("UFC 330: Makhachev vs. Machado Garry: 12
+   fights") can use the whole row. Sort's longest option is "Highest
+   Confidence", so it sizes to that and stops. */
+#slateSortSelect + .custom-select { flex: none; min-width: 178px; }
+#slateSortSelect + .custom-select .custom-select-btn { min-height: 38px; padding: 8px 12px; }
 
 @media (max-width: 620px) {
   .slate-toolbar-leagues { margin: 0 -14px; padding: 0 14px; }
+  /* Full-width here, same as every other row in the stacked toolbar. */
+  #slateSortSelect + .custom-select { flex: 1; min-width: 0; }
   /* One control per line rather than four squeezed onto one: crammed side
      by side at this width, "Upcoming / Live" wrapped to two lines and the
      Sort label collided with it. Each row is full-width and obviously
@@ -2930,13 +2939,34 @@ input[type="range"]:focus-visible {
   padding: 6px 10px;
   font-family: var(--mono);
   font-size: 0.72rem;
-  white-space: nowrap;
+  /* Short labels stay on one line; a full sentence wraps into a box instead
+     of one very long line. nowrap alone was a viewport-overflow bug waiting
+     for a long tooltip: the pseudo-element is out of flow but still counts
+     toward its ancestors' scrollable overflow, so an invisible 450px
+     tooltip centred on a control near the right edge pushed the whole page
+     197px wide with nothing visible to explain it. */
+  white-space: normal;
+  width: max-content;
+  max-width: min(260px, 70vw);
+  text-align: center;
   opacity: 0;
   pointer-events: none;
   transition: opacity 150ms ease, transform 150ms ease;
   box-shadow: 0 8px 20px rgba(0, 0, 0, 0.45);
   z-index: 30;
 }
+/* For a trigger sitting at the right edge of its row, where a centred
+   tooltip would hang off the viewport (and widen the page's scroll box even
+   while invisible). Anchors the box's right edge to the trigger instead;
+   the arrow stays over the trigger itself. */
+.has-tooltip.is-end::after {
+  left: auto;
+  right: 0;
+  transform: translateX(0) translateY(4px);
+  text-align: left;
+}
+.has-tooltip.is-end:hover::after,
+.has-tooltip.is-end:focus-visible::after { transform: translateX(0) translateY(0); }
 .has-tooltip::before {
   content: '';
   position: absolute;
@@ -4399,6 +4429,19 @@ input[type="range"]:focus-visible {
   color: var(--muted);
 }
 
+/* Inside the Tracking Dashboard the sections already separate themselves
+   with their own bottom rule, and each one carries an h3 directly above its
+   explainer — a second hairline under every lede there would read as ten
+   dividers stacked down a narrow panel. */
+.learning-content .explainer {
+  border-bottom: none;
+  padding-bottom: 0;
+  margin: 0 0 12px;
+}
+.learning-content .explainer-lede,
+.learning-content .explainer-body { font-size: 0.72rem; }
+.learning-content .explainer-more { font-size: 0.66rem; }
+
 /* ================================================================ */
 /* Info dot — a tooltip target for a sentence that was inline prose  */
 /* ================================================================ */
@@ -4506,11 +4549,16 @@ input[type="range"]:focus-visible {
   /* "Showing" is what the three date buttons plainly are; dropping the word
      keeps the toggle and its info dot together on one line instead of
      wrapping the dot onto a third row of its own. */
-  .day-toggle-bar { flex-wrap: nowrap; padding: 8px 14px; }
+  /* "Showing" is what the three date buttons plainly are, and the
+     parenthetical dates are supplementary — dropping both is what lets the
+     toggle and its info dot share one row here. At phone text sizes the
+     full "Yesterday (Aug 19) / Today / Tomorrow (Aug 21)" run is ~560px,
+     which no amount of nowrap makes fit in 362px. wrap stays on as the
+     safety net rather than letting it overflow the viewport. */
+  .day-toggle-bar { padding: 8px 14px; }
   .day-toggle-label { display: none; }
-  /* Sized to its labels, not stretched — flexing it to fill squeezed
-     "Yesterday (Aug 19)" onto two lines. */
-  .day-toggle-bar > .day-toggle { flex: none; }
+  #yesterdayDateLabel,
+  #tomorrowDateLabel { display: none; }
 }
 
 /* (.day-toggle-hint is gone — that sentence is the .info-dot's tooltip now.
@@ -4771,14 +4819,13 @@ input[type="range"]:focus-visible {
   color: var(--muted);
 }
 
-.tracker-sport-filter select {
-  background: var(--surface);
-  border: 1px solid var(--line);
-  border-radius: var(--radius);
-  color: var(--text);
-  font-family: var(--mono);
+/* The native select here is sr-only now (enhanceSelect stands a themed
+   button in front of it), so these are the dimensions that button takes. */
+#trackerSportFilter + .custom-select { flex: none; min-width: 148px; }
+#trackerSportFilter + .custom-select .custom-select-btn {
   font-size: 0.78rem;
-  padding: 6px 8px;
+  padding: 6px 9px;
+  min-height: 34px;
 }
 
 .tracker-controls-row .perf-period-tabs {

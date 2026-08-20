@@ -17,7 +17,7 @@
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Syne:wght@600;700;800&family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
-<link rel="stylesheet" href="styles.css?v=1.161">
+<link rel="stylesheet" href="styles.css?v=1.162">
 </head>
 <body>
 
@@ -139,7 +139,7 @@
   </div>
   <!-- Was a full sentence sitting in the bar, which at 1400px stranded it
        ~1200px from the toggle it describes. Same text, on demand. -->
-  <span class="info-dot has-tooltip" tabindex="0" role="note"
+  <span class="info-dot has-tooltip is-end" tabindex="0" role="note"
         data-tooltip="MMA always shows every card in the next week, regardless of this toggle."
         aria-label="MMA always shows every card in the next week, regardless of this toggle.">i</span>
 </div>
@@ -749,29 +749,41 @@
     <!-- Server-Tracked: Full Slate / Pixel's Picks / Play of the Day -->
     <section class="learning-section">
       <h3>Tracked Picks <span class="stats-source">Server-tracked, each pick locked closer to its own game</span></h3>
-      <p class="filter-hint">
-        Locked in by the worker itself, whether or not anyone has the app
+      <details class="explainer">
+        <summary class="explainer-summary">
+          <span class="explainer-lede">Server-locked picks, flat 1 unit each — every one counts toward the totals, flagged or not.</span>
+          <span class="explainer-more" aria-hidden="true">What's counted</span>
+        </summary>
+        <p class="explainer-body">
+          Locked in by the worker itself, whether or not anyone has the app
         open, each one closer to its own game's start time rather than all
         at once — and never changed afterward, once locked. Every pick
         counts toward its tracker's totals below, flagged or not (a flagged
         pick just means it was a thin-day fallback, not that it's excluded).
         Flat 1-unit stake per pick either way, no bankroll cap. The point is
         whether the picks themselves are profitable.
-      </p>
+        </p>
+      </details>
       <div id="trackerTabs" class="perf-period-tabs" role="group" aria-label="Which tracker to show">
         <button class="perf-period-btn" data-tracker="fullslate" type="button">Full Slate</button>
         <button class="perf-period-btn is-active" data-tracker="top5" type="button">Pixel's Picks</button>
         <button class="perf-period-btn" data-tracker="potd" type="button">Play of the Day</button>
         <button class="perf-period-btn" data-tracker="propplay" type="button">Prop Play</button>
       </div>
-      <p class="filter-hint">
-        <strong>Full Slate</strong> tracks one pick per game, every sport, every
+      <details class="explainer">
+        <summary class="explainer-summary">
+          <span class="explainer-lede">Full Slate is one pick per game; Pixel's Picks is exactly 5 a day; Play of the Day is one.</span>
+          <span class="explainer-more" aria-hidden="true">What each tracker covers</span>
+        </summary>
+        <p class="explainer-body">
+          <strong>Full Slate</strong> tracks one pick per game, every sport, every
         day. No odds band or score floor, a complete daily record of the
         algorithm's own lean. <strong>Pixel's Picks</strong> is exactly 5
         picks/day, min and max. <strong>Play of the Day</strong> is the single
         most promising, real-value pick across the whole slate, −200 to +150
         odds.
-      </p>
+        </p>
+      </details>
       <div id="top5Summary" class="learning-grid">
         <div class="metric-card">
           <div class="metric-label">Total Picks</div>
@@ -843,36 +855,53 @@
          the same table. -->
     <section class="learning-section">
       <h3>Ladder Challenge <span class="stats-source">Tracked as climbs, not as a win rate — the bankroll compounds</span></h3>
-      <p class="filter-hint">
-        One lower-risk play a day around −200, staking the entire ladder
+      <details class="explainer">
+        <summary class="explainer-summary">
+          <span class="explainer-lede">One lower-risk play a day around −200, staking the whole ladder bankroll; a loss resets the climb to $20.</span>
+          <span class="explainer-more" aria-hidden="true">How a climb works</span>
+        </summary>
+        <p class="explainer-body">
+          One lower-risk play a day around −200, staking the entire ladder
         bankroll each time. A win rides straight into the next rung; a loss
         ends that climb and the next one starts back at $20, Day 1. Profit is
         skimmed off at fixed points on the way up, and that banked money is
         all a busted climb keeps — which is why each run is shown start to
         finish rather than averaged into anything.
-      </p>
+        </p>
+      </details>
       <div id="ladderTracker" class="ladder-tracker"></div>
     </section>
 
     <!-- Calibration & Audit -->
     <section class="learning-section">
       <h3>Calibration &amp; Audit <span class="stats-source">Reporting only, nothing here changes the algorithm automatically</span></h3>
-      <p class="filter-hint">
-        How well Pixel's Picks' own confidence scores and closing-line value
+      <details class="explainer">
+        <summary class="explainer-summary">
+          <span class="explainer-lede">How well Pixel's Picks' own confidence scores and closing-line value have tracked reality.</span>
+          <span class="explainer-more" aria-hidden="true">How this works</span>
+        </summary>
+        <p class="explainer-body">
+          How well Pixel's Picks' own confidence scores and closing-line value
         have tracked reality. Always scoped to Pixel's Picks specifically,
         regardless of which tab is selected above, since Full Slate and Play
         of the Day don't have a tunable "standard" to audit. Findings, not
         automatic adjustments; the algorithm stays exactly as it is. Use
         this to decide manually whether to change anything.
-      </p>
+        </p>
+      </details>
       <div id="calibrationReport" class="learning-recs"></div>
     </section>
 
     <!-- Daily Learning -->
     <section class="learning-section">
       <h3>Daily Learning <span class="stats-source">Automatic, reviews every morning before the day's picks lock in</span></h3>
-      <p class="filter-hint">
-        The self-correction loop. Every morning at the 2am ET batch, before
+      <details class="explainer">
+        <summary class="explainer-summary">
+          <span class="explainer-lede">Every morning, before picks lock, the app re-weights its own misfiring segments — bounded to x0.70–x1.05.</span>
+          <span class="explainer-more" aria-hidden="true">How this works</span>
+        </summary>
+        <p class="explainer-body">
+          The self-correction loop. Every morning at the 2am ET batch, before
         any picks are chosen, the app reviews its trailing 30 days of graded
         results — both actual wins vs. what its own probabilities predicted,
         and closing-line value — for every sport + bet-type segment and odds
@@ -883,7 +912,8 @@
         only to the <em>next</em> day's selection, and the Full Slate record
         is never adjusted — it keeps measuring the raw engine so the evidence
         this learns from stays unbiased.
-      </p>
+        </p>
+      </details>
       <div id="dailyLearnWeights" class="learning-recs"></div>
       <div id="dailyLearnLog" class="learning-recs"></div>
     </section>
@@ -891,8 +921,13 @@
     <!-- MLB Pitcher Props -->
     <section class="learning-section">
       <h3>MLB Pitcher Props <span class="stats-source">Automatic, scanned 2–3 hours before each game's first pitch</span></h3>
-      <p class="filter-hint">
-        Outs Recorded and Strikeouts for each game's two starting pitchers.
+      <details class="explainer">
+        <summary class="explainer-summary">
+          <span class="explainer-lede">Outs Recorded and Strikeouts for both starters, scanned a few hours before that game's first pitch.</span>
+          <span class="explainer-more" aria-hidden="true">What's tracked</span>
+        </summary>
+        <p class="explainer-body">
+          Outs Recorded and Strikeouts for each game's two starting pitchers.
         Rather than one fixed time for every game, each game is scanned once
         it's a few hours from its own first pitch — early enough to act on,
         late enough that lineups and prop boards have actually settled. This
@@ -902,7 +937,8 @@
         pitcher's own final boxscore line; a pitcher who's scratched or a
         game that's postponed voids rather than grades. Currently one price
         check per game per day, not a running line-movement tracker yet.
-      </p>
+        </p>
+      </details>
       <div id="mlbPropsSummary" class="learning-recs"></div>
       <div id="mlbPropsList" class="learning-recs"></div>
     </section>
@@ -910,15 +946,21 @@
     <!-- NFL QB Props -->
     <section class="learning-section">
       <h3>NFL QB Props <span class="stats-source">Automatic, scanned 2–3 hours before each game's kickoff</span></h3>
-      <p class="filter-hint">
-        Pass Completions and Pass Attempts for each game's starting
+      <details class="explainer">
+        <summary class="explainer-summary">
+          <span class="explainer-lede">Pass Completions and Attempts for each starting quarterback, scanned a few hours before kickoff.</span>
+          <span class="explainer-more" aria-hidden="true">What's tracked</span>
+        </summary>
+        <p class="explainer-body">
+          Pass Completions and Pass Attempts for each game's starting
         quarterback(s), scanned the same way MLB Pitcher Props are — a few
         hours before kickoff rather than one fixed time. De-vigs the market
         the same way every other board on this app does, and tracks the one
         side (if any) that clears a genuine edge. Settled against the
         quarterback's own final boxscore passing line; a QB who doesn't
         play voids rather than grades.
-      </p>
+        </p>
+      </details>
       <div id="nflPropsSummary" class="learning-recs"></div>
       <div id="nflPropsList" class="learning-recs"></div>
     </section>
@@ -926,8 +968,13 @@
     <!-- WNBA Player Props -->
     <section class="learning-section">
       <h3>WNBA Player Props <span class="stats-source">Automatic, scanned 2–3 hours before each game's tip-off</span></h3>
-      <p class="filter-hint">
-        Points + Rebounds + Assists (PRA) and Rebounds + Assists, scanned the
+      <details class="explainer">
+        <summary class="explainer-summary">
+          <span class="explainer-lede">Points + Rebounds + Assists and Rebounds + Assists, scanned a few hours before tip-off.</span>
+          <span class="explainer-more" aria-hidden="true">What's tracked</span>
+        </summary>
+        <p class="explainer-body">
+          Points + Rebounds + Assists (PRA) and Rebounds + Assists, scanned the
         same way MLB Pitcher Props and NFL QB Props are. De-vigs the market
         the same way every other board on this app does, and tracks the one
         side (if any) that clears a genuine edge. Settled against the
@@ -935,7 +982,8 @@
         rather than grades. No minutes-played eligibility filter — no
         reliable pregame minutes-projection source exists to gate on, so
         this tracks the raw market instead of a fabricated proxy for one.
-      </p>
+        </p>
+      </details>
       <div id="wnbaPropsSummary" class="learning-recs"></div>
       <div id="wnbaPropsList" class="learning-recs"></div>
     </section>
@@ -943,8 +991,13 @@
     <!-- NHL Player Props -->
     <section class="learning-section">
       <h3>NHL Player Props <span class="stats-source">Automatic, scanned 2–3 hours before each game's puck drop</span></h3>
-      <p class="filter-hint">
-        Shots on Goal, scanned the same way the other player-prop boards on
+      <details class="explainer">
+        <summary class="explainer-summary">
+          <span class="explainer-lede">Shots on Goal, scanned a few hours before puck drop.</span>
+          <span class="explainer-more" aria-hidden="true">What's tracked</span>
+        </summary>
+        <p class="explainer-body">
+          Shots on Goal, scanned the same way the other player-prop boards on
         this page are. De-vigs the market the same way every other board on
         this app does, and tracks the one side (if any) that clears a
         genuine edge. Settled against the skater's own final boxscore line;
@@ -953,7 +1006,8 @@
         data (who's playing which forward line or power-play unit tonight)
         that isn't available from any free source, so this tracks the raw
         market instead of a filter it can't actually apply.
-      </p>
+        </p>
+      </details>
       <div id="nhlPropsSummary" class="learning-recs"></div>
       <div id="nhlPropsList" class="learning-recs"></div>
     </section>
@@ -961,8 +1015,13 @@
     <!-- Algorithm Health -->
     <section class="learning-section">
       <h3>Algorithm Health <span class="stats-source">Automatic, reviews every Monday, 7am ET</span></h3>
-      <p class="filter-hint">
-        Also always scoped to Pixel's Picks' own selection criteria,
+      <details class="explainer">
+        <summary class="explainer-summary">
+          <span class="explainer-lede">A weekly review that acts on its own: a segment falling short of its own fair probability gets auto-paused until it recovers.</span>
+          <span class="explainer-more" aria-hidden="true">What it can change</span>
+        </summary>
+        <p class="explainer-body">
+          Also always scoped to Pixel's Picks' own selection criteria,
         regardless of the tab selected above. Unlike Calibration &amp; Audit
         above, this section acts on its own: a sport + bet-type segment whose
         actual results fall significantly short of what its own no-vig fair
@@ -974,7 +1033,8 @@
         proposal, never applied automatically. This panel is read-only —
         every action here is a report of what the algorithm already did or
         proposed, not a control for changing it.
-      </p>
+        </p>
+      </details>
       <div id="algoHealthConfig" class="learning-table"></div>
       <div id="algoHealthPaused" class="learning-recs"></div>
       <div id="algoHealthLog" class="learning-recs"></div>
@@ -983,6 +1043,6 @@
   </div>
 </aside>
 
-<script type="module" src="app.js?v=1.161"></script>
+<script type="module" src="app.js?v=1.162"></script>
 </body>
 </html>

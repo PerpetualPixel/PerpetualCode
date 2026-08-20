@@ -15,6 +15,7 @@ import { CONFIG } from './config.js';
 import { DEMO_EVENTS } from './demo.js';
 import { teamLogoUrl } from './team-logos.js';
 import { leagueIconSvg } from './league-icons.js';
+import { enhanceSelect } from './custom-select.js';
 import { BUILD_INFO } from './version.js';
 import { summarizePicks, gradePick } from './learning.js';
 import { liveSetsLabel } from './tennis-results.js';
@@ -83,6 +84,14 @@ import {
   tennisRecentForm,
   tennisHeadToHead,
 } from './insights.js';
+
+/* Handle for the Sport filter's themed dropdown, so
+   renderTrackerSportFilterOptions can tell it the option list changed.
+   Declared here rather than at its assignment further down: that sits
+   below the function that reads it, and a `const` there would leave the
+   reference in the temporal dead zone if anything ever rendered the
+   tracker during module evaluation. */
+let enhancedSportFilter = null;
 
 const BANKROLL_KEY = 'pixelpick.bankroll.v1';
 const SLATE_LEAGUE_KEY = 'pixelpick.slateLeague.v2';
@@ -4664,6 +4673,15 @@ document.addEventListener('keydown', (event) => {
 el.slateSortSelect?.addEventListener('change', () => {
   renderFullSlate();
 });
+
+/* Themed dropdowns for the two selects that sit on surfaces the user looks
+   at directly. A native <select> opens an OS-drawn option list that this
+   page's theme can't reach, so on a near-black page it flashes a bright
+   system menu — the same reason #slateEventSelect was hand-wrapped in
+   app.html. Both keep the <select> as their source of truth, so the
+   listeners above and in renderTrackerSportFilterOptions are untouched. */
+enhanceSelect(el.slateSortSelect, { label: 'Sort' });
+enhancedSportFilter = enhanceSelect(el.trackerSportFilter, { label: 'Sport' });
 el.slateBody.addEventListener('click', (event) => {
   const mlbStats = event.target.closest('[data-show-mlb-stats]');
   if (mlbStats) {
@@ -5829,6 +5847,10 @@ function renderTrackerSportFilterOptions(allPicks) {
     ...labels.map((label) => `<option value="${esc(label)}">${esc(label)}</option>`),
   ].join('');
   el.trackerSportFilter.value = state.trackerSportFilter;
+  // The options above are rebuilt from whatever sports today's data
+  // actually contains, so the themed button standing in for this select
+  // has to re-read them — setting .value directly fires no 'change'.
+  enhancedSportFilter?.refresh();
 }
 
 /** `sportFilter` is a sportGroupLabel() string ("MLB", "ATP") or "all" — see renderTrackerSportFilterOptions. */
