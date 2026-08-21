@@ -197,6 +197,44 @@ Invoke-RestMethod -Method Post -Uri "$base/admin/regrade-mma-totals?apply=true" 
 
 ---
 
+## Deploying after 2am ET: redrawing the day
+
+Every board is drawn once per ET date at 2am and is then immutable — no
+later tick may quietly replace a posted pick. So a worker deployed *after*
+2am finds the day already drawn by the previous build, skips all four
+boards, and the new selection logic or stake bands don't take effect until
+tomorrow.
+
+`/admin/redraw-today` is the escape hatch. It clears today's Play of the
+Day, Prop Play, Pixel's Picks and ladder rung, then redraws all four in the
+usual order (POTD → Prop Play → Pixel's Picks → ladder) under the currently
+deployed logic. Run it right after `wrangler deploy`:
+
+```powershell
+$key = @{ "X-Owner-Key" = "<your owner passphrase>" }
+$base = "https://pixel-pick-odds.mgbouldering.workers.dev"
+
+Invoke-RestMethod -Method Post -Uri "$base/admin/redraw-today" -Headers $key
+```
+
+It reports what it cleared and what got drawn. Two things it refuses to do:
+
+- **Before 2am ET** — nothing has been drawn yet, and clearing would only
+  wipe yesterday's still-current boards.
+- **Once any of the day's games has started** — the board is partly live or
+  already graded by then, deleting a pick would lose a real tracked result,
+  and no replacement can be drawn for a game in progress. The response lists
+  exactly which picks are underway. `-Body '{"force": true}'` overrides,
+  which is only right if you accept losing those picks outright.
+
+A ladder rung that's already been graded is always kept, even under
+`force`: its result has already moved the climb's bankroll, and redrawing it
+would let the same rung compound twice. The rest of the day still redraws
+around it. Full Slate is left alone — it's the raw research record, locked
+per game on its own timeline, not a promised daily board.
+
+---
+
 ## If something's wrong
 
 | Symptom | Cause | Fix |

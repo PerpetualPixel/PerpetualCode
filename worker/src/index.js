@@ -52,7 +52,7 @@ import { runPropPlayDaily, runPropPlayGrading, getAllPropPlays } from './prop-pl
 import { extractSlipFromImage } from './slip-vision.js';
 import { consumeQuota, getQuotaUsage } from './tail-fade-quota.js';
 import { runNhlPropsScan, runNhlPropsGrading, getAllNhlPropsTracked } from './nhl-props.js';
-import { runPotdDaily, runPotdClvSnapshot, runPotdGrading, backfillPotdAnalysis, getPotd, getPotdLeaning, getPotdHistory, retractPotd, regradePotdTennisVoids } from './potd.js';
+import { runPotdDaily, runPotdClvSnapshot, runPotdGrading, backfillPotdAnalysis, getPotd, getPotdLeaning, getPotdHistory, retractPotd, regradePotdTennisVoids, etParts } from './potd.js';
 import { runLadderDaily, runLadderGrading, getLadder, getLadderHistory } from './ladder.js';
 import { getOrGenerateAnalysis } from './analysis.js';
 import {
@@ -79,6 +79,8 @@ import {
   retractTop5Picks,
   regradeTop5TennisVoids,
   runBoardReview,
+  clearTrackedDay,
+  GENERATION_HOUR_ET,
 } from './tracking.js';
 import { authorize as authorizeSettings, getSettings, putSettings } from './settings.js';
 import {
@@ -968,6 +970,7 @@ export default {
       '/admin/manual-mma-result',
       '/admin/audit-mma-totals',
       '/admin/regrade-mma-totals',
+      '/admin/redraw-today',
     ]);
     // Bet-slip extraction spends real model credits on every call, and the
     // request body is an image, so an unthrottled endpoint is both a cost
@@ -2024,6 +2027,142 @@ export default {
           dateKey: slate.dateKey,
           reason,
           regenerated,
+        }, { headers: cors });
+      } catch (error) {
+        return json({ error: String(error).slice(0, 200) }, { status: 500, headers: cors });
+      }
+    }
+
+    /**
+     * Redraws TODAY's four boards from scratch, under whatever selection
+     * logic and stake bands are currently deployed.
+     *
+     * Every board is idempotent per ET date on purpose — once drawn, a
+     * pick is an editorial call made at a point in time and no later tick
+     * may quietly replace it. That guarantee is exactly what gets in the
+     * way the one time you WANT a redraw: a worker deployed after 2am ET
+     * finds the day already drawn by the previous build and skips all four
+     * boards, so the new logic doesn't take effect until tomorrow. This is
+     * the explicit, owner-only escape hatch for that case (it's what the
+     * 2026-08-21 reset needed, the worker having gone out after the batch
+     * hour) — never on a timer, never reachable by the app.
+     *
+     * Refuses once any of the day's games has started: past that point the
+     * board is partly live or already graded, deleting a pick would lose a
+     * real tracked result, and a replacement can't be drawn for a game in
+     * progress anyway. `{"force": true}` overrides, which is only ever
+     * right if you accept losing those picks outright.
+     *
+     * Full Slate is deliberately left alone — it's the raw research record
+     * feeding the learning review, locked per-game on its own timeline
+     * rather than a promised daily board.
+     */
+    if (pathname === '/admin/redraw-today' && request.method === 'POST') {
+      const auth = authorizeSettings(request, env);
+      if (!auth.ok) return json({ error: auth.error }, { status: auth.status, headers: cors });
+      try {
+        const now = Date.now();
+        const { date: dateKey, hour } = etParts(now);
+        const body = await request.json().catch(() => ({}));
+        const force = body?.force === true;
+
+        // Before the batch hour there's nothing drawn to redraw, and the
+        // generators would all skip anyway — clearing here would just wipe
+        // yesterday's still-current boards for no gain.
+        if (hour < GENERATION_HOUR_ET) {
+          return json({
+            error: `before the ${GENERATION_HOUR_ET}am ET generation hour — today's boards haven't been drawn yet`,
+            dateKey,
+          }, { status: 409, headers: cors });
+        }
+
+        const potdKey = `potd:${dateKey}`;
+        const propKey = `propplay:${dateKey}`;
+        const ladderPlayKey = `ladder:play:${dateKey}`;
+        const [top5Existing, potdRaw, propRaw, ladderRaw] = await Promise.all([
+          getTop5(env, { now }),
+          env.POTD_KV.get(potdKey),
+          env.POTD_KV.get(propKey),
+          env.POTD_KV.get(ladderPlayKey),
+        ]);
+        const potdRecord = potdRaw ? JSON.parse(potdRaw) : null;
+        const propRecord = propRaw ? JSON.parse(propRaw) : null;
+        const ladderRecord = ladderRaw ? JSON.parse(ladderRaw) : null;
+
+        // Prop Play legs carry an ISO `commence`; every other board stores
+        // epoch ms. Anything unparseable counts as started, so a record
+        // shaped in a way this doesn't understand fails closed.
+        const startedAlready = (value) => {
+          const ms = typeof value === 'number' ? value : Date.parse(value ?? '');
+          return !Number.isFinite(ms) || ms <= now;
+        };
+        const started = [
+          ...top5Existing.filter((p) => startedAlready(p.commenceMs))
+            .map((p) => `Pixel's Picks: ${p.selection}`),
+          ...(potdRecord?.pick && startedAlready(potdRecord.pick.commenceMs)
+            ? [`Play of the Day: ${potdRecord.pick.selection}`] : []),
+          ...(propRecord?.legs ?? []).filter((l) => startedAlready(l.commenceMs ?? l.commence))
+            .map((l) => `Prop Play: ${l.label}`),
+          ...(ladderRecord?.pick && startedAlready(ladderRecord.pick.commenceMs)
+            ? [`Ladder: ${ladderRecord.pick.selection}`] : []),
+        ];
+        if (started.length && !force) {
+          return json({
+            error: "today's board is already underway — redrawing now would delete tracked picks whose games have started",
+            dateKey,
+            started,
+            hint: 'resend with {"force": true} to redraw anyway, accepting the loss of those picks',
+          }, { status: 409, headers: cors });
+        }
+
+        // A settled rung has already moved the climb's bankroll (see
+        // ladder.js's settleLadderPlay, applied at grading) — clearing it
+        // would let the same rung settle a second time and compound twice.
+        // Left in place; the rest of the day still redraws around it.
+        const ladderGraded = Boolean(ladderRecord)
+          && (ladderRecord.pick?.status ?? 'pending') !== 'pending';
+        const cleared = {
+          top5: await clearTrackedDay(env, dateKey),
+          potd: Boolean(potdRecord),
+          propPlay: Boolean(propRecord),
+          ladder: Boolean(ladderRecord) && !ladderGraded,
+        };
+        await Promise.all([
+          potdRecord ? env.POTD_KV.delete(potdKey) : null,
+          propRecord ? env.POTD_KV.delete(propKey) : null,
+          cleared.ladder ? env.POTD_KV.delete(ladderPlayKey) : null,
+          // The hold reason recorded on a skip, else /ladder would explain
+          // a freshly-posted rung with a stale "why there's nothing today".
+          cleared.ladder ? env.POTD_KV.delete(`ladder:status:${dateKey}`) : null,
+        ].filter(Boolean));
+
+        // Same order, same shared slate fetch, same reasoning as the 2am
+        // scheduled run above: Play of the Day first, Prop Play second,
+        // then Pixel's Picks (which read both from KV to exclude their
+        // games), and the ladder last of all. Sequential for that reason —
+        // run concurrently the exclusion reads would race the writes.
+        const sharedSlate = fetchFullSlateEvents(env, ctx);
+        const fetchFullSlate = () => sharedSlate;
+        const potd = await runPotdDaily(env, ctx, now, { fetchFullSlate });
+        const propPlay = await runPropPlayDaily(env, ctx, now);
+        const top5 = await runTop5Batch(env, ctx, now, { fetchFullSlate });
+        const ladder = cleared.ladder
+          ? await runLadderDaily(env, ctx, now, {
+            fetchFullSlate,
+            getTop5Picks: () => getTop5(env, { now }),
+          })
+          : { skipped: true, reason: 'kept — already graded', dateKey };
+
+        return json({
+          dateKey,
+          cleared,
+          drawn: {
+            potd: potd?.skipped ? potd : { posted: true, selection: potd?.record?.pick?.selection ?? null },
+            propPlay: { posted: propPlay?.created === true, legs: propPlay?.record?.legs?.length ?? 0 },
+            top5: { picks: (await getTop5(env, { now })).length, result: top5 },
+            ladder: ladder?.skipped ? ladder : { posted: true, selection: ladder?.record?.pick?.selection ?? null },
+          },
+          forced: force,
         }, { headers: cors });
       } catch (error) {
         return json({ error: String(error).slice(0, 200) }, { status: 500, headers: cors });

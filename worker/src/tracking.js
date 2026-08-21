@@ -1114,6 +1114,32 @@ export async function getAllTrackedPicks(env, { now = Date.now(), days = 90 } = 
 }
 
 /**
+ * Drops one day's Pixel's Picks completely — every pick record, every
+ * retracted record, and the manifest that indexes them — leaving the day
+ * looking to runTop5Batch exactly as it does before its first draw.
+ *
+ * Shared by resetAllTracking below (which walks the whole retention window)
+ * and by /admin/redraw-today, which clears a single day so the board can be
+ * drawn again under changed selection logic.
+ */
+export async function clearTrackedDay(env, dateKey) {
+  let deleted = 0;
+  const { pickIds, retractedPickIds } = await loadTrackedPicks(env, dateKey);
+  for (const id of pickIds) {
+    await env.POTD_KV.delete(`track:${dateKey}:pick:${id}`);
+    deleted++;
+  }
+  // Retracted records sit under their own key prefix — dropping the
+  // manifest without them would leave unreachable orphans behind.
+  for (const id of retractedPickIds) {
+    await env.POTD_KV.delete(`track:${dateKey}:retracted:${id}`);
+    deleted++;
+  }
+  await env.POTD_KV.delete(`track:${dateKey}:top5`);
+  return deleted;
+}
+
+/**
  * Wipes every tracked pick and manifest currently in KV — the server-side
  * counterpart to the client's local "Archive & Reset" button. Both are
  * explicit, user-triggered actions (see /top5-reset route), never run on a
@@ -1122,19 +1148,7 @@ export async function getAllTrackedPicks(env, { now = Date.now(), days = 90 } = 
 export async function resetAllTracking(env, { now = Date.now(), days = 90 } = {}) {
   let deleted = 0;
   for (let i = 0; i < days; i++) {
-    const dateKey = etDate(now - i * 86400000);
-    const { pickIds, retractedPickIds } = await loadTrackedPicks(env, dateKey);
-    for (const id of pickIds) {
-      await env.POTD_KV.delete(`track:${dateKey}:pick:${id}`);
-      deleted++;
-    }
-    // Retracted records sit under their own key prefix — dropping the
-    // manifest without them would leave unreachable orphans behind.
-    for (const id of retractedPickIds) {
-      await env.POTD_KV.delete(`track:${dateKey}:retracted:${id}`);
-      deleted++;
-    }
-    await env.POTD_KV.delete(`track:${dateKey}:top5`);
+    deleted += await clearTrackedDay(env, etDate(now - i * 86400000));
   }
   return { deleted };
 }
