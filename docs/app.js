@@ -827,6 +827,7 @@ const el = {
   calibrationReport: document.getElementById('calibrationReport'),
   dailyLearnWeights: document.getElementById('dailyLearnWeights'),
   dailyLearnLog: document.getElementById('dailyLearnLog'),
+  dailyLearnSummary: document.getElementById('dailyLearnSummary'),
   mlbPropsSummary: document.getElementById('mlbPropsSummary'),
   mlbPropsList: document.getElementById('mlbPropsList'),
   nflPropsSummary: document.getElementById('nflPropsSummary'),
@@ -6442,6 +6443,7 @@ async function renderDailyLearningSection() {
   if (!data) {
     el.dailyLearnWeights.innerHTML = `<p class="empty">Couldn't load daily learning data.</p>`;
     el.dailyLearnLog.innerHTML = '';
+    if (el.dailyLearnSummary) el.dailyLearnSummary.textContent = 'Daily learning — data unavailable';
     renderAlgoChangeBanner(null);
     return;
   }
@@ -6464,6 +6466,7 @@ async function renderDailyLearningSection() {
   const allEntries = data.log ?? [];
   if (!allEntries.length) {
     el.dailyLearnLog.innerHTML = `<div class="rec-item">No reviews yet — the first one runs at the next 2am ET batch and reports here every morning after.</div>`;
+    setDailyLearnSummary(entries.length, []);
     return;
   }
 
@@ -6547,33 +6550,40 @@ async function renderDailyLearningSection() {
       </div>`;
     }).join('');
 
-  // One disclosure for the whole log, labelled with the span it covers.
-  // Expanded, this is every reviewed day's full report stacked down the
-  // page — around ten lines each, so a fortnight of reviews buried the rest
-  // of the dashboard under a wall of statistics nobody scrolls. It's a
-  // reference you consult, not a feed you read: closed by default, and the
-  // date range on the summary says what's inside without opening it.
-  const shownDates = [...recent, ...archived]
-    .map((e) => e.dateKey).filter(Boolean).sort();
-  const dayCount = shownDates.length;
-  const range = dayCount && shownDates[0] !== shownDates[dayCount - 1]
-    ? `${shownDates[0]} – ${shownDates[dayCount - 1]}`
-    : (shownDates[0] ?? '');
-
   el.dailyLearnLog.innerHTML = `
-    <details class="explainer log-disclosure">
-      <summary class="explainer-summary">
-        <span class="explainer-lede">Daily review log${range ? ` — <strong>${esc(range)}</strong>` : ''}
-          <span class="log-day-count">${dayCount} day${dayCount === 1 ? '' : 's'}</span></span>
-        <span class="explainer-more">Read</span>
-      </summary>
-      <div class="explainer-body log-disclosure-body">
-        ${recentHtml}
-        ${archived.length > 0
-          ? `<div class="log-archived"><p class="log-archived-head">Archived weeks (${Math.ceil(archived.length / 7)})</p>${archivedHtml}</div>`
-          : ''}
-      </div>
-    </details>`;
+    ${recentHtml}
+    ${archived.length > 0
+      ? `<div class="log-archived"><p class="log-archived-head">Archived weeks (${Math.ceil(archived.length / 7)})</p>${archivedHtml}</div>`
+      : ''}`;
+
+  // Label the disclosure both halves sit inside (see app.html) with the span
+  // the log actually covers, so what's behind it is legible while it's shut.
+  setDailyLearnSummary(entries.length, [...recent, ...archived]);
+}
+
+/**
+ * The Daily Learning disclosure's summary line: how many adjustments are
+ * live right now, and which days the report log below them covers.
+ *
+ * Written here rather than in the markup because the range is whatever the
+ * feed turned out to hold — a fresh install has one day, a long-running one
+ * has the full retention window.
+ */
+function setDailyLearnSummary(weightCount, entries) {
+  if (!el.dailyLearnSummary) return;
+
+  const dates = entries.map((e) => e.dateKey).filter(Boolean).sort();
+  const range = dates.length && dates[0] !== dates[dates.length - 1]
+    ? `${dates[0]} – ${dates[dates.length - 1]}`
+    : (dates[0] ?? '');
+
+  const adjustments = weightCount === 0
+    ? 'No active adjustments'
+    : `${weightCount} active adjustment${weightCount === 1 ? '' : 's'}`;
+
+  el.dailyLearnSummary.innerHTML = `Daily learning — ${esc(adjustments)}${
+    range ? `, reviews covering <strong>${esc(range)}</strong>` : ''
+  }${dates.length ? `<span class="log-day-count">${dates.length} day${dates.length === 1 ? '' : 's'}</span>` : ''}`;
 }
 
 /** Current state of the weekly algorithm health review (see worker/src/algo-health.js). */
