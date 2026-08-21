@@ -75,8 +75,8 @@ import { applyTennisFormSignal } from '../../docs/qualitative.js';
 import { loadTeamContextsFor, applyTeamFormSignal } from './team-form.js';
 import { getNflEfficiency } from './nfl-efficiency.js';
 import { loadTennisArchivesFor } from './tennis-archive.js';
-import { isPickWindowOpen } from './tracking.js';
-import { scheduleStillOpen, isExhibition, isEligibleTennisMatch, etParts, etDatePlusDays } from './potd.js';
+import { GENERATION_HOUR_ET } from './tracking.js';
+import { isExhibition, isEligibleTennisMatch, etParts, etDatePlusDays } from './potd.js';
 
 export const LADDER_BASE = 20;
 /** Skim points: the first time the bankroll passes one, everything above it is banked. */
@@ -119,7 +119,6 @@ const GRADING_LOOKBACK_DAYS = 3;
 const STATE_KEY = 'ladder:state';
 const RUNS_KEY = 'ladder:runs';
 const playKey = (dateKey) => `ladder:play:${dateKey}`;
-const poolKey = (dateKey) => `ladder-pool:${dateKey}`;
 /**
  * Why today has no rung yet. runLadderDaily already returned this as a
  * {skipped, reason} on every tick, but that value only ever went to the
@@ -258,24 +257,6 @@ export async function ladderExclusions(env, dateKey, top5Picks = []) {
 }
 
 /**
- * Snapshots newly-lockable ladder-band candidates into today's pool —
- * identical reasoning to potd.js's updatePotdPool: an early game's price is
- * gone from the feed long before an evening game's own lock window opens, so
- * "compare the whole day fairly" means freezing each candidate when it
- * becomes trustworthy rather than re-reading prices later.
- */
-async function updateLadderPool(env, ctx, dateKey, lockable, now) {
-  const raw = await env.POTD_KV.get(poolKey(dateKey));
-  const pool = raw ? JSON.parse(raw) : { date: dateKey, entries: [] };
-  const known = new Set(pool.entries.map((e) => e.id));
-  const fresh = lockable.filter((c) => !known.has(c.id));
-  if (!fresh.length) return pool;
-  pool.entries.push(...fresh.map((c) => ({ ...c, capturedAt: now })));
-  ctx.waitUntil(env.POTD_KV.put(poolKey(dateKey), JSON.stringify(pool), { expirationTtl: KV_TTL_SECONDS }));
-  return pool;
-}
-
-/**
  * The day's ladder play out of a pool of qualifiers: best score wins, and
  * among candidates within NEAR_TIE_SCORE of that best, the one priced
  * closest to -200 takes it. Exported for the tests — the selection rule is
@@ -292,17 +273,22 @@ export function chooseLadderPlay(candidates) {
 
 /**
  * Posts today's rung, once. Runs on the same hourly tick as everything else
- * and no-ops until the day's field is settled (scheduleStillOpen false —
- * the same signal Play of the Day locks on), which also means the Play of
- * the Day and Prop Play are already posted by the time this picks, so the
- * exclusions above are reading a complete picture rather than an empty one.
+ * and draws once at the generation hour, after Play of the Day, Pixel's
+ * Picks and the Prop Play are already posted (index.js orders the chain),
+ * so the exclusions above read a complete picture rather than an empty one.
  *
- * Never bets more than the run's own bankroll, and never posts on a day
- * with nothing in band: the ladder holding its place is a valid outcome,
- * not a failure.
+ * Never bets more than the run's own bankroll. The rung posts every day
+ * the slate has any eligible game at all — the in-band standard falls
+ * back to the best-scoring eligible candidate (marked viaFallback) rather
+ * than holding; see the header.
  */
 export async function runLadderDaily(env, ctx, now = Date.now(), { fetchFullSlate, getTop5Picks = async () => [] } = {}) {
-  const dateKey = etParts(now).date;
+  const { date: dateKey, hour } = etParts(now);
+  // Same generation hour as every other board — see tracking.js's
+  // GENERATION_HOUR_ET. Before it, yesterday's rung is still the rung.
+  if (hour < GENERATION_HOUR_ET) {
+    return { skipped: true, reason: 'before generation hour', dateKey };
+  }
   // Records why the day has no rung, so /ladder can explain an empty
   // section instead of leaving "holding on purpose" and "broken" looking
   // identical. Written on every skip, cleared once a rung actually posts.
@@ -357,15 +343,14 @@ export async function runLadderDaily(env, ctx, now = Date.now(), { fetchFullSlat
     return etParts(c.commenceMs).date === dateKey;
   });
 
-  await updateLadderPool(env, ctx, dateKey, structurallyEligible.filter((c) => isPickWindowOpen(c, now)), now);
-  if (scheduleStillOpen(events, dateKey, now)) {
-    return hold("still comparing today's games", { inBandSoFar: structurallyEligible.length });
-  }
-
-  const poolRaw = await env.POTD_KV.get(poolKey(dateKey));
-  const pool = poolRaw ? JSON.parse(poolRaw).entries : [];
+  // One draw at the generation hour, same as every other board since the
+  // 2026-08-21 reset — the capture-into-a-pool-as-windows-open cycle (and
+  // its "still comparing today's games" hold) is gone with the rest of the
+  // progressive-locking machinery. index.js runs this after Play of the
+  // Day, Pixel's Picks and the Prop Play are decided, so the exclusions
+  // below read a complete day.
   const { blockedEventIds, contradictable } = await ladderExclusions(env, dateKey, await getTop5Picks());
-  const eligible = pool.filter((c) => (
+  const eligible = structurallyEligible.filter((c) => (
     c.commenceMs > now
     && !blockedEventIds.has(c.eventId)
     && !contradictable.some((pick) => contradictsPick(c, pick))
@@ -377,8 +362,8 @@ export async function runLadderDaily(env, ctx, now = Date.now(), { fetchFullSlat
     // excluded). Deliberately not written to KV: a hold isn't a play, and
     // tomorrow's tick should be free to post one.
     return hold("nothing on today's slate clears the ladder's basic eligibility checks", {
-      poolSize: pool.length,
-      blockedByExclusion: pool.length - eligible.length,
+      poolSize: structurallyEligible.length,
+      blockedByExclusion: structurallyEligible.length - eligible.length,
     });
   }
 

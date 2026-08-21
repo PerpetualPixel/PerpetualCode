@@ -473,10 +473,10 @@ export default {
     // dynamic window, see worker/src/wnba-props.js.
     ctx.waitUntil(runWnbaPropsScan(env, ctx, now, { fetchFullSlate: () => fetchFullSlateEvents(env, ctx) }));
     ctx.waitUntil(runWnbaPropsGrading(env, ctx, now));
-    // Prop Play of the Day — one safe-line straight/2-leg parlay with a
-    // stats-backed writeup, built once pregame and graded from ESPN
-    // boxscores. See worker/src/prop-play.js.
-    ctx.waitUntil(runPropPlayDaily(env, ctx, now));
+    // Prop Play selection moved into the ordered selection chain below —
+    // it has to be decided after the Play of the Day and before Pixel's
+    // Picks so the day's boards never overlap. Grading stays here on every
+    // tick, same as before.
     ctx.waitUntil(runPropPlayGrading(env, ctx, now));
 
     // Every tick: NHL player props (Shots on Goal) — same per-game dynamic
@@ -582,10 +582,24 @@ export default {
           const top5Before = await getTop5(env, { now });
           const wasComplete = top5Before.length >= TOP5_COUNT;
 
-          const [, , potdResult] = await Promise.all([
+          // The day's ranking, in order, per explicit product direction
+          // (2026-08-21 reset): the Play of the Day is the slate's #1 pick
+          // and is decided FIRST; the Prop Play second; Pixel's Picks are
+          // the next 5 after both, with the flagships' games excluded
+          // (tracking.js reads them from KV, which is why the awaits are
+          // sequential and not a Promise.all — run concurrently, the
+          // exclusion reads would race the writes and silently pass on an
+          // empty set). Each step is idempotent per ET date and a failure
+          // is caught so a bad POTD run can never cost the day's other
+          // boards. The Full Slate batch doesn't read any of them, so it
+          // runs alongside the Pixel's Picks draw.
+          const potdResult = await runPotdDaily(env, ctx, now, { fetchFullSlate })
+            .catch((e) => { console.error('Play of the Day selection failed:', e); return null; });
+          await runPropPlayDaily(env, ctx, now)
+            .catch((e) => console.error('Prop Play selection failed:', e));
+          await Promise.all([
             runTop5Batch(env, ctx, now, { fetchFullSlate }),
             runFullSlateBatch(env, ctx, now, { fetchFullSlate }),
-            runPotdDaily(env, ctx, now, { fetchFullSlate }),
           ]);
 
           // AFTER that Promise.all, never inside it: the ladder's whole

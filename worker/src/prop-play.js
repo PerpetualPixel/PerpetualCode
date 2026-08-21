@@ -358,7 +358,10 @@ export async function runPropPlayDaily(env, ctx, now = Date.now(), { debug = fal
     .sort((x, y) => new Date(x.commence_time) - new Date(y.commence_time))
     .slice(0, MAX_GAMES_SCANNED);
   trace.push(`games today, pregame: ${games.length}`);
-  if (!games.length) return { created: false, reason: 'no pregame games today', trace };
+  // No early return on an empty WNBA day: the moneyline pool below draws
+  // from every slate sport, and bailing here was what let a no-WNBA day
+  // post no Prop Play at all — the exact "code stopping it from posting"
+  // the 2026-08-21 reset removes.
 
   let candidates = [];
   for (const game of games) {
@@ -369,7 +372,9 @@ export async function runPropPlayDaily(env, ctx, now = Date.now(), { debug = fal
     trace.push(`${game.away_team} @ ${game.home_team}: ${extracted.length} safe-band alternates`);
     candidates = candidates.concat(extracted);
   }
-  if (!candidates.length) return { created: false, reason: 'no safe-band alternate lines found', trace };
+  // Same rule as the games check above: an empty alternate-line board is a
+  // note for the trace, not a reason to skip the day.
+  if (!candidates.length) trace.push('no safe-band alternate lines found');
 
   // SAFEST line first — heaviest juice = deepest below the player's normal
   // output — and one lookup per player+stat, which keeps each player's
@@ -415,8 +420,50 @@ export async function runPropPlayDaily(env, ctx, now = Date.now(), { debug = fal
       qualified.push(...mls);
     } catch { trace.push(`${sportKey}: ml fetch failed`); }
   }
+  // The day's boards never overlap: anything already featured by the Play
+  // of the Day or a Pixel's Pick is off the table here. (index.js orders
+  // the chain POTD -> Prop Play -> Pixel's Picks at the generation hour,
+  // so normally only the POTD read finds anything — the manifest read
+  // covers a mid-day redeploy where Pixel's Picks already exist.)
+  try {
+    const [potdRaw, top5ManifestRaw] = await Promise.all([
+      env.POTD_KV.get(`potd:${dateKey}`),
+      env.POTD_KV.get(`track:${dateKey}:top5`),
+    ]);
+    const featured = new Set();
+    const potd = potdRaw ? JSON.parse(potdRaw) : null;
+    if (potd?.pick?.eventId) featured.add(potd.pick.eventId);
+    for (const id of (top5ManifestRaw ? JSON.parse(top5ManifestRaw).pickIds ?? [] : [])) {
+      featured.add(id.split(':')[0]);
+    }
+    if (featured.size) {
+      const before = qualified.length;
+      for (let i = qualified.length - 1; i >= 0; i--) {
+        if (featured.has(qualified[i].game?.oddsEventId)) qualified.splice(i, 1);
+      }
+      if (qualified.length !== before) trace.push(`${before - qualified.length} legs dropped (already featured by another board)`);
+    }
+  } catch { trace.push('cross-board dedupe read failed — continuing'); }
+
   trace.push(`qualified legs: ${qualified.length}`);
-  if (!qualified.length) return { created: false, reason: 'no leg cleared the conviction gates', trace };
+  // "There will be a prop play no matter what": when nothing clears the
+  // conviction gates, fall back to the safest available candidate (the
+  // heaviest line in the band — deepest below the player's normal output)
+  // rather than skipping the day, flagged so the writeup can say so. Only
+  // a day with literally no candidate anywhere posts nothing.
+  let viaFallback = false;
+  if (!qualified.length) {
+    const fallbackPool = candidates
+      .filter((c) => c.game?.commence && new Date(c.game.commence).getTime() > now)
+      .sort((x, y) => x.decimal - y.decimal);
+    if (!fallbackPool.length) {
+      return { created: false, reason: 'no prop or moneyline candidate anywhere on the slate today', trace };
+    }
+    const c = fallbackPool[0];
+    qualified.push({ ...c, profile: c.profile ?? null, conviction: 0 });
+    viaFallback = true;
+    trace.push(`fallback: ${c.player} ${c.need}+ ${c.statKey} — no leg cleared the gates, safest line taken`);
+  }
 
   // Every qualified leg is already SAFE (the gates saw to that), so the
   // pairing optimizes what the ticket PAYS for that safety. All cross-game
@@ -456,6 +503,10 @@ export async function runPropPlayDaily(env, ctx, now = Date.now(), { debug = fal
   const record = {
     date: dateKey,
     kind: legs.length === 2 ? 'parlay' : 'straight',
+    // True when the conviction gates found nothing and the safest available
+    // line was taken instead — surfaces read this the same way they read
+    // Pixel's Picks' own flagged fallback slots.
+    ...(viaFallback ? { viaFallback: true } : {}),
     combinedAmerican,
     combinedDecimal: Math.round(combinedDecimal * 1000) / 1000,
     // See playConsensusProb: this is what makes the play measurable by the

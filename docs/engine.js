@@ -853,6 +853,16 @@ export function topPicks(
     // Picks turns this on because it promises exactly `count` locks every
     // time; everything else keeps the "empty is honest" behaviour.
     guaranteeCount = false,
+    // The tier below guaranteeCount, for the board that must NEVER post
+    // short, per explicit product direction ("there will always be 5 plays
+    // no matter what"). guaranteeCount's own fallback still holds the edge
+    // bar (minEv/minKelly), which is right for a board that would rather
+    // run short than post a demonstrably -EV bet — this flag says the
+    // opposite trade was chosen: fill the remaining slots from the best of
+    // what's left, edge bar relaxed, flagged for what they are. The hard
+    // odds bounds and isPickable still apply — a full board is the promise,
+    // a -1800 or a preseason game is still not a way to keep it.
+    lastResortFill = false,
     // Sport keys the user has said they'd rather see more of. This is a soft
     // sort nudge, not a filter — it can move a close call to the front of the
     // queue, never invent or hide a grade.
@@ -970,6 +980,30 @@ export function topPicks(
         percentile: percentileOf(c.score, scores),
         meetsStandard: false,
         flagReason: reasons.length ? reasons.join(', ') : 'outside standard criteria',
+      });
+    }
+  }
+
+  // See lastResortFill's own comment — only reachable when even the
+  // guaranteeCount fallback (edge bar intact) couldn't reach `count`.
+  if (guaranteeCount && lastResortFill && picks.length < count) {
+    const remaining = [...candidates]
+      .filter((c) => !usedLegs.includes(c) && withinHardBounds(c.american) && isPickable(c))
+      .sort((a, b) => sortKey(b) - sortKey(a));
+
+    for (const c of remaining) {
+      if (picks.length >= count) break;
+      if (usedLegs.some((leg) => leg.eventId === c.eventId)) continue;
+      if (usedLegs.some((leg) => contradicts(leg, c))) continue;
+      usedLegs.push(c);
+      picks.push({
+        type: 'single',
+        legs: [c],
+        american: c.american,
+        score: c.score,
+        percentile: percentileOf(c.score, scores),
+        meetsStandard: false,
+        flagReason: 'no qualifying edge today — posted to keep the board full',
       });
     }
   }

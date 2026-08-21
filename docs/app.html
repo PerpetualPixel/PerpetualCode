@@ -28,7 +28,7 @@
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Syne:wght@600;700;800&family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
-<link rel="stylesheet" href="styles.css?v=1.163">
+<link rel="stylesheet" href="styles.css?v=1.164">
 </head>
 <body>
 
@@ -100,42 +100,24 @@
 <details id="whatsNewHint" class="notice" hidden>
   <summary class="notice-summary">
     <span class="notice-tag">New</span>
-    <span class="notice-title">Picks now lock throughout the day, not all at once at 2am</span>
+    <span class="notice-title">Fresh slate: tracking restarted Aug 21 — every board now posts daily at 2am ET</span>
     <span class="notice-more" aria-hidden="true">Details</span>
     <button type="button" id="whatsNewHintClose" class="icon-btn notice-close" aria-label="Dismiss">✕</button>
   </summary>
   <div class="notice-body">
     <p>
-      Pixel's Picks and Play of the Day used to post all at once at 2am. Now each pick locks
-      individually, closer to its own game's start time, so the numbers are fresher. Before a
-      slot locks you'll see a <span class="whats-new-badge is-lean">LEAN</span> badge — the
-      algorithm's current best guess, which can still change — and
-      <span class="whats-new-badge is-final">PICK LOCKED IN</span> once it's set for good.
+      After a round of major changes, the tracked record was reset on Aug 21, 2026 —
+      everything before that lives under the <strong>Archive</strong> button in the Tracking
+      Dashboard, untouched. The daily boards are simpler now, and guaranteed: at 2am ET the
+      whole slate is ranked once — the #1 pick becomes the <strong>Play of the Day</strong>,
+      the next five become <strong>Pixel's Picks</strong> (always exactly 5, never sharing a
+      game with the Play of the Day), and a <strong>Prop Play</strong> and a
+      <strong>Ladder</strong> rung post alongside them. A pick that didn't clear the usual
+      sharp standard still posts, visibly flagged, rather than leaving a hole in the board.
     </p>
   </div>
 </details>
 
-<details id="retractionNotice" class="notice is-notice" hidden>
-  <summary class="notice-summary">
-    <span class="notice-tag">Notice</span>
-    <span class="notice-title">Today's WTA picks were retracted and re-run — they settle as a void</span>
-    <span class="notice-more" aria-hidden="true">Details</span>
-    <button type="button" id="retractionNoticeClose" class="icon-btn notice-close" aria-label="Dismiss">✕</button>
-  </summary>
-  <div class="notice-body">
-    <p>
-      WTA picks were calling too many straight-up upsets against in-form favourites. A recent-form
-      check now sits in front of every tennis moneyline: the algorithm can only take an underdog
-      when that player's recent results and head-to-head actually back the upset. Because the
-      change landed mid-day, <strong>every WTA pick already on today's board was pulled and the
-      slate re-run under the new rule</strong> — across Full Slate, Pixel's Picks and Play of the Day.
-      Retracted picks stay visible, marked <span class="whats-new-badge is-retracted">RETRACTED</span>,
-      and settle as a <strong>void</strong>: your stake is returned and they count as neither a win
-      nor a loss in any record or ROI figure. Matches that had already started keep no replacement
-      pick — a match in progress can't honestly be re-picked.
-    </p>
-  </div>
-</details>
 
 <div id="dayFilterBar" class="day-toggle-bar">
   <span class="day-toggle-label">Showing</span>
@@ -244,16 +226,17 @@
        same one that used to sit open above the board on every visit. -->
   <details class="explainer tab-intro">
     <summary class="explainer-summary">
-      <span class="explainer-lede">5 locks a day — sharp range −250/+250, positive EV, real Kelly edge.</span>
+      <span class="explainer-lede">5 picks, every day at 2am ET — the best of the full slate after the Play of the Day takes #1.</span>
       <span class="explainer-more" aria-hidden="true">How they're chosen</span>
     </summary>
     <p class="explainer-body">
-      Drawn from every league and every sportsbook. Each slot locks
-      individually, closer to its own game's start time — before that you'll
-      see the algorithm's current <strong>LEAN</strong>, which can still
-      change; once <strong>PICK LOCKED IN</strong>, a pick is never re-picked. Nothing
-      here ever pads out with a bet that isn't actually worth taking. Every
-      game regardless of price lives on the Full Slate tab.
+      Once a day at 2am ET the whole slate — every league, every sportsbook —
+      is ranked. The #1 pick becomes the Play of the Day; these are the next
+      five, and they never share a game with it. The board is always exactly
+      5: when fewer than 5 clear the sharp standard (−200/+150 band, positive
+      EV, a real Kelly edge), the rest fill from the best available and are
+      visibly flagged rather than passed off as locks. Once posted, a pick
+      never changes. Every game regardless of price lives on the Full Slate tab.
     </p>
   </details>
   <div id="status" class="status" role="status" aria-live="polite">Loading the board…</div>
@@ -427,14 +410,12 @@
       on it, nothing hidden by odds or confidence, with a glowing ring
       around whichever side the algorithm leans toward on each market. Tap
       any price to see the case for it, and the case against it.
-      <strong>Pixel's Picks</strong> is fully automatic: 5 locks, sharp
-      range −250/+250, ranked purely by edge. Each slot locks individually,
-      closer to its own game's start time, rather than all at once —
-      before that you'll see a LEAN badge (the algorithm's current best
-      guess, still subject to change); PICK LOCKED IN means it's set for good and
-      nothing changes after.
-      <strong>Play of the Day</strong> is one pick for the whole day, the
-      same for everyone, chosen the same way, with a full written breakdown
+      <strong>Pixel's Picks</strong> is fully automatic: at 2am ET the whole
+      slate is ranked once, the #1 pick becomes the Play of the Day, and
+      these are the next 5 — always exactly 5, never sharing a game with
+      the Play of the Day, posted all at once and never changed after.
+      <strong>Play of the Day</strong> is that #1 pick — one pick for the
+      whole day, the same for everyone, with a full written breakdown
       instead of the compact card.</p>
     </details>
 
@@ -483,22 +464,18 @@
       window (today, or before 6am ET the next morning, since a late main
       event can run past midnight) since fight cards don't follow the same
       daily schedule as league games.</p>
-      <p><strong>5. The best-graded picks are selected, one game at a
-      time.</strong> Full Slate ranks live by score. Pixel's Picks is
-      different: each slot locks individually, once that game is close
-      enough to its own start (an hour or two out, depending on the sport)
-      to trust the numbers — not one batch for the whole day. Before a slot
-      locks it shows a LEAN badge (the current best candidate, which can
-      still lose its spot to something better as later games' own windows
-      open); once the pick is locked in, reloading the page never changes it, and nothing
-      about it reacts to price movement afterward. On a quiet day where
-      fewer than 5 real edges clear the bar by the time nothing's left to
-      wait for, the rest are filled from the next-best available prices and
-      explicitly flagged "Outside standard criteria", still real, gradeable
-      bets, just not sharp enough to call a lock without saying so. Every one
-      of the 5 counts toward the Tracking Dashboard's win-rate math regardless;
-      the flag is transparency about how the pick was chosen, not an
-      exclusion.</p>
+      <p><strong>5. The day's boards are drawn once, at 2am ET, in
+      order.</strong> The whole slate is ranked by grade. The #1 pick
+      becomes the Play of the Day. Pixel's Picks are the next 5, drawn
+      after it and never sharing its game. The Prop Play and the Ladder
+      rung post in the same pass. Every board posts every day: on a quiet
+      slate where fewer than 5 real edges clear the bar, the remaining
+      slots fill from the next-best available prices and are explicitly
+      flagged "Outside standard criteria" — still real, gradeable bets,
+      just not sharp enough to call locks without saying so. Every one of
+      the 5 counts toward the Tracking Dashboard's win-rate math
+      regardless; the flag is transparency about how the pick was chosen,
+      not an exclusion.</p>
       <p><strong>6. The write-up explains the pick that was already made. It
       never re-decides.</strong> Once a side is chosen by the math above, the
       AI matchup analysis is told which side that is and asked to build the
@@ -515,17 +492,17 @@
 
     <details>
       <summary>Pixel's Picks' sharp standard</summary>
-      <p>Pixel's Picks always hands back exactly 5 locks, minimum and maximum,
-      priced between −250 and +250, graded 50 or higher whenever enough real
-      edges clear that bar. On a quiet slate where fewer than 5 do, the rest
+      <p>Pixel's Picks always hands back exactly 5 picks, minimum and
+      maximum, drawn once a day at 2am ET from the ranked slate — after the
+      Play of the Day takes the #1 slot, and never sharing a game with it.
+      The sharp standard is −200/+150, graded 50 or higher, positive EV and
+      a real Kelly edge; whenever fewer than 5 clear that bar, the rest
       fill in from the next-best prices available and are flagged "Outside
-      standard criteria", still real, gradeable bets, just not sharp enough
-      to call a lock without saying so. All 5 are tracked and count toward the
-      Tracking Dashboard's win-rate math regardless of the flag. Each slot
-      locks individually, closer to its own game's start time rather than
-      all at once — see it leaning before that, marked LEAN. Once a slot's
-      pick is locked in, it stays up unchanged regardless of how the market moves
-      afterward.</p>
+      standard criteria" — still real, gradeable bets, just not sharp
+      enough to call locks without saying so. All 5 are tracked and count
+      toward the Tracking Dashboard's win-rate math regardless of the
+      flag. Once posted, the board never changes, regardless of how the
+      market moves afterward.</p>
     </details>
   </div>
 </aside>
@@ -558,9 +535,9 @@
     </p>
     <p>Under the hood: Pixel Pick prices every game on the board against
     the market's own no-vig consensus and surfaces the real edges — Full
-    Slate for every market on every game, Pixel's Picks for the sharpest 5
-    locks, and Play of the Day for one highest-conviction pick, each one
-    locked closer to its own game's start time so the numbers stay fresh.
+    Slate for every market on every game, Play of the Day for the slate's
+    single #1 pick, and Pixel's Picks for the next 5 — all drawn in one
+    ranked pass at 2am ET, posted daily without exception.
     Every tracked pick is graded against its actual result, win or lose, so
     the Tracking Dashboard reflects real performance, not a marketing
     number.</p>
@@ -759,40 +736,50 @@
   <div class="learning-content">
     <!-- Server-Tracked: Full Slate / Pixel's Picks / Play of the Day -->
     <section class="learning-section">
-      <h3>Tracked Picks <span class="stats-source">Server-tracked, each pick locked closer to its own game</span></h3>
+      <h3>Tracked Picks <span class="stats-source">Server-tracked, posted daily at 2am ET</span></h3>
       <details class="explainer">
         <summary class="explainer-summary">
-          <span class="explainer-lede">Server-locked picks, flat 1 unit each — every one counts toward the totals, flagged or not.</span>
+          <span class="explainer-lede">Server-posted picks, flat 1 unit each — every one counts toward the totals, flagged or not.</span>
           <span class="explainer-more" aria-hidden="true">What's counted</span>
         </summary>
         <p class="explainer-body">
-          Locked in by the worker itself, whether or not anyone has the app
-        open, each one closer to its own game's start time rather than all
-        at once — and never changed afterward, once locked. Every pick
-        counts toward its tracker's totals below, flagged or not (a flagged
-        pick just means it was a thin-day fallback, not that it's excluded).
+          Posted by the worker itself at 2am ET, whether or not anyone has
+        the app open — and never changed afterward. Every pick counts
+        toward its tracker's totals below, flagged or not (a flagged pick
+        just means it was a thin-day fallback, not that it's excluded).
         Flat 1-unit stake per pick either way, no bankroll cap. The point is
         whether the picks themselves are profitable.
         </p>
       </details>
+      <!-- Everything before the Aug 21, 2026 reset lives behind this toggle
+           — same data, untouched, just filed as the previous era so the
+           live record starts clean. Wired in renderTrackerSection. -->
+      <div class="tracker-era-row">
+        <button type="button" id="trackerEraToggle" class="icon-btn tracker-era-btn"
+                aria-pressed="false">Archive — before Aug 21</button>
+        <p id="trackerEraNote" class="tracker-era-note" hidden>
+          Viewing the archived record: everything tracked before the
+          Aug&nbsp;21,&nbsp;2026 reset. These picks were chosen by earlier
+          versions of the algorithm and are kept for transparency; the live
+          record above the line starts fresh from Aug&nbsp;21.
+        </p>
+      </div>
       <div id="trackerTabs" class="perf-period-tabs" role="group" aria-label="Which tracker to show">
-        <button class="perf-period-btn" data-tracker="fullslate" type="button">Full Slate</button>
         <button class="perf-period-btn is-active" data-tracker="top5" type="button">Pixel's Picks</button>
         <button class="perf-period-btn" data-tracker="potd" type="button">Play of the Day</button>
         <button class="perf-period-btn" data-tracker="propplay" type="button">Prop Play</button>
       </div>
       <details class="explainer">
         <summary class="explainer-summary">
-          <span class="explainer-lede">Full Slate is one pick per game; Pixel's Picks is exactly 5 a day; Play of the Day is one.</span>
+          <span class="explainer-lede">Pixel's Picks is exactly 5 a day; Play of the Day is the slate's #1; Prop Play is one prop ticket.</span>
           <span class="explainer-more" aria-hidden="true">What each tracker covers</span>
         </summary>
         <p class="explainer-body">
-          <strong>Full Slate</strong> tracks one pick per game, every sport, every
-        day. No odds band or score floor, a complete daily record of the
-        algorithm's own lean. <strong>Pixel's Picks</strong> is exactly 5
-        picks/day, min and max. <strong>Play of the Day</strong> is the single
-        most promising, real-value pick across the whole slate, −200 to +150
-        odds.
+          <strong>Pixel's Picks</strong> is exactly 5 picks/day, min and max —
+        the best of the slate after the Play of the Day takes #1.
+        <strong>Play of the Day</strong> is that single #1 pick.
+        <strong>Prop Play</strong> is the day's one safe-line player-prop
+        ticket. All three post at 2am ET and are graded against real results.
         </p>
       </details>
       <div id="top5Summary" class="learning-grid">
@@ -929,100 +916,6 @@
       <div id="dailyLearnLog" class="learning-recs"></div>
     </section>
 
-    <!-- MLB Pitcher Props -->
-    <section class="learning-section">
-      <h3>MLB Pitcher Props <span class="stats-source">Automatic, scanned 2–3 hours before each game's first pitch</span></h3>
-      <details class="explainer">
-        <summary class="explainer-summary">
-          <span class="explainer-lede">Outs Recorded and Strikeouts for both starters, scanned a few hours before that game's first pitch.</span>
-          <span class="explainer-more" aria-hidden="true">What's tracked</span>
-        </summary>
-        <p class="explainer-body">
-          Outs Recorded and Strikeouts for each game's two starting pitchers.
-        Rather than one fixed time for every game, each game is scanned once
-        it's a few hours from its own first pitch — early enough to act on,
-        late enough that lineups and prop boards have actually settled. This
-        de-vigs the market the same way every other board on this app does,
-        and tracks the one side (if any) that clears a genuine edge — not
-        every line priced, only real mispricings. Settled against each
-        pitcher's own final boxscore line; a pitcher who's scratched or a
-        game that's postponed voids rather than grades. Currently one price
-        check per game per day, not a running line-movement tracker yet.
-        </p>
-      </details>
-      <div id="mlbPropsSummary" class="learning-recs"></div>
-      <div id="mlbPropsList" class="learning-recs"></div>
-    </section>
-
-    <!-- NFL QB Props -->
-    <section class="learning-section">
-      <h3>NFL QB Props <span class="stats-source">Automatic, scanned 2–3 hours before each game's kickoff</span></h3>
-      <details class="explainer">
-        <summary class="explainer-summary">
-          <span class="explainer-lede">Pass Completions and Attempts for each starting quarterback, scanned a few hours before kickoff.</span>
-          <span class="explainer-more" aria-hidden="true">What's tracked</span>
-        </summary>
-        <p class="explainer-body">
-          Pass Completions and Pass Attempts for each game's starting
-        quarterback(s), scanned the same way MLB Pitcher Props are — a few
-        hours before kickoff rather than one fixed time. De-vigs the market
-        the same way every other board on this app does, and tracks the one
-        side (if any) that clears a genuine edge. Settled against the
-        quarterback's own final boxscore passing line; a QB who doesn't
-        play voids rather than grades.
-        </p>
-      </details>
-      <div id="nflPropsSummary" class="learning-recs"></div>
-      <div id="nflPropsList" class="learning-recs"></div>
-    </section>
-
-    <!-- WNBA Player Props -->
-    <section class="learning-section">
-      <h3>WNBA Player Props <span class="stats-source">Automatic, scanned 2–3 hours before each game's tip-off</span></h3>
-      <details class="explainer">
-        <summary class="explainer-summary">
-          <span class="explainer-lede">Points + Rebounds + Assists and Rebounds + Assists, scanned a few hours before tip-off.</span>
-          <span class="explainer-more" aria-hidden="true">What's tracked</span>
-        </summary>
-        <p class="explainer-body">
-          Points + Rebounds + Assists (PRA) and Rebounds + Assists, scanned the
-        same way MLB Pitcher Props and NFL QB Props are. De-vigs the market
-        the same way every other board on this app does, and tracks the one
-        side (if any) that clears a genuine edge. Settled against the
-        player's own final boxscore line; a player who doesn't play voids
-        rather than grades. No minutes-played eligibility filter — no
-        reliable pregame minutes-projection source exists to gate on, so
-        this tracks the raw market instead of a fabricated proxy for one.
-        </p>
-      </details>
-      <div id="wnbaPropsSummary" class="learning-recs"></div>
-      <div id="wnbaPropsList" class="learning-recs"></div>
-    </section>
-
-    <!-- NHL Player Props -->
-    <section class="learning-section">
-      <h3>NHL Player Props <span class="stats-source">Automatic, scanned 2–3 hours before each game's puck drop</span></h3>
-      <details class="explainer">
-        <summary class="explainer-summary">
-          <span class="explainer-lede">Shots on Goal, scanned a few hours before puck drop.</span>
-          <span class="explainer-more" aria-hidden="true">What's tracked</span>
-        </summary>
-        <p class="explainer-body">
-          Shots on Goal, scanned the same way the other player-prop boards on
-        this page are. De-vigs the market the same way every other board on
-        this app does, and tracks the one side (if any) that clears a
-        genuine edge. Settled against the skater's own final boxscore line;
-        a skater who doesn't play voids rather than grades. No 1st-line/1st-
-        power-play-unit eligibility filter — that requires line-combination
-        data (who's playing which forward line or power-play unit tonight)
-        that isn't available from any free source, so this tracks the raw
-        market instead of a filter it can't actually apply.
-        </p>
-      </details>
-      <div id="nhlPropsSummary" class="learning-recs"></div>
-      <div id="nhlPropsList" class="learning-recs"></div>
-    </section>
-
     <!-- Algorithm Health -->
     <section class="learning-section">
       <h3>Algorithm Health <span class="stats-source">Automatic, reviews every Monday, 7am ET</span></h3>
@@ -1054,6 +947,6 @@
   </div>
 </aside>
 
-<script type="module" src="app.js?v=1.163"></script>
+<script type="module" src="app.js?v=1.164"></script>
 </body>
 </html>

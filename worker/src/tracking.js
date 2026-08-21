@@ -27,10 +27,6 @@
  */
 import { analyze, topPicks, clearsMaxJuice, isNflPreseason, isNflPreseasonKey } from '../../docs/engine.js';
 import { fetchCapperConsensus, applyCapperConsensus, upgradeToValueStraight } from '../../docs/capper-consensus.js';
-import { getAllWnbaPropsTracked } from './wnba-props.js';
-import { getAllMlbPropsTracked } from './mlb-props.js';
-import { getAllNflPropsTracked } from './nfl-props.js';
-import { getAllNhlPropsTracked } from './nhl-props.js';
 import { isPower4Matchup } from '../../docs/ncaaf-conferences.js';
 import { gradePick } from '../../docs/learning.js';
 import { isMma, isTennis } from '../../docs/insights.js';
@@ -62,34 +58,22 @@ import { retractedRecord } from './retraction.js';
 export const TOP5_COUNT = 5;
 
 /**
- * Score at or above which a candidate is locked the moment its window opens,
- * without waiting for the rest of the day to be visible.
+ * ET hour at or after which the day's boards are drawn. One draw, all at
+ * once, per explicit product direction (2026-08-21 reset): the daily
+ * learning review runs at this same hour first (see index.js's selection
+ * chain), then Play of the Day takes the slate's #1, then Pixel's Picks
+ * takes the next 5 — so a cron tick between midnight and 2am ET must not
+ * draw the new day's board before the review has run or the day's ranking
+ * is meaningful. Between midnight and this hour, yesterday's board is
+ * simply still the board.
  *
- * The board used to wait for EVERY one of today's games to reach its lock
- * window before drawing at all, so it could compare the whole day. The
- * trigger for that fires ~3h before the day's LAST game — by which point the
- * draw pool, which only contains games that haven't started, has lost the
- * entire afternoon. On a normal MLB day (1pm-10pm ET) the draw happened
- * around 7pm and could only see 7pm-or-later games. That is why a board
- * promising 5 kept posting 1 or 2, repeatedly, and why guaranteeCount
- * couldn't save it: its fallback draws from that same emptied pool.
- *
- * A genuinely strong number doesn't need the rest of the day for context, so
- * it's taken when it appears rather than left to expire.
+ * This replaces the per-slot progressive locking (PREMIUM_LOCK_SCORE /
+ * DEADLINE_BUFFER_EVENTS / the intraday pool) that used to live here: each
+ * slot locked closer to its own game's start for fresher numbers, but the
+ * windowing machinery was also what let boards post short or late.
+ * Freshness was explicitly traded for "posted daily, in full, no excuses."
  */
-const PREMIUM_LOCK_SCORE = 72;
-
-/**
- * How much slack to leave before treating the day as running out.
- *
- * Slots are filled once the remaining unstarted events are down to roughly
- * the number of slots still open. The buffer exists because supply is only
- * re-measured once per tick (15 min) and several games can start between two
- * ticks — waiting for supply to reach exactly the slot count would routinely
- * overshoot and strand the board short, which is the entire failure being
- * fixed here.
- */
-const DEADLINE_BUFFER_EVENTS = 3;
+export const GENERATION_HOUR_ET = 2;
 
 /**
  * Pixel's Picks price band, per explicit product direction: "-200 straight is
@@ -527,50 +511,17 @@ export function pickRecordFrom(pick, dateKey, now, stakeUnits = 2) {
 }
 
 /**
- * Snapshots every newly-lockable, structurally-eligible candidate into
- * today's Top5 accumulation pool — same mechanism and same reasoning as
- * potd.js's updatePotdPool: an early game's odds vanish once it starts,
- * long before an evening game's own window even opens, so comparing the
- * whole day's candidates fairly means freezing each one's data the moment
- * it becomes trustworthy rather than re-reading live prices later. Stores
- * the raw candidate (score/EV/Kelly/odds-band filtering happens once, at
- * final-selection time in runTop5Batch, against the pool — not here).
- */
-async function updateTop5Pool(env, ctx, dateKey, lockable, now) {
-  const poolKey = `track:${dateKey}:pool`;
-  const raw = await env.POTD_KV.get(poolKey);
-  const pool = raw ? JSON.parse(raw) : { date: dateKey, entries: [] };
-  const known = new Set(pool.entries.map((e) => e.id));
-  const fresh = lockable.filter((c) => !known.has(c.id));
-  if (!fresh.length) return pool;
-  pool.entries.push(...fresh.map((c) => ({ ...c, capturedAt: now })));
-  ctx.waitUntil(env.POTD_KV.put(poolKey, JSON.stringify(pool), { expirationTtl: KV_TTL_SECONDS }));
-  return pool;
-}
-
-/**
- * Runs hourly (see index.js's scheduled()), all day — not a single 2am
- * batch anymore. Every structurally-eligible candidate (day window, segment
- * not paused, tennis tier, max-juice, NCAAF Power 4) whose own game has
- * reached its own reasonable pre-game lock time (isPickWindowOpen/
- * PICK_LEAD_HOURS) gets captured into today's pool the moment it's first
- * seen (see updateTop5Pool). The 5 real slots aren't filled from that pool
- * immediately, though — same reasoning as Play of the Day's own pool (see
- * potd.js's runPotdDaily): locking a slot the instant something clears the
- * bar would bias toward an early-afternoon game over a stronger evening one
- * whose window just hasn't opened yet. Instead this waits until
- * stillUpcoming goes false (every one of today's eligible games has had its
- * own window open, so the pool is as complete as it's going to get), then
- * runs the existing, unmodified topPicks() — same sharp standard (-250/+250,
- * confidence floor) and EV/Kelly edge floor as always — against whatever in
- * the pool is still actionable (hasn't started), filling as many of the
- * remaining slots as genuinely qualify. guaranteeCount only kicks in at
- * that same final moment, padding with a flagged (meetsStandard: false)
- * pick rather than shrinking below 5 on a thin day — never on an
- * intermediate tick, where padding would burn a slot a later game might
- * have earned instead. Once posted, a pick doesn't move even if the market
- * does — it's an editorial call made at a point in time, not a live-
- * repriced one.
+ * Draws the day's 5 Pixel's Picks in one pass, at the generation hour (see
+ * GENERATION_HOUR_ET) — after the daily learning review and after the Play
+ * of the Day, whose game (and the Prop Play's, when it exists yet) is
+ * excluded so the day's boards never overlap. Every structurally-eligible
+ * candidate (day window, segment not paused, tennis tier, max-juice, NCAAF
+ * Power 4) competes in the same draw; the sharp standard (odds band,
+ * confidence floor, EV/Kelly edge floor) fills the board first, and the
+ * flagged fallback tiers fill whatever's left so the board never posts
+ * short (see topPicks' guaranteeCount/lastResortFill). Once posted, a pick
+ * doesn't move even if the market does — it's an editorial call made at a
+ * point in time, not a live-repriced one.
  *
  * Self-healing, not one-shot: this used to hard-skip the instant a manifest
  * existed at all, which meant a degraded run (e.g. a partial/truncated
@@ -594,6 +545,12 @@ export async function runTop5Batch(
   { fetchFullSlate = () => fetchFullSlateEvents(env, ctx) } = {},
 ) {
   const dateKey = etDate(now);
+  // Before the generation hour, today's board simply doesn't exist yet —
+  // see GENERATION_HOUR_ET. Checked before the manifest read so a
+  // midnight-to-2am tick costs nothing.
+  if (etHour(now) < GENERATION_HOUR_ET) {
+    return { skipped: true, reason: 'before generation hour', dateKey };
+  }
   const manifestKey = `track:${dateKey}:top5`;
   const existingRaw = await env.POTD_KV.get(manifestKey);
   const existing = existingRaw ? JSON.parse(existingRaw) : null;
@@ -720,47 +677,12 @@ export async function runTop5Batch(
     learningProfile,
   );
 
-  // Split by whether each candidate's own game has reached its lock time —
-  // see this function's own comment for why only "lockable" candidates get
-  // captured into the pool this tick, and why the real slots wait for
-  // stillUpcoming to go false before drawing from it. stillUpcoming itself
-  // is checked against the raw event list (scheduleStillOpen), not this
-  // price-filtered eligibleToday — see that function's own comment for why.
-  const lockable = eligibleToday.filter((c) => isPickWindowOpen(c, now));
-  const stillUpcoming = scheduleStillOpen(events, dateKey, now);
-  await updateTop5Pool(env, ctx, dateKey, lockable, now);
-
-  const poolRaw = await env.POTD_KV.get(`track:${dateKey}:pool`);
-  const pool = poolRaw ? JSON.parse(poolRaw).entries : [];
-
-  // How many of today's eligible games still haven't started — the day's
-  // remaining supply of chances. Measured off the raw event list, not the
-  // price-filtered pool, for the same reason scheduleStillOpen is: a game
-  // that hasn't posted a price yet is still a chance this board has left.
-  const supplyLeft = events.filter((event) => {
-    const commenceMs = Date.parse(event.commence_time);
-    if (!Number.isFinite(commenceMs) || commenceMs <= now) return false;
-    if (existingEventIds.has(event.id)) return false;
-    if (event.sport_key === 'americanfootball_ncaaf' && !isPower4Matchup(event.home_team, event.away_team)) return false;
-    if (isMma(event.sport_key)) return isEligibleMmaFight(commenceMs, now);
-    if (isTennis(event.sport_key)) return isEligibleTennisMatch(commenceMs, now);
-    return etDate(commenceMs) === dateKey;
-  }).length;
-
-  // Two ways a slot gets filled on this tick:
-  //   - the day is running out (supply is down to roughly the slots left, or
-  //     every game has had its window and there's nothing more coming), so
-  //     take the best of what's actually still bettable; or
-  //   - a candidate is strong enough to stand on its own (PREMIUM_LOCK_SCORE),
-  //     in which case waiting only risks losing it to its own start time.
-  // The old behaviour was neither: it waited for the whole day, every time,
-  // and by then most of the day was unbettable.
-  const atDeadline = !stillUpcoming || supplyLeft <= needed + DEADLINE_BUFFER_EVENTS;
-  // Already-locked events are excluded same as the live eligibility filter
-  // above (existingEventIds) — a pool entry can predate today's most recent
-  // lock. Anything whose game has since started can't be posted anymore;
-  // it stays in the pool's own history, just never becomes a real pick.
-  const stillActionable = pool.filter((c) => c.commenceMs > now && !existingEventIds.has(c.eventId));
+  // The whole day is drawable at once: at the generation hour nothing has
+  // started yet, so there is no window-opening/pool-capture cycle to wait
+  // through anymore (see GENERATION_HOUR_ET). Only games that haven't
+  // started are postable — relevant on a redeploy-mid-day top-up tick, not
+  // at 2am.
+  const stillActionable = eligibleToday.filter((c) => c.commenceMs > now);
 
   // MMA moneylines get the MMA_Engine capper-consensus swing (docs/
   // capper-consensus.js) before the final draw — the same enrichment the
@@ -772,10 +694,34 @@ export async function runTop5Batch(
     ? applyCapperConsensus(stillActionable, consensusFeed, { now })
     : stillActionable;
 
+  // The day's hierarchy, per explicit product direction (2026-08-21): the
+  // Play of the Day is the slate's #1 and is drawn FIRST (index.js awaits
+  // runPotdDaily before this batch); Pixel's Picks are the next 5, and the
+  // flagships' games are excluded here BEFORE the draw — pre-filtering
+  // rather than post-filtering is what lets topPicks' count guarantee hold.
+  // Prop Play legs are excluded the same way so the day's boards never
+  // overlap. A cross-board read failure degrades to loadPublishedSides'
+  // own contradiction guard rather than costing the board.
+  const featuredEventIds = new Set();
+  try {
+    const [potdRaw, propPlayRaw] = await Promise.all([
+      env.POTD_KV.get(`potd:${dateKey}`),
+      env.POTD_KV.get(`propplay:${dateKey}`),
+    ]);
+    const potdRecord = potdRaw ? JSON.parse(potdRaw) : null;
+    if (potdRecord?.pick?.eventId) featuredEventIds.add(potdRecord.pick.eventId);
+    const propPlay = propPlayRaw ? JSON.parse(propPlayRaw) : null;
+    for (const leg of propPlay?.legs ?? []) {
+      if (leg.oddsEventId) featuredEventIds.add(leg.oddsEventId);
+    }
+  } catch { /* flagship dedupe is an upgrade — the draw below stands alone */ }
+
   // Never the opposite side of something the Full Slate or Play of the Day
   // already published — see loadPublishedSides.
   const publishedSides = await loadPublishedSides(env, dateKey);
-  const nonConflicting = drawPool.filter((c) => !contradictsPublishedBoard(c, publishedSides));
+  const nonConflicting = drawPool.filter(
+    (c) => !contradictsPublishedBoard(c, publishedSides) && !featuredEventIds.has(c.eventId),
+  );
 
   const slate = topPicks(nonConflicting, {
     oddsMin: PIXEL_ODDS.SHARP_MIN,
@@ -785,59 +731,17 @@ export async function runTop5Batch(
     hardOddsMin: PIXEL_ODDS.HARD_MIN,
     hardOddsMax: PIXEL_ODDS.HARD_MAX,
     count: needed,
-    // Off-deadline, only a genuinely strong number earns a slot early;
-    // at the deadline the standard is the configured one and the fallback
-    // is allowed to fill rather than let the board finish short.
-    minScore: atDeadline ? convictionFloor : Math.max(convictionFloor, PREMIUM_LOCK_SCORE),
+    minScore: convictionFloor,
     minEv: algoConfig.MIN_EV_PCT,
     minKelly: algoConfig.MIN_KELLY_FRACTION,
-    guaranteeCount: atDeadline,
+    // "There will always be 5 plays no matter what" — the sharp standard
+    // fills first, guaranteeCount's flagged fallback second, and the
+    // last-resort tier (edge bar relaxed, hard band still enforced) only
+    // if the slate is so thin even that couldn't reach 5. Every non-sharp
+    // slot arrives visibly flagged.
+    guaranteeCount: true,
+    lastResortFill: true,
   });
-
-  // The revamped hierarchy: the two BEST plays of the day are the 5U
-  // flagships (Play of the Day + Prop Play); Pixel's Picks are the next 5.
-  // High-conviction prop picks (already scored 0-100 by their scans, priced
-  // -200 or better) compete for those 5 slots on equal footing with the
-  // team markets, and anything already featured by a flagship is excluded
-  // so the 7 plays never overlap.
-  try {
-    const [potdRaw, propPlayRaw, ...pools] = await Promise.all([
-      env.POTD_KV.get(`potd:${dateKey}`),
-      env.POTD_KV.get(`propplay:${dateKey}`),
-      getAllWnbaPropsTracked(env, { now, days: 1 }),
-      getAllMlbPropsTracked(env, { now, days: 1 }),
-      getAllNflPropsTracked(env, { now, days: 1 }),
-      getAllNhlPropsTracked(env, { now, days: 1 }),
-    ]);
-    const featured = new Set();
-    const potdRecord = potdRaw ? JSON.parse(potdRaw) : null;
-    if (potdRecord?.pick?.eventId) featured.add(potdRecord.pick.eventId);
-    const propPlay = propPlayRaw ? JSON.parse(propPlayRaw) : null;
-    for (const leg of propPlay?.legs ?? []) {
-      if (leg.oddsEventId) featured.add(leg.oddsEventId);
-    }
-    slate.picks = slate.picks.filter((p) => !featured.has(p.legs[0].eventId));
-
-    const propCandidates = pools.flat().filter((p) =>
-      p.status === 'pending' && Number(p.decimal) >= 1.5 && Number.isFinite(p.score)
-      && p.commenceMs > now && !featured.has(p.eventId) && !existingEventIds.has(p.eventId)
-      // Same price band and same cross-board rule the team markets are held
-      // to — a prop is a Pixel's Pick like any other, not a side door around
-      // the standard.
-      && Number(p.american) >= PIXEL_ODDS.HARD_MIN && Number(p.american) <= PIXEL_ODDS.HARD_MAX
-      && !contradictsPublishedBoard(p, publishedSides));
-    const merged = [
-      ...slate.picks,
-      ...propCandidates.map((p) => ({ legs: [p], score: p.score, meetsStandard: true, flagReason: null })),
-    ].sort((x, y) => y.score - x.score);
-    const perEvent = new Set();
-    slate.picks = merged.filter((p) => {
-      const eventId = p.legs[0].eventId;
-      if (perEvent.has(eventId)) return false;
-      perEvent.add(eventId);
-      return true;
-    }).slice(0, needed);
-  } catch { /* props and flagship dedupe are upgrades — the team slate stands alone */ }
 
   // Belt-and-suspenders alongside the existingEventIds filter above: even
   // though topPicks() can't return two same-event candidates from a single

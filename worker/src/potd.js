@@ -2,24 +2,23 @@
  * Play of the Day — one editorially-selected pick, posted once daily, the
  * same for every user that day.
  *
- * Timing: NOT a single 2am batch anymore. Runs hourly, all day (see
- * index.js's scheduled()), accumulating a pool of candidates as each one's
- * own game reaches its own reasonable pre-game lock time (tracking.js's
- * isPickWindowOpen/PICK_LEAD_HOURS) — see updatePotdPool's own comment for
- * why a pool is necessary at all rather than just picking the best
- * currently-lockable candidate: an early game's odds vanish once it
- * starts, long before an evening game's own window has even opened, so
- * "wait and compare the whole day fairly" requires freezing each
- * candidate's data the moment it becomes trustworthy, not re-reading live
- * prices later. POTD_HOUR (2am ET) still matters — it's when the daily
- * learning review digests yesterday's results, which today's locks read.
+ * Timing: one draw at the generation hour (tracking.js's
+ * GENERATION_HOUR_ET, 2am ET), immediately after the daily learning review
+ * and BEFORE the Pixel's Picks batch — per explicit product direction
+ * (2026-08-21 reset), the Play of the Day is the slate's #1 pick, and
+ * Pixel's Picks are the next 5, drawn afterward with this pick's game
+ * excluded. The old accumulate-a-pool-through-the-day flow (each game
+ * captured as its own lock window opened, drawn only once nothing was left
+ * to wait for) is gone with the rest of the progressive-locking machinery.
  *
  * Odds: restricted to POTD_MIN_AMERICAN..POTD_MAX_AMERICAN, a narrower band
- * than the rest of the app's general sharp-price rules (RULES.MIN_AMERICAN/
- * MAX_AMERICAN) — this is a single showcase pick, not a full board, so it's
- * held to a stricter "real moneyline-friendly favorite-to-live-underdog"
- * range with no fallback outside it: a day with nothing in range simply
- * posts nothing rather than reaching for a price outside what was asked for.
+ * than the rest of the app's general sharp-price rules — this is a single
+ * showcase pick, held to a stricter range. Unlike before the reset, a day
+ * with nothing in range still posts: the pick falls back in visible,
+ * flagged tiers (confidence floor first, then the band) rather than
+ * skipping, because "no Play of the Day today" is exactly the outcome the
+ * reset forbids. Only a slate with literally no gradeable game posts
+ * nothing.
  *
  * Tracking: the stored pick carries the same status/clv/result fields
  * worker/src/tracking.js's Top 5 batch tracks its own picks with, graded via
@@ -51,7 +50,7 @@ import {
   isNoOpTennisRegrade,
   regradeTennisVoids,
 } from './tennis-espn.js';
-import { isPickWindowOpen } from './tracking.js';
+import { GENERATION_HOUR_ET } from './tracking.js';
 import { applyTennisFormSignal } from '../../docs/qualitative.js';
 import { loadTeamContextsFor, applyTeamFormSignal } from './team-form.js';
 import { getNflEfficiency } from './nfl-efficiency.js';
@@ -59,7 +58,7 @@ import { loadTennisArchive, loadTennisArchivesFor } from './tennis-archive.js';
 import { retractedRecord } from './retraction.js';
 
 const ET_TZ = 'America/New_York';
-export const POTD_HOUR = 2; // 2am ET — when the daily learning review runs, not when picks lock anymore
+export const POTD_HOUR = 2; // 2am ET — the daily learning review and the day's single draw (see header)
 const POTD_MIN_AMERICAN = -200;
 const POTD_MAX_AMERICAN = 150;
 // Matches docs/learning.js's own FLAT_UNIT_STAKE — duplicated rather than
@@ -352,29 +351,6 @@ async function buildRecord(best, dateKey, now, env, ctx) {
 }
 
 /**
- * Snapshots every newly-lockable, qualifying candidate into today's
- * accumulation pool — called every tick with whatever's currently eligible
- * and window-open; only candidates not already in the pool get added, and
- * each one is frozen at capture time (the live odds feed may no longer
- * have it, e.g. once its game starts, by the time the pool is actually
- * used to pick a winner). Nothing is ever removed from the pool — an
- * entry whose game has since started just gets filtered out at selection
- * time (see runPotdDaily), not deleted, so the pool stays a true record of
- * everything that was actually available today.
- */
-async function updatePotdPool(env, ctx, dateKey, lockable, now) {
-  const poolKey = `potd-pool:${dateKey}`;
-  const raw = await env.POTD_KV.get(poolKey);
-  const pool = raw ? JSON.parse(raw) : { date: dateKey, entries: [] };
-  const known = new Set(pool.entries.map((e) => e.id));
-  const fresh = lockable.filter((c) => !known.has(c.id));
-  if (!fresh.length) return pool;
-  pool.entries.push(...fresh.map((c) => ({ ...c, capturedAt: now })));
-  ctx.waitUntil(env.POTD_KV.put(poolKey, JSON.stringify(pool), { expirationTtl: KV_TTL_SECONDS }));
-  return pool;
-}
-
-/**
  * Runs hourly, all day (see index.js's scheduled()) — not a single 2am
  * batch anymore. Filters today's still-upcoming, non-exhibition, in-band
  * (-200..+150) candidates same as before, but only candidates whose own
@@ -398,7 +374,16 @@ async function updatePotdPool(env, ctx, dateKey, lockable, now) {
  * tick already locked it, or a retried cron tick fired twice.
  */
 export async function runPotdDaily(env, ctx, now = Date.now(), { fetchFullSlate }) {
-  const dateKey = etParts(now).date;
+  const { date: dateKey, hour } = etParts(now);
+  // One draw for the whole day, at the generation hour, per explicit
+  // product direction (2026-08-21 reset): the Play of the Day is the
+  // slate's #1 pick and is decided FIRST — index.js awaits this before the
+  // Pixel's Picks batch, which then excludes this pick's game — so the
+  // day's boards form one ranking rather than three independent draws.
+  // Before that hour, yesterday's pick is simply still the pick.
+  if (hour < GENERATION_HOUR_ET) {
+    return { skipped: true, reason: 'before generation hour', dateKey };
+  }
   const kvKey = `potd:${dateKey}`;
 
   const existing = await env.POTD_KV.get(kvKey);
@@ -470,25 +455,45 @@ export async function runPotdDaily(env, ctx, now = Date.now(), { fetchFullSlate 
     return etParts(c.commenceMs).date === dateKey;
   });
 
-  // stillUpcoming is checked against the raw event list (scheduleStillOpen),
-  // not this price/band-filtered eligibleToday — see that function's own
-  // comment for why.
-  const lockable = eligibleToday.filter((c) => isPickWindowOpen(c, now));
-  const stillUpcoming = scheduleStillOpen(events, dateKey, now);
-  await updatePotdPool(env, ctx, dateKey, lockable, now);
-
-  if (stillUpcoming) {
-    return { skipped: true, reason: "still comparing today's games", dateKey };
-  }
-
-  const poolRaw = await env.POTD_KV.get(`potd-pool:${dateKey}`);
-  const pool = poolRaw ? JSON.parse(poolRaw).entries : [];
-  // recentPotdEventIds re-applied here because pool entries persist across
-  // ticks — an entry could have been added before the excluded match's
-  // reschedule became visible (or before this guard existed at all).
-  const stillActionable = pool.filter((c) => c.commenceMs > now && !recentPotdEventIds.has(c.eventId));
+  // The whole day is drawable at once at the generation hour — nothing has
+  // started yet, so the old capture-into-a-pool-then-wait cycle (which
+  // existed to compare early games against evening ones fairly, and which
+  // could end the day with NO pick at all when everything actionable had
+  // started) has nothing left to solve. Its skip paths were also the "code
+  // stopping it from posting" this reset explicitly removes.
+  let stillActionable = eligibleToday.filter((c) => c.commenceMs > now);
+  // "There will be a play of the day" — guaranteed. When nothing clears the
+  // full standard, relax in tiers, never silently: first the confidence
+  // floor goes (band and structural checks hold), then the band itself.
+  // Each tier keeps the checks about the GAME's legitimacy (exhibition,
+  // max-juice, preseason, Power 4, already-featured-recently) — a
+  // guaranteed pick still can't be a game this app refuses to grade.
+  let fallbackReason = null;
   if (!stillActionable.length) {
-    return { skipped: true, reason: 'no qualifying candidate remained actionable today', dateKey };
+    const structurallySound = candidates.filter((c) => {
+      if (isExhibition(c)) return false;
+      if (!clearsMaxJuice(c)) return false;
+      if (isNflPreseason(c)) return false;
+      if (c.sportKey === 'americanfootball_ncaaf' && !isPower4Matchup(c.home, c.away)) return false;
+      if (c.commenceMs <= now) return false;
+      if (recentPotdEventIds.has(c.eventId)) return false;
+      if (isTennis(c.sportKey)) return isEligibleTennisMatch(c.commenceMs, now);
+      return etParts(c.commenceMs).date === dateKey;
+    });
+    const inBand = structurallySound.filter(
+      (c) => c.american >= POTD_MIN_AMERICAN && c.american <= POTD_MAX_AMERICAN && !isSegmentPaused(c, pausedSegments),
+    );
+    if (inBand.length) {
+      stillActionable = inBand;
+      fallbackReason = `confidence below the usual ${RULES.MIN_SCORE} floor`;
+    } else if (structurallySound.length) {
+      stillActionable = structurallySound;
+      fallbackReason = `odds outside the usual ${formatAmerican(POTD_MIN_AMERICAN)}/${formatAmerican(POTD_MAX_AMERICAN)} band`;
+    } else {
+      // Only reachable when the slate has literally no upcoming game the
+      // app will grade — an off day, not a selection failure.
+      return { skipped: true, reason: 'no gradeable game on the entire slate today', dateKey };
+    }
   }
 
   // MMA candidates get the MMA_Engine capper-consensus swing (docs/
@@ -509,6 +514,13 @@ export async function runPotdDaily(env, ctx, now = Date.now(), { fetchFullSlate 
   // Slate lock applies, so the two boards never disagree about a fight.
   const best = consensusFeed ? upgradeToValueStraight(chosen, consensusFeed) : chosen;
   const record = await buildRecord(best, dateKey, now, env, ctx);
+  // A fallback-tier pick says so on its face rather than passing as an
+  // ordinary lock — same honesty contract as Pixel's Picks' own flagged
+  // fallback slots.
+  if (fallbackReason) {
+    record.pick.meetsStandard = false;
+    record.pick.flagReason = fallbackReason;
+  }
   // A day's pick, once posted, doesn't move even if the market does — it's
   // an editorial call made at a point in time, not a live-repriced candidate.
   await env.POTD_KV.put(kvKey, JSON.stringify(record), { expirationTtl: KV_TTL_SECONDS });

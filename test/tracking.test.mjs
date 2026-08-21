@@ -250,16 +250,20 @@ test('a heavy favorite is never posted, even to fill a slot', async () => {
   assert.ok(picks.every((p) => p.american >= -200), 'nothing worse than -200 may be posted');
 });
 
-test('runTop5Batch never surfaces a -EV or dust-edge candidate, even to fill toward 5', async () => {
+test('a -EV-only slate still fills the board, visibly flagged — never passed off as a lock', async () => {
   const { env } = makeKvStore();
   // Same "thin consensus, small outlier" pattern as the engine.test.mjs
   // regression test — clears MIN_SCORE on liquidity/agreement alone, but is
-  // -EV once the vig is paid.
+  // -EV once the vig is paid. Under the 2026-08-21 reset the board never
+  // posts short while a hard-band candidate exists (topPicks'
+  // lastResortFill); honesty moves to the flag, not to the empty slot.
   const events = [makeEvent('juicy', { outlier: 10 })];
 
   await runTop5Batch(env, ctx, NOW, { fetchFullSlate: async () => events });
   const picks = await getTop5(env, { dateKey: '2026-08-05' });
-  assert.equal(picks.length, 0, 'a -EV-only slate must produce zero tracked picks, not a padded 5');
+  assert.equal(picks.length, 1, 'the one available game fills one slot');
+  assert.equal(picks[0].meetsStandard, false);
+  assert.match(picks[0].flagReason, /no qualifying edge/);
 });
 
 test('runTop5Batch only skips once the board already has TOP5_COUNT picks', async () => {
@@ -396,11 +400,15 @@ test('runTop5Batch uses the tuned EV floor from algo:config, not the shipped def
   }));
 
   const events = [makeEvent('modest-edge', { outlier: 20 })];
-  const result = await runTop5Batch(env, ctx, NOW, { fetchFullSlate: async () => events });
+  await runTop5Batch(env, ctx, NOW, { fetchFullSlate: async () => events });
   const picks = await getTop5(env, { dateKey: '2026-08-05' });
 
-  assert.equal(picks.length, 0, 'a modest edge that clears the shipped default should not clear a tightened floor');
-  assert.equal(result.count, 0);
+  // The tightened floor decides how the pick is LABELLED, not whether the
+  // board fills (see the -EV-slate test above): under the tuned floor this
+  // modest edge no longer qualifies as a sharp lock, so it must arrive
+  // flagged — where the shipped default would have posted it unflagged.
+  assert.equal(picks.length, 1);
+  assert.equal(picks[0].meetsStandard, false, 'the tuned floor must demote this pick to a flagged fallback');
 });
 
 /* ---------------------------------------------------------------- */
