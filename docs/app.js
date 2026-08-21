@@ -14,6 +14,8 @@ if (!window.location.hostname.includes('perpetualpicks.com')) {
 import { CONFIG } from './config.js';
 import { DEMO_EVENTS } from './demo.js';
 import { teamLogoUrl } from './team-logos.js';
+import { leagueIconSvg } from './league-icons.js';
+import { enhanceSelect } from './custom-select.js';
 import { BUILD_INFO } from './version.js';
 import { summarizePicks, gradePick } from './learning.js';
 import { liveSetsLabel } from './tennis-results.js';
@@ -83,6 +85,14 @@ import {
   tennisHeadToHead,
 } from './insights.js';
 
+/* Handle for the Sport filter's themed dropdown, so
+   renderTrackerSportFilterOptions can tell it the option list changed.
+   Declared here rather than at its assignment further down: that sits
+   below the function that reads it, and a `const` there would leave the
+   reference in the temporal dead zone if anything ever rendered the
+   tracker during module evaluation. */
+let enhancedSportFilter = null;
+
 const BANKROLL_KEY = 'pixelpick.bankroll.v1';
 const SLATE_LEAGUE_KEY = 'pixelpick.slateLeague.v2';
 const PIXEL_SORT_KEY = 'pixelpick.sort.v1';
@@ -118,7 +128,10 @@ const LEAGUE_GROUPS = [
   // year-round), preseason runs about four weeks, and a permanent
   // "NFL Pre: 0 games" token would read as broken rather than out of season.
   { id: 'nflpre', label: 'NFL Pre', keys: [], seasonal: true },
-  { id: 'ncaa', label: 'NCAA', keys: ['americanfootball_ncaaf'] },
+  // Labelled NCAAF, not "NCAA": it sits in the same picker as NCAAB, and
+  // the bare "NCAA" read as ambiguous next to it. Id stays `ncaa` — that's
+  // what saved league preferences are keyed on.
+  { id: 'ncaa', label: 'NCAAF', keys: ['americanfootball_ncaaf'] },
   { id: 'atp', label: 'ATP', keys: [] },
   { id: 'wta', label: 'WTA', keys: [] },
   { id: 'wnba', label: 'WNBA', keys: ['basketball_wnba'] },
@@ -147,11 +160,11 @@ const LEAGUE_GROUPS = [
 ];
 const LEAGUE_GROUP_BY_ID = new Map(LEAGUE_GROUPS.map((g) => [g.id, g]));
 
-/** One glyph per league group, for the glowing quick-select token row (renderSlateLeagueOptions) — purely decorative, the underlying select is still the source of truth. */
-const LEAGUE_ICONS = {
-  mlb: '⚾', nfl: '🏈', nflpre: '🏈', ncaa: '🎓', atp: '🎾', wta: '🎾',
-  wnba: '🏀', mma: '🥊', mls: '⚽', nhl: '🏒', nba: '🏀', ncaab: '🎓',
-};
+/* Sport glyphs for the league chip row now live in ./league-icons.js — see
+   leagueIconSvg's import above. The chips pair that glyph with the group's
+   own text label, which is what actually distinguishes leagues sharing a
+   sport (ATP/WTA, NBA/WNBA/NCAAB, NFL/NCAAF). The underlying select is
+   still the source of truth for the selection itself. */
 
 /**
  * Fill the key lists of every league group whose sport keys aren't stable
@@ -1133,6 +1146,37 @@ function setStatus(text, kind = '') {
 // research resolves. Reset on every full render.
 const renderedLegs = [];
 
+/* ---------------------------------------------------------------- */
+/* Optional-data fetches                                             */
+/* ---------------------------------------------------------------- */
+
+/**
+ * The enrichment fetches below (context, weather, MMA/tennis extras, the
+ * tennis archive) all treat "nothing to say" as a normal answer: they
+ * resolve to null and every caller renders fine without them. That contract
+ * is deliberate and unchanged here.
+ *
+ * What it lost was any way to tell a legitimately empty answer from a
+ * worker that's 500ing or a request that never left the browser — both
+ * arrived as a silent null, so a broken endpoint looked exactly like a quiet
+ * one and there was nothing in the console to say otherwise. These two say
+ * why, and still return null.
+ */
+function okOrNull(label) {
+  return (response) => {
+    if (response.ok) return response.json();
+    console.warn(`[${label}] HTTP ${response.status} ${response.statusText} — treating as no data`);
+    return null;
+  };
+}
+
+function softFail(label) {
+  return (error) => {
+    console.warn(`[${label}] request failed — treating as no data:`, error?.message ?? error);
+    return null;
+  };
+}
+
 /**
  * Tennis history archive for a tour. Static asset, built by
  * scripts/build-tennis-data.mjs — ESPN carries nothing usable for tennis.
@@ -1144,8 +1188,8 @@ function tennisArchive(sportKey) {
     state.tennis.set(
       tour,
       fetch(`data/tennis-${tour}.json`)
-        .then((r) => (r.ok ? r.json() : null))
-        .catch(() => null),
+        .then(okOrNull('tennis-archive'))
+        .catch(softFail('tennis-archive')),
     );
   }
   return state.tennis.get(tour);
@@ -1164,9 +1208,9 @@ function eventContext(leg) {
       state.context.set(
         leg.eventId,
         fetch(url, { headers: { Accept: 'application/json' } })
-          .then((r) => (r.ok ? r.json() : null))
+          .then(okOrNull('context'))
           .then((d) => d?.context ?? null)
-          .catch(() => null),
+          .catch(softFail('context')),
       );
     }
   }
@@ -1192,9 +1236,9 @@ function weatherFor(leg) {
       state.context.set(
         key,
         fetch(url, { headers: { Accept: 'application/json' } })
-          .then((r) => (r.ok ? r.json() : null))
+          .then(okOrNull('weather'))
           .then((d) => d?.weather ?? null)
-          .catch(() => null),
+          .catch(softFail('weather')),
       );
     }
   }
@@ -1221,9 +1265,9 @@ function mmaContextFor(leg) {
       state.context.set(
         key,
         fetch(url, { headers: { Accept: 'application/json' } })
-          .then((r) => (r.ok ? r.json() : null))
+          .then(okOrNull('mma-context'))
           .then((d) => d?.context ?? null)
-          .catch(() => null),
+          .catch(softFail('mma-context')),
       );
     }
   }
@@ -1248,9 +1292,9 @@ function tennisPhotosFor(leg) {
       state.context.set(
         key,
         fetch(url, { headers: { Accept: 'application/json' } })
-          .then((r) => (r.ok ? r.json() : null))
+          .then(okOrNull('tennis-photo'))
           .then((d) => d?.context ?? null)
-          .catch(() => null),
+          .catch(softFail('tennis-photo')),
       );
     }
   }
@@ -1336,9 +1380,9 @@ function matchupAnalysisFor(leg, { audit = false } = {}) {
       state.context.set(
         key,
         fetch(url, { headers: { Accept: 'application/json' } })
-          .then((r) => (r.ok ? r.json() : null))
+          .then(okOrNull('analysis'))
           .then((d) => d?.analysis ?? null)
-          .catch(() => null),
+          .catch(softFail('analysis')),
       );
     }
   }
@@ -2068,7 +2112,7 @@ function renderMmaPhotos(me, opponent) {
       <div class="mma-badge-slot">${isUfcDebut(fighter) ? `<span class="mma-ufc-debut-badge">UFC Debut</span>` : ''}</div>
       ${photoOf(fighter)
         ? `<img class="mma-photo" src="${esc(photoOf(fighter))}" alt="${esc(fighter.name)}" loading="lazy"
-             onerror="this.outerHTML='<span class=&quot;mma-photo mma-photo-fallback&quot;>${initials(fighter.name)}</span>'">`
+             data-photo-fallback="${initials(fighter.name)}">`
         : `<span class="mma-photo mma-photo-fallback">${initials(fighter.name)}</span>`}
       <p class="mma-photo-name">${esc(fighter.name)}</p>
     </div>` : '';
@@ -2097,7 +2141,7 @@ function renderTennisPhotos(photos, away, home) {
     <div class="mma-photo-side ${sideClass}">
       ${photo
         ? `<img class="mma-photo" src="${esc(photo)}" alt="${esc(name)}" loading="lazy"
-             onerror="this.outerHTML='<span class=&quot;mma-photo mma-photo-fallback&quot;>${initials(name)}</span>'">`
+             data-photo-fallback="${initials(name)}">`
         : `<span class="mma-photo mma-photo-fallback">${initials(name)}</span>`}
       <p class="mma-photo-name">${esc(name)}</p>
     </div>`;
@@ -3036,9 +3080,9 @@ async function enrichTennisAltSpreads() {
       url.searchParams.set('eventId', eventId);
 
       const event = await fetch(url, { headers: { Accept: 'application/json' } })
-        .then((r) => (r.ok ? r.json() : null))
+        .then(okOrNull('tennis-alt-spread'))
         .then((d) => d?.event ?? null)
-        .catch(() => null);
+        .catch(softFail('tennis-alt-spread'));
 
       state.tennisAltSpreads.set(eventId, event);
       return event;
@@ -3674,8 +3718,16 @@ function ensureBoxScore(game, { live = false } = {}) {
   // {box:null} from an older worker keeps being served back, no network
   // request made, for its whole max-age, which reads as "still no grid"
   // minutes after the worker was actually fixed.
+  // Captured on the way past so the not-ok branch below can name the status
+  // rather than just "not ok" — a 404 (wrong route) and a 500 (worker threw)
+  // want completely different fixes, and the diagnostic is the only place
+  // that distinction ever surfaces.
+  let httpStatus = 0;
   fetch(url, { headers: { Accept: 'application/json' }, cache: 'no-store' })
-    .then((r) => (r.ok ? r.json() : null))
+    .then((r) => {
+      httpStatus = r.status;
+      return r.ok ? r.json() : null;
+    })
     .then((data) => {
       // The deployed worker stamps every /boxscore answer with supportsLive
       // (see worker/src/index.js). Its absence means the worker running in
@@ -3693,7 +3745,7 @@ function ensureBoxScore(game, { live = false } = {}) {
         // not be invisible: the reason names which gate refused, per fixture,
         // right in the console — the difference between diagnosing this in
         // one screenshot and guessing at it for three rounds.
-        boxScoreDiagnostic(game, data ? `no box (reason: ${data.reason ?? 'not reported'})` : 'response not ok');
+        boxScoreDiagnostic(game, data ? `no box (reason: ${data.reason ?? 'not reported'})` : `response not ok (HTTP ${httpStatus})`);
         return;
       }
       const previous = state.boxScores.get(game.eventId);
@@ -4070,11 +4122,15 @@ function renderSlateLeagueOptions() {
     .join('');
 
   if (el.slateLeagueTokens) {
+    /* The label is real text in the chip now rather than a hover tooltip:
+       a glyph alone can't tell ATP from WTA (same sport, same ball), and a
+       tooltip is no help on touch, where most of this gets used. */
     el.slateLeagueTokens.innerHTML = groups
       .map((group) => `
-        <button type="button" class="league-token has-tooltip ${group.id === state.slateLeague ? 'is-active' : ''} ${group.offSeason ? 'is-off-season' : ''}"
-                data-league-token="${esc(group.id)}" data-tooltip="${esc(group.label)}" aria-label="${esc(group.label)}">
-          <span class="league-token-icon" aria-hidden="true">${LEAGUE_ICONS[group.id] ?? '●'}</span>
+        <button type="button" class="league-chip ${group.id === state.slateLeague ? 'is-active' : ''} ${group.offSeason ? 'is-off-season' : ''}"
+                data-league-token="${esc(group.id)}"
+                aria-pressed="${group.id === state.slateLeague ? 'true' : 'false'}">
+          ${leagueIconSvg(group.id)}<span class="league-chip-label">${esc(group.label)}</span>
         </button>`)
       .join('');
   }
@@ -4653,9 +4709,37 @@ document.addEventListener('click', (event) => {
 document.addEventListener('keydown', (event) => {
   if (event.key === 'Escape') closeEventMenu();
 });
+/* Fighter/player photos that 404 fall back to the initials tile. This was
+   an onerror="" attribute written into each <img> — an inline handler, which
+   a Content-Security-Policy without 'unsafe-inline' refuses to run just as
+   it refuses an inline <script>, so the broken image would have stayed
+   broken. Capture phase because `error` doesn't bubble; one listener covers
+   every photo the drawer ever renders, including ones added later. */
+document.addEventListener(
+  'error',
+  (event) => {
+    const img = event.target;
+    if (!(img instanceof HTMLImageElement) || !img.dataset.photoFallback) return;
+    const fallback = document.createElement('span');
+    fallback.className = 'mma-photo mma-photo-fallback';
+    fallback.textContent = img.dataset.photoFallback;
+    img.replaceWith(fallback);
+  },
+  true,
+);
+
 el.slateSortSelect?.addEventListener('change', () => {
   renderFullSlate();
 });
+
+/* Themed dropdowns for the two selects that sit on surfaces the user looks
+   at directly. A native <select> opens an OS-drawn option list that this
+   page's theme can't reach, so on a near-black page it flashes a bright
+   system menu — the same reason #slateEventSelect was hand-wrapped in
+   app.html. Both keep the <select> as their source of truth, so the
+   listeners above and in renderTrackerSportFilterOptions are untouched. */
+enhanceSelect(el.slateSortSelect, { label: 'Sort' });
+enhancedSportFilter = enhanceSelect(el.trackerSportFilter, { label: 'Sport' });
 el.slateBody.addEventListener('click', (event) => {
   const mlbStats = event.target.closest('[data-show-mlb-stats]');
   if (mlbStats) {
@@ -5821,6 +5905,10 @@ function renderTrackerSportFilterOptions(allPicks) {
     ...labels.map((label) => `<option value="${esc(label)}">${esc(label)}</option>`),
   ].join('');
   el.trackerSportFilter.value = state.trackerSportFilter;
+  // The options above are rebuilt from whatever sports today's data
+  // actually contains, so the themed button standing in for this select
+  // has to re-read them — setting .value directly fires no 'change'.
+  enhancedSportFilter?.refresh();
 }
 
 /** `sportFilter` is a sportGroupLabel() string ("MLB", "ATP") or "all" — see renderTrackerSportFilterOptions. */
@@ -6866,7 +6954,13 @@ function showWhatsNewHintIfFresh() {
   el.whatsNewHint.hidden = false;
 }
 
-el.whatsNewHintClose.addEventListener('click', () => {
+// The button lives inside the <summary> (anything outside it isn't
+// rendered while the notice is collapsed, which is its normal state),
+// so the click has to be stopped from also toggling the disclosure open
+// on its way out.
+el.whatsNewHintClose.addEventListener('click', (event) => {
+  event.preventDefault();
+  event.stopPropagation();
   localStorage.setItem(WHATS_NEW_LEAN_FINAL_KEY, '1');
   el.whatsNewHint.hidden = true;
 });
@@ -6893,7 +6987,13 @@ function showRetractionNoticeIfFresh() {
   el.retractionNotice.hidden = false;
 }
 
-el.retractionNoticeClose.addEventListener('click', () => {
+// The button lives inside the <summary> (anything outside it isn't
+// rendered while the notice is collapsed, which is its normal state),
+// so the click has to be stopped from also toggling the disclosure open
+// on its way out.
+el.retractionNoticeClose.addEventListener('click', (event) => {
+  event.preventDefault();
+  event.stopPropagation();
   localStorage.setItem(RETRACTION_NOTICE_KEY, '1');
   el.retractionNotice.hidden = true;
 });

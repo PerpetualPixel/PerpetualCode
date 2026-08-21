@@ -25,16 +25,34 @@ function declaredVersion() {
   return match[1];
 }
 
-test('every ?v= asset in app.html is pinned to the declared build version', () => {
-  const version = declaredVersion();
-  const html = read('app.html');
-  const pinned = [...html.matchAll(/(?:href|src)="([^"?]+)\?v=([^"]+)"/g)];
+const CACHE_BUSTED_PAGES = ['app.html', 'login.html', 'account.html', 'index.html'];
 
-  assert.ok(pinned.length >= 2, 'app.html should still cache-bust app.js and styles.css');
-  for (const [, asset, pin] of pinned) {
-    assert.equal(
-      pin, version,
-      `${asset} is pinned at ?v=${pin} but version.js says ${version} — returning browsers would keep the cached copy`,
+for (const page of CACHE_BUSTED_PAGES) {
+  test(`every ?v= asset in ${page} is pinned to the declared build version`, () => {
+    const version = declaredVersion();
+    const html = read(page);
+    const pinned = [...html.matchAll(/(?:href|src)="([^"?]+)\?v=([^"]+)"/g)];
+
+    assert.ok(pinned.length >= 1, `${page} should cache-bust the local assets it loads`);
+    for (const [, asset, pin] of pinned) {
+      assert.equal(
+        pin, version,
+        `${page}: ${asset} is pinned at ?v=${pin} but version.js says ${version} — returning browsers would keep the cached copy`,
+      );
+    }
+  });
+}
+
+/* The pages above each load a local .js now rather than carrying an inline
+   <script>, so a file left unstamped is silently cacheable — the exact drift
+   the test above exists to catch, just on a page it didn't used to cover. */
+test('no page loads a local .js or .css without a version stamp', () => {
+  for (const page of CACHE_BUSTED_PAGES) {
+    const html = read(page);
+    const unstamped = [...html.matchAll(/(?:href|src)="(?!https?:)([^"?]+\.(?:js|css))"/g)];
+    assert.deepEqual(
+      unstamped.map((m) => m[1]), [],
+      `${page} loads local asset(s) with no ?v= stamp — run update-version.js`,
     );
   }
 });

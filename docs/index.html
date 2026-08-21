@@ -2,19 +2,24 @@
 <html lang="en">
 <head>
   <meta charset="UTF-8">
+<!-- Content-Security-Policy. The load-bearing directive is script-src
+     without 'unsafe-inline': every page's JavaScript lives in its own .js
+     file now, and inline handlers are all delegated listeners, so an
+     injected <script> or onerror="" simply does not run. That matters most
+     because the auth token lives in localStorage, which any executing
+     script can read.
+     Delivered as <meta> because GitHub Pages serves static files and can't
+     set response headers. That costs frame-ancestors and report-uri, which
+     <meta> ignores — X-Frame-Options equivalent protection would need a
+     real header, so clickjacking is not covered here. -->
+<meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; font-src 'self'; img-src 'self' data: https:; connect-src 'self' https://pixel-pick-odds.mgbouldering.workers.dev; object-src 'none'; base-uri 'self'; form-action 'self'">
   <!-- Returning, already-signed-in visitors skip the pitch entirely — same
        "already logged in" check login.html does, just placed as early as
        possible (before body parsing starts) so there's no flash of landing
        page first. Only checks token presence, not validity: app.html's own
        checkAuth() is the real gate and will bounce back to login.html if the
        token turns out to be stale, exactly as it does today. -->
-  <script>
-    try {
-      if (localStorage.getItem('pp_auth_token')) {
-        window.location.href = '/app.html';
-      }
-    } catch (e) {}
-  </script>
+  <script src="signed-in-redirect.js?v=1.163"></script>
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>Perpetual Picks - Your Edge, Perpetually</title>
   <meta name="description" content="Data-driven picks across every major sport, tracked in the open. See what Perpetual Picks does before you sign up.">
