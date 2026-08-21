@@ -1146,6 +1146,37 @@ function setStatus(text, kind = '') {
 // research resolves. Reset on every full render.
 const renderedLegs = [];
 
+/* ---------------------------------------------------------------- */
+/* Optional-data fetches                                             */
+/* ---------------------------------------------------------------- */
+
+/**
+ * The enrichment fetches below (context, weather, MMA/tennis extras, the
+ * tennis archive) all treat "nothing to say" as a normal answer: they
+ * resolve to null and every caller renders fine without them. That contract
+ * is deliberate and unchanged here.
+ *
+ * What it lost was any way to tell a legitimately empty answer from a
+ * worker that's 500ing or a request that never left the browser — both
+ * arrived as a silent null, so a broken endpoint looked exactly like a quiet
+ * one and there was nothing in the console to say otherwise. These two say
+ * why, and still return null.
+ */
+function okOrNull(label) {
+  return (response) => {
+    if (response.ok) return response.json();
+    console.warn(`[${label}] HTTP ${response.status} ${response.statusText} — treating as no data`);
+    return null;
+  };
+}
+
+function softFail(label) {
+  return (error) => {
+    console.warn(`[${label}] request failed — treating as no data:`, error?.message ?? error);
+    return null;
+  };
+}
+
 /**
  * Tennis history archive for a tour. Static asset, built by
  * scripts/build-tennis-data.mjs — ESPN carries nothing usable for tennis.
@@ -1157,8 +1188,8 @@ function tennisArchive(sportKey) {
     state.tennis.set(
       tour,
       fetch(`data/tennis-${tour}.json`)
-        .then((r) => (r.ok ? r.json() : null))
-        .catch(() => null),
+        .then(okOrNull('tennis-archive'))
+        .catch(softFail('tennis-archive')),
     );
   }
   return state.tennis.get(tour);
@@ -1177,9 +1208,9 @@ function eventContext(leg) {
       state.context.set(
         leg.eventId,
         fetch(url, { headers: { Accept: 'application/json' } })
-          .then((r) => (r.ok ? r.json() : null))
+          .then(okOrNull('context'))
           .then((d) => d?.context ?? null)
-          .catch(() => null),
+          .catch(softFail('context')),
       );
     }
   }
@@ -1205,9 +1236,9 @@ function weatherFor(leg) {
       state.context.set(
         key,
         fetch(url, { headers: { Accept: 'application/json' } })
-          .then((r) => (r.ok ? r.json() : null))
+          .then(okOrNull('weather'))
           .then((d) => d?.weather ?? null)
-          .catch(() => null),
+          .catch(softFail('weather')),
       );
     }
   }
@@ -1234,9 +1265,9 @@ function mmaContextFor(leg) {
       state.context.set(
         key,
         fetch(url, { headers: { Accept: 'application/json' } })
-          .then((r) => (r.ok ? r.json() : null))
+          .then(okOrNull('mma-context'))
           .then((d) => d?.context ?? null)
-          .catch(() => null),
+          .catch(softFail('mma-context')),
       );
     }
   }
@@ -1261,9 +1292,9 @@ function tennisPhotosFor(leg) {
       state.context.set(
         key,
         fetch(url, { headers: { Accept: 'application/json' } })
-          .then((r) => (r.ok ? r.json() : null))
+          .then(okOrNull('tennis-photo'))
           .then((d) => d?.context ?? null)
-          .catch(() => null),
+          .catch(softFail('tennis-photo')),
       );
     }
   }
@@ -1349,9 +1380,9 @@ function matchupAnalysisFor(leg, { audit = false } = {}) {
       state.context.set(
         key,
         fetch(url, { headers: { Accept: 'application/json' } })
-          .then((r) => (r.ok ? r.json() : null))
+          .then(okOrNull('analysis'))
           .then((d) => d?.analysis ?? null)
-          .catch(() => null),
+          .catch(softFail('analysis')),
       );
     }
   }
@@ -2081,7 +2112,7 @@ function renderMmaPhotos(me, opponent) {
       <div class="mma-badge-slot">${isUfcDebut(fighter) ? `<span class="mma-ufc-debut-badge">UFC Debut</span>` : ''}</div>
       ${photoOf(fighter)
         ? `<img class="mma-photo" src="${esc(photoOf(fighter))}" alt="${esc(fighter.name)}" loading="lazy"
-             onerror="this.outerHTML='<span class=&quot;mma-photo mma-photo-fallback&quot;>${initials(fighter.name)}</span>'">`
+             data-photo-fallback="${initials(fighter.name)}">`
         : `<span class="mma-photo mma-photo-fallback">${initials(fighter.name)}</span>`}
       <p class="mma-photo-name">${esc(fighter.name)}</p>
     </div>` : '';
@@ -2110,7 +2141,7 @@ function renderTennisPhotos(photos, away, home) {
     <div class="mma-photo-side ${sideClass}">
       ${photo
         ? `<img class="mma-photo" src="${esc(photo)}" alt="${esc(name)}" loading="lazy"
-             onerror="this.outerHTML='<span class=&quot;mma-photo mma-photo-fallback&quot;>${initials(name)}</span>'">`
+             data-photo-fallback="${initials(name)}">`
         : `<span class="mma-photo mma-photo-fallback">${initials(name)}</span>`}
       <p class="mma-photo-name">${esc(name)}</p>
     </div>`;
@@ -3049,9 +3080,9 @@ async function enrichTennisAltSpreads() {
       url.searchParams.set('eventId', eventId);
 
       const event = await fetch(url, { headers: { Accept: 'application/json' } })
-        .then((r) => (r.ok ? r.json() : null))
+        .then(okOrNull('tennis-alt-spread'))
         .then((d) => d?.event ?? null)
-        .catch(() => null);
+        .catch(softFail('tennis-alt-spread'));
 
       state.tennisAltSpreads.set(eventId, event);
       return event;
@@ -3687,8 +3718,16 @@ function ensureBoxScore(game, { live = false } = {}) {
   // {box:null} from an older worker keeps being served back, no network
   // request made, for its whole max-age, which reads as "still no grid"
   // minutes after the worker was actually fixed.
+  // Captured on the way past so the not-ok branch below can name the status
+  // rather than just "not ok" — a 404 (wrong route) and a 500 (worker threw)
+  // want completely different fixes, and the diagnostic is the only place
+  // that distinction ever surfaces.
+  let httpStatus = 0;
   fetch(url, { headers: { Accept: 'application/json' }, cache: 'no-store' })
-    .then((r) => (r.ok ? r.json() : null))
+    .then((r) => {
+      httpStatus = r.status;
+      return r.ok ? r.json() : null;
+    })
     .then((data) => {
       // The deployed worker stamps every /boxscore answer with supportsLive
       // (see worker/src/index.js). Its absence means the worker running in
@@ -3706,7 +3745,7 @@ function ensureBoxScore(game, { live = false } = {}) {
         // not be invisible: the reason names which gate refused, per fixture,
         // right in the console — the difference between diagnosing this in
         // one screenshot and guessing at it for three rounds.
-        boxScoreDiagnostic(game, data ? `no box (reason: ${data.reason ?? 'not reported'})` : 'response not ok');
+        boxScoreDiagnostic(game, data ? `no box (reason: ${data.reason ?? 'not reported'})` : `response not ok (HTTP ${httpStatus})`);
         return;
       }
       const previous = state.boxScores.get(game.eventId);
@@ -4670,6 +4709,25 @@ document.addEventListener('click', (event) => {
 document.addEventListener('keydown', (event) => {
   if (event.key === 'Escape') closeEventMenu();
 });
+/* Fighter/player photos that 404 fall back to the initials tile. This was
+   an onerror="" attribute written into each <img> — an inline handler, which
+   a Content-Security-Policy without 'unsafe-inline' refuses to run just as
+   it refuses an inline <script>, so the broken image would have stayed
+   broken. Capture phase because `error` doesn't bubble; one listener covers
+   every photo the drawer ever renders, including ones added later. */
+document.addEventListener(
+  'error',
+  (event) => {
+    const img = event.target;
+    if (!(img instanceof HTMLImageElement) || !img.dataset.photoFallback) return;
+    const fallback = document.createElement('span');
+    fallback.className = 'mma-photo mma-photo-fallback';
+    fallback.textContent = img.dataset.photoFallback;
+    img.replaceWith(fallback);
+  },
+  true,
+);
+
 el.slateSortSelect?.addEventListener('change', () => {
   renderFullSlate();
 });

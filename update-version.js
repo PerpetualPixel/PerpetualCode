@@ -82,19 +82,30 @@ console.log(`✅ Updated version.js: v${currentVersion} (${commit}) @ ${builtAt}
 // index.html is the public landing page (self-contained, no styles.css/
 // app.js of its own) — app.html is the actual gated app shell those two
 // entry points belong to, so that's what gets cache-busted here.
-const appShellPath = path.join(__dirname, 'docs', 'app.html');
-try {
-  let appHtml = fs.readFileSync(appShellPath, 'utf8');
-  appHtml = appHtml.replace(
-    /(href="styles\.css)(\?v=[^"]*)?(")/,
-    `$1?v=${currentVersion}$3`,
-  );
-  appHtml = appHtml.replace(
-    /(src="app\.js)(\?v=[^"]*)?(")/,
-    `$1?v=${currentVersion}$3`,
-  );
-  fs.writeFileSync(appShellPath, appHtml);
-  console.log(`✅ Cache-busted styles.css and app.js in app.html to ?v=${currentVersion}`);
-} catch (e) {
-  console.warn('Could not cache-bust app.html:', e.message);
+// Every page that loads a local .js or .css gets its own version stamp.
+// This used to be app.html only, which was fine while every other page kept
+// its script inline — an inline script can't go stale, because the browser
+// revalidates the HTML that carries it. Now that login/account/index each
+// load a real .js file (moved out so those pages can run under a
+// Content-Security-Policy that forbids inline script), those files are
+// separately cacheable and need the same treatment or a returning visitor
+// keeps yesterday's copy.
+const CACHE_BUSTED_PAGES = ['app.html', 'login.html', 'account.html', 'index.html'];
+
+for (const page of CACHE_BUSTED_PAGES) {
+  const pagePath = path.join(__dirname, 'docs', page);
+  try {
+    const before = fs.readFileSync(pagePath, 'utf8');
+    // Local .js/.css only: absolute URLs (Google Fonts, Turnstile) aren't
+    // ours to version, and images/manifests aren't code.
+    const after = before.replace(
+      /((?:href|src)="(?!https?:)[^"?]+\.(?:js|css))(\?v=[^"]*)?(")/g,
+      `$1?v=${currentVersion}$3`,
+    );
+    if (after !== before) fs.writeFileSync(pagePath, after);
+    const count = [...after.matchAll(/\?v=/g)].length;
+    console.log(`✅ Cache-busted ${count} asset${count === 1 ? '' : 's'} in ${page} to ?v=${currentVersion}`);
+  } catch (e) {
+    console.warn(`Could not cache-bust ${page}:`, e.message);
+  }
 }
