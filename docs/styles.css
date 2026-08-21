@@ -4649,6 +4649,14 @@ input[type="range"]:focus-visible {
 
 /* The algorithm's own unit sizing, shown on every tracked card — units,
    never dollars, since every user runs a different dollar unit. */
+/* Carries no inset of its own — it takes the horizontal padding of whatever
+   it sits in, which is why every caller renders it INSIDE the .confidence
+   block (14px, same as .leg below it) rather than as a sibling of it. As a
+   sibling of .confidence it was a direct child of .pick, which has no
+   padding, so the line sat flush against the card's left edge while the
+   selection beneath it was inset — visibly out of line on a narrow screen.
+   The Prop Play card is the one caller outside .confidence, and that card
+   pads its own contents. */
 .units-line {
   margin: 6px 0 0;
   font-family: var(--mono);

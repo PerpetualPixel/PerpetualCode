@@ -1595,6 +1595,7 @@ function renderConfidence(pick) {
         <span>Confidence <span class="conf-score">${Math.round(pick.score)}</span>/100</span>
         ${beatsLine}
       </div>
+      ${unitsLineHtml(pick.stakeUnits)}
     </div>`;
 }
 
@@ -1723,7 +1724,6 @@ function renderPick(pick) {
       </div>
 
       ${renderConfidence(pick)}
-      ${unitsLineHtml(pick.stakeUnits)}
 
       ${isCombo ? `<p class="pair-note">${esc(pick.pairReason)}</p>` : ''}
 
@@ -1761,12 +1761,19 @@ function renderDegradedPick(pick) {
       <div class="confidence" style="--conf:${confidenceColor(pick.score, state.minScore)}">
         <div class="conf-track"><span class="conf-fill" style="width:${Math.round(pick.score)}%"></span></div>
         <div class="conf-label"><span>Confidence <span class="conf-score">${Math.round(pick.score)}</span>/100</span></div>
+        ${unitsLineHtml(pick.stakeUnits)}
       </div>
-      ${unitsLineHtml(pick.stakeUnits)}
 
-      <p class="leg-selection">${esc(record.selection)}</p>
-      <p class="leg-matchup">${esc(record.away)} @ ${esc(record.home)} ·
-        <span class="schedule-result ${resultClass}">${esc(statusLabel)}</span></p>
+      <!-- Wrapped in .leg for the same 14px inset the live card's legs carry.
+           Bare here, these two sat flush against the card's edge while the
+           confidence block above them was inset — the same misalignment the
+           units line had, on the surface that renders a started or finished
+           pick. -->
+      <div class="leg">
+        <p class="leg-selection">${esc(record.selection)}</p>
+        <p class="leg-matchup">${esc(record.away)} @ ${esc(record.home)} ·
+          <span class="schedule-result ${resultClass}">${esc(statusLabel)}</span></p>
+      </div>
     </article>`;
 }
 
