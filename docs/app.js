@@ -32,7 +32,6 @@ import {
   bookIdFor,
   impliedProb,
   americanToDecimal,
-  suggestedParlayStake,
   suggestedStake,
   scoreCandidate,
   isNflPreseasonKey,
@@ -1518,11 +1517,6 @@ function stakeLineHtml(stake, className = 'stake-line') {
   return `<div class="${className}">${esc(result.text)}</div>`;
 }
 
-function stakeLine(pick) {
-  const stake = suggestedParlayStake(pick.legs, americanToDecimal(pick.american));
-  return stakeLineHtml(stake);
-}
-
 /**
  * The algorithm's own sizing for a tracked play, in units — rendered on
  * the card itself, per explicit product direction ("post the unit size
@@ -1530,6 +1524,25 @@ function stakeLine(pick) {
  * different dollar amount units"). Confidence decides the number (see
  * engine.js's stakeUnitsForScore); this only says it.
  */
+/**
+ * A fallback-tier pick's marker, sitting inline with the sport chip.
+ *
+ * This used to be a full-width amber banner under the header, from when a
+ * flagged pick was the rare exception. Every board posts in full every day
+ * now (worker/src/tracking.js's guarantee), so a thin slate flags all five
+ * cards — five identical alarm blocks stacked down the page, each louder
+ * than the pick it labelled. When the exception becomes the norm it stops
+ * reading as a warning, so it's shaped as a category instead: same
+ * disclosure, same reason (on the chip's tooltip), a great deal quieter.
+ */
+function flagChipHtml(flagged, reason) {
+  if (!flagged) return '';
+  const why = reason
+    ? `Outside standard criteria: ${reason}`
+    : 'Outside standard criteria';
+  return `<span class="pick-flag-chip" title="${esc(why)}">Fallback</span>`;
+}
+
 function unitsLineHtml(units, className = 'units-line') {
   const n = Number(units);
   if (!Number.isFinite(n) || n <= 0) return '';
@@ -1559,7 +1572,10 @@ function renderLeanBadge(isLean) {
 
 function renderConfidence(pick) {
   const color = confidenceColor(pick.score, state.minScore);
-  const stake = stakeLine(pick);
+  // No ¼-Kelly stake line here: the algorithm sizes its own plays now, and
+  // unitsLineHtml prints that directly beneath this bar. Two different
+  // recommended stakes stacked on one card ("1 unit" over "Suggested stake:
+  // 0.24u") just argue with each other — the units line is the answer.
   // percentile is only meaningful against the live pool topPicks() itself
   // ranked against — Pixel's Picks is a locked, server-
   // picked set with no "board" of its own left to compare against by the
@@ -1578,7 +1594,6 @@ function renderConfidence(pick) {
         <span>Confidence <span class="conf-score">${Math.round(pick.score)}</span>/100</span>
         ${beatsLine}
       </div>
-      ${stake}
     </div>`;
 }
 
@@ -1701,11 +1716,10 @@ function renderPick(pick) {
         <span class="pick-head-left">
           <span class="chip"><strong>${esc(sport)}</strong> ·
             ${isCombo ? '2-leg combo' : 'Straight bet'}</span>
+          ${flagChipHtml(flagged, pick.flagReason)}
         </span>
         <span class="price">${esc(formatAmerican(pick.american))}</span>
       </div>
-
-      ${flagged ? `<div class="pick-flag">⚠ Outside standard criteria: ${esc(pick.flagReason)}</div>` : ''}
 
       ${renderConfidence(pick)}
       ${unitsLineHtml(pick.stakeUnits)}
@@ -1738,11 +1752,10 @@ function renderDegradedPick(pick) {
       <div class="pick-head">
         <span class="pick-head-left">
           <span class="chip"><strong>Straight bet</strong></span>
+          ${flagChipHtml(flagged, record.flagReason)}
         </span>
         <span class="price">${esc(formatAmerican(pick.american))}</span>
       </div>
-
-      ${flagged ? `<div class="pick-flag">⚠ Outside standard criteria: ${esc(record.flagReason)}</div>` : ''}
 
       <div class="confidence" style="--conf:${confidenceColor(pick.score, state.minScore)}">
         <div class="conf-track"><span class="conf-fill" style="width:${Math.round(pick.score)}%"></span></div>
@@ -2654,6 +2667,29 @@ function capperConsensusSectionHtml(leg) {
       ? `<p class="consensus-meta">Consensus last updated ${esc(dateFmt.format(new Date(cc.generatedAt)))} — powered by the <a href="https://perpetualpixel.github.io/MMA_Engine/" target="_blank" rel="noopener">MMA Consensus Engine</a>.</p>`
       : '') +
     `</div>`;
+}
+
+/**
+ * When MMA_Engine's picks.json was last built, shown under a fight card's
+ * event header.
+ *
+ * Every MMA number on these cards — the consensus winner call, the capper
+ * reads, the card-status annotations — comes from that one feed
+ * (capper-consensus.js), pushed by the engine's weekly run. So "how current
+ * is this card" really means "when did that run", and until now the only
+ * place that said so was inside an individual fight's drawer, three taps
+ * from the board it describes. Empty on a feed that predates the field, or
+ * before the first fetch lands: an invented timestamp on stale data is the
+ * one genuinely harmful answer here.
+ */
+function mmaFeedStampHtml() {
+  const raw = cachedConsensusFeed()?.generated_at;
+  const ms = typeof raw === 'number' ? raw : Date.parse(raw ?? '');
+  if (!Number.isFinite(ms)) return '';
+  const at = new Date(ms);
+  return `<p class="slate-event-stamp">Picks &amp; capper data imported from the
+    <a href="https://perpetualpixel.github.io/MMA_Engine/" target="_blank" rel="noopener">MMA Consensus Engine</a>
+    · <time datetime="${esc(at.toISOString())}">${esc(dateFmt.format(at))}</time></p>`;
 }
 
 async function openStatsDrawer(leg, opposite = null, { fullscreen = false, oddsOnly = false } = {}) {
@@ -4433,7 +4469,9 @@ function renderFullSlate() {
         if (currentEvent !== null) {
           html += '</div>'; // Close previous event section
         }
-        html += `<div class="slate-event-section"><h3 class="slate-event-header">${esc(eventName)}</h3>`;
+        html += `<div class="slate-event-section"><h3 class="slate-event-header">${esc(eventName)}</h3>${
+          group.id === 'mma' ? mmaFeedStampHtml() : ''
+        }`;
         currentEvent = eventName;
       }
 
@@ -5090,9 +5128,8 @@ const potdDateTimeFmt = new Intl.DateTimeFormat(undefined, {
  * Generate tap pulled, which has no meaning for a single daily editorial
  * pick with no board of its own to compare against.
  */
-function renderPotdConfidence(score, stake, stakeUnits = null) {
+function renderPotdConfidence(score, stakeUnits = null) {
   const color = confidenceColor(score, RULES.MIN_SCORE);
-  const stakeText = stakeLineHtml(stake);
   return `
     <div class="confidence" style="--conf:${color}">
       <div class="conf-track">
@@ -5102,7 +5139,6 @@ function renderPotdConfidence(score, stake, stakeUnits = null) {
         <span>Confidence <span class="conf-score">${Math.round(score)}</span>/100</span>
       </div>
       ${unitsLineHtml(stakeUnits)}
-      ${stakeText}
     </div>`;
 }
 
@@ -5190,7 +5226,7 @@ function renderPotdCard(writeup, generatedAt, stale) {
         ${esc(writeup.matchup)} · ${esc(potdDateTimeFmt.format(new Date(writeup.commenceMs)))}
         · best price at ${esc(writeup.book)}
       </p>
-      ${renderPotdConfidence(writeup.score, writeup.stake, writeup.stakeUnits)}
+      ${renderPotdConfidence(writeup.score, writeup.stakeUnits)}
       <button type="button" class="potd-more-btn" aria-expanded="false" aria-controls="${detailId}">
         More info
       </button>
@@ -5245,7 +5281,7 @@ function renderPotdLeanCard(lean) {
       <p class="potd-matchup">
         ${esc(lean.away)} @ ${esc(lean.home)} · ${esc(potdDateTimeFmt.format(new Date(lean.commenceMs)))}
       </p>
-      ${renderPotdConfidence(lean.score, null)}
+      ${renderPotdConfidence(lean.score)}
       <p class="potd-meta">
         Best price at ${esc(lean.book)} — the algorithm's current leader; not locked in until closer to game time.
       </p>
@@ -6511,10 +6547,33 @@ async function renderDailyLearningSection() {
       </div>`;
     }).join('');
 
-  el.dailyLearnLog.innerHTML = [
-    recentHtml,
-    archived.length > 0 ? `<div style="margin-top:16px;padding-top:12px;border-top:1px solid var(--line)"><p style="font-size:0.85rem;color:var(--muted);margin:0 0 8px">Archived weeks (${Math.ceil(archived.length / 7)})</p>${archivedHtml}</div>` : '',
-  ].filter(Boolean).join('');
+  // One disclosure for the whole log, labelled with the span it covers.
+  // Expanded, this is every reviewed day's full report stacked down the
+  // page — around ten lines each, so a fortnight of reviews buried the rest
+  // of the dashboard under a wall of statistics nobody scrolls. It's a
+  // reference you consult, not a feed you read: closed by default, and the
+  // date range on the summary says what's inside without opening it.
+  const shownDates = [...recent, ...archived]
+    .map((e) => e.dateKey).filter(Boolean).sort();
+  const dayCount = shownDates.length;
+  const range = dayCount && shownDates[0] !== shownDates[dayCount - 1]
+    ? `${shownDates[0]} – ${shownDates[dayCount - 1]}`
+    : (shownDates[0] ?? '');
+
+  el.dailyLearnLog.innerHTML = `
+    <details class="explainer log-disclosure">
+      <summary class="explainer-summary">
+        <span class="explainer-lede">Daily review log${range ? ` — <strong>${esc(range)}</strong>` : ''}
+          <span class="log-day-count">${dayCount} day${dayCount === 1 ? '' : 's'}</span></span>
+        <span class="explainer-more">Read</span>
+      </summary>
+      <div class="explainer-body log-disclosure-body">
+        ${recentHtml}
+        ${archived.length > 0
+          ? `<div class="log-archived"><p class="log-archived-head">Archived weeks (${Math.ceil(archived.length / 7)})</p>${archivedHtml}</div>`
+          : ''}
+      </div>
+    </details>`;
 }
 
 /** Current state of the weekly algorithm health review (see worker/src/algo-health.js). */
