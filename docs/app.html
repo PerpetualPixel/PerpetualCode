@@ -11,8 +11,16 @@
      Delivered as <meta> because GitHub Pages serves static files and can't
      set response headers. That costs frame-ancestors and report-uri, which
      <meta> ignores — X-Frame-Options equivalent protection would need a
-     real header, so clickjacking is not covered here. -->
-<meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src 'self' https://fonts.gstatic.com; img-src 'self' data: https:; connect-src 'self' https://pixel-pick-odds.mgbouldering.workers.dev; object-src 'none'; base-uri 'self'; form-action 'self'">
+     real header, so clickjacking is not covered here.
+     connect-src carries perpetualpixel.github.io as well as the worker:
+     that's where MMA_Engine's picks.json lives (capper-consensus.js), the
+     feed behind every fight card's consensus call, capper reasoning and
+     cancelled-bout annotation. Omitting it silently blocked that fetch —
+     the cards still rendered, just stripped of every consensus signal,
+     which is exactly the failure a CSP regression hides best. This is the
+     only page that reads the feed; the other pages' connect-src stays the
+     worker alone. -->
+<meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src 'self' https://fonts.gstatic.com; img-src 'self' data: https:; connect-src 'self' https://pixel-pick-odds.mgbouldering.workers.dev https://perpetualpixel.github.io; object-src 'none'; base-uri 'self'; form-action 'self'">
 <title>Perpetual Picks - App</title>
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <meta name="theme-color" content="#05050A">
@@ -28,7 +36,7 @@
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Syne:wght@600;700;800&family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
-<link rel="stylesheet" href="styles.css?v=1.165">
+<link rel="stylesheet" href="styles.css?v=1.167">
 </head>
 <body>
 
@@ -923,8 +931,23 @@
         this learns from stays unbiased.
         </p>
       </details>
-      <div id="dailyLearnWeights" class="learning-recs"></div>
-      <div id="dailyLearnLog" class="learning-recs"></div>
+      <!-- Both halves of this section — the currently active weights and the
+           day-by-day report log — behind one disclosure. Open, they are a
+           dozen dense stat rows followed by a fortnight of full reports,
+           which buried every section under them; it is a reference you
+           consult, not a feed you read. app.js fills the summary in with the
+           span the log actually covers, so you know what is inside without
+           opening it. -->
+      <details id="dailyLearnDisclosure" class="explainer log-disclosure">
+        <summary class="explainer-summary">
+          <span class="explainer-lede" id="dailyLearnSummary">Daily review log</span>
+          <span class="explainer-more" aria-hidden="true">Read</span>
+        </summary>
+        <div class="explainer-body log-disclosure-body">
+          <div id="dailyLearnWeights" class="learning-recs"></div>
+          <div id="dailyLearnLog" class="learning-recs"></div>
+        </div>
+      </details>
     </section>
 
     <!-- Algorithm Health -->
@@ -958,6 +981,6 @@
   </div>
 </aside>
 
-<script type="module" src="app.js?v=1.165"></script>
+<script type="module" src="app.js?v=1.167"></script>
 </body>
 </html>

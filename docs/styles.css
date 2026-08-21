@@ -3021,6 +3021,19 @@ input[type="range"]:focus-visible {
   animation: slideInDown 0.4s ease-out;
 }
 
+/* Feed provenance under an MMA card's event header — see app.js's
+   mmaFeedStampHtml. Spans the grid like the header above it, or it would
+   sit in the first card's cell. */
+.slate-event-stamp {
+  grid-column: 1 / -1;
+  margin: -6px 0 14px;
+  color: var(--muted);
+  font-size: 0.72rem;
+  line-height: 1.5;
+}
+.slate-event-stamp a { color: var(--accent); }
+.slate-event-stamp time { font-family: var(--mono); color: var(--text); }
+
 /* Glassmorphism surface + glowing gradient border (violet/magenta/laser),
    via the standard dual-background-clip trick: a flat near-black fill
    clipped to the padding-box, sitting under a gradient clipped to the
@@ -4216,20 +4229,32 @@ input[type="range"]:focus-visible {
 /* Outside-standard pick flag                                       */
 /* ================================================================ */
 
+/* Deliberately quiet, and deliberately not amber. Every board posts in
+   full every day now (worker/src/tracking.js's guarantee), so on a thin
+   slate EVERY card is a fallback — the amber card border plus a full-width
+   warning banner meant five identical alarm blocks stacked down the page,
+   louder than the picks they labelled. When the exception is the norm it
+   stops being a warning and starts being a category, so it reads as one:
+   the disclosure is unchanged (the reason is on the chip, on hover and in
+   the tooltip), it just no longer shouts over the pick. */
 .pick.is-outside-standard {
-  border-color: var(--warn);
+  border-color: var(--line);
 }
 
-.pick-flag {
-  margin: 10px 14px 0;
-  padding: 8px 10px;
-  border-radius: 6px;
-  background: rgba(251, 191, 36, 0.1);
-  border: 1px solid rgba(251, 191, 36, 0.35);
-  color: var(--warn);
-  font-size: 0.72rem;
-  font-weight: 600;
-  line-height: 1.4;
+.pick-flag-chip {
+  display: inline-flex;
+  align-items: center;
+  padding: 2px 8px;
+  border-radius: 999px;
+  border: 1px solid var(--line);
+  background: rgba(156, 152, 184, 0.12);
+  color: var(--muted);
+  font-size: 0.6rem;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  white-space: nowrap;
+  cursor: help;
 }
 
 /* Whether a Pixel's Picks/Play of the Day slot is the app's locked, final
@@ -4426,6 +4451,36 @@ input[type="range"]:focus-visible {
   margin: 8px 0 0;
   font-size: 0.78rem;
   line-height: 1.65;
+  color: var(--muted);
+}
+
+/* The daily review log, behind one disclosure (see app.js's
+   renderDailyLearningSection). Opened, it's still long by nature — a
+   fortnight of full reports — so it scrolls inside its own box rather than
+   pushing everything below it off the screen. */
+.log-disclosure-body {
+  max-height: 60vh;
+  overflow-y: auto;
+  margin-top: 10px;
+}
+.log-day-count {
+  margin-left: 8px;
+  padding: 1px 7px;
+  border-radius: 999px;
+  border: 1px solid var(--line);
+  color: var(--muted);
+  font-size: 0.65rem;
+  font-weight: 600;
+  white-space: nowrap;
+}
+.log-archived {
+  margin-top: 16px;
+  padding-top: 12px;
+  border-top: 1px solid var(--line);
+}
+.log-archived-head {
+  margin: 0 0 8px;
+  font-size: 0.85rem;
   color: var(--muted);
 }
 

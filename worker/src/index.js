@@ -2131,9 +2131,10 @@ export default {
           potdRecord ? env.POTD_KV.delete(potdKey) : null,
           propRecord ? env.POTD_KV.delete(propKey) : null,
           cleared.ladder ? env.POTD_KV.delete(ladderPlayKey) : null,
-          // The hold reason recorded on a skip, else /ladder would explain
-          // a freshly-posted rung with a stale "why there's nothing today".
-          cleared.ladder ? env.POTD_KV.delete(`ladder:status:${dateKey}`) : null,
+          // The hold reason recorded on a skip — dropped whenever the rung
+          // is about to be redrawn, else /ladder would explain a freshly
+          // posted rung with a stale "why there's nothing today".
+          ladderGraded ? null : env.POTD_KV.delete(`ladder:status:${dateKey}`),
         ].filter(Boolean));
 
         // Same order, same shared slate fetch, same reasoning as the 2am
@@ -2146,12 +2147,16 @@ export default {
         const potd = await runPotdDaily(env, ctx, now, { fetchFullSlate });
         const propPlay = await runPropPlayDaily(env, ctx, now);
         const top5 = await runTop5Batch(env, ctx, now, { fetchFullSlate });
-        const ladder = cleared.ladder
-          ? await runLadderDaily(env, ctx, now, {
+        // Gated on the rung being GRADED, not on one having been cleared:
+        // "nothing was cleared" also covers the day having no rung at all,
+        // and that's the case most in need of a draw — skipping it there
+        // would leave the day without the rung it's guaranteed.
+        const ladder = ladderGraded
+          ? { skipped: true, reason: 'kept — already graded', dateKey }
+          : await runLadderDaily(env, ctx, now, {
             fetchFullSlate,
             getTop5Picks: () => getTop5(env, { now }),
-          })
-          : { skipped: true, reason: 'kept — already graded', dateKey };
+          });
 
         return json({
           dateKey,

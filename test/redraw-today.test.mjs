@@ -166,6 +166,27 @@ test('force overrides the already-underway refusal', async () => {
   assert.equal(store.has(`potd:${DATE}`), false);
 });
 
+test('a day with no ladder rung yet still gets one drawn, not skipped as "kept"', async () => {
+  // "Nothing was cleared" covers both a graded rung being kept and there
+  // being no rung at all — and the second case is the one most in need of a
+  // draw. Gating the redraw on "was something cleared" silently skipped it,
+  // leaving the day without the rung it's guaranteed.
+  const store = drawnDay();
+  store.delete(`ladder:play:${DATE}`);
+
+  const res = await redraw(store);
+  assert.equal(res.status, 200);
+
+  const body = await res.json();
+  assert.equal(body.cleared.ladder, false, 'nothing to clear');
+  assert.notEqual(body.drawn.ladder.reason, 'kept — already graded');
+  // It actually ran: the empty stub slate makes it hold, and only a real
+  // runLadderDaily call records why.
+  const status = JSON.parse(store.get(`ladder:status:${DATE}`) ?? 'null');
+  assert.equal(status?.dateKey, DATE, 'runLadderDaily was called');
+  assert.notEqual(status?.reason, 'stale hold');
+});
+
 test('a settled ladder rung is kept — clearing it would compound the climb twice', async () => {
   const store = drawnDay({ ladderStatus: 'won' });
   const res = await redraw(store);
