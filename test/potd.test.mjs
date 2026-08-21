@@ -268,9 +268,12 @@ test('the stored record carries a headline, price, and tracking fields', async (
   assert.equal(record.writeup.sections.find((s) => s.title === 'The Market & Price Case'), undefined);
 
   assert.equal(record.pick.status, 'pending');
-  // 5U play (product direction): FLAT_UNIT_STAKE 20 x 5 — the Play of the
-  // Day and the Prop Play are the two flagship 5-unit plays.
-  assert.equal(record.pick.suggested_stake, 100);
+  // Confidence-scaled 3-5U band at $25/1U (2026-08-21 direction) — the
+  // exact spot in the band is the algorithm's call, so assert the band and
+  // the units/dollars agreement rather than one fixed number.
+  assert.ok(record.pick.stakeUnits >= 3 && record.pick.stakeUnits <= 5,
+    `POTD units in [3, 5], got ${record.pick.stakeUnits}`);
+  assert.equal(record.pick.suggested_stake, record.pick.stakeUnits * 25);
   assert.equal(record.pick.dateKey, '2026-08-05');
   assert.equal(record.pick.clv.openAmerican, record.pick.american);
   assert.equal(record.pick.result, null);

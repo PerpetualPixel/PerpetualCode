@@ -25,7 +25,7 @@
  * single, server-side, always-on history that doesn't depend on anyone
  * having the app open.
  */
-import { analyze, topPicks, clearsMaxJuice, isNflPreseason, isNflPreseasonKey } from '../../docs/engine.js';
+import { analyze, topPicks, clearsMaxJuice, isNflPreseason, isNflPreseasonKey, UNIT_DOLLARS, STAKE_BANDS, stakeUnitsForScore } from '../../docs/engine.js';
 import { fetchCapperConsensus, applyCapperConsensus, upgradeToValueStraight } from '../../docs/capper-consensus.js';
 import { isPower4Matchup } from '../../docs/ncaaf-conferences.js';
 import { gradePick } from '../../docs/learning.js';
@@ -147,13 +147,9 @@ export function contradictsPublishedBoard(candidate, publishedSides) {
   }
   return false;
 }
-// Matches docs/learning.js's own FLAT_UNIT_STAKE — duplicated rather than
-// imported because that module's exported constant sits alongside
-// IndexedDB-touching functions this file never calls; importing just the
-// one pure function (gradePick) and this one number keeps the boundary
-// between "browser-only" and "safe to run in the Worker" obvious at a
-// glance rather than relying on nothing-happens-to-call-the-unsafe-part.
-const FLAT_UNIT_STAKE = 20;
+/* The dollar value of one unit comes from docs/engine.js's UNIT_DOLLARS
+   ($25/1U, 2026-08-21 product direction) — the flat $20 constant this file
+   used to carry is gone with flat staking itself; see pickRecordFrom. */
 const KV_TTL_SECONDS = 86400 * 90; // 90 days — long enough for weeks of calibration data, not forever
 
 // How many ET calendar days back runTop5Batch looks for an event it already
@@ -449,8 +445,17 @@ export async function fetchFullSlateEvents(env, ctx) {
 // direction — the 5 daily picks sit just below the two 5U Plays of the Day).
 // Full Slate passes 1 explicitly: it tracks every game and stays the flat
 // 1U baseline.
-export function pickRecordFrom(pick, dateKey, now, stakeUnits = 2) {
+export function pickRecordFrom(pick, dateKey, now, stakeUnits = null) {
   const leg = pick.legs[0];
+  // The algorithm sizes its own play (2026-08-21 direction): confidence
+  // maps onto the board's unit band, and a flagged fallback pick pins to
+  // the band's minimum — extra size is for picks that earned it. A caller
+  // can still pass an explicit stakeUnits (Full Slate's raw record stays
+  // flat 1U).
+  const units = stakeUnits
+    ?? (pick.meetsStandard === false
+      ? STAKE_BANDS.pixel.min
+      : stakeUnitsForScore(pick.score, STAKE_BANDS.pixel));
   return {
     pickId: leg.id,
     dateKey,
@@ -495,7 +500,11 @@ export function pickRecordFrom(pick, dateKey, now, stakeUnits = 2) {
     // and isn't itself a probability.
     consensusProb: leg.consensusProb,
     commenceMs: leg.commenceMs,
-    suggested_stake: FLAT_UNIT_STAKE * stakeUnits,
+    // The recommendation shown on the card is the UNITS — every user runs
+    // a different dollar unit. The dollar figure is the tracked record's
+    // own accounting basis ($25/1U) for Net $ and ROI.
+    stakeUnits: units,
+    suggested_stake: UNIT_DOLLARS * units,
     generatedAt: now,
     status: 'pending',
     clv: { openAmerican: leg.american, closeAmerican: leg.american, updatedAt: now },

@@ -23,6 +23,7 @@
  */
 
 import { fetchSport, fetchScores, UPSTREAM, REGIONS } from './odds.js';
+import { UNIT_DOLLARS, STAKE_BANDS } from '../../docs/engine.js';
 import { gradePick } from '../../docs/learning.js';
 import { normalizeName } from '../../docs/wnba-props.js';
 import { espnAbbr } from '../../docs/team-logos.js';
@@ -78,11 +79,21 @@ const MAX_GAMES_SCANNED = 3;
 const MAX_GAMELOG_LOOKUPS = 12;
 
 const GRADING_LOOKBACK_DAYS = 3;
-// The Prop Play is a 5-UNIT play (product direction: it and the regular
-// Play of the Day are 5U each). $20/unit matches FLAT_UNIT_STAKE across the
-// trackers, so the record's dollar stake is 5 x 20.
-const UNIT_STAKE = 20;
-const PLAY_UNITS = 5;
+/* Sizing (2026-08-21 direction, was a flat 5U x $20): the Prop Play
+   carries 1 to 2.5 units, decided by the play's own conviction — the
+   weighted hit-rate blend its legs were selected on — with a fallback-tier
+   play pinned to 1U. Dollars come from engine.js's UNIT_DOLLARS ($25/1U);
+   the card shows the units. Conviction lives on 0..1 (season/L10/L5 hit
+   rates plus a streak kicker), and the gates only pass legs around 0.75+,
+   so [0.75, 0.95] is the honest spread of what actually qualifies. */
+const PROP_CONVICTION_LO = 0.75;
+const PROP_CONVICTION_HI = 0.95;
+function propPlayUnits(legs, viaFallback) {
+  if (viaFallback || !legs.length) return STAKE_BANDS.prop.min;
+  const avg = legs.reduce((sum, l) => sum + (Number(l.conviction) || 0), 0) / legs.length;
+  const t = Math.max(0, Math.min(1, (avg - PROP_CONVICTION_LO) / (PROP_CONVICTION_HI - PROP_CONVICTION_LO)));
+  return Math.round((STAKE_BANDS.prop.min + t * (STAKE_BANDS.prop.max - STAKE_BANDS.prop.min)) * 2) / 2;
+}
 
 function etDate(ms) {
   const fmt = new Intl.DateTimeFormat('en-US', {
@@ -535,8 +546,8 @@ export async function runPropPlayDaily(env, ctx, now = Date.now(), { debug = fal
       status: 'pending',
     }))),
     writeup: playWriteup(legs, combinedAmerican),
-    units: PLAY_UNITS,
-    suggested_stake: UNIT_STAKE * PLAY_UNITS,
+    units: propPlayUnits(legs, viaFallback),
+    suggested_stake: UNIT_DOLLARS * propPlayUnits(legs, viaFallback),
     status: 'pending',
     generatedAt: now,
   };
@@ -636,7 +647,7 @@ export async function runPropPlayGrading(env, ctx, now = Date.now()) {
         : 'won';
       // Settled as ONE play: both legs must hit; one miss loses the full
       // 5U stake, a win pays the combined price on it.
-      const stake = record.suggested_stake ?? UNIT_STAKE * PLAY_UNITS;
+      const stake = record.suggested_stake ?? UNIT_DOLLARS * STAKE_BANDS.prop.min;
       const payout = record.status === 'won' ? stake * (record.combinedDecimal - 1)
         : record.status === 'lost' ? -stake : 0;
       record.result = { payout: Math.round(payout * 100) / 100, roiPercent: Math.round((payout / stake) * 10000) / 100 };
@@ -673,8 +684,8 @@ export async function getAllPropPlays(env, { now = Date.now(), days = 90 } = {})
       selection: record.legs.map((l) => l.label).join(' + '),
       american: record.combinedAmerican,
       decimal: record.combinedDecimal,
-      suggested_stake: record.suggested_stake ?? UNIT_STAKE * PLAY_UNITS,
-      units: record.units ?? PLAY_UNITS,
+      suggested_stake: record.suggested_stake ?? UNIT_DOLLARS * STAKE_BANDS.prop.min,
+      units: record.units ?? STAKE_BANDS.prop.min,
       // Absent on records written before playConsensusProb existed; those
       // are skipped by segmentStats rather than counted with a made-up
       // number, which is the correct handling of "we never recorded it".

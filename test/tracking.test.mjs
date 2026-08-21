@@ -139,8 +139,9 @@ test('runTop5Batch stores at most TOP5_COUNT picks, all clearing the EV/Kelly fl
   assert.equal(picks.length, result.count);
   for (const p of picks) {
     assert.equal(p.status, 'pending');
-    // 2U per Pixel's Pick (product direction — see pickRecordFrom).
-    assert.equal(p.suggested_stake, 40);
+    // Confidence-scaled 1-2.5U band at $25/1U (2026-08-21 direction).
+    assert.ok(p.stakeUnits >= 1 && p.stakeUnits <= 2.5, `units in [1, 2.5], got ${p.stakeUnits}`);
+    assert.equal(p.suggested_stake, p.stakeUnits * 25);
     // Real edges clearing the sharp standard outright, not padding.
     assert.equal(p.meetsStandard, true);
     assert.equal(p.flagReason, null);

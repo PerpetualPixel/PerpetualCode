@@ -1523,6 +1523,20 @@ function stakeLine(pick) {
   return stakeLineHtml(stake);
 }
 
+/**
+ * The algorithm's own sizing for a tracked play, in units — rendered on
+ * the card itself, per explicit product direction ("post the unit size
+ * recommendations on the card itself. Keep it units as every user has
+ * different dollar amount units"). Confidence decides the number (see
+ * engine.js's stakeUnitsForScore); this only says it.
+ */
+function unitsLineHtml(units, className = 'units-line') {
+  const n = Number(units);
+  if (!Number.isFinite(n) || n <= 0) return '';
+  const label = n === 1 ? '1 unit' : `${n} units`;
+  return `<div class="${className}"><span class="units-value">${esc(label)}</span> — algorithm's suggested size</div>`;
+}
+
 /** Same stake line, for a single raw candidate rather than an assembled pick. */
 function singleStakeLine(candidate) {
   return stakeLineHtml(suggestedStake(candidate));
@@ -1691,11 +1705,10 @@ function renderPick(pick) {
         <span class="price">${esc(formatAmerican(pick.american))}</span>
       </div>
 
-      ${renderLeanBadge(pick.isLean === true)}
-
       ${flagged ? `<div class="pick-flag">⚠ Outside standard criteria: ${esc(pick.flagReason)}</div>` : ''}
 
       ${renderConfidence(pick)}
+      ${unitsLineHtml(pick.stakeUnits)}
 
       ${isCombo ? `<p class="pair-note">${esc(pick.pairReason)}</p>` : ''}
 
@@ -1729,14 +1742,13 @@ function renderDegradedPick(pick) {
         <span class="price">${esc(formatAmerican(pick.american))}</span>
       </div>
 
-      ${renderLeanBadge(false)}
-
       ${flagged ? `<div class="pick-flag">⚠ Outside standard criteria: ${esc(record.flagReason)}</div>` : ''}
 
       <div class="confidence" style="--conf:${confidenceColor(pick.score, state.minScore)}">
         <div class="conf-track"><span class="conf-fill" style="width:${Math.round(pick.score)}%"></span></div>
         <div class="conf-label"><span>Confidence <span class="conf-score">${Math.round(pick.score)}</span>/100</span></div>
       </div>
+      ${unitsLineHtml(pick.stakeUnits)}
 
       <p class="leg-selection">${esc(record.selection)}</p>
       <p class="leg-matchup">${esc(record.away)} @ ${esc(record.home)} ·
@@ -4557,6 +4569,7 @@ function pixelPickFromRecord(record) {
       percentile: null,
       meetsStandard: record.meetsStandard,
       flagReason: record.flagReason,
+      stakeUnits: record.stakeUnits ?? null,
       isLean: record.isLean === true,
     };
   }
@@ -4569,6 +4582,7 @@ function pixelPickFromRecord(record) {
     score: record.score,
     meetsStandard: record.meetsStandard,
     flagReason: record.flagReason,
+    stakeUnits: record.stakeUnits ?? null,
     isLean: record.isLean === true,
   };
 }
@@ -5076,7 +5090,7 @@ const potdDateTimeFmt = new Intl.DateTimeFormat(undefined, {
  * Generate tap pulled, which has no meaning for a single daily editorial
  * pick with no board of its own to compare against.
  */
-function renderPotdConfidence(score, stake) {
+function renderPotdConfidence(score, stake, stakeUnits = null) {
   const color = confidenceColor(score, RULES.MIN_SCORE);
   const stakeText = stakeLineHtml(stake);
   return `
@@ -5087,6 +5101,7 @@ function renderPotdConfidence(score, stake) {
       <div class="conf-label">
         <span>Confidence <span class="conf-score">${Math.round(score)}</span>/100</span>
       </div>
+      ${unitsLineHtml(stakeUnits)}
       ${stakeText}
     </div>`;
 }
@@ -5169,14 +5184,13 @@ function renderPotdCard(writeup, generatedAt, stale) {
         <span class="chip"><strong>${esc(writeup.sportTitle)}</strong> · ${esc(writeup.marketLabel)}</span>
         <span class="price">${esc(writeup.price)}</span>
       </div>
-      ${renderLeanBadge(false)}
       ${staleNote}
       <h2 class="potd-headline">${esc(writeup.headline)}</h2>
       <p class="potd-matchup">
         ${esc(writeup.matchup)} · ${esc(potdDateTimeFmt.format(new Date(writeup.commenceMs)))}
         · best price at ${esc(writeup.book)}
       </p>
-      ${renderPotdConfidence(writeup.score, writeup.stake)}
+      ${renderPotdConfidence(writeup.score, writeup.stake, writeup.stakeUnits)}
       <button type="button" class="potd-more-btn" aria-expanded="false" aria-controls="${detailId}">
         More info
       </button>
@@ -5537,6 +5551,7 @@ function renderPropPlayCard(record) {
       <span class="prop-play-kind">${record.kind === 'parlay' ? '2-leg parlay' : 'Straight'} · ${esc(formatAmerican(record.combinedAmerican))}</span>
       ${statusChip}
     </div>
+    ${unitsLineHtml(record.units)}
     ${legs}
     <div class="prop-play-writeup">${paragraphs}</div>
   </div>`;

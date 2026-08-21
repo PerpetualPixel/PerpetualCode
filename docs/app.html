@@ -28,7 +28,7 @@
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Syne:wght@600;700;800&family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
-<link rel="stylesheet" href="styles.css?v=1.164">
+<link rel="stylesheet" href="styles.css?v=1.165">
 </head>
 <body>
 
@@ -114,6 +114,8 @@
       game with the Play of the Day), and a <strong>Prop Play</strong> and a
       <strong>Ladder</strong> rung post alongside them. A pick that didn't clear the usual
       sharp standard still posts, visibly flagged, rather than leaving a hole in the board.
+      Every card now also shows the algorithm's own unit sizing, scaled to its confidence —
+      3–5 units for the Play of the Day, 1–2.5 for Pixel's Picks and the Prop Play.
     </p>
   </div>
 </details>
@@ -386,6 +388,12 @@
       <p>Set a bankroll and a unit size under the Bankroll button to see that
       suggestion as a recommended number of units to bet instead of just a
       percentage.</p>
+      <p>The tracked boards carry their own sizing, printed right on each
+      card: the algorithm scales every play's units to its confidence —
+      Play of the Day 3–5 units, Pixel's Picks and the Prop Play 1–2.5 —
+      and a pick that only made the board as a flagged fallback always
+      sits at its band's minimum. Units, not dollars, since your unit is
+      yours; the Tracking Dashboard's own dollar math counts 1 unit as $25.</p>
     </details>
 
     <details>
@@ -747,8 +755,11 @@
         the app open — and never changed afterward. Every pick counts
         toward its tracker's totals below, flagged or not (a flagged pick
         just means it was a thin-day fallback, not that it's excluded).
-        Flat 1-unit stake per pick either way, no bankroll cap. The point is
-        whether the picks themselves are profitable.
+        Stakes are the algorithm's own unit sizing, scaled by confidence —
+        Play of the Day 3–5 units, Pixel's Picks and the Prop Play 1–2.5,
+        a flagged fallback always at its band's minimum. The dollar
+        figures below count 1 unit as $25. The point is whether the picks
+        themselves are profitable.
         </p>
       </details>
       <!-- Everything before the Aug 21, 2026 reset lives behind this toggle
@@ -947,6 +958,6 @@
   </div>
 </aside>
 
-<script type="module" src="app.js?v=1.164"></script>
+<script type="module" src="app.js?v=1.165"></script>
 </body>
 </html>

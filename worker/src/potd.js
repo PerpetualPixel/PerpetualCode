@@ -30,7 +30,7 @@
  * written, nothing overwrites it.
  */
 
-import { analyze, RULES, formatAmerican, suggestedStake, clearsMaxJuice, isNflPreseason } from '../../docs/engine.js';
+import { analyze, RULES, formatAmerican, suggestedStake, clearsMaxJuice, isNflPreseason, UNIT_DOLLARS, STAKE_BANDS, stakeUnitsForScore } from '../../docs/engine.js';
 import { fetchCapperConsensus, applyCapperConsensus, upgradeToValueStraight } from '../../docs/capper-consensus.js';
 import { isPower4Matchup } from '../../docs/ncaaf-conferences.js';
 import { buildInsights, insightsByTier, isTennis, isMma } from '../../docs/insights.js';
@@ -61,12 +61,9 @@ const ET_TZ = 'America/New_York';
 export const POTD_HOUR = 2; // 2am ET — the daily learning review and the day's single draw (see header)
 const POTD_MIN_AMERICAN = -200;
 const POTD_MAX_AMERICAN = 150;
-// Matches docs/learning.js's own FLAT_UNIT_STAKE — duplicated rather than
-// imported for the same reason worker/src/tracking.js already duplicates it:
-// keeps the browser-only/IndexedDB boundary of that module obvious at a
-// glance, rather than importing a constant that sits alongside code this
-// Worker never calls.
-const FLAT_UNIT_STAKE = 20;
+/* Stake dollars come from docs/engine.js's UNIT_DOLLARS ($25/1U) — the
+   flat 5U x $20 this file used to hardcode is replaced by the
+   confidence-scaled 3-5U band in buildRecord (2026-08-21 direction). */
 // Matches tracking.js's own KV_TTL_SECONDS — the Tracking Dashboard's Play of
 // the Day section (getPotdHistory) needs weeks of history to be meaningful,
 // not just the display card's old 8-day window.
@@ -280,6 +277,9 @@ function buildWriteup(candidate, research, now, analysis) {
     score: Math.round(candidate.score),
     commenceMs: candidate.commenceMs,
     stake: suggestedStake(candidate),
+    // The algorithm's own sizing for this play, in units — rendered on the
+    // card itself (renderPotdConfidence). Same value stored on pick.stakeUnits.
+    stakeUnits: stakeUnitsForScore(candidate.score, STAKE_BANDS.potd),
     analysis: analysis?.analysis ?? null,
     reasons: analysis?.quickTake ?? null,
     devilsAdvocate: analysis?.devilsAdvocate ?? null,
@@ -338,10 +338,13 @@ async function buildRecord(best, dateKey, now, env, ctx) {
       commenceMs: best.commenceMs,
       book: best.book,
       consensusProb: best.consensusProb,
-      // Play of the Day is a 5-UNIT play (product direction — it and the
-      // Prop Play are the two 5U flagship plays; every other tracker stays
-      // at the flat 1U).
-      suggested_stake: FLAT_UNIT_STAKE * 5,
+      // The flagship carries the most conviction on the board: 3 to 5
+      // units, where the algorithm's own confidence score picks the spot
+      // in the band (2026-08-21 direction — was a flat 5U). The dollar
+      // figure is the tracked record's $25/1U accounting basis; the card
+      // shows the units.
+      stakeUnits: stakeUnitsForScore(best.score, STAKE_BANDS.potd),
+      suggested_stake: UNIT_DOLLARS * stakeUnitsForScore(best.score, STAKE_BANDS.potd),
       status: 'pending',
       clv: { openAmerican: best.american, closeAmerican: best.american, updatedAt: now },
       result: null,
@@ -520,6 +523,9 @@ export async function runPotdDaily(env, ctx, now = Date.now(), { fetchFullSlate 
   if (fallbackReason) {
     record.pick.meetsStandard = false;
     record.pick.flagReason = fallbackReason;
+    // A fallback-tier pick never carries extra size — the band's minimum.
+    record.pick.stakeUnits = STAKE_BANDS.potd.min;
+    record.pick.suggested_stake = UNIT_DOLLARS * STAKE_BANDS.potd.min;
   }
   // A day's pick, once posted, doesn't move even if the market does — it's
   // an editorial call made at a point in time, not a live-repriced candidate.

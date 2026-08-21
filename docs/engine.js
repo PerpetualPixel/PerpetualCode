@@ -1012,6 +1012,48 @@ export function topPicks(
 }
 
 /* ------------------------------------------------------------------ */
+/* Tracked-board unit staking                                          */
+/* ------------------------------------------------------------------ */
+
+/**
+ * What one unit is worth in the tracked record's own dollar figures ($25/1U
+ * per explicit product direction, 2026-08-21). Display leans on UNITS, not
+ * this number — every user runs a different dollar unit — but the tracked
+ * history needs one consistent dollar basis for its Net $ / ROI math, and
+ * this is it.
+ */
+export const UNIT_DOLLARS = 25;
+
+/**
+ * Per-board unit ranges, per explicit product direction: the boards form a
+ * conviction hierarchy — the Play of the Day (the slate's #1) carries the
+ * most, 3 to 5 units; the Prop Play and each Pixel's Pick carry 1 to 2.5.
+ * Within each band the algorithm's own confidence score decides where a
+ * pick lands (see stakeUnitsForScore); the ladder is absent deliberately,
+ * since it stakes its whole compounding bankroll and units don't apply.
+ */
+export const STAKE_BANDS = {
+  potd: { min: 3, max: 5 },
+  pixel: { min: 1, max: 2.5 },
+  prop: { min: 1, max: 2.5 },
+};
+
+/**
+ * Maps a 0-100 confidence score onto a board's unit band, in half-unit
+ * steps. The score range that spreads the band is [50, 85]: 50 is
+ * RULES.MIN_SCORE (the floor a standard pick must clear — a pick at the
+ * floor carries the band's minimum), and 85+ is reserved for the genuinely
+ * elite grades that earn the top of the band. Anything below the floor
+ * (flagged fallback picks) pins to the minimum: a pick that didn't clear
+ * the standard never carries extra size.
+ */
+export function stakeUnitsForScore(score, { min, max }) {
+  const LO = 50, HI = 85;
+  const t = Math.max(0, Math.min(1, ((Number(score) || 0) - LO) / (HI - LO)));
+  return Math.round((min + t * (max - min)) * 2) / 2;
+}
+
+/* ------------------------------------------------------------------ */
 /* Bankroll staking (Kelly Criterion)                                  */
 /* ------------------------------------------------------------------ */
 
