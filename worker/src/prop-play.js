@@ -23,6 +23,7 @@
  */
 
 import { fetchSport, fetchScores, UPSTREAM, REGIONS } from './odds.js';
+import { UNIT_DOLLARS, STAKE_BANDS } from '../../docs/engine.js';
 import { gradePick } from '../../docs/learning.js';
 import { normalizeName } from '../../docs/wnba-props.js';
 import { espnAbbr } from '../../docs/team-logos.js';
@@ -78,11 +79,21 @@ const MAX_GAMES_SCANNED = 3;
 const MAX_GAMELOG_LOOKUPS = 12;
 
 const GRADING_LOOKBACK_DAYS = 3;
-// The Prop Play is a 5-UNIT play (product direction: it and the regular
-// Play of the Day are 5U each). $20/unit matches FLAT_UNIT_STAKE across the
-// trackers, so the record's dollar stake is 5 x 20.
-const UNIT_STAKE = 20;
-const PLAY_UNITS = 5;
+/* Sizing (2026-08-21 direction, was a flat 5U x $20): the Prop Play
+   carries 1 to 2.5 units, decided by the play's own conviction — the
+   weighted hit-rate blend its legs were selected on — with a fallback-tier
+   play pinned to 1U. Dollars come from engine.js's UNIT_DOLLARS ($25/1U);
+   the card shows the units. Conviction lives on 0..1 (season/L10/L5 hit
+   rates plus a streak kicker), and the gates only pass legs around 0.75+,
+   so [0.75, 0.95] is the honest spread of what actually qualifies. */
+const PROP_CONVICTION_LO = 0.75;
+const PROP_CONVICTION_HI = 0.95;
+function propPlayUnits(legs, viaFallback) {
+  if (viaFallback || !legs.length) return STAKE_BANDS.prop.min;
+  const avg = legs.reduce((sum, l) => sum + (Number(l.conviction) || 0), 0) / legs.length;
+  const t = Math.max(0, Math.min(1, (avg - PROP_CONVICTION_LO) / (PROP_CONVICTION_HI - PROP_CONVICTION_LO)));
+  return Math.round((STAKE_BANDS.prop.min + t * (STAKE_BANDS.prop.max - STAKE_BANDS.prop.min)) * 2) / 2;
+}
 
 function etDate(ms) {
   const fmt = new Intl.DateTimeFormat('en-US', {
@@ -358,7 +369,10 @@ export async function runPropPlayDaily(env, ctx, now = Date.now(), { debug = fal
     .sort((x, y) => new Date(x.commence_time) - new Date(y.commence_time))
     .slice(0, MAX_GAMES_SCANNED);
   trace.push(`games today, pregame: ${games.length}`);
-  if (!games.length) return { created: false, reason: 'no pregame games today', trace };
+  // No early return on an empty WNBA day: the moneyline pool below draws
+  // from every slate sport, and bailing here was what let a no-WNBA day
+  // post no Prop Play at all — the exact "code stopping it from posting"
+  // the 2026-08-21 reset removes.
 
   let candidates = [];
   for (const game of games) {
@@ -369,7 +383,9 @@ export async function runPropPlayDaily(env, ctx, now = Date.now(), { debug = fal
     trace.push(`${game.away_team} @ ${game.home_team}: ${extracted.length} safe-band alternates`);
     candidates = candidates.concat(extracted);
   }
-  if (!candidates.length) return { created: false, reason: 'no safe-band alternate lines found', trace };
+  // Same rule as the games check above: an empty alternate-line board is a
+  // note for the trace, not a reason to skip the day.
+  if (!candidates.length) trace.push('no safe-band alternate lines found');
 
   // SAFEST line first — heaviest juice = deepest below the player's normal
   // output — and one lookup per player+stat, which keeps each player's
@@ -415,8 +431,50 @@ export async function runPropPlayDaily(env, ctx, now = Date.now(), { debug = fal
       qualified.push(...mls);
     } catch { trace.push(`${sportKey}: ml fetch failed`); }
   }
+  // The day's boards never overlap: anything already featured by the Play
+  // of the Day or a Pixel's Pick is off the table here. (index.js orders
+  // the chain POTD -> Prop Play -> Pixel's Picks at the generation hour,
+  // so normally only the POTD read finds anything — the manifest read
+  // covers a mid-day redeploy where Pixel's Picks already exist.)
+  try {
+    const [potdRaw, top5ManifestRaw] = await Promise.all([
+      env.POTD_KV.get(`potd:${dateKey}`),
+      env.POTD_KV.get(`track:${dateKey}:top5`),
+    ]);
+    const featured = new Set();
+    const potd = potdRaw ? JSON.parse(potdRaw) : null;
+    if (potd?.pick?.eventId) featured.add(potd.pick.eventId);
+    for (const id of (top5ManifestRaw ? JSON.parse(top5ManifestRaw).pickIds ?? [] : [])) {
+      featured.add(id.split(':')[0]);
+    }
+    if (featured.size) {
+      const before = qualified.length;
+      for (let i = qualified.length - 1; i >= 0; i--) {
+        if (featured.has(qualified[i].game?.oddsEventId)) qualified.splice(i, 1);
+      }
+      if (qualified.length !== before) trace.push(`${before - qualified.length} legs dropped (already featured by another board)`);
+    }
+  } catch { trace.push('cross-board dedupe read failed — continuing'); }
+
   trace.push(`qualified legs: ${qualified.length}`);
-  if (!qualified.length) return { created: false, reason: 'no leg cleared the conviction gates', trace };
+  // "There will be a prop play no matter what": when nothing clears the
+  // conviction gates, fall back to the safest available candidate (the
+  // heaviest line in the band — deepest below the player's normal output)
+  // rather than skipping the day, flagged so the writeup can say so. Only
+  // a day with literally no candidate anywhere posts nothing.
+  let viaFallback = false;
+  if (!qualified.length) {
+    const fallbackPool = candidates
+      .filter((c) => c.game?.commence && new Date(c.game.commence).getTime() > now)
+      .sort((x, y) => x.decimal - y.decimal);
+    if (!fallbackPool.length) {
+      return { created: false, reason: 'no prop or moneyline candidate anywhere on the slate today', trace };
+    }
+    const c = fallbackPool[0];
+    qualified.push({ ...c, profile: c.profile ?? null, conviction: 0 });
+    viaFallback = true;
+    trace.push(`fallback: ${c.player} ${c.need}+ ${c.statKey} — no leg cleared the gates, safest line taken`);
+  }
 
   // Every qualified leg is already SAFE (the gates saw to that), so the
   // pairing optimizes what the ticket PAYS for that safety. All cross-game
@@ -456,6 +514,10 @@ export async function runPropPlayDaily(env, ctx, now = Date.now(), { debug = fal
   const record = {
     date: dateKey,
     kind: legs.length === 2 ? 'parlay' : 'straight',
+    // True when the conviction gates found nothing and the safest available
+    // line was taken instead — surfaces read this the same way they read
+    // Pixel's Picks' own flagged fallback slots.
+    ...(viaFallback ? { viaFallback: true } : {}),
     combinedAmerican,
     combinedDecimal: Math.round(combinedDecimal * 1000) / 1000,
     // See playConsensusProb: this is what makes the play measurable by the
@@ -484,8 +546,8 @@ export async function runPropPlayDaily(env, ctx, now = Date.now(), { debug = fal
       status: 'pending',
     }))),
     writeup: playWriteup(legs, combinedAmerican),
-    units: PLAY_UNITS,
-    suggested_stake: UNIT_STAKE * PLAY_UNITS,
+    units: propPlayUnits(legs, viaFallback),
+    suggested_stake: UNIT_DOLLARS * propPlayUnits(legs, viaFallback),
     status: 'pending',
     generatedAt: now,
   };
@@ -585,7 +647,7 @@ export async function runPropPlayGrading(env, ctx, now = Date.now()) {
         : 'won';
       // Settled as ONE play: both legs must hit; one miss loses the full
       // 5U stake, a win pays the combined price on it.
-      const stake = record.suggested_stake ?? UNIT_STAKE * PLAY_UNITS;
+      const stake = record.suggested_stake ?? UNIT_DOLLARS * STAKE_BANDS.prop.min;
       const payout = record.status === 'won' ? stake * (record.combinedDecimal - 1)
         : record.status === 'lost' ? -stake : 0;
       record.result = { payout: Math.round(payout * 100) / 100, roiPercent: Math.round((payout / stake) * 10000) / 100 };
@@ -622,8 +684,8 @@ export async function getAllPropPlays(env, { now = Date.now(), days = 90 } = {})
       selection: record.legs.map((l) => l.label).join(' + '),
       american: record.combinedAmerican,
       decimal: record.combinedDecimal,
-      suggested_stake: record.suggested_stake ?? UNIT_STAKE * PLAY_UNITS,
-      units: record.units ?? PLAY_UNITS,
+      suggested_stake: record.suggested_stake ?? UNIT_DOLLARS * STAKE_BANDS.prop.min,
+      units: record.units ?? STAKE_BANDS.prop.min,
       // Absent on records written before playConsensusProb existed; those
       // are skipped by segmentStats rather than counted with a made-up
       // number, which is the correct handling of "we never recorded it".

@@ -853,6 +853,16 @@ export function topPicks(
     // Picks turns this on because it promises exactly `count` locks every
     // time; everything else keeps the "empty is honest" behaviour.
     guaranteeCount = false,
+    // The tier below guaranteeCount, for the board that must NEVER post
+    // short, per explicit product direction ("there will always be 5 plays
+    // no matter what"). guaranteeCount's own fallback still holds the edge
+    // bar (minEv/minKelly), which is right for a board that would rather
+    // run short than post a demonstrably -EV bet — this flag says the
+    // opposite trade was chosen: fill the remaining slots from the best of
+    // what's left, edge bar relaxed, flagged for what they are. The hard
+    // odds bounds and isPickable still apply — a full board is the promise,
+    // a -1800 or a preseason game is still not a way to keep it.
+    lastResortFill = false,
     // Sport keys the user has said they'd rather see more of. This is a soft
     // sort nudge, not a filter — it can move a close call to the front of the
     // queue, never invent or hide a grade.
@@ -974,7 +984,73 @@ export function topPicks(
     }
   }
 
+  // See lastResortFill's own comment — only reachable when even the
+  // guaranteeCount fallback (edge bar intact) couldn't reach `count`.
+  if (guaranteeCount && lastResortFill && picks.length < count) {
+    const remaining = [...candidates]
+      .filter((c) => !usedLegs.includes(c) && withinHardBounds(c.american) && isPickable(c))
+      .sort((a, b) => sortKey(b) - sortKey(a));
+
+    for (const c of remaining) {
+      if (picks.length >= count) break;
+      if (usedLegs.some((leg) => leg.eventId === c.eventId)) continue;
+      if (usedLegs.some((leg) => contradicts(leg, c))) continue;
+      usedLegs.push(c);
+      picks.push({
+        type: 'single',
+        legs: [c],
+        american: c.american,
+        score: c.score,
+        percentile: percentileOf(c.score, scores),
+        meetsStandard: false,
+        flagReason: 'no qualifying edge today — posted to keep the board full',
+      });
+    }
+  }
+
   return { picks, poolSize: pool.length, generatedAt: Date.now() };
+}
+
+/* ------------------------------------------------------------------ */
+/* Tracked-board unit staking                                          */
+/* ------------------------------------------------------------------ */
+
+/**
+ * What one unit is worth in the tracked record's own dollar figures ($25/1U
+ * per explicit product direction, 2026-08-21). Display leans on UNITS, not
+ * this number — every user runs a different dollar unit — but the tracked
+ * history needs one consistent dollar basis for its Net $ / ROI math, and
+ * this is it.
+ */
+export const UNIT_DOLLARS = 25;
+
+/**
+ * Per-board unit ranges, per explicit product direction: the boards form a
+ * conviction hierarchy — the Play of the Day (the slate's #1) carries the
+ * most, 3 to 5 units; the Prop Play and each Pixel's Pick carry 1 to 2.5.
+ * Within each band the algorithm's own confidence score decides where a
+ * pick lands (see stakeUnitsForScore); the ladder is absent deliberately,
+ * since it stakes its whole compounding bankroll and units don't apply.
+ */
+export const STAKE_BANDS = {
+  potd: { min: 3, max: 5 },
+  pixel: { min: 1, max: 2.5 },
+  prop: { min: 1, max: 2.5 },
+};
+
+/**
+ * Maps a 0-100 confidence score onto a board's unit band, in half-unit
+ * steps. The score range that spreads the band is [50, 85]: 50 is
+ * RULES.MIN_SCORE (the floor a standard pick must clear — a pick at the
+ * floor carries the band's minimum), and 85+ is reserved for the genuinely
+ * elite grades that earn the top of the band. Anything below the floor
+ * (flagged fallback picks) pins to the minimum: a pick that didn't clear
+ * the standard never carries extra size.
+ */
+export function stakeUnitsForScore(score, { min, max }) {
+  const LO = 50, HI = 85;
+  const t = Math.max(0, Math.min(1, ((Number(score) || 0) - LO) / (HI - LO)));
+  return Math.round((min + t * (max - min)) * 2) / 2;
 }
 
 /* ------------------------------------------------------------------ */

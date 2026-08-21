@@ -1067,3 +1067,25 @@ test('analyze() still yields preseason candidates — Full Slate keeps them', ()
   assert.ok(candidates.length > 0, 'analyze() must not filter preseason out');
   assert.ok(candidates.every((c) => c.sportKey === 'americanfootball_nfl_preseason'));
 });
+
+/* ---------------------------------------------------------------- */
+/* stakeUnitsForScore — the 2026-08-21 confidence-scaled unit bands   */
+/* ---------------------------------------------------------------- */
+
+test('stakeUnitsForScore spans each board band from its floor to its ceiling', async () => {
+  const { stakeUnitsForScore, STAKE_BANDS, UNIT_DOLLARS } = await import('../docs/engine.js');
+  // At or below the MIN_SCORE floor: the band minimum, never less.
+  assert.equal(stakeUnitsForScore(50, STAKE_BANDS.potd), 3);
+  assert.equal(stakeUnitsForScore(12, STAKE_BANDS.potd), 3);
+  assert.equal(stakeUnitsForScore(50, STAKE_BANDS.pixel), 1);
+  // At the elite end: the band maximum, never more.
+  assert.equal(stakeUnitsForScore(85, STAKE_BANDS.potd), 5);
+  assert.equal(stakeUnitsForScore(99, STAKE_BANDS.potd), 5);
+  assert.equal(stakeUnitsForScore(99, STAKE_BANDS.pixel), 2.5);
+  // In between: inside the band, in half-unit steps.
+  const mid = stakeUnitsForScore(68, STAKE_BANDS.pixel);
+  assert.ok(mid > 1 && mid < 2.5, `mid-band units, got ${mid}`);
+  assert.equal(mid * 2, Math.round(mid * 2), 'half-unit steps only');
+  // The tracked record's dollar basis.
+  assert.equal(UNIT_DOLLARS, 25);
+});

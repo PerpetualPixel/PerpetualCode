@@ -100,17 +100,22 @@ test('picks the best in-band candidate even when an out-of-band one scores highe
   assert.ok(result.pick.american >= -200 && result.pick.american <= 150);
 });
 
-test('a day with nothing in the -200..+150 band posts nothing', async () => {
-  const { env, store } = makeKvStore();
+test('a day with nothing in the -200..+150 band still posts — flagged as an out-of-band fallback', async () => {
+  const { env } = makeKvStore();
   // Both sides of this game are far outside the band (heavy favorite / big dog).
   const events = [makeEvent('lopsided', '2026-08-05T09:00:00Z', { outlier: 10, favoritePrice: -400 })];
+  // makeEvent prices every away side at +120, which IS inside the band —
+  // push it out so the day genuinely has nothing between -200 and +150.
+  events[0].bookmakers.forEach((b) => b.markets[0].outcomes.forEach((o) => {
+    if (o.name.endsWith('Away')) o.price = 900;
+  }));
   const result = await runPotdDaily(env, ctx, NOW, { fetchFullSlate: async () => events });
-  assert.equal(result.skipped, true);
-  // The band filter empties the pool, so the day ends with nothing
-  // actionable — the specific 'in odds band' reason string predates the
-  // pool-based selection flow.
-  assert.equal(result.reason, 'no qualifying candidate remained actionable today');
-  assert.equal(store.size, 0);
+  // Per the 2026-08-21 reset, "no Play of the Day today" is not an allowed
+  // outcome while the slate has a gradeable game — the pick posts, visibly
+  // flagged rather than passed off as an ordinary lock.
+  assert.equal(result.skipped, false);
+  assert.equal(result.pick.meetsStandard, false);
+  assert.match(result.pick.flagReason, /odds outside/);
 });
 
 test('a candidate whose segment the weekly algorithm health review has paused is skipped, even if it scores best', async () => {
@@ -128,11 +133,33 @@ test('a candidate whose segment the weekly algorithm health review has paused is
   assert.match(result.pick.pickId, /^active-sport:/);
 });
 
-test('a candidate below the confidence floor is never selected', async () => {
+test('a candidate below the confidence floor posts flagged rather than skipping the day', async () => {
   const { env } = makeKvStore();
   const events = [makeEvent('weak', '2026-08-05T09:00:00Z', { outlier: 0 })];
   const result = await runPotdDaily(env, ctx, NOW, { fetchFullSlate: async () => events });
+  // Same reset contract as the band test above: the floor decides how the
+  // pick is LABELLED, not whether a pick exists.
+  assert.equal(result.skipped, false);
+  assert.equal(result.pick.meetsStandard, false);
+  assert.match(result.pick.flagReason, /confidence below/);
+});
+
+test('a slate with literally no gradeable game posts nothing — the only allowed empty day', async () => {
+  const { env, store } = makeKvStore();
+  const result = await runPotdDaily(env, ctx, NOW, { fetchFullSlate: async () => [] });
   assert.equal(result.skipped, true);
+  assert.equal(result.reason, 'no gradeable game on the entire slate today');
+  assert.equal(store.size, 0);
+});
+
+test('before the generation hour, the day is not drawn at all', async () => {
+  const { env, store } = makeKvStore();
+  const oneAmEt = Date.parse('2026-08-05T05:00:00Z'); // 1am ET Aug 5 (EDT)
+  const events = [makeEvent('early', '2026-08-05T23:00:00Z', { outlier: 30 })];
+  const result = await runPotdDaily(env, ctx, oneAmEt, { fetchFullSlate: async () => events });
+  assert.equal(result.skipped, true);
+  assert.equal(result.reason, 'before generation hour');
+  assert.equal(store.size, 0);
 });
 
 test('an exhibition-format game is never selected even if it scores well', async () => {
@@ -241,9 +268,12 @@ test('the stored record carries a headline, price, and tracking fields', async (
   assert.equal(record.writeup.sections.find((s) => s.title === 'The Market & Price Case'), undefined);
 
   assert.equal(record.pick.status, 'pending');
-  // 5U play (product direction): FLAT_UNIT_STAKE 20 x 5 — the Play of the
-  // Day and the Prop Play are the two flagship 5-unit plays.
-  assert.equal(record.pick.suggested_stake, 100);
+  // Confidence-scaled 3-5U band at $25/1U (2026-08-21 direction) — the
+  // exact spot in the band is the algorithm's call, so assert the band and
+  // the units/dollars agreement rather than one fixed number.
+  assert.ok(record.pick.stakeUnits >= 3 && record.pick.stakeUnits <= 5,
+    `POTD units in [3, 5], got ${record.pick.stakeUnits}`);
+  assert.equal(record.pick.suggested_stake, record.pick.stakeUnits * 25);
   assert.equal(record.pick.dateKey, '2026-08-05');
   assert.equal(record.pick.clv.openAmerican, record.pick.american);
   assert.equal(record.pick.result, null);

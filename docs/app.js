@@ -93,6 +93,21 @@ import {
    tracker during module evaluation. */
 let enhancedSportFilter = null;
 
+/* The 2026-08-21 tracked-data reset: everything the app tracked before this
+   ET date is the previous era, shown only behind the dashboard's Archive
+   toggle; the live record starts here. A display boundary, not a data
+   change — nothing was deleted, the worker's history endpoints still return
+   both eras and this is where they're split. */
+const TRACKING_EPOCH = '2026-08-21';
+// The same boundary as an instant: 2am ET on the reset date (EDT, UTC-4) —
+// for records keyed by timestamp (ladder runs) rather than by ET dateKey.
+const TRACKING_EPOCH_MS = Date.parse('2026-08-21T06:00:00Z');
+/** Which side of the reset a dateKey-carrying record falls on. */
+function inTrackingEra(record, era) {
+  const key = record?.dateKey ?? record?.date ?? '';
+  return era === 'archive' ? key < TRACKING_EPOCH : key >= TRACKING_EPOCH;
+}
+
 const BANKROLL_KEY = 'pixelpick.bankroll.v1';
 const SLATE_LEAGUE_KEY = 'pixelpick.slateLeague.v2';
 const PIXEL_SORT_KEY = 'pixelpick.sort.v1';
@@ -721,8 +736,6 @@ const el = {
   updateBannerDismiss: document.getElementById('updateBannerDismiss'),
   whatsNewHint: document.getElementById('whatsNewHint'),
   whatsNewHintClose: document.getElementById('whatsNewHintClose'),
-  retractionNotice: document.getElementById('retractionNotice'),
-  retractionNoticeClose: document.getElementById('retractionNoticeClose'),
   bankrollToggle: document.getElementById('bankrollToggle'),
   bankrollPanel: document.getElementById('bankrollPanel'),
   bankrollClose: document.getElementById('bankrollClose'),
@@ -791,6 +804,8 @@ const el = {
   learningPanelClose: document.getElementById('learningPanelClose'),
   trackerRefreshBtn: document.getElementById('trackerRefreshBtn'),
   trackerTabs: document.getElementById('trackerTabs'),
+  trackerEraToggle: document.getElementById('trackerEraToggle'),
+  trackerEraNote: document.getElementById('trackerEraNote'),
   top5TotalPicks: document.getElementById('top5TotalPicks'),
   top5GradedPicks: document.getElementById('top5GradedPicks'),
   top5WinRate: document.getElementById('top5WinRate'),
@@ -852,9 +867,14 @@ const state = {
   // Calibration & Audit and Algorithm Health stay Pixel's-Picks-scoped
   // regardless of this (see renderTrackerSection's own comment).
   activeTracker: 'top5',
+  // 'live' (the record since the 2026-08-21 reset) or 'archive' (before it).
+  trackerEra: 'live',
+  // The /ladder-history payload, kept so the era toggle can re-render the
+  // ladder panel without refetching.
+  ladderHistory: null,
   // All three trackers' full history, fetched once per dashboard open and
   // re-rendered from on toggle — not re-fetched per click.
-  trackerPicks: { fullslate: [], top5: [], potd: [], propplay: [] },
+  trackerPicks: { top5: [], potd: [], propplay: [] },
   // List/Calendar/Graph — which of the three views renders the currently
   // active tracker's picks below the metric cards.
   trackerView: 'list',
@@ -1503,6 +1523,20 @@ function stakeLine(pick) {
   return stakeLineHtml(stake);
 }
 
+/**
+ * The algorithm's own sizing for a tracked play, in units — rendered on
+ * the card itself, per explicit product direction ("post the unit size
+ * recommendations on the card itself. Keep it units as every user has
+ * different dollar amount units"). Confidence decides the number (see
+ * engine.js's stakeUnitsForScore); this only says it.
+ */
+function unitsLineHtml(units, className = 'units-line') {
+  const n = Number(units);
+  if (!Number.isFinite(n) || n <= 0) return '';
+  const label = n === 1 ? '1 unit' : `${n} units`;
+  return `<div class="${className}"><span class="units-value">${esc(label)}</span> — algorithm's suggested size</div>`;
+}
+
 /** Same stake line, for a single raw candidate rather than an assembled pick. */
 function singleStakeLine(candidate) {
   return stakeLineHtml(suggestedStake(candidate));
@@ -1671,11 +1705,10 @@ function renderPick(pick) {
         <span class="price">${esc(formatAmerican(pick.american))}</span>
       </div>
 
-      ${renderLeanBadge(pick.isLean === true)}
-
       ${flagged ? `<div class="pick-flag">⚠ Outside standard criteria: ${esc(pick.flagReason)}</div>` : ''}
 
       ${renderConfidence(pick)}
+      ${unitsLineHtml(pick.stakeUnits)}
 
       ${isCombo ? `<p class="pair-note">${esc(pick.pairReason)}</p>` : ''}
 
@@ -1709,14 +1742,13 @@ function renderDegradedPick(pick) {
         <span class="price">${esc(formatAmerican(pick.american))}</span>
       </div>
 
-      ${renderLeanBadge(false)}
-
       ${flagged ? `<div class="pick-flag">⚠ Outside standard criteria: ${esc(record.flagReason)}</div>` : ''}
 
       <div class="confidence" style="--conf:${confidenceColor(pick.score, state.minScore)}">
         <div class="conf-track"><span class="conf-fill" style="width:${Math.round(pick.score)}%"></span></div>
         <div class="conf-label"><span>Confidence <span class="conf-score">${Math.round(pick.score)}</span>/100</span></div>
       </div>
+      ${unitsLineHtml(pick.stakeUnits)}
 
       <p class="leg-selection">${esc(record.selection)}</p>
       <p class="leg-matchup">${esc(record.away)} @ ${esc(record.home)} ·
@@ -4537,6 +4569,7 @@ function pixelPickFromRecord(record) {
       percentile: null,
       meetsStandard: record.meetsStandard,
       flagReason: record.flagReason,
+      stakeUnits: record.stakeUnits ?? null,
       isLean: record.isLean === true,
     };
   }
@@ -4549,6 +4582,7 @@ function pixelPickFromRecord(record) {
     score: record.score,
     meetsStandard: record.meetsStandard,
     flagReason: record.flagReason,
+    stakeUnits: record.stakeUnits ?? null,
     isLean: record.isLean === true,
   };
 }
@@ -4896,6 +4930,17 @@ if (learningToggle) {
   learningToggle.addEventListener('click', () => openLearningDashboard());
 }
 
+el.trackerEraToggle?.addEventListener('click', () => {
+  state.trackerEra = state.trackerEra === 'archive' ? 'live' : 'archive';
+  const archived = state.trackerEra === 'archive';
+  el.trackerEraToggle.classList.toggle('is-active', archived);
+  el.trackerEraToggle.setAttribute('aria-pressed', String(archived));
+  el.trackerEraToggle.textContent = archived ? 'Back to the live record' : 'Archive — before Aug 21';
+  if (el.trackerEraNote) el.trackerEraNote.hidden = !archived;
+  renderTrackerSection();
+  renderLadderDashboard(state.ladderHistory ?? null);
+});
+
 el.trackerTabs?.addEventListener('click', (event) => {
   const btn = event.target.closest('[data-tracker]');
   if (!btn) return;
@@ -5045,7 +5090,7 @@ const potdDateTimeFmt = new Intl.DateTimeFormat(undefined, {
  * Generate tap pulled, which has no meaning for a single daily editorial
  * pick with no board of its own to compare against.
  */
-function renderPotdConfidence(score, stake) {
+function renderPotdConfidence(score, stake, stakeUnits = null) {
   const color = confidenceColor(score, RULES.MIN_SCORE);
   const stakeText = stakeLineHtml(stake);
   return `
@@ -5056,6 +5101,7 @@ function renderPotdConfidence(score, stake) {
       <div class="conf-label">
         <span>Confidence <span class="conf-score">${Math.round(score)}</span>/100</span>
       </div>
+      ${unitsLineHtml(stakeUnits)}
       ${stakeText}
     </div>`;
 }
@@ -5138,14 +5184,13 @@ function renderPotdCard(writeup, generatedAt, stale) {
         <span class="chip"><strong>${esc(writeup.sportTitle)}</strong> · ${esc(writeup.marketLabel)}</span>
         <span class="price">${esc(writeup.price)}</span>
       </div>
-      ${renderLeanBadge(false)}
       ${staleNote}
       <h2 class="potd-headline">${esc(writeup.headline)}</h2>
       <p class="potd-matchup">
         ${esc(writeup.matchup)} · ${esc(potdDateTimeFmt.format(new Date(writeup.commenceMs)))}
         · best price at ${esc(writeup.book)}
       </p>
-      ${renderPotdConfidence(writeup.score, writeup.stake)}
+      ${renderPotdConfidence(writeup.score, writeup.stake, writeup.stakeUnits)}
       <button type="button" class="potd-more-btn" aria-expanded="false" aria-controls="${detailId}">
         More info
       </button>
@@ -5259,7 +5304,7 @@ function renderPotd(potd, leaning) {
   registerPostedPicks('potd', []);
 
   el.potdBody.innerHTML = `<p class="empty">
-    Nothing to show yet — check back once today's slate is underway.</p>`;
+    Today's Play of the Day posts at 2am ET, along with the rest of the day's boards.</p>`;
 }
 
 let potdLoaded = false;
@@ -5506,6 +5551,7 @@ function renderPropPlayCard(record) {
       <span class="prop-play-kind">${record.kind === 'parlay' ? '2-leg parlay' : 'Straight'} · ${esc(formatAmerican(record.combinedAmerican))}</span>
       ${statusChip}
     </div>
+    ${unitsLineHtml(record.units)}
     ${legs}
     <div class="prop-play-writeup">${paragraphs}</div>
   </div>`;
@@ -5727,11 +5773,11 @@ async function fetchFullSlateHistory() {
 }
 
 const TRACKER_EMPTY_MESSAGES = {
-  fullslate: 'Nothing tracked yet. The worker locks in one pick per game, across every sport, at 2am ET.',
-  top5: 'Nothing tracked yet. The worker generates Pixel\'s Picks at 2am ET.',
-  potd: 'Nothing tracked yet. The worker generates Play of the Day at 2am ET.',
-  propplay: 'Nothing tracked yet. The Prop Play of the Day posts pregame each day.',
+  top5: "Nothing tracked in this record yet. Pixel's Picks post daily at 2am ET.",
+  potd: 'Nothing tracked in this record yet. The Play of the Day posts daily at 2am ET.',
+  propplay: 'Nothing tracked in this record yet. The Prop Play posts daily at 2am ET.',
 };
+const TRACKER_EMPTY_ARCHIVE = 'Nothing in the archive for this tracker — it started after the Aug 21, 2026 reset.';
 
 /**
  * Fetches all three server-side trackers' full history once — Full Slate
@@ -5764,11 +5810,12 @@ function setTrackerLoading(isLoading) {
 }
 
 async function loadTrackerHistories() {
-  const [fullSlate, top5, potd, propplay, ladder] = await Promise.all([
-    fetchFullSlateHistory(), fetchTop5History(), fetchPotdHistory(), fetchPropPlayHistory(),
+  const [top5, potd, propplay, ladder] = await Promise.all([
+    fetchTop5History(), fetchPotdHistory(), fetchPropPlayHistory(),
     fetchLadderHistory(),
   ]);
-  state.trackerPicks = { fullslate: fullSlate, top5, potd, propplay };
+  state.trackerPicks = { top5, potd, propplay };
+  state.ladderHistory = ladder;
   renderTrackerSection();
   renderLadderDashboard(ladder);
   return top5;
@@ -5835,12 +5882,40 @@ function renderLadderDashboard(data) {
       No ladder data yet — the first climb starts with the next qualifying play.</p>`;
     return;
   }
-  const { state: current, runs = [], plan } = data;
-  const settledRungs = (data.plays ?? []).filter((p) => p.pick?.status && p.pick.status !== 'pending');
-  const bankedAllTime = runs.reduce((sum, r) => sum + (r.banked ?? 0), 0) + (current.banked ?? 0);
-  const bestClimb = Math.max(0, ...runs.map((r) => r.wins ?? 0), current.wins ?? 0);
+  const { state: current, plan } = data;
+  // The dashboard's Archive toggle splits the ladder the same way it splits
+  // the pick trackers: finished climbs that ended before the reset instant
+  // belong to the archive; the climb in progress always belongs to the live
+  // record (a run is one indivisible unit — it can't be split across eras).
+  const archived = state.trackerEra === 'archive';
+  const runs = (data.runs ?? []).filter((r) =>
+    archived ? (r.endedAt ?? 0) < TRACKING_EPOCH_MS : (r.endedAt ?? 0) >= TRACKING_EPOCH_MS);
+  const showCurrent = !archived;
+  const settledRungs = (data.plays ?? []).filter((p) => p.pick?.status && p.pick.status !== 'pending')
+    .filter((p) => inTrackingEra(p, state.trackerEra));
+  const bankedAllTime = runs.reduce((sum, r) => sum + (r.banked ?? 0), 0)
+    + (showCurrent ? (current.banked ?? 0) : 0);
+  const bestClimb = Math.max(0, ...runs.map((r) => r.wins ?? 0), showCurrent ? (current.wins ?? 0) : 0);
+  // The one number the whole challenge rolls up to: what every climb in
+  // this record has produced, minus the fresh base each climb started
+  // with. A finished run's totalValue is banked + whatever it ended
+  // holding (0 for a bust); the live climb counts what it's riding plus
+  // what it's banked, since that money exists even mid-climb.
+  const base = plan?.base ?? 20;
+  const netBalance = Math.round((
+    runs.reduce((sum, r) => sum + ((r.totalValue ?? 0) - base), 0)
+    + (showCurrent ? (current.bankroll ?? 0) + (current.banked ?? 0) - base : 0)
+  ) * 100) / 100;
 
   el.ladderTracker.innerHTML = `
+    <div class="ladder-net-row">
+      <span class="ladder-net-label">Overall net balance${archived ? ' (archive)' : ''}</span>
+      <strong class="ladder-net-value ${netBalance > 0 ? 'positive' : netBalance < 0 ? 'negative' : ''}">
+        ${netBalance >= 0 ? '+' : '−'}${ladderMoney(Math.abs(netBalance))}
+      </strong>
+      <span class="ladder-net-hint">every climb's outcome, minus the ${ladderMoney(base)} each one started with</span>
+    </div>
+    ${showCurrent ? `
     <div class="ladder-tracker-current">
       <div class="ladder-run-head">
         <span class="ladder-run-verdict is-live">Climbing now · Day ${current.step}</span>
@@ -5856,7 +5931,7 @@ function renderLadderDashboard(data) {
         <span><span class="ladder-run-label">Banked</span> <strong class="is-banked">${ladderMoney(current.banked ?? 0)}</strong></span>
         <span><span class="ladder-run-label">Rungs won</span> ${current.wins ?? 0}/${plan.rungs.length}</span>
       </div>
-    </div>
+    </div>` : ''}
 
     <div class="learning-grid ladder-tracker-grid">
       <div class="metric-card">
@@ -5879,7 +5954,9 @@ function renderLadderDashboard(data) {
 
     ${runs.length
       ? `<div class="ladder-runs">${runs.map((run) => renderLadderRun(run, plan)).join('')}</div>`
-      : `<p class="empty">No finished climbs yet — the one above is the first.</p>`}`;
+      : `<p class="empty">${archived
+        ? 'No climbs finished before the Aug 21, 2026 reset.'
+        : 'No finished climbs in this record yet — the one above is the first.'}</p>`}`;
 }
 
 /**
@@ -6124,7 +6201,11 @@ function renderTrackerGraph(days) {
  * has its own separate (untuned) −200/+150 band.
  */
 function renderTrackerSection() {
-  const allPicks = state.trackerPicks[state.activeTracker] ?? [];
+  // The era split (see TRACKING_EPOCH) comes first: every number and every
+  // day block below describes only the record being viewed — live by
+  // default, the pre-reset archive behind the toggle.
+  const allPicks = (state.trackerPicks[state.activeTracker] ?? [])
+    .filter((p) => inTrackingEra(p, state.trackerEra));
   renderTrackerSportFilterOptions(allPicks);
   const picks = filterPicksBySport(allPicks, state.trackerSportFilter);
 
@@ -6150,7 +6231,7 @@ function renderTrackerSection() {
   if (state.trackerView === 'list') {
     el.top5DailyHistory.innerHTML = days.length
       ? days.map((d) => renderTop5DayBlock(d)).join('')
-      : `<p class="empty">${esc(TRACKER_EMPTY_MESSAGES[state.activeTracker])}</p>`;
+      : `<p class="empty">${esc(state.trackerEra === 'archive' ? TRACKER_EMPTY_ARCHIVE : TRACKER_EMPTY_MESSAGES[state.activeTracker])}</p>`;
   } else if (state.trackerView === 'calendar') {
     renderTrackerCalendar(days);
   } else if (state.trackerView === 'graph') {
@@ -6621,7 +6702,13 @@ async function renderLearningDashboard() {
     setTrackerLoading(false);
   }
   renderCalibrationReport(top5Picks);
-  await Promise.all([renderDailyLearningSection(), renderAlgoHealthSection(), renderMlbPropsSection(), renderNflPropsSection(), renderWnbaPropsSection(), renderNhlPropsSection()]);
+  // The four per-sport prop research sections (MLB/NFL/WNBA/NHL) are off
+  // the dashboard as of the 2026-08-21 reset — the tracked surfaces are
+  // Pixel's Picks, Play of the Day and Prop Play only. Their worker
+  // pipelines still run (the daily learning review reads them as
+  // evidence); their render functions remain below, unreferenced, in case
+  // the sections come back.
+  await Promise.all([renderDailyLearningSection(), renderAlgoHealthSection()]);
 }
 
 /** worker/src/mlb-props.js's own tracked-pick history — pitcher outs/strikeouts, each game scanned once 2-3 hours before its own first pitch. */
@@ -6943,12 +7030,12 @@ function showWelcomeToastIfFresh() {
 // Versioned so a future, meaningfully different change can show its own
 // hint again even to someone who already dismissed this one — bump the
 // suffix, don't reuse the key.
-const WHATS_NEW_LEAN_FINAL_KEY = 'pp_seen_hint_lean_final_v2';
+const WHATS_NEW_LEAN_FINAL_KEY = 'pp_seen_hint_reset_v3';
 
-/** One-time explainer for the Pixel's Picks/Play of the Day lock-timing
- * change (see renderLeanBadge) — localStorage, not sessionStorage, since
- * this should show once ever per browser, not once per session the way the
- * welcome toast does. Persists (doesn't auto-hide) until dismissed. */
+/** One-time explainer for the 2026-08-21 fresh-slate reset (tracking
+ * archived, boards drawn once daily at 2am ET) — localStorage, not
+ * sessionStorage, since this should show once ever per browser, not once
+ * per session the way the welcome toast does. Persists until dismissed. */
 function showWhatsNewHintIfFresh() {
   if (localStorage.getItem(WHATS_NEW_LEAN_FINAL_KEY)) return;
   el.whatsNewHint.hidden = false;
@@ -6965,45 +7052,12 @@ el.whatsNewHintClose.addEventListener('click', (event) => {
   el.whatsNewHint.hidden = true;
 });
 
-// Versioned on the same rule as WHATS_NEW_LEAN_FINAL_KEY: a future
-// retraction gets its own suffix rather than reusing this one, so someone
-// who dismissed this notice still sees the next one.
-const RETRACTION_NOTICE_KEY = 'pp_seen_notice_wta_retraction_v1';
-
-/**
- * One-time blanket notice for the manual WTA retraction (see the worker's
- * /admin/retract-wta route). Deliberately ONE notice covering every
- * retracted pick rather than a per-pick callout: a badge already marks each
- * one in the tracking dashboard, and the thing a user actually needs told
- * once is *why the record changed underneath them* — that the picks were
- * pulled by hand, and that a void is not a loss.
- *
- * Shown at the very top, above the day filter and every board, since it
- * explains something about the whole app rather than one tab. localStorage,
- * not sessionStorage — once ever per browser, same as the lean/final hint.
- */
-function showRetractionNoticeIfFresh() {
-  if (localStorage.getItem(RETRACTION_NOTICE_KEY)) return;
-  el.retractionNotice.hidden = false;
-}
-
-// The button lives inside the <summary> (anything outside it isn't
-// rendered while the notice is collapsed, which is its normal state),
-// so the click has to be stopped from also toggling the disclosure open
-// on its way out.
-el.retractionNoticeClose.addEventListener('click', (event) => {
-  event.preventDefault();
-  event.stopPropagation();
-  localStorage.setItem(RETRACTION_NOTICE_KEY, '1');
-  el.retractionNotice.hidden = true;
-});
 
 (async function init() {
   if (!checkAuth()) return;
 
   showWelcomeToastIfFresh();
   showWhatsNewHintIfFresh();
-  showRetractionNoticeIfFresh();
 
   el.accountLink.hidden = !getToken();
   el.pixelSort.value = state.pixelSort;

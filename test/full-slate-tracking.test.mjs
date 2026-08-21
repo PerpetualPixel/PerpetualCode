@@ -406,7 +406,9 @@ test('runFullSlateBatch stores picks with a flat unit stake', async () => {
   const events = [makeEvent('flat', { outlier: 35 })];
   await runFullSlateBatch(env, ctx, NOW, { fetchFullSlate: async () => events });
   const picks = await getFullSlateTracked(env, { dateKey: '2026-08-05' });
-  assert.equal(picks[0].suggested_stake, 20);
+  // Full Slate stays flat 1U — at the $25/1U basis (engine.js UNIT_DOLLARS).
+  assert.equal(picks[0].stakeUnits, 1);
+  assert.equal(picks[0].suggested_stake, 25);
 });
 
 test('runFullSlateBatch is idempotent within a day — a second call adds nothing for already-tracked games', async () => {
