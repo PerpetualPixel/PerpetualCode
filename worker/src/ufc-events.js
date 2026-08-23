@@ -613,17 +613,30 @@ export function gradeMmaStraight(pick, results) {
   const fight = findMmaFight(pick.home, pick.away, results ?? []);
   if (!fight) return null;
   const terms = parseMmaStraight(pick.selection);
-  if (!terms) return { void: true, reason: 'unparseable straight selection' };
+  // Void settles the stake with nothing won or lost, same as gradePick's
+  // pushes — payout must be 0 here too, not the undefined a bare { void }
+  // literal leaves behind (the tracker renders/sums whatever's here).
+  const voided = (reason) => ({ void: true, reason, payout: 0 });
+  if (!terms) return voided('unparseable straight selection');
   const finishedInside = fight.method != null ? methodBucketOf(fight.method) !== 'dec' : null;
   const detailBase = {
     winner: fight.aWon ? fight.displayA : fight.bWon ? fight.displayB : null,
     method: fight.method ?? null,
     round: fight.round ?? null,
   };
-  const done = (won) => ({ won, detail: detailBase });
+  // gradeMmaStraight settles outside gradePick() (the odds feed has no
+  // market shaped like a capper straight), so it must compute payout itself
+  // using the same math — a win pays (decimal - 1) * stake, a loss forfeits
+  // the stake. Without this every winning straight priced its payout as
+  // undefined, which the tracker then displayed and summed as $NaN.
+  const done = (won) => ({
+    won,
+    detail: detailBase,
+    payout: won ? (pick.decimal - 1) * pick.suggested_stake : -pick.suggested_stake,
+  });
 
   if (terms.kind === 'rounds_total') {
-    if (fight.round == null && finishedInside !== false) return { void: true, reason: 'no finish round from ESPN' };
+    if (fight.round == null && finishedInside !== false) return voided('no finish round from ESPN');
     // A decision always goes past any posted rounds line; a finish in round
     // R means the fight ended before R.5, so Under X.5 wins iff R <= X.
     const wentOver = finishedInside === false || (fight.round != null && fight.round > terms.point);
@@ -637,29 +650,29 @@ export function gradeMmaStraight(pick, results) {
   if (named && !named[1]) return done(false); // their fighter lost — no term can save it
   if (!named && (terms.method || terms.rounds) && !terms.insideDistance && !terms.goesDistance) {
     // "by KO round 1" with no recognizable fighter — can't attribute; void.
-    if (!terms.method && !terms.rounds) return { void: true, reason: 'no gradable term' };
+    if (!terms.method && !terms.rounds) return voided('no gradable term');
   }
 
   if (terms.method) {
-    if (fight.method == null) return { void: true, reason: 'no finish method from ESPN' };
+    if (fight.method == null) return voided('no finish method from ESPN');
     if (methodBucketOf(fight.method) !== terms.method) return done(false);
   }
   if (terms.rounds?.length) {
-    if (fight.round == null) return { void: true, reason: 'no finish round from ESPN' };
+    if (fight.round == null) return voided('no finish round from ESPN');
     if (finishedInside === false) return done(false); // went to a decision
     if (!terms.rounds.includes(fight.round)) return done(false);
   }
   if (terms.insideDistance) {
-    if (finishedInside == null) return { void: true, reason: 'no finish method from ESPN' };
+    if (finishedInside == null) return voided('no finish method from ESPN');
     if (!finishedInside) return done(false);
   }
   if (terms.goesDistance) {
-    if (finishedInside == null) return { void: true, reason: 'no finish method from ESPN' };
+    if (finishedInside == null) return voided('no finish method from ESPN');
     if (finishedInside) return done(false);
   }
   if (!terms.method && !terms.rounds?.length && !terms.insideDistance && !terms.goesDistance) {
     // Plain fighter moneyline phrased as a straight ("Eric McConico").
-    if (!named) return { void: true, reason: 'selection names neither fighter' };
+    if (!named) return voided('selection names neither fighter');
   }
   return done(true);
 }
