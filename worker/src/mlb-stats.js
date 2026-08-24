@@ -351,9 +351,17 @@ function pitcherFromProbable(probable) {
  * against opponentAbbr, take its ESPN event id from there. Either side (or
  * both) comes back null when ESPN hasn't posted a starter yet, or the
  * matchup can't be found — shown client-side as "TBD," never fabricated.
+ *
+ * Also returns the matched game's own ESPN `eventId` and scheduled `date`.
+ * Both are free here (this function already had to find the event to read
+ * its probables at all) and save every caller that wants first-pitch time
+ * from repeating the same schedule scan — worker/src/analysis.js's baseball
+ * fact sheet uses `date` for the day/night split and the weather lookup.
+ * Purely additive: callers that only destructure away/home are unaffected.
  */
 export async function fetchStartingPitchers(teamAbbr, opponentAbbr, ctx) {
-  if (!teamAbbr || !opponentAbbr) return { away: null, home: null };
+  const none = { away: null, home: null, eventId: null, date: null };
+  if (!teamAbbr || !opponentAbbr) return none;
 
   const data = await cachedJson(`${ESPN_SITE}/teams/${teamAbbr.toLowerCase()}/schedule`, SCHEDULE_TTL, ctx);
   const events = data?.events ?? [];
@@ -362,7 +370,7 @@ export async function fetchStartingPitchers(teamAbbr, opponentAbbr, ctx) {
     if (comp?.status?.type?.completed) return false;
     return comp?.competitors?.some((c) => c.team?.abbreviation?.toLowerCase() === opponentAbbr.toLowerCase());
   });
-  if (!upcoming) return { away: null, home: null };
+  if (!upcoming) return none;
 
   const summary = await cachedJson(`${ESPN_SITE}/summary?event=${upcoming.id}`, PITCHER_TTL, ctx);
   const competitors = summary?.header?.competitions?.[0]?.competitors ?? [];
@@ -371,6 +379,8 @@ export async function fetchStartingPitchers(teamAbbr, opponentAbbr, ctx) {
   return {
     away: pitcherFromProbable(away?.probables?.[0]),
     home: pitcherFromProbable(home?.probables?.[0]),
+    eventId: upcoming.id ?? null,
+    date: upcoming.date ?? null,
   };
 }
 
