@@ -4,6 +4,7 @@ import assert from 'node:assert/strict';
 import {
   quickTakeCap, analysisCacheKey, getOrGenerateAnalysis, tennisFactSheet,
   baseballFactSheet, pitcherRecentForm, firstPitchLine, ordinal, mlbAbbr, inningsNotation,
+  propFactSheet, getOrGeneratePropAnalysis,
 } from '../worker/src/analysis.js';
 
 const EPOCH = Date.UTC(2000, 0, 1);
@@ -279,4 +280,86 @@ test('baseballFactSheet reports recent-form innings in thirds, not as a decimal'
   }, 'New York Yankees', 'Boston Red Sox');
   assert.match(sheet, /13\.2 IP/);
   assert.doesNotMatch(sheet, /13\.7 IP/);
+});
+
+/* ---------------------------------------------------------------- */
+/* propFactSheet — Prop Play of the Day's "known facts" block        */
+/* ---------------------------------------------------------------- */
+
+/**
+ * A player prop is not a matchup, so it cannot reuse the game write-up:
+ * "Seattle at Las Vegas" is barely the subject when the bet is whether one
+ * player clears 20 points. The numbers that decide a prop all live on the
+ * leg's hit-rate profile, none of which appears in the team fact sheet —
+ * which is why Prop Play had no sharp write-up at all before this.
+ */
+
+const PROP_RECORD = {
+  date: '2026-08-24',
+  kind: 'parlay',
+  combinedAmerican: 105,
+  legs: [
+    {
+      kind: 'prop', label: "A'ja Wilson 20+ Points", player: "A'ja Wilson", need: 20,
+      american: -380, book: 'fanduel', away: 'Seattle Storm', home: 'Las Vegas Aces',
+      profile: { games: 32, season: 0.84, l10: 0.9, l5: 1, streak: 8, avgSeason: 24.3, avgL5: 26.1 },
+    },
+  ],
+};
+
+test('propFactSheet states the line, the hit rates, and the cushion under the line', () => {
+  const sheet = propFactSheet(PROP_RECORD);
+  assert.match(sheet, /A'ja Wilson 20\+ Points at -380/);
+  assert.match(sheet, /84% of 32 games this season/);
+  assert.match(sheet, /90% over the last 10/);
+  // The cushion is the whole thesis of a deep alternate line: how far the
+  // line sits below the player's own average, not just that she is "hot".
+  assert.match(sheet, /cushion of \+4\.3/);
+  assert.match(sheet, /8 straight games clearing 20\+/);
+});
+
+test('propFactSheet says plainly when a leg has no game log, rather than leaving a gap', () => {
+  // Silence invites the model to invent a profile; an explicit "no log" does
+  // not. Same reasoning as the tennis and baseball head-to-head lines.
+  const sheet = propFactSheet({ combinedAmerican: -300, legs: [{ label: 'X 10+ Points', need: 10, american: -300, profile: null }] });
+  assert.match(sheet, /No game log resolved/);
+});
+
+test('propFactSheet flags a moneyline leg as having no prop profile at all', () => {
+  const sheet = propFactSheet({
+    combinedAmerican: -250,
+    legs: [{ kind: 'ml', label: 'Aces ML (vs Storm)', american: -250, away: 'Seattle Storm', home: 'Las Vegas Aces' }],
+  });
+  assert.match(sheet, /not a player prop/);
+  assert.doesNotMatch(sheet, /cushion/);
+});
+
+test('propFactSheet describes the ticket shape, and distinguishes a parlay from a straight', () => {
+  // Shape is read from the leg COUNT, not from the record's own `kind`, so a
+  // one-leg ticket can never be described to the model as a parlay.
+  assert.match(propFactSheet(PROP_RECORD), /single straight play at \+105/);
+
+  const parlay = {
+    ...PROP_RECORD,
+    legs: [PROP_RECORD.legs[0], {
+      kind: 'prop', label: 'Napheesa Collier 6+ Rebounds', need: 6, american: -260,
+      away: 'Minnesota Lynx', home: 'Phoenix Mercury',
+      profile: { games: 30, season: 0.8, l10: 0.8, l5: 0.6, streak: 0, avgSeason: 8.1, avgL5: 7.2 },
+    }],
+  };
+  assert.match(propFactSheet(parlay), /2-leg parlay at a combined \+105/);
+  assert.match(propFactSheet(parlay), /one bad night cannot sink both/);
+  // Both legs are described, not just the first.
+  assert.match(propFactSheet(parlay), /LEG 2: Napheesa Collier/);
+});
+
+test('propFactSheet returns null with no legs, so the caller shows no section at all', () => {
+  assert.equal(propFactSheet({ legs: [] }), null);
+  assert.equal(propFactSheet(null), null);
+});
+
+test('getOrGeneratePropAnalysis returns null with no ANTHROPIC_API_KEY, same as every other variant', async () => {
+  const env = { POTD_KV: { async get() { return null; }, async put() {} } };
+  const ctx = { waitUntil: (p) => p };
+  assert.equal(await getOrGeneratePropAnalysis(PROP_RECORD, env, ctx, Date.now()), null);
 });

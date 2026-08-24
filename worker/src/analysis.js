@@ -868,3 +868,167 @@ export async function getOrGenerateAnalysis(candidate, env, ctx, now = Date.now(
   ctx.waitUntil(env.POTD_KV.put(kvKey, result, { expirationTtl: 86400 * CACHE_TTL_DAYS }));
   return result;
 }
+
+/* ------------------------------------------------------------------ */
+/* Prop Play of the Day                                                */
+/* ------------------------------------------------------------------ */
+
+/**
+ * The prop play's own fact sheet: every leg's real line, price, matchup and
+ * hit-rate profile, exactly as worker/src/prop-play.js already computed them
+ * from the player's ESPN game log.
+ *
+ * A player prop is not a matchup, so it cannot reuse the game write-up above:
+ * "Las Vegas at Seattle" is barely the subject when the bet is whether one
+ * player clears 20 points. The numbers that actually decide a prop — how
+ * often she has cleared this exact line, her average against it, whether the
+ * line sits below her floor rather than near her ceiling — all live on the
+ * leg's profile, and none of them appear anywhere in the team fact sheet.
+ *
+ * Exported and pure so the wiring is testable without a model call.
+ */
+export function propFactSheet(record) {
+  const legs = record?.legs ?? [];
+  if (!legs.length) return null;
+
+  const pct = (v) => (Number.isFinite(v) ? `${Math.round(v * 100)}%` : null);
+  const blocks = legs.map((leg, i) => {
+    const lines = [`LEG ${i + 1}: ${leg.label} at ${fmtAmericanPrice(leg.american)}${leg.book ? ` (${leg.book})` : ''}`];
+    if (leg.away && leg.home) lines.push(`  Game: ${leg.away} at ${leg.home}.`);
+
+    if (leg.kind === 'ml') {
+      // A moneyline leg has no game log behind it — its whole case is the
+      // price itself, which the model is told not to argue from. Say that
+      // plainly rather than leaving it to infer a profile that isn't there.
+      lines.push(`  This leg is a straight moneyline on a heavy favorite, not a player prop. `
+        + `There is no per-game hit-rate profile for it; judge it only on the team facts you are given, if any.`);
+      return lines.join('\n');
+    }
+
+    const p = leg.profile;
+    if (!p) {
+      lines.push('  No game log resolved for this player, so there is no hit-rate history for this line.');
+      return lines.join('\n');
+    }
+    const hitRates = [
+      p.season != null ? `${pct(p.season)} of ${p.games} games this season` : null,
+      p.l10 != null ? `${pct(p.l10)} over the last 10` : null,
+      p.l5 != null ? `${pct(p.l5)} over the last 5` : null,
+    ].filter(Boolean);
+    if (hitRates.length) lines.push(`  Has cleared this exact ${leg.need}+ line in ${hitRates.join(', ')}.`);
+    if (p.avgSeason != null) {
+      const cushion = p.avgSeason - leg.need;
+      lines.push(`  Season average: ${p.avgSeason}${p.avgL5 != null ? ` (${p.avgL5} across the last 5)` : ''}, `
+        + `against a ${leg.need}+ line. That is a cushion of ${cushion >= 0 ? '+' : ''}${Math.round(cushion * 10) / 10} `
+        + `between the line and the season average.`);
+    }
+    if (p.streak >= 2) lines.push(`  Current streak: ${p.streak} straight games clearing ${leg.need}+.`);
+    return lines.join('\n');
+  });
+
+  const shape = legs.length === 2
+    ? `This is a 2-leg parlay at a combined ${fmtAmericanPrice(record.combinedAmerican)}. `
+      + `The two legs are deliberately taken from two different games, so one bad night cannot sink both.`
+    : `This is a single straight play at ${fmtAmericanPrice(record.combinedAmerican)}.`;
+
+  return `${blocks.join('\n\n')}\n\nSTRUCTURE\n${shape}`;
+}
+
+/** "-380" / "+145" — the analysis module's own copy, so this file stays standalone. */
+function fmtAmericanPrice(american) {
+  const n = Number(american);
+  if (!Number.isFinite(n)) return 'an unlisted price';
+  return n > 0 ? `+${n}` : String(n);
+}
+
+/**
+ * The sharp write-up for Prop Play of the Day.
+ *
+ * Separate entry point from getOrGenerateAnalysis because the subject is
+ * different in kind: this argues one two-leg ticket built from player
+ * game-log history, not one side of one game, so it takes the whole record
+ * rather than a candidate and gets its own prompt and cache namespace. Same
+ * contract as the game write-up in every other respect — returns the same
+ * {analysis, quickTake, devilsAdvocate} JSON envelope, returns null whenever
+ * it can't produce a real answer, and never blocks the play itself.
+ */
+export async function getOrGeneratePropAnalysis(record, env, ctx, now = Date.now()) {
+  if (!env?.ANTHROPIC_API_KEY) return null;
+  const factSheet = propFactSheet(record);
+  if (!factSheet) return null;
+
+  const dateKey = record.date ?? etDate(now);
+  const legKey = (record.legs ?? []).map((l) => l.label).join('|');
+  const kvKey = `prop-analysis:v1:${dateKey}:${legKey}`;
+  const cached = await env.POTD_KV.get(kvKey);
+  if (cached) return cached;
+
+  const prompt = `You are a sharp, highly experienced sports betting analyst who specialises in player props, writing the breakdown behind this app's "Prop Play of the Day" — the single prop ticket it is featuring across the whole slate today. Write like a professional handicapper explaining his read to another sharp bettor: specific, numbers-first, and honest about where the risk actually is.
+
+Known facts (this is the ONLY information you have — there is no other source):
+${factSheet}
+
+This app's own model already selected this ticket, from each player's real per-game log. Your job is NOT to re-decide whether to play it — it is to explain, using only the facts above, why these lines are the ones it took, and to be genuinely honest about how the ticket loses.
+
+RULES — read carefully, these are not optional:
+1. Use ONLY the facts given above. Do not state, imply, or assume any statistic, injury, minutes projection, matchup detail, defensive ranking, or result that is not explicitly written above.
+2. Use each player's and team's name exactly as written above, character for character.
+3. Never invent a game log, an opponent's defensive rank, a rest/injury situation, or a head-to-head history. If something is not above, do not mention it. Absence of a fact is not evidence of its opposite.
+4. Do not discuss whether the PRICE is good value, implied probability, vig, or line shopping. The app shows pricing separately. Argue the player and the line, not the market.
+5. Cite the actual numbers: write "cleared 20+ in 90% of her last 10" or "a 4.3-point cushion between the line and her season average", never "has been consistent" or "is in good form". A claim with no number in it is filler.
+6. The whole point of an alternate line this deep is that it sits below the player's floor rather than near her ceiling. Where the cushion supports that, say so in those terms.
+7. No markdown: no "#" headings, no "**bold**", no bullet points in Part 1. Start Part 1 directly with its first sentence.
+8. Never use an em dash (—) anywhere in your answer. Use a period, comma, or parentheses instead.
+
+Write your response in two parts, in this order.
+
+PART 1 — Analysis (plain text, before the JSON below): 6-to-10 sentences of flowing prose. Take each leg in turn, say what its hit-rate history and cushion actually establish, and then say what has to happen for the ticket as a whole to cash. If this is a parlay, address explicitly what the two legs share and do not share as risks.
+
+PART 2 — Structured summary: after Part 1, on the very last line and ONLY the last line, output one JSON object (no other text on that line, and none of Part 1's prose repeated inside it) with this exact structure:
+{
+  "quickTake": ["<reason 1>", "<reason 2>", "<reason 3>", "<reason 4 if warranted>"],
+  "devilsAdvocate": ["<a genuine way this ticket loses>", "<a second, different genuine way it loses>"]
+}
+- quickTake: 3 to 4 substantive sentences on why this ticket is today's prop play, each carrying a specific number from the facts above, and each covering a different angle (one per leg at minimum, plus the ticket's overall shape). Do not restate the same hit rate twice.
+- devilsAdvocate: exactly 2 short sentences on how this specific ticket actually loses. Be concrete about the real failure modes for a deep alternate line (a blowout cutting a starter's minutes, foul trouble, an unexpected rest day, a single cold shooting night against a line with a thin cushion) and tie each to the facts above where you can. On a parlay, at least one must address that both legs must land. Not a token "anything can happen" disclaimer.`;
+
+  let text;
+  try {
+    text = await callClaude(prompt, env, { maxTokens: 1200 });
+  } catch (e) {
+    console.error('Prop analysis call failed:', e);
+    return null;
+  }
+  if (!text) return null;
+
+  // Same trailing-JSON extraction the game write-up uses, and for the same
+  // reason: the model does not reliably put a newline before the object.
+  let analysis = text;
+  let quickTake = null;
+  let devilsAdvocate = null;
+  const trimmed = text.trim();
+  let searchFrom = trimmed.length;
+  while (searchFrom > 0) {
+    const idx = trimmed.lastIndexOf('{', searchFrom - 1);
+    if (idx === -1) break;
+    try {
+      const parsed = JSON.parse(trimmed.slice(idx));
+      analysis = trimmed.slice(0, idx).trim();
+      quickTake = asStringBullets(parsed.quickTake, 4);
+      devilsAdvocate = asStringBullets(parsed.devilsAdvocate, 3);
+      break;
+    } catch {
+      searchFrom = idx;
+    }
+  }
+  if (analysis === text) {
+    const marker = trimmed.indexOf('"quickTake"');
+    const braceIdx = marker === -1 ? -1 : trimmed.lastIndexOf('{', marker);
+    if (braceIdx !== -1) analysis = trimmed.slice(0, braceIdx).trim();
+  }
+  analysis = analysis.replace(/^#{1,3}\s+.+\n+/, '').trim();
+
+  const result = JSON.stringify({ analysis, quickTake, devilsAdvocate });
+  ctx.waitUntil(env.POTD_KV.put(kvKey, result, { expirationTtl: 86400 * CACHE_TTL_DAYS }));
+  return result;
+}

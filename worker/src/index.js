@@ -54,7 +54,7 @@ import { consumeQuota, getQuotaUsage } from './tail-fade-quota.js';
 import { runNhlPropsScan, runNhlPropsGrading, getAllNhlPropsTracked } from './nhl-props.js';
 import { runPotdDaily, runPotdClvSnapshot, runPotdGrading, backfillPotdAnalysis, getPotd, getPotdLeaning, getPotdHistory, retractPotd, regradePotdTennisVoids, etParts } from './potd.js';
 import { runLadderDaily, runLadderGrading, getLadder, getLadderHistory } from './ladder.js';
-import { getOrGenerateAnalysis } from './analysis.js';
+import { getOrGenerateAnalysis, getOrGeneratePropAnalysis } from './analysis.js';
 import {
   UPSTREAM,
   regionsFor,
@@ -1381,11 +1381,29 @@ export default {
         const date = url.searchParams.get('date');
         if (date && /^\d{4}-\d{2}-\d{2}$/.test(date)) {
           const raw = await env.POTD_KV.get(`propplay:${date}`);
-          return json({ propPlay: raw ? JSON.parse(raw) : null }, { headers: { ...cors, 'Cache-Control': 'public, max-age=300' } });
+          const past = raw ? JSON.parse(raw) : null;
+          const pastAnalysis = past
+            ? await getOrGeneratePropAnalysis(past, env, ctx, Date.now()).catch(() => null)
+            : null;
+          return json(
+            { propPlay: past ? { ...past, analysis: pastAnalysis } : null },
+            { headers: { ...cors, 'Cache-Control': 'public, max-age=300' } },
+          );
         }
         const result = await runPropPlayDaily(env, ctx, Date.now(), { debug });
+        // The sharp write-up for the ticket, generated on the first read of
+        // the day and cached in KV from then on — the same lazy pattern
+        // /analysis uses for a game, rather than blocking the daily draw on a
+        // model call. Attached to the record here rather than stored inside
+        // it so a play written before this existed still picks one up.
+        const propAnalysis = result.record
+          ? await getOrGeneratePropAnalysis(result.record, env, ctx, Date.now()).catch(() => null)
+          : null;
         return json(
-          { propPlay: result.record ?? null, ...(debug ? { created: result.created, reason: result.reason ?? null, trace: result.trace ?? null, wouldPost: result.wouldPost ?? null } : {}) },
+          {
+            propPlay: result.record ? { ...result.record, analysis: propAnalysis } : null,
+            ...(debug ? { created: result.created, reason: result.reason ?? null, trace: result.trace ?? null, wouldPost: result.wouldPost ?? null } : {}),
+          },
           { headers: { ...cors, 'Cache-Control': debug ? 'no-store' : 'public, max-age=300' } },
         );
       } catch (error) {
@@ -1400,8 +1418,30 @@ export default {
         return json({ error: 'Method not allowed' }, { status: 405, headers: cors });
       }
       try {
+        const ladder = await getLadder(env);
+        // Today's rung is an ordinary game pick (eventId, sportKey, home,
+        // away, outcomeName), so it gets the same sharp write-up every other
+        // surface shows rather than being the one board with a bare
+        // selection and no reasoning. getOrGenerateAnalysis is keyed on
+        // event + outcome, so when the rung is also a Full Slate or Pixel's
+        // Picks pick this is a cache hit and costs no extra model call.
+        const pick = ladder?.play?.pick;
+        if (pick?.eventId && pick?.outcomeName) {
+          const analysis = await getOrGenerateAnalysis(
+            {
+              eventId: pick.eventId,
+              sportKey: pick.sportKey,
+              sportTitle: pick.sportTitle ?? pick.sportKey,
+              home: pick.home,
+              away: pick.away,
+              outcomeName: pick.outcomeName,
+            },
+            env, ctx, Date.now(),
+          ).catch(() => null);
+          if (analysis) ladder.play = { ...ladder.play, analysis };
+        }
         return json(
-          { ladder: await getLadder(env) },
+          { ladder },
           { headers: { ...cors, 'Cache-Control': 'public, max-age=120' } },
         );
       } catch (error) {
