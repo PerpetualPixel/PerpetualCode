@@ -55,6 +55,7 @@ import { runNhlPropsScan, runNhlPropsGrading, getAllNhlPropsTracked } from './nh
 import { runPotdDaily, runPotdClvSnapshot, runPotdGrading, backfillPotdAnalysis, getPotd, getPotdLeaning, getPotdHistory, retractPotd, regradePotdTennisVoids, etParts } from './potd.js';
 import { runLadderDaily, runLadderGrading, getLadder, getLadderHistory } from './ladder.js';
 import { getOrGenerateAnalysis, getOrGeneratePropAnalysis } from './analysis.js';
+import { repairMissingPayouts } from './repair-payouts.js';
 import {
   UPSTREAM,
   regionsFor,
@@ -970,6 +971,7 @@ export default {
       '/admin/manual-mma-result',
       '/admin/audit-mma-totals',
       '/admin/regrade-mma-totals',
+      '/admin/repair-payouts',
       '/admin/redraw-today',
     ]);
     // Bet-slip extraction spends real model credits on every call, and the
@@ -1997,6 +1999,32 @@ export default {
         const days = Math.min(90, Math.max(1, Number(searchParams.get('days')) || 14));
         const apply = searchParams.get('apply') === 'true';
         const result = await regradeMmaTotals(env, ctx, Date.now(), { days, apply });
+        return json(result, { headers: cors });
+      } catch (error) {
+        return json({ error: String(error).slice(0, 200) }, { status: 500, headers: cors });
+      }
+    }
+
+    /**
+     * Rebuilds the dollar figure on settled picks that stored a missing or
+     * NaN payout, which the tracker renders as "$NaN".
+     *
+     * Needed because grading only ever visits PENDING picks: fixing the
+     * grader stops new bad payouts but can never repair one already written.
+     * Unlike /admin/regrade-mma-totals this never re-decides an outcome — it
+     * touches no scoreboard and no grader, and a won pick stays won. It only
+     * recomputes the number that should already have followed from the
+     * pick's own stored price and stake, so it is safe across settled
+     * history. Dry run unless ?apply=true.
+     */
+    if (pathname === '/admin/repair-payouts' && request.method === 'POST') {
+      const auth = authorizeSettings(request, env);
+      if (!auth.ok) return json({ error: auth.error }, { status: auth.status, headers: cors });
+      try {
+        const { searchParams } = new URL(request.url);
+        const days = Math.min(120, Math.max(1, Number(searchParams.get('days')) || 30));
+        const apply = searchParams.get('apply') === 'true';
+        const result = await repairMissingPayouts(env, ctx, Date.now(), { days, apply });
         return json(result, { headers: cors });
       } catch (error) {
         return json({ error: String(error).slice(0, 200) }, { status: 500, headers: cors });

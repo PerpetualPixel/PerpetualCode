@@ -5687,12 +5687,28 @@ el.tabPotd.addEventListener('click', () => setActiveTab('potd'));
 /* Tracking Dashboard                                                */
 /* ---------------------------------------------------------------- */
 
+/**
+ * Both of these are handed values straight off a stored pick's result, and a
+ * settled pick CAN carry a missing or non-numeric one: a grader that returned
+ * no payout writes a record whose `payout` key JSON.stringify drops entirely,
+ * and whose roiPercent (NaN) serialises to null. That shipped, and rendered
+ * as a literal "$NaN" on a real winning pick.
+ *
+ * The stored records get repaired server-side (worker/src/repair-payouts.js),
+ * but the display must never be the thing that surfaces arithmetic that went
+ * wrong upstream. An em-dash reads as "not available", which is the truth;
+ * "$NaN" reads as the app being broken, and is impossible for a user to act
+ * on. Guarding here rather than at each call site because every caller of
+ * these two has the same problem.
+ */
 function formatSignedMoney(amount) {
+  if (!Number.isFinite(amount)) return '—';
   const sign = amount > 0 ? '+' : amount < 0 ? '−' : '';
   return `${sign}$${Math.abs(amount).toFixed(2)}`;
 }
 
 function formatSignedPct(pct) {
+  if (!Number.isFinite(pct)) return '—';
   const sign = pct > 0 ? '+' : pct < 0 ? '−' : '';
   return `${sign}${Math.abs(pct).toFixed(1)}%`;
 }
