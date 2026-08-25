@@ -650,3 +650,34 @@ test('gradeMmaStraight grades method, round, and distance straights from the fig
   assert.equal(gradeMmaStraight({ ...base, selection: 'Islam Makhachev by submission' }, noMethod).void, true);
   assert.equal(gradeMmaStraight({ ...base, selection: 'Islam Makhachev by submission' }, []), null);
 });
+
+test('gradeMmaStraight prices a real payout instead of $NaN — a win at +180 pays 1.8x the stake', async () => {
+  const { gradeMmaStraight } = await import('../worker/src/ufc-events.js');
+  const results = [{
+    a: 'gregory rodrigues', b: 'anthony hernandez', aWon: true, bWon: false,
+    displayA: 'Gregory Rodrigues', displayB: 'Anthony Hernandez',
+    method: 'Decision', round: 3,
+  }];
+  // +180 american == 2.8 decimal; this is the exact shape a capper straight
+  // carries (see docs/capper-consensus.js's upgradeToValueStraight).
+  const win = gradeMmaStraight({
+    marketKey: 'mma_straight', home: 'Gregory Rodrigues', away: 'Anthony Hernandez',
+    selection: 'Gregory Rodrigues', american: 180, decimal: 2.8, suggested_stake: 25,
+  }, results);
+  assert.equal(win.won, true);
+  assert.ok(Math.abs(win.payout - 45) < 1e-9); // (2.8 - 1) * 25
+
+  const lose = gradeMmaStraight({
+    marketKey: 'mma_straight', home: 'Gregory Rodrigues', away: 'Anthony Hernandez',
+    selection: 'Anthony Hernandez', american: -220, decimal: 1.4545, suggested_stake: 25,
+  }, results);
+  assert.equal(lose.won, false);
+  assert.equal(lose.payout, -25);
+
+  const voided = gradeMmaStraight({
+    marketKey: 'mma_straight', home: 'Gregory Rodrigues', away: 'Anthony Hernandez',
+    selection: 'not a real term here', decimal: 2.8, suggested_stake: 25,
+  }, [{ ...results[0], method: null, round: null }]);
+  assert.equal(voided.void, true);
+  assert.equal(voided.payout, 0);
+});

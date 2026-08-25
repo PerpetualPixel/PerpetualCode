@@ -5413,6 +5413,41 @@ function ladderMoney(n) {
 }
 
 /**
+ * The sharp write-up section, for the cards that render their analysis
+ * inline rather than behind the stats drawer (the Ladder rung and Prop Play
+ * of the Day, neither of which has a "More Stats" affordance of its own).
+ *
+ * Takes the raw JSON envelope the worker returns — {analysis, quickTake,
+ * devilsAdvocate} — and returns '' for anything it can't render, so a board
+ * whose write-up isn't available (no ANTHROPIC_API_KEY, a failed model call,
+ * a play from before this existed) simply shows what it always showed rather
+ * than an empty heading. Mirrors renderPotdSharpTake/renderPotdDevilsAdvocate,
+ * which do the same job inside Play of the Day's own section layout.
+ */
+function renderInlineSharpTake(raw, { title = 'Why This Pick' } = {}) {
+  if (!raw) return '';
+  let parsed;
+  try {
+    parsed = typeof raw === 'string' ? JSON.parse(raw) : raw;
+  } catch {
+    // A bare non-JSON string is still prose worth showing.
+    return typeof raw === 'string' && raw.trim()
+      ? `<div class="inline-sharp-take"><h4>${esc(title)}</h4><p class="analysis-text">${esc(raw)}</p></div>`
+      : '';
+  }
+  const reasons = Array.isArray(parsed.quickTake) ? parsed.quickTake : [];
+  const risks = Array.isArray(parsed.devilsAdvocate) ? parsed.devilsAdvocate : [];
+  if (!parsed.analysis && !reasons.length && !risks.length) return '';
+  return `<div class="inline-sharp-take">
+    <h4>${esc(title)} <span class="stats-source">Sharp analysis</span></h4>
+    ${reasons.length ? `<ul class="quick-take-list">${reasons.map((r) => `<li>${esc(r)}</li>`).join('')}</ul>` : ''}
+    ${parsed.analysis ? `<p class="analysis-text">${esc(parsed.analysis)}</p>` : ''}
+    ${risks.length ? `<div class="inline-devil"><h5>Devil's Advocate</h5>
+      <ul class="quick-take-list">${risks.map((t) => `<li>${esc(t)}</li>`).join('')}</ul></div>` : ''}
+  </div>`;
+}
+
+/**
  * The rung track: one pip per step of the ideal climb, each labelled with
  * what that rung bets. Steps already won are filled, the current one is
  * marked, and the rungs that bank profit carry a skim marker — the take-outs
@@ -5481,6 +5516,7 @@ function renderLadderPlay(ladder) {
       Risking <strong>${ladderMoney(play.stake)}</strong> to return
       <strong>${ladderMoney(play.toReturn)}</strong>
     </p>
+    ${renderInlineSharpTake(play.analysis, { title: 'Why This Rung' })}
   </div>`;
 }
 
@@ -5598,6 +5634,7 @@ function renderPropPlayCard(record) {
     ${unitsLineHtml(record.units)}
     ${legs}
     <div class="prop-play-writeup">${paragraphs}</div>
+    ${renderInlineSharpTake(record.analysis, { title: 'Why This Ticket' })}
   </div>`;
 }
 

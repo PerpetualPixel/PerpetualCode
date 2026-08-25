@@ -6258,3 +6258,43 @@ input[type="range"]:focus-visible {
   font-size: 0.72rem;
   line-height: 1.45;
 }
+
+/* Inline sharp write-up, for the two boards that show their analysis on the
+   card itself rather than behind the stats drawer: the Ladder rung and Prop
+   Play of the Day. Reuses .quick-take-list / .analysis-text wholesale (same
+   bullets, same prose treatment as Play of the Day and the drawer), and only
+   adds the wrapper those two need — an accent-topped divider separating the
+   write-up from the pick's own numbers above it. */
+.inline-sharp-take {
+  margin-top: 14px;
+  padding-top: 14px;
+  border-top: 1px solid var(--accent);
+}
+
+.inline-sharp-take h4 {
+  margin: 0 0 10px;
+  font-size: 0.82rem;
+  color: var(--text);
+  font-weight: 600;
+}
+
+/* The devil's-advocate half carries the same warn tone it has everywhere
+   else, so a risk never reads as another reason to like the pick. */
+.inline-sharp-take .inline-devil {
+  margin-top: 12px;
+  padding-top: 12px;
+  border-top: 1px solid var(--line);
+}
+
+.inline-sharp-take .inline-devil h5 {
+  margin: 0 0 8px;
+  font-size: 0.75rem;
+  font-weight: 600;
+  color: var(--warn);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+.inline-sharp-take .inline-devil .quick-take-list li::before {
+  content: '😈';
+}

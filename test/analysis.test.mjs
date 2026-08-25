@@ -1,7 +1,11 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 
-import { quickTakeCap, analysisCacheKey, getOrGenerateAnalysis, tennisFactSheet } from '../worker/src/analysis.js';
+import {
+  quickTakeCap, analysisCacheKey, getOrGenerateAnalysis, tennisFactSheet,
+  baseballFactSheet, pitcherRecentForm, firstPitchLine, ordinal, mlbAbbr, inningsNotation,
+  propFactSheet, getOrGeneratePropAnalysis,
+} from '../worker/src/analysis.js';
 
 const EPOCH = Date.UTC(2000, 0, 1);
 const day = (iso) => Math.round((Date.parse(iso) - EPOCH) / 86400000);
@@ -116,4 +120,246 @@ test('tennisFactSheet still always states the head-to-head situation, even absen
 test('tennisFactSheet returns null when the archive has no matches at all', () => {
   assert.equal(tennisFactSheet({ matches: [] }, 'Alpha A.', 'Bravo B.', 'tennis_atp_us_open'), null);
   assert.equal(tennisFactSheet(null, 'Alpha A.', 'Bravo B.', 'tennis_atp_us_open'), null);
+});
+
+/* ---------------------------------------------------------------- */
+/* baseballFactSheet — the MLB "known facts" block                   */
+/* ---------------------------------------------------------------- */
+
+/**
+ * The bug these cover: an MLB pick could render with no write-up at all.
+ * The baseball branch built its fact sheet from starters plus a W-L record
+ * and nothing else, and a null fact sheet makes getOrGenerateAnalysis return
+ * null — so a game with no probable starter posted yet, or an unmapped team
+ * name, silently produced no analysis on the card. What it DID produce was
+ * two lines of context behind a prompt that asks the model to weigh recent
+ * form and day/night context, neither of which was ever in the sheet.
+ */
+
+const PITCHER = {
+  playerId: '1', name: 'Ace Alpha', throws: 'R', wins: 12, losses: 6,
+  era: 3.12, whip: 1.05, ip: '165.1', strikeouts: 210, walks: 38,
+};
+const OUTINGS = [
+  { ip: '7.0', earnedRuns: 1, strikeouts: 9, walks: 1, homeRuns: 0 },
+  { ip: '6.2', earnedRuns: 2, strikeouts: 7, walks: 2, homeRuns: 1 },
+];
+const RANKED = {
+  offense: {
+    battingAvg: { value: 0.268, rank: 4 }, obpSlugging: { value: 0.782, rank: 3 },
+    runs: { value: 640, rank: 2 }, homeRuns: { value: 198, rank: 1 },
+  },
+  defense: { era: { value: 3.55, rank: 6 }, whip: { value: 1.18, rank: 5 } },
+};
+
+test('baseballFactSheet carries the starters, their recent-form ERA, and ranked team stats', () => {
+  const sheet = baseballFactSheet({
+    pitchers: { away: PITCHER, home: null, date: '2026-08-24T23:05:00Z' },
+    awaySplits: { season: '78-52', lastTen: '7-3', home: '42-22', away: '36-30' },
+    awayStats: RANKED,
+    awayOutings: OUTINGS,
+    headToHead: [],
+  }, 'New York Yankees', 'Boston Red Sox');
+
+  assert.match(sheet, /Ace Alpha/);
+  assert.match(sheet, /3\.12 ERA/);          // season line
+  assert.match(sheet, /Recent form/);         // the line the prompt asks for
+  assert.match(sheet, /\.782 OPS \(3rd of 30\)/); // ranked, not just raw
+  assert.match(sheet, /7-3 in their last 10/);
+  // A starter ESPN hasn't posted yet is stated plainly, never invented.
+  assert.match(sheet, /Boston Red Sox starter: not yet announced/);
+});
+
+test('baseballFactSheet returns null only when nothing at all resolved', () => {
+  // Both starters unannounced and no other source resolving is not context —
+  // the caller needs that signal to fall back to the generic ESPN sheet.
+  assert.equal(baseballFactSheet({ pitchers: { away: null, home: null } }, 'A', 'B'), null);
+  assert.equal(baseballFactSheet(null, 'A', 'B'), null);
+  assert.equal(baseballFactSheet({}, 'A', 'B'), null);
+  // But a sheet with real splits and no starters is still real context.
+  assert.ok(baseballFactSheet({ awaySplits: { season: '78-52' } }, 'A', 'B'));
+});
+
+test('baseballFactSheet states an empty season series as an explicit absence, not silence', () => {
+  const sheet = baseballFactSheet({
+    awaySplits: { season: '78-52' }, headToHead: [],
+  }, 'New York Yankees', 'Boston Red Sox');
+  // Same reasoning as tennis's head-to-head line: silence invites the model
+  // to fill the gap, an explicit "no meetings" does not.
+  assert.match(sheet, /no completed meetings/);
+  assert.match(sheet, /not evidence about either side/);
+});
+
+test('pitcherRecentForm reads ".1"/".2" innings as thirds, not decimals', () => {
+  // 6.2 IP is six innings and two outs (20 outs), not 6.2 innings. Treating
+  // it as a decimal understates the workload and so overstates the ERA.
+  const form = pitcherRecentForm([{ ip: '6.2', earnedRuns: 2, strikeouts: 7, walks: 2, homeRuns: 1 }]);
+  assert.equal(form.starts, 1);
+  assert.ok(Math.abs(form.innings - 20 / 3) < 1e-9);
+  assert.ok(Math.abs(form.era - (2 * 9) / (20 / 3)) < 1e-9);
+});
+
+test('pitcherRecentForm computes ERA from real totals, not an average of per-game ERAs', () => {
+  // 1 ER in 9 IP and 5 ER in 1 IP is 6 ER in 10 IP (5.40), not the mean of
+  // the two individual game ERAs (1.00 and 45.00).
+  const form = pitcherRecentForm([
+    { ip: '9.0', earnedRuns: 1 },
+    { ip: '1.0', earnedRuns: 5 },
+  ]);
+  assert.ok(Math.abs(form.era - 5.4) < 1e-9);
+  assert.equal(form.innings, 10);
+});
+
+test('pitcherRecentForm returns null for an empty or unusable log', () => {
+  assert.equal(pitcherRecentForm([]), null);
+  assert.equal(pitcherRecentForm(null), null);
+  assert.equal(pitcherRecentForm([{ ip: null, earnedRuns: 3 }]), null);
+});
+
+test('firstPitchLine labels day and night games off the ET hour', () => {
+  // 23:05Z is 7:05pm ET in August; 17:05Z is 1:05pm ET.
+  assert.match(firstPitchLine('2026-08-24T23:05:00Z'), /night game/);
+  assert.match(firstPitchLine('2026-08-24T17:05:00Z'), /day game/);
+  assert.equal(firstPitchLine('not a date'), null);
+  assert.equal(firstPitchLine(null), null);
+});
+
+test('ordinal handles the teens, which are the ranks a naive suffix gets wrong', () => {
+  assert.equal(ordinal(1), '1st');
+  assert.equal(ordinal(2), '2nd');
+  assert.equal(ordinal(3), '3rd');
+  assert.equal(ordinal(4), '4th');
+  assert.equal(ordinal(11), '11th');
+  assert.equal(ordinal(12), '12th');
+  assert.equal(ordinal(13), '13th');
+  assert.equal(ordinal(21), '21st');
+  assert.equal(ordinal(30), '30th');
+  assert.equal(ordinal(null), null);
+});
+
+test('mlbAbbr resolves every spelling of the Athletics to the one current ESPN slug', () => {
+  // The franchise relocated and ESPN's slug moved from "oak" to "ath"; an
+  // unmapped name means no fact sheet, which is how a pick loses its write-up.
+  assert.equal(mlbAbbr('Athletics'), 'ath');
+  assert.equal(mlbAbbr('Oakland Athletics'), 'ath');
+  assert.equal(mlbAbbr('Sacramento Athletics'), 'ath');
+  assert.equal(mlbAbbr('Not A Team'), null);
+});
+
+test('inningsNotation writes outs as baseball thirds, never a decimal', () => {
+  // 41 outs is thirteen innings and two outs. Rendering it "13.7" (the plain
+  // decimal) is the tell that a write-up was not produced by anyone who
+  // follows the sport, which is exactly the voice this text is meant to have.
+  assert.equal(inningsNotation(41), '13.2');
+  assert.equal(inningsNotation(28), '9.1');
+  assert.equal(inningsNotation(27), '9.0');
+  assert.equal(inningsNotation(0), '0.0');
+  assert.equal(inningsNotation(-1), null);
+  assert.equal(inningsNotation(null), null);
+});
+
+test('baseballFactSheet writes rate stats without a leading zero, and ERA with one', () => {
+  const sheet = baseballFactSheet({
+    awayStats: {
+      offense: { battingAvg: { value: 0.268, rank: 4 }, obpSlugging: { value: 0.782, rank: 3 } },
+      defense: { era: { value: 3.55, rank: 6 }, fieldingPercentage: { value: 0.987, rank: 8 } },
+    },
+  }, 'New York Yankees', 'Boston Red Sox');
+  assert.match(sheet, /\.268 AVG/);
+  assert.match(sheet, /\.782 OPS/);
+  assert.match(sheet, /\.987 fielding pct/);
+  assert.doesNotMatch(sheet, /0\.268/);
+  // ERA is not a leading-zero-dropped stat; it keeps its whole number.
+  assert.match(sheet, /3\.55 team ERA/);
+});
+
+test('baseballFactSheet reports recent-form innings in thirds, not as a decimal', () => {
+  const sheet = baseballFactSheet({
+    pitchers: { away: PITCHER, home: null },
+    awayOutings: OUTINGS, // 7.0 + 6.2 = 41 outs = 13.2 IP
+  }, 'New York Yankees', 'Boston Red Sox');
+  assert.match(sheet, /13\.2 IP/);
+  assert.doesNotMatch(sheet, /13\.7 IP/);
+});
+
+/* ---------------------------------------------------------------- */
+/* propFactSheet — Prop Play of the Day's "known facts" block        */
+/* ---------------------------------------------------------------- */
+
+/**
+ * A player prop is not a matchup, so it cannot reuse the game write-up:
+ * "Seattle at Las Vegas" is barely the subject when the bet is whether one
+ * player clears 20 points. The numbers that decide a prop all live on the
+ * leg's hit-rate profile, none of which appears in the team fact sheet —
+ * which is why Prop Play had no sharp write-up at all before this.
+ */
+
+const PROP_RECORD = {
+  date: '2026-08-24',
+  kind: 'parlay',
+  combinedAmerican: 105,
+  legs: [
+    {
+      kind: 'prop', label: "A'ja Wilson 20+ Points", player: "A'ja Wilson", need: 20,
+      american: -380, book: 'fanduel', away: 'Seattle Storm', home: 'Las Vegas Aces',
+      profile: { games: 32, season: 0.84, l10: 0.9, l5: 1, streak: 8, avgSeason: 24.3, avgL5: 26.1 },
+    },
+  ],
+};
+
+test('propFactSheet states the line, the hit rates, and the cushion under the line', () => {
+  const sheet = propFactSheet(PROP_RECORD);
+  assert.match(sheet, /A'ja Wilson 20\+ Points at -380/);
+  assert.match(sheet, /84% of 32 games this season/);
+  assert.match(sheet, /90% over the last 10/);
+  // The cushion is the whole thesis of a deep alternate line: how far the
+  // line sits below the player's own average, not just that she is "hot".
+  assert.match(sheet, /cushion of \+4\.3/);
+  assert.match(sheet, /8 straight games clearing 20\+/);
+});
+
+test('propFactSheet says plainly when a leg has no game log, rather than leaving a gap', () => {
+  // Silence invites the model to invent a profile; an explicit "no log" does
+  // not. Same reasoning as the tennis and baseball head-to-head lines.
+  const sheet = propFactSheet({ combinedAmerican: -300, legs: [{ label: 'X 10+ Points', need: 10, american: -300, profile: null }] });
+  assert.match(sheet, /No game log resolved/);
+});
+
+test('propFactSheet flags a moneyline leg as having no prop profile at all', () => {
+  const sheet = propFactSheet({
+    combinedAmerican: -250,
+    legs: [{ kind: 'ml', label: 'Aces ML (vs Storm)', american: -250, away: 'Seattle Storm', home: 'Las Vegas Aces' }],
+  });
+  assert.match(sheet, /not a player prop/);
+  assert.doesNotMatch(sheet, /cushion/);
+});
+
+test('propFactSheet describes the ticket shape, and distinguishes a parlay from a straight', () => {
+  // Shape is read from the leg COUNT, not from the record's own `kind`, so a
+  // one-leg ticket can never be described to the model as a parlay.
+  assert.match(propFactSheet(PROP_RECORD), /single straight play at \+105/);
+
+  const parlay = {
+    ...PROP_RECORD,
+    legs: [PROP_RECORD.legs[0], {
+      kind: 'prop', label: 'Napheesa Collier 6+ Rebounds', need: 6, american: -260,
+      away: 'Minnesota Lynx', home: 'Phoenix Mercury',
+      profile: { games: 30, season: 0.8, l10: 0.8, l5: 0.6, streak: 0, avgSeason: 8.1, avgL5: 7.2 },
+    }],
+  };
+  assert.match(propFactSheet(parlay), /2-leg parlay at a combined \+105/);
+  assert.match(propFactSheet(parlay), /one bad night cannot sink both/);
+  // Both legs are described, not just the first.
+  assert.match(propFactSheet(parlay), /LEG 2: Napheesa Collier/);
+});
+
+test('propFactSheet returns null with no legs, so the caller shows no section at all', () => {
+  assert.equal(propFactSheet({ legs: [] }), null);
+  assert.equal(propFactSheet(null), null);
+});
+
+test('getOrGeneratePropAnalysis returns null with no ANTHROPIC_API_KEY, same as every other variant', async () => {
+  const env = { POTD_KV: { async get() { return null; }, async put() {} } };
+  const ctx = { waitUntil: (p) => p };
+  assert.equal(await getOrGeneratePropAnalysis(PROP_RECORD, env, ctx, Date.now()), null);
 });
