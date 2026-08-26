@@ -3679,6 +3679,22 @@ function slateTeamRow(game, side, { gameState, scoreEvent, recommendedId, hideMa
  * whole game. Falls back to whatever's least extreme if nothing on this
  * game actually clears the band, so More Info still has something to show.
  */
+/**
+ * Every candidate id this card can actually draw a market cell for — the
+ * same six slots bestCandidateForGame ranks. Used to tell whether the
+ * server's tracked pick is something this grid can highlight at all: an MMA
+ * capper straight (method/round/distance) is a real tracked bet with no cell
+ * of its own, and pointing the glow at an id no cell carries would just
+ * silently turn the highlight off.
+ */
+function slateCellIds(game) {
+  return new Set([
+    game.h2h?.away, game.h2h?.home,
+    game.spreads?.away, game.spreads?.home,
+    game.totals?.away, game.totals?.home,
+  ].filter(Boolean).map((c) => c.id));
+}
+
 function bestCandidateForGame(game) {
   let all = [
     game.h2h.away, game.h2h.home,
@@ -4033,7 +4049,28 @@ function slateGameHtml(game) {
   // card. The rounds total still exists as data (the drawer and value play
   // use it) — it just no longer competes for space or attention on the card.
   const mlOnly = isMmaSportKey(game.sportKey);
-  const rowProps = { gameState, scoreEvent, recommendedId: rec?.id ?? null, hideMarkets, mlOnly };
+  // The highlighted cell has to name the same bet this card names. The Main
+  // Play line above already prefers the server's locked pick over a live
+  // recompute, but the glow always followed `rec` — so one card could ring
+  // Arizona's moneyline while naming the Cubs as its own Main Play, and
+  // contradict Pixel's Picks on the same game (confirmed live, MLB, 2026-08-26).
+  //
+  // The two genuinely aren't the same read: the tracked pick is locked
+  // server-side with the team-form and injury gate applied (see
+  // worker/src/full-slate-tracking.js's applyTeamFormSignal), while
+  // bestCandidateForGame re-ranks live prices in the browser and gates only
+  // tennis. On a near-pickem game a trivial price move flips the live read,
+  // which is exactly how the glow ends up on the side the server's own
+  // gating rejected.
+  //
+  // So the tracked pick wins the glow whenever this grid has a cell for it.
+  // The live read still stands in when there's no tracked pick yet (the
+  // common pregame case) or when the tracked bet has no cell of its own (an
+  // MMA straight), which keeps every existing highlight behaviour intact.
+  const trackedCellId = trackedPick?.pickId && slateCellIds(game).has(trackedPick.pickId)
+    ? trackedPick.pickId
+    : null;
+  const rowProps = { gameState, scoreEvent, recommendedId: trackedCellId ?? rec?.id ?? null, hideMarkets, mlOnly };
 
   // MMA_Engine's ESPN card annotation (carried on every picks.json entry as
   // card_status) can know a bout is off before the odds feed drops its
