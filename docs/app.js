@@ -281,17 +281,24 @@ function etDayLabelDate(which) {
  * event, not a daily fixture — so this is that same precedent applied to the
  * other sport with the same cadence, not a new idea.
  *
- * NFL has the identical shape (Sunday, plus Thursday/Monday) and is
- * deliberately NOT included here: the ask was college football specifically,
- * and widening a shared filter further is a separate call to make.
+ * NFL is here for the same reason: it plays Sunday plus a Thursday and a
+ * Monday game, so five days out of seven a strict day match showed an empty
+ * NFL slate. Preseason is matched by pattern rather than listed, because The
+ * Odds API keys it separately and only while preseason is live (see
+ * populateDynamicGroups) — a fixed Set could never catch it.
  */
-const WEEKLY_SPORT_KEYS = new Set(['americanfootball_ncaaf']);
+const WEEKLY_SPORT_KEYS = new Set(['americanfootball_ncaaf', 'americanfootball_nfl']);
+
+/** A sport that plays about one day a week, so an exact-day match hides it most of the time. */
+function isWeeklySportKey(sportKey) {
+  return WEEKLY_SPORT_KEYS.has(sportKey) || isNflPreseasonKey(sportKey);
+}
 
 function withinDayFilter(commenceMs, sportKey, isFinished = false) {
   // Upcoming games in a weekly sport ignore the day toggle entirely so the
   // whole slate is browsable; FINISHED ones still respect it, so "Yesterday"
   // keeps meaning yesterday's results rather than every result on file.
-  if (!isFinished && (isMmaSportKey(sportKey) || WEEKLY_SPORT_KEYS.has(sportKey))) return true;
+  if (!isFinished && (isMmaSportKey(sportKey) || isWeeklySportKey(sportKey))) return true;
   const targetMs = Date.now()
     + (state.dayFilter === 'tomorrow' ? ONE_DAY_MS : state.dayFilter === 'yesterday' ? -ONE_DAY_MS : 0);
   return etDateString(commenceMs) === etDateString(targetMs);
