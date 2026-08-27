@@ -269,8 +269,29 @@ function etDayLabelDate(which) {
  * same honest "no data yet" this app already prefers everywhere else over
  * guessing.
  */
+/**
+ * Sports that play about one day a week, so a strict calendar-day match
+ * hides the entire sport for most of the week.
+ *
+ * College football is overwhelmingly a Saturday sport: browsing the slate on
+ * a Thursday, Saturday's games are two days out, past even "Tomorrow", so
+ * the Full Slate showed no college football at all for four or five days out
+ * of every seven (confirmed live, 2026-08-27). MMA already carries exactly
+ * this exemption below and for exactly this reason — a card is a weekly
+ * event, not a daily fixture — so this is that same precedent applied to the
+ * other sport with the same cadence, not a new idea.
+ *
+ * NFL has the identical shape (Sunday, plus Thursday/Monday) and is
+ * deliberately NOT included here: the ask was college football specifically,
+ * and widening a shared filter further is a separate call to make.
+ */
+const WEEKLY_SPORT_KEYS = new Set(['americanfootball_ncaaf']);
+
 function withinDayFilter(commenceMs, sportKey, isFinished = false) {
-  if (!isFinished && isMmaSportKey(sportKey)) return true;
+  // Upcoming games in a weekly sport ignore the day toggle entirely so the
+  // whole slate is browsable; FINISHED ones still respect it, so "Yesterday"
+  // keeps meaning yesterday's results rather than every result on file.
+  if (!isFinished && (isMmaSportKey(sportKey) || WEEKLY_SPORT_KEYS.has(sportKey))) return true;
   const targetMs = Date.now()
     + (state.dayFilter === 'tomorrow' ? ONE_DAY_MS : state.dayFilter === 'yesterday' ? -ONE_DAY_MS : 0);
   return etDateString(commenceMs) === etDateString(targetMs);
