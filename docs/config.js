@@ -14,6 +14,18 @@ export const CONFIG = {
   // lock you out of your own app.
   REQUIRE_AUTH: false,
 
+  // Temporary (2026-08-26 direction): for PICKING purposes, the day's Prop
+  // Play of the Day is the Ladder Challenge rung. The Prop Play slot on the
+  // Play of the Day tab names the ladder's bet instead of a player-prop
+  // ticket, and the Ladder section keeps its own place below, unchanged.
+  //
+  // Deliberately display-only: the worker still selects, posts, tracks and
+  // grades a real Prop Play every day, so its history stays continuous and
+  // the algorithm-health review keeps its sample. Flip this back to false to
+  // restore the prop ticket on the board with no gap in the record and no
+  // worker deploy.
+  PROP_PLAY_IS_LADDER: true,
+
   // How many picks Pixel's Picks shows — matches worker/src/tracking.js's
   // own TOP5_COUNT, the real source of truth now that Pixel's Picks is
   // generated once daily server-side (2am ET) rather than live per-request;

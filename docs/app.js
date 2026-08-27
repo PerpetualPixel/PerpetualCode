@@ -5412,6 +5412,22 @@ async function loadPotd({ force = false } = {}) {
 
   // The Prop Play of the Day rides on the same tab, below the main card —
   // additive: any failure here leaves the PoTD exactly as rendered above.
+  //
+  // While CONFIG.PROP_PLAY_IS_LADDER is on, this slot names the Ladder
+  // Challenge rung instead of a prop ticket. Display only: the worker keeps
+  // selecting, posting, tracking and grading a real prop play every day, so
+  // its record stays continuous and flipping the flag back needs no deploy.
+  // The rung is NOT re-registered with registerPostedPicks here — loadLadder
+  // already registers this exact pick under its own surface, and posting it
+  // twice would have Tail or Fade count one bet as two of ours.
+  if (CONFIG.PROP_PLAY_IS_LADDER) {
+    try {
+      const card = renderLadderAsPropPlayCard(await fetchLadderData());
+      if (card) el.potdBody.insertAdjacentHTML('beforeend', card);
+    } catch { /* same as below: this slot is a bonus, never a blocker */ }
+    return;
+  }
+
   try {
     const res = await fetch(new URL('/prop-play', CONFIG.WORKER_URL), { headers: { Accept: 'application/json' } });
     const { propPlay } = await res.json();
@@ -5607,14 +5623,32 @@ function renderLadder(ladder) {
     </section>`;
 }
 
+/**
+ * One /ladder fetch shared by both readers of it — the Ladder section and,
+ * while CONFIG.PROP_PLAY_IS_LADDER is on, the Prop Play slot above it. Both
+ * render on the same tab in the same pass, so without this the tab would ask
+ * the worker for the identical payload twice.
+ */
+let ladderPromise = null;
+function fetchLadderData({ force = false } = {}) {
+  if (!CONFIG.WORKER_URL) return Promise.resolve(null);
+  if (force) ladderPromise = null;
+  if (!ladderPromise) {
+    ladderPromise = fetch(new URL('/ladder', CONFIG.WORKER_URL), { headers: { Accept: 'application/json' } })
+      .then((res) => res.json())
+      .then((d) => d?.ladder ?? null)
+      .catch((e) => { ladderPromise = null; throw e; }); // a hiccup isn't permanent
+  }
+  return ladderPromise;
+}
+
 let ladderLoaded = false;
 async function loadLadder({ force = false } = {}) {
   if (!el.ladderBody || (ladderLoaded && !force)) return;
   if (!CONFIG.WORKER_URL) return;
   ladderLoaded = true;
   try {
-    const res = await fetch(new URL('/ladder', CONFIG.WORKER_URL), { headers: { Accept: 'application/json' } });
-    const { ladder } = await res.json();
+    const ladder = await fetchLadderData({ force });
     // Same two exclusions as the other surfaces: a stale rung is the last
     // one played rather than today's recommendation, and a settled pick is
     // history. Only a live, pending rung is something to vouch for.
@@ -5634,6 +5668,51 @@ async function loadLadder({ force = false } = {}) {
   } catch {
     ladderLoaded = false; // same as the other loaders: a hiccup isn't permanent
   }
+}
+
+/**
+ * The Ladder rung shown in the Prop Play of the Day slot, while
+ * CONFIG.PROP_PLAY_IS_LADDER is on — for picking purposes the day's prop
+ * play IS the ladder rung.
+ *
+ * Deliberately says so on the card rather than quietly dressing a game
+ * moneyline up as a prop ticket: the two are staked and graded completely
+ * differently (the ladder rides its whole compounding bankroll, a prop play
+ * risks a fixed unit band), and a reader who isn't told would reasonably
+ * assume the usual prop-play sizing applies.
+ *
+ * Returns '' for a hold day, a stale rung (the last one played, not today's
+ * call) or a settled one, matching the exclusions every other surface
+ * applies to this same pick — a slot with nothing live to show renders
+ * nothing rather than an empty card.
+ */
+function renderLadderAsPropPlayCard(ladder) {
+  const play = ladder?.play;
+  const pick = play?.pick;
+  if (!pick || play.stale) return '';
+  const settled = pick.status && pick.status !== 'pending';
+  const statusChip = settled
+    ? `<span class="prop-play-status is-${esc(pick.status)}">${pick.status === 'won' ? '✅ Won' : pick.status === 'lost' ? '❌ Lost' : 'Voided'}</span>`
+    : '';
+  return `<div class="prop-play-card">
+    <div class="prop-play-header">
+      <span class="prop-play-title">Prop Play of the Day</span>
+      <span class="prop-play-kind">Ladder rung ${esc(String(play.step))} · ${esc(formatAmerican(pick.american))}</span>
+      ${statusChip}
+    </div>
+    <p class="prop-play-note">Today's prop play is the Ladder Challenge rung.</p>
+    <div class="prop-play-leg">
+      <div class="prop-play-leg-line"><strong>${esc(pick.selection)}</strong>
+        <span class="prop-play-price">${esc(formatAmerican(pick.american))}</span></div>
+      <div class="prop-play-leg-sub">${esc(pick.away)} @ ${esc(pick.home)} · ${esc(pick.book)}</div>
+    </div>
+    <p class="prop-play-stake-note">
+      Staked as a ladder rung, not a unit play: risking
+      <strong>${ladderMoney(play.stake)}</strong> to return
+      <strong>${ladderMoney(play.toReturn)}</strong>.
+    </p>
+    ${renderInlineSharpTake(play.analysis, { title: 'Why This Pick' })}
+  </div>`;
 }
 
 /** The Prop Play of the Day card: safe-line legs, each with its measured
