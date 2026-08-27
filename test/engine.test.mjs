@@ -1075,12 +1075,14 @@ test('analyze() still yields preseason candidates — Full Slate keeps them', ()
 test('stakeUnitsForScore spans each board band from its floor to its ceiling', async () => {
   const { stakeUnitsForScore, STAKE_BANDS, UNIT_DOLLARS } = await import('../docs/engine.js');
   // At or below the MIN_SCORE floor: the band minimum, never less.
-  assert.equal(stakeUnitsForScore(50, STAKE_BANDS.potd), 3);
-  assert.equal(stakeUnitsForScore(12, STAKE_BANDS.potd), 3);
+  // Play of the Day's band was 3-to-5 units and is now 1-to-3 (2026-08-26),
+  // so a POTD that only just clears the standard sizes like any other pick.
+  assert.equal(stakeUnitsForScore(50, STAKE_BANDS.potd), 1);
+  assert.equal(stakeUnitsForScore(12, STAKE_BANDS.potd), 1);
   assert.equal(stakeUnitsForScore(50, STAKE_BANDS.pixel), 1);
   // At the elite end: the band maximum, never more.
-  assert.equal(stakeUnitsForScore(85, STAKE_BANDS.potd), 5);
-  assert.equal(stakeUnitsForScore(99, STAKE_BANDS.potd), 5);
+  assert.equal(stakeUnitsForScore(85, STAKE_BANDS.potd), 3);
+  assert.equal(stakeUnitsForScore(99, STAKE_BANDS.potd), 3);
   assert.equal(stakeUnitsForScore(99, STAKE_BANDS.pixel), 2.5);
   // In between: inside the band, in half-unit steps.
   const mid = stakeUnitsForScore(68, STAKE_BANDS.pixel);
@@ -1088,4 +1090,24 @@ test('stakeUnitsForScore spans each board band from its floor to its ceiling', a
   assert.equal(mid * 2, Math.round(mid * 2), 'half-unit steps only');
   // The tracked record's dollar basis.
   assert.equal(UNIT_DOLLARS, 25);
+});
+
+test('no board can size a single play above 3 units / $75', async () => {
+  const { stakeUnitsForScore, STAKE_BANDS, MAX_STAKE_UNITS, UNIT_DOLLARS } = await import('../docs/engine.js');
+  assert.equal(MAX_STAKE_UNITS, 3);
+  assert.equal(MAX_STAKE_UNITS * UNIT_DOLLARS, 75);
+
+  // Every shipped band, across the whole score range, stays at or under it.
+  for (const [board, band] of Object.entries(STAKE_BANDS)) {
+    for (let score = 0; score <= 100; score += 1) {
+      const units = stakeUnitsForScore(score, band);
+      assert.ok(units <= MAX_STAKE_UNITS, `${board} sized ${units}u at score ${score}`);
+      assert.ok(units >= 1, `${board} sized ${units}u at score ${score}`);
+      assert.equal(units * 2, Math.round(units * 2), 'half-unit steps only');
+    }
+  }
+
+  // The cap is enforced in the function, not just by the band table, so a
+  // band edited later cannot quietly reintroduce an oversized stake.
+  assert.equal(stakeUnitsForScore(100, { min: 4, max: 9 }), MAX_STAKE_UNITS);
 });

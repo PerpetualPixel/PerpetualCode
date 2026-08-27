@@ -1033,10 +1033,17 @@ export const UNIT_DOLLARS = 25;
  * since it stakes its whole compounding bankroll and units don't apply.
  */
 export const STAKE_BANDS = {
-  potd: { min: 3, max: 5 },
+  // Play of the Day was 3-to-5 units ($75-$125). Capped to 1-to-3 (2026-08-26
+  // direction): nothing this app posts risks more than 3 units / $75, and a
+  // POTD that only just clears the standard now sizes like any other single
+  // pick rather than starting at what used to be the old band's floor.
+  potd: { min: 1, max: 3 },
   pixel: { min: 1, max: 2.5 },
   prop: { min: 1, max: 2.5 },
 };
+
+/** No board may size a single play above this, whatever its band says. */
+export const MAX_STAKE_UNITS = 3;
 
 /**
  * Maps a 0-100 confidence score onto a board's unit band, in half-unit
@@ -1050,7 +1057,12 @@ export const STAKE_BANDS = {
 export function stakeUnitsForScore(score, { min, max }) {
   const LO = 50, HI = 85;
   const t = Math.max(0, Math.min(1, ((Number(score) || 0) - LO) / (HI - LO)));
-  return Math.round((min + t * (max - min)) * 2) / 2;
+  const units = Math.round((min + t * (max - min)) * 2) / 2;
+  // The cap is enforced here, not just in the band table, so a band edited
+  // later (or a caller passing its own min/max) can never quietly reintroduce
+  // a stake above the ceiling. Half-unit rounding already happened above, so
+  // clamping cannot produce an off-step size.
+  return Math.min(units, MAX_STAKE_UNITS);
 }
 
 /* ------------------------------------------------------------------ */

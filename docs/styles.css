@@ -6298,3 +6298,22 @@ input[type="range"]:focus-visible {
 .inline-sharp-take .inline-devil .quick-take-list li::before {
   content: '😈';
 }
+
+/* Prop Play slot standing in for the Ladder rung (CONFIG.PROP_PLAY_IS_LADDER).
+   The note and the stake line are the two things a reader needs that a normal
+   prop ticket never carries: which board this pick really comes from, and
+   that it is staked as a compounding rung rather than a fixed unit play. */
+.prop-play-note {
+  margin: 0 0 10px;
+  font-size: 0.78rem;
+  color: var(--muted);
+}
+
+.prop-play-stake-note {
+  margin: 10px 0 0;
+  font-size: 0.8rem;
+  color: #cbd5df;
+  line-height: 1.5;
+}
+
+.prop-play-stake-note strong { color: var(--text); }
