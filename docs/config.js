@@ -14,17 +14,23 @@ export const CONFIG = {
   // lock you out of your own app.
   REQUIRE_AUTH: false,
 
-  // Temporary (2026-08-26 direction): for PICKING purposes, the day's Prop
-  // Play of the Day is the Ladder Challenge rung. The Prop Play slot on the
-  // Play of the Day tab names the ladder's bet instead of a player-prop
-  // ticket, and the Ladder section keeps its own place below, unchanged.
+  // OFF (2026-08-28). Briefly on, so the Prop Play slot named the Ladder
+  // rung instead of a player-prop ticket.
   //
-  // Deliberately display-only: the worker still selects, posts, tracks and
-  // grades a real Prop Play every day, so its history stays continuous and
-  // the algorithm-health review keeps its sample. Flip this back to false to
-  // restore the prop ticket on the board with no gap in the record and no
-  // worker deploy.
-  PROP_PLAY_IS_LADDER: true,
+  // Why it came back off: a ladder rung is a GAME pick (moneyline, spread or
+  // total), so the slot posted things like an MLB over/under. That is not a
+  // prop in any sense — Prop Play of the Day is safe-line PLAYER props,
+  // alternate lines set deep inside a player's own comfort zone and picked
+  // off their real game log (see worker/src/prop-play.js). The two are
+  // different kinds of bet, and one cannot stand in for the other.
+  //
+  // The swap was built display-only for exactly this reason: the worker
+  // never stopped selecting, posting, tracking and grading a real Prop Play,
+  // so turning it off restores the prop ticket immediately, with no gap in
+  // the tracked record and no worker deploy. Left in place rather than
+  // deleted so it can be flipped again if the ladder should ever headline
+  // that slot, but it should not be used to replace the prop itself.
+  PROP_PLAY_IS_LADDER: false,
 
   // How many picks Pixel's Picks shows — matches worker/src/tracking.js's
   // own TOP5_COUNT, the real source of truth now that Pixel's Picks is
