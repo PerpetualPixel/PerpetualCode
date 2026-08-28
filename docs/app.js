@@ -902,7 +902,7 @@ const state = {
   ladderHistory: null,
   // All three trackers' full history, fetched once per dashboard open and
   // re-rendered from on toggle — not re-fetched per click.
-  trackerPicks: { top5: [], potd: [], propplay: [] },
+  trackerPicks: { top5: [], potd: [], propplay: [], fullslate: [] },
   // List/Calendar/Graph — which of the three views renders the currently
   // active tracker's picks below the metric cards.
   trackerView: 'list',
@@ -6017,11 +6017,16 @@ const TRACKER_EMPTY_MESSAGES = {
   top5: "Nothing tracked in this record yet. Pixel's Picks post daily at 2am ET.",
   potd: 'Nothing tracked in this record yet. The Play of the Day posts daily at 2am ET.',
   propplay: 'Nothing tracked in this record yet. The Prop Play posts daily at 2am ET.',
+  // Full Slate locks each game as its own pick window opens (see
+  // worker/src/tracking.js's PICK_LEAD_HOURS), rather than in one 2am batch
+  // like the curated boards — so "nothing yet" here means no game has
+  // reached its lock time today, not that a daily draw is still pending.
+  fullslate: 'Nothing tracked in this record yet. Full Slate locks each game a few hours before it starts.',
 };
 const TRACKER_EMPTY_ARCHIVE = 'Nothing in the archive for this tracker — it started after the Aug 21, 2026 reset.';
 
 /**
- * Fetches all three server-side trackers' full history once — Full Slate
+ * Fetches all four server-side trackers' full history once — Full Slate
  * (worker/src/full-slate-tracking.js, one pick per game, every sport, no
  * filtering), Pixel's Picks (worker/src/tracking.js, 5 locked picks/day),
  * and Play of the Day (worker/src/potd.js, 1 pick/day). All three return the
@@ -6051,11 +6056,11 @@ function setTrackerLoading(isLoading) {
 }
 
 async function loadTrackerHistories() {
-  const [top5, potd, propplay, ladder] = await Promise.all([
+  const [top5, potd, propplay, fullslate, ladder] = await Promise.all([
     fetchTop5History(), fetchPotdHistory(), fetchPropPlayHistory(),
-    fetchLadderHistory(),
+    fetchFullSlateHistory(), fetchLadderHistory(),
   ]);
-  state.trackerPicks = { top5, potd, propplay };
+  state.trackerPicks = { top5, potd, propplay, fullslate };
   state.ladderHistory = ladder;
   renderTrackerSection();
   renderLadderDashboard(ladder);
@@ -6424,9 +6429,12 @@ function renderTrackerGraph(days) {
 }
 
 /**
- * Renders whichever of the three trackers state.activeTracker names into
+ * Renders whichever of the four trackers state.activeTracker names into
  * the dashboard's one shared set of metric cards + history container —
- * three parallel DOM sections were considered and rejected in favor of this.
+ * parallel DOM sections per tracker were considered and rejected in favor
+ * of this, which is why adding Full Slate back as its own tab needed no
+ * change here: every number below is computed from whichever tracker's
+ * picks the active tab names.
  *
  * Every pick counts toward its tracker's own totals, flagged or not — this
  * used to exclude Pixel's Picks' flagged (guaranteeCount() fallback)
