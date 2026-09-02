@@ -63,10 +63,11 @@ const NEAR_TIE_DECIMAL = 0.08;
 // lightest line — the -460/-310 sweet spot — over stacking two -650s into a
 // combined price that barely pays.
 
-// Moneyline legs: heavy favorites from ANY slate sport (a -250 tennis or
-// WNBA ML, per explicit product direction). Conviction for an ML is the
-// market's own consensus: the median implied probability across books.
-const ML_SPORTS = ['basketball_wnba', 'baseball_mlb', 'upcoming'];
+// Moneyline knobs, retained for extractMlCandidates — which no longer feeds
+// this board's selection (see runPropPlayDaily: a Prop Play must be an actual
+// PLAYER prop) but is still exported and tested, and is what a separate
+// heavy-favourites board would build on. ML_SPORTS went with the caller;
+// a future board picks its own sports rather than inheriting this one's.
 const ML_IMPLIED_MIN = 0.72;
 const ML_MIN_BOOKS = 4;
 const ML_STALE_VOID_MS = 48 * 3600 * 1000;
@@ -420,17 +421,17 @@ export async function runPropPlayDaily(env, ctx, now = Date.now(), { debug = fal
     }
     qualified.push({ ...c, profile, conviction: convictionOf(profile) });
   }
-  // Heavy-favorite moneylines from any slate sport join the same pool,
-  // judged by the market's own consensus — the slate's cached odds mean no
-  // new credits. ('upcoming' covers tennis tournament keys without a list.)
-  for (const sportKey of ML_SPORTS) {
-    try {
-      const { events: mlEvents } = await fetchSport(sportKey, env, ctx);
-      const mls = extractMlCandidates(mlEvents, sportKey, dateKey, now);
-      trace.push(`${sportKey}: ${mls.length} qualifying moneyline favorites`);
-      qualified.push(...mls);
-    } catch { trace.push(`${sportKey}: ml fetch failed`); }
-  }
+  // Moneyline legs used to join this pool here (heavy favourites from any
+  // slate sport). Removed 2026-08-28 by explicit direction: the Prop Play of
+  // the Day must be actual PLAYER props, not moneylines or spreads. A
+  // moneyline is a game bet — it has no player, no stat line, and no
+  // hit-rate profile, so it can't be argued the way this board argues every
+  // other leg ("cleared this exact line in 90% of her last 10"), and its
+  // presence is what let a game bet headline a prop board.
+  //
+  // extractMlCandidates and its tests are kept: they're still exercised
+  // directly, and the moneyline shape is the obvious thing to reach for if a
+  // separate favourites board is ever wanted. It just isn't this board.
   // The day's boards never overlap: anything already featured by the Play
   // of the Day or a Pixel's Pick is off the table here. (index.js orders
   // the chain POTD -> Prop Play -> Pixel's Picks at the generation hour,
@@ -468,7 +469,7 @@ export async function runPropPlayDaily(env, ctx, now = Date.now(), { debug = fal
       .filter((c) => c.game?.commence && new Date(c.game.commence).getTime() > now)
       .sort((x, y) => x.decimal - y.decimal);
     if (!fallbackPool.length) {
-      return { created: false, reason: 'no prop or moneyline candidate anywhere on the slate today', trace };
+      return { created: false, reason: 'no player-prop candidate anywhere on the slate today', trace };
     }
     const c = fallbackPool[0];
     qualified.push({ ...c, profile: c.profile ?? null, conviction: 0 });
