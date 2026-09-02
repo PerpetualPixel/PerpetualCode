@@ -745,6 +745,66 @@ function buildPick(anchor, pool, usedLegs = []) {
 }
 
 /**
+ * Turn up to `max` short-priced singles on a finished board into two-leg
+ * combos, using the same pairing rule buildPick has always applied: a leg
+ * priced -151 or shorter can't stand alone at a sensible price, so it takes
+ * a partner from another game to drag the ticket toward +100.
+ *
+ * Exported so the curated boards can opt in. topPicks() deliberately returns
+ * singles — it ranks candidates, it doesn't construct tickets — and every
+ * caller that wants combos wants a different number of them, so the choice
+ * belongs to the caller rather than being baked into the ranking.
+ *
+ * `pool` is the remaining candidate pool a partner may be drawn from; a
+ * partner is never a candidate already on the board, never the same game as
+ * its own anchor, and never contradicts a leg already committed (findPartner
+ * enforces the last two). Picks are considered strongest-first, so when only
+ * some can be paired it's the best of them that get the treatment.
+ *
+ * Anything that can't find a legal partner stays exactly as it was — a
+ * single. This never drops a pick: a board that promised five plays still
+ * has five afterwards.
+ */
+export function pairShortPricedPicks(picks, pool, { max = 2, isEligible = () => true } = {}) {
+  const onBoard = new Set(picks.flatMap((p) => p.legs.map((l) => l.id)));
+  const usedEventIds = new Set(picks.flatMap((p) => p.legs.map((l) => l.eventId)));
+  const usedLegs = picks.flatMap((p) => p.legs);
+  let made = 0;
+
+  return picks.map((pick) => {
+    if (made >= max) return pick;
+    // Only a single whose own price is too short to stand alone is a
+    // candidate for pairing; a leg already at -140 or +120 is fine as it is.
+    if (pick.type !== 'single' || !needsPartner(pick.legs[0].american)) return pick;
+
+    const anchor = pick.legs[0];
+    // isEligible gates BOTH ends of the ticket, so a caller asking for
+    // moneyline combos gets two moneylines and not a moneyline welded to a
+    // total. Applied to the anchor too, not just the partner — pairing a leg
+    // the caller wouldn't have chosen as a partner makes no sense.
+    if (!isEligible(anchor)) return pick;
+    const eligible = pool.filter(
+      (c) => !onBoard.has(c.id) && !usedEventIds.has(c.eventId) && isEligible(c),
+    );
+    const paired = findPartner(anchor, eligible, usedLegs);
+    if (!paired) return pick;
+
+    made += 1;
+    onBoard.add(paired.partner.id);
+    usedEventIds.add(paired.partner.eventId);
+    usedLegs.push(paired.partner);
+    return {
+      type: 'combo',
+      legs: [anchor, paired.partner],
+      american: paired.combined.american,
+      decimal: paired.combined.decimal,
+      score: (anchor.score + paired.partner.score) / 2,
+      pairReason: `${formatAmerican(anchor.american)} is shorter than ${formatAmerican(RULES.SINGLE_FLOOR)}, so it's paired with ${paired.partner.selection} to bring the ticket to ${formatAmerican(paired.combined.american)}, closer to even money.`,
+    };
+  });
+}
+
+/**
  * Generate a slate of 1–2 picks.
  *
  * @param candidates    scored candidates from buildCandidates + scoreCandidate

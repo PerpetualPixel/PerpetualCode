@@ -25,7 +25,7 @@
  * single, server-side, always-on history that doesn't depend on anyone
  * having the app open.
  */
-import { analyze, topPicks, clearsMaxJuice, isNflPreseason, isNflPreseasonKey, UNIT_DOLLARS, STAKE_BANDS, stakeUnitsForScore } from '../../docs/engine.js';
+import { analyze, topPicks, pairShortPricedPicks, clearsMaxJuice, isNflPreseason, isNflPreseasonKey, UNIT_DOLLARS, STAKE_BANDS, stakeUnitsForScore } from '../../docs/engine.js';
 import { fetchCapperConsensus, applyCapperConsensus, upgradeToValueStraight } from '../../docs/capper-consensus.js';
 import { isPower4Matchup } from '../../docs/ncaaf-conferences.js';
 import { gradePick } from '../../docs/learning.js';
@@ -158,6 +158,12 @@ const KV_TTL_SECONDS = 86400 * 90; // 90 days — long enough for weeks of calib
 // comment at its declaration there): a game whose start time moved after
 // its pick locked in must not be pickable a second time under a new date.
 const EVENT_DEDUPE_LOOKBACK_DAYS = 2;
+
+// How many of the day's five Pixel's Picks run as 2-leg moneyline combos
+// rather than straight bets. Two of five by direction: enough to make the
+// board meaningfully safer without turning it into a parlay card, and it
+// leaves three straights to compare the style against.
+const PIXEL_COMBO_SLOTS = 2;
 
 const FIXED_SPORT_KEYS = [
   'baseball_mlb',
@@ -445,8 +451,40 @@ export async function fetchFullSlateEvents(env, ctx) {
 // direction — the 5 daily picks sit just below the two 5U Plays of the Day).
 // Full Slate passes 1 explicitly: it tracks every game and stays the flat
 // 1U baseline.
+/**
+ * The per-leg slice of a combo record: everything a grader needs to settle
+ * that leg on its own, and nothing else. Payout is deliberately absent — a
+ * parlay pays once, off the COMBINED price on the record, never per leg.
+ */
+function comboLegRecord(leg) {
+  return {
+    legId: leg.id,
+    eventId: leg.eventId,
+    sportKey: leg.sportKey,
+    sportTitle: leg.sportTitle,
+    marketKey: leg.marketKey,
+    marketLabel: leg.marketLabel,
+    outcomeName: leg.outcomeName,
+    point: leg.point ?? null,
+    selection: leg.selection,
+    american: leg.american,
+    decimal: leg.decimal,
+    book: leg.book,
+    home: leg.home,
+    away: leg.away,
+    commenceMs: leg.commenceMs,
+    status: 'pending',
+  };
+}
+
 export function pickRecordFrom(pick, dateKey, now, stakeUnits = null) {
   const leg = pick.legs[0];
+  // A two-leg combo (docs/engine.js's pairShortPricedPicks) is ONE bet that
+  // happens to have two legs, so the record keeps every single-pick field
+  // pointing at the anchor leg — that's what event dedupe, the sport filter,
+  // the date resync and every display helper already read — and overrides
+  // only what the ticket itself changes: its price, its label, and the legs.
+  const isCombo = pick.type === 'combo' && pick.legs.length === 2;
   // The algorithm sizes its own play (2026-08-21 direction): confidence
   // maps onto the board's unit band, and a flagged fallback pick pins to
   // the band's minimum — extra size is for picks that earned it. A caller
@@ -457,8 +495,15 @@ export function pickRecordFrom(pick, dateKey, now, stakeUnits = null) {
       ? STAKE_BANDS.pixel.min
       : stakeUnitsForScore(pick.score, STAKE_BANDS.pixel));
   return {
-    pickId: leg.id,
+    // A combo's id has to differ from its anchor leg's, or the same anchor
+    // appearing as a single on another day would collide with it in KV.
+    pickId: isCombo ? `${pick.legs[0].id}+${pick.legs[1].id}` : leg.id,
     dateKey,
+    ...(isCombo ? {
+      type: 'combo',
+      legs: pick.legs.map(comboLegRecord),
+      pairReason: pick.pairReason ?? null,
+    } : {}),
     eventId: leg.eventId,
     sportKey: leg.sportKey,
     home: leg.home,
@@ -473,9 +518,11 @@ export function pickRecordFrom(pick, dateKey, now, stakeUnits = null) {
     marketKey: leg.marketKey,
     outcomeName: leg.outcomeName,
     point: leg.point ?? null,
-    selection: leg.selection,
-    american: leg.american,
-    decimal: leg.decimal,
+    // The three fields a combo genuinely changes: what the ticket is called,
+    // and what it actually pays. Everything else above stays the anchor's.
+    selection: isCombo ? pick.legs.map((l) => l.selection).join(' + ') : leg.selection,
+    american: isCombo ? pick.american : leg.american,
+    decimal: isCombo ? pick.decimal : leg.decimal,
     book: leg.book,
     score: pick.score,
     // Daily-learning provenance (worker/src/daily-learning.js): when a
@@ -507,7 +554,12 @@ export function pickRecordFrom(pick, dateKey, now, stakeUnits = null) {
     suggested_stake: UNIT_DOLLARS * units,
     generatedAt: now,
     status: 'pending',
-    clv: { openAmerican: leg.american, closeAmerican: leg.american, updatedAt: now },
+    // CLV compares one market's opening price against its own close. A parlay
+    // spans two markets, so there is no single close to compare against —
+    // recorded as absent rather than silently tracking the anchor leg's
+    // movement and labelling it the ticket's. top5ClvPct already drops nulls,
+    // so a combo simply sits out the CLV average instead of skewing it.
+    clv: isCombo ? null : { openAmerican: leg.american, closeAmerican: leg.american, updatedAt: now },
     result: null,
     // Whether this pick actually cleared the sharp standard, or is a
     // guaranteeCount() fallback filling out the board on a thin day (see
@@ -752,6 +804,21 @@ export async function runTop5Batch(
     lastResortFill: true,
   });
 
+  // Two of the five run as 2-leg moneyline combos (2026-09-02 direction:
+  // "some of these pixel picks to be safer, like 2 solid MLs that make the
+  // odds + money"). This is the engine's own original rule, finally applied
+  // to this board: a favourite priced shorter than -150 can't stand alone at
+  // a sensible number, so it takes a partner from another game and the ticket
+  // lands near +100 — safer legs, plus-money price.
+  //
+  // Both ends are restricted to moneylines clearing the same conviction floor
+  // the board's singles clear, so "solid ML" means solid on both legs. A pick
+  // with no legal partner stays a single, so the board still posts five.
+  slate.picks = pairShortPricedPicks(slate.picks, nonConflicting, {
+    max: PIXEL_COMBO_SLOTS,
+    isEligible: (c) => c.marketKey === 'h2h' && c.score >= convictionFloor,
+  });
+
   // Belt-and-suspenders alongside the existingEventIds filter above: even
   // though topPicks() can't return two same-event candidates from a single
   // call, and the filter already stops it from seeing an event a prior call
@@ -769,9 +836,11 @@ export async function runTop5Batch(
     // consensus's priced straight (method/round/distance) when the straight
     // carries more value — see upgradeToValueStraight.
     if (consensusFeed) pick.legs = pick.legs.map((leg) => upgradeToValueStraight(leg, consensusFeed));
-    const eventId = pick.legs[0].eventId;
-    if (usedEventIds.has(eventId)) continue;
-    usedEventIds.add(eventId);
+    // Every leg's game is spoken for, not just the anchor's — otherwise a
+    // later pick could take the other side of a combo's partner game.
+    const eventIds = pick.legs.map((l) => l.eventId);
+    if (eventIds.some((id) => usedEventIds.has(id))) continue;
+    eventIds.forEach((id) => usedEventIds.add(id));
     const record = pickRecordFrom(pick, dateKey, now);
     newPickIds.push(record.pickId);
     ctx.waitUntil(
@@ -895,6 +964,11 @@ export async function runClvSnapshot(
 
   let updated = 0;
   for (const pick of pending) {
+    // A combo carries no clv (see pickRecordFrom: a parlay spans two markets,
+    // so there's no single close to track), and its pickId is a composite
+    // that matches no candidate id anyway — skipped before either would be
+    // dereferenced.
+    if (!pick.clv) continue;
     const fresh = (candidatesBySport.get(pick.sportKey) ?? []).find((c) => c.id === pick.pickId);
     if (!fresh || fresh.american === pick.clv.closeAmerican) continue;
     pick.clv = { ...pick.clv, closeAmerican: fresh.american, updatedAt: now };
@@ -966,14 +1040,60 @@ export async function runGrading(
   const pending = picks.filter((p) => p.status === 'pending' || isRegradableTennisVoid(p));
   if (!pending.length) return { graded: 0, remaining: 0 };
 
-  const sportsNeeded = [...new Set(pending.map((p) => p.sportKey))];
+  // Every sport in play, counting a combo's SECOND leg — its sport can differ
+  // from the record's own (the record's sportKey is the anchor's), and a leg
+  // whose scores were never fetched can never settle, which would leave the
+  // whole ticket pending forever.
+  const legsOf = (p) => (p.type === 'combo' && Array.isArray(p.legs) ? p.legs : [p]);
+  const allLegs = pending.flatMap(legsOf);
+  const sportsNeeded = [...new Set(allLegs.map((l) => l.sportKey))];
   const fetched = await Promise.all(sportsNeeded.map((s) => fetchScoresFn(s)));
   const scoreEventsBySport = new Map(sportsNeeded.map((s, i) => [s, fetched[i].events ?? []]));
-  const mmaResults = pending.some((p) => isMma(p.sportKey)) ? await fetchMmaResultsFn() : [];
+  const mmaResults = allLegs.some((l) => isMma(l.sportKey)) ? await fetchMmaResultsFn() : [];
   // The odds feed has never once posted a tennis result (see
   // worker/src/tennis-espn.js's header) — ESPN's scoreboard is what actually
   // settles these. One fetch per pass covers every tournament in play.
-  const tennisResults = pending.some((p) => isTennis(p.sportKey)) ? await fetchTennisResultsFn() : [];
+  const tennisResults = allLegs.some((l) => isTennis(l.sportKey)) ? await fetchTennisResultsFn() : [];
+
+  /**
+   * Settle ONE leg to won/lost/void, through the same per-sport graders a
+   * single pick uses. Only the verdict is read: a parlay pays once, off the
+   * ticket's own combined price, so the nominal stake here never reaches a
+   * stored number. Returns null while the leg can't be settled yet.
+   */
+  const gradeLeg = async (leg) => {
+    const scoreEvent = (scoreEventsBySport.get(leg.sportKey) ?? []).find((e) => e.id === leg.eventId);
+    const probe = { ...leg, decimal: leg.decimal ?? 2, suggested_stake: 1 };
+    if (isMma(leg.sportKey)) return gradeMmaPickWithFallback(probe, scoreEvent, mmaResults);
+    if (isTennis(leg.sportKey)) return gradeTennisPickWithEspn(probe, scoreEvent, tennisResults, env, ctx, now);
+    return gradePick(probe, scoreEvent, now);
+  };
+
+  /**
+   * Settle a two-leg ticket from its legs' verdicts, on the same rule the
+   * Prop Play already uses for its own parlay: every leg must land, any loss
+   * loses the ticket, and a void leg voids it rather than being quietly
+   * dropped to leave a "parlay" of one. Stays pending until every leg has an
+   * answer — a ticket half-settled is not settled.
+   */
+  const gradeCombo = async (pick) => {
+    const outcomes = await Promise.all(pick.legs.map(gradeLeg));
+    if (outcomes.some((o) => !o)) return null;
+    pick.legs = pick.legs.map((leg, i) => ({
+      ...leg,
+      status: outcomes[i].void ? 'void' : outcomes[i].won ? 'won' : 'lost',
+      ...(outcomes[i].void ? { voidReason: outcomes[i].reason } : {}),
+      ...(outcomes[i].detail ? { detail: outcomes[i].detail } : {}),
+    }));
+    if (outcomes.some((o) => o.void)) {
+      return { void: true, reason: 'a leg voided, so the ticket voids with it' };
+    }
+    const won = outcomes.every((o) => o.won);
+    return {
+      won,
+      payout: won ? (pick.decimal - 1) * pick.suggested_stake : -pick.suggested_stake,
+    };
+  };
 
   let graded = 0;
   let rescheduled = 0;
@@ -1003,7 +1123,9 @@ export async function runGrading(
     }
 
     let outcome;
-    if (isMma(pick.sportKey)) {
+    if (pick.type === 'combo' && Array.isArray(pick.legs)) {
+      outcome = await gradeCombo(pick);
+    } else if (isMma(pick.sportKey)) {
       outcome = gradeMmaPickWithFallback(pick, scoreEvent, mmaResults);
     } else if (isTennis(pick.sportKey)) {
       // ESPN's scoreboard supplies the sets the odds feed never posts, and

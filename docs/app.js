@@ -1780,7 +1780,7 @@ function renderDegradedPick(pick) {
     <article class="pick ${flagged ? 'is-outside-standard' : ''}">
       <div class="pick-head">
         <span class="pick-head-left">
-          <span class="chip"><strong>Straight bet</strong></span>
+          <span class="chip"><strong>${record.type === 'combo' ? '2-leg combo' : 'Straight bet'}</strong></span>
           ${flagChipHtml(flagged, record.flagReason)}
         </span>
         <span class="price">${esc(formatAmerican(pick.american))}</span>
@@ -4670,6 +4670,31 @@ function dayFilteredCandidates() {
  * price, book comparison) can ever differ from that.
  */
 function pixelPickFromRecord(record) {
+  // A two-leg moneyline combo (worker/src/tracking.js's PIXEL_COMBO_SLOTS).
+  // Its pickId is a composite ("A+P") that matches no live candidate, so
+  // without this it would always fall to the degraded branch below and read
+  // as a straight bet at a price no single leg was ever offered at.
+  //
+  // The full combo card needs real candidates for both legs — renderLeg runs
+  // explain() over them and hydrates research per leg — so it's only used
+  // when BOTH resolve live. Once either game has started its price leaves the
+  // feed, and the ticket falls back to the degraded card, which now knows to
+  // call itself a combo rather than a straight bet.
+  if (record.type === 'combo' && Array.isArray(record.legs)) {
+    const legs = record.legs.map((l) => state.candidates.find((c) => c.id === l.legId));
+    const common = {
+      american: record.american,
+      score: record.score,
+      meetsStandard: record.meetsStandard,
+      flagReason: record.flagReason,
+      stakeUnits: record.stakeUnits ?? null,
+      isLean: record.isLean === true,
+      pairReason: record.pairReason ?? null,
+    };
+    if (legs.every(Boolean)) return { type: 'combo', legs, percentile: null, ...common };
+    return { type: 'combo', degraded: true, record, legs: [{ commenceMs: record.commenceMs }], ...common };
+  }
+
   const live = state.candidates.find((c) => c.id === record.pickId);
   if (live) {
     return {
