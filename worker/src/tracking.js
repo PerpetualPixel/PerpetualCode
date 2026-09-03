@@ -25,7 +25,7 @@
  * single, server-side, always-on history that doesn't depend on anyone
  * having the app open.
  */
-import { analyze, topPicks, pairShortPricedPicks, clearsMaxJuice, isNflPreseason, isNflPreseasonKey, UNIT_DOLLARS, STAKE_BANDS, stakeUnitsForScore } from '../../docs/engine.js';
+import { analyze, topPicks, applyBankrollBuilders, clearsMaxJuice, isNflPreseason, isNflPreseasonKey, UNIT_DOLLARS, STAKE_BANDS, stakeUnitsForScore } from '../../docs/engine.js';
 import { fetchCapperConsensus, applyCapperConsensus, upgradeToValueStraight } from '../../docs/capper-consensus.js';
 import { isPower4Matchup } from '../../docs/ncaaf-conferences.js';
 import { gradePick } from '../../docs/learning.js';
@@ -164,6 +164,11 @@ const EVENT_DEDUPE_LOOKBACK_DAYS = 2;
 // board meaningfully safer without turning it into a parlay card, and it
 // leaves three straights to compare the style against.
 const PIXEL_COMBO_SLOTS = 2;
+
+// What counts as a "favourite" for a bankroll builder's legs: a side actually
+// laying juice. A pick'em or a dog can grade well and still has no place in a
+// ticket whose whole premise is stacking likely winners.
+const FAVOURITE_MAX_AMERICAN = -110;
 
 const FIXED_SPORT_KEYS = [
   'baseball_mlb',
@@ -804,19 +809,31 @@ export async function runTop5Batch(
     lastResortFill: true,
   });
 
-  // Two of the five run as 2-leg moneyline combos (2026-09-02 direction:
-  // "some of these pixel picks to be safer, like 2 solid MLs that make the
-  // odds + money"). This is the engine's own original rule, finally applied
-  // to this board: a favourite priced shorter than -150 can't stand alone at
-  // a sensible number, so it takes a partner from another game and the ticket
-  // lands near +100 — safer legs, plus-money price.
+  // Two of the five run as "bankroll builders" (2026-09-02 direction): two or
+  // three moneyline favourites from different games, stacked until the ticket
+  // itself pays plus money rather than laying heavy juice on any one of them.
   //
-  // Both ends are restricted to moneylines clearing the same conviction floor
-  // the board's singles clear, so "solid ML" means solid on both legs. A pick
-  // with no legal partner stays a single, so the board still posts five.
-  slate.picks = pairShortPricedPicks(slate.picks, nonConflicting, {
+  // Every leg is a moneyline clearing the same conviction floor the board's
+  // singles clear, and legs are taken safest-first, so a ticket reaches plus
+  // money on the fewest and likeliest legs available. A pick with no legal
+  // ticket stays a single, so the board still posts five.
+  //
+  // See buildBankrollBuilder's own note on what this does and does not buy:
+  // stacking favourites raises variance rather than lowering it, and is a
+  // product choice made with that understood.
+  slate.picks = applyBankrollBuilders(slate.picks, nonConflicting, {
     max: PIXEL_COMBO_SLOTS,
-    isEligible: (c) => c.marketKey === 'h2h' && c.score >= convictionFloor,
+    // The ticket obeys the board's own hard band exactly as a single does —
+    // a stack of favourites is still a Pixel's Pick, not an exception to what
+    // the board promises.
+    maxAmerican: PIXEL_ODDS.HARD_MAX,
+    // Legs must be actual FAVOURITES laying real juice, not merely moneylines
+    // clearing the score floor. Without this a +600 longshot that graded well
+    // qualified as a leg and the "bankroll builder" came out at +779.
+    isEligible: (c) => c.marketKey === 'h2h'
+      && c.american <= FAVOURITE_MAX_AMERICAN
+      && c.american >= PIXEL_ODDS.HARD_MIN
+      && c.score >= convictionFloor,
   });
 
   // Belt-and-suspenders alongside the existingEventIds filter above: even

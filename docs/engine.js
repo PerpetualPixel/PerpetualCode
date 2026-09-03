@@ -745,6 +745,113 @@ function buildPick(anchor, pool, usedLegs = []) {
 }
 
 /**
+ * A "bankroll builder": two or three moneyline favourites from different
+ * games, stacked until the TICKET pays plus money.
+ *
+ * The shape asked for directly (2026-09-02): favourites are individually
+ * likely but pay little, so legs are added until the combined price clears
+ * +100 and the ticket pays more than it risks. Legs are taken safest-first
+ * (highest consensus win probability), so the ticket reaches plus money on
+ * the fewest, likeliest legs rather than on longer prices.
+ *
+ * Honest about what this is: stacking favourites does NOT reduce risk. Each
+ * leg must land, so a 2-leg ticket of two ~67% favourites cashes ~45% of the
+ * time and needs ~42% to break even at +138 — a thinner edge than either leg
+ * alone, with the vig paid twice. It converts "wins often, pays little" into
+ * "wins under half the time, pays more". That is a deliberate product
+ * choice, recorded here so the next reader doesn't mistake it for a claim
+ * that parlays are safer than their legs.
+ *
+ * Returns null rather than a bad ticket: fewer than two legs, or three legs
+ * that still can't reach plus money, means no bankroll builder exists for
+ * this anchor and the caller keeps whatever it had.
+ */
+export function buildBankrollBuilder(anchor, pool, {
+  minAmerican = RULES.PAIR_TARGET_AMERICAN,
+  // The ticket still answers to its board's own price ceiling. Without this a
+  // "bankroll builder" could stack its way to +779 and be a longshot parlay
+  // wearing the name — which is exactly what happened the first time this ran
+  // against the existing board tests, and why they exist.
+  maxAmerican = Infinity,
+  maxLegs = 3,
+  isEligible = () => true,
+} = {}) {
+  if (!anchor || !isEligible(anchor)) return null;
+
+  // Safest first: a leg's consensus probability is the market's own read on
+  // how likely it is, which is exactly the axis "safer" should mean here.
+  // Falling back to the price itself keeps a candidate that never carried a
+  // consensus from sorting to the bottom by accident.
+  const safety = (c) => (Number.isFinite(c.consensusProb) ? c.consensusProb : impliedProb(c.american));
+  const usedEventIds = new Set([anchor.eventId]);
+  const legs = [anchor];
+  let combined = combineLegs([anchor.american]);
+
+  const queue = pool
+    .filter((c) => isEligible(c) && c.eventId !== anchor.eventId)
+    .sort((a, b) => safety(b) - safety(a));
+
+  for (const c of queue) {
+    if (legs.length >= maxLegs || combined.american >= minAmerican) break;
+    // One leg per game, and never a leg that argues with one already on the
+    // ticket — a "parlay" holding both sides of anything cannot all land.
+    if (usedEventIds.has(c.eventId) || legs.some((l) => contradicts(l, c))) continue;
+    legs.push(c);
+    usedEventIds.add(c.eventId);
+    combined = combineLegs(legs.map((l) => l.american));
+  }
+
+  // Under the target is not a bankroll builder; over the board's ceiling is a
+  // different bet than the board promises. Either way, no ticket.
+  if (legs.length < 2) return null;
+  if (combined.american < minAmerican || combined.american > maxAmerican) return null;
+
+  return {
+    type: 'combo',
+    legs,
+    american: combined.american,
+    decimal: combined.decimal,
+    score: legs.reduce((sum, l) => sum + l.score, 0) / legs.length,
+    pairReason: `${legs.length} favourites stacked (${legs.map((l) => formatAmerican(l.american)).join(', ')}) so the ticket pays ${formatAmerican(combined.american)} instead of laying heavy juice on any one of them.`,
+  };
+}
+
+/**
+ * Convert up to `max` of a finished board's singles into bankroll builders
+ * (see buildBankrollBuilder), strongest pick first.
+ *
+ * Board-level bookkeeping the per-ticket builder can't do on its own: a leg
+ * already on the board is never pulled in as someone else's partner, no two
+ * tickets share a game, and a pick with no legal ticket keeps whatever it
+ * had. A board promising five plays still posts five afterwards.
+ */
+export function applyBankrollBuilders(picks, pool, { max = 2, ...opts } = {}) {
+  const claimed = new Set(picks.flatMap((p) => p.legs.map((l) => l.id)));
+  const claimedEvents = new Set(picks.flatMap((p) => p.legs.map((l) => l.eventId)));
+  let made = 0;
+
+  return picks.map((pick) => {
+    if (made >= max || pick.type !== 'single') return pick;
+    const anchor = pick.legs[0];
+    const available = pool.filter((c) => !claimed.has(c.id) && !claimedEvents.has(c.eventId));
+    const ticket = buildBankrollBuilder(anchor, available, opts);
+    if (!ticket) return pick;
+
+    made += 1;
+    for (const leg of ticket.legs) {
+      claimed.add(leg.id);
+      claimedEvents.add(leg.eventId);
+    }
+    // The board's own classification of this slot rides along. topPicks sets
+    // meetsStandard/flagReason on the pick, not on its legs, so building a
+    // ticket around the anchor would otherwise silently drop them — and a
+    // record with meetsStandard undefined is neither a standard pick nor a
+    // flagged one, which every win-rate and ROI summary reads by that field.
+    return { ...ticket, meetsStandard: pick.meetsStandard, flagReason: pick.flagReason ?? null };
+  });
+}
+
+/**
  * Turn up to `max` short-priced singles on a finished board into two-leg
  * combos, using the same pairing rule buildPick has always applied: a leg
  * priced -151 or shorter can't stand alone at a sensible price, so it takes
