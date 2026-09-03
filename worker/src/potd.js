@@ -33,6 +33,30 @@
 import { analyze, RULES, formatAmerican, suggestedStake, clearsMaxJuice, isNflPreseason, UNIT_DOLLARS, STAKE_BANDS, stakeUnitsForScore } from '../../docs/engine.js';
 import { fetchCapperConsensus, applyCapperConsensus, upgradeToValueStraight } from '../../docs/capper-consensus.js';
 import { isPower4Matchup } from '../../docs/ncaaf-conferences.js';
+
+// What the Play of the Day counts as a favourite worth showcasing: a side
+// actually laying juice. A pick'em or a dog can grade well on price cleanliness
+// and still isn't the bet to lead the day with.
+export const POTD_FAVOURITE_MAX_AMERICAN = -110;
+
+/**
+ * The day's pick: the best-scoring genuine FAVOURITE, falling back to the
+ * best-scoring candidate of any price when the slate offers no favourite at
+ * all (the board runs every day).
+ *
+ * Exported and pure so the rule is testable on its own. It used to be a bare
+ * max-by-score over the whole pool, and score is "how clean is this number",
+ * NOT "how likely is this to win" — it blends liquidity, book agreement,
+ * line-shopping gain and freshness. A tidily priced underdog could therefore
+ * be the day's single most-confident pick while being the least likely to
+ * land, which is a structural reason for the showcase pick to lose regardless
+ * of sample size.
+ */
+export function chooseShowcasePick(pool, maxAmerican = POTD_FAVOURITE_MAX_AMERICAN) {
+  if (!pool?.length) return null;
+  const favourites = pool.filter((c) => c.american <= maxAmerican);
+  return (favourites.length ? favourites : pool).reduce((a, b) => (b.score > a.score ? b : a));
+}
 import { buildInsights, insightsByTier, isTennis, isMma } from '../../docs/insights.js';
 import { gradePick } from '../../docs/learning.js';
 import { fetchContext, hasContext } from './context.js';
@@ -511,7 +535,21 @@ export async function runPotdDaily(env, ctx, now = Date.now(), { fetchFullSlate 
     ? applyCapperConsensus(stillActionable, consensusFeed, { now })
     : stillActionable;
 
-  const chosen = drawPool.reduce((a, b) => (b.score > a.score ? b : a));
+  // Favourites first (2026-09-02 direction: the Play of the Day must be
+  // something a bettor doesn't hesitate over).
+  //
+  // This used to be a bare max-by-score over the whole pool, and score is
+  // "how clean is this number", NOT "how likely is this to win" — it blends
+  // liquidity, book agreement, line-shopping gain and freshness. A tidily
+  // priced underdog could therefore be the day's single most-confident pick
+  // while being the least likely to actually land, which is a structural
+  // reason for the showcase pick to lose regardless of any sample size.
+  //
+  // So the day's pick is drawn from genuine favourites when the slate offers
+  // any, ranked by score exactly as before WITHIN that pool. A slate with no
+  // favourite at all falls back to the old behaviour rather than posting
+  // nothing — the board still runs every day.
+  const chosen = chooseShowcasePick(drawPool);
   // An MMA winner runs as its best-value play (possibly a capper-priced
   // straight) rather than a moneyline too heavy to pay — same swap the Full
   // Slate lock applies, so the two boards never disagree about a fight.

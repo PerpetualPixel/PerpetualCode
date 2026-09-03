@@ -13,7 +13,7 @@
  */
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { pairShortPricedPicks } from '../docs/engine.js';
+import { pairShortPricedPicks, buildBankrollBuilder, applyBankrollBuilders } from '../docs/engine.js';
 import { pickRecordFrom } from '../worker/src/tracking.js';
 
 const cand = (id, american, { score = 70, marketKey = 'h2h', eventId = id } = {}) => ({
@@ -119,4 +119,101 @@ test('a single is recorded exactly as before — no combo fields, CLV intact', (
   assert.equal(rec.american, -120);
   assert.ok(rec.clv, 'a single must keep its CLV record');
   assert.equal(rec.clv.openAmerican, -120);
+});
+
+/* ---------------------------------------------------------------- */
+/* Bankroll builders — 2-3 favourites stacked to plus money          */
+/* ---------------------------------------------------------------- */
+
+const fav = (id, american, prob) => ({
+  ...cand(id, american), consensusProb: prob,
+});
+
+test('favourites are stacked only until the ticket pays plus money', () => {
+  // Two -200s already clear +100, so a third leg would be risk bought for
+  // nothing — every extra leg is another way to lose.
+  const t = buildBankrollBuilder(fav('A', -200, 0.67), [fav('B', -200, 0.67), fav('C', -180, 0.64)], { isEligible: ML });
+  assert.equal(t.legs.length, 2);
+  assert.ok(t.american >= 100, `ticket must pay plus money, got ${t.american}`);
+});
+
+test('a third leg is added only when two cannot reach plus money', () => {
+  const t = buildBankrollBuilder(fav('A', -250, 0.71), [fav('B', -250, 0.71), fav('C', -250, 0.71)], { isEligible: ML });
+  assert.equal(t.legs.length, 3);
+  assert.ok(t.american >= 100);
+});
+
+test('legs are taken safest-first, not in pool order', () => {
+  const t = buildBankrollBuilder(fav('A', -200, 0.67), [fav('LONG', -120, 0.55), fav('SAFE', -190, 0.66)], { isEligible: ML });
+  assert.equal(t.legs[1].id, 'SAFE');
+});
+
+test('a ticket never exceeds its board\'s own price ceiling', () => {
+  // The bug the board's existing tests caught: without a ceiling, stacking
+  // produced a +779 longshot parlay calling itself a bankroll builder.
+  const over = buildBankrollBuilder(fav('A', -120, 0.55), [fav('B', -120, 0.55)], { isEligible: ML, maxAmerican: 150 });
+  assert.equal(over, null, 'a ticket past the ceiling is no ticket');
+  const under = buildBankrollBuilder(fav('A', -200, 0.67), [fav('B', -200, 0.67)], { isEligible: ML, maxAmerican: 150 });
+  assert.ok(under && under.american <= 150);
+});
+
+test('a ticket that cannot reach plus money is not built at all', () => {
+  const t = buildBankrollBuilder(fav('A', -900, 0.9), [fav('B', -900, 0.9), fav('C', -900, 0.9)], { isEligible: ML });
+  assert.equal(t, null);
+});
+
+test('never two legs from the same game, nor contradicting legs', () => {
+  const sameGame = { ...fav('B', -200, 0.67), eventId: 'A' };
+  assert.equal(buildBankrollBuilder(fav('A', -200, 0.67), [sameGame], { isEligible: ML }), null);
+});
+
+test('applyBankrollBuilders keeps the board full and carries its flags', () => {
+  const board = [
+    { type: 'single', legs: [fav('A', -200, 0.67)], american: -200, score: 70, meetsStandard: true, flagReason: null },
+    { type: 'single', legs: [fav('B', -190, 0.66)], american: -190, score: 68, meetsStandard: false, flagReason: 'thin day' },
+    { type: 'single', legs: [fav('C', -120, 0.55)], american: -120, score: 66, meetsStandard: true, flagReason: null },
+  ];
+  const pool = [fav('P1', -200, 0.67), fav('P2', -195, 0.66)];
+  const out = applyBankrollBuilders(board, pool, { max: 2, isEligible: ML, maxAmerican: 150 });
+
+  assert.equal(out.length, 3, 'a board promising three plays still posts three');
+  assert.equal(out.filter((p) => p.type === 'combo').length, 2);
+  // meetsStandard/flagReason live on the PICK, not its legs — building a
+  // ticket around the anchor dropped them, and a record with meetsStandard
+  // undefined is neither standard nor flagged to every ROI summary.
+  assert.equal(out[0].meetsStandard, true);
+  assert.equal(out[1].meetsStandard, false);
+  assert.equal(out[1].flagReason, 'thin day');
+  // No leg is used twice across the board.
+  const ids = out.flatMap((p) => p.legs.map((l) => l.id));
+  assert.equal(new Set(ids).size, ids.length);
+});
+
+/* ---------------------------------------------------------------- */
+/* Play of the Day: favourites first                                 */
+/* ---------------------------------------------------------------- */
+
+test('POTD picks the best FAVOURITE, not the best-scoring underdog', async () => {
+  const { chooseShowcasePick } = await import('../worker/src/potd.js');
+
+  // Score measures how clean a number is (liquidity, book agreement, shop
+  // gain, freshness), never how likely the bet is to land. The +145 dog
+  // outscores everything here and must still not lead the day.
+  const pool = [
+    { id: 'dog', american: 145, score: 88 },
+    { id: 'fav', american: -165, score: 74 },
+    { id: 'pickem', american: -105, score: 80 },
+  ];
+  assert.equal(chooseShowcasePick(pool).id, 'fav');
+
+  // Among favourites, score still decides — this only narrows the pool.
+  const twoFavs = [{ id: 'lo', american: -160, score: 70 }, { id: 'hi', american: -140, score: 82 }];
+  assert.equal(chooseShowcasePick(twoFavs).id, 'hi');
+
+  // A slate with no favourite still posts a pick: the board runs every day.
+  const noFavs = [{ id: 'dog', american: 145, score: 88 }, { id: 'pickem', american: -105, score: 80 }];
+  assert.equal(chooseShowcasePick(noFavs).id, 'dog');
+
+  assert.equal(chooseShowcasePick([]), null);
+  assert.equal(chooseShowcasePick(null), null);
 });
