@@ -89,45 +89,82 @@ export const GENERATION_HOUR_ET = 2;
 const PIXEL_ODDS = { SHARP_MIN: -200, SHARP_MAX: 100, HARD_MIN: -200, HARD_MAX: 150 };
 
 /**
- * Sides already taken by the other boards, as `eventId|marketKey|outcomeName`.
+ * The KV layout of every board that publishes a side on a game market, so one
+ * loader can read any combination of them. Keyed by the short board name the
+ * callers below use.
+ */
+const SIDE_SOURCES = {
+  slate: { manifest: (d) => `slate:${d}:manifest`, pick: (d, id) => `slate:${d}:pick:${id}` },
+  top5: { manifest: (d) => `track:${d}:top5`, pick: (d, id) => `track:${d}:pick:${id}` },
+};
+
+/** Every side one stored record puts on the board — a combo puts one per leg. */
+function sidesOfRecord(pick, into) {
+  if (!pick) return;
+  // A Pixel's Picks bankroll builder is stored as one record with `legs`
+  // and no top-level eventId (see pickRecordFrom's combo branch). Reading
+  // only the top level would make both of its legs invisible to every
+  // contradiction check — the exact blind spot that lets another board take
+  // the opposite side of a leg the parlay needs.
+  const parts = Array.isArray(pick.legs) && pick.legs.length ? pick.legs : [pick];
+  for (const part of parts) {
+    if (!part?.eventId || !part?.marketKey || !part?.outcomeName) continue;
+    into.add(`${part.eventId}|${part.marketKey}|${part.outcomeName}`);
+  }
+}
+
+/**
+ * Sides already taken by other boards, as `eventId|marketKey|outcomeName`.
  *
- * Pixel's Picks must never sit on the opposite side of a bet the Full Slate
- * or Play of the Day already published — per explicit product direction,
- * "these cannot contradict another pick anywhere in the full slate or play of
- * the day." Agreement is fine and expected: the Full Slate carries a pick on
+ * No board may sit on the opposite side of a bet another one already
+ * published — per explicit product direction, "ensure ... picks dont
+ * contridict across the full slate and pixel picks or plays of the day."
+ * Agreement is fine and expected: the Full Slate carries a pick on
  * essentially every game, so excluding its events outright would leave
  * nothing to pick from. Only the OPPOSITE side of a market it already called
  * is a contradiction.
  *
- * Read straight from KV rather than through full-slate-tracking.js's own
- * loader: that module already imports from this one, and closing the cycle
- * for one lookup isn't worth the load-order fragility.
+ * `boards` names which stores to read, because the answer depends on who is
+ * asking and, critically, on who has already run. The day is drawn in a fixed
+ * order (see index.js's scheduled()): Play of the Day, then Prop Play, then
+ * Pixel's Picks, then the Full Slate. Each board can only defer to the ones
+ * drawn BEFORE it — asking about a store that hasn't been written yet reads
+ * an empty set and silently protects nothing — so Pixel's Picks reads
+ * ['potd'] and the Full Slate reads ['potd', 'top5'].
+ *
+ * The Prop Play is deliberately absent: its legs are player props, on market
+ * keys no game board ever quotes, so they cannot be contradicted by a
+ * moneyline, spread or total. Its games are already kept off the curated
+ * boards by the featuredEventIds exclusion below.
+ *
+ * Read straight from KV rather than through each board's own loader: those
+ * modules already import from this one, and closing the cycle for one lookup
+ * isn't worth the load-order fragility.
  */
-async function loadPublishedSides(env, dateKey) {
+export async function loadPublishedSides(env, dateKey, boards = ['slate', 'potd']) {
   const sides = new Set();
-  const add = (pick) => {
-    if (!pick?.eventId || !pick?.marketKey || !pick?.outcomeName) return;
-    sides.add(`${pick.eventId}|${pick.marketKey}|${pick.outcomeName}`);
-  };
+  const wanted = new Set(boards);
 
   try {
-    const [slateManifestRaw, potdRaw] = await Promise.all([
-      env.POTD_KV.get(`slate:${dateKey}:manifest`),
-      env.POTD_KV.get(`potd:${dateKey}`),
-    ]);
-    if (potdRaw) add(JSON.parse(potdRaw)?.pick);
+    if (wanted.has('potd')) {
+      const potdRaw = await env.POTD_KV.get(`potd:${dateKey}`);
+      if (potdRaw) sidesOfRecord(JSON.parse(potdRaw)?.pick, sides);
+    }
 
-    const slateIds = slateManifestRaw ? (JSON.parse(slateManifestRaw).pickIds ?? []) : [];
-    const slatePicks = await Promise.all(
-      slateIds.map((id) => env.POTD_KV.get(`slate:${dateKey}:pick:${id}`)),
-    );
-    for (const raw of slatePicks) {
-      if (raw) add(JSON.parse(raw));
+    for (const name of Object.keys(SIDE_SOURCES)) {
+      if (!wanted.has(name)) continue;
+      const src = SIDE_SOURCES[name];
+      const manifestRaw = await env.POTD_KV.get(src.manifest(dateKey));
+      const ids = manifestRaw ? (JSON.parse(manifestRaw).pickIds ?? []) : [];
+      const raws = await Promise.all(ids.map((id) => env.POTD_KV.get(src.pick(dateKey, id))));
+      for (const raw of raws) {
+        if (raw) sidesOfRecord(JSON.parse(raw), sides);
+      }
     }
   } catch {
-    // A cross-board read failure must not stop the board from being built —
-    // it degrades to this board's own same-event guards, which already
-    // prevent the worst case (two Pixel's Picks on opposite sides).
+    // A cross-board read failure must not stop a board from being built —
+    // it degrades to that board's own same-event guards, which already
+    // prevent the worst case (two picks on the same board contradicting).
   }
   return sides;
 }
@@ -136,13 +173,21 @@ async function loadPublishedSides(env, dateKey) {
  * Whether a candidate takes the opposite side of a market another board
  * already published. Same event + same market + a DIFFERENT outcome is the
  * contradiction; the identical outcome is agreement and passes.
+ *
+ * A combo candidate is checked leg by leg: one contradicting leg is enough,
+ * since the whole ticket needs every leg to land.
  */
 export function contradictsPublishedBoard(candidate, publishedSides) {
-  if (!publishedSides?.size) return false;
+  if (!publishedSides?.size || !candidate) return false;
+  const parts = Array.isArray(candidate.legs) && candidate.legs.length
+    ? candidate.legs
+    : [candidate];
   for (const side of publishedSides) {
     const [eventId, marketKey, outcomeName] = side.split('|');
-    if (candidate.eventId === eventId && candidate.marketKey === marketKey && candidate.outcomeName !== outcomeName) {
-      return true;
+    for (const part of parts) {
+      if (part?.eventId === eventId && part?.marketKey === marketKey && part?.outcomeName !== outcomeName) {
+        return true;
+      }
     }
   }
   return false;
@@ -782,9 +827,13 @@ export async function runTop5Batch(
     }
   } catch { /* flagship dedupe is an upgrade — the draw below stands alone */ }
 
-  // Never the opposite side of something the Full Slate or Play of the Day
-  // already published — see loadPublishedSides.
-  const publishedSides = await loadPublishedSides(env, dateKey);
+  // Never the opposite side of something another board already published —
+  // see loadPublishedSides. Both directions are guarded, because within one
+  // day each board can be the earlier one: on the 2am draw the Full Slate is
+  // written AFTER this board and defers to it (index.js hands it these picks
+  // in memory), while on every hourly top-up after that the Slate's existing
+  // picks are already in KV and this board defers to them.
+  const publishedSides = await loadPublishedSides(env, dateKey, ['slate', 'potd']);
   const nonConflicting = drawPool.filter(
     (c) => !contradictsPublishedBoard(c, publishedSides) && !featuredEventIds.has(c.eventId),
   );
@@ -847,6 +896,13 @@ export async function runTop5Batch(
   // this same slate) is dropped rather than written.
   const usedEventIds = new Set(existingEventIds);
   const newPickIds = [];
+  // The sides this tick is about to publish, handed straight back to the
+  // caller. The KV writes below go through ctx.waitUntil, so the Full Slate
+  // batch that runs next cannot count on reading them back in time — it gets
+  // them in memory instead, and falls back to KV for everything written on
+  // earlier ticks. Without this the two boards can still land on opposite
+  // sides of the same game, which is the bug this whole path exists to stop.
+  const publishedNow = new Set();
   for (const pick of slate.picks) {
     // MMA fights lock their best VALUE play, not automatically the priced
     // market that earned the slot: a heavy moneyline gives way to the
@@ -860,6 +916,7 @@ export async function runTop5Batch(
     eventIds.forEach((id) => usedEventIds.add(id));
     const record = pickRecordFrom(pick, dateKey, now);
     newPickIds.push(record.pickId);
+    sidesOfRecord(record, publishedNow);
     ctx.waitUntil(
       env.POTD_KV.put(`track:${dateKey}:pick:${record.pickId}`, JSON.stringify(record), {
         expirationTtl: KV_TTL_SECONDS,
@@ -880,7 +937,10 @@ export async function runTop5Batch(
     }),
   );
 
-  return { skipped: false, dateKey, count: pickIds.length, added: newPickIds.length, poolSize: slate.poolSize };
+  return {
+    skipped: false, dateKey, count: pickIds.length, added: newPickIds.length,
+    poolSize: slate.poolSize, publishedSides: [...publishedNow],
+  };
 }
 
 /**

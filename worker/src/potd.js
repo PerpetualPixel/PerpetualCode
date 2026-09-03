@@ -549,6 +549,30 @@ export async function runPotdDaily(env, ctx, now = Date.now(), { fetchFullSlate 
   // any, ranked by score exactly as before WITHIN that pool. A slate with no
   // favourite at all falls back to the old behaviour rather than posting
   // nothing — the board still runs every day.
+  // Never the opposite side of a bet another board already published
+  // (2026-09-03 direction: picks must not contradict across the Full Slate,
+  // Pixel's Picks and the Play of the Day).
+  //
+  // Pixel's Picks has applied this since it was added, but only in one
+  // direction: it runs LAST in the daily chain and checks what came before.
+  // The Play of the Day runs first and checked nothing, so while it could
+  // never contradict Pixel's Picks (they don't exist yet), it could and did
+  // sit opposite the Full Slate's own tracked pick on the same game — the
+  // Full Slate locks continuously through the day, so a side is often
+  // already published by the time this runs.
+  //
+  // Agreement passes; only the opposite side of the same market is a
+  // contradiction. A read failure degrades to the previous behaviour rather
+  // than costing the day's pick.
+  // No cross-board contradiction filter here, deliberately. The Play of the
+  // Day is drawn FIRST every day — before the Prop Play, Pixel's Picks and
+  // the Full Slate (see index.js's scheduled() ordering comment) — so at this
+  // moment no other board has published a side to contradict. A
+  // loadPublishedSides() call here would read an empty set and filter
+  // nothing, which is worse than no check: it reads like protection that
+  // isn't there. The boards drawn AFTER this one are the ones that defer to
+  // it, and they do (tracking.js for Pixel's Picks, full-slate-tracking.js
+  // for the Full Slate).
   const chosen = chooseShowcasePick(drawPool);
   // An MMA winner runs as its best-value play (possibly a capper-priced
   // straight) rather than a moneyline too heavy to pay — same swap the Full

@@ -1102,3 +1102,95 @@ test('regradeMmaTotals leaves a settled pick alone when ESPN has no round to jud
   assert.equal(result.unauditable.length, 1, 'reported, not silently skipped');
   assert.equal(store.get(`slate:${dateKey}:pick:p1`), before, 'missing data must never flip a settled outcome');
 });
+
+/* ---------------------------------------------------------------- */
+/* Cross-board contradiction                                         */
+/* ---------------------------------------------------------------- */
+
+/*
+ * The bug these cover, reported live: the Full Slate held Arizona's moneyline
+ * while Pixel's Picks held Chicago's on the same game. The two boards were
+ * drawn concurrently, so neither could see the other's write. The Full Slate
+ * is now drawn LAST and is the board that defers — it can, because a
+ * contradicting candidate here falls to the game's next-best market rather
+ * than leaving the game uncovered.
+ */
+
+test('the Full Slate never takes the opposite side of a Play of the Day pick', async () => {
+  const { env } = makeKvStore();
+  // h2h is the clearly stronger market on this game, so without the guard
+  // the slate locks the home moneyline.
+  const events = [makeMultiMarketEvent('potdclash', { h2hOutlier: 60, spreadOutlier: 5 })];
+  await env.POTD_KV.put('potd:2026-08-05', JSON.stringify({
+    pick: { eventId: 'potdclash', marketKey: 'h2h', outcomeName: 'potdclash Away' },
+  }));
+
+  await runFullSlateBatch(env, ctx, NOW, { fetchFullSlate: async () => events });
+  const picks = await getFullSlateTracked(env, { dateKey: '2026-08-05' });
+  assert.equal(picks.length, 1, 'the game keeps a pick — deferring must not leave it uncovered');
+  assert.ok(
+    !(picks[0].marketKey === 'h2h' && picks[0].outcomeName === 'potdclash Home'),
+    'took the opposite side of the Play of the Day',
+  );
+});
+
+test("the Full Slate never takes the opposite side of a Pixel's Pick already in KV", async () => {
+  const { env } = makeKvStore();
+  const events = [makeMultiMarketEvent('top5clash', { h2hOutlier: 60, spreadOutlier: 5 })];
+  await env.POTD_KV.put('track:2026-08-05:top5', JSON.stringify({ pickIds: ['p1'] }));
+  await env.POTD_KV.put('track:2026-08-05:pick:p1', JSON.stringify({
+    eventId: 'top5clash', marketKey: 'h2h', outcomeName: 'top5clash Away',
+  }));
+
+  await runFullSlateBatch(env, ctx, NOW, { fetchFullSlate: async () => events });
+  const picks = await getFullSlateTracked(env, { dateKey: '2026-08-05' });
+  assert.equal(picks.length, 1);
+  assert.ok(
+    !(picks[0].marketKey === 'h2h' && picks[0].outcomeName === 'top5clash Home'),
+    "took the opposite side of a Pixel's Pick",
+  );
+});
+
+test('knownSides blocks a contradiction that has not reached KV yet', async () => {
+  // The real-run case: Pixel's Picks writes through ctx.waitUntil, so the
+  // Full Slate cannot read those picks back in time. index.js hands them
+  // over in memory instead, and this is what that hand-off has to buy.
+  const { env } = makeKvStore();
+  const events = [makeMultiMarketEvent('inmem', { h2hOutlier: 60, spreadOutlier: 5 })];
+
+  await runFullSlateBatch(env, ctx, NOW, {
+    fetchFullSlate: async () => events,
+    knownSides: ['inmem|h2h|inmem Away'],
+  });
+  const picks = await getFullSlateTracked(env, { dateKey: '2026-08-05' });
+  assert.equal(picks.length, 1);
+  assert.ok(
+    !(picks[0].marketKey === 'h2h' && picks[0].outcomeName === 'inmem Home'),
+    'in-memory sides were ignored — the ctx.waitUntil race is still open',
+  );
+});
+
+test('agreeing with a curated board is fine — only the opposite side is barred', async () => {
+  const { env } = makeKvStore();
+  const events = [makeMultiMarketEvent('agree', { h2hOutlier: 60, spreadOutlier: 5 })];
+  // Same side the slate would pick anyway.
+  await runFullSlateBatch(env, ctx, NOW, {
+    fetchFullSlate: async () => events,
+    knownSides: ['agree|h2h|agree Home'],
+  });
+  const picks = await getFullSlateTracked(env, { dateKey: '2026-08-05' });
+  assert.equal(picks.length, 1);
+  assert.equal(picks[0].marketKey, 'h2h');
+  assert.equal(picks[0].outcomeName, 'agree Home', 'agreement must not be filtered out');
+});
+
+test('a curated side on one game does not disturb any other game', async () => {
+  const { env } = makeKvStore();
+  const events = [makeEvent('clean1'), makeEvent('clean2')];
+  await runFullSlateBatch(env, ctx, NOW, {
+    fetchFullSlate: async () => events,
+    knownSides: ['someOtherGame|h2h|Whoever'],
+  });
+  const picks = await getFullSlateTracked(env, { dateKey: '2026-08-05' });
+  assert.equal(picks.length, 2, 'every game still gets its pick');
+});

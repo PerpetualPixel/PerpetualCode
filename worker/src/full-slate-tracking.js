@@ -24,7 +24,10 @@ import { analyze, clearsMaxJuice } from '../../docs/engine.js';
 import { gradePick } from '../../docs/learning.js';
 import { isMma, isTennis } from '../../docs/insights.js';
 import { fetchSport, fetchScores } from './odds.js';
-import { pickRecordFrom, fetchFullSlateEvents, isPickWindowOpen } from './tracking.js';
+import {
+  pickRecordFrom, fetchFullSlateEvents, isPickWindowOpen,
+  loadPublishedSides, contradictsPublishedBoard,
+} from './tracking.js';
 import { fetchMmaResults, gradeMmaPickWithFallback, findMmaFight, normalizeName } from './ufc-events.js';
 import { isSettleableTennisMarket, hasSecondarySettlementSource } from '../../docs/tennis-tiers.js';
 import {
@@ -143,7 +146,7 @@ export async function runFullSlateBatch(
   env,
   ctx,
   now = Date.now(),
-  { fetchFullSlate = () => fetchFullSlateEvents(env, ctx) } = {},
+  { fetchFullSlate = () => fetchFullSlateEvents(env, ctx), knownSides = [] } = {},
 ) {
   const dateKey = etDate(now);
   const manifestKey = `slate:${dateKey}:manifest`;
@@ -175,6 +178,23 @@ export async function runFullSlateBatch(
       ...priorManifests.filter(Boolean).flatMap((raw) => JSON.parse(raw).pickIds ?? []),
     ].map((id) => id.split(':')[0]),
   );
+
+  // Sides the curated boards already published today, so this board can
+  // never post the opposite of one of them — per explicit product direction,
+  // "picks dont contridict across the full slate and pixel picks or plays of
+  // the day." The Full Slate is drawn LAST for exactly this reason: it is the
+  // board that can see every other one, and the only board that can defer
+  // without leaving a gap, because a contradicting candidate here simply
+  // falls to the game's next-best market (see the bestPerGame loop) instead
+  // of dropping the game.
+  //
+  // `knownSides` is what the Pixel's Picks batch just returned in memory. Its
+  // KV writes go through ctx.waitUntil, so reading them back here would be a
+  // race this board would lose silently; the KV read still runs alongside for
+  // everything written on earlier ticks and for the Play of the Day.
+  const curatedSides = await loadPublishedSides(env, dateKey, ['potd', 'top5'])
+    .catch(() => new Set());
+  for (const side of knownSides) curatedSides.add(side);
 
   // Benched segments are read once per batch and applied per-game below.
   // Best-effort: a KV read failure here must never cost the day's board, so
@@ -258,6 +278,14 @@ export async function runFullSlateBatch(
     // LOW_VARIANCE_MAX_AMERICAN) — an overpriced one simply isn't eligible
     // to be this game's one pick, same as an unsettleable tennis line above.
     if (!clearsMaxJuice(c)) continue;
+    // Same precedent as the tennis form gate and the MMA consensus
+    // preference above: a candidate that contradicts what the day already
+    // published isn't eligible to be this game's one pick, and the slot
+    // falls to the next-best candidate rather than going empty. Usually
+    // that's the agreeing side of the same market, or a different market on
+    // the same game — either way the Full Slate keeps its one-pick-per-game
+    // contract while the day stops arguing with itself.
+    if (contradictsPublishedBoard(c, curatedSides)) continue;
     if (isSegmentPaused(c, pausedSegments)) {
       if (!benchedPerGame.has(c.eventId)) benchedPerGame.set(c.eventId, c);
       continue;

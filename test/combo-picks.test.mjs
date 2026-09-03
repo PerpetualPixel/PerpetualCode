@@ -14,7 +14,9 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { pairShortPricedPicks, buildBankrollBuilder, applyBankrollBuilders } from '../docs/engine.js';
-import { pickRecordFrom } from '../worker/src/tracking.js';
+import {
+  pickRecordFrom, loadPublishedSides, contradictsPublishedBoard,
+} from '../worker/src/tracking.js';
 
 const cand = (id, american, { score = 70, marketKey = 'h2h', eventId = id } = {}) => ({
   id, eventId, american, score, marketKey,
@@ -216,4 +218,64 @@ test('POTD picks the best FAVOURITE, not the best-scoring underdog', async () =>
 
   assert.equal(chooseShowcasePick([]), null);
   assert.equal(chooseShowcasePick(null), null);
+});
+
+/* ---------------------------------------------------------------- */
+/* A parlay's legs must be visible to the contradiction check         */
+/* ---------------------------------------------------------------- */
+
+/*
+ * A bankroll builder is stored as ONE record carrying `legs`, with no
+ * top-level eventId. A contradiction check that only reads the top level
+ * sees nothing at all on such a record — so the day's other boards could
+ * happily take the opposite side of a leg this ticket needs to land, and
+ * every guard would report clean. Both halves are covered: what the ticket
+ * publishes, and what a ticket may itself be blocked from taking.
+ */
+
+test("a combo's legs are the sides it publishes, not its (absent) top level", async () => {
+  const combo = pickRecordFrom(
+    {
+      type: 'combo', legs: [cand('A', -150), cand('B', -140)],
+      american: 120, decimal: 2.2, score: 72, meetsStandard: true, flagReason: null,
+    },
+    '2026-09-02', Date.parse('2026-09-02T06:00:00Z'), 1,
+  );
+  // The record's top level points at the ANCHOR leg only (see pickRecordFrom)
+  // — so a check that reads only the top level publishes leg A's side and is
+  // blind to leg B's, which is exactly the hole being closed.
+  assert.equal(combo.eventId, 'A');
+  assert.equal(combo.legs.length, 2);
+
+  const store = new Map([
+    ['track:2026-09-02:top5', JSON.stringify({ pickIds: [combo.pickId] })],
+    [`track:2026-09-02:pick:${combo.pickId}`, JSON.stringify(combo)],
+  ]);
+  const env = { POTD_KV: { async get(k) { return store.get(k) ?? null; } } };
+
+  const sides = await loadPublishedSides(env, '2026-09-02', ['top5']);
+  assert.equal(sides.size, 2, 'both legs must be published, not zero and not one');
+  assert.ok(sides.has('A|h2h|A'));
+  assert.ok(sides.has('B|h2h|B'));
+
+  // The opposite side of leg B is now barred everywhere.
+  assert.equal(
+    contradictsPublishedBoard({ eventId: 'B', marketKey: 'h2h', outcomeName: 'B Opponent' }, sides),
+    true,
+  );
+  assert.equal(
+    contradictsPublishedBoard({ eventId: 'B', marketKey: 'h2h', outcomeName: 'B' }, sides),
+    false,
+    'agreeing with a leg is not a contradiction',
+  );
+});
+
+test('a combo candidate is barred when any one of its legs contradicts', () => {
+  const sides = new Set(['B|h2h|B Opponent']);
+  const ticket = { legs: [cand('A', -150), cand('B', -140)] };
+  assert.equal(contradictsPublishedBoard(ticket, sides), true, 'one bad leg sinks the ticket');
+  assert.equal(
+    contradictsPublishedBoard({ legs: [cand('A', -150), cand('C', -140)] }, sides),
+    false,
+  );
 });
