@@ -594,18 +594,26 @@ export default {
           // exclusion reads would race the writes and silently pass on an
           // empty set). Each step is idempotent per ET date and a failure
           // is caught so a bad POTD run can never cost the day's other
-          // boards. The Full Slate batch doesn't read any of them, so it
-          // runs alongside the Pixel's Picks draw.
+          // boards. The Full Slate runs LAST, and sequentially, for the same
+          // reason: it is the board that defers to all the others, so it has
+          // to be able to see them (see runFullSlateBatch's curatedSides).
+          // It used to run alongside the Pixel's Picks draw, and that race is
+          // how the day ended up holding Arizona's moneyline on the Full
+          // Slate and Chicago's on Pixel's Picks — neither board could see
+          // the other's write.
           const potdResult = await runPotdDaily(env, ctx, now, { fetchFullSlate })
             .catch((e) => { console.error('Play of the Day selection failed:', e); return null; });
           await runPropPlayDaily(env, ctx, now)
             .catch((e) => console.error('Prop Play selection failed:', e));
-          await Promise.all([
-            runTop5Batch(env, ctx, now, { fetchFullSlate }),
-            runFullSlateBatch(env, ctx, now, { fetchFullSlate }),
-          ]);
+          const top5Run = await runTop5Batch(env, ctx, now, { fetchFullSlate })
+            .catch((e) => { console.error('Pixel\'s Picks batch failed:', e); return null; });
+          // Handed over in memory, not read back from KV: the picks above are
+          // written through ctx.waitUntil, so a KV read here could miss them.
+          await runFullSlateBatch(env, ctx, now, {
+            fetchFullSlate, knownSides: top5Run?.publishedSides ?? [],
+          }).catch((e) => console.error('Full Slate batch failed:', e));
 
-          // AFTER that Promise.all, never inside it: the ladder's whole
+          // AFTER those batches, never alongside them: the ladder's whole
           // selection rule is "not the Play of the Day, not the Prop Play,
           // nothing contradicting today's board", and it reads those from
           // KV. Run concurrently with the batch that writes them and it
@@ -2079,11 +2087,15 @@ export default {
         if (retracted > 0) {
           const sharedSlate = fetchFullSlateEvents(env, ctx);
           const fetchFullSlate = () => sharedSlate;
-          const [top5Run, slateRun, potdRun] = await Promise.all([
-            runTop5Batch(env, ctx, now, { fetchFullSlate }),
-            runFullSlateBatch(env, ctx, now, { fetchFullSlate }),
-            runPotdDaily(env, ctx, now, { fetchFullSlate }),
-          ]);
+          // Same order as the 2am scheduled run, and sequential for the same
+          // reason: the Play of the Day is drawn first, Pixel's Picks next,
+          // and the Full Slate last so it can defer to both instead of
+          // racing them onto opposite sides of a game.
+          const potdRun = await runPotdDaily(env, ctx, now, { fetchFullSlate });
+          const top5Run = await runTop5Batch(env, ctx, now, { fetchFullSlate });
+          const slateRun = await runFullSlateBatch(env, ctx, now, {
+            fetchFullSlate, knownSides: top5Run?.publishedSides ?? [],
+          });
           regenerated = { top5: top5Run, fullSlate: slateRun, potd: potdRun };
         }
 

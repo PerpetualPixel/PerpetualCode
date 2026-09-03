@@ -8,6 +8,7 @@ import {
   getPotd,
   getPotdHistory,
 } from '../worker/src/potd.js';
+import { RULES } from '../docs/engine.js';
 import { seedTennisArchiveCacheForTests } from '../worker/src/tennis-archive.js';
 
 // The tennis form gate (docs/qualitative.js) reads the static archive; unit
@@ -437,4 +438,189 @@ test('getPotdHistory skips a pre-migration record with no tracking fields', asyn
   const history = await getPotdHistory(env, { now: NOW, days: 5 });
   assert.equal(history.length, 1);
   assert.equal(history[0].dateKey, '2026-08-05');
+});
+
+/* ---------------------------------------------------------------- */
+/* runPotdDaily — the Play of the Day as a parlay                    */
+/* ---------------------------------------------------------------- */
+
+/*
+ * 2026-09-03 direction: "the play of the day can be a parlay too." It runs
+ * on the same builder as Pixel's Picks' bankroll builders — favourites from
+ * different games stacked safest-first until the ticket pays plus money
+ * instead of laying heavy juice on any one of them.
+ */
+
+test('two in-band favourites become a plus-money parlay rather than one juiced straight', async () => {
+  const { env } = makeKvStore();
+  const events = [
+    makeEvent('favA', '2026-08-05T09:00:00Z', { outlier: 20, favoritePrice: -150 }),
+    makeEvent('favB', '2026-08-05T09:30:00Z', { outlier: 20, favoritePrice: -150 }),
+  ];
+  const result = await runPotdDaily(env, ctx, NOW, { fetchFullSlate: async () => events });
+
+  assert.equal(result.skipped, false);
+  assert.equal(result.pick.type, 'combo');
+  assert.equal(result.pick.legs.length, 2);
+  assert.ok(result.pick.american > 0, `a bankroll builder must pay plus money, got ${result.pick.american}`);
+  // A ticket answers to the TICKET ceiling, not the straight band — see
+  // RULES.TICKET_MAX_AMERICAN for why those are different numbers.
+  assert.ok(
+    result.pick.american <= RULES.TICKET_MAX_AMERICAN,
+    `the ticket obeys the ticket ceiling, got ${result.pick.american}`,
+  );
+  // What actually keeps it a bankroll builder: every LEG is a real favourite
+  // inside this board's own band.
+  for (const leg of result.pick.legs) {
+    assert.equal(leg.marketKey, 'h2h');
+    assert.ok(leg.american <= -110 && leg.american >= -200, `leg priced ${leg.american}`);
+  }
+  assert.equal(
+    new Set(result.pick.legs.map((l) => l.eventId)).size, 2,
+    'both legs must come from different games',
+  );
+  assert.match(result.pick.selection, / \+ /, 'the stored selection names every leg');
+  assert.equal(result.pick.clv, null, 'a parlay has no single closing line to compare against');
+  // The record's own id must not collide with its anchor leg's, or the same
+  // anchor posting as a straight another day would overwrite it.
+  assert.notEqual(result.pick.pickId, result.pick.legs[0].legId);
+});
+
+test('an anchor already paying plus money stays a straight — there is nothing to stack toward', async () => {
+  const { env } = makeKvStore();
+  // Both sides of both games are dogs, so chooseShowcasePick falls back to
+  // the best-scoring candidate of any price and no favourite leg exists.
+  const events = [
+    makeEvent('dogA', '2026-08-05T09:00:00Z', { outlier: 20, favoritePrice: 105 }),
+    makeEvent('dogB', '2026-08-05T09:30:00Z', { outlier: 20, favoritePrice: 105 }),
+  ];
+  const result = await runPotdDaily(env, ctx, NOW, { fetchFullSlate: async () => events });
+  assert.equal(result.skipped, false);
+  assert.equal(result.pick.type, undefined, 'no ticket should have been built');
+  assert.ok(result.pick.clv, 'a straight still carries CLV');
+});
+
+test('a lone favourite with no partner stays a straight', async () => {
+  const { env } = makeKvStore();
+  const events = [makeEvent('solo', '2026-08-05T09:00:00Z', { outlier: 20, favoritePrice: -150 })];
+  const result = await runPotdDaily(env, ctx, NOW, { fetchFullSlate: async () => events });
+  assert.equal(result.skipped, false);
+  assert.equal(result.pick.type, undefined);
+});
+
+test('a fallback-tier day never gets a parlay stacked on top of it', async () => {
+  const { env } = makeKvStore();
+  // Everything below the confidence floor: outlier 0 means every book quotes
+  // the same price, so there is no edge to score.
+  const events = [
+    makeEvent('weakA', '2026-08-05T09:00:00Z', { outlier: 0, favoritePrice: -150 }),
+    makeEvent('weakB', '2026-08-05T09:30:00Z', { outlier: 0, favoritePrice: -150 }),
+  ];
+  const result = await runPotdDaily(env, ctx, NOW, { fetchFullSlate: async () => events });
+  assert.equal(result.skipped, false);
+  assert.equal(result.pick.meetsStandard, false, 'fixture should land on the flagged fallback tier');
+  assert.equal(
+    result.pick.type, undefined,
+    'stacking a second below-standard leg multiplies the problem rather than fixing it',
+  );
+});
+
+test('every leg of a parlay carries its own write-up', async () => {
+  const { env } = makeKvStore();
+  const events = [
+    makeEvent('wuA', '2026-08-05T09:00:00Z', { outlier: 20, favoritePrice: -150 }),
+    makeEvent('wuB', '2026-08-05T09:30:00Z', { outlier: 20, favoritePrice: -150 }),
+  ];
+  await runPotdDaily(env, ctx, NOW, { fetchFullSlate: async () => events });
+  const record = await getPotd(env, NOW);
+
+  assert.equal(record.writeup.legs.length, 2, 'one write-up block per leg, anchor included');
+  assert.match(record.writeup.marketLabel, /2-leg parlay/);
+  assert.match(record.writeup.headline, / \+ /);
+  assert.ok(record.writeup.pairReason, 'the ticket says why these legs');
+  for (const leg of record.writeup.legs) {
+    assert.ok(leg.headline, 'every leg needs its own headline');
+    assert.ok(leg.matchup, 'every leg needs its own matchup');
+    assert.ok(Array.isArray(leg.quotes), 'every leg needs its own book table');
+  }
+  // The top-level price is the TICKET's, not the anchor leg's.
+  assert.equal(record.writeup.american, record.pick.american);
+  assert.notEqual(record.writeup.american, record.writeup.legs[0].american);
+});
+
+test('runPotdGrading settles a parlay only when every leg has landed', async () => {
+  const { env, store } = makeKvStore();
+  const events = [
+    makeEvent('gradeA', '2026-08-05T09:00:00Z', { outlier: 20, favoritePrice: -150 }),
+    makeEvent('gradeB', '2026-08-05T09:30:00Z', { outlier: 20, favoritePrice: -150 }),
+  ];
+  await runPotdDaily(env, ctx, NOW, { fetchFullSlate: async () => events });
+  const dateKey = '2026-08-05';
+  const legs = JSON.parse(store.get(`potd:${dateKey}`)).pick.legs;
+
+  const scoreFor = (leg, winnerName) => ({
+    id: leg.eventId,
+    completed: true,
+    scores: [
+      { name: `${leg.eventId} Home`, score: winnerName.endsWith('Home') ? '5' : '1' },
+      { name: `${leg.eventId} Away`, score: winnerName.endsWith('Away') ? '5' : '1' },
+    ],
+  });
+
+  // Only the first leg has a final score: the ticket must stay pending.
+  await runPotdGrading(env, ctx, NOW + 6 * 3.6e6, {
+    fetchScoresFn: async () => ({ events: [scoreFor(legs[0], legs[0].outcomeName)] }),
+    fetchMmaResultsFn: async () => [],
+    fetchTennisResultsFn: async () => [],
+  });
+  assert.equal(
+    JSON.parse(store.get(`potd:${dateKey}`)).pick.status, 'pending',
+    'a half-settled ticket is not settled',
+  );
+
+  // Both legs land — the ticket wins and pays off its COMBINED price.
+  await runPotdGrading(env, ctx, NOW + 7 * 3.6e6, {
+    fetchScoresFn: async () => ({
+      events: legs.map((l) => scoreFor(l, l.outcomeName)),
+    }),
+    fetchMmaResultsFn: async () => [],
+    fetchTennisResultsFn: async () => [],
+  });
+  const settled = JSON.parse(store.get(`potd:${dateKey}`)).pick;
+  assert.equal(settled.status, 'won');
+  assert.ok(
+    Math.abs(settled.result.payout - (settled.decimal - 1) * settled.suggested_stake) < 1e-9,
+    'a parlay pays once, off the ticket price — not per leg',
+  );
+  assert.deepEqual(settled.legs.map((l) => l.status), ['won', 'won']);
+});
+
+test('one losing leg loses the whole parlay', async () => {
+  const { env, store } = makeKvStore();
+  const events = [
+    makeEvent('lossA', '2026-08-05T09:00:00Z', { outlier: 20, favoritePrice: -150 }),
+    makeEvent('lossB', '2026-08-05T09:30:00Z', { outlier: 20, favoritePrice: -150 }),
+  ];
+  await runPotdDaily(env, ctx, NOW, { fetchFullSlate: async () => events });
+  const dateKey = '2026-08-05';
+  const legs = JSON.parse(store.get(`potd:${dateKey}`)).pick.legs;
+
+  await runPotdGrading(env, ctx, NOW + 7 * 3.6e6, {
+    fetchScoresFn: async () => ({
+      events: legs.map((leg, i) => ({
+        id: leg.eventId,
+        completed: true,
+        // Leg 0 lands, leg 1 does not.
+        scores: [
+          { name: `${leg.eventId} Home`, score: (i === 0) === leg.outcomeName.endsWith('Home') ? '5' : '1' },
+          { name: `${leg.eventId} Away`, score: (i === 0) === leg.outcomeName.endsWith('Home') ? '1' : '5' },
+        ],
+      })),
+    }),
+    fetchMmaResultsFn: async () => [],
+    fetchTennisResultsFn: async () => [],
+  });
+  const settled = JSON.parse(store.get(`potd:${dateKey}`)).pick;
+  assert.equal(settled.status, 'lost');
+  assert.equal(settled.result.payout, -settled.suggested_stake);
 });
