@@ -1571,12 +1571,20 @@ function stakeLineHtml(stake, className = 'stake-line') {
  * reading as a warning, so it's shaped as a category instead: same
  * disclosure, same reason (on the chip's tooltip), a great deal quieter.
  */
-function flagChipHtml(flagged, reason) {
-  if (!flagged) return '';
-  const why = reason
-    ? `Outside standard criteria: ${reason}`
-    : 'Outside standard criteria';
-  return `<span class="pick-flag-chip" title="${esc(why)}">Fallback</span>`;
+function flagChipHtml() {
+  // The "Fallback" chip is removed (2026-09-03 direction: remove the flagged
+  // feature). It marked a pick the guaranteed-board fill posted when fewer
+  // than five cleared the sharp standard, and on a thin slate it labelled
+  // most of the board — at which point it stopped reading as a warning and
+  // started reading as noise.
+  //
+  // Deliberately a no-op rather than a deletion of every call site: the
+  // underlying classification is NOT gone. meetsStandard/flagReason are
+  // still selected on, still written to the tracked record, and still what
+  // the algorithm-health review reads, so the honesty survives where it is
+  // actually load-bearing. Only the on-card badge is retired. Restoring it
+  // is putting the markup back here.
+  return '';
 }
 
 function unitsLineHtml(units, className = 'units-line') {
@@ -1745,15 +1753,14 @@ function renderPick(pick) {
   const isCombo = pick.type === 'combo';
   const lead = pick.legs[0];
   const sport = lead.sportTitle ?? lead.sportKey;
-  const flagged = pick.meetsStandard === false;
 
   return `
-    <article class="pick ${flagged ? 'is-outside-standard' : ''}">
+    <article class="pick">
       <div class="pick-head">
         <span class="pick-head-left">
           <span class="chip"><strong>${esc(sport)}</strong> ·
             ${isCombo ? '2-leg combo' : 'Straight bet'}</span>
-          ${flagChipHtml(flagged, pick.flagReason)}
+          ${flagChipHtml()}
         </span>
         <span class="price">${esc(formatAmerican(pick.american))}</span>
       </div>
@@ -1777,18 +1784,17 @@ function renderPick(pick) {
  */
 function renderDegradedPick(pick) {
   const record = pick.record;
-  const flagged = pick.meetsStandard === false;
   const resultClass = record.status === 'won' ? 'win' : record.status === 'lost' ? 'loss' : '';
   const statusLabel = record.status === 'won' ? 'Won'
     : record.status === 'lost' ? 'Lost'
     : record.commenceMs <= Date.now() ? 'Live / Final' : 'Locked';
 
   return `
-    <article class="pick ${flagged ? 'is-outside-standard' : ''}">
+    <article class="pick">
       <div class="pick-head">
         <span class="pick-head-left">
           <span class="chip"><strong>${record.type === 'combo' ? '2-leg combo' : 'Straight bet'}</strong></span>
-          ${flagChipHtml(flagged, record.flagReason)}
+          ${flagChipHtml()}
         </span>
         <span class="price">${esc(formatAmerican(pick.american))}</span>
       </div>
@@ -5921,7 +5927,7 @@ function meetsTrackingStandard(pick) {
   return pick.meetsStandard !== false;
 }
 
-/** Groups server-tracked picks by their own stored dateKey (not a pickId prefix — these ids are raw candidate ids, not date-prefixed like the client's). Every pick counts toward its day's own record/ROI/net, flagged or not — flagged ones still show the "⚠ flagged" badge in the row for transparency, they just aren't excluded from the math (see renderTrackerSection's own comment on why). */
+/** Groups server-tracked picks by their own stored dateKey (not a pickId prefix — these ids are raw candidate ids, not date-prefixed like the client's). Every pick counts toward its day's own record/ROI/net; the on-row "flagged" badge that used to mark a thin-day fallback is gone (2026-09-03), while the underlying meetsStandard classification stays on the record for the algorithm-health review. */
 function groupTop5ByDay(picks) {
   const byDay = new Map();
   for (const p of picks) {
@@ -5979,10 +5985,9 @@ function renderTop5DayBlock(day, open = false) {
       ? ` title="${esc(`Void — stake returned, counts as neither a win nor a loss${p.result?.voidReason ? `: ${p.result.voidReason}` : ''}`)}"`
       : '';
     const payoutLabel = p.result ? formatSignedMoney(p.result.payout) : '—';
-    const flagged = !meetsTrackingStandard(p);
     return `
       <div class="day-pick-row ${statusClass}"${voidTitle}>
-        <span class="pick-matchup">${esc(p.away)} @ ${esc(p.home)}${flagged ? ' <span class="pick-flag-inline" title="Outside standard criteria: a thin-day fallback pick, still counted in every total">⚠ flagged</span>' : ''}</span>
+        <span class="pick-matchup">${esc(p.away)} @ ${esc(p.home)}</span>
         <span class="pick-side">${esc(p.selection)}</span>
         <span class="pick-status">${statusLabel}</span>
         <span class="pick-payout">${esc(payoutLabel)}</span>

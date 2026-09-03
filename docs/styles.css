@@ -4237,9 +4237,10 @@ input[type="range"]:focus-visible {
    stops being a warning and starts being a category, so it reads as one:
    the disclosure is unchanged (the reason is on the chip, on hover and in
    the tooltip), it just no longer shouts over the pick. */
-.pick.is-outside-standard {
-  border-color: var(--line);
-}
+/* .pick.is-outside-standard and .pick-flag-chip are retired (2026-09-03):
+   the card no longer emits either. Kept out of the stylesheet rather than
+   left as dead rules — the classification itself still lives on the tracked
+   record, it just has no on-card badge. */
 
 .pick-flag-chip {
   display: inline-flex;
