@@ -633,6 +633,80 @@ body {
   color: var(--muted);
 }
 
+/* --- Play of the Day as a parlay ------------------------------------
+   The ticket's legs sit above the fold (see renderPotdCard): the headline
+   is the joined selection, so a reader who can't see which games are on the
+   ticket without expanding the card can't tell what they're betting. */
+.potd-legs {
+  list-style: none;
+  margin: 0 0 14px;
+  padding: 0;
+  display: grid;
+  gap: 8px;
+}
+
+.potd-leg {
+  display: flex;
+  gap: 10px;
+  align-items: baseline;
+  padding: 10px 12px;
+  background: var(--surface-2);
+  border: 1px solid var(--line);
+  border-radius: 8px;
+}
+
+/* Fixed-width so the leg bodies line up however many legs there are. */
+.potd-leg-num {
+  flex: 0 0 auto;
+  min-width: 1.4em;
+  font-family: var(--mono);
+  font-size: 0.72rem;
+  color: var(--muted);
+}
+
+.potd-leg-body {
+  display: grid;
+  gap: 3px;
+  min-width: 0;
+}
+
+.potd-leg-meta {
+  font-family: var(--mono);
+  font-size: 0.7rem;
+  color: var(--muted);
+}
+
+/* The builder's own sentence on why these legs, in the same voice the
+   Pixel's Picks bankroll builders carry. */
+.potd-pair-reason {
+  margin: 0 0 14px;
+  font-size: 0.82rem;
+  line-height: 1.5;
+  color: var(--muted);
+}
+
+/* Each leg's full breakdown inside the expanded detail. The heading marks
+   where one leg's case ends and the next begins — without it three stacked
+   write-ups read as one very long argument about the first game. */
+.potd-leg-detail + .potd-leg-detail {
+  margin-top: 26px;
+}
+
+.potd-leg-title {
+  margin: 22px 0 0;
+  padding-top: 16px;
+  border-top: 2px solid var(--accent);
+  font-size: 0.95rem;
+  line-height: 1.35;
+}
+
+/* The first section inside a leg draws its own top border, which would
+   double up against the leg title's. */
+.potd-leg-detail .potd-section:first-of-type {
+  border-top: none;
+  padding-top: 0;
+}
+
 .potd-section {
   margin-top: 18px;
   padding-top: 14px;

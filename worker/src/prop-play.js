@@ -27,6 +27,7 @@ import { UNIT_DOLLARS, STAKE_BANDS } from '../../docs/engine.js';
 import { gradePick } from '../../docs/learning.js';
 import { normalizeName } from '../../docs/wnba-props.js';
 import { espnAbbr } from '../../docs/team-logos.js';
+import { legsOf } from './combo-grading.js';
 
 const KV_TTL_SECONDS = 86400 * 90;
 const ESPN_SITE = 'https://site.web.api.espn.com/apis/site/v2/sports/basketball/wnba';
@@ -444,7 +445,11 @@ export async function runPropPlayDaily(env, ctx, now = Date.now(), { debug = fal
     ]);
     const featured = new Set();
     const potd = potdRaw ? JSON.parse(potdRaw) : null;
-    if (potd?.pick?.eventId) featured.add(potd.pick.eventId);
+    // Every leg's game, not just the anchor's — the Play of the Day can be
+    // a parlay (see potd.js's buildRecord).
+    for (const leg of legsOf(potd?.pick)) {
+      if (leg?.eventId) featured.add(leg.eventId);
+    }
     for (const id of (top5ManifestRaw ? JSON.parse(top5ManifestRaw).pickIds ?? [] : [])) {
       featured.add(id.split(':')[0]);
     }

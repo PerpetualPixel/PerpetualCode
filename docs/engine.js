@@ -59,6 +59,25 @@ export const RULES = {
   SINGLE_FLOOR: -150,
   // Anything from -250 to -151 must be paired to drag the price toward +100.
   PAIR_TARGET_AMERICAN: 100,
+  /*
+   * The most a stacked ticket (buildBankrollBuilder) may pay.
+   *
+   * Deliberately looser than MAX_AMERICAN, which bounds a STRAIGHT. The two
+   * bound different things. On a single bet the price IS the risk, so a
+   * board promising -200..+150 keeps its word by refusing anything longer.
+   * On a ticket the price is a product: what makes it a bankroll builder
+   * rather than a longshot is the quality of its LEGS, and those are already
+   * held to the board's own band (nothing longer than -110, nothing shorter
+   * than the board's floor) by each caller's isEligible.
+   *
+   * Reusing the straight ceiling here looked consistent and was not: two
+   * -150 favourites — exactly the bet asked for, "2 solid MLs that make the
+   * odds + money" — combine to +178 and were refused, so builders could only
+   * ever form from a narrow -200..-175 window and almost never fired. At
+   * +250 (28.6% implied) two favourites of -120 or shorter pair, while a
+   * genuine longshot stack is still refused.
+   */
+  TICKET_MAX_AMERICAN: 250,
   // Below this many books pricing the exact same number, consensus is noise.
   MIN_BOOKS: 3,
   // Nothing below this grade is shown at all. The board is meant to be the best

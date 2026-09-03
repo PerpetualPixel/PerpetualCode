@@ -30,7 +30,7 @@
  * written, nothing overwrites it.
  */
 
-import { analyze, RULES, formatAmerican, suggestedStake, clearsMaxJuice, isNflPreseason, UNIT_DOLLARS, STAKE_BANDS, stakeUnitsForScore } from '../../docs/engine.js';
+import { analyze, RULES, formatAmerican, suggestedStake, clearsMaxJuice, isNflPreseason, buildBankrollBuilder, UNIT_DOLLARS, STAKE_BANDS, stakeUnitsForScore } from '../../docs/engine.js';
 import { fetchCapperConsensus, applyCapperConsensus, upgradeToValueStraight } from '../../docs/capper-consensus.js';
 import { isPower4Matchup } from '../../docs/ncaaf-conferences.js';
 
@@ -80,6 +80,7 @@ import { loadTeamContextsFor, applyTeamFormSignal } from './team-form.js';
 import { getNflEfficiency } from './nfl-efficiency.js';
 import { loadTennisArchive, loadTennisArchivesFor } from './tennis-archive.js';
 import { retractedRecord } from './retraction.js';
+import { legsOf, isComboPick, makeLegGrader, gradeComboTicket, comboLegRecord } from './combo-grading.js';
 
 const ET_TZ = 'America/New_York';
 export const POTD_HOUR = 2; // 2am ET — the daily learning review and the day's single draw (see header)
@@ -316,61 +317,127 @@ function buildWriteup(candidate, research, now, analysis) {
   };
 }
 
-async function buildRecord(best, dateKey, now, env, ctx) {
-  const research = await researchFor(best, env, ctx);
-  // A sharp-bettor-voiced write-up on top of the existing quantitative
-  // sections — see buildWriteup's own comment. Never blocks posting: any
-  // failure here (no API key, a rate limit, a malformed reply) just leaves
-  // analysis null and Play of the Day goes up on schedule regardless,
-  // exactly like the same feature already behaves for every other pick.
-  let analysis = null;
+/**
+ * The AI write-up for one candidate, or null. Never throws and never blocks
+ * posting: any failure (no API key, a rate limit, a malformed reply) just
+ * leaves this null and the Play of the Day goes up on schedule regardless,
+ * exactly like the same feature already behaves for every other pick.
+ *
+ * Logged rather than swallowed so a recurring failure is diagnosable from
+ * the Worker's logs instead of silently posting an analysis-less pick every
+ * day with no trace of why — backfillPotdAnalysis gets another shot at it on
+ * a later tick regardless.
+ */
+async function analysisFor(candidate, env, ctx, now) {
   try {
-    const raw = await getOrGenerateAnalysis(best, env, ctx, now, { isPotd: true });
-    if (raw) analysis = JSON.parse(raw);
+    const raw = await getOrGenerateAnalysis(candidate, env, ctx, now, { isPotd: true });
+    return raw ? JSON.parse(raw) : null;
   } catch (e) {
-    // Logged (not just swallowed) so a recurring failure here is
-    // diagnosable from the Worker's logs instead of silently posting an
-    // analysis-less Play of the Day every day with no trace of why —
-    // backfillPotdAnalysis below gets another shot at it on a later tick
-    // regardless.
     console.error('POTD analysis generation failed:', e);
-    analysis = null;
+    return null;
   }
-  const writeup = buildWriteup(best, research, now, analysis);
+}
+
+/**
+ * The stored record for the day, from either a straight candidate or a
+ * bankroll-builder ticket (see buildBankrollBuilder).
+ *
+ * A ticket keeps every single-pick field pointing at its ANCHOR leg — the
+ * same convention tracking.js's pickRecordFrom uses, and what the CLV
+ * snapshot, the date bucketing and the display helpers already read — and
+ * overrides only what the ticket itself changes: its price, its label, and
+ * its legs.
+ *
+ * Every leg gets its OWN research and its own write-up, per direction that
+ * all plays carry a breakdown and analysis. A parlay is a bet on two or
+ * three games, so one game's analysis explains at most half of it; the
+ * top-level write-up stays the anchor's (that's what the card leads with)
+ * and `writeup.legs` carries the rest.
+ */
+async function buildRecord(selection, dateKey, now, env, ctx) {
+  const isCombo = selection?.type === 'combo' && Array.isArray(selection.legs) && selection.legs.length > 1;
+  const legs = isCombo ? selection.legs : [selection];
+  const anchor = legs[0];
+
+  // Bounded at maxLegs (3), so this is at most three research pulls and
+  // three model calls where a straight makes one.
+  const perLeg = await Promise.all(legs.map(async (leg) => buildWriteup(
+    leg,
+    await researchFor(leg, env, ctx),
+    now,
+    await analysisFor(leg, env, ctx, now),
+  )));
+
+  // A COPY of the anchor's block, not the block itself: `legs` below holds
+  // every leg including the anchor, and assigning that array onto the very
+  // object it contains makes the record circular and unserialisable.
+  const writeup = isCombo ? { ...perLeg[0] } : perLeg[0];
+  if (isCombo) {
+    Object.assign(writeup, {
+      headline: `${legs.map((l) => l.selection).join(' + ')} (${formatAmerican(selection.american)})`,
+      matchup: legs.map((l) => `${l.away} @ ${l.home}`).join(' • '),
+      marketLabel: `${legs.length}-leg parlay`,
+      price: formatAmerican(selection.american),
+      american: selection.american,
+      score: Math.round(selection.score),
+      stakeUnits: stakeUnitsForScore(selection.score, STAKE_BANDS.potd),
+      // Why these legs, in the builder's own words — the same sentence the
+      // Pixel's Picks bankroll builders carry.
+      pairReason: selection.pairReason ?? null,
+      // Each leg's full write-up, anchor included, in ticket order. The card
+      // renders one block per leg so a parlay is never explained by one
+      // game's reasoning alone.
+      legs: perLeg,
+    });
+  }
+
+  const stakeSource = isCombo ? selection : anchor;
+  const units = stakeUnitsForScore(stakeSource.score, STAKE_BANDS.potd);
   return {
     date: dateKey,
     generatedAt: now,
     pick: {
-      pickId: best.id,
+      // A ticket's id has to differ from its anchor leg's, or the same
+      // anchor appearing as a straight on another day would collide with it
+      // in KV — same rule as pickRecordFrom's.
+      pickId: isCombo ? legs.map((l) => l.id).join('+') : anchor.id,
       dateKey,
-      eventId: best.eventId,
-      sportKey: best.sportKey,
-      marketKey: best.marketKey,
-      outcomeName: best.outcomeName,
-      point: best.point ?? null,
-      selection: best.selection,
-      american: best.american,
-      decimal: best.decimal,
-      score: best.score,
+      ...(isCombo ? {
+        type: 'combo',
+        legs: legs.map(comboLegRecord),
+        pairReason: selection.pairReason ?? null,
+      } : {}),
+      eventId: anchor.eventId,
+      sportKey: anchor.sportKey,
+      marketKey: anchor.marketKey,
+      outcomeName: anchor.outcomeName,
+      point: anchor.point ?? null,
+      selection: isCombo ? legs.map((l) => l.selection).join(' + ') : anchor.selection,
+      american: isCombo ? selection.american : anchor.american,
+      decimal: isCombo ? selection.decimal : anchor.decimal,
+      score: stakeSource.score,
       // Same daily-learning provenance the Top 5 records carry (see
       // tracking.js's pickRecordFrom) — null when no learned weight
       // adjusted this candidate's score before selection.
-      rawScore: best.rawScore ?? null,
-      learnWeight: best.learnWeight ?? null,
-      home: best.home,
-      away: best.away,
-      commenceMs: best.commenceMs,
-      book: best.book,
-      consensusProb: best.consensusProb,
-      // The flagship carries the most conviction on the board: 3 to 5
-      // units, where the algorithm's own confidence score picks the spot
-      // in the band (2026-08-21 direction — was a flat 5U). The dollar
-      // figure is the tracked record's $25/1U accounting basis; the card
-      // shows the units.
-      stakeUnits: stakeUnitsForScore(best.score, STAKE_BANDS.potd),
-      suggested_stake: UNIT_DOLLARS * stakeUnitsForScore(best.score, STAKE_BANDS.potd),
+      rawScore: anchor.rawScore ?? null,
+      learnWeight: anchor.learnWeight ?? null,
+      home: anchor.home,
+      away: anchor.away,
+      commenceMs: anchor.commenceMs,
+      book: anchor.book,
+      consensusProb: anchor.consensusProb,
+      // The flagship carries the most conviction on the board: the algorithm's
+      // own confidence score picks the spot in the band. The dollar figure is
+      // the tracked record's $25/1U accounting basis; the card shows the units.
+      stakeUnits: units,
+      suggested_stake: UNIT_DOLLARS * units,
       status: 'pending',
-      clv: { openAmerican: best.american, closeAmerican: best.american, updatedAt: now },
+      // A parlay has no single closing line to compare against — its price is
+      // the product of two or three markets that each move on their own — so
+      // CLV is null rather than a number that would look meaningful and not
+      // be. Same call tracking.js's pickRecordFrom makes for its own tickets,
+      // and runPotdClvSnapshot skips a null-clv pick for the same reason.
+      clv: isCombo ? null : { openAmerican: anchor.american, closeAmerican: anchor.american, updatedAt: now },
       result: null,
     },
     writeup,
@@ -549,21 +616,6 @@ export async function runPotdDaily(env, ctx, now = Date.now(), { fetchFullSlate 
   // any, ranked by score exactly as before WITHIN that pool. A slate with no
   // favourite at all falls back to the old behaviour rather than posting
   // nothing — the board still runs every day.
-  // Never the opposite side of a bet another board already published
-  // (2026-09-03 direction: picks must not contradict across the Full Slate,
-  // Pixel's Picks and the Play of the Day).
-  //
-  // Pixel's Picks has applied this since it was added, but only in one
-  // direction: it runs LAST in the daily chain and checks what came before.
-  // The Play of the Day runs first and checked nothing, so while it could
-  // never contradict Pixel's Picks (they don't exist yet), it could and did
-  // sit opposite the Full Slate's own tracked pick on the same game — the
-  // Full Slate locks continuously through the day, so a side is often
-  // already published by the time this runs.
-  //
-  // Agreement passes; only the opposite side of the same market is a
-  // contradiction. A read failure degrades to the previous behaviour rather
-  // than costing the day's pick.
   // No cross-board contradiction filter here, deliberately. The Play of the
   // Day is drawn FIRST every day — before the Prop Play, Pixel's Picks and
   // the Full Slate (see index.js's scheduled() ordering comment) — so at this
@@ -578,7 +630,34 @@ export async function runPotdDaily(env, ctx, now = Date.now(), { fetchFullSlate 
   // straight) rather than a moneyline too heavy to pay — same swap the Full
   // Slate lock applies, so the two boards never disagree about a fight.
   const best = consensusFeed ? upgradeToValueStraight(chosen, consensusFeed) : chosen;
-  const record = await buildRecord(best, dateKey, now, env, ctx);
+
+  // The Play of the Day can be a parlay (2026-09-03 direction), on exactly
+  // the terms Pixel's Picks' bankroll builders already run: two or three
+  // moneyline favourites from different games, stacked safest-first until
+  // the ticket itself pays plus money instead of laying heavy juice on any
+  // one of them. It's the same builder, so the two boards can't drift apart
+  // on what a "bankroll builder" means.
+  //
+  // Preferred, not forced. buildBankrollBuilder returns null when the anchor
+  // already pays plus money on its own (nothing to stack toward), when no
+  // second favourite is available, or when the only ticket it could build
+  // lands outside this board's own price band — and in every one of those
+  // cases the straight it was built from is the better bet anyway, so the
+  // day posts that. A fallback-tier day is left alone entirely: the pick is
+  // already flagged as below standard, and stacking a second below-standard
+  // leg onto it multiplies that rather than fixing it.
+  const ticket = fallbackReason ? null : buildBankrollBuilder(best, drawPool, {
+    // A ticket answers to the ticket ceiling, not this board's straight band
+    // — see RULES.TICKET_MAX_AMERICAN. Its LEGS are what's held to
+    // -200..-110 here, by isEligible below.
+    maxAmerican: RULES.TICKET_MAX_AMERICAN,
+    isEligible: (c) => c.marketKey === 'h2h'
+      && c.american <= POTD_FAVOURITE_MAX_AMERICAN
+      && c.american >= POTD_MIN_AMERICAN
+      && c.score >= RULES.MIN_SCORE,
+  });
+
+  const record = await buildRecord(ticket ?? best, dateKey, now, env, ctx);
   // A fallback-tier pick says so on its face rather than passing as an
   // ordinary lock — same honesty contract as Pixel's Picks' own flagged
   // fallback slots.
@@ -610,6 +689,10 @@ export async function runPotdClvSnapshot(env, ctx, now = Date.now(), { fetchSpor
   const record = JSON.parse(raw);
   const { pick } = record;
   if (pick.status !== 'pending' || pick.commenceMs <= now) return { updated: false };
+  // A parlay carries no CLV to refresh: its price is the product of two or
+  // three markets that each move independently, so there is no single
+  // closing line to compare it against (see buildRecord).
+  if (!pick.clv) return { updated: false };
 
   const { events } = await fetchSportFn(pick.sportKey);
   const fresh = analyze(events ?? [], { now }).find((c) => c.id === pick.pickId);
@@ -641,31 +724,62 @@ export async function backfillPotdAnalysis(env, ctx, now = Date.now()) {
   if (!raw) return { attempted: false };
 
   const record = JSON.parse(raw);
-  if (record.writeup?.analysis) return { attempted: false };
+  // On a parlay, every leg's block is checked, not just the top-level one:
+  // the model call is made per leg (see buildRecord), so one leg can come
+  // back written up and another empty. "All plays have that breakdown and
+  // analysis" means all of them, legs included.
+  const blocks = Array.isArray(record.writeup?.legs) && record.writeup.legs.length
+    ? record.writeup.legs
+    : [record.writeup];
+  const legs = legsOf(record.pick);
+  const missing = blocks
+    .map((block, i) => ({ block, leg: legs[i] ?? record.pick }))
+    .filter(({ block }) => block && !block.analysis);
+  if (!missing.length) return { attempted: false };
 
-  const candidate = {
-    eventId: record.pick.eventId,
-    sportKey: record.pick.sportKey,
-    sportTitle: record.writeup?.sportTitle,
-    home: record.pick.home,
-    away: record.pick.away,
-    outcomeName: record.pick.outcomeName,
-  };
+  let succeeded = 0;
+  for (const { block, leg } of missing) {
+    const candidate = {
+      eventId: leg.eventId,
+      sportKey: leg.sportKey,
+      sportTitle: block.sportTitle ?? leg.sportTitle,
+      home: leg.home,
+      away: leg.away,
+      outcomeName: leg.outcomeName,
+    };
 
-  let analysis = null;
-  try {
-    const raw2 = await getOrGenerateAnalysis(candidate, env, ctx, now, { isPotd: true });
-    if (raw2) analysis = JSON.parse(raw2);
-  } catch (e) {
-    console.error('POTD analysis backfill failed:', e);
-    return { attempted: true, succeeded: false };
+    let analysis = null;
+    try {
+      const raw2 = await getOrGenerateAnalysis(candidate, env, ctx, now, { isPotd: true });
+      if (raw2) analysis = JSON.parse(raw2);
+    } catch (e) {
+      // One leg failing must not cost the others theirs — a later tick
+      // retries whatever is still missing.
+      console.error('POTD analysis backfill failed:', e);
+      continue;
+    }
+    if (!analysis) continue;
+
+    block.analysis = analysis.analysis ?? null;
+    block.reasons = analysis.quickTake ?? null;
+    block.devilsAdvocate = analysis.devilsAdvocate ?? null;
+    block.victoryMethods = analysis.victoryMethods ?? null;
+    succeeded += 1;
   }
-  if (!analysis) return { attempted: true, succeeded: false };
+  if (!succeeded) return { attempted: true, succeeded: false };
 
-  record.writeup.analysis = analysis.analysis ?? null;
-  record.writeup.reasons = analysis.quickTake ?? null;
-  record.writeup.devilsAdvocate = analysis.devilsAdvocate ?? null;
-  record.writeup.victoryMethods = analysis.victoryMethods ?? null;
+  // The card leads with the top-level write-up, so on a parlay it has to
+  // mirror the anchor leg's block — otherwise a freshly backfilled anchor
+  // would still render with nothing above its legs.
+  if (Array.isArray(record.writeup?.legs) && record.writeup.legs.length) {
+    const [first] = record.writeup.legs;
+    Object.assign(record.writeup, {
+      analysis: first.analysis ?? null,
+      reasons: first.reasons ?? null,
+      devilsAdvocate: first.devilsAdvocate ?? null,
+      victoryMethods: first.victoryMethods ?? null,
+    });
+  }
   await env.POTD_KV.put(kvKey, JSON.stringify(record), { expirationTtl: KV_TTL_SECONDS });
   return { attempted: true, succeeded: true };
 }
@@ -676,15 +790,34 @@ export async function backfillPotdAnalysis(env, ctx, now = Date.now()) {
  * graded/still-pending-with-no-result record, same idempotent shape as
  * every other grading pass here. */
 async function gradePotdForDate(env, ctx, now, dateKey, pick, record, fetchScoresFn, fetchMmaResultsFn, fetchTennisResultsFn) {
-  const { events } = await fetchScoresFn(pick.sportKey);
-  const scoreEvent = (events ?? []).find((e) => e.id === pick.eventId);
+  // Every sport the record has a leg in, not just the record's own sportKey
+  // — that field points at the anchor leg, so a parlay whose second leg is a
+  // different sport would otherwise never have its scores fetched and would
+  // sit pending forever. A straight has exactly one leg, itself, so this is
+  // the same single fetch it always was.
+  const legs = legsOf(pick);
+  const sportsNeeded = [...new Set(legs.map((l) => l.sportKey))];
+  const fetched = await Promise.all(sportsNeeded.map((sk) => fetchScoresFn(sk)));
+  const scoreEventsBySport = new Map(sportsNeeded.map((sk, i) => [sk, fetched[i].events ?? []]));
+  const scoreEvent = (scoreEventsBySport.get(pick.sportKey) ?? []).find((e) => e.id === pick.eventId);
+  // Fetched once and only when a leg actually needs them, same as before.
+  const mmaResults = legs.some((l) => isMma(l.sportKey)) ? await fetchMmaResultsFn() : [];
+  const tennisResults = legs.some((l) => isTennis(l.sportKey)) ? await fetchTennisResultsFn() : [];
+
   let outcome;
-  if (isMma(pick.sportKey)) {
-    outcome = gradeMmaPickWithFallback(pick, scoreEvent, await fetchMmaResultsFn());
+  if (isComboPick(pick)) {
+    // The identical rule Pixel's Picks' bankroll builders settle under —
+    // every leg lands or the ticket doesn't. See worker/src/combo-grading.js.
+    outcome = await gradeComboTicket(
+      pick,
+      makeLegGrader({ scoreEventsBySport, mmaResults, tennisResults, env, ctx, now }),
+    );
+  } else if (isMma(pick.sportKey)) {
+    outcome = gradeMmaPickWithFallback(pick, scoreEvent, mmaResults);
   } else if (isTennis(pick.sportKey)) {
     // ESPN's scoreboard, not the odds feed, is what settles tennis at all —
     // see worker/src/tennis-espn.js.
-    outcome = await gradeTennisPickWithEspn(pick, scoreEvent, await fetchTennisResultsFn(), env, ctx, now);
+    outcome = await gradeTennisPickWithEspn(pick, scoreEvent, tennisResults, env, ctx, now);
   } else {
     outcome = gradePick(pick, scoreEvent);
   }

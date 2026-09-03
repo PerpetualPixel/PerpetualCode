@@ -77,6 +77,7 @@ import { getNflEfficiency } from './nfl-efficiency.js';
 import { loadTennisArchivesFor } from './tennis-archive.js';
 import { GENERATION_HOUR_ET } from './tracking.js';
 import { isExhibition, isEligibleTennisMatch, etParts, etDatePlusDays } from './potd.js';
+import { legsOf } from './combo-grading.js';
 
 export const LADDER_BASE = 20;
 /** Skim points: the first time the bankroll passes one, everything above it is banked. */
@@ -241,7 +242,12 @@ export async function ladderExclusions(env, dateKey, top5Picks = []) {
 
   const blockedEventIds = new Set();
   const potd = potdRaw ? JSON.parse(potdRaw) : null;
-  if (potd?.pick?.eventId) blockedEventIds.add(potd.pick.eventId);
+  // Every game on the Play of the Day, not just its anchor: the POTD can be
+  // a parlay (see potd.js's buildRecord), and its record's top-level eventId
+  // names only the first leg.
+  for (const leg of legsOf(potd?.pick)) {
+    if (leg?.eventId) blockedEventIds.add(leg.eventId);
+  }
   const prop = propRaw ? JSON.parse(propRaw) : null;
   for (const leg of prop?.legs ?? []) {
     if (leg.oddsEventId) blockedEventIds.add(leg.oddsEventId);

@@ -25,7 +25,7 @@
  * single, server-side, always-on history that doesn't depend on anyone
  * having the app open.
  */
-import { analyze, topPicks, applyBankrollBuilders, clearsMaxJuice, isNflPreseason, isNflPreseasonKey, UNIT_DOLLARS, STAKE_BANDS, stakeUnitsForScore } from '../../docs/engine.js';
+import { analyze, topPicks, RULES, applyBankrollBuilders, clearsMaxJuice, isNflPreseason, isNflPreseasonKey, UNIT_DOLLARS, STAKE_BANDS, stakeUnitsForScore } from '../../docs/engine.js';
 import { fetchCapperConsensus, applyCapperConsensus, upgradeToValueStraight } from '../../docs/capper-consensus.js';
 import { isPower4Matchup } from '../../docs/ncaaf-conferences.js';
 import { gradePick } from '../../docs/learning.js';
@@ -54,6 +54,7 @@ import {
   BACKFILL_READ_BUDGET,
 } from './tennis-espn.js';
 import { retractedRecord } from './retraction.js';
+import { legsOf, isComboPick, makeLegGrader, gradeComboTicket, comboLegRecord } from './combo-grading.js';
 
 export const TOP5_COUNT = 5;
 
@@ -501,32 +502,6 @@ export async function fetchFullSlateEvents(env, ctx) {
 // direction — the 5 daily picks sit just below the two 5U Plays of the Day).
 // Full Slate passes 1 explicitly: it tracks every game and stays the flat
 // 1U baseline.
-/**
- * The per-leg slice of a combo record: everything a grader needs to settle
- * that leg on its own, and nothing else. Payout is deliberately absent — a
- * parlay pays once, off the COMBINED price on the record, never per leg.
- */
-function comboLegRecord(leg) {
-  return {
-    legId: leg.id,
-    eventId: leg.eventId,
-    sportKey: leg.sportKey,
-    sportTitle: leg.sportTitle,
-    marketKey: leg.marketKey,
-    marketLabel: leg.marketLabel,
-    outcomeName: leg.outcomeName,
-    point: leg.point ?? null,
-    selection: leg.selection,
-    american: leg.american,
-    decimal: leg.decimal,
-    book: leg.book,
-    home: leg.home,
-    away: leg.away,
-    commenceMs: leg.commenceMs,
-    status: 'pending',
-  };
-}
-
 export function pickRecordFrom(pick, dateKey, now, stakeUnits = null) {
   const leg = pick.legs[0];
   // A two-leg combo (docs/engine.js's pairShortPricedPicks) is ONE bet that
@@ -820,7 +795,12 @@ export async function runTop5Batch(
       env.POTD_KV.get(`propplay:${dateKey}`),
     ]);
     const potdRecord = potdRaw ? JSON.parse(potdRaw) : null;
-    if (potdRecord?.pick?.eventId) featuredEventIds.add(potdRecord.pick.eventId);
+    // Every leg's game, not just the anchor's — the Play of the Day can be
+    // a parlay (see potd.js's buildRecord), and a second leg left un-excluded
+    // would let this board re-pick a game the day has already featured.
+    for (const leg of legsOf(potdRecord?.pick)) {
+      if (leg?.eventId) featuredEventIds.add(leg.eventId);
+    }
     const propPlay = propPlayRaw ? JSON.parse(propPlayRaw) : null;
     for (const leg of propPlay?.legs ?? []) {
       if (leg.oddsEventId) featuredEventIds.add(leg.oddsEventId);
@@ -872,10 +852,10 @@ export async function runTop5Batch(
   // product choice made with that understood.
   slate.picks = applyBankrollBuilders(slate.picks, nonConflicting, {
     max: PIXEL_COMBO_SLOTS,
-    // The ticket obeys the board's own hard band exactly as a single does —
-    // a stack of favourites is still a Pixel's Pick, not an exception to what
-    // the board promises.
-    maxAmerican: PIXEL_ODDS.HARD_MAX,
+    // A ticket answers to the ticket ceiling, not the straight one — see
+    // RULES.TICKET_MAX_AMERICAN for why those are different numbers. Its
+    // LEGS are what's held to this board's own band, by isEligible below.
+    maxAmerican: RULES.TICKET_MAX_AMERICAN,
     // Legs must be actual FAVOURITES laying real juice, not merely moneylines
     // clearing the score floor. Without this a +600 longshot that graded well
     // qualified as a leg and the "bankroll builder" came out at +779.
@@ -1117,11 +1097,7 @@ export async function runGrading(
   const pending = picks.filter((p) => p.status === 'pending' || isRegradableTennisVoid(p));
   if (!pending.length) return { graded: 0, remaining: 0 };
 
-  // Every sport in play, counting a combo's SECOND leg — its sport can differ
-  // from the record's own (the record's sportKey is the anchor's), and a leg
-  // whose scores were never fetched can never settle, which would leave the
-  // whole ticket pending forever.
-  const legsOf = (p) => (p.type === 'combo' && Array.isArray(p.legs) ? p.legs : [p]);
+  // Every sport in play, counting a combo's SECOND leg — see legsOf.
   const allLegs = pending.flatMap(legsOf);
   const sportsNeeded = [...new Set(allLegs.map((l) => l.sportKey))];
   const fetched = await Promise.all(sportsNeeded.map((s) => fetchScoresFn(s)));
@@ -1132,45 +1108,10 @@ export async function runGrading(
   // settles these. One fetch per pass covers every tournament in play.
   const tennisResults = allLegs.some((l) => isTennis(l.sportKey)) ? await fetchTennisResultsFn() : [];
 
-  /**
-   * Settle ONE leg to won/lost/void, through the same per-sport graders a
-   * single pick uses. Only the verdict is read: a parlay pays once, off the
-   * ticket's own combined price, so the nominal stake here never reaches a
-   * stored number. Returns null while the leg can't be settled yet.
-   */
-  const gradeLeg = async (leg) => {
-    const scoreEvent = (scoreEventsBySport.get(leg.sportKey) ?? []).find((e) => e.id === leg.eventId);
-    const probe = { ...leg, decimal: leg.decimal ?? 2, suggested_stake: 1 };
-    if (isMma(leg.sportKey)) return gradeMmaPickWithFallback(probe, scoreEvent, mmaResults);
-    if (isTennis(leg.sportKey)) return gradeTennisPickWithEspn(probe, scoreEvent, tennisResults, env, ctx, now);
-    return gradePick(probe, scoreEvent, now);
-  };
-
-  /**
-   * Settle a two-leg ticket from its legs' verdicts, on the same rule the
-   * Prop Play already uses for its own parlay: every leg must land, any loss
-   * loses the ticket, and a void leg voids it rather than being quietly
-   * dropped to leave a "parlay" of one. Stays pending until every leg has an
-   * answer — a ticket half-settled is not settled.
-   */
-  const gradeCombo = async (pick) => {
-    const outcomes = await Promise.all(pick.legs.map(gradeLeg));
-    if (outcomes.some((o) => !o)) return null;
-    pick.legs = pick.legs.map((leg, i) => ({
-      ...leg,
-      status: outcomes[i].void ? 'void' : outcomes[i].won ? 'won' : 'lost',
-      ...(outcomes[i].void ? { voidReason: outcomes[i].reason } : {}),
-      ...(outcomes[i].detail ? { detail: outcomes[i].detail } : {}),
-    }));
-    if (outcomes.some((o) => o.void)) {
-      return { void: true, reason: 'a leg voided, so the ticket voids with it' };
-    }
-    const won = outcomes.every((o) => o.won);
-    return {
-      won,
-      payout: won ? (pick.decimal - 1) * pick.suggested_stake : -pick.suggested_stake,
-    };
-  };
+  // Both shared with the Play of the Day, which posts the same kind of
+  // ticket — see worker/src/combo-grading.js for the rule.
+  const gradeLeg = makeLegGrader({ scoreEventsBySport, mmaResults, tennisResults, env, ctx, now });
+  const gradeCombo = (pick) => gradeComboTicket(pick, gradeLeg);
 
   let graded = 0;
   let rescheduled = 0;
@@ -1200,7 +1141,7 @@ export async function runGrading(
     }
 
     let outcome;
-    if (pick.type === 'combo' && Array.isArray(pick.legs)) {
+    if (isComboPick(pick)) {
       outcome = await gradeCombo(pick);
     } else if (isMma(pick.sportKey)) {
       outcome = gradeMmaPickWithFallback(pick, scoreEvent, mmaResults);

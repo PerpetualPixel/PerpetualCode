@@ -5310,6 +5310,55 @@ function renderPotdBooks(writeup) {
 }
 
 /**
+ * Whether this write-up describes a multi-leg ticket rather than one game.
+ *
+ * The Play of the Day can be a bankroll builder — two or three moneyline
+ * favourites stacked until the ticket pays plus money (2026-09-03 direction,
+ * the same builder Pixel's Picks uses). The worker writes every leg's own
+ * research and write-up into `writeup.legs`, anchor included, so the card
+ * never has to explain a parlay with one game's reasoning.
+ */
+function isPotdParlay(writeup) {
+  return Array.isArray(writeup?.legs) && writeup.legs.length > 1;
+}
+
+/** One leg on the ticket, in the always-visible summary above the fold. */
+function renderPotdLegSummary(leg, index) {
+  const when = Number.isFinite(leg.commenceMs)
+    ? ` · ${potdDateTimeFmt.format(new Date(leg.commenceMs))}`
+    : '';
+  return `
+    <li class="potd-leg">
+      <span class="potd-leg-num">${index + 1}</span>
+      <span class="potd-leg-body">
+        <strong>${esc(leg.headline)}</strong>
+        <span class="potd-leg-meta">${esc(leg.sportTitle)} · ${esc(leg.matchup)}${esc(when)}</span>
+      </span>
+    </li>`;
+}
+
+/**
+ * One leg's FULL write-up inside the expanded detail — the same book table,
+ * sharp take, quantitative sections and devil's advocate a straight Play of
+ * the Day gets, because that is what "all plays have that breakdown and
+ * analysis" has to mean on a bet made of two or three games.
+ */
+function renderPotdLegDetail(leg, index) {
+  const inner = [
+    renderPotdBooks(leg),
+    renderPotdSharpTake(leg),
+    (leg.sections ?? []).map(renderPotdSection).join(''),
+    renderPotdDevilsAdvocate(leg),
+  ].join('');
+  if (!inner.trim()) return '';
+  return `
+    <div class="potd-leg-detail">
+      <h3 class="potd-leg-title">Leg ${index + 1} · ${esc(leg.headline)}</h3>
+      ${inner}
+    </div>`;
+}
+
+/**
  * The single Play of the Day card, collapsed to its pick by default.
  *
  * Everything that makes the case — the book table, the sharp take, the
@@ -5325,29 +5374,69 @@ function renderPotdCard(writeup, generatedAt, stale) {
     ? `<p class="potd-stale">Today's pick hasn't posted yet. Showing yesterday's.</p>`
     : '';
   const detailId = 'potdDetail';
+  const parlay = isPotdParlay(writeup);
+  const legs = parlay ? writeup.legs : [];
+
+  // A ticket's own kickoff is its EARLIEST leg's — that's when the bet stops
+  // being cancellable — not the anchor's, which the record's commenceMs
+  // points at and which can be hours later.
+  const kickoffMs = parlay
+    ? Math.min(...legs.map((l) => l.commenceMs).filter(Number.isFinite))
+    : writeup.commenceMs;
+  const kickoff = Number.isFinite(kickoffMs)
+    ? potdDateTimeFmt.format(new Date(kickoffMs))
+    : '';
+
+  // The chip names every sport on the ticket, not just the anchor's — a
+  // parlay can cross sports, and labelling a mixed ticket "MLB" is wrong.
+  const sportLabel = parlay
+    ? [...new Set(legs.map((l) => l.sportTitle).filter(Boolean))].join(' + ')
+    : writeup.sportTitle;
+
+  // A parlay's legs go ABOVE the fold, not behind "More info": the card's
+  // headline is the joined selection, and a reader who can't see which games
+  // are on the ticket without expanding it can't tell what they're betting.
+  const subhead = parlay
+    ? `
+      <p class="potd-matchup">
+        ${legs.length} legs${kickoff ? ` · first game ${esc(kickoff)}` : ''}
+      </p>
+      <ol class="potd-legs">${legs.map(renderPotdLegSummary).join('')}</ol>
+      ${writeup.pairReason ? `<p class="potd-pair-reason">${esc(writeup.pairReason)}</p>` : ''}`
+    : `
+      <p class="potd-matchup">
+        ${esc(writeup.matchup)}${kickoff ? ` · ${esc(kickoff)}` : ''}
+        · best price at ${esc(writeup.book)}
+      </p>`;
+
+  // Each leg carries its own full breakdown on a parlay; a straight keeps
+  // the single set of blocks it always had.
+  const detail = parlay
+    ? legs.map(renderPotdLegDetail).join('')
+    : [
+      renderPotdBooks(writeup),
+      renderPotdSharpTake(writeup),
+      (writeup.sections ?? []).map(renderPotdSection).join(''),
+      renderPotdDevilsAdvocate(writeup),
+    ].join('');
+
   return `
     <article class="potd-card">
       <div class="potd-head">
-        <span class="chip"><strong>${esc(writeup.sportTitle)}</strong> · ${esc(writeup.marketLabel)}</span>
+        <span class="chip"><strong>${esc(sportLabel)}</strong> · ${esc(writeup.marketLabel)}</span>
         <span class="price">${esc(writeup.price)}</span>
       </div>
       ${staleNote}
       <h2 class="potd-headline">${esc(writeup.headline)}</h2>
-      <p class="potd-matchup">
-        ${esc(writeup.matchup)} · ${esc(potdDateTimeFmt.format(new Date(writeup.commenceMs)))}
-        · best price at ${esc(writeup.book)}
-      </p>
+      ${subhead}
       ${renderPotdConfidence(writeup.score, writeup.stakeUnits)}
       <button type="button" class="potd-more-btn" aria-expanded="false" aria-controls="${detailId}">
         More info
       </button>
       <div class="potd-detail" id="${detailId}" hidden>
-        ${renderPotdBooks(writeup)}
-        ${renderPotdSharpTake(writeup)}
-        ${writeup.sections.map(renderPotdSection).join('')}
-        ${renderPotdDevilsAdvocate(writeup)}
+        ${detail}
         <p class="potd-meta">
-          Best price at ${esc(writeup.book)} · posted ${esc(potdDateTimeFmt.format(new Date(generatedAt)))}
+          ${parlay ? 'Best price per leg shown above' : `Best price at ${esc(writeup.book)}`} · posted ${esc(potdDateTimeFmt.format(new Date(generatedAt)))}
         </p>
       </div>
     </article>`;
@@ -5985,9 +6074,19 @@ function renderTop5DayBlock(day, open = false) {
       ? ` title="${esc(`Void — stake returned, counts as neither a win nor a loss${p.result?.voidReason ? `: ${p.result.voidReason}` : ''}`)}"`
       : '';
     const payoutLabel = p.result ? formatSignedMoney(p.result.payout) : '—';
+    // A ticket's away/home fields point at its ANCHOR leg only (see
+    // combo-grading.js's record shape), so printing them next to a joined
+    // "A + B" selection names one game for a bet on two. Every leg's matchup
+    // is listed instead, with the whole set as the row's tooltip since three
+    // matchups don't fit the cell on a phone.
+    const legs = Array.isArray(p.legs) && p.legs.length > 1 ? p.legs : null;
+    const matchups = legs
+      ? legs.map((l) => `${l.away} @ ${l.home}`).join(' + ')
+      : `${p.away} @ ${p.home}`;
+    const matchupTitle = legs ? ` title="${esc(matchups)}"` : '';
     return `
       <div class="day-pick-row ${statusClass}"${voidTitle}>
-        <span class="pick-matchup">${esc(p.away)} @ ${esc(p.home)}</span>
+        <span class="pick-matchup"${matchupTitle}>${esc(matchups)}</span>
         <span class="pick-side">${esc(p.selection)}</span>
         <span class="pick-status">${statusLabel}</span>
         <span class="pick-payout">${esc(payoutLabel)}</span>
