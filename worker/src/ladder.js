@@ -75,7 +75,7 @@ import { applyTennisFormSignal } from '../../docs/qualitative.js';
 import { loadTeamContextsFor, applyTeamFormSignal } from './team-form.js';
 import { getNflEfficiency } from './nfl-efficiency.js';
 import { loadTennisArchivesFor } from './tennis-archive.js';
-import { GENERATION_HOUR_ET } from './tracking.js';
+import { GENERATION_HOUR_ET, loadPublishedSides, contradictsPublishedBoard } from './tracking.js';
 import { isExhibition, isEligibleTennisMatch, etParts, etDatePlusDays } from './potd.js';
 import { legsOf } from './combo-grading.js';
 
@@ -253,12 +253,25 @@ export async function ladderExclusions(env, dateKey, top5Picks = []) {
     if (leg.oddsEventId) blockedEventIds.add(leg.oddsEventId);
   }
 
+  // Sides the Full Slate has already published today. The ladder is the LAST
+  // surface drawn (index.js orders the chain), so unlike the curated boards
+  // it can see the whole slate — and the slate is not excluded by event the
+  // way the flagships are, because it carries a pick on essentially every
+  // game and blocking those would leave the ladder nothing to draw from.
+  // Agreement is fine; only the opposite side is barred, per the same
+  // direction the other boards follow.
+  const slateSides = await loadPublishedSides(env, dateKey, ['slate']).catch(() => new Set());
+
   return {
     blockedEventIds,
-    // Both the day's flagship picks are also real picks that could be
-    // contradicted on a market the event block above misses (a prop leg with
-    // no oddsEventId, say), so they join the contradiction check too.
-    contradictable: [...(potd?.pick ? [potd.pick] : []), ...top5Picks],
+    // Flattened to LEGS, not records: a Pixel's Pick can be a bankroll
+    // builder whose top-level fields describe only its anchor, so checking
+    // the record alone leaves its second leg open to being contradicted.
+    // Both flagships are also real picks that could be contradicted on a
+    // market the event block above misses (a prop leg with no oddsEventId,
+    // say), so they join the contradiction check too.
+    contradictable: [...legsOf(potd?.pick), ...top5Picks.flatMap(legsOf)].filter(Boolean),
+    slateSides,
   };
 }
 
@@ -355,11 +368,12 @@ export async function runLadderDaily(env, ctx, now = Date.now(), { fetchFullSlat
   // progressive-locking machinery. index.js runs this after Play of the
   // Day, Pixel's Picks and the Prop Play are decided, so the exclusions
   // below read a complete day.
-  const { blockedEventIds, contradictable } = await ladderExclusions(env, dateKey, await getTop5Picks());
+  const { blockedEventIds, contradictable, slateSides } = await ladderExclusions(env, dateKey, await getTop5Picks());
   const eligible = structurallyEligible.filter((c) => (
     c.commenceMs > now
     && !blockedEventIds.has(c.eventId)
     && !contradictable.some((pick) => contradictsPick(c, pick))
+    && !contradictsPublishedBoard(c, slateSides)
   ));
 
   if (!eligible.length) {

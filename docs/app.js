@@ -1759,7 +1759,7 @@ function renderPick(pick) {
       <div class="pick-head">
         <span class="pick-head-left">
           <span class="chip"><strong>${esc(sport)}</strong> ·
-            ${isCombo ? '2-leg combo' : 'Straight bet'}</span>
+            ${isCombo ? `${pick.legs.length}-leg combo` : 'Straight bet'}</span>
           ${flagChipHtml()}
         </span>
         <span class="price">${esc(formatAmerican(pick.american))}</span>
@@ -1789,11 +1789,18 @@ function renderDegradedPick(pick) {
     : record.status === 'lost' ? 'Lost'
     : record.commenceMs <= Date.now() ? 'Live / Final' : 'Locked';
 
+  // A ticket's away/home point at its ANCHOR leg (see combo-grading.js's
+  // record shape), so printing them under a joined "A + B" selection names
+  // one game for a bet on two.
+  const matchups = Array.isArray(record.legs) && record.legs.length > 1
+    ? record.legs.map((l) => `${l.away} @ ${l.home}`).join(' + ')
+    : `${record.away} @ ${record.home}`;
+
   return `
     <article class="pick">
       <div class="pick-head">
         <span class="pick-head-left">
-          <span class="chip"><strong>${record.type === 'combo' ? '2-leg combo' : 'Straight bet'}</strong></span>
+          <span class="chip"><strong>${record.type === 'combo' ? `${record.legs?.length ?? 2}-leg combo` : 'Straight bet'}</strong></span>
           ${flagChipHtml()}
         </span>
         <span class="price">${esc(formatAmerican(pick.american))}</span>
@@ -1812,7 +1819,7 @@ function renderDegradedPick(pick) {
            pick. -->
       <div class="leg">
         <p class="leg-selection">${esc(record.selection)}</p>
-        <p class="leg-matchup">${esc(record.away)} @ ${esc(record.home)} ·
+        <p class="leg-matchup">${esc(matchups)} ·
           <span class="schedule-result ${resultClass}">${esc(statusLabel)}</span></p>
       </div>
     </article>`;

@@ -388,3 +388,79 @@ test('a genuinely better score still wins outright, regardless of price', () => 
   ]);
   assert.equal(chosen.id, 'dog', 'the tie-break only applies to near-ties, never overriding a real edge');
 });
+
+/* ---------------------------------------------------------------- */
+/* Cross-board contradiction                                         */
+/* ---------------------------------------------------------------- */
+
+/*
+ * The ladder draws last of every surface, so it is the one that can see the
+ * whole day and the one that gives way. Two holes were open: the Full Slate
+ * was never consulted at all, and a Pixel's Pick that is a bankroll builder
+ * was only ever checked at its top level, where the record describes its
+ * anchor leg alone.
+ */
+
+test('the ladder never takes the opposite side of a Full Slate pick', async () => {
+  const { env } = makeKvStore();
+  const events = [makeLadderEvent('clash')];
+  // The Full Slate already has the home side; the ladder's own pick on this
+  // game would be the same favourite, so only the OPPOSITE side is at issue.
+  await env.POTD_KV.put('slate:2026-08-14:manifest', JSON.stringify({ pickIds: ['s1'] }));
+  await env.POTD_KV.put('slate:2026-08-14:pick:s1', JSON.stringify({
+    eventId: 'clash', marketKey: 'h2h', outcomeName: 'clash Away',
+  }));
+
+  const result = await runLadderDaily(env, ladderCtx, NOW, {
+    fetchFullSlate: async () => events,
+    getTop5Picks: async () => [],
+  });
+  if (!result.skipped) {
+    assert.notEqual(
+      result.record.pick.outcomeName, 'clash Home',
+      'took the opposite side of a Full Slate pick',
+    );
+  }
+});
+
+test('agreeing with the Full Slate is fine — the ladder still posts', async () => {
+  const { env } = makeKvStore();
+  const events = [makeLadderEvent('agree')];
+  await env.POTD_KV.put('slate:2026-08-14:manifest', JSON.stringify({ pickIds: ['s1'] }));
+  await env.POTD_KV.put('slate:2026-08-14:pick:s1', JSON.stringify({
+    eventId: 'agree', marketKey: 'h2h', outcomeName: 'agree Home',
+  }));
+
+  const result = await runLadderDaily(env, ladderCtx, NOW, {
+    fetchFullSlate: async () => events,
+    getTop5Picks: async () => [],
+  });
+  assert.equal(result.skipped, false, 'agreement must not empty the pool');
+  assert.equal(result.record.pick.outcomeName, 'agree Home');
+});
+
+test("a Pixel's Pick parlay protects BOTH its legs, not just its anchor", async () => {
+  const { env } = makeKvStore();
+  const events = [makeLadderEvent('legTwo')];
+  // A bankroll builder whose top level describes leg one on another game
+  // entirely; leg two is the game the ladder is looking at.
+  const combo = {
+    type: 'combo',
+    eventId: 'somewhereElse', marketKey: 'h2h', outcomeName: 'Other Home',
+    legs: [
+      { eventId: 'somewhereElse', marketKey: 'h2h', outcomeName: 'Other Home' },
+      { eventId: 'legTwo', marketKey: 'h2h', outcomeName: 'legTwo Away' },
+    ],
+  };
+
+  const result = await runLadderDaily(env, ladderCtx, NOW, {
+    fetchFullSlate: async () => events,
+    getTop5Picks: async () => [combo],
+  });
+  if (!result.skipped) {
+    assert.notEqual(
+      result.record.pick.outcomeName, 'legTwo Home',
+      "took the opposite side of a parlay's second leg",
+    );
+  }
+});
