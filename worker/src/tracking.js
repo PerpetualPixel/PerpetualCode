@@ -37,6 +37,7 @@ import { getLearningProfile, applyLearningToCandidates } from './daily-learning.
 import { fetchMmaResults, gradeMmaPickWithFallback } from './ufc-events.js';
 import { applyTennisFormSignal } from '../../docs/qualitative.js';
 import { loadTeamContextsFor, applyTeamFormSignal } from './team-form.js';
+import { fetchGridironFeed } from '../../docs/gridiron.js';
 import { getNflEfficiency } from './nfl-efficiency.js';
 import { loadTennisArchivesFor } from './tennis-archive.js';
 import {
@@ -738,7 +739,8 @@ export async function runTop5Batch(
     applyTeamFormSignal(
       applyTennisFormSignal(analyzed, await loadTennisArchivesFor(analyzed), { now }),
       await loadTeamContextsFor(analyzed, ctx, { now }),
-      { now, nflEfficiency: await getNflEfficiency(env) },
+      { now, nflEfficiency: await getNflEfficiency(env),
+        gridironFeed: await fetchGridironFeed(undefined, { force: true }).catch(() => null) },
     ),
     learningProfile,
   );

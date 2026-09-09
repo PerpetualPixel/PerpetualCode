@@ -1407,6 +1407,36 @@ input[type="range"]:focus-visible {
   color: var(--muted);
 }
 
+/* The Gridiron Engine's read on a football game — same callout treatment as
+   the capper consensus above, since both are an outside engine's opinion
+   sitting next to this app's own grade. */
+.gridiron-read p {
+  margin: 0 0 8px;
+  padding: 8px 10px;
+  border-left: 2px solid var(--accent);
+  background: color-mix(in srgb, var(--accent) 8%, transparent);
+  font-size: 0.82rem;
+  line-height: 1.4;
+}
+
+.gridiron-read .gridiron-meta {
+  border-left: none;
+  background: none;
+  padding: 0 10px;
+  font-size: 0.74rem;
+  color: var(--muted);
+}
+
+/* The engine's own disclosure, verbatim: it publishes that it has not been
+   shown to beat the closing line, and this app does not get to bury that in
+   smaller type than it prints the pick. */
+.gridiron-read .gridiron-disclosure {
+  border-left: 2px solid var(--line);
+  background: color-mix(in srgb, var(--line) 15%, transparent);
+  font-size: 0.76rem;
+  color: var(--muted);
+}
+
 /* The drawer's cancelled-fight banner: the consensus below it is history,
    not a live read. */
 .capper-consensus .consensus-cancelled {
