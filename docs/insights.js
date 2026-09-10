@@ -677,6 +677,111 @@ export function weatherInsights(weather, sportKey = null) {
 }
 
 /* ------------------------------------------------------------------ */
+/* Gridiron Engine (NFL / NCAAF)                                       */
+/* ------------------------------------------------------------------ */
+
+/**
+ * The NFL/NCAA prediction engine's read on one football game, as card
+ * bullets. `game` is an entry from its picks.json feed — see docs/gridiron.js
+ * for the fetching, matching and scoring; this module only writes the
+ * sentences, so it keeps its no-imports independence and the worker can use
+ * it unchanged.
+ *
+ * THE RULE at the top of this file applies here with no exception: every
+ * bullet below is a value that arrived in the feed. The engine writes its own
+ * breakdown paragraphs (`analysis`) and those are quoted, not paraphrased —
+ * rewording someone else's model output is how a hedged sentence turns into a
+ * confident one.
+ *
+ * Two things are stated plainly rather than buried:
+ *   - when the engine's pick is the OTHER side of this bet, the card says so.
+ *     A model read that contradicts the pick is exactly the bullet a person
+ *     needs, and hiding it would make this feed a cheerleader.
+ *   - a lean is labelled a lean. The engine finalises a pick only once the
+ *     injury report and kickoff forecast are in, and until then its own
+ *     number can still move.
+ */
+export function gridironInsights(game, subject, { marketKey = 'h2h' } = {}) {
+  if (!game) return [];
+  const bullets = [];
+  const pick = marketKey === 'spreads' ? game.spread : game.moneyline;
+  const ml = game.moneyline;
+  const analysis = game.analysis ?? {};
+  const pct = (value) => (Number.isFinite(value) ? `${Math.round(value * 100)}%` : null);
+
+  /* What the model makes of the game ---------------------------------- */
+  if (ml?.selection && Number.isFinite(ml.prob)) {
+    const tier = ml.tier_label ?? ml.tier ?? 'read';
+    const implied = pct(ml.agreement?.implied_prob);
+    const priceClause = implied ? ` The price implies ${implied}.` : '';
+    const line = game.model?.line ? `${game.model.line}, ` : '';
+    bullets.push({
+      tier: 'personnel',
+      text: `Gridiron Engine projects ${line}making ${ml.selection} a ${String(tier).toLowerCase()} `
+        + `at ${pct(ml.prob)} to win outright.${priceClause}`,
+    });
+  }
+
+  /* Does that read back this bet, or the other side? ------------------- */
+  // A total has no side to agree or disagree with, so it is not asked.
+  if (subject && pick?.selection && marketKey !== 'totals') {
+    const backsThis = fold(pick.selection) === fold(subject)
+      || containsWords(fold(pick.selection), fold(subject))
+      || containsWords(fold(subject), fold(pick.selection));
+    const what = marketKey === 'spreads'
+      ? `${pick.selection} ${pick.point > 0 ? `+${pick.point}` : pick.point}`
+      : pick.selection;
+    bullets.push({
+      tier: 'personnel',
+      text: backsThis
+        ? `The engine's own ${marketKey === 'spreads' ? 'spread' : 'moneyline'} pick is this side: ${what}.`
+        : `The engine's ${marketKey === 'spreads' ? 'spread' : 'moneyline'} pick is the other side of this game: ${what}.`,
+    });
+  }
+
+  /* The projected scoreline -------------------------------------------- */
+  const score = game.model?.projected_score;
+  if (score && Number.isFinite(score.home) && Number.isFinite(score.away)) {
+    bullets.push({
+      tier: 'personnel',
+      text: `Projected score: ${game.home} ${score.home}, ${game.away} ${score.away}`
+        + (Number.isFinite(score.total) ? `, against a market total of ${score.total}.` : '.'),
+    });
+  }
+
+  /* The engine's own words, quoted -------------------------------------- */
+  const topFactor = (analysis.factors ?? [])[0];
+  if (topFactor?.text) bullets.push({ tier: 'personnel', text: topFactor.text });
+
+  for (const entry of analysis.injuries ?? []) {
+    // Only the side this bet names — the whole report belongs on the engine's
+    // own page, which every card links to. A total names no side, so it gets
+    // both.
+    if (subject && marketKey !== 'totals' && !containsWords(fold(entry.team), fold(subject))
+        && fold(entry.team) !== fold(subject)) continue;
+    if (/^no (availability data|game-status designations|designations)/i.test(entry.text)) continue;
+    bullets.push({ tier: 'supporting', text: `${entry.team}: ${entry.text}` });
+  }
+
+  if (analysis.conditions) bullets.push({ tier: 'situational', text: analysis.conditions });
+
+  /* How final this read is ---------------------------------------------- */
+  if (game.locked) {
+    bullets.push({
+      tier: 'situational',
+      text: `The engine's pick on this game is locked${game.lock_reason ? ` (${game.lock_reason})` : ''} — it is what its tracker grades.`,
+    });
+  } else if (game.stage === 'lean') {
+    bullets.push({
+      tier: 'situational',
+      text: `This is the engine's lean, not its final pick: it locks once the ${game.waiting_on ?? 'final injury report and kickoff forecast'} is in, and the number can still move until then.`,
+    });
+  }
+
+  return bullets;
+}
+
+/* ------------------------------------------------------------------ */
 /* MMA (UFC / PFL / Dana White's Contender Series)                     */
 /* ------------------------------------------------------------------ */
 
@@ -952,7 +1057,7 @@ export const isMma = (sportKey) => sportKey === 'mma_mixed_martial_arts';
  * breakdown (see worker/src/potd.js). Returns [] when nothing could be
  * sourced, which the UI renders as a shorter card rather than filler.
  */
-export function buildInsights(leg, { tennisData = null, context = null, mmaContext = null, weather = null, now = Date.now() } = {}) {
+export function buildInsights(leg, { tennisData = null, context = null, mmaContext = null, weather = null, gridiron = null, now = Date.now() } = {}) {
   if (isTennis(leg.sportKey)) {
     if (!tennisData) return [];
     // Tennis "teams" are the two players; the bet names one of them.
@@ -972,9 +1077,15 @@ export function buildInsights(leg, { tennisData = null, context = null, mmaConte
     : leg.selection.replace(/ to win$/i, '').replace(/\s[+-]\d+(\.\d+)?$/, '').trim();
 
   const bullets = subject ? teamInsights(context, subject, { marketKey: leg.marketKey }) : [];
+  // The Gridiron Engine's read on a football game (docs/gridiron.js supplies
+  // the matched feed entry; null for every other sport, and for a football
+  // game its weeks don't cover). It sits after the ESPN-sourced bullets
+  // because it is a model's read rather than a fact about the teams, and the
+  // facts should be read first.
+  const engine = gridironInsights(gridiron, subject, { marketKey: leg.marketKey });
   // Weather applies to the game, not to whichever side the bet names — worth
   // showing on a total exactly as much as a moneyline or spread.
-  return [...bullets, ...weatherInsights(weather, leg.sportKey)];
+  return [...bullets, ...engine, ...weatherInsights(weather, leg.sportKey)];
 }
 
 /** Flattens tagged bullets to plain text, in original order — what the

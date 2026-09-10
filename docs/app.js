@@ -66,6 +66,16 @@ import {
   MMA_CONSENSUS_SWING,
 } from './capper-consensus.js';
 import {
+  fetchGridironFeed,
+  cachedGridironFeed,
+  findGridironGame,
+  gridironSignal,
+  gridironRecord,
+  gameGridironRecord,
+  blendGridironSignal,
+  isFootball,
+} from './gridiron.js';
+import {
   buildInsights,
   insightTexts,
   insightsByTier,
@@ -1273,6 +1283,23 @@ function eventContext(leg) {
 }
 
 /**
+ * The Gridiron Engine's entry for one football game, or null.
+ *
+ * One shared feed for the whole board rather than a lookup per game (see
+ * docs/gridiron.js): it is a single static JSON file on GitHub Pages carrying
+ * both leagues' current and next week, so fetching it once and matching
+ * locally costs one request for the entire slate. Null for every non-football
+ * leg, for a game outside the weeks the engine has published, and whenever
+ * the feed can't be reached — the same "nothing to say, not an error"
+ * contract as eventContext.
+ */
+async function gridironFor(leg) {
+  if (!isFootball(leg.sportKey)) return null;
+  const feed = await fetchGridironFeed();
+  return findGridironGame(feed, leg);
+}
+
+/**
  * National Weather Service forecast for one NFL/MLB venue at game time, via
  * the worker. Free — no odds credits — and null for every other sport, a
  * domed venue, an unlisted venue, or a game further out than NWS forecasts
@@ -1454,8 +1481,10 @@ async function insightsFor(leg) {
   if (isMma(leg.sportKey)) {
     return insightTexts(buildInsights(leg, { mmaContext: await mmaContextFor(leg) }));
   }
-  const [context, weather] = await Promise.all([eventContext(leg), weatherFor(leg)]);
-  return insightTexts(buildInsights(leg, { context, weather }));
+  const [context, weather, gridiron] = await Promise.all([
+    eventContext(leg), weatherFor(leg), gridironFor(leg),
+  ]);
+  return insightTexts(buildInsights(leg, { context, weather, gridiron }));
 }
 
 /**
@@ -2713,6 +2742,79 @@ function capperConsensusSectionHtml(leg) {
 }
 
 /**
+ * The Gridiron Engine's read on a football game, in the drawer — its pick,
+ * the tier, the calibrated win probability, and a link to the week page the
+ * whole breakdown lives on.
+ *
+ * Renders synchronously from the leg's own attached record or the cached feed
+ * (same first-paint-or-not-at-all posture as capperConsensusSectionHtml), and
+ * returns '' for non-football legs and games the engine's published weeks
+ * don't cover.
+ *
+ * `scored` keeps the wording honest. The signal only attaches to markets the
+ * feed can speak to — moneylines and spreads — so a total on a covered game
+ * shows the engine's projected scoreline as context and says plainly that it
+ * did not move this pick's number. And where the engine's pick is the OTHER
+ * side, the section says that too: a contradicting model read is exactly what
+ * someone about to place this bet should see.
+ */
+function gridironSectionHtml(leg) {
+  if (!isFootball(leg.sportKey)) return '';
+  const gr = leg.gridiron ?? gameGridironRecord(cachedGridironFeed(), leg);
+  if (!gr) return '';
+
+  const pct = (v) => (Number.isFinite(v) ? `${Math.round(v * 100)}%` : null);
+  const prob = pct(gr.prob);
+  const implied = pct(gr.impliedProb);
+  const score = gr.projectedScore;
+
+  const readLine = gr.selection
+    ? `<p>The engine's pick is <strong>${esc(gr.selection)}</strong>` +
+      `${gr.tier ? ` — a ${esc(String(gr.tier))}` : ''}${prob ? ` at ${esc(prob)} to win` : ''}.` +
+      `${implied ? ` The price implies ${esc(implied)}.` : ''}</p>`
+    : '';
+
+  const scoreLine = score && Number.isFinite(score.home)
+    ? `<p class="gridiron-score">Projected score: <strong>${esc(leg.home)} ${esc(String(score.home))}, ` +
+      `${esc(leg.away)} ${esc(String(score.away))}</strong>` +
+      `${Number.isFinite(score.total) ? ` against a market total of ${esc(String(score.total))}.` : '.'}</p>`
+    : '';
+
+  const gradeLine = gr.scored
+    ? (gr.aligned
+      ? `<p>This pick is the engine's side, which raised its grade.</p>`
+      : `<p>This pick is the <strong>opposite</strong> side to the engine's, which lowered its grade.</p>`)
+    : `<p>The engine has no view on a ${esc(leg.marketLabel)} bet here, so it hasn't moved this pick's
+       number — it's context for the game.</p>`;
+
+  const stageLine = gr.locked
+    ? `<p class="gridiron-meta">Locked${gr.lockReason ? ` — ${esc(gr.lockReason)}` : ''}: this is the pick its own tracker grades.</p>`
+    : gr.stage === 'lean'
+      ? `<p class="gridiron-meta">This is a lean, not final — it locks once the
+         ${esc(gr.waitingOn ?? 'final injury report and kickoff forecast')} is in.</p>`
+      : '';
+
+  // The engine's own disclosure, verbatim from the feed. It is emphatic that
+  // this model has not been shown to beat the closing line, and a site
+  // borrowing its picks has no business quietly dropping that.
+  const disclosure = gr.disclosure
+    ? `<p class="gridiron-disclosure">${esc(gr.disclosure)}</p>`
+    : '';
+
+  const link = gr.url
+    ? `<p class="gridiron-meta"><a href="${esc(gr.url)}" target="_blank" rel="noopener">Full breakdown on the
+       Gridiron Engine${gr.weekLabel ? ` — ${esc(gr.weekLabel)}` : ''}</a>` +
+      `${gr.generatedAt ? ` · built ${esc(dateFmt.format(new Date(gr.generatedAt)))}` : ''}</p>`
+    : '';
+
+  return `
+    <div class="stats-section gridiron-read">
+      <h3>Gridiron Engine</h3>
+      ${readLine}${scoreLine}${gradeLine}${stageLine}${disclosure}${link}
+    </div>`;
+}
+
+/**
  * When MMA_Engine's picks.json was last built, shown under a fight card's
  * event header.
  *
@@ -2774,7 +2876,11 @@ async function openStatsDrawer(leg, opposite = null, { fullscreen = false, oddsO
   // entire drawer; otherwise the slower research sections stream in on top
   // of it once they resolve — see the final innerHTML replace below.
   const consensusHtml = capperConsensusSectionHtml(leg);
-  el.statsDrawerBody.innerHTML = metaHtml + mainPlayHtml + consensusHtml + renderPriceTable(leg);
+  // Empty on the very first football drawer of a session, when no feed has
+  // been fetched yet — the research pass below awaits one, so the final
+  // render recomputes this rather than leaving the section missing.
+  let gridironHtml = gridironSectionHtml(leg);
+  el.statsDrawerBody.innerHTML = metaHtml + mainPlayHtml + consensusHtml + gridironHtml + renderPriceTable(leg);
   if (oddsOnly) return;
 
   // The research below (AI writeup, form bullets, weather) is the slow
@@ -2812,9 +2918,11 @@ async function openStatsDrawer(leg, opposite = null, { fullscreen = false, oddsO
       mmaSubjectName = leg.selection.replace(/ to win$/i, '').trim();
       mmaBreakdownHtml = renderMmaBreakdown(mmaContext, mmaSubjectName, leg);
     } else {
-      const [context, w] = await Promise.all([eventContext(leg), weatherFor(leg)]);
+      const [context, w, gridiron] = await Promise.all([
+        eventContext(leg), weatherFor(leg), gridironFor(leg),
+      ]);
       weather = w;
-      bullets = buildInsights(leg, { context, weather });
+      bullets = buildInsights(leg, { context, weather, gridiron });
     }
     const analysis = await analysisPromise;
     // The worker always returns a JSON envelope now — {analysis, quickTake,
@@ -2964,10 +3072,12 @@ async function openStatsDrawer(leg, opposite = null, { fullscreen = false, oddsO
   // drawer is actually for below the fold. (It still renders instantly in
   // the fast first paint above, where it IS the bottom until the slower
   // research sections resolve and take its place.)
+  gridironHtml = gridironSectionHtml(leg);   // the feed has landed by now
   el.statsDrawerBody.innerHTML =
     metaHtml +
     mainPlayHtml +
     consensusHtml +
+    gridironHtml +
     renderWeatherPills(weather) +
     priceHtml +
     devilHtml +
@@ -3294,6 +3404,27 @@ async function refreshQualitativeSignals() {
       } else {
         const context = await eventContext(c);
         signal = teamQualitativeSignal(context, c.outcomeName);
+        // Football candidates also get the Gridiron Engine's read on the game
+        // (docs/gridiron.js), blended with the ESPN form/injury/EPA signal
+        // above rather than replacing it — the two read different data, and
+        // dropping either would throw away real evidence. The engine's own
+        // measurements say it does not beat the market, so its say stays
+        // inside the generic ±QUALITATIVE.MAX_SWING clamp like any other
+        // qualitative signal, and is damped where it strays above the price.
+        if (isFootball(c.sportKey)) {
+          const feed = await fetchGridironFeed();
+          const match = gridironSignal(feed, c);
+          const game = match?.game ?? findGridironGame(feed, c);
+          if (game) {
+            c.gridiron = gridironRecord(game, feed, {
+              market: match?.market ?? null,
+              aligned: match?.aligned ?? null,
+              signal: match?.signal ?? null,
+              scored: Boolean(match),
+            });
+          }
+          if (match) signal = blendGridironSignal(signal, match.signal);
+        }
       }
     } catch {
       /* enrichment is a bonus; the price score stands on its own */

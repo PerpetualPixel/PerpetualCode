@@ -40,6 +40,9 @@ import { fetchContext, hasContext } from './context.js';
 import { teamQualitativeSignal, supportsQualitativeSignal } from '../../docs/qualitative.js';
 import { scoreCandidate } from '../../docs/engine.js';
 import { nflEpaDifferential } from './nfl-efficiency.js';
+import {
+  gridironSignal, findGridironGame, gridironRecord, blendGridironSignal, isFootball,
+} from '../../docs/gridiron.js';
 
 /** The one sport nflEpaDifferential has real data for — see nfl-efficiency.js's header. */
 const isNfl = (sportKey) => sportKey === 'americanfootball_nfl';
@@ -230,11 +233,20 @@ export function teamUnderdogBlocked(candidate, signal) {
  * see that function's own comment for why it's weighted highest of the
  * three when present.
  *
+ * `gridironFeed` is the NFL/NCAA prediction engine's picks.json (docs/
+ * gridiron.js) — optional, and only ever consulted for the two football
+ * keys. Where it covers a game, its calibrated read is blended with the
+ * form/injury/EPA signal above (GRIDIRON_BLEND_WEIGHT) rather than replacing
+ * it, and what it said is attached as `gridiron` so a locked pick's record
+ * carries the engine's number even after the game leaves the odds feed.
+ *
  * Returns a new array; does NOT re-sort — same contract as
  * applyTennisFormSignal, so callers that depend on score order must sort
  * afterwards, since re-scoring reorders candidates.
  */
-export function applyTeamFormSignal(candidates, contexts, { now = Date.now(), nflEfficiency = null } = {}) {
+export function applyTeamFormSignal(
+  candidates, contexts, { now = Date.now(), nflEfficiency = null, gridironFeed = null } = {},
+) {
   return (candidates ?? []).flatMap((c) => {
     if (!hasContext(c?.sportKey) || !supportsQualitativeSignal(c.marketKey)) return [c];
     const context = contexts?.get?.(fixtureKey(c)) ?? null;
@@ -249,8 +261,41 @@ export function applyTeamFormSignal(candidates, contexts, { now = Date.now(), nf
     } catch {
       /* a malformed context is missing data, not a reason to lose the board */
     }
+
+    // The Gridiron Engine's read on a football game (docs/gridiron.js),
+    // blended into the same signal rather than applied beside it, so the
+    // locked board and the browser's live one grade a football game
+    // identically — the same reason the capper consensus is applied here in
+    // the worker rather than only in app.js.
+    let gridiron = null;
+    if (gridironFeed && isFootball(c.sportKey)) {
+      try {
+        const match = gridironSignal(gridironFeed, c);
+        const game = match?.game ?? findGridironGame(gridironFeed, c);
+        if (game) {
+          gridiron = gridironRecord(game, gridironFeed, {
+            market: match?.market ?? null,
+            aligned: match?.aligned ?? null,
+            signal: match?.signal ?? null,
+            scored: Boolean(match),
+          });
+        }
+        if (match) signal = blendGridironSignal(signal, match.signal);
+      } catch {
+        /* a malformed feed entry is missing data, same posture as above */
+      }
+    }
+
+    // The underdog gate reads the blended signal: an upset call the engine
+    // backs is evidenced, and one it contradicts is not merely unevidenced.
     if (teamUnderdogBlocked(c, signal)) return [];
-    if (signal == null) return [{ ...c, formSignal: null, epaDiff }];
-    return [{ ...c, ...scoreCandidate(c, { now, qualitative: signal }), formSignal: signal, epaDiff }];
+    if (signal == null) return [{ ...c, formSignal: null, epaDiff, ...(gridiron ? { gridiron } : {}) }];
+    return [{
+      ...c,
+      ...scoreCandidate(c, { now, qualitative: signal }),
+      formSignal: signal,
+      epaDiff,
+      ...(gridiron ? { gridiron } : {}),
+    }];
   });
 }

@@ -32,6 +32,7 @@ else is sourced separately:
 | NFL, MLB, NBA, soccer | ESPN, via the worker's `/context` | season and venue records, last five, head-to-head, ATS, injury report |
 | Tennis (ATP + WTA) | static archive in [`docs/data/`](docs/data/) | head-to-head, form, surface splits, rankings, retirements |
 | MMA (UFC, PFL, Contender Series) | Sherdog, via the worker's `/mma-context` | pro record, finish-rate breakdown, loss-by-method, recent form, layoff disclosure |
+| NFL, NCAAF | [Gridiron Engine](https://perpetualpixel.github.io/NFL-NCAA-Football-Prediction-Engine/) `picks.json` | the model's pick and tier, calibrated win probability, projected score, injury report, matchup grades |
 
 ESPN has no usable tennis data at all — its tennis athletes carry no ids and the
 summary endpoint returns 400 — so tennis runs off a season archive built from
@@ -64,6 +65,36 @@ league directories rather than hardcoded — a fixed UFC+PFL pair left every
 other promotion's card displaying as a bare `Card - MM/DD`, and a longer
 hand-kept list would fail the same silent way the next time ESPN's roster of
 leagues changed.
+
+### Football: the Gridiron Engine feed
+
+The NFL/NCAA prediction engine at
+[perpetualpixel.github.io/NFL-NCAA-Football-Prediction-Engine](https://perpetualpixel.github.io/NFL-NCAA-Football-Prediction-Engine/)
+publishes `picks.json` beside its week pages: per game, the moneyline and
+spread it lands on, the tier, the calibrated win probability, and every
+breakdown paragraph from the card as plain text. [`docs/gridiron.js`](docs/gridiron.js)
+reads it, matches each entry to the football games on this app's own odds
+board, and folds the result into both the research bullets and the grade.
+
+**How much it is allowed to move a grade, and why it is not more.** MMA's
+capper consensus carries its own ±25 swing because the cappers *are* this
+app's handicapping model for that sport. Football is the opposite case, and
+the engine says so itself in the feed's `disclosure`: measured 2023-2025 its
+optimal blend weight given the closing line is 0.00, its closing line value is
+34-39%, and its largest disagreements with the market were its worst bets. So
+it enters as an ordinary qualitative signal inside the generic ±8 clamp,
+blended with the ESPN form/injury/EPA signal rather than replacing it, and its
+magnitude is *damped* as it strays above the price rather than amplified — the
+opposite of what a naive "the model likes it more than the book does" reading
+would do. Spread agreement is capped lower still, because the engine's own
+tracking says its spread sides cover about half the time. Totals get the
+projected scoreline as research and no grade change at all: the engine
+publishes no totals record, so there is nothing to stand behind.
+
+Where the engine's pick is the *other* side of a bet on the board, the card
+says so, and the drawer carries the engine's own disclosure verbatim. A site
+borrowing another model's picks does not get to keep the confidence and drop
+the caveat.
 
 None of these sources cost odds credits.
 

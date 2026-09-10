@@ -77,6 +77,7 @@ import {
 import { GENERATION_HOUR_ET } from './tracking.js';
 import { applyTennisFormSignal } from '../../docs/qualitative.js';
 import { loadTeamContextsFor, applyTeamFormSignal } from './team-form.js';
+import { fetchGridironFeed } from '../../docs/gridiron.js';
 import { getNflEfficiency } from './nfl-efficiency.js';
 import { loadTennisArchive, loadTennisArchivesFor } from './tennis-archive.js';
 import { retractedRecord } from './retraction.js';
@@ -456,7 +457,8 @@ export async function runPotdDaily(env, ctx, now = Date.now(), { fetchFullSlate 
     applyTeamFormSignal(
       applyTennisFormSignal(analyzed, await loadTennisArchivesFor(analyzed), { now }),
       await loadTeamContextsFor(analyzed, ctx, { now }),
-      { now, nflEfficiency: await getNflEfficiency(env) },
+      { now, nflEfficiency: await getNflEfficiency(env),
+        gridironFeed: await fetchGridironFeed(undefined, { force: true }).catch(() => null) },
     ),
     learningProfile,
   );

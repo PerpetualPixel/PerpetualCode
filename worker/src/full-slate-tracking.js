@@ -43,6 +43,7 @@ import { getAllNhlPropsTracked } from './nhl-props.js';
 import { applyTennisFormSignal } from '../../docs/qualitative.js';
 import { getPausedSegments, isSegmentPaused } from './algo-health.js';
 import { loadTeamContextsFor, applyTeamFormSignal } from './team-form.js';
+import { fetchGridironFeed } from '../../docs/gridiron.js';
 import { getNflEfficiency } from './nfl-efficiency.js';
 import { loadTennisArchivesFor } from './tennis-archive.js';
 import { retractedRecord } from './retraction.js';
@@ -217,7 +218,8 @@ export async function runFullSlateBatch(
   const candidates = applyTeamFormSignal(
     applyTennisFormSignal(analyzed, await loadTennisArchivesFor(analyzed), { now }),
     teamContexts,
-    { now, nflEfficiency: await getNflEfficiency(env) },
+    { now, nflEfficiency: await getNflEfficiency(env),
+      gridironFeed: await fetchGridironFeed(undefined, { force: true }).catch(() => null) },
   ).sort((a, b) => b.score - a.score);
 
   // analyze() is already sorted by score descending (re-sorted above after
