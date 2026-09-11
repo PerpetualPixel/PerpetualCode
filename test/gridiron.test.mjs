@@ -396,3 +396,14 @@ test('simultaneous callers share one request rather than one each', async () => 
   assert.equal(calls.length, 1);
   assert.ok(results.every((r) => r === results[0]));
 });
+
+test('an early lean with no injury report behind it is context, never a grade', () => {
+  // feed v2 publishes `stage: "pending"` reads made more than a week out
+  const early = game({ stage: 'pending', locked: false, waiting_on: null });
+  assert.equal(gridironSignal(feed([early]), candidate()), null);
+  const [enriched] = applyGridironFeed([candidate()], feed([early]), () => {
+    throw new Error('a pending read must not re-score the candidate');
+  });
+  assert.equal(enriched.gridiron.scored, false);
+  assert.equal(enriched.gridiron.stage, 'pending');
+});

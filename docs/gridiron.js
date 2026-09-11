@@ -213,6 +213,14 @@ function tierMagnitude(tier) {
 export function gridironSignal(feed, candidate) {
   const game = findGridironGame(feed, candidate);
   if (!game) return null;
+  // Feed v2 publishes every game the engine lists, including early leans made
+  // more than a week out with no injury report behind them (`stage:
+  // "pending"`). Those are the engine's read, but not yet its pick — its own
+  // release rules withhold them from the tracker for exactly that reason —
+  // so they reach the card as context (see gridironRecord) and never the
+  // grade. Scoring a pre-injury-report lean would be betting on a number the
+  // engine itself says will move.
+  if (game.stage === 'pending') return null;
 
   if (candidate.marketKey === 'h2h') {
     const pick = game.moneyline;
