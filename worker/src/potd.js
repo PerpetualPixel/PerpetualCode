@@ -77,6 +77,7 @@ import {
 import { GENERATION_HOUR_ET } from './tracking.js';
 import { applyTennisFormSignal } from '../../docs/qualitative.js';
 import { loadTeamContextsFor, applyTeamFormSignal } from './team-form.js';
+import { withGridironFloor } from './tracking.js';
 import { fetchGridironFeed } from '../../docs/gridiron.js';
 import { getNflEfficiency } from './nfl-efficiency.js';
 import { loadTennisArchive, loadTennisArchivesFor } from './tennis-archive.js';
@@ -304,7 +305,7 @@ function buildWriteup(candidate, research, now, analysis) {
     stake: suggestedStake(candidate),
     // The algorithm's own sizing for this play, in units — rendered on the
     // card itself (renderPotdConfidence). Same value stored on pick.stakeUnits.
-    stakeUnits: stakeUnitsForScore(candidate.score, STAKE_BANDS.potd),
+    stakeUnits: withGridironFloor(candidate, stakeUnitsForScore(candidate.score, STAKE_BANDS.potd), STAKE_BANDS.potd),
     analysis: analysis?.analysis ?? null,
     reasons: analysis?.quickTake ?? null,
     devilsAdvocate: analysis?.devilsAdvocate ?? null,
@@ -368,8 +369,8 @@ async function buildRecord(best, dateKey, now, env, ctx) {
       // in the band (2026-08-21 direction — was a flat 5U). The dollar
       // figure is the tracked record's $25/1U accounting basis; the card
       // shows the units.
-      stakeUnits: stakeUnitsForScore(best.score, STAKE_BANDS.potd),
-      suggested_stake: UNIT_DOLLARS * stakeUnitsForScore(best.score, STAKE_BANDS.potd),
+      stakeUnits: withGridironFloor(best, stakeUnitsForScore(best.score, STAKE_BANDS.potd), STAKE_BANDS.potd),
+      suggested_stake: UNIT_DOLLARS * withGridironFloor(best, stakeUnitsForScore(best.score, STAKE_BANDS.potd), STAKE_BANDS.potd),
       status: 'pending',
       clv: { openAmerican: best.american, closeAmerican: best.american, updatedAt: now },
       result: null,

@@ -213,6 +213,14 @@ function tierMagnitude(tier) {
 export function gridironSignal(feed, candidate) {
   const game = findGridironGame(feed, candidate);
   if (!game) return null;
+  // Feed v2 publishes every game the engine lists, including early leans made
+  // more than a week out with no injury report behind them (`stage:
+  // "pending"`). Those are the engine's read, but not yet its pick — its own
+  // release rules withhold them from the tracker for exactly that reason —
+  // so they reach the card as context (see gridironRecord) and never the
+  // grade. Scoring a pre-injury-report lean would be betting on a number the
+  // engine itself says will move.
+  if (game.stage === 'pending') return null;
 
   if (candidate.marketKey === 'h2h') {
     const pick = game.moneyline;
@@ -269,6 +277,67 @@ export function blendGridironSignal(teamSignal, gridSignal) {
   return clamp(GRIDIRON_BLEND_WEIGHT * b + (1 - GRIDIRON_BLEND_WEIGHT) * a, -1, 1);
 }
 
+/* ── Sizing: the one condition under which a Lock has paid ──────────── */
+
+/**
+ * How much better than the engine's own line the board's best price has to
+ * be before a Lock moneyline earns extra units.
+ *
+ * Measured on the engine's 535 graded Lock moneylines (2023-25): at the line
+ * the engine grades against they return -0.74%; at a price 1% better (in
+ * decimal terms) they break even, and at 2% better they return +1.25%, with
+ * college Locks positive in every one of the three seasons. No sizing rule
+ * on its own gets there — the confident tiers lose less than the rest, but
+ * they still pay the vig — so extra size is tied to the one thing that
+ * actually moved the record: the price. A Lock at the engine's own number
+ * or worse sizes like any other pick.
+ *
+ * At a typical Lock price this is small in American terms — 1% better than
+ * -400 is about -381 — which is exactly the gap line-shopping across eight
+ * books tends to find and the engine, grading one line, never sees.
+ */
+export const LOCK_PRICE_EDGE = { TWO_UNITS: 0.01, THREE_UNITS: 0.02 };
+
+/** American odds -> decimal, or null for anything that is not a real price. */
+export function americanToDecimalOrNull(american) {
+  const a = Number(american);
+  if (!Number.isFinite(a) || Math.abs(a) < 100) return null;
+  return a < 0 ? 1 + 100 / -a : 1 + a / 100;
+}
+
+/**
+ * How much better (or worse) the board's price is than the engine's, as a
+ * fraction of decimal odds: +0.02 means the bettor is paid 2% more per unit
+ * than the line the engine graded. Null when either side has no real price.
+ */
+export function priceEdgeVsEngine(candidate, pick) {
+  const board = Number(candidate?.decimal);
+  const engine = americanToDecimalOrNull(pick?.price);
+  if (!Number.isFinite(board) || board <= 1 || engine == null) return null;
+  return board / engine - 1;
+}
+
+/**
+ * The minimum units a football candidate should carry on the strength of the
+ * engine's read, or null when it has not earned one: a Lock moneyline on the
+ * engine's own side whose board price beats the engine's line by
+ * LOCK_PRICE_EDGE. Two units at 1% better, three at 2% better. Every other
+ * case — a Pick, a Lean, a spread, the other side, a Lock at a worse price —
+ * returns null and sizes on the app's own score as it always has.
+ *
+ * The board's stake band still caps the result where it applies (Pixel's
+ * Picks top out at 2.5u); this is a floor, never an override of the ceiling.
+ */
+export function lockStakeFloor(candidate, match) {
+  if (!match || match.market !== 'h2h' || !match.aligned) return null;
+  if (String(match.pick?.tier ?? '').toLowerCase() !== 'lock') return null;
+  const edge = priceEdgeVsEngine(candidate, match.pick);
+  if (edge == null) return null;
+  if (edge >= LOCK_PRICE_EDGE.THREE_UNITS) return 3;
+  if (edge >= LOCK_PRICE_EDGE.TWO_UNITS) return 2;
+  return null;
+}
+
 /**
  * The feed entry flattened into what the UI renders, with `scored` saying
  * honestly whether it moved this candidate's grade. A totals candidate on a
@@ -276,7 +345,7 @@ export function blendGridironSignal(teamSignal, gridSignal) {
  * scoreline is real context for that game, and claiming it graded the total
  * would not be.
  */
-export function gridironRecord(game, feed, { market = null, aligned = null, signal = null, scored = false } = {}) {
+export function gridironRecord(game, feed, { market = null, aligned = null, signal = null, scored = false, priceEdge = null, stakeFloor = null } = {}) {
   if (!game) return null;
   const pick = market === 'spreads' ? game.spread : game.moneyline;
   return {
@@ -301,6 +370,11 @@ export function gridironRecord(game, feed, { market = null, aligned = null, sign
     aligned,
     signal,
     scored,
+    // How the board's best price compares to the engine's line, and the unit
+    // floor that comparison earned (see lockStakeFloor) — null unless this is
+    // a Lock moneyline on the engine's side at a better price.
+    priceEdge,
+    stakeFloor,
     generatedAt: feed?.generated_at ?? null,
     disclosure: feed?.disclosure ?? null,
   };
@@ -345,6 +419,8 @@ export function applyGridironFeed(candidates, feed, scoreFor) {
         aligned: match.aligned,
         signal: match.signal,
         scored: true,
+        priceEdge: priceEdgeVsEngine(c, match.pick),
+        stakeFloor: lockStakeFloor(c, match),
       }),
     };
     return Object.assign(enriched, scoreFor(enriched, match.signal));

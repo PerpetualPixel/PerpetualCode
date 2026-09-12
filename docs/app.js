@@ -73,6 +73,8 @@ import {
   gridironRecord,
   gameGridironRecord,
   blendGridironSignal,
+  priceEdgeVsEngine,
+  lockStakeFloor,
   isFootball,
 } from './gridiron.js';
 import {
@@ -2787,6 +2789,18 @@ function gridironSectionHtml(leg) {
     : `<p>The engine has no view on a ${esc(leg.marketLabel)} bet here, so it hasn't moved this pick's
        number — it's context for the game.</p>`;
 
+  // Sizing is the one lever the engine's own record says pays on its Locks,
+  // and only at a better price than it grades against — so the drawer says
+  // whether THIS price cleared that bar, in either direction.
+  const edgePct = Number.isFinite(gr.priceEdge) ? `${gr.priceEdge >= 0 ? '+' : ''}${(gr.priceEdge * 100).toFixed(1)}%` : null;
+  const sizingLine = gr.stakeFloor
+    ? `<p>Board price beats the engine's line by <strong>${esc(edgePct)}</strong> — the only condition
+       under which its Locks have paid — so this play sizes at a <strong>${esc(String(gr.stakeFloor))}u</strong> floor.</p>`
+    : (gr.scored && gr.aligned && String(gr.tier).toLowerCase() === 'lock' && edgePct)
+      ? `<p class="gridiron-meta">Board price vs the engine's line: ${esc(edgePct)}. Its Locks only pay at 1%+ better,
+         so this one sizes on the app's own score.</p>`
+      : '';
+
   const stageLine = gr.locked
     ? `<p class="gridiron-meta">Locked${gr.lockReason ? ` — ${esc(gr.lockReason)}` : ''}: this is the pick its own tracker grades.</p>`
     : gr.stage === 'lean'
@@ -2810,7 +2824,7 @@ function gridironSectionHtml(leg) {
   return `
     <div class="stats-section gridiron-read">
       <h3>Gridiron Engine</h3>
-      ${readLine}${scoreLine}${gradeLine}${stageLine}${disclosure}${link}
+      ${readLine}${scoreLine}${gradeLine}${sizingLine}${stageLine}${disclosure}${link}
     </div>`;
 }
 
@@ -3421,6 +3435,8 @@ async function refreshQualitativeSignals() {
               aligned: match?.aligned ?? null,
               signal: match?.signal ?? null,
               scored: Boolean(match),
+              priceEdge: match ? priceEdgeVsEngine(c, match.pick) : null,
+              stakeFloor: match ? lockStakeFloor(c, match) : null,
             });
           }
           if (match) signal = blendGridironSignal(signal, match.signal);
