@@ -42,6 +42,7 @@ import { scoreCandidate } from '../../docs/engine.js';
 import { nflEpaDifferential } from './nfl-efficiency.js';
 import {
   gridironSignal, findGridironGame, gridironRecord, blendGridironSignal, isFootball,
+  priceEdgeVsEngine, lockStakeFloor,
 } from '../../docs/gridiron.js';
 
 /** The one sport nflEpaDifferential has real data for — see nfl-efficiency.js's header. */
@@ -278,6 +279,10 @@ export function applyTeamFormSignal(
             aligned: match?.aligned ?? null,
             signal: match?.signal ?? null,
             scored: Boolean(match),
+            priceEdge: match ? priceEdgeVsEngine(c, match.pick) : null,
+            // The unit floor a Lock earns by beating the engine's price —
+            // read by pickRecordFrom / the POTD draw when they size the play.
+            stakeFloor: match ? lockStakeFloor(c, match) : null,
           });
         }
         if (match) signal = blendGridironSignal(signal, match.signal);

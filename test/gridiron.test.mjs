@@ -407,3 +407,76 @@ test('an early lean with no injury report behind it is context, never a grade', 
   assert.equal(enriched.gridiron.scored, false);
   assert.equal(enriched.gridiron.stage, 'pending');
 });
+
+/* ── Sizing: a Lock earns units only by beating the engine's price ───── */
+
+import { priceEdgeVsEngine, lockStakeFloor, LOCK_PRICE_EDGE } from '../docs/gridiron.js';
+import { withGridironFloor } from '../worker/src/tracking.js';
+import { STAKE_BANDS, MAX_STAKE_UNITS } from '../docs/engine.js';
+
+const lockGame = () => game({
+  moneyline: {
+    ...game().moneyline,
+    tier: 'lock', tier_label: 'Lock', prob: 0.9, price: -400,
+    agreement: { model_prob: 0.9, implied_prob: 0.8, gap: 0.1 },
+  },
+});
+// -400 is 1.25 decimal; the board's best price at 1% and 2% better
+const atEdge = (edge) => candidate({ decimal: 1.25 * (1 + edge), american: -400 });
+
+test('price edge is the board price over the engine line, in decimal terms', () => {
+  const pick = lockGame().moneyline;
+  assert.ok(Math.abs(priceEdgeVsEngine(atEdge(0.02), pick) - 0.02) < 1e-9);
+  assert.ok(priceEdgeVsEngine(atEdge(-0.01), pick) < 0);
+  // no real price on either side, no edge to speak of
+  assert.equal(priceEdgeVsEngine(candidate({ decimal: NaN }), pick), null);
+  assert.equal(priceEdgeVsEngine(atEdge(0.02), { ...pick, price: null }), null);
+});
+
+test('a Lock at a better price than the engine graded earns a unit floor; at its own price it does not', () => {
+  const f = feed([lockGame()]);
+  const floorAt = (edge) => lockStakeFloor(atEdge(edge), gridironSignal(f, atEdge(edge)));
+  assert.equal(floorAt(LOCK_PRICE_EDGE.THREE_UNITS), 3);
+  assert.equal(floorAt(LOCK_PRICE_EDGE.TWO_UNITS), 2);
+  assert.equal(floorAt(0.005), null);   // the engine's own line, give or take: no floor
+  assert.equal(floorAt(-0.02), null);   // a worse price never sizes up
+});
+
+test('only a Lock moneyline on the engine’s side earns the floor', () => {
+  // a Pick at a great price is still a Pick — the record says those lose
+  const pickFeed = feed([game({ moneyline: { ...game().moneyline, tier: 'pick', price: -400 } })]);
+  assert.equal(lockStakeFloor(atEdge(0.05), gridironSignal(pickFeed, atEdge(0.05))), null);
+  // the other side of a Lock is opposed, not confident
+  const f = feed([lockGame()]);
+  const other = candidate({ outcomeName: 'New England Patriots', selection: 'New England Patriots to win', decimal: 4.0 });
+  assert.equal(lockStakeFloor(other, gridironSignal(f, other)), null);
+  // a spread has no Lock tier to earn one
+  const spread = candidate({ marketKey: 'spreads', outcomeName: 'Seattle Seahawks', point: -3.5, decimal: 1.95 });
+  assert.equal(lockStakeFloor(spread, gridironSignal(f, spread)), null);
+});
+
+test('applyGridironFeed carries the price edge and the floor on the record', () => {
+  const f = feed([lockGame()]);
+  const [enriched] = applyGridironFeed([atEdge(0.02)], f, (cand, signal) =>
+    scoreCandidate(cand, { now: NOW, qualitative: signal }));
+  assert.ok(Math.abs(enriched.gridiron.priceEdge - 0.02) < 1e-9);
+  assert.equal(enriched.gridiron.stakeFloor, 3);
+  const [plain] = applyGridironFeed([atEdge(0)], f, (cand, signal) =>
+    scoreCandidate(cand, { now: NOW, qualitative: signal }));
+  assert.equal(plain.gridiron.stakeFloor, null);
+});
+
+test('the worker lifts a score-sized stake to the floor, never above the board’s band', () => {
+  const withFloor = (stakeFloor) => ({ gridiron: { stakeFloor } });
+  // Pixel's Picks top out at 2.5u: a 3u floor is capped there
+  assert.equal(withGridironFloor(withFloor(3), 1, STAKE_BANDS.pixel), STAKE_BANDS.pixel.max);
+  // Play of the Day allows 3u
+  assert.equal(withGridironFloor(withFloor(3), 1.5, STAKE_BANDS.potd), 3);
+  // a floor below the score-sized stake changes nothing
+  assert.equal(withGridironFloor(withFloor(2), 2.5, STAKE_BANDS.pixel), 2.5);
+  // no floor, or no engine record at all, leaves the stake alone
+  assert.equal(withGridironFloor(withFloor(null), 1.5, STAKE_BANDS.pixel), 1.5);
+  assert.equal(withGridironFloor({}, 1, STAKE_BANDS.potd), 1);
+  // and nothing ever clears the app-wide ceiling
+  assert.ok(withGridironFloor(withFloor(5), 1, { min: 1, max: 10 }) <= MAX_STAKE_UNITS);
+});

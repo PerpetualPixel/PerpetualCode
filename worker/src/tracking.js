@@ -25,7 +25,7 @@
  * single, server-side, always-on history that doesn't depend on anyone
  * having the app open.
  */
-import { analyze, topPicks, applyBankrollBuilders, clearsMaxJuice, isNflPreseason, isNflPreseasonKey, UNIT_DOLLARS, STAKE_BANDS, stakeUnitsForScore } from '../../docs/engine.js';
+import { analyze, topPicks, applyBankrollBuilders, clearsMaxJuice, isNflPreseason, isNflPreseasonKey, UNIT_DOLLARS, STAKE_BANDS, MAX_STAKE_UNITS, stakeUnitsForScore } from '../../docs/engine.js';
 import { fetchCapperConsensus, applyCapperConsensus, upgradeToValueStraight } from '../../docs/capper-consensus.js';
 import { isPower4Matchup } from '../../docs/ncaaf-conferences.js';
 import { gradePick } from '../../docs/learning.js';
@@ -483,6 +483,22 @@ function comboLegRecord(leg) {
   };
 }
 
+/**
+ * Lift a score-sized stake to the floor a football Lock earned by beating the
+ * Gridiron Engine's price (docs/gridiron.js's lockStakeFloor), without ever
+ * exceeding the board's own band or MAX_STAKE_UNITS. Sizing is the one lever
+ * the engine's record says pays on its confident plays — and only at a
+ * better price than it grades against — so the floor is conditional on that
+ * price edge being real on this candidate, not on the tier alone. A candidate
+ * with no floor (every non-football pick, every non-Lock, a Lock at the
+ * engine's own number) keeps its score-sized stake untouched.
+ */
+export function withGridironFloor(candidate, units, band) {
+  const floor = Number(candidate?.gridiron?.stakeFloor);
+  if (!Number.isFinite(floor) || floor <= units) return units;
+  return Math.min(floor, band?.max ?? MAX_STAKE_UNITS, MAX_STAKE_UNITS);
+}
+
 export function pickRecordFrom(pick, dateKey, now, stakeUnits = null) {
   const leg = pick.legs[0];
   // A two-leg combo (docs/engine.js's pairShortPricedPicks) is ONE bet that
@@ -499,7 +515,7 @@ export function pickRecordFrom(pick, dateKey, now, stakeUnits = null) {
   const units = stakeUnits
     ?? (pick.meetsStandard === false
       ? STAKE_BANDS.pixel.min
-      : stakeUnitsForScore(pick.score, STAKE_BANDS.pixel));
+      : withGridironFloor(leg, stakeUnitsForScore(pick.score, STAKE_BANDS.pixel), STAKE_BANDS.pixel));
   return {
     // A combo's id has to differ from its anchor leg's, or the same anchor
     // appearing as a single on another day would collide with it in KV.
