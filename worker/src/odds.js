@@ -55,15 +55,18 @@ export const REGIONS = 'us';
 // only by international books until close to start — US books post those
 // matches late or not at all. That left them coming back with fewer than
 // RULES.MIN_BOOKS quoting each line, so no candidate was built and the match
-// rendered as an all-dash Full Slate row even an hour out. Tennis alone
-// uses the EU/UK books that actually price it — WITHOUT the us region: the
-// whole point of the widening was that US books don't post these matches,
-// so paying a third region's credits to re-ask them added cost (9 vs 6
-// credits per fetch, the most expensive call in the app) for lines the
-// uk/eu set already carries. Scoped to tennis on purpose: The Odds API
-// bills per region per market, so widening every sport would multiply the
-// quota cost of the whole slate.
-export const TENNIS_REGIONS = 'uk,eu';
+// rendered as an all-dash Full Slate row even an hour out. Tennis therefore
+// pulls the EU/UK books that price it — AND, since 2026-09-15, the US books
+// too. For a year this was uk/eu alone to save a region's credits, and the
+// consequence showed up in the record: every tennis pick's "best price" was
+// at 1xBet, GTbets, Betfair or Pinnacle, none of which a US reader can use,
+// and those picks went 22-29 on Pixel's Picks for -20%. With the US region
+// back, a main-tour match carries DraftKings/FanDuel prices, the curated
+// boards can require a bettable price (buildCandidates' `bettable`), and
+// the uk/eu books still carry the sharp anchor (Pinnacle, the exchanges)
+// and the depth for lower-tier draws. 9 credits per tennis key per miss
+// instead of 6, under a plan whose ceiling sits far above actual usage.
+export const TENNIS_REGIONS = 'us,uk,eu';
 // A sport whose odds board came back EMPTY is out of season or between
 // cards — nothing there can change in minutes, and The Odds API bills the
 // same markets-x-regions price for an empty answer as a full one. Empty

@@ -315,7 +315,9 @@ export async function runLadderDaily(env, ctx, now = Date.now(), { fetchFullSlat
     fetchFullSlate(),
   ]);
   // The bar no fallback relaxes — see the file header.
-  const clearsEdge = (c) => c.ev > algoConfig.MIN_EV_PCT
+  // ...and a price the reader can take (buildCandidates' `bettable`).
+  const clearsEdge = (c) => c.bettable !== false
+    && c.ev > algoConfig.MIN_EV_PCT
     && suggestedStake(c) >= algoConfig.MIN_KELLY_FRACTION;
 
   // Team sports get their own form/injury gate (worker/src/team-form.js)

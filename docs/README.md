@@ -93,6 +93,16 @@ boards that rank by score kept choosing the cleanest number over the most
 profitable one. A zero-EV candidate now scores at most 33 whatever its market
 quality.
 
+**A curated pick is priced at a book you can bet.** Play of the Day,
+Pixel's Picks and the Ladder refuse a candidate whose best price sits only at
+an offshore or EU book (`bettable` on the candidate; `requireBettable` in
+`topPicks`). The live record made the case: Pixel's Picks priced at a registry
+book went 24-19 for +24.7%, those priced at offshore/EU books 35-42 for −10%,
+and those at Pinnacle or an exchange 6-8 for −25% — and the edge read only
+predicted results at registry prices. Tennis now pulls the US region too so
+main-tour matches carry registry prices at all. The Full Slate, as the raw
+record, still tracks every line.
+
 **The edge floor is the one thing no board relaxes.** Play of the Day,
 Pixel's Picks, the Ladder rung and the Prop Play each require a real edge
 (`RULES.MIN_EV_PCT`, 2% of stake against the anchored consensus, plus a

@@ -123,10 +123,10 @@ test('enrichMmaEvents falls back to date grouping for every fight when both scor
 test('regionsFor widens tennis keys and leaves team sports on us', () => {
   assert.equal(regionsFor('tennis_wta_cincinnati'), TENNIS_REGIONS);
   assert.equal(regionsFor('tennis_atp_canadian_open'), TENNIS_REGIONS);
-  // uk,eu deliberately WITHOUT us: the widening exists because US books
-  // don't price lower-tier tennis, so re-asking them paid a third region's
-  // credits (9 vs 6 per fetch) for nothing.
-  assert.equal(TENNIS_REGIONS, 'uk,eu');
+  // us AND uk/eu: the US books carry the prices a reader can bet (without
+  // them every tennis pick's best price was at 1xBet or Pinnacle), the
+  // uk/eu books carry the sharp anchor and the depth for lower-tier draws.
+  assert.equal(TENNIS_REGIONS, 'us,uk,eu');
 
   for (const key of ['baseball_mlb', 'americanfootball_nfl', 'mma_mixed_martial_arts', 'soccer_usa_mls']) {
     assert.equal(regionsFor(key), REGIONS);
@@ -146,9 +146,9 @@ test('fetchSport requests the widened regions for a tennis key', async () => {
   };
 
   await fetchSport('tennis_wta_cincinnati', { ODDS_API_KEY: 'k' }, ctx);
-  assert.equal(requested.length, 1);
+  assert.equal(requested.length, 1, 'tennis makes no second sharp-quote call — its regions already carry Pinnacle');
   const url = new URL(requested[0]);
-  assert.equal(url.searchParams.get('regions'), 'uk,eu');
+  assert.equal(url.searchParams.get('regions'), 'us,uk,eu');
 });
 
 test('fetchSport keeps team sports on the us region', async () => {
@@ -175,7 +175,7 @@ test('fetchSport caches tennis under a region-specific key (no us-only collision
 
   await fetchSport('tennis_wta_cincinnati', { ODDS_API_KEY: 'k' }, ctx);
   assert.ok(puts.length >= 1);
-  assert.ok(puts[0].includes('regions=uk,eu'), `cache key should carry the tennis regions, got ${puts[0]}`);
+  assert.ok(puts[0].includes('regions=us,uk,eu'), `cache key should carry the tennis regions, got ${puts[0]}`);
 });
 
 /* ---------------------------------------------------------------- */

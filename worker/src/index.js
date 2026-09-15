@@ -884,7 +884,12 @@ export default {
               ...tagged(ladder, 'ladder'),
             ];
           },
-        }),
+        })
+          // Logged, never swallowed: this review ran once in W33 and silently
+          // never again (see algo-health.js's HEALTH_WINDOW_DAYS), and no
+          // segment was ever paused because nothing said it had stopped.
+          .then((r) => console.log('Algorithm health review:', JSON.stringify(r).slice(0, 500)))
+          .catch((e) => console.error('Algorithm health review failed:', e)),
       );
 
       // Same Monday-morning slot for the optional weekly tracking-dashboard

@@ -810,6 +810,9 @@ export async function runTop5Batch(
     // rather than padding the record with bets the engine itself grades as
     // losers (see topPicks' own note on the removed last-resort tier).
     guaranteeCount: true,
+    // Every Pixel's Pick is priced at a book the reader can bet — see
+    // buildCandidates' `bettable` for the record behind this.
+    requireBettable: true,
   });
 
   // Two of the five run as "bankroll builders" (2026-09-02 direction): two or
@@ -837,6 +840,7 @@ export async function runTop5Batch(
     // favourites that are individually -EV multiplies the vig, not the
     // bankroll — the ticket is only as good as its worst leg.
     isEligible: (c) => c.marketKey === 'h2h'
+      && c.bettable !== false
       && c.american <= FAVOURITE_MAX_AMERICAN
       && c.american >= PIXEL_ODDS.HARD_MIN
       && c.score >= convictionFloor

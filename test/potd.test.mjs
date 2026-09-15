@@ -54,7 +54,10 @@ const NOW = Date.parse('2026-08-05T07:00:00Z'); // 3am ET Aug 5 (EDT) — after 
  * whole day "still comparing" at the tests' 3am-ET NOW.
  */
 function makeEvent(id, commenceIso, { sport = 'basketball_nba', sportTitle = 'NBA', outlier = 35, favoritePrice = -140, lastUpdate = NOW - 600000 } = {}) {
-  const books = ['b0', 'b1', 'b2', 'b3', 'b4', 'b5', 'b6', 'b7'];
+  // Registry (bettable) books: the curated boards refuse a best price at a
+  // book the reader can't use, so a fixture priced at fake keys would never
+  // post at all.
+  const books = ['draftkings', 'fanduel', 'betmgm', 'williamhill_us', 'betrivers', 'espnbet', 'fanatics', 'hardrockbet'];
   return {
     id,
     sport_key: sport,
@@ -172,6 +175,18 @@ test('a slate with literally no gradeable game posts nothing — and says so', a
   assert.equal(result.reason, 'no gradeable game on the entire slate today');
   // The only write is the day's hold record — never a pick.
   assert.deepEqual([...store.keys()], ['potd:hold:2026-08-05']);
+});
+
+test('a slate priced only at books the reader cannot bet posts no Play of the Day', async () => {
+  const { env } = makeKvStore();
+  // A real edge by the numbers, but every quote is at an offshore/EU book:
+  // in the record such picks went 12-13 for -24%, and nobody could have
+  // taken the price anyway.
+  const events = [makeEvent('offshore', '2026-08-05T09:00:00Z', { outlier: 35 })];
+  events[0].bookmakers.forEach((b, i) => { b.key = `offshore${i}`; b.title = `Offshore ${i}`; });
+  const result = await runPotdDaily(env, ctx, NOW, { fetchFullSlate: async () => events });
+  assert.equal(result.skipped, true);
+  assert.match(result.reason, /clears the edge floor/);
 });
 
 test('a pick posting later in the day clears an earlier hold', async () => {

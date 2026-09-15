@@ -339,6 +339,8 @@ test('the best price comes from a book the reader can bet at when any registry b
   const [home] = buildCandidates([event], { now: NOW }).filter((c) => c.selection.startsWith('off Home'));
   assert.equal(home.book, 'DraftKings', 'the best REGISTRY price is the bet, not the offshore standout');
   assert.equal(home.american, -105);
+  assert.equal(home.bookKey, 'draftkings');
+  assert.equal(home.bettable, true);
   // The offshore quote still counts as a book and still informs the market
   // read (it is in the benchmark and in the disagreement measure).
   assert.equal(home.bookCount, DEEP_BOOKS.length + 1);
@@ -352,6 +354,21 @@ test('the best price comes from a book the reader can bet at when any registry b
   const unlisted = makeEvent('un', -140, 120, { ...SHARP, books: ['Bovada', 'BetOnline', 'MyBookie', 'BetUS'] });
   const [any] = buildCandidates([unlisted], { now: NOW }).filter((c) => c.selection.startsWith('un Home'));
   assert.equal(any.book, 'Bovada');
+  assert.equal(any.bettable, false, 'and the candidate says so');
+});
+
+test('topPicks can refuse candidates nobody can bet, and the browser board does not by default', () => {
+  const listed = analyze([makeEvent('l', -140, 120, SHARP)], { now: NOW });
+  const unlisted = analyze([makeEvent('u', -140, 120, { ...SHARP, books: ['Bovada', 'BetOnline', 'MyBookie', 'BetUS', 'GTbets', '1xBet', 'LowVig', 'Betfair'] })], { now: NOW });
+  const pool = [...listed, ...unlisted];
+  assert.ok(unlisted.some((c) => c.bettable === false) && listed.every((c) => c.bettable === true), 'fixture sanity');
+
+  const research = topPicks(pool, { oddsMin: -1000, oddsMax: 500, minScore: 0, count: 8 });
+  assert.ok(research.picks.some((p) => p.legs[0].bettable === false), 'the research board still shows every priced line');
+
+  const curated = topPicks(pool, { oddsMin: -1000, oddsMax: 500, minScore: 0, count: 8, requireBettable: true, guaranteeCount: true });
+  assert.ok(curated.picks.length > 0);
+  assert.ok(curated.picks.every((p) => p.legs[0].bettable === true), 'a curated board never posts a price the reader cannot take, fallback included');
 });
 
 /* ---------------------------------------------------------------- */

@@ -186,7 +186,14 @@ export function bookIdFor(apiKey) {
  * sharp-quote merge) so they arrive in the same `bookmakers[]` list every
  * other quote does; buildCandidates recognises them by key.
  */
-export const SHARP_BOOK_KEYS = new Set(['pinnacle']);
+export const SHARP_BOOK_KEYS = new Set([
+  'pinnacle',
+  // The exchanges: a back price on Betfair or Matchbook is set by the
+  // market itself, and in the tracked record they showed up as the "best
+  // price" on 118 Full Slate picks a US reader could never have taken.
+  // Reference, not bet, same as Pinnacle.
+  'betfair_ex_eu', 'betfair_ex_uk', 'betfair_ex_au', 'matchbook',
+]);
 
 export function isSharpBook(bookKey) {
   return SHARP_BOOK_KEYS.has(String(bookKey ?? '').toLowerCase());
@@ -450,6 +457,15 @@ export function buildCandidates(events, { now = Date.now() } = {}) {
       const registry = soft.filter((q) => bookIdFor(q.bookKey));
       const bettable = registry.length ? registry : soft;
       const best = bettable.reduce((a, b) => (b.decimal > a.decimal ? b : a));
+      // Whether that best price is one the reader can take (a registry
+      // book). The curated boards refuse to post a pick that isn't: in the
+      // live record (2026-08-08 to 09-15) Pixel's Picks priced at a registry
+      // book went 24-19 for +24.7% ROI while those priced at an offshore or
+      // EU book went 35-42 for -10% and those at a sharp book 6-8 for -25%,
+      // and the edge-vs-consensus read only predicted results at registry
+      // prices at all. A pick nobody can bet is not a pick; it is a record
+      // of a number.
+      const isBettable = registry.length > 0;
 
       // Benchmark against the REST of the market, so the outlier we're about to
       // bet doesn't get to vote on whether it's a good bet.
@@ -521,6 +537,8 @@ export function buildCandidates(events, { now = Date.now() } = {}) {
         american: best.american,
         decimal: best.decimal,
         book: best.book,
+        bookKey: best.bookKey,
+        bettable: isBettable,
         updatedMs: best.updatedMs,
         bookCount: soft.length,
         // Every book on this exact line, best price first — this is what the
@@ -1218,6 +1236,12 @@ export function topPicks(
     // favorite dressed as a value play is not.
     hardOddsMin = -Infinity,
     hardOddsMax = Infinity,
+    // Refuse any candidate whose best price is not at a registry book (see
+    // buildCandidates' `bettable`). Off by default so the browser's own
+    // research board still shows every priced line; the curated, tracked
+    // boards turn it on, because their record is a promise about bets a
+    // reader can place.
+    requireBettable = false,
   } = {},
 ) {
   const DOG_AMERICAN = 120;
@@ -1233,7 +1257,7 @@ export function topPicks(
   // fallback below, which pads a thin board from the raw candidate list.
   // Filtering only `pool` would leave exactly that hole — a quiet day's
   // padding could post the preseason game this is meant to keep out.
-  const isPickable = (c) => !isNflPreseason(c);
+  const isPickable = (c) => !isNflPreseason(c) && (!requireBettable || c.bettable !== false);
   const pool = candidates.filter(
     (c) => inRange(c.american) && withinHardBounds(c.american) && c.score >= minScore && clearsEdgeBar(c) && isPickable(c),
   );

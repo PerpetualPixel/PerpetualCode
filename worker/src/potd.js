@@ -456,7 +456,11 @@ export async function runPotdDaily(env, ctx, now = Date.now(), { fetchFullSlate 
     env.POTD_KV.get(`potd:${etDatePlusDays(now, -2)}`),
   ]);
   // The one bar no fallback tier below relaxes — see the file header.
-  const clearsEdge = (c) => c.ev > algoConfig.MIN_EV_PCT
+  // ...and a price the reader can take (buildCandidates' `bettable`): a
+  // Play of the Day at 1xBet or Pinnacle is a number, not a bet, and in the
+  // record those went 12-13 for -24%.
+  const clearsEdge = (c) => c.bettable !== false
+    && c.ev > algoConfig.MIN_EV_PCT
     && suggestedStake(c) >= algoConfig.MIN_KELLY_FRACTION;
   const recentPotdEventIds = new Set(
     recentPotdRaws.filter(Boolean).map((raw) => JSON.parse(raw)?.pick?.eventId).filter(Boolean),

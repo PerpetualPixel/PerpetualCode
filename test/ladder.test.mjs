@@ -65,7 +65,10 @@ const ladderCtx = { waitUntil: (p) => p };
  * which would fail every fixture here regardless of the preseason filter.
  */
 function makeLadderEvent(id, { sport = 'basketball_nba', sportTitle = 'NBA', favoritePrice = -195, awayPrice = 160, outlier = 30 } = {}) {
-  const books = ['b0', 'b1', 'b2', 'b3', 'b4', 'b5', 'b6', 'b7'];
+  // Registry (bettable) books: the curated boards refuse a best price at a
+  // book the reader can't use, so a fixture priced at fake keys would never
+  // post at all.
+  const books = ['draftkings', 'fanduel', 'betmgm', 'williamhill_us', 'betrivers', 'espnbet', 'fanatics', 'hardrockbet'];
   return {
     id,
     sport_key: sport,
