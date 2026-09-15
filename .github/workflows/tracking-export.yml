@@ -19,6 +19,12 @@ on:
     # 06:20 UTC daily — after the 2am ET draw and the overnight grading.
     - cron: "20 6 * * *"
   workflow_dispatch:
+  # A change to this job runs it once on the branch that carries the change,
+  # so the export can be exercised before it reaches main (GitHub only
+  # dispatches by hand from the default branch).
+  push:
+    paths:
+      - .github/workflows/tracking-export.yml
 
 permissions:
   contents: write
