@@ -161,7 +161,18 @@ series or two and roster churn is total, so the result says almost nothing
 about either team — the high-variance, low-information game those two curated
 surfaces exist to avoid.
 
-**Costs 3 credits per league, per cache miss.** Capped at 3 leagues a request —
+**Costs 3 credits per league, per cache miss — plus 3 more for the sharp
+anchor.** Every US-region board fetch is paired with a second, separately
+cached call for the sharp reference books (`bookmakers=pinnacle`; The Odds API
+bills a group of up to ten bookmakers as one region), whose de-vigged line
+anchors the consensus every other price is graded against (see
+`SHARP_BOOK_KEYS` in `docs/engine.js`). Tennis skips the second call — its
+uk/eu regions already carry Pinnacle. Set the `SHARP_BOOKMAKERS` var to a
+different comma-separated list, or to an empty string to turn the second call
+off and grade against the soft-book median alone. A failed sharp fetch
+degrades to that silently; it is an upgrade, never a dependency.
+
+Capped at 3 leagues a request —
 the browser enforces the same limit, but a spend ceiling doesn't belong only in
 a place the user can edit.
 

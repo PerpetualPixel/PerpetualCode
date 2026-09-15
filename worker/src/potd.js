@@ -13,12 +13,16 @@
  *
  * Odds: restricted to POTD_MIN_AMERICAN..POTD_MAX_AMERICAN, a narrower band
  * than the rest of the app's general sharp-price rules — this is a single
- * showcase pick, held to a stricter range. Unlike before the reset, a day
- * with nothing in range still posts: the pick falls back in visible,
- * flagged tiers (confidence floor first, then the band) rather than
- * skipping, because "no Play of the Day today" is exactly the outcome the
- * reset forbids. Only a slate with literally no gradeable game posts
- * nothing.
+ * showcase pick, held to a stricter range. A day with nothing in range
+ * still posts where it can: the pick falls back in visible, flagged tiers
+ * (confidence floor first, then the band). The one thing NO tier relaxes is
+ * the edge floor (algo-health's MIN_EV_PCT / MIN_KELLY_FRACTION, the same
+ * bar Pixel's Picks holds): until 2026-09-15 this board had no EV
+ * requirement at all — a pick only had to clear the composite score, which
+ * a zero-EV bet with clean numbers did comfortably — and the flagship of
+ * the day was routinely a bet the engine's own numbers graded as a loser.
+ * A day where nothing clears the edge floor posts NO Play of the Day, with
+ * the reason written to KV (`potd:hold:<date>`) so the card can say why.
  *
  * Tracking: the stored pick carries the same status/clv/result fields
  * worker/src/tracking.js's Top 5 batch tracks its own picks with, graded via
@@ -63,7 +67,7 @@ import { fetchContext, hasContext } from './context.js';
 import { fetchWeather } from './weather.js';
 import { fetchMmaContext } from './mma.js';
 import { fetchSport, fetchScores } from './odds.js';
-import { getPausedSegments, isSegmentPaused } from './algo-health.js';
+import { getAlgoConfig, getPausedSegments, isSegmentPaused } from './algo-health.js';
 import { getLearningProfile, applyLearningToCandidates } from './daily-learning.js';
 import { fetchMmaResults, gradeMmaPickWithFallback } from './ufc-events.js';
 import { getOrGenerateAnalysis } from './analysis.js';
@@ -93,6 +97,14 @@ const POTD_MAX_AMERICAN = 150;
 // the Day section (getPotdHistory) needs weeks of history to be meaningful,
 // not just the display card's old 8-day window.
 const KV_TTL_SECONDS = 86400 * 90;
+/**
+ * Why today has no Play of the Day, when it doesn't — written by
+ * runPotdDaily on a day nothing clears the edge floor, read by getPotdHold
+ * for the /potd route. Mirrors the ladder's own `ladder:status:<date>`: an
+ * empty card that can say "no edge today" is a different thing from one
+ * that can't say whether the draw simply hasn't run.
+ */
+const holdKey = (dateKey) => `potd:hold:${dateKey}`;
 
 /** ET calendar date (YYYY-MM-DD) and wall-clock hour for a given instant. */
 export function etParts(ms) {
@@ -434,12 +446,18 @@ export async function runPotdDaily(env, ctx, now = Date.now(), { fetchFullSlate 
   // eligible candidate and could be featured a second day running —
   // possibly on the opposite side, exactly the confirmed Full Slate
   // incident. Two KV gets closes it.
-  const [pausedSegments, learningProfile, ...recentPotdRaws] = await Promise.all([
+  const [pausedSegments, learningProfile, algoConfig, ...recentPotdRaws] = await Promise.all([
     getPausedSegments(env),
     getLearningProfile(env),
+    // The same EV/Kelly floor Pixel's Picks reads (worker/src/algo-health.js)
+    // — tightened by the weekly review, never loosened below RULES.
+    getAlgoConfig(env),
     env.POTD_KV.get(`potd:${etDatePlusDays(now, -1)}`),
     env.POTD_KV.get(`potd:${etDatePlusDays(now, -2)}`),
   ]);
+  // The one bar no fallback tier below relaxes — see the file header.
+  const clearsEdge = (c) => c.ev > algoConfig.MIN_EV_PCT
+    && suggestedStake(c) >= algoConfig.MIN_KELLY_FRACTION;
   const recentPotdEventIds = new Set(
     recentPotdRaws.filter(Boolean).map((raw) => JSON.parse(raw)?.pick?.eventId).filter(Boolean),
   );
@@ -464,6 +482,7 @@ export async function runPotdDaily(env, ctx, now = Date.now(), { fetchFullSlate 
   );
   const eligibleToday = candidates.filter((c) => {
     if (c.score < RULES.MIN_SCORE) return false;
+    if (!clearsEdge(c)) return false;
     if (isExhibition(c)) return false;
     if (c.american < POTD_MIN_AMERICAN || c.american > POTD_MAX_AMERICAN) return false;
     // Low-variance markets (player props, MLS's BTTS/double-chance) get
@@ -491,15 +510,16 @@ export async function runPotdDaily(env, ctx, now = Date.now(), { fetchFullSlate 
   // started) has nothing left to solve. Its skip paths were also the "code
   // stopping it from posting" this reset explicitly removes.
   let stillActionable = eligibleToday.filter((c) => c.commenceMs > now);
-  // "There will be a play of the day" — guaranteed. When nothing clears the
-  // full standard, relax in tiers, never silently: first the confidence
-  // floor goes (band and structural checks hold), then the band itself.
-  // Each tier keeps the checks about the GAME's legitimacy (exhibition,
-  // max-juice, preseason, Power 4, already-featured-recently) — a
-  // guaranteed pick still can't be a game this app refuses to grade.
+  // When nothing clears the full standard, relax in tiers, never silently:
+  // first the confidence floor goes (band and structural checks hold), then
+  // the band itself. Each tier keeps the checks about the GAME's legitimacy
+  // (exhibition, max-juice, preseason, Power 4, already-featured-recently)
+  // AND the edge floor — a fallback pick can be a less tidy number or an
+  // out-of-band price, but it is never a bet the engine grades as -EV.
   let fallbackReason = null;
   if (!stillActionable.length) {
     const structurallySound = candidates.filter((c) => {
+      if (!clearsEdge(c)) return false;
       if (isExhibition(c)) return false;
       if (!clearsMaxJuice(c)) return false;
       if (isNflPreseason(c)) return false;
@@ -519,9 +539,21 @@ export async function runPotdDaily(env, ctx, now = Date.now(), { fetchFullSlate 
       stillActionable = structurallySound;
       fallbackReason = `odds outside the usual ${formatAmerican(POTD_MIN_AMERICAN)}/${formatAmerican(POTD_MAX_AMERICAN)} band`;
     } else {
-      // Only reachable when the slate has literally no upcoming game the
-      // app will grade — an off day, not a selection failure.
-      return { skipped: true, reason: 'no gradeable game on the entire slate today', dateKey };
+      // Nothing on the slate carries an edge worth the day's flagship —
+      // either an off day with no gradeable game at all, or a full slate
+      // priced efficiently enough that nothing beats the market by the
+      // floor. Both are honest "no play" days; the hold is written so the
+      // card can say which rather than showing yesterday's pick as if it
+      // were live.
+      const anyGame = candidates.some((c) => c.commenceMs > now && !isExhibition(c) && !isNflPreseason(c)
+        && (isTennis(c.sportKey) ? isEligibleTennisMatch(c.commenceMs, now) : etParts(c.commenceMs).date === dateKey));
+      const reason = anyGame
+        ? `nothing on today's slate clears the edge floor (${(algoConfig.MIN_EV_PCT * 100).toFixed(1)}% EV against the no-vig consensus)`
+        : 'no gradeable game on the entire slate today';
+      await env.POTD_KV.put(holdKey(dateKey), JSON.stringify({ dateKey, reason, checkedAt: now, poolSize: candidates.length }), {
+        expirationTtl: KV_TTL_SECONDS,
+      });
+      return { skipped: true, reason, dateKey };
     }
   }
 
@@ -570,6 +602,9 @@ export async function runPotdDaily(env, ctx, now = Date.now(), { fetchFullSlate 
   // A day's pick, once posted, doesn't move even if the market does — it's
   // an editorial call made at a point in time, not a live-repriced candidate.
   await env.POTD_KV.put(kvKey, JSON.stringify(record), { expirationTtl: KV_TTL_SECONDS });
+  // A pick supersedes any hold an earlier tick wrote for the day (a slate
+  // that filled in late, a redraw) — the card must never show both.
+  try { await env.POTD_KV.delete(holdKey(dateKey)); } catch { /* best-effort */ }
   return { skipped: false, dateKey, pick: record.pick };
 }
 
@@ -726,6 +761,12 @@ export async function runPotdGrading(env, ctx, now = Date.now(), {
 
 /** Today's Play of the Day, or yesterday's as a labelled fallback if today's
  * hasn't been generated yet (e.g. it's 1am ET and the cron hasn't fired). */
+/** Today's hold record ({ dateKey, reason, checkedAt }) when the draw ran and posted nothing, else null. */
+export async function getPotdHold(env, now = Date.now()) {
+  const raw = await env.POTD_KV.get(holdKey(etParts(now).date));
+  return raw ? JSON.parse(raw) : null;
+}
+
 export async function getPotd(env, now = Date.now()) {
   const today = etParts(now).date;
   const todayRaw = await env.POTD_KV.get(`potd:${today}`);

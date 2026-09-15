@@ -6,6 +6,7 @@ import {
   runPotdClvSnapshot,
   runPotdGrading,
   getPotd,
+  getPotdHold,
   getPotdHistory,
 } from '../worker/src/potd.js';
 import { seedTennisArchiveCacheForTests } from '../worker/src/tennis-archive.js';
@@ -133,23 +134,54 @@ test('a candidate whose segment the weekly algorithm health review has paused is
   assert.match(result.pick.pickId, /^active-sport:/);
 });
 
-test('a candidate below the confidence floor posts flagged rather than skipping the day', async () => {
+test('a candidate below the confidence floor but clearing the edge floor posts flagged', async () => {
   const { env } = makeKvStore();
-  const events = [makeEvent('weak', '2026-08-05T09:00:00Z', { outlier: 0 })];
+  // Four books, one hanging -123 against -140 elsewhere (a real ~2.6%
+  // edge), quoted 14 hours ago: thin liquidity and zero freshness drag the
+  // composite grade under 50 while the edge itself is intact. The floor
+  // decides how the pick is LABELLED; the edge decides whether it exists.
+  const events = [makeEvent('thin', '2026-08-05T09:00:00Z', { outlier: 17, lastUpdate: NOW - 14 * 3.6e6 })];
+  events[0].bookmakers = events[0].bookmakers.slice(0, 4);
   const result = await runPotdDaily(env, ctx, NOW, { fetchFullSlate: async () => events });
-  // Same reset contract as the band test above: the floor decides how the
-  // pick is LABELLED, not whether a pick exists.
   assert.equal(result.skipped, false);
   assert.equal(result.pick.meetsStandard, false);
   assert.match(result.pick.flagReason, /confidence below/);
 });
 
-test('a slate with literally no gradeable game posts nothing — the only allowed empty day', async () => {
+test('a slate with no edge posts NO Play of the Day — and records why', async () => {
+  const { env, store } = makeKvStore();
+  // Every book at exactly -140: the best price IS the consensus, so the
+  // "edge" is the vig, negative. Until 2026-09-15 this posted flagged as
+  // "confidence below the floor"; a bet the engine grades as a loser is
+  // not a Play of the Day at any label.
+  const events = [makeEvent('weak', '2026-08-05T09:00:00Z', { outlier: 0 })];
+  const result = await runPotdDaily(env, ctx, NOW, { fetchFullSlate: async () => events });
+  assert.equal(result.skipped, true);
+  assert.match(result.reason, /clears the edge floor/);
+  assert.equal(store.has('potd:2026-08-05'), false, 'no pick written');
+  const hold = await getPotdHold(env, NOW);
+  assert.ok(hold, 'the hold is recorded so the card can say why');
+  assert.match(hold.reason, /edge floor/);
+  assert.equal(await getPotd(env, NOW), null);
+});
+
+test('a slate with literally no gradeable game posts nothing — and says so', async () => {
   const { env, store } = makeKvStore();
   const result = await runPotdDaily(env, ctx, NOW, { fetchFullSlate: async () => [] });
   assert.equal(result.skipped, true);
   assert.equal(result.reason, 'no gradeable game on the entire slate today');
-  assert.equal(store.size, 0);
+  // The only write is the day's hold record — never a pick.
+  assert.deepEqual([...store.keys()], ['potd:hold:2026-08-05']);
+});
+
+test('a pick posting later in the day clears an earlier hold', async () => {
+  const { env } = makeKvStore();
+  await runPotdDaily(env, ctx, NOW, { fetchFullSlate: async () => [] });
+  assert.ok(await getPotdHold(env, NOW));
+  const events = [makeEvent('late', '2026-08-05T09:30:00Z', { outlier: 20 })];
+  const result = await runPotdDaily(env, ctx, NOW, { fetchFullSlate: async () => events });
+  assert.equal(result.skipped, false);
+  assert.equal(await getPotdHold(env, NOW), null);
 });
 
 test('before the generation hour, the day is not drawn at all', async () => {
@@ -226,11 +258,11 @@ test('excludes a game that has already started', async () => {
   assert.equal(result.skipped, true);
 });
 
-test('an empty slate skips cleanly without writing to KV', async () => {
+test('an empty slate skips cleanly, writing only the hold record', async () => {
   const { env, store } = makeKvStore();
   const result = await runPotdDaily(env, ctx, NOW, { fetchFullSlate: async () => [] });
   assert.equal(result.skipped, true);
-  assert.equal(store.size, 0);
+  assert.deepEqual([...store.keys()], ['potd:hold:2026-08-05']);
 });
 
 /* ---------------------------------------------------------------- */

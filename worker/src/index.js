@@ -52,7 +52,7 @@ import { runPropPlayDaily, runPropPlayGrading, getAllPropPlays } from './prop-pl
 import { extractSlipFromImage } from './slip-vision.js';
 import { consumeQuota, getQuotaUsage } from './tail-fade-quota.js';
 import { runNhlPropsScan, runNhlPropsGrading, getAllNhlPropsTracked } from './nhl-props.js';
-import { runPotdDaily, runPotdClvSnapshot, runPotdGrading, backfillPotdAnalysis, getPotd, getPotdLeaning, getPotdHistory, retractPotd, regradePotdTennisVoids, etParts } from './potd.js';
+import { runPotdDaily, runPotdClvSnapshot, runPotdGrading, backfillPotdAnalysis, getPotd, getPotdHold, getPotdLeaning, getPotdHistory, retractPotd, regradePotdTennisVoids, etParts } from './potd.js';
 import { runLadderDaily, runLadderGrading, getLadder, getLadderHistory } from './ladder.js';
 import { getOrGenerateAnalysis, getOrGeneratePropAnalysis } from './analysis.js';
 import { repairMissingPayouts } from './repair-payouts.js';
@@ -1404,6 +1404,10 @@ export default {
         return json(
           {
             propPlay: result.record ? { ...result.record, analysis: propAnalysis } : null,
+            // Why there is no play today, when there isn't — the gates found
+            // nothing, or there was nothing to scan. Always present so the
+            // card can say so instead of rendering nothing.
+            hold: result.record ? null : (result.reason ?? null),
             ...(debug ? { created: result.created, reason: result.reason ?? null, trace: result.trace ?? null, wouldPost: result.wouldPost ?? null } : {}),
           },
           { headers: { ...cors, 'Cache-Control': debug ? 'no-store' : 'public, max-age=300' } },
@@ -1472,14 +1476,18 @@ export default {
         return json({ error: 'Method not allowed' }, { status: 405, headers: cors });
       }
       try {
-        const potd = await getPotd(env);
+        // `hold` is today's no-play record (see potd.js's getPotdHold) — set
+        // when the draw ran and nothing cleared the edge floor. The client
+        // shows it in place of yesterday's stale pick, which getPotd still
+        // returns for the days the draw simply hasn't happened yet.
+        const [potd, hold] = await Promise.all([getPotd(env), getPotdHold(env)]);
         const leaning = potd ? null : await getPotdLeaning(env);
         return json(
-          { potd, leaning },
+          { potd, leaning, hold },
           { headers: { ...cors, 'Cache-Control': 'public, max-age=300' } },
         );
       } catch (error) {
-        return json({ potd: null, leaning: null, reason: String(error).slice(0, 120) }, { headers: cors });
+        return json({ potd: null, leaning: null, hold: null, reason: String(error).slice(0, 120) }, { headers: cors });
       }
     }
 

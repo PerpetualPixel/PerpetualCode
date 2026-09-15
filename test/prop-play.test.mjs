@@ -13,7 +13,38 @@ import {
   extractAltCandidates,
   legWriteup,
   gradePropLeg,
+  propEdge,
+  PROP_MIN_EDGE,
+  PROP_PRIOR_GAMES,
 } from '../worker/src/prop-play.js';
+
+/* ── the edge gate ──────────────────────────────────────────────── */
+
+test('propEdge: a hit rate has to beat the PRICE, not just be high', () => {
+  // 75% season / 80% L10 over 20 games clears every hit-rate gate this
+  // board has — and at -650 (86.7% implied) it is a losing bet.
+  const profile = { games: 20, season: 0.75, l10: 0.8 };
+  const atMinus650 = propEdge(profile, 1 + 100 / 650);
+  assert.ok(atMinus650 < 0, `expected a negative edge at -650, got ${atMinus650}`);
+  // The same player at -250 (71.4% implied) is a real edge.
+  const atMinus250 = propEdge(profile, 1 + 100 / 250);
+  assert.ok(atMinus250 >= PROP_MIN_EDGE, `expected ≥${PROP_MIN_EDGE} at -250, got ${atMinus250}`);
+});
+
+test('propEdge shrinks a short sample toward the market and needs a real profile', () => {
+  const implied = 1 / (1 + 100 / 460);
+  const hot = { games: 8, season: 1.0, l10: 1.0 };
+  const long = { games: 40, season: 1.0, l10: 1.0 };
+  const shortEdge = propEdge(hot, 1 + 100 / 460);
+  const longEdge = propEdge(long, 1 + 100 / 460);
+  assert.ok(shortEdge < longEdge, 'eight perfect games are less evidence than forty');
+  // Exactly the pseudo-game blend: (rate·n + implied·PRIOR) / (n + PRIOR) − implied.
+  const expected = (1.0 * 8 + implied * PROP_PRIOR_GAMES) / (8 + PROP_PRIOR_GAMES) - implied;
+  assert.ok(Math.abs(shortEdge - expected) < 1e-3);
+  assert.equal(propEdge(null, 1.4), null);
+  assert.equal(propEdge({ games: 10, season: 0.9 }, 1.4), null, 'no L10 rate, no claim');
+  assert.equal(propEdge(hot, 1), null);
+});
 
 /* ── gamelog parsing ────────────────────────────────────────────── */
 

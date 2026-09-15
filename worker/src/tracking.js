@@ -25,7 +25,7 @@
  * single, server-side, always-on history that doesn't depend on anyone
  * having the app open.
  */
-import { analyze, topPicks, applyBankrollBuilders, clearsMaxJuice, isNflPreseason, isNflPreseasonKey, UNIT_DOLLARS, STAKE_BANDS, stakeUnitsForScore } from '../../docs/engine.js';
+import { analyze, topPicks, applyBankrollBuilders, clearsMaxJuice, isNflPreseason, isNflPreseasonKey, suggestedStake, UNIT_DOLLARS, STAKE_BANDS, stakeUnitsForScore } from '../../docs/engine.js';
 import { fetchCapperConsensus, applyCapperConsensus, upgradeToValueStraight } from '../../docs/capper-consensus.js';
 import { isPower4Matchup } from '../../docs/ncaaf-conferences.js';
 import { gradePick } from '../../docs/learning.js';
@@ -585,10 +585,11 @@ export function pickRecordFrom(pick, dateKey, now, stakeUnits = null) {
  * candidate (day window, segment not paused, tennis tier, max-juice, NCAAF
  * Power 4) competes in the same draw; the sharp standard (odds band,
  * confidence floor, EV/Kelly edge floor) fills the board first, and the
- * flagged fallback tiers fill whatever's left so the board never posts
- * short (see topPicks' guaranteeCount/lastResortFill). Once posted, a pick
- * doesn't move even if the market does — it's an editorial call made at a
- * point in time, not a live-repriced one.
+ * flagged fallback tier (band/floor relaxed, edge bar intact) fills what it
+ * can of the rest — the board posts SHORT on a day with fewer than five real
+ * edges (see topPicks' guaranteeCount). Once posted, a pick doesn't move
+ * even if the market does — it's an editorial call made at a point in time,
+ * not a live-repriced one.
  *
  * Self-healing, not one-shot: this used to hard-skip the instant a manifest
  * existed at all, which meant a degraded run (e.g. a partial/truncated
@@ -802,13 +803,13 @@ export async function runTop5Batch(
     minScore: convictionFloor,
     minEv: algoConfig.MIN_EV_PCT,
     minKelly: algoConfig.MIN_KELLY_FRACTION,
-    // "There will always be 5 plays no matter what" — the sharp standard
-    // fills first, guaranteeCount's flagged fallback second, and the
-    // last-resort tier (edge bar relaxed, hard band still enforced) only
-    // if the slate is so thin even that couldn't reach 5. Every non-sharp
-    // slot arrives visibly flagged.
+    // The sharp standard fills first; guaranteeCount's flagged fallback
+    // (odds band and score floor relaxed, EDGE BAR INTACT) fills what it
+    // can of the rest. There is no tier below that any more: the board
+    // posts short on a day the market offers fewer than five real edges,
+    // rather than padding the record with bets the engine itself grades as
+    // losers (see topPicks' own note on the removed last-resort tier).
     guaranteeCount: true,
-    lastResortFill: true,
   });
 
   // Two of the five run as "bankroll builders" (2026-09-02 direction): two or
@@ -832,10 +833,15 @@ export async function runTop5Batch(
     // Legs must be actual FAVOURITES laying real juice, not merely moneylines
     // clearing the score floor. Without this a +600 longshot that graded well
     // qualified as a leg and the "bankroll builder" came out at +779.
+    // ...and each leg must carry a real edge of its own. Stacking
+    // favourites that are individually -EV multiplies the vig, not the
+    // bankroll — the ticket is only as good as its worst leg.
     isEligible: (c) => c.marketKey === 'h2h'
       && c.american <= FAVOURITE_MAX_AMERICAN
       && c.american >= PIXEL_ODDS.HARD_MIN
-      && c.score >= convictionFloor,
+      && c.score >= convictionFloor
+      && c.ev > algoConfig.MIN_EV_PCT
+      && suggestedStake(c) >= algoConfig.MIN_KELLY_FRACTION,
   });
 
   // Belt-and-suspenders alongside the existingEventIds filter above: even

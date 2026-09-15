@@ -71,7 +71,11 @@ export const RULES = {
   // still being a -EV bet once the vig is paid. Pixel Picks opts into this
   // as a hard floor (see topPicks' minEv) so scoring well isn't enough on
   // its own; the price has to actually be worth taking.
-  MIN_EV_PCT: 0.015,
+  //
+  // Raised from 1.5% to 2% (2026-09-15) alongside the power de-vig and the
+  // sharp anchor below: a 1.5% read against a soft-book median was inside
+  // the noise of the estimate itself, and the graded record showed it.
+  MIN_EV_PCT: 0.02,
   // Below this, suggestedStake()'s quarter-Kelly fraction is a rounding
   // error, not a bet — the $1.48-on-$1000 pattern this exists to cut off.
   MIN_KELLY_FRACTION: 0.0025,
@@ -162,6 +166,42 @@ export function bookIdFor(apiKey) {
 }
 
 /**
+ * Sharp reference books: price-makers whose de-vigged line is the best free
+ * estimate of a game's true probability that exists. They are the ANCHOR of
+ * the consensus, never a bet — Pinnacle does not take US customers, and
+ * its price is the benchmark the rest of the market is graded against.
+ *
+ * Why this exists: the consensus used to be the median of the soft US books
+ * with the best-priced one removed. Soft books copy each other and lag the
+ * sharp market by minutes to hours, so "one book hangs a better number than
+ * the median of the others" very often meant "one book has moved toward
+ * where Pinnacle already is and the rest have not" — a bet AGAINST the
+ * sharp read, dressed as an edge. Grading the outlier against Pinnacle
+ * instead asks the right question: is this price better than the best
+ * estimate of the truth, not better than the slowest books on the board.
+ * This is the standard positive-EV method (a soft book's price against a
+ * sharp de-vigged line), and it is what the graded record was missing.
+ *
+ * The worker's odds fetch pulls these separately (worker/src/odds.js's
+ * sharp-quote merge) so they arrive in the same `bookmakers[]` list every
+ * other quote does; buildCandidates recognises them by key.
+ */
+export const SHARP_BOOK_KEYS = new Set(['pinnacle']);
+
+export function isSharpBook(bookKey) {
+  return SHARP_BOOK_KEYS.has(String(bookKey ?? '').toLowerCase());
+}
+
+/**
+ * How much of the consensus the sharp anchor carries when one is present;
+ * the soft-book median supplies the rest. Not 1.0, because a single sharp
+ * quote can itself be stale for a few minutes and the soft median is a real,
+ * if noisier, second read — and not lower, because the whole point is that
+ * the sharp line is the estimate worth trusting.
+ */
+export const SHARP_ANCHOR_WEIGHT = 0.7;
+
+/**
  * Best quote per registry book for one candidate. A book missing from the
  * result isn't pricing this exact line, which is what greys its button out.
  */
@@ -210,21 +250,74 @@ export function combineLegs(americanOdds) {
 /* ------------------------------------------------------------------ */
 
 /**
+ * Which de-vig method strips a book's margin. 'power' is the default;
+ * 'multiplicative' is kept for comparison and for degenerate inputs.
+ *
+ * Why power and not the proportional rescale this app shipped with: the
+ * multiplicative method spreads the vig evenly across every outcome, and
+ * books do not charge it that way. The favourite-longshot bias is one of the
+ * best-replicated findings in betting markets — longshots are overpriced
+ * relative to their true chance — so a proportional rescale systematically
+ * OVERSTATES the underdog's fair probability and understates the
+ * favourite's. On a -300/+240 line that is about 1.5 points handed to the
+ * dog, which at +240 is roughly 5% of phantom expected value: more than
+ * three times this app's entire EV floor, on the side of the market this
+ * engine's outlier hunt already lands on most often. That is the structural
+ * reason the graded record showed +120-and-longer underdogs winning 29.6%
+ * with negative closing-line value.
+ *
+ * The power method raises every implied probability to the same exponent k
+ * (k > 1 when the book holds a margin) and solves for the k that makes them
+ * sum to 1. Because p^k shrinks small probabilities proportionally more
+ * than large ones, it takes the margin mostly out of the longshot — the
+ * shape the empirical bias has. It is the method Pinnacle's own writing on
+ * de-vigging recommends over the proportional one, and it needs no market
+ * assumptions beyond "the book is one consistent price-maker."
+ */
+export const DEVIG_METHOD = 'power';
+
+/**
  * Strip the bookmaker's margin from a set of mutually exclusive prices.
  *
  * Raw implied probabilities sum to more than 1 — that surplus is the vig.
- * We rescale proportionally so they sum to 1, which is the standard
- * multiplicative method. It slightly over-corrects heavy favorites relative to
- * Shin's method, but it needs no solver and is what most public models use.
+ * `fair` sums to exactly 1 under either method; `vig` is the overround the
+ * book was charging (0.045 => 4.5%). See DEVIG_METHOD for why the power
+ * method is the default.
  */
-export function devig(americanOdds) {
+export function devig(americanOdds, { method = DEVIG_METHOD } = {}) {
   const raw = americanOdds.map(impliedProb);
   const overround = raw.reduce((a, b) => a + b, 0);
-  return {
-    fair: raw.map((p) => p / overround),
-    // e.g. 0.045 => the book is charging 4.5% on this market.
-    vig: overround - 1,
-  };
+  const vig = overround - 1;
+  const multiplicative = () => ({ fair: raw.map((p) => p / overround), vig });
+
+  // The power solve needs at least two real probabilities strictly inside
+  // (0, 1); anything else (a one-sided market, a malformed price) falls back
+  // to the proportional rescale rather than to a solver that cannot converge.
+  if (method !== 'power' || raw.length < 2 || !(overround > 0)
+    || raw.some((p) => !(p > 0 && p < 1))) {
+    return multiplicative();
+  }
+
+  // f(k) = Σ p_i^k − 1 is strictly decreasing in k on (0, ∞), f(1) = vig,
+  // so the root sits above 1 for a positive hold and below it for a
+  // negative one (an arbitrage across books never arrives here, since each
+  // book is de-vigged on its own, but a stale one-book market can). Bisect:
+  // 200 halvings of a [0.05, 20] bracket is far past double precision, and
+  // the loop exits early once the bracket collapses.
+  const f = (k) => raw.reduce((sum, p) => sum + p ** k, 0) - 1;
+  let lo = 0.05;
+  let hi = 20;
+  if (!(f(lo) > 0 && f(hi) < 0)) return multiplicative();
+  for (let i = 0; i < 200 && hi - lo > 1e-15; i++) {
+    const mid = (lo + hi) / 2;
+    if (f(mid) > 0) lo = mid; else hi = mid;
+  }
+  const k = (lo + hi) / 2;
+  const powered = raw.map((p) => p ** k);
+  // Renormalise the last few ulps so the outcomes sum to exactly 1 — every
+  // consumer (two-way consensus sums, EV) is entitled to that invariant.
+  const total = powered.reduce((a, b) => a + b, 0);
+  return { fair: powered.map((p) => p / total), vig };
 }
 
 function median(values) {
@@ -340,10 +433,23 @@ export function buildCandidates(events, { now = Date.now() } = {}) {
       // only 1 book minimum, while other sports require the standard 3.
       const isMmaMarket = event.sport_key === 'mma_mixed_martial_arts';
       const minBooks = isMmaMarket ? 1 : RULES.MIN_BOOKS;
-      if (quotes.length < minBooks) continue;
+      // Sharp reference quotes (see SHARP_BOOK_KEYS) anchor the consensus and
+      // are never the bet; everything else is a soft, bettable price.
+      const sharp = quotes.filter((q) => isSharpBook(q.bookKey));
+      const soft = quotes.filter((q) => !isSharpBook(q.bookKey));
+      if (soft.length < minBooks) continue;
 
-      // Best price = highest decimal payout. This is the line-shopping winner.
-      const best = quotes.reduce((a, b) => (b.decimal > a.decimal ? b : a));
+      // Best price = highest decimal payout among books the user can actually
+      // bet at: the registry (SPORTSBOOKS) when any of them prices the line,
+      // else any soft book (thin MMA cards, a book the registry doesn't list
+      // yet). The tracked record grades at this price, so it has to be a
+      // price a reader could have taken — an offshore outlier is not that,
+      // and an outlier from a sharper offshore book is more often the RIGHT
+      // number than a mispriced one, which made the soft median look wrong
+      // in exactly the wrong direction.
+      const registry = soft.filter((q) => bookIdFor(q.bookKey));
+      const bettable = registry.length ? registry : soft;
+      const best = bettable.reduce((a, b) => (b.decimal > a.decimal ? b : a));
 
       // Benchmark against the REST of the market, so the outlier we're about to
       // bet doesn't get to vote on whether it's a good bet.
@@ -360,9 +466,19 @@ export function buildCandidates(events, { now = Date.now() } = {}) {
       // 1/overround − 1, which is always negative — a single-book side still
       // fails the EV floor exactly as it did while NaN, it just displays an
       // honest probability instead of a broken one.
-      const others = quotes.filter((q) => q !== best);
-      const benchmark = others.length ? others : quotes;
-      const consensusProb = median(benchmark.map((q) => q.fairProb));
+      const others = soft.filter((q) => q !== best);
+      const benchmark = others.length ? others : soft;
+      const marketProb = median(benchmark.map((q) => q.fairProb));
+      // With a sharp anchor on the board, the consensus is mostly its
+      // de-vigged line (SHARP_ANCHOR_WEIGHT), with the soft median as the
+      // remainder; without one, the soft median stands alone exactly as it
+      // always has. `anchor` records which, so the tracked record can
+      // measure the two regimes separately.
+      const sharpProb = sharp.length ? median(sharp.map((q) => q.fairProb)) : null;
+      const consensusProb = sharpProb != null
+        ? SHARP_ANCHOR_WEIGHT * sharpProb + (1 - SHARP_ANCHOR_WEIGHT) * marketProb
+        : marketProb;
+      const anchor = sharpProb != null ? 'sharp' : 'market';
       // Still measured across `others` only: one book cannot disagree with
       // itself, and stdev([]) is already 0 — the same "no measurable
       // disagreement" a perfectly aligned multi-book market reports.
@@ -373,7 +489,7 @@ export function buildCandidates(events, { now = Date.now() } = {}) {
 
       // What line shopping alone bought us, in probability terms.
       const avgProb =
-        quotes.reduce((a, q) => a + impliedProb(q.american), 0) / quotes.length;
+        soft.reduce((a, q) => a + impliedProb(q.american), 0) / soft.length;
       const shopGain = avgProb - impliedProb(best.american);
 
       candidates.push({
@@ -406,7 +522,7 @@ export function buildCandidates(events, { now = Date.now() } = {}) {
         decimal: best.decimal,
         book: best.book,
         updatedMs: best.updatedMs,
-        bookCount: quotes.length,
+        bookCount: soft.length,
         // Every book on this exact line, best price first — this is what the
         // per-book buttons render from.
         quotes: [...quotes]
@@ -418,8 +534,17 @@ export function buildCandidates(events, { now = Date.now() } = {}) {
             decimal: q.decimal,
             updatedMs: q.updatedMs,
             link: q.link,
+            // A reference quote, shown for what it is: not a price to take.
+            sharp: isSharpBook(q.bookKey),
           })),
         consensusProb,
+        // 'sharp' when a SHARP_BOOK_KEYS quote anchored consensusProb, else
+        // 'market'. sharpProb/marketProb are the two inputs, kept so the
+        // tracked record can compare the regimes; marketProb is what the
+        // consensus WOULD have been under the old soft-median-only rule.
+        anchor,
+        sharpProb,
+        marketProb,
         fairAmerican: decimalToAmerican(1 / consensusProb),
         ev,
         disagreement,
@@ -438,12 +563,21 @@ export function buildCandidates(events, { now = Date.now() } = {}) {
 
 // Max points (of the 0-100 grade) a fully one-sided qualitative signal (see
 // docs/qualitative.js) can swing a candidate's score, either direction.
-// norm(c.ev, -0.03, 0.06) below means the 45-point edge weight is worth
-// roughly 5 score-points per 1pp of EV, so an 8-point swing is worth about
-// 1.6pp of EV — enough to flip a genuinely close price call (a few points
-// apart) but far short of overturning a real, one-sided edge (typically
-// 20+ points apart). Tunable; sanity-check against real slates.
+// norm(c.ev, -0.03, 0.06) below means a fully-confident candidate earns
+// roughly 11 score-points per 1pp of EV, so an 8-point swing is worth well
+// under 1pp of EV — enough to flip a genuinely close price call but far
+// short of overturning a real edge. Tunable; sanity-check against real slates.
 export const QUALITATIVE = { MAX_SWING: 8 };
+
+/**
+ * How the confidence factors combine into the multiplier on the edge — see
+ * scoreCandidate. CONFIDENCE_FLOOR is what a candidate with NO supporting
+ * confidence keeps of its edge score; the rest is earned. Weights sum to 1.
+ */
+export const SCORE_CONFIDENCE = {
+  FLOOR: 0.55,
+  WEIGHTS: { liquidity: 0.35, agreement: 0.25, shopping: 0.15, freshness: 0.10, anchor: 0.15 },
+};
 
 /**
  * Score penalty for long-shot candidates — sized from this app's own graded
@@ -476,6 +610,18 @@ export const UNDERDOG_PROB_PENALTY = { START: 0.45, FULL: 0.30, MAX_DROP: 12 };
  * Composite 0–100 grade. Edge dominates; everything else is confidence that
  * the edge is real rather than an artifact of a thin or stale market.
  *
+ * Structurally: score = 100 · edge · (FLOOR + (1 − FLOOR) · confidence),
+ * minus the long-shot penalty, plus the qualitative swing. The confidence
+ * factors MULTIPLY the edge; they never add to it. This app shipped with an
+ * additive blend (45% edge, 55% liquidity/agreement/shopping/freshness),
+ * under which a bet with ZERO expected value and a tidy, liquid, fresh
+ * number scored about 70 — twenty points clear of the floor — and the
+ * boards that ranked by score kept choosing the cleanest number over the
+ * most profitable one. "How clean is this number" is a reason to trust an
+ * edge, not a substitute for having one: a zero-EV candidate now scores at
+ * most 33 whatever its market quality, and a real edge is worth more when
+ * the market around it is deep, tight, fresh and sharp-anchored.
+ *
  * `qualitative` is an optional -1..1 signal (recent form / head-to-head /
  * injuries — see docs/qualitative.js) applied as a small, capped swing on
  * top of the price-only score, never folded into the weighted average
@@ -501,18 +647,25 @@ export function scoreCandidate(c, { now = Date.now(), qualitative = 0 } = {}) {
     shopping: norm(c.shopGain, 0, 0.04),
     // Prefer lines quoted recently, on games close enough to be priced sharply.
     freshness: (1 - norm(hoursStale, 0.5, 12)) * (1 - norm(hoursOut, 24, 168)),
+    // A consensus anchored to a sharp book (see SHARP_BOOK_KEYS) is a far
+    // better estimate of the truth than a soft-book median; the edge it
+    // implies deserves more trust. 0 when no anchor was available.
+    anchor: c.anchor === 'sharp' ? 1 : 0,
     // Recent form / head-to-head / injuries — see docs/qualitative.js. 0
     // when there's no usable data for this candidate.
     qualitative: clamp(qualitative, -1, 1),
   };
 
+  const w = SCORE_CONFIDENCE.WEIGHTS;
+  parts.confidence =
+    w.liquidity * parts.liquidity +
+    w.agreement * parts.agreement +
+    w.shopping * parts.shopping +
+    w.freshness * parts.freshness +
+    w.anchor * parts.anchor;
+
   const priceScore =
-    100 *
-    (0.45 * parts.edge +
-      0.18 * parts.liquidity +
-      0.15 * parts.agreement +
-      0.14 * parts.shopping +
-      0.08 * parts.freshness);
+    100 * parts.edge * (SCORE_CONFIDENCE.FLOOR + (1 - SCORE_CONFIDENCE.FLOOR) * parts.confidence);
 
   // Long-shot penalty (see UNDERDOG_PROB_PENALTY above) — subtracted from
   // the composite rather than folded into the weighted average, same
@@ -540,12 +693,19 @@ export function scoreCandidate(c, { now = Date.now(), qualitative = 0 } = {}) {
  * which reads actual form, head-to-head and injury data; four bullets of odds
  * arithmetic was three bullets of restating the same edge.
  */
+/** How the card names its benchmark: the sharp anchor when one set it, else the soft-book consensus. */
+function consensusLabel(c) {
+  return c.anchor === 'sharp'
+    ? 'The sharp market\'s no-vig line (Pinnacle-anchored)'
+    : 'The market\'s own no-vig consensus';
+}
+
 export function explain(c) {
   const evPct = (c.ev * 100).toFixed(1);
 
   const value =
     c.ev >= 0.005
-      ? `The market's own no-vig consensus makes this a ${(c.consensusProb * 100).toFixed(1)}% shot, fair value ${formatAmerican(c.fairAmerican)}. You're getting ${formatAmerican(c.american)} at ${c.book}, worth about ${evPct}% per dollar.`
+      ? `${consensusLabel(c)} makes this a ${(c.consensusProb * 100).toFixed(1)}% shot, fair value ${formatAmerican(c.fairAmerican)}. You're getting ${formatAmerican(c.american)} at ${c.book}, worth about ${evPct}% per dollar.`
       : `Consensus fair value is ${formatAmerican(c.fairAmerican)} and the best price is ${formatAmerican(c.american)} at ${c.book}, priced close to fair (${evPct}% per dollar), so it's here on market quality rather than a pricing mistake.`;
 
   const context =
@@ -573,10 +733,13 @@ export function explainExtensive(c, { now = Date.now() } = {}) {
 
   const bullets = [];
 
+  const anchorNote = c.anchor === 'sharp'
+    ? ' Anchored to the sharp market (Pinnacle), with the soft-book median as a second read.'
+    : '';
   bullets.push(
     c.ev >= 0.005
-      ? `No-vig consensus: ${(c.consensusProb * 100).toFixed(1)}% to win, which prices out to a fair value of ${formatAmerican(c.fairAmerican)}. The best available price is ${formatAmerican(c.american)} at ${c.book}, a gap worth about ${evPct}% of expected value per dollar staked.`
-      : `No-vig consensus: ${(c.consensusProb * 100).toFixed(1)}% to win, fair value ${formatAmerican(c.fairAmerican)}. The best price, ${formatAmerican(c.american)} at ${c.book}, sits close to that fair number (${evPct}% per dollar); this pick is here on market quality and agreement, not a mispriced number.`,
+      ? `No-vig consensus: ${(c.consensusProb * 100).toFixed(1)}% to win, which prices out to a fair value of ${formatAmerican(c.fairAmerican)}.${anchorNote} The best available price is ${formatAmerican(c.american)} at ${c.book}, a gap worth about ${evPct}% of expected value per dollar staked.`
+      : `No-vig consensus: ${(c.consensusProb * 100).toFixed(1)}% to win, fair value ${formatAmerican(c.fairAmerican)}.${anchorNote} The best price, ${formatAmerican(c.american)} at ${c.book}, sits close to that fair number (${evPct}% per dollar); this pick is here on market quality and agreement, not a mispriced number.`,
   );
 
   bullets.push(
@@ -1020,16 +1183,15 @@ export function topPicks(
     // Picks turns this on because it promises exactly `count` locks every
     // time; everything else keeps the "empty is honest" behaviour.
     guaranteeCount = false,
-    // The tier below guaranteeCount, for the board that must NEVER post
-    // short, per explicit product direction ("there will always be 5 plays
-    // no matter what"). guaranteeCount's own fallback still holds the edge
-    // bar (minEv/minKelly), which is right for a board that would rather
-    // run short than post a demonstrably -EV bet — this flag says the
-    // opposite trade was chosen: fill the remaining slots from the best of
-    // what's left, edge bar relaxed, flagged for what they are. The hard
-    // odds bounds and isPickable still apply — a full board is the promise,
-    // a -1800 or a preseason game is still not a way to keep it.
-    lastResortFill = false,
+    // There is deliberately NO tier below guaranteeCount. One existed
+    // (`lastResortFill`, 2026-08-21 to 2026-09-15): it filled the remaining
+    // slots with the edge bar relaxed so the board never posted short. Every
+    // pick it produced was, by this engine's own numbers, a losing bet
+    // before kickoff, and it was posting them on precisely the days the
+    // market offered nothing. A short board is the honest output of a day
+    // with no edge; a full board of -EV bets is a guaranteed loss dressed as
+    // a promise kept. The edge bar (minEv/minKelly) is now the one thing no
+    // tier of this function relaxes.
     // Sport keys the user has said they'd rather see more of. This is a soft
     // sort nudge, not a filter — it can move a close call to the front of the
     // queue, never invent or hide a grade.
@@ -1147,30 +1309,6 @@ export function topPicks(
         percentile: percentileOf(c.score, scores),
         meetsStandard: false,
         flagReason: reasons.length ? reasons.join(', ') : 'outside standard criteria',
-      });
-    }
-  }
-
-  // See lastResortFill's own comment — only reachable when even the
-  // guaranteeCount fallback (edge bar intact) couldn't reach `count`.
-  if (guaranteeCount && lastResortFill && picks.length < count) {
-    const remaining = [...candidates]
-      .filter((c) => !usedLegs.includes(c) && withinHardBounds(c.american) && isPickable(c))
-      .sort((a, b) => sortKey(b) - sortKey(a));
-
-    for (const c of remaining) {
-      if (picks.length >= count) break;
-      if (usedLegs.some((leg) => leg.eventId === c.eventId)) continue;
-      if (usedLegs.some((leg) => contradicts(leg, c))) continue;
-      usedLegs.push(c);
-      picks.push({
-        type: 'single',
-        legs: [c],
-        american: c.american,
-        score: c.score,
-        percentile: percentileOf(c.score, scores),
-        meetsStandard: false,
-        flagReason: 'no qualifying edge today — posted to keep the board full',
       });
     }
   }

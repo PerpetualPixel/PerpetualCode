@@ -86,6 +86,100 @@ export function regionsFor(sportKey) {
 // The sports catalogue is free to fetch and changes on the order of days.
 export const SPORTS_LIST_CACHE_SECONDS = 3600;
 
+/**
+ * Sharp reference books, pulled alongside the US board so docs/engine.js's
+ * buildCandidates can anchor its consensus to them (see SHARP_BOOK_KEYS
+ * there for why). Comma-separated Odds API bookmaker keys; overridable per
+ * deployment with the SHARP_BOOKMAKERS var, and an empty string disables
+ * the second call entirely.
+ *
+ * Cost: The Odds API bills the `bookmakers` parameter at one region per
+ * group of ten bookmakers, so this is one extra region's worth per sport
+ * per cache miss — 3 credits on the 3-market featured call, the same
+ * increment tennis already pays for its uk/eu regions. Under the 100k/month
+ * plan and the observed ~15-20% utilisation this is affordable; it is the
+ * single most valuable credit this app spends, because every other number
+ * on the board is graded against it.
+ */
+export const DEFAULT_SHARP_BOOKMAKERS = 'pinnacle';
+
+/**
+ * The sharp bookmaker list to request for one sport, or null when no second
+ * call should be made: disabled by config, or a sport whose own regions
+ * already carry the sharp books (tennis pulls uk/eu, where Pinnacle lives —
+ * a second call would pay again for quotes the first already returned).
+ */
+export function sharpBookmakersFor(env, sportKey) {
+  const configured = env?.SHARP_BOOKMAKERS ?? DEFAULT_SHARP_BOOKMAKERS;
+  const keys = String(configured).split(',').map((k) => k.trim()).filter(Boolean);
+  if (!keys.length) return null;
+  if (regionsFor(sportKey) !== REGIONS) return null;
+  return keys.join(',');
+}
+
+/**
+ * Fold sharp-book quotes into the matching US-board events, by event id and
+ * bookmaker key. A sharp book already present on an event (a region that
+ * carried it) is left alone; an event only the sharp book prices is dropped,
+ * since nothing on it can be bet. Pure and exported for the tests.
+ */
+export function mergeSharpQuotes(events, sharpEvents) {
+  if (!Array.isArray(events) || !Array.isArray(sharpEvents) || !sharpEvents.length) return events;
+  const sharpById = new Map(sharpEvents.map((e) => [e.id, e]));
+  for (const event of events) {
+    const sharp = sharpById.get(event.id);
+    if (!sharp) continue;
+    const present = new Set((event.bookmakers ?? []).map((b) => b.key));
+    for (const book of sharp.bookmakers ?? []) {
+      if (present.has(book.key)) continue;
+      event.bookmakers = event.bookmakers ?? [];
+      event.bookmakers.push(book);
+      present.add(book.key);
+    }
+  }
+  return events;
+}
+
+/**
+ * The sharp books' quotes for one sport, cached under their own key for the
+ * same TTL as the board they anchor. Best-effort: any failure returns [] and
+ * the board grades against the soft-book median exactly as it did before
+ * this existed — the anchor is an upgrade, never a dependency.
+ */
+async function fetchSharpQuotes(sport, bookmakers, env, ctx, ttl) {
+  const cacheKey = new Request(
+    `https://pixel-pick.cache/sharp/${sport}?markets=${MARKETS}&bookmakers=${bookmakers}`,
+  );
+  const cache = caches.default;
+  try {
+    const cached = await cache.match(cacheKey);
+    if (cached) return await cached.json();
+
+    const url = new URL(`${UPSTREAM}/sports/${sport}/odds`);
+    url.searchParams.set('apiKey', (env.ODDS_API_KEY ?? '').trim());
+    url.searchParams.set('bookmakers', bookmakers);
+    url.searchParams.set('markets', MARKETS);
+    url.searchParams.set('oddsFormat', 'american');
+    url.searchParams.set('dateFormat', 'iso');
+    const upstream = await fetch(url.toString());
+    if (!upstream.ok) return [];
+    const events = await upstream.json();
+    if (!Array.isArray(events)) return [];
+    const cacheTtl = events.length === 0 ? EMPTY_BOARD_CACHE_SECONDS : ttl;
+    ctx.waitUntil(
+      cache.put(
+        cacheKey,
+        new Response(JSON.stringify(events), {
+          headers: { 'Content-Type': 'application/json', 'Cache-Control': `max-age=${cacheTtl}` },
+        }),
+      ),
+    );
+    return events;
+  } catch {
+    return [];
+  }
+}
+
 function extractMoneylineOdds(event) {
   // Extract the best h2h (moneyline) odds from the bookmakers array
   // The home_team's odds go into the `american` field, and all available
@@ -181,9 +275,19 @@ export async function fetchSport(sport, env, ctx) {
   );
   const cache = caches.default;
 
+  // The sharp anchor's quotes ride along on every board fetch (see
+  // sharpBookmakersFor). Merged AFTER the soft board is cached so the two
+  // caches stay independent: a sharp-fetch hiccup can never poison the
+  // cached board, and vice versa.
+  const sharpBookmakers = sharpBookmakersFor(env, sport);
+  const withSharp = async (events) => {
+    if (!sharpBookmakers || !Array.isArray(events) || !events.length) return events;
+    return mergeSharpQuotes(events, await fetchSharpQuotes(sport, sharpBookmakers, env, ctx, ttl));
+  };
+
   const cached = await cache.match(cacheKey);
   if (cached) {
-    let events = await cached.json();
+    let events = await withSharp(await cached.json());
     if (sport === 'mma_mixed_martial_arts') {
       events = await enrichMmaEvents(events, ctx);
     }
@@ -203,13 +307,10 @@ export async function fetchSport(sport, env, ctx) {
     lastCost: upstream.headers.get('x-requests-last'),
   };
 
-  if (sport === 'mma_mixed_martial_arts') {
-    events = await enrichMmaEvents(events, ctx);
-  }
-
   // An empty board holds far longer than a live one — see
-  // EMPTY_BOARD_CACHE_SECONDS. Cached AFTER the MMA enrichment on purpose:
-  // enrichment never invents events, so emptiness is the upstream's answer.
+  // EMPTY_BOARD_CACHE_SECONDS. Cached BEFORE the sharp merge and the MMA
+  // enrichment: neither invents events, so emptiness is the upstream's
+  // answer, and the cached board must stay the soft US board alone.
   const cacheTtl = Array.isArray(events) && events.length === 0 ? EMPTY_BOARD_CACHE_SECONDS : ttl;
   ctx.waitUntil(
     cache.put(
@@ -219,6 +320,11 @@ export async function fetchSport(sport, env, ctx) {
       }),
     ),
   );
+
+  events = await withSharp(events);
+  if (sport === 'mma_mixed_martial_arts') {
+    events = await enrichMmaEvents(events, ctx);
+  }
 
   return { events, cached: false, quota };
 }

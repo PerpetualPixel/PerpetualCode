@@ -9,7 +9,7 @@ import {
   TEAM_DOG_MIN_SIGNAL,
   MAX_CONTEXT_FETCHES,
 } from '../worker/src/team-form.js';
-import { QUALITATIVE } from '../docs/engine.js';
+import { QUALITATIVE, scoreCandidate } from '../docs/engine.js';
 
 const NOW = Date.parse('2026-08-16T16:00:00Z');
 const ctx = { waitUntil: (p) => p };
@@ -110,8 +110,11 @@ test('applyTeamFormSignal: keeps a form-backed underdog and re-scores it upward'
   const [kept] = applyTeamFormSignal([candidate({ score: 60 })], contexts, { now: NOW });
   assert.ok(kept, 'a backed underdog survives the gate');
   assert.ok(Math.abs(kept.formSignal - 0.6) < 1e-9, `expected +0.6 signal, got ${kept.formSignal}`);
-  assert.ok(kept.score > 60, 'the swing is applied, not merely recorded');
-  assert.ok(kept.score <= 60 + QUALITATIVE.MAX_SWING + 1e-9, 'and stays inside the capped swing');
+  // The re-score is scoreCandidate's own price-only grade plus the swing —
+  // compared against THAT, not the fixture's placeholder 60.
+  const priceOnly = scoreCandidate(candidate(), { now: NOW }).score;
+  assert.ok(kept.score > priceOnly, 'the swing is applied, not merely recorded');
+  assert.ok(kept.score <= priceOnly + QUALITATIVE.MAX_SWING + 1e-9, 'and stays inside the capped swing');
 });
 
 test('applyTeamFormSignal: a favorite with poor form is re-scored DOWNWARD, never dropped', () => {
@@ -120,7 +123,7 @@ test('applyTeamFormSignal: a favorite with poor form is re-scored DOWNWARD, neve
   const [kept] = applyTeamFormSignal([fav], contexts, { now: NOW });
   assert.ok(kept, 'favorites are never gated out');
   assert.ok(kept.formSignal < 0);
-  assert.ok(kept.score < 60, 'a favorite in bad form should grade worse, not the same');
+  assert.ok(kept.score < scoreCandidate(fav, { now: NOW }).score, 'a favorite in bad form should grade worse, not the same');
 });
 
 test('applyTeamFormSignal: injuries alone can carry the signal when form is unavailable', () => {
@@ -188,7 +191,7 @@ test('applyTeamFormSignal: NFL candidates blend a real epaDiff and attach it to 
   const [kept] = applyTeamFormSignal([c], new Map(), { now: NOW, nflEfficiency });
   assert.ok(kept, 'a real epaDiff must produce a signal even with no ESPN context match');
   assert.ok(Number.isFinite(kept.epaDiff) && kept.epaDiff > 0, 'the stronger side gets a positive EPA differential');
-  assert.ok(kept.score > 60, 'the EPA swing is applied, not merely recorded');
+  assert.ok(kept.score > scoreCandidate(c, { now: NOW }).score, 'the EPA swing is applied, not merely recorded');
 });
 
 test('applyTeamFormSignal: NFL candidate with no nflEfficiency snapshot behaves exactly like before', () => {
