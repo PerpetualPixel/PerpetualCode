@@ -64,8 +64,11 @@ const ladderCtx = { waitUntil: (p) => p };
  * it every book agreeing exactly produces zero edge and a score in the 30s,
  * which would fail every fixture here regardless of the preseason filter.
  */
-function makeLadderEvent(id, { sport = 'basketball_nba', sportTitle = 'NBA', favoritePrice = -195, awayPrice = 160, outlier = 25 } = {}) {
-  const books = ['b0', 'b1', 'b2', 'b3', 'b4', 'b5', 'b6', 'b7'];
+function makeLadderEvent(id, { sport = 'basketball_nba', sportTitle = 'NBA', favoritePrice = -195, awayPrice = 160, outlier = 30 } = {}) {
+  // Registry (bettable) books: the curated boards refuse a best price at a
+  // book the reader can't use, so a fixture priced at fake keys would never
+  // post at all.
+  const books = ['draftkings', 'fanduel', 'betmgm', 'williamhill_us', 'betrivers', 'espnbet', 'fanatics', 'hardrockbet'];
   return {
     id,
     sport_key: sport,
@@ -334,22 +337,37 @@ test('the band is -200..+120 — a plus-money underdog now qualifies, unlike the
   // Two fixture details that matter: awayPrice must be a real other side
   // (leaving the +160 default would put BOTH sides on plus money, a
   // negative-vig market that cannot exist), and the tracked price is the
-  // BEST book's, so 90 + the 25 outlier = +115 is what actually gets graded
+  // BEST book's, so 90 + the 30 outlier = +120 is what actually gets graded
   // against the band's +120 ceiling.
   const events = [makeLadderEvent('dog', { favoritePrice: 90, awayPrice: -130 })];
   const result = await runLadderDaily(env, ladderCtx, NOW, { fetchFullSlate: async () => events });
-  assert.equal(result.skipped, false, 'a +115 candidate must be pickable');
-  assert.equal(result.record.pick.american, 115);
+  assert.equal(result.skipped, false, 'a +120 candidate must be pickable');
+  assert.equal(result.record.pick.american, 120);
+  assert.equal(result.record.pick.viaFallback, false);
 });
 
-test('a price heavier than -200 is still posted via the fallback — the ladder plays every day, not just in-band days', async () => {
+test('a price heavier than -200 WITH a real edge is still posted via the fallback — off the band, never off the edge floor', async () => {
   const { env } = makeKvStore();
-  const events = [makeLadderEvent('heavy', { favoritePrice: -260 })];
+  // -300/+240 elsewhere, one book at -245: outside the band, but a clear
+  // edge against the market's no-vig line (about +3% EV).
+  const events = [makeLadderEvent('heavy', { favoritePrice: -300, awayPrice: 240, outlier: 55 })];
   const result = await runLadderDaily(env, ladderCtx, NOW, { fetchFullSlate: async () => events });
-  assert.equal(result.skipped, false, 'nothing in the preferred band must fall back to the best available game, not hold');
-  // -260 base + the fixture's default +25 outlier on the best book = -235.
-  assert.equal(result.record.pick.american, -235);
+  assert.equal(result.skipped, false, 'nothing in the preferred band must fall back to the best available EDGE, not hold');
+  assert.equal(result.record.pick.american, -245);
   assert.equal(result.record.pick.viaFallback, true, 'the pick must be honestly marked as outside the preferred band');
+});
+
+test('a heavy favourite with NO edge is never posted, fallback or not — the ladder holds and says why', async () => {
+  const { env } = makeKvStore();
+  // Under the old rule this posted as a viaFallback rung: the fixture is
+  // -260 with the same +25 outlier every other fixture carries, which is
+  // a -EV bet once the hold is paid. A compounding bankroll never rides one.
+  const events = [makeLadderEvent('heavy', { favoritePrice: -260, outlier: 25 })];
+  const result = await runLadderDaily(env, ladderCtx, NOW, { fetchFullSlate: async () => events });
+  assert.equal(result.skipped, true);
+  assert.match(result.reason, /clears the edge floor/);
+  const status = JSON.parse(await env.POTD_KV.get('ladder:status:2026-08-14'));
+  assert.match(status.reason, /edge floor/);
 });
 
 test('when something clears the preferred band, the fallback never fires even if a worse-priced candidate also exists', async () => {

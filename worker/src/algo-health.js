@@ -45,7 +45,15 @@ const ALGO_CONFIG_TTL = 86400 * 365; // config/state should persist indefinitely
 // considered — conservative on purpose: a niche segment simply won't
 // accumulate enough evidence to trigger anything, and "no action" is always
 // the correct default over an action taken on a noisy handful of picks.
-export const HEALTH_WINDOW_DAYS = 60;
+// 60 days until 2026-09-15. Reading 60 days of every tracker is ~1,500 KV
+// gets in one scheduled invocation, and the live log shows the review ran
+// exactly once (2026-W33, when the record was small) and never again as the
+// record grew — every later Monday's run died silently on the per-invocation
+// subrequest cap (a real incident with the same shape as the MLB league-stats
+// refresh, see index.js). 30 days is what the daily learning review already
+// reads without trouble, and MIN_SEGMENT_SAMPLE is reachable inside it for
+// every segment that matters.
+export const HEALTH_WINDOW_DAYS = 30;
 export const MIN_SEGMENT_SAMPLE = 20;
 export const MIN_OVERALL_SAMPLE = 30;
 

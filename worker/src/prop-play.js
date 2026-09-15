@@ -76,6 +76,32 @@ const ML_STALE_VOID_MS = 48 * 3600 * 1000;
 const MIN_GAMES = 8;
 const MIN_SEASON_RATE = 0.75;
 const MIN_L10_RATE = 0.8;
+// The edge gate (2026-09-15). The hit-rate gates above say the player
+// clears the line OFTEN; they say nothing about whether she clears it more
+// often than the PRICE already assumes, which is the only thing that makes
+// the bet worth money. A -650 line implies 86.7%; a player with a 75% season
+// rate passes every gate above and loses ~13 cents on the dollar to it. So a
+// leg's blended hit rate (season and last-10, evenly) is shrunk toward the
+// market's implied probability by PROP_PRIOR_GAMES pseudo-games — a
+// twelve-game sample is real evidence, not the truth — and must still beat
+// that implied probability by PROP_MIN_EDGE. Recorded on the leg as `edge`.
+export const PROP_MIN_EDGE = 0.04;
+export const PROP_PRIOR_GAMES = 10;
+
+/**
+ * A prop leg's edge over its own price: shrunk blended hit rate minus the
+ * line's implied probability. Pure and exported for the tests. Null when
+ * the profile can't state a rate.
+ */
+export function propEdge(profile, decimal) {
+  if (!profile || !Number.isFinite(profile.season) || !Number.isFinite(profile.l10)) return null;
+  if (!(decimal > 1)) return null;
+  const implied = 1 / decimal;
+  const blended = 0.5 * profile.season + 0.5 * profile.l10;
+  const n = Number(profile.games) || 0;
+  const shrunk = (blended * n + implied * PROP_PRIOR_GAMES) / (n + PROP_PRIOR_GAMES);
+  return Math.round((shrunk - implied) * 1e4) / 1e4;
+}
 const MAX_GAMES_SCANNED = 3;
 const MAX_GAMELOG_LOOKUPS = 12;
 
@@ -419,7 +445,12 @@ export async function runPropPlayDaily(env, ctx, now = Date.now(), { debug = fal
       trace.push(`${c.player} ${c.need}+ ${c.statKey}: gates missed (n=${profile.games}, season=${pct(profile.season)}, L10=${pct(profile.l10)})`);
       continue;
     }
-    qualified.push({ ...c, profile, conviction: convictionOf(profile) });
+    const edge = propEdge(profile, c.decimal);
+    if (!(edge >= PROP_MIN_EDGE)) {
+      trace.push(`${c.player} ${c.need}+ ${c.statKey}: no edge at ${fmtAmerican(c.american)} (hit rate beats the price by ${edge == null ? 'n/a' : pct(edge)}, needs ${pct(PROP_MIN_EDGE)})`);
+      continue;
+    }
+    qualified.push({ ...c, profile, edge, conviction: convictionOf(profile) });
   }
   // Moneyline legs used to join this pool here (heavy favourites from any
   // slate sport). Removed 2026-08-28 by explicit direction: the Prop Play of
@@ -458,23 +489,18 @@ export async function runPropPlayDaily(env, ctx, now = Date.now(), { debug = fal
   } catch { trace.push('cross-board dedupe read failed — continuing'); }
 
   trace.push(`qualified legs: ${qualified.length}`);
-  // "There will be a prop play no matter what": when nothing clears the
-  // conviction gates, fall back to the safest available candidate (the
-  // heaviest line in the band — deepest below the player's normal output)
-  // rather than skipping the day, flagged so the writeup can say so. Only
-  // a day with literally no candidate anywhere posts nothing.
-  let viaFallback = false;
+  // No fallback. One existed (2026-08-21 to 2026-09-15) that posted the
+  // heaviest line in the band when nothing cleared the gates — a leg with
+  // no hit-rate case and, by construction, no edge, at -650 or thereabouts.
+  // A prop play that can't argue its own numbers isn't a prop play; the day
+  // posts nothing and says why. `viaFallback` is kept on the record shape
+  // (always false now) so every surface that reads old records still can.
+  const viaFallback = false;
   if (!qualified.length) {
-    const fallbackPool = candidates
-      .filter((c) => c.game?.commence && new Date(c.game.commence).getTime() > now)
-      .sort((x, y) => x.decimal - y.decimal);
-    if (!fallbackPool.length) {
-      return { created: false, reason: 'no player-prop candidate anywhere on the slate today', trace };
-    }
-    const c = fallbackPool[0];
-    qualified.push({ ...c, profile: c.profile ?? null, conviction: 0 });
-    viaFallback = true;
-    trace.push(`fallback: ${c.player} ${c.need}+ ${c.statKey} — no leg cleared the gates, safest line taken`);
+    const reason = candidates.length
+      ? `no player-prop leg cleared the hit-rate and edge gates today (${candidates.length} safe-band lines scanned)`
+      : 'no player-prop candidate anywhere on the slate today';
+    return { created: false, reason, trace };
   }
 
   // Every qualified leg is already SAFE (the gates saw to that), so the
@@ -538,6 +564,8 @@ export async function runPropPlayDaily(env, ctx, now = Date.now(), { debug = fal
       need: leg.need,
       point: leg.point,
       american: leg.american,
+      // Shrunk hit rate over the line's implied probability — see propEdge.
+      edge: leg.edge ?? null,
       book: leg.book,
       home: leg.game.home,
       away: leg.game.away,

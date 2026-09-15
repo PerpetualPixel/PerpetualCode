@@ -44,30 +44,74 @@ counter appears.
 
 ## How picks are chosen
 
-Not "odds in range, pick at random." The engine runs the same three steps a
+Not "odds in range, pick at random." The engine runs the same four steps a
 professional bettor runs before placing anything:
 
-**1. De-vig every book.** A book showing -110 / -110 is not saying "50/50" — it's
-saying 50/50 plus a 4.8% fee. Strip the fee and you get what that book actually
-believes.
+**1. De-vig every book — with the power method, not a proportional rescale.**
+A book showing -110 / -110 is not saying "50/50" — it's saying 50/50 plus a
+4.8% fee. Strip the fee and you get what that book actually believes. *How*
+you strip it matters: books do not charge the margin evenly. Longshots are
+overpriced relative to their true chance (the favourite-longshot bias, one of
+the best-replicated findings in betting markets), so rescaling every outcome
+proportionally hands the underdog a point or two of probability it doesn't
+have — on a +240 dog that is about 5% of phantom expected value, more than
+three times this app's entire edge floor, and it is why an outlier-hunting
+engine drifts toward dogs that win 30% of the time. The power method
+(`devig()` in `engine.js`) raises each implied probability to the exponent
+that makes them sum to 1, which takes the margin mostly out of the longshot.
 
-**2. Build a consensus that excludes the book you'd bet at.** This is the step
-most naive models skip. If DraftKings hangs +150 and everyone else says +130,
-letting DraftKings vote on its own price makes every outlier look like free
-money. The benchmark is built from the *other* books only.
+**2. Anchor the consensus to the sharp market.** The worker pulls Pinnacle's
+line alongside the US board (`worker/src/odds.js`), and where it prices a
+game the consensus is 70% its de-vigged number and 30% the soft-book median
+(`SHARP_ANCHOR_WEIGHT`). Soft books copy each other and lag the sharp market
+by minutes to hours, so "one book is better than the median of the others"
+very often meant "one book has moved toward where Pinnacle already is and the
+rest haven't" — a bet *against* the sharp read, dressed as an edge. Pinnacle
+is never the bet (it doesn't take US customers); it is the benchmark. Where no
+sharp quote exists the soft-book median stands alone, exactly as before, and
+the pick's `anchor` field says which regime graded it.
 
-**3. Grade the best available price against that benchmark.** The gap is your
+**3. Exclude the book you'd bet at from its own benchmark.** If DraftKings
+hangs +150 and everyone else says +130, letting DraftKings vote on its own
+price makes every outlier look like free money. The benchmark is built from
+the *other* books only.
+
+**4. Grade the best price the reader can actually take.** The best price is
+chosen among the books in the app's own registry (`SPORTSBOOKS`) whenever one
+of them prices the line — an offshore outlier isn't a price most readers can
+get, and the tracked record grades at this number, so it has to be one they
+could have taken. The gap between that price and the anchored consensus is the
 edge, expressed as expected value per dollar.
 
-Then four confidence weights decide which edges are trustworthy:
+Then the grade: **edge, multiplied by confidence.** The score is
+`100 · edge · (0.55 + 0.45 · confidence)`, where confidence blends book count
+(35%), market agreement (25%), sharp anchor present (15%), line-shopping gain
+(15%) and freshness (10%). The confidence factors *scale* the edge; they never
+add to it. The previous additive blend let a zero-EV bet with a tidy, liquid,
+fresh number score about 70 — twenty points clear of the floor — and the
+boards that rank by score kept choosing the cleanest number over the most
+profitable one. A zero-EV candidate now scores at most 33 whatever its market
+quality.
 
-| Factor | Weight | Why it matters |
-|---|---|---|
-| Edge vs consensus | 45% | The actual money. Everything else is a filter on this. |
-| Book count | 18% | Three books agreeing is noise. Ten is a market. |
-| Market agreement | 15% | An outlier only means something if everyone else is clustered. |
-| Line-shopping gain | 14% | The best number vs the field average — this is the part you control. |
-| Freshness | 8% | A stale line on a game six days out isn't a real price. |
+**A curated pick is priced at a book you can bet.** Play of the Day,
+Pixel's Picks and the Ladder refuse a candidate whose best price sits only at
+an offshore or EU book (`bettable` on the candidate; `requireBettable` in
+`topPicks`). The live record made the case: Pixel's Picks priced at a registry
+book went 24-19 for +24.7%, those priced at offshore/EU books 35-42 for −10%,
+and those at Pinnacle or an exchange 6-8 for −25% — and the edge read only
+predicted results at registry prices. Tennis now pulls the US region too so
+main-tour matches carry registry prices at all. The Full Slate, as the raw
+record, still tracks every line.
+
+**The edge floor is the one thing no board relaxes.** Play of the Day,
+Pixel's Picks, the Ladder rung and the Prop Play each require a real edge
+(`RULES.MIN_EV_PCT`, 2% of stake against the anchored consensus, plus a
+minimum quarter-Kelly stake) before a pick can post at all — flagged fallback
+tiers relax the price band or the confidence floor, never this. Until
+2026-09-15 Play of the Day and the Ladder had no EV requirement, and every
+board had a last-resort tier that posted bets the engine itself graded as
+losers so the board never looked short. A day with fewer real edges now posts
+fewer picks, with the reason written to the card: a pass is a pick too.
 
 The `?` on each pick shows the real numbers behind that grade, not a generated
 adjective.

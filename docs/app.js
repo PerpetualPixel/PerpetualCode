@@ -1593,10 +1593,11 @@ function stakeLineHtml(stake, className = 'stake-line') {
  * A fallback-tier pick's marker, sitting inline with the sport chip.
  *
  * This used to be a full-width amber banner under the header, from when a
- * flagged pick was the rare exception. Every board posts in full every day
- * now (worker/src/tracking.js's guarantee), so a thin slate flags all five
- * cards — five identical alarm blocks stacked down the page, each louder
- * than the pick it labelled. When the exception becomes the norm it stops
+ * flagged pick was the rare exception. A thin slate can flag most of the
+ * board (worker/src/tracking.js's guaranteeCount fallback — edge bar
+ * intact, band and floor relaxed), so several identical alarm blocks would
+ * stack down the page, each louder than the pick it labelled. When the
+ * exception becomes common it stops
  * reading as a warning, so it's shaped as a category instead: same
  * disclosure, same reason (on the chip's tooltip), a great deal quieter.
  */
@@ -5549,12 +5550,24 @@ function markTabSeen(storageKey, currentValue) {
 
 let potdCurrentDate = null;
 
-function renderPotd(potd, leaning) {
+function renderPotd(potd, leaning, hold = null) {
   // A stale fallback (yesterday's pick, shown because today's hasn't
   // posted yet — see worker/src/potd.js's getPotd) isn't new content, so it
   // never lights up the tab; only a genuine, freshly-posted day does.
   potdCurrentDate = potd && !potd.stale ? potd.date : null;
   updateNewIndicator(el.tabPotd, 'pp_potd_seen_date', potdCurrentDate);
+
+  // The draw ran today and posted nothing (worker/src/potd.js writes the
+  // reason): that is the day's answer, and it beats showing yesterday's
+  // already-played pick as though it were live. A no-edge day is a real
+  // outcome of a board that only posts bets its own numbers say are +EV.
+  if (hold && (!potd || potd.stale)) {
+    registerPostedPicks('potd', []);
+    el.potdBody.innerHTML = `<p class="empty">
+      <strong>No Play of the Day today.</strong> ${esc(hold.reason ?? 'Nothing on the slate cleared the standard.')}
+      A pass is a pick too: the board only posts a play when the price beats the market's no-vig line by the edge floor.</p>`;
+    return;
+  }
 
   if (potd) {
     const { writeup, generatedAt, stale } = potd;
@@ -5594,7 +5607,7 @@ async function loadPotd({ force = false } = {}) {
   try {
     const res = await fetch(new URL('/potd', CONFIG.WORKER_URL), { headers: { Accept: 'application/json' } });
     const data = await res.json();
-    renderPotd(data.potd ?? null, data.leaning ?? null);
+    renderPotd(data.potd ?? null, data.leaning ?? null, data.hold ?? null);
   } catch {
     potdLoaded = false; // a network hiccup shouldn't permanently give up
     el.potdBody.innerHTML = `<p class="empty">Couldn't reach the odds feed.</p>`;
@@ -5621,7 +5634,14 @@ async function loadPotd({ force = false } = {}) {
 
   try {
     const res = await fetch(new URL('/prop-play', CONFIG.WORKER_URL), { headers: { Accept: 'application/json' } });
-    const { propPlay } = await res.json();
+    const { propPlay, hold } = await res.json();
+    if (!propPlay && hold) {
+      // Same honesty as the main card above: the scan ran and nothing
+      // cleared the hit-rate and edge gates, so the slot says so.
+      registerPostedPicks('propplay', []);
+      el.potdBody.insertAdjacentHTML('beforeend', `<p class="empty">
+        <strong>No Prop Play today.</strong> ${esc(hold)}</p>`);
+    }
     if (propPlay) {
       // Registered leg by leg rather than as one combined ticket: someone
       // pasting "A'ja Wilson 24+ points" is asking about that leg, and the

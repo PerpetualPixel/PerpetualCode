@@ -6,6 +6,9 @@ import {
   regionsFor,
   REGIONS,
   TENNIS_REGIONS,
+  DEFAULT_SHARP_BOOKMAKERS,
+  sharpBookmakersFor,
+  mergeSharpQuotes,
 } from '../worker/src/odds.js';
 
 /**
@@ -120,10 +123,10 @@ test('enrichMmaEvents falls back to date grouping for every fight when both scor
 test('regionsFor widens tennis keys and leaves team sports on us', () => {
   assert.equal(regionsFor('tennis_wta_cincinnati'), TENNIS_REGIONS);
   assert.equal(regionsFor('tennis_atp_canadian_open'), TENNIS_REGIONS);
-  // uk,eu deliberately WITHOUT us: the widening exists because US books
-  // don't price lower-tier tennis, so re-asking them paid a third region's
-  // credits (9 vs 6 per fetch) for nothing.
-  assert.equal(TENNIS_REGIONS, 'uk,eu');
+  // us AND uk/eu: the US books carry the prices a reader can bet (without
+  // them every tennis pick's best price was at 1xBet or Pinnacle), the
+  // uk/eu books carry the sharp anchor and the depth for lower-tier draws.
+  assert.equal(TENNIS_REGIONS, 'us,uk,eu');
 
   for (const key of ['baseball_mlb', 'americanfootball_nfl', 'mma_mixed_martial_arts', 'soccer_usa_mls']) {
     assert.equal(regionsFor(key), REGIONS);
@@ -143,9 +146,9 @@ test('fetchSport requests the widened regions for a tennis key', async () => {
   };
 
   await fetchSport('tennis_wta_cincinnati', { ODDS_API_KEY: 'k' }, ctx);
-  assert.equal(requested.length, 1);
+  assert.equal(requested.length, 1, 'tennis makes no second sharp-quote call — its regions already carry Pinnacle');
   const url = new URL(requested[0]);
-  assert.equal(url.searchParams.get('regions'), 'uk,eu');
+  assert.equal(url.searchParams.get('regions'), 'us,uk,eu');
 });
 
 test('fetchSport keeps team sports on the us region', async () => {
@@ -172,7 +175,82 @@ test('fetchSport caches tennis under a region-specific key (no us-only collision
 
   await fetchSport('tennis_wta_cincinnati', { ODDS_API_KEY: 'k' }, ctx);
   assert.ok(puts.length >= 1);
-  assert.ok(puts[0].includes('regions=uk,eu'), `cache key should carry the tennis regions, got ${puts[0]}`);
+  assert.ok(puts[0].includes('regions=us,uk,eu'), `cache key should carry the tennis regions, got ${puts[0]}`);
+});
+
+/* ---------------------------------------------------------------- */
+/* Sharp anchor quotes                                               */
+/* ---------------------------------------------------------------- */
+
+test('sharpBookmakersFor asks for Pinnacle on US-region sports, never on tennis, and can be switched off', () => {
+  assert.equal(DEFAULT_SHARP_BOOKMAKERS, 'pinnacle');
+  assert.equal(sharpBookmakersFor({}, 'baseball_mlb'), 'pinnacle');
+  assert.equal(sharpBookmakersFor({}, 'americanfootball_nfl'), 'pinnacle');
+  // Tennis already pulls uk/eu, where Pinnacle lives — a second call would
+  // pay again for quotes the first already returned.
+  assert.equal(sharpBookmakersFor({}, 'tennis_wta_cincinnati'), null);
+  assert.equal(sharpBookmakersFor({ SHARP_BOOKMAKERS: '' }, 'baseball_mlb'), null);
+  assert.equal(sharpBookmakersFor({ SHARP_BOOKMAKERS: 'pinnacle, betfair_ex_eu' }, 'baseball_mlb'), 'pinnacle,betfair_ex_eu');
+});
+
+test('mergeSharpQuotes folds the sharp book onto the matching event and drops events nobody can bet', () => {
+  const events = [
+    { id: 'a', bookmakers: [{ key: 'draftkings', markets: [] }] },
+    { id: 'b', bookmakers: [{ key: 'pinnacle', markets: [{ key: 'h2h' }] }] },
+  ];
+  const sharp = [
+    { id: 'a', bookmakers: [{ key: 'pinnacle', markets: [{ key: 'h2h' }] }] },
+    { id: 'b', bookmakers: [{ key: 'pinnacle', markets: [{ key: 'spreads' }] }] },
+    { id: 'zzz', bookmakers: [{ key: 'pinnacle', markets: [] }] },
+  ];
+  const out = mergeSharpQuotes(events, sharp);
+  assert.equal(out.length, 2, 'an event only the sharp book prices is not added');
+  assert.deepEqual(out[0].bookmakers.map((b) => b.key), ['draftkings', 'pinnacle']);
+  // Already present (a region carried it): left exactly as it was.
+  assert.equal(out[1].bookmakers.length, 1);
+  assert.equal(out[1].bookmakers[0].markets[0].key, 'h2h');
+  assert.equal(mergeSharpQuotes(events, []), events);
+});
+
+test('fetchSport pulls the sharp quotes as a second, separately-cached request and merges them', async () => {
+  const requested = [];
+  const puts = [];
+  globalThis.caches = {
+    default: {
+      async match() { return null; },
+      async put(key) { puts.push(String(key.url ?? key)); },
+    },
+  };
+  globalThis.fetch = async (url) => {
+    requested.push(String(url));
+    const u = new URL(url);
+    const body = u.searchParams.get('bookmakers') === 'pinnacle'
+      ? [{ id: 'e1', bookmakers: [{ key: 'pinnacle', title: 'Pinnacle', markets: [] }] }]
+      : [{ id: 'e1', bookmakers: [{ key: 'draftkings', title: 'DraftKings', markets: [] }] }];
+    return { ok: true, async json() { return body; }, headers: { get: () => null } };
+  };
+
+  const { events } = await fetchSport('baseball_mlb', { ODDS_API_KEY: 'k' }, ctx);
+  assert.equal(requested.length, 2);
+  const [board, sharp] = requested.map((r) => new URL(r));
+  assert.equal(board.searchParams.get('regions'), 'us');
+  assert.equal(board.searchParams.has('bookmakers'), false);
+  assert.equal(sharp.searchParams.get('bookmakers'), 'pinnacle');
+  assert.equal(sharp.searchParams.has('regions'), false, 'bookmakers takes priority over regions upstream — never send both');
+  assert.deepEqual(events[0].bookmakers.map((b) => b.key), ['draftkings', 'pinnacle']);
+  // The soft board is cached WITHOUT the sharp quotes, under its own key.
+  assert.ok(puts.some((p) => p.includes('/odds/baseball_mlb')));
+  assert.ok(puts.some((p) => p.includes('/sharp/baseball_mlb')));
+});
+
+test('a failed sharp fetch degrades to the soft board alone', async () => {
+  globalThis.caches = { default: { async match() { return null; }, async put() {} } };
+  globalThis.fetch = async (url) => {
+    if (new URL(url).searchParams.has('bookmakers')) throw new Error('upstream down');
+    return { ok: true, async json() { return [{ id: 'e1', bookmakers: [{ key: 'fanduel', markets: [] }] }]; }, headers: { get: () => null } };
+  };
+  const { events } = await fetchSport('baseball_mlb', { ODDS_API_KEY: 'k' }, ctx);
+  assert.deepEqual(events[0].bookmakers.map((b) => b.key), ['fanduel']);
 });
 
 test('an empty odds board is cached for hours, a live one for CACHE_SECONDS', async () => {
