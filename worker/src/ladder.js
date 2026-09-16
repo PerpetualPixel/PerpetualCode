@@ -42,32 +42,35 @@
  * a different stake plan over the same board, not a promise of a different
  * game.
  *
- * The ladder posts every day the slate has ANY real game on it. When nothing
+ * The ladder posts every day the slate has a real EDGE on it. When nothing
  * clears the preferred band (or the app's own RULES.MIN_SCORE floor), the
- * best-SCORING candidate on the whole eligible slate is taken instead — off
- * the app's usual price/quality bar, but a deliberate product decision: a
- * daily challenge that sometimes has no entry isn't the product. What never
- * gets relaxed, band or no band, are the integrity checks that aren't about
+ * best-scoring candidate on the rest of the eligible slate is taken instead
+ * — off the price band, but never off the edge floor. What never gets
+ * relaxed, band or no band, are the integrity checks that aren't about
  * price at all — no exhibitions, no NFL preseason, no non-Power-4 NCAAF, no
  * paused segment (worker/src/algo-health.js), no market this app can't
- * settle, nothing already spoken for by today's other picks. Only a day with
- * literally no eligible game anywhere on the slate holds with no rung at all
- * — see chooseLadderPlay and the fallback logic in runLadderDaily. A rung
- * taken via the fallback is marked `viaFallback: true` on the stored pick, so
- * every surface that reads it can say so honestly rather than presenting it
- * as an ordinary in-band rung.
+ * settle, nothing already spoken for by today's other picks — and, since
+ * 2026-09-15, the edge floor itself (algo-health's MIN_EV_PCT and
+ * MIN_KELLY_FRACTION, the bar Pixel's Picks holds). This is the one surface
+ * that stakes its WHOLE bankroll on a single bet; it had no EV requirement
+ * at all, and a compounding bankroll riding a -EV rung every day is the
+ * fastest way this app could lose money. A day where nothing clears the
+ * edge floor holds, with the reason written so /ladder can say so. A rung
+ * taken via the band fallback is marked `viaFallback: true` on the stored
+ * pick, so every surface that reads it can say so honestly rather than
+ * presenting it as an ordinary in-band rung.
  *
  * Storage: Workers KV (the same POTD_KV binding the other daily surfaces
  * use). `ladder:state` is the live run, `ladder:play:<date>` is a day's play,
  * `ladder:runs` is the archive of finished climbs.
  */
 
-import { analyze, RULES, clearsMaxJuice, isNflPreseason } from '../../docs/engine.js';
+import { analyze, RULES, clearsMaxJuice, isNflPreseason, suggestedStake } from '../../docs/engine.js';
 import { isPower4Matchup } from '../../docs/ncaaf-conferences.js';
 import { isTennis, isMma } from '../../docs/insights.js';
 import { gradePick } from '../../docs/learning.js';
 import { fetchScores } from './odds.js';
-import { getPausedSegments, isSegmentPaused } from './algo-health.js';
+import { getAlgoConfig, getPausedSegments, isSegmentPaused } from './algo-health.js';
 import { getLearningProfile, applyLearningToCandidates } from './daily-learning.js';
 import { fetchMmaResults, gradeMmaPickWithFallback } from './ufc-events.js';
 import { fetchTennisResults, gradeTennisPickWithEspn, isRegradableTennisVoid, isNoOpTennisRegrade } from './tennis-espn.js';
@@ -305,11 +308,17 @@ export async function runLadderDaily(env, ctx, now = Date.now(), { fetchFullSlat
   const existing = await env.POTD_KV.get(playKey(dateKey));
   if (existing) return { skipped: true, reason: 'already posted today', dateKey };
 
-  const [pausedSegments, learningProfile, events] = await Promise.all([
+  const [pausedSegments, learningProfile, algoConfig, events] = await Promise.all([
     getPausedSegments(env),
     getLearningProfile(env),
+    getAlgoConfig(env),
     fetchFullSlate(),
   ]);
+  // The bar no fallback relaxes — see the file header.
+  // ...and a price the reader can take (buildCandidates' `bettable`).
+  const clearsEdge = (c) => c.bettable !== false
+    && c.ev > algoConfig.MIN_EV_PCT
+    && suggestedStake(c) >= algoConfig.MIN_KELLY_FRACTION;
 
   // Team sports get their own form/injury gate (worker/src/team-form.js)
   // alongside the tennis one, in the same position for the same reason.
@@ -330,7 +339,7 @@ export async function runLadderDaily(env, ctx, now = Date.now(), { fetchFullSlat
   // in-band-only `inBand`: this app used to pool nothing outside the price
   // band at all, which meant a day where the only real games were priced
   // outside -200..+120 had literally no fallback pool to reach into.
-  const structurallyEligible = candidates.filter((c) => {
+  const passesIntegrity = candidates.filter((c) => {
     if (isExhibition(c)) return false;
     if (!clearsMaxJuice(c)) return false;
     // NFL preseason is excluded from the ladder for the same reason as
@@ -344,6 +353,9 @@ export async function runLadderDaily(env, ctx, now = Date.now(), { fetchFullSlat
     if (isTennis(c.sportKey)) return isEligibleTennisMatch(c.commenceMs, now);
     return etParts(c.commenceMs).date === dateKey;
   });
+  // ...and then the edge floor, kept separate so the hold below can say which
+  // of the two the day failed.
+  const structurallyEligible = passesIntegrity.filter(clearsEdge);
 
   // One draw at the generation hour, same as every other board since the
   // 2026-08-21 reset — the capture-into-a-pool-as-windows-open cycle (and
@@ -359,23 +371,31 @@ export async function runLadderDaily(env, ctx, now = Date.now(), { fetchFullSlat
   ));
 
   if (!eligible.length) {
-    // The one hold that can still happen: nothing on the ENTIRE slate today
-    // cleared even the integrity checks (an off day, or everything today got
-    // excluded). Deliberately not written to KV: a hold isn't a play, and
-    // tomorrow's tick should be free to post one.
-    return hold("nothing on today's slate clears the ladder's basic eligibility checks", {
-      poolSize: structurallyEligible.length,
-      blockedByExclusion: structurallyEligible.length - eligible.length,
-    });
+    // Nothing on the ENTIRE slate today cleared the integrity checks and the
+    // edge floor (an off day, an efficiently-priced day, or everything got
+    // excluded). The status key records which; the play key is deliberately
+    // not written: a hold isn't a play, and tomorrow's tick should be free
+    // to post one.
+    const noEdge = passesIntegrity.length > 0 && structurallyEligible.length === 0;
+    return hold(
+      noEdge
+        ? `nothing on today's slate clears the edge floor (${(algoConfig.MIN_EV_PCT * 100).toFixed(1)}% EV against the no-vig consensus) — the ladder never rides a -EV rung`
+        : "nothing on today's slate clears the ladder's basic eligibility checks",
+      {
+        poolSize: structurallyEligible.length,
+        blockedByExclusion: structurallyEligible.length - eligible.length,
+      },
+    );
   }
 
   // Preferred: the app's own quality floor and the -200..+120 band. Falling
-  // back to the full eligible slate only when NOTHING clears that — the
-  // ladder posts a rung every day the slate has a real game on it, taking
-  // the best-scoring candidate available rather than holding. chooseLadderPlay
-  // still applies its own near-tie-toward--200 rule inside whichever pool it
-  // gets, so a fallback pick is still the best AVAILABLE approximation of the
-  // ladder's own preferred shape, not an arbitrary pick.
+  // back to the rest of the eligible slate (every entry already clears the
+  // edge floor) only when NOTHING clears that — the ladder posts a rung
+  // every day the slate has a real edge on it, taking the best-scoring
+  // candidate available rather than holding. chooseLadderPlay still applies
+  // its own near-tie-toward--200 rule inside whichever pool it gets, so a
+  // fallback pick is still the best AVAILABLE approximation of the ladder's
+  // own preferred shape, not an arbitrary pick.
   const preferredBand = eligible.filter((c) => (
     c.score >= RULES.MIN_SCORE && c.american >= LADDER_MIN_AMERICAN && c.american <= LADDER_MAX_AMERICAN
   ));

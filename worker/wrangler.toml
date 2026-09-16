@@ -17,6 +17,14 @@ ALLOWED_ORIGINS = "https://perpetualpicks.com,https://www.perpetualpicks.com,htt
 # either value alone.
 CACHE_SECONDS = "900"
 
+# Sharp reference books whose de-vigged line anchors the consensus (see
+# docs/engine.js's SHARP_BOOK_KEYS and worker/src/odds.js's sharpBookmakersFor).
+# Comma-separated Odds API bookmaker keys. Unset = "pinnacle". Each US-region
+# board fetch pays one extra region's worth of credits (3 on the featured
+# call) for this second, separately cached request. Set to "" to disable and
+# grade against the soft-book median alone.
+# SHARP_BOOKMAKERS = "pinnacle"
+
 # Require a signed-in account for /odds. Leave "false" until the D1 database is
 # created and migrations are applied — the frontend's CONFIG.REQUIRE_AUTH must
 # be flipped to match, or the app will 401 against its own proxy.

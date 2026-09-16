@@ -55,15 +55,18 @@ export const REGIONS = 'us';
 // only by international books until close to start — US books post those
 // matches late or not at all. That left them coming back with fewer than
 // RULES.MIN_BOOKS quoting each line, so no candidate was built and the match
-// rendered as an all-dash Full Slate row even an hour out. Tennis alone
-// uses the EU/UK books that actually price it — WITHOUT the us region: the
-// whole point of the widening was that US books don't post these matches,
-// so paying a third region's credits to re-ask them added cost (9 vs 6
-// credits per fetch, the most expensive call in the app) for lines the
-// uk/eu set already carries. Scoped to tennis on purpose: The Odds API
-// bills per region per market, so widening every sport would multiply the
-// quota cost of the whole slate.
-export const TENNIS_REGIONS = 'uk,eu';
+// rendered as an all-dash Full Slate row even an hour out. Tennis therefore
+// pulls the EU/UK books that price it — AND, since 2026-09-15, the US books
+// too. For a year this was uk/eu alone to save a region's credits, and the
+// consequence showed up in the record: every tennis pick's "best price" was
+// at 1xBet, GTbets, Betfair or Pinnacle, none of which a US reader can use,
+// and those picks went 22-29 on Pixel's Picks for -20%. With the US region
+// back, a main-tour match carries DraftKings/FanDuel prices, the curated
+// boards can require a bettable price (buildCandidates' `bettable`), and
+// the uk/eu books still carry the sharp anchor (Pinnacle, the exchanges)
+// and the depth for lower-tier draws. 9 credits per tennis key per miss
+// instead of 6, under a plan whose ceiling sits far above actual usage.
+export const TENNIS_REGIONS = 'us,uk,eu';
 // A sport whose odds board came back EMPTY is out of season or between
 // cards — nothing there can change in minutes, and The Odds API bills the
 // same markets-x-regions price for an empty answer as a full one. Empty
@@ -85,6 +88,100 @@ export function regionsFor(sportKey) {
 }
 // The sports catalogue is free to fetch and changes on the order of days.
 export const SPORTS_LIST_CACHE_SECONDS = 3600;
+
+/**
+ * Sharp reference books, pulled alongside the US board so docs/engine.js's
+ * buildCandidates can anchor its consensus to them (see SHARP_BOOK_KEYS
+ * there for why). Comma-separated Odds API bookmaker keys; overridable per
+ * deployment with the SHARP_BOOKMAKERS var, and an empty string disables
+ * the second call entirely.
+ *
+ * Cost: The Odds API bills the `bookmakers` parameter at one region per
+ * group of ten bookmakers, so this is one extra region's worth per sport
+ * per cache miss — 3 credits on the 3-market featured call, the same
+ * increment tennis already pays for its uk/eu regions. Under the 100k/month
+ * plan and the observed ~15-20% utilisation this is affordable; it is the
+ * single most valuable credit this app spends, because every other number
+ * on the board is graded against it.
+ */
+export const DEFAULT_SHARP_BOOKMAKERS = 'pinnacle';
+
+/**
+ * The sharp bookmaker list to request for one sport, or null when no second
+ * call should be made: disabled by config, or a sport whose own regions
+ * already carry the sharp books (tennis pulls uk/eu, where Pinnacle lives —
+ * a second call would pay again for quotes the first already returned).
+ */
+export function sharpBookmakersFor(env, sportKey) {
+  const configured = env?.SHARP_BOOKMAKERS ?? DEFAULT_SHARP_BOOKMAKERS;
+  const keys = String(configured).split(',').map((k) => k.trim()).filter(Boolean);
+  if (!keys.length) return null;
+  if (regionsFor(sportKey) !== REGIONS) return null;
+  return keys.join(',');
+}
+
+/**
+ * Fold sharp-book quotes into the matching US-board events, by event id and
+ * bookmaker key. A sharp book already present on an event (a region that
+ * carried it) is left alone; an event only the sharp book prices is dropped,
+ * since nothing on it can be bet. Pure and exported for the tests.
+ */
+export function mergeSharpQuotes(events, sharpEvents) {
+  if (!Array.isArray(events) || !Array.isArray(sharpEvents) || !sharpEvents.length) return events;
+  const sharpById = new Map(sharpEvents.map((e) => [e.id, e]));
+  for (const event of events) {
+    const sharp = sharpById.get(event.id);
+    if (!sharp) continue;
+    const present = new Set((event.bookmakers ?? []).map((b) => b.key));
+    for (const book of sharp.bookmakers ?? []) {
+      if (present.has(book.key)) continue;
+      event.bookmakers = event.bookmakers ?? [];
+      event.bookmakers.push(book);
+      present.add(book.key);
+    }
+  }
+  return events;
+}
+
+/**
+ * The sharp books' quotes for one sport, cached under their own key for the
+ * same TTL as the board they anchor. Best-effort: any failure returns [] and
+ * the board grades against the soft-book median exactly as it did before
+ * this existed — the anchor is an upgrade, never a dependency.
+ */
+async function fetchSharpQuotes(sport, bookmakers, env, ctx, ttl) {
+  const cacheKey = new Request(
+    `https://pixel-pick.cache/sharp/${sport}?markets=${MARKETS}&bookmakers=${bookmakers}`,
+  );
+  const cache = caches.default;
+  try {
+    const cached = await cache.match(cacheKey);
+    if (cached) return await cached.json();
+
+    const url = new URL(`${UPSTREAM}/sports/${sport}/odds`);
+    url.searchParams.set('apiKey', (env.ODDS_API_KEY ?? '').trim());
+    url.searchParams.set('bookmakers', bookmakers);
+    url.searchParams.set('markets', MARKETS);
+    url.searchParams.set('oddsFormat', 'american');
+    url.searchParams.set('dateFormat', 'iso');
+    const upstream = await fetch(url.toString());
+    if (!upstream.ok) return [];
+    const events = await upstream.json();
+    if (!Array.isArray(events)) return [];
+    const cacheTtl = events.length === 0 ? EMPTY_BOARD_CACHE_SECONDS : ttl;
+    ctx.waitUntil(
+      cache.put(
+        cacheKey,
+        new Response(JSON.stringify(events), {
+          headers: { 'Content-Type': 'application/json', 'Cache-Control': `max-age=${cacheTtl}` },
+        }),
+      ),
+    );
+    return events;
+  } catch {
+    return [];
+  }
+}
 
 function extractMoneylineOdds(event) {
   // Extract the best h2h (moneyline) odds from the bookmakers array
@@ -181,9 +278,19 @@ export async function fetchSport(sport, env, ctx) {
   );
   const cache = caches.default;
 
+  // The sharp anchor's quotes ride along on every board fetch (see
+  // sharpBookmakersFor). Merged AFTER the soft board is cached so the two
+  // caches stay independent: a sharp-fetch hiccup can never poison the
+  // cached board, and vice versa.
+  const sharpBookmakers = sharpBookmakersFor(env, sport);
+  const withSharp = async (events) => {
+    if (!sharpBookmakers || !Array.isArray(events) || !events.length) return events;
+    return mergeSharpQuotes(events, await fetchSharpQuotes(sport, sharpBookmakers, env, ctx, ttl));
+  };
+
   const cached = await cache.match(cacheKey);
   if (cached) {
-    let events = await cached.json();
+    let events = await withSharp(await cached.json());
     if (sport === 'mma_mixed_martial_arts') {
       events = await enrichMmaEvents(events, ctx);
     }
@@ -203,13 +310,10 @@ export async function fetchSport(sport, env, ctx) {
     lastCost: upstream.headers.get('x-requests-last'),
   };
 
-  if (sport === 'mma_mixed_martial_arts') {
-    events = await enrichMmaEvents(events, ctx);
-  }
-
   // An empty board holds far longer than a live one — see
-  // EMPTY_BOARD_CACHE_SECONDS. Cached AFTER the MMA enrichment on purpose:
-  // enrichment never invents events, so emptiness is the upstream's answer.
+  // EMPTY_BOARD_CACHE_SECONDS. Cached BEFORE the sharp merge and the MMA
+  // enrichment: neither invents events, so emptiness is the upstream's
+  // answer, and the cached board must stay the soft US board alone.
   const cacheTtl = Array.isArray(events) && events.length === 0 ? EMPTY_BOARD_CACHE_SECONDS : ttl;
   ctx.waitUntil(
     cache.put(
@@ -219,6 +323,11 @@ export async function fetchSport(sport, env, ctx) {
       }),
     ),
   );
+
+  events = await withSharp(events);
+  if (sport === 'mma_mixed_martial_arts') {
+    events = await enrichMmaEvents(events, ctx);
+  }
 
   return { events, cached: false, quota };
 }

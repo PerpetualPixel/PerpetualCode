@@ -26,6 +26,10 @@ import {
   bookIdFor,
   explain,
   explainExtensive,
+  DEVIG_METHOD,
+  SHARP_BOOK_KEYS,
+  SHARP_ANCHOR_WEIGHT,
+  isSharpBook,
 } from '../docs/engine.js';
 
 const HOUR = 3.6e6;
@@ -57,6 +61,32 @@ test('devig removes the hold and returns probabilities summing to 1', () => {
   const threeWay = devig([150, 220, 180]);
   assert.equal(threeWay.fair.length, 3);
   assert.ok(Math.abs(threeWay.fair.reduce((a, b) => a + b, 0) - 1) < 1e-12);
+});
+
+test('the power de-vig takes the margin out of the longshot, not evenly off both sides', () => {
+  assert.equal(DEVIG_METHOD, 'power');
+  // -300/+240: 4.4% hold. Proportionally rescaled, the dog keeps 28.2%;
+  // under the power method the favourite absorbs less of the margin and
+  // the dog sits nearer 26.7% — about a point and a half of probability
+  // that used to be handed to the underdog on every lopsided line.
+  const power = devig([-300, 240]);
+  const proportional = devig([-300, 240], { method: 'multiplicative' });
+  assert.ok(Math.abs(power.fair[0] + power.fair[1] - 1) < 1e-12);
+  assert.ok(power.fair[0] > proportional.fair[0], 'the favourite must come out MORE likely than the proportional rescale says');
+  assert.ok(power.fair[1] < proportional.fair[1], 'and the longshot LESS likely');
+  assert.ok(power.fair[0] - proportional.fair[0] > 0.01, `expected a >1pp shift, got ${(power.fair[0] - proportional.fair[0]).toFixed(4)}`);
+  // Both report the same hold — the method changes the split, not the vig.
+  assert.ok(Math.abs(power.vig - proportional.vig) < 1e-12);
+
+  // Symmetric prices are unaffected by the method: there is no longshot.
+  const even = devig([-110, -110]);
+  assert.ok(Math.abs(even.fair[0] - 0.5) < 1e-12);
+
+  // A market with a NEGATIVE hold (only ever a stale one-book line) still
+  // solves — k drops below 1 — and still sums to 1.
+  const arb = devig([-400, 900]);
+  assert.ok(Math.abs(arb.fair[0] + arb.fair[1] - 1) < 1e-12);
+  assert.ok(arb.fair[0] > 0.8 && arb.fair[0] < 0.9);
 });
 
 /* ---------------------------------------------------------------- */
@@ -207,8 +237,138 @@ test('a multi-book market still benchmarks against the other books only', () => 
     .filter((c) => c.selection.startsWith('g2 Home'));
   const ownFairProb = candidate.quotes[0].american;
   assert.equal(ownFairProb, -130, 'fixture: book 0 hangs the outlier best price');
-  // -130 de-vigged would sit above the consensus the other four books make.
-  assert.ok(candidate.consensusProb < 1 / americanToDecimal(-130));
+  // The consensus is exactly what the other four books (all -140/+120) say
+  // the home side is worth — the outlier's own de-vigged -130 read, which
+  // would sit lower, never votes.
+  const othersFair = devig([-140, 120]).fair[0];
+  const ownFair = devig([-130, 120]).fair[0];
+  assert.ok(Math.abs(candidate.consensusProb - othersFair) < 1e-9);
+  assert.ok(ownFair < othersFair, 'fixture sanity: the outlier de-vigs to a lower home probability');
+  assert.equal(candidate.anchor, 'market', 'no sharp book on this fixture, so the soft median stands alone');
+  assert.equal(candidate.sharpProb, null);
+});
+
+/* ---------------------------------------------------------------- */
+/* Sharp anchor + bettable best price                                 */
+/* ---------------------------------------------------------------- */
+
+/** The fixture with a Pinnacle quote appended at the given prices. */
+function withSharpQuote(event, homePrice, awayPrice) {
+  event.bookmakers.push({
+    key: 'pinnacle',
+    title: 'Pinnacle',
+    last_update: new Date(NOW - 5 * 60 * 1000).toISOString(),
+    markets: [{
+      key: 'h2h',
+      last_update: new Date(NOW - 5 * 60 * 1000).toISOString(),
+      outcomes: [
+        { name: event.home_team, price: homePrice },
+        { name: event.away_team, price: awayPrice },
+      ],
+    }],
+  });
+  return event;
+}
+
+test('a sharp quote anchors the consensus and is never the bet', () => {
+  assert.ok(SHARP_BOOK_KEYS.has('pinnacle'));
+  assert.ok(isSharpBook('pinnacle') && isSharpBook('PINNACLE') && !isSharpBook('draftkings'));
+
+  // Soft books all -140/+120 with DraftKings hanging -105; Pinnacle has the
+  // home side as a coin flip at +100/-120. Under the soft median alone the
+  // -105 looked like a big edge (the slow books haven't moved); against the
+  // sharp line it is nothing of the sort — exactly the case the anchor
+  // exists to catch. Pinnacle's +100 is also the best HOME number on the
+  // board, and it still must not be the bet.
+  const event = withSharpQuote(makeEvent('sh', -140, 120, SHARP), 100, -120);
+  const [home] = buildCandidates([event], { now: NOW }).filter((c) => c.selection.startsWith('sh Home'));
+
+  assert.equal(home.anchor, 'sharp');
+  const sharpFair = devig([100, -120]).fair[0];
+  const softFair = devig([-140, 120]).fair[0];
+  assert.ok(Math.abs(home.sharpProb - sharpFair) < 1e-9);
+  assert.ok(Math.abs(home.marketProb - softFair) < 1e-9);
+  const expected = SHARP_ANCHOR_WEIGHT * sharpFair + (1 - SHARP_ANCHOR_WEIGHT) * softFair;
+  assert.ok(Math.abs(home.consensusProb - expected) < 1e-9, 'consensus is the weighted blend of sharp and soft');
+
+  // Never the bet, even when it is the best number on the board.
+  assert.equal(home.book, 'DraftKings');
+  assert.equal(home.american, -105);
+  // It stays visible in the per-book table, flagged, and is not counted as a bettable book.
+  const pinnacleQuote = home.quotes.find((q) => q.bookKey === 'pinnacle');
+  assert.ok(pinnacleQuote && pinnacleQuote.sharp === true && pinnacleQuote.american === 100);
+  assert.ok(home.quotes.filter((q) => q.bookKey !== 'pinnacle').every((q) => q.sharp === false));
+  assert.equal(home.bookCount, DEEP_BOOKS.length);
+
+  // And the anchor moves the grade: the same -105 that graded as a ~10%
+  // edge against the soft median grades as no edge at all against a sharp
+  // line that has the game as a coin flip.
+  const [unanchored] = buildCandidates([makeEvent('sh', -140, 120, SHARP)], { now: NOW }).filter((c) => c.selection.startsWith('sh Home'));
+  assert.equal(unanchored.anchor, 'market');
+  assert.ok(home.ev < unanchored.ev, 'a sharp line longer than the soft median must cut the apparent edge');
+  assert.ok(home.ev < RULES.MIN_EV_PCT, `against the sharp line this is not a bet, got ev=${home.ev.toFixed(3)}`);
+  // ...and the grade follows the edge, not the tidiness of the number.
+  const [scoredAnchored] = analyze([event], { now: NOW }).filter((c) => c.selection.startsWith('sh Home'));
+  const [scoredUnanchored] = analyze([makeEvent('sh', -140, 120, SHARP)], { now: NOW }).filter((c) => c.selection.startsWith('sh Home'));
+  assert.ok(scoredAnchored.score < RULES.MIN_SCORE, `must not clear the floor, scored ${scoredAnchored.score.toFixed(1)}`);
+  assert.ok(scoredUnanchored.score > RULES.MIN_SCORE);
+  assert.equal(scoredAnchored.parts.anchor, 1);
+  assert.equal(scoredUnanchored.parts.anchor, 0);
+});
+
+test('a sharp quote alone cannot make a market — the bettable books still have to clear MIN_BOOKS', () => {
+  const thin = withSharpQuote(makeEvent('thin', -140, 120), -140, 120);
+  thin.bookmakers = [thin.bookmakers[0], thin.bookmakers[1], thin.bookmakers[thin.bookmakers.length - 1]]; // 2 soft + Pinnacle
+  assert.equal(buildCandidates([thin], { now: NOW }).length, 0);
+});
+
+test('the best price comes from a book the reader can bet at when any registry book prices the line', () => {
+  // An offshore book (not in SPORTSBOOKS) hangs the standout number. The
+  // tracked record grades at the best price, so that price has to be one a
+  // reader could have taken; the offshore quote still informs the consensus.
+  const event = makeEvent('off', -140, 120, SHARP); // DraftKings hangs -105, the rest -140
+  event.bookmakers.push({
+    key: 'betonlineag',
+    title: 'BetOnline.ag',
+    last_update: new Date(NOW - 5 * 60 * 1000).toISOString(),
+    markets: [{ key: 'h2h', last_update: new Date(NOW - 5 * 60 * 1000).toISOString(), outcomes: [
+      { name: 'off Home', price: 100 }, // better than any registry book
+      { name: 'off Away', price: -120 },
+    ] }],
+  });
+  const [home] = buildCandidates([event], { now: NOW }).filter((c) => c.selection.startsWith('off Home'));
+  assert.equal(home.book, 'DraftKings', 'the best REGISTRY price is the bet, not the offshore standout');
+  assert.equal(home.american, -105);
+  assert.equal(home.bookKey, 'draftkings');
+  assert.equal(home.bettable, true);
+  // The offshore quote still counts as a book and still informs the market
+  // read (it is in the benchmark and in the disagreement measure).
+  assert.equal(home.bookCount, DEEP_BOOKS.length + 1);
+  assert.ok(home.quotes.some((q) => q.bookKey === 'betonlineag' && q.sharp === false));
+  const [withoutOffshore] = buildCandidates([makeEvent('off', -140, 120, SHARP)], { now: NOW }).filter((c) => c.selection.startsWith('off Home'));
+  assert.equal(withoutOffshore.disagreement, 0, 'fixture: the other books agree exactly');
+  assert.ok(home.disagreement > 0, 'the offshore outlier registers as market disagreement');
+
+  // With NO registry book on the line (a thin card priced only by books
+  // this app doesn't list), any soft book may be the bet — the old behaviour.
+  const unlisted = makeEvent('un', -140, 120, { ...SHARP, books: ['Bovada', 'BetOnline', 'MyBookie', 'BetUS'] });
+  const [any] = buildCandidates([unlisted], { now: NOW }).filter((c) => c.selection.startsWith('un Home'));
+  assert.equal(any.book, 'Bovada');
+  assert.equal(any.bettable, false, 'and the candidate says so');
+});
+
+test('topPicks can refuse candidates nobody can bet, and the browser board does not by default', () => {
+  const listed = analyze([makeEvent('l', -140, 120, SHARP)], { now: NOW });
+  const unlisted = analyze([makeEvent('u', -140, 120, { ...SHARP, books: ['Bovada', 'BetOnline', 'MyBookie', 'BetUS', 'GTbets', '1xBet', 'LowVig', 'Betfair'] })], { now: NOW });
+  const pool = [...listed, ...unlisted];
+  assert.ok(unlisted.some((c) => c.bettable === false) && listed.every((c) => c.bettable === true), 'fixture sanity');
+
+  const research = topPicks(pool, { oddsMin: -1000, oddsMax: 500, minScore: 0, count: 8 });
+  assert.ok(research.picks.some((p) => p.legs[0].bettable === false), 'the research board still shows every priced line');
+
+  const curated = topPicks(pool, { oddsMin: -1000, oddsMax: 500, minScore: 0, count: 8, requireBettable: true, guaranteeCount: true });
+  assert.ok(curated.picks.length > 0);
+  assert.ok(curated.picks.every((p) => p.legs[0].bettable === true), 'a curated board never posts a price the reader cannot take, fallback included');
 });
 
 /* ---------------------------------------------------------------- */
@@ -531,8 +691,11 @@ test('the board never argues with itself, including via combo partners', () => {
   let twoPickSlates = 0;
   let combosSeen = 0;
 
+  // minScore: 0 — this is a contradiction test on the slate builder, not a
+  // grading test; the fixture's 9% holds grade in the 40s under the
+  // edge-dominated score, and the builder's pairing logic is what's on trial.
   for (let seed = 1; seed <= 600; seed++) {
-    const { picks } = generateSlate(candidates, { rng: seeded(seed) });
+    const { picks } = generateSlate(candidates, { rng: seeded(seed), minScore: 0 });
     if (picks.length === 2) twoPickSlates++;
     combosSeen += picks.filter((p) => p.type === 'combo').length;
 

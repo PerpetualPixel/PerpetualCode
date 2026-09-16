@@ -36,7 +36,7 @@
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Syne:wght@600;700;800&family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
-<link rel="stylesheet" href="styles.css?v=1.183">
+<link rel="stylesheet" href="styles.css?v=1.185">
 </head>
 <body>
 
@@ -116,12 +116,14 @@
     <p>
       After a round of major changes, the tracked record was reset on Sep 1, 2026 —
       everything before that lives under the <strong>Archive</strong> button in the Tracking
-      Dashboard, untouched. The daily boards are simpler now, and guaranteed: at 2am ET the
+      Dashboard, untouched. The daily boards are simpler now: at 2am ET the
       whole slate is ranked once — the #1 pick becomes the <strong>Play of the Day</strong>,
-      the next five become <strong>Pixel's Picks</strong> (always exactly 5, never sharing a
+      the next five become <strong>Pixel's Picks</strong> (up to 5, never sharing a
       game with the Play of the Day), and a <strong>Prop Play</strong> and a
-      <strong>Ladder</strong> rung post alongside them. A pick that didn't clear the usual
-      sharp standard still posts, visibly flagged, rather than leaving a hole in the board.
+      <strong>Ladder</strong> rung post alongside them. Every pick on every board has to beat
+      the market's no-vig line by the edge floor; a pick that clears that but not the full
+      sharp standard posts visibly flagged, and a day with fewer real edges posts fewer picks
+      rather than filling the board with bets the engine itself grades as losers.
       Every card now also shows the algorithm's own unit sizing, scaled to its confidence —
       3–5 units for the Play of the Day, 1–2.5 for Pixel's Picks and the Prop Play.
     </p>
@@ -236,7 +238,7 @@
        same one that used to sit open above the board on every visit. -->
   <details class="explainer tab-intro">
     <summary class="explainer-summary">
-      <span class="explainer-lede">5 picks, every day at 2am ET — the best of the full slate after the Play of the Day takes #1.</span>
+      <span class="explainer-lede">Up to 5 picks, every day at 2am ET — the best real edges on the full slate after the Play of the Day takes #1.</span>
       <span class="explainer-more" aria-hidden="true">How they're chosen</span>
     </summary>
     <p class="explainer-body">
@@ -449,17 +451,25 @@
       league, every market (moneyline, spread, total) on every live
       sportsbook quote is pulled in, nothing is excluded up front by odds or
       "gut feel." Each book's own price is stripped of its built-in fee
-      (de-vigged) to get that book's honest read, then every book <em>except</em>
-      the one offering the best price is combined into a consensus fair
-      value. Excluding the best price keeps it from inflating its own
-      benchmark, which would make every bet look artificially profitable.</p>
+      (de-vigged) to get that book's honest read, using the power method:
+      books load their margin onto the longshot, not evenly, so a proportional
+      rescale would hand every underdog a point or two of probability it
+      doesn't have. Then a consensus fair value is built from every book
+      <em>except</em> the one offering the best price, and where the sharp
+      market (Pinnacle) prices the game, its line carries 70% of that
+      consensus. Excluding the best price keeps it from inflating its own
+      benchmark, and anchoring to the sharp line keeps "better than the slow
+      books" from passing as "better than the truth." The best price itself
+      is always one from a book you can actually bet at.</p>
       <p><strong>2. Each candidate is graded 0–100.</strong> The best available
       price is compared against that consensus to get its real expected value
-      (EV), the dominant factor (45% of the grade). The rest is
-      confidence that the edge is real rather than a fluke of a thin or stale
-      market: how many books agree (18%), how tightly they agree (15%), how
-      much better the best price is than the field average, "line shopping"
-      gain (14%), and how fresh the quote is relative to kickoff (8%). For
+      (EV), and the grade is that edge <em>multiplied</em> by a confidence
+      factor: how many books agree (35% of the confidence), how tightly they
+      agree (25%), whether a sharp anchor set the consensus (15%), how much
+      better the best price is than the field average, "line shopping" gain
+      (15%), and how fresh the quote is relative to kickoff (10%). Confidence
+      scales an edge; it never substitutes for one, so a zero-EV bet with a
+      tidy number can't grade above the low 30s. For
       team sports only (never MMA, see below), a small, capped adjustment
       from recent form, head-to-head history, and injury news can nudge the
       grade up to about 8 points either way; it can sharpen a close call but
@@ -484,14 +494,16 @@
       order.</strong> The whole slate is ranked by grade. The #1 pick
       becomes the Play of the Day. Pixel's Picks are the next 5, drawn
       after it and never sharing its game. The Prop Play and the Ladder
-      rung post in the same pass. Every board posts every day: on a quiet
-      slate where fewer than 5 real edges clear the bar, the remaining
-      slots fill from the next-best available prices and are explicitly
-      flagged "Outside standard criteria" — still real, gradeable bets,
-      just not sharp enough to call locks without saying so. Every one of
-      the 5 counts toward the Tracking Dashboard's win-rate math
-      regardless; the flag is transparency about how the pick was chosen,
-      not an exclusion.</p>
+      rung post in the same pass. Every pick has to beat the market's
+      no-vig line — anchored to the sharp market where Pinnacle prices the
+      game — by the edge floor. On a quiet slate where fewer than 5 edges
+      clear the full sharp standard (price band and confidence floor), the
+      remaining slots fill only from prices that still clear the edge floor
+      and are explicitly flagged "Outside standard criteria"; if nothing
+      does, the board posts short. A board of five bets the engine itself
+      grades as losers is not a board. Every posted pick counts toward the
+      Tracking Dashboard's win-rate math regardless of its flag; the flag is
+      transparency about how the pick was chosen, not an exclusion.</p>
       <p><strong>6. The write-up explains the pick that was already made. It
       never re-decides.</strong> Once a side is chosen by the math above, the
       AI matchup analysis is told which side that is and asked to build the
@@ -982,6 +994,6 @@
   </div>
 </aside>
 
-<script type="module" src="app.js?v=1.183"></script>
+<script type="module" src="app.js?v=1.185"></script>
 </body>
 </html>

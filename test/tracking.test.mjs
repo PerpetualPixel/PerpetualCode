@@ -251,20 +251,19 @@ test('a heavy favorite is never posted, even to fill a slot', async () => {
   assert.ok(picks.every((p) => p.american >= -200), 'nothing worse than -200 may be posted');
 });
 
-test('a -EV-only slate still fills the board, visibly flagged — never passed off as a lock', async () => {
+test('a -EV-only slate posts an EMPTY board — never a flagged filler', async () => {
   const { env } = makeKvStore();
-  // Same "thin consensus, small outlier" pattern as the engine.test.mjs
-  // regression test — clears MIN_SCORE on liquidity/agreement alone, but is
-  // -EV once the vig is paid. Under the 2026-08-21 reset the board never
-  // posts short while a hard-band candidate exists (topPicks'
-  // lastResortFill); honesty moves to the flag, not to the empty slot.
+  // A -130 against a -140 consensus: once the hold is paid there is no
+  // edge left. From 2026-08-21 to 2026-09-15 this posted anyway, flagged
+  // "no qualifying edge today — posted to keep the board full", and the
+  // record filled with bets the engine itself graded as losers on exactly
+  // the days the market offered nothing. A short board is the honest answer.
   const events = [makeEvent('juicy', { outlier: 10 })];
 
-  await runTop5Batch(env, ctx, NOW, { fetchFullSlate: async () => events });
+  const result = await runTop5Batch(env, ctx, NOW, { fetchFullSlate: async () => events });
+  assert.equal(result.skipped, false);
   const picks = await getTop5(env, { dateKey: '2026-08-05' });
-  assert.equal(picks.length, 1, 'the one available game fills one slot');
-  assert.equal(picks[0].meetsStandard, false);
-  assert.match(picks[0].flagReason, /no qualifying edge/);
+  assert.equal(picks.length, 0, 'nothing clears the edge floor, so nothing posts');
 });
 
 test('runTop5Batch only skips once the board already has TOP5_COUNT picks', async () => {
@@ -400,16 +399,23 @@ test('runTop5Batch uses the tuned EV floor from algo:config, not the shipped def
     MIN_SCORE: TUNABLE_BOUNDS.MIN_SCORE.min,
   }));
 
-  const events = [makeEvent('modest-edge', { outlier: 20 })];
+  // -123 against a -140 consensus: about +2.6% EV, clear of the shipped 2%
+  // floor and short of the tuned 3.5% ceiling.
+  const events = [makeEvent('modest-edge', { outlier: 17 })];
   await runTop5Batch(env, ctx, NOW, { fetchFullSlate: async () => events });
   const picks = await getTop5(env, { dateKey: '2026-08-05' });
 
-  // The tightened floor decides how the pick is LABELLED, not whether the
-  // board fills (see the -EV-slate test above): under the tuned floor this
-  // modest edge no longer qualifies as a sharp lock, so it must arrive
-  // flagged — where the shipped default would have posted it unflagged.
-  assert.equal(picks.length, 1);
-  assert.equal(picks[0].meetsStandard, false, 'the tuned floor must demote this pick to a flagged fallback');
+  // The edge floor decides whether a pick EXISTS, tuned or not — there is
+  // no flagged tier beneath it any more. Under the tuned floor this modest
+  // edge does not post at all...
+  assert.equal(picks.length, 0, 'the tuned floor must keep this pick off the board entirely');
+
+  // ...and under the shipped default the very same slate posts it unflagged.
+  const fresh = makeKvStore();
+  await runTop5Batch(fresh.env, ctx, NOW, { fetchFullSlate: async () => events });
+  const defaultPicks = await getTop5(fresh.env, { dateKey: '2026-08-05' });
+  assert.equal(defaultPicks.length, 1);
+  assert.equal(defaultPicks[0].meetsStandard, true);
 });
 
 /* ---------------------------------------------------------------- */

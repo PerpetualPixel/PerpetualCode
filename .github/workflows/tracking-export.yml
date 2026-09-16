@@ -1,0 +1,77 @@
+# Snapshot the live tracked record into the repo.
+#
+# Every board's history lives in the worker's KV and is only readable through
+# the worker's public JSON routes. That is fine for the dashboard and useless
+# for anyone (or anything) that wants to study the record offline, diff it
+# over time, or read it from an environment that can reach GitHub but not
+# workers.dev. This job pulls each history route once a day (and on demand)
+# and commits the JSON under docs/data/tracking/, so the record has a
+# permanent, versioned copy beside the code that produced it.
+#
+# Read-only against the worker: every route here is a public GET the app
+# itself calls on page load, so this spends no odds credits and needs no
+# secret. The football engine's own ledgers are pulled from its live site for
+# the same reason — the copies committed in that repo lag its hourly build.
+name: Export tracked record
+
+on:
+  schedule:
+    # 06:20 UTC daily — after the 2am ET draw and the overnight grading.
+    - cron: "20 6 * * *"
+  workflow_dispatch:
+  # A change to this job runs it once on the branch that carries the change,
+  # so the export can be exercised before it reaches main (GitHub only
+  # dispatches by hand from the default branch).
+  push:
+    paths:
+      - .github/workflows/tracking-export.yml
+
+permissions:
+  contents: write
+
+concurrency:
+  group: tracking-export
+  cancel-in-progress: false
+
+jobs:
+  export:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.ref_name }}
+      - name: Pull every history route
+        env:
+          WORKER: https://pixel-pick-odds.mgbouldering.workers.dev
+          GRIDIRON: https://perpetualpixel.github.io/NFL-NCAA-Football-Prediction-Engine
+        run: |
+          set -euo pipefail
+          out=docs/data/tracking
+          mkdir -p "$out"
+          fetch() { # name url
+            if curl -fsSL --retry 3 --retry-delay 5 --max-time 120 -H 'Accept: application/json' "$2" -o "$out/$1.json.tmp"; then
+              python3 -c "import json,sys; json.load(open(sys.argv[1]))" "$out/$1.json.tmp" \
+                && mv "$out/$1.json.tmp" "$out/$1.json" \
+                || { echo "::warning::$1 returned non-JSON, keeping previous copy"; rm -f "$out/$1.json.tmp"; }
+            else
+              echo "::warning::$1 failed to fetch, keeping previous copy"; rm -f "$out/$1.json.tmp"
+            fi
+          }
+          for route in top5-history potd-history full-slate-history ladder-history prop-play-history \
+                       mlb-props-history nfl-props-history wnba-props-history nhl-props-history \
+                       learning algo-health stale-picks top5 potd ladder prop-play; do
+            fetch "$route" "$WORKER/$route"
+          done
+          fetch gridiron-tracking-nfl "$GRIDIRON/tracking-nfl.json"
+          fetch gridiron-tracking-ncaa "$GRIDIRON/tracking-ncaa.json"
+          fetch gridiron-picks "$GRIDIRON/picks.json"
+          date -u +%Y-%m-%dT%H:%M:%SZ > "$out/exported-at.txt"
+          ls -la "$out"
+      - name: Commit if anything changed
+        run: |
+          git config user.name "tracking-export[bot]"
+          git config user.email "tracking-export@users.noreply.github.com"
+          git add docs/data/tracking
+          if git diff --cached --quiet; then echo "no changes"; exit 0; fi
+          git commit -m "Tracked record snapshot $(cat docs/data/tracking/exported-at.txt)"
+          git push
