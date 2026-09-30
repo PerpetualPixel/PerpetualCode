@@ -873,6 +873,15 @@ export default {
                 getAllPropPlays(env, opts),
                 getLadderHistory(env, opts),
               ]);
+            // getLadderHistory returns { plays, runs, state, plan }, and each
+            // play wraps its bet in `pick` with the stake beside it. Until
+            // 2026-09-30 the object itself was spread into `tagged`, whose
+            // `.map` threw on it — which is the actual reason this review ran
+            // once (W33, before the ladder existed) and never again: every
+            // later Monday died here, silently, inside waitUntil.
+            const ladderPicks = (ladder?.plays ?? []).map((play) => ({
+              ...play.pick, dateKey: play.dateKey, suggested_stake: play.stake,
+            }));
             return [
               ...tagged(top5, 'top5'),
               ...tagged(slate, 'fullslate'),
@@ -881,7 +890,7 @@ export default {
               ...tagged(wnbaProps, 'wnbaprops'),
               ...tagged(nhlProps, 'nhlprops'),
               ...tagged(propPlays, 'propplay'),
-              ...tagged(ladder, 'ladder'),
+              ...tagged(ladderPicks, 'ladder'),
             ];
           },
         })
@@ -2159,16 +2168,13 @@ export default {
 
         const potdKey = `potd:${dateKey}`;
         const propKey = `propplay:${dateKey}`;
-        const ladderPlayKey = `ladder:play:${dateKey}`;
-        const [top5Existing, potdRaw, propRaw, ladderRaw] = await Promise.all([
+        const [top5Existing, potdRaw, propRaw] = await Promise.all([
           getTop5(env, { now }),
           env.POTD_KV.get(potdKey),
           env.POTD_KV.get(propKey),
-          env.POTD_KV.get(ladderPlayKey),
         ]);
         const potdRecord = potdRaw ? JSON.parse(potdRaw) : null;
         const propRecord = propRaw ? JSON.parse(propRaw) : null;
-        const ladderRecord = ladderRaw ? JSON.parse(ladderRaw) : null;
 
         // Prop Play legs carry an ISO `commence`; every other board stores
         // epoch ms. Anything unparseable counts as started, so a record
@@ -2184,8 +2190,6 @@ export default {
             ? [`Play of the Day: ${potdRecord.pick.selection}`] : []),
           ...(propRecord?.legs ?? []).filter((l) => startedAlready(l.commenceMs ?? l.commence))
             .map((l) => `Prop Play: ${l.label}`),
-          ...(ladderRecord?.pick && startedAlready(ladderRecord.pick.commenceMs)
-            ? [`Ladder: ${ladderRecord.pick.selection}`] : []),
         ];
         if (started.length && !force) {
           return json({
@@ -2196,48 +2200,32 @@ export default {
           }, { status: 409, headers: cors });
         }
 
-        // A settled rung has already moved the climb's bankroll (see
-        // ladder.js's settleLadderPlay, applied at grading) — clearing it
-        // would let the same rung settle a second time and compound twice.
-        // Left in place; the rest of the day still redraws around it.
-        const ladderGraded = Boolean(ladderRecord)
-          && (ladderRecord.pick?.status ?? 'pending') !== 'pending';
+        // The Ladder is not part of the daily draw any more: it posts one
+        // NFL parlay per kickoff window on its own schedule (worker/src/
+        // ladder.js), and a riding rung has the climb's whole bankroll on
+        // it. It is never cleared or redrawn here.
         const cleared = {
           top5: await clearTrackedDay(env, dateKey),
           potd: Boolean(potdRecord),
           propPlay: Boolean(propRecord),
-          ladder: Boolean(ladderRecord) && !ladderGraded,
+          ladder: false,
         };
         await Promise.all([
           potdRecord ? env.POTD_KV.delete(potdKey) : null,
           propRecord ? env.POTD_KV.delete(propKey) : null,
-          cleared.ladder ? env.POTD_KV.delete(ladderPlayKey) : null,
-          // The hold reason recorded on a skip — dropped whenever the rung
-          // is about to be redrawn, else /ladder would explain a freshly
-          // posted rung with a stale "why there's nothing today".
-          ladderGraded ? null : env.POTD_KV.delete(`ladder:status:${dateKey}`),
         ].filter(Boolean));
 
         // Same order, same shared slate fetch, same reasoning as the 2am
         // scheduled run above: Play of the Day first, Prop Play second,
         // then Pixel's Picks (which read both from KV to exclude their
-        // games), and the ladder last of all. Sequential for that reason —
-        // run concurrently the exclusion reads would race the writes.
+        // games). Sequential for that reason — run concurrently the
+        // exclusion reads would race the writes.
         const sharedSlate = fetchFullSlateEvents(env, ctx);
         const fetchFullSlate = () => sharedSlate;
         const potd = await runPotdDaily(env, ctx, now, { fetchFullSlate });
         const propPlay = await runPropPlayDaily(env, ctx, now);
         const top5 = await runTop5Batch(env, ctx, now, { fetchFullSlate });
-        // Gated on the rung being GRADED, not on one having been cleared:
-        // "nothing was cleared" also covers the day having no rung at all,
-        // and that's the case most in need of a draw — skipping it there
-        // would leave the day without the rung it's guaranteed.
-        const ladder = ladderGraded
-          ? { skipped: true, reason: 'kept — already graded', dateKey }
-          : await runLadderDaily(env, ctx, now, {
-            fetchFullSlate,
-            getTop5Picks: () => getTop5(env, { now }),
-          });
+        const ladder = { skipped: true, reason: 'the Ladder posts per NFL kickoff window on its own schedule and is not part of the daily draw', dateKey };
 
         return json({
           dateKey,

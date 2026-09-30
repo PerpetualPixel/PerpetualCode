@@ -122,7 +122,11 @@ test('redraw clears all four boards once past the generation hour', async () => 
   assert.equal(body.cleared.top5, 5, 'all five Pixel\'s Picks records dropped');
   assert.equal(body.cleared.potd, true);
   assert.equal(body.cleared.propPlay, true);
-  assert.equal(body.cleared.ladder, true);
+  // The Ladder posts per NFL kickoff window on its own schedule (worker/src/
+  // ladder.js) and a riding rung has the whole bankroll on it — never part
+  // of the daily redraw.
+  assert.equal(body.cleared.ladder, false);
+  assert.match(body.drawn.ladder.reason, /not part of the daily draw/);
 
   // Every old pick record is gone, and the manifest runTop5Batch rewrites
   // indexes none of them — the day is drawn afresh, not topped up around
@@ -136,11 +140,7 @@ test('redraw clears all four boards once past the generation hour', async () => 
   // which makes "cleared" observable on its own.
   assert.equal(store.has(`potd:${DATE}`), false);
   assert.equal(store.has(`propplay:${DATE}`), false);
-  assert.equal(store.has(`ladder:play:${DATE}`), false);
-  // The stale hold reason is dropped — else /ladder would explain a
-  // freshly-drawn rung with the previous run's "why there's nothing today".
-  const ladderStatus = JSON.parse(store.get(`ladder:status:${DATE}`) ?? 'null');
-  assert.notEqual(ladderStatus?.reason, 'stale hold');
+  assert.equal(store.has(`ladder:play:${DATE}`), true, 'the ladder rung is left exactly as it was');
 });
 
 test('redraw is refused once a game has started, naming what would have been lost', async () => {
@@ -153,7 +153,7 @@ test('redraw is refused once a game has started, naming what would have been los
   assert.ok(body.started.some((s) => s.startsWith("Pixel's Picks:")));
   assert.ok(body.started.some((s) => s.startsWith('Play of the Day:')));
   assert.ok(body.started.some((s) => s.startsWith('Prop Play:')));
-  assert.ok(body.started.some((s) => s.startsWith('Ladder:')));
+  assert.ok(!body.started.some((s) => s.startsWith('Ladder:')), 'the ladder is not the redraw\'s to refuse over');
   assert.ok(store.has(`potd:${DATE}`), 'refused means nothing was deleted');
   assert.ok(store.has(`track:${DATE}:pick:e1:h2h`));
 });
@@ -166,35 +166,24 @@ test('force overrides the already-underway refusal', async () => {
   assert.equal(store.has(`potd:${DATE}`), false);
 });
 
-test('a day with no ladder rung yet still gets one drawn, not skipped as "kept"', async () => {
-  // "Nothing was cleared" covers both a graded rung being kept and there
-  // being no rung at all — and the second case is the one most in need of a
-  // draw. Gating the redraw on "was something cleared" silently skipped it,
-  // leaving the day without the rung it's guaranteed.
-  const store = drawnDay();
-  store.delete(`ladder:play:${DATE}`);
-
-  const res = await redraw(store);
-  assert.equal(res.status, 200);
-
-  const body = await res.json();
-  assert.equal(body.cleared.ladder, false, 'nothing to clear');
-  assert.notEqual(body.drawn.ladder.reason, 'kept — already graded');
-  // It actually ran: the empty stub slate makes it hold, and only a real
-  // runLadderDaily call records why.
-  const status = JSON.parse(store.get(`ladder:status:${DATE}`) ?? 'null');
-  assert.equal(status?.dateKey, DATE, 'runLadderDaily was called');
-  assert.notEqual(status?.reason, 'stale hold');
+test('the ladder is never touched by a redraw — pending or settled, a rung and its hold status stay put', async () => {
+  for (const ladderStatus of ['pending', 'won']) {
+    const store = drawnDay({ ladderStatus });
+    const res = await redraw(store);
+    assert.equal(res.status, 200);
+    const body = await res.json();
+    assert.equal(body.cleared.ladder, false);
+    assert.match(body.drawn.ladder.reason, /not part of the daily draw/);
+    assert.ok(store.has(`ladder:play:${DATE}`), `the ${ladderStatus} rung survives the redraw`);
+    assert.equal(JSON.parse(store.get(`ladder:status:${DATE}`)).reason, 'stale hold', 'its status is not the redraw\'s to clear');
+  }
 });
 
-test('a settled ladder rung is kept — clearing it would compound the climb twice', async () => {
+test('the rest of the day still redraws around the ladder', async () => {
   const store = drawnDay({ ladderStatus: 'won' });
   const res = await redraw(store);
   assert.equal(res.status, 200);
-
   const body = await res.json();
-  assert.equal(body.cleared.ladder, false);
-  assert.match(body.drawn.ladder.reason, /already graded/);
   assert.ok(store.has(`ladder:play:${DATE}`), 'the graded rung survives the redraw');
   // The rest of the day still redraws around it.
   assert.equal(store.has(`potd:${DATE}`), false);
