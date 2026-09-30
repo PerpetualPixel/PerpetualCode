@@ -126,17 +126,27 @@ export async function sendLadderNotifications(env, record, state) {
   if (!users.length) return;
 
   const { pick, stake, toReturn, step } = record;
-  const matchup = `${pick.away} @ ${pick.home}`;
+  // A parlay rung (worker/src/ladder.js, since 2026-09-30) carries its legs
+  // and no single game; a pre-redesign rung is one game.
+  const legs = Array.isArray(pick.legs) && pick.legs.length ? pick.legs : null;
+  const window = record.slot?.label ? ` &middot; ${record.slot.label}` : '';
+  const matchup = legs
+    ? legs.map((l) => `${l.selection} <span style="color: #00d9ff;">${formatAmerican(l.american)}</span> &middot; ${l.away} @ ${l.home}`).join('<br>')
+    : `${pick.away} @ ${pick.home}`;
+  const matchupText = legs
+    ? legs.map((l) => `${l.selection} (${formatAmerican(l.american)}) — ${l.away} @ ${l.home}`).join('\n')
+    : `${pick.away} @ ${pick.home}`;
   const price = formatAmerican(pick.american);
+  const headline = legs ? `${legs.length}-leg NFL parlay` : pick.selection;
   const money = (n) => `$${Number(n).toFixed(2)}`;
   const banked = state?.banked ? ` &middot; ${money(state.banked)} already banked` : '';
 
   await sendBatch(env, users, (user) => ({
     to: user.email,
     from: FROM,
-    subject: `Ladder Day ${step}: ${pick.selection} (${price}) — ${money(stake)} riding`,
-    html: emailShell(user.username, `Ladder Challenge &middot; Day ${step}`, `
-      <p style="margin-bottom: 8px; font-size: 18px; font-weight: bold;">${pick.selection} <span style="color: #00d9ff;">${price}</span></p>
+    subject: `Ladder Rung ${step}: ${headline} (${price}) — ${money(stake)} riding`,
+    html: emailShell(user.username, `Ladder Challenge &middot; Rung ${step}${window}`, `
+      <p style="margin-bottom: 8px; font-size: 18px; font-weight: bold;">${headline} <span style="color: #00d9ff;">${price}</span></p>
       <p style="margin-bottom: 20px; color: #a0a0cc;">${matchup}</p>
       <p style="margin-bottom: 8px; color: #a0a0cc;">
         Staking <strong style="color: #fff;">${money(stake)}</strong> to return
@@ -146,7 +156,7 @@ export async function sendLadderNotifications(env, record, state) {
         The whole bankroll rides each rung — a loss ends the climb and starts the next one back at $20.
       </p>
     `),
-    text: `Hi ${user.username}, Ladder Day ${step}: ${pick.selection} (${price})\n${matchup}\nStaking ${money(stake)} to return ${money(toReturn)}\n\nOpen: https://perpetualpicks.com/app.html`,
+    text: `Hi ${user.username}, Ladder Rung ${step}: ${headline} (${price})\n${matchupText}\nStaking ${money(stake)} to return ${money(toReturn)}\n\nOpen: https://perpetualpicks.com/app.html`,
   }));
 }
 

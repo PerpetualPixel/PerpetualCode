@@ -5735,19 +5735,31 @@ function renderLadderTrack(plan, state) {
   </ol>`;
 }
 
-/** Today's rung: the play itself, what it risks, and what it returns. */
+/** One leg of a parlay rung, with its own graded chip once the game is in. */
+function renderLadderLeg(leg) {
+  const chip = leg.status && leg.status !== 'pending'
+    ? ` <span class="ladder-status is-${esc(leg.status)}">${leg.status === 'won' ? '✅' : leg.status === 'lost' ? '❌' : 'push'}</span>`
+    : '';
+  return `<li class="ladder-leg">
+    <span class="ladder-leg-line"><strong>${esc(leg.selection)}</strong> ${esc(formatAmerican(leg.american))}${chip}</span>
+    <span class="ladder-leg-sub">${esc(leg.away)} @ ${esc(leg.home)} · ${esc(potdDateTimeFmt.format(new Date(leg.commenceMs)))} · ${esc(leg.book)}</span>
+  </li>`;
+}
+
+/** The rung riding now (or the last one), what it risks, and what it returns. */
 function renderLadderPlay(ladder) {
   const { play } = ladder;
   if (!play) {
-    // The only hold left is a slate with nothing structurally eligible at
-    // all (an off day, or everything today already excluded) — the band
-    // itself no longer causes a hold; see worker/src/ladder.js's fallback.
-    const reason = ladder.todayStatus?.reason;
+    // Nothing riding and nothing posted yet: the worker records why (a
+    // window not yet due, no NFL on the slate, or a window with no parlay
+    // that clears the bar) — see worker/src/ladder.js's runLadderDaily.
+    const status = ladder.todayStatus;
+    const reason = status?.reason;
     return `<div class="ladder-play is-holding">
-      <p class="ladder-play-title">Holding today</p>
+      <p class="ladder-play-title">${status?.waiting ? 'Waiting for the next window' : 'Holding'}</p>
       <p class="ladder-play-note">
-        ${reason ? esc(reason.charAt(0).toUpperCase() + reason.slice(1)) : "Nothing on today's slate is eligible for a rung yet."}
-        The climb keeps its place — no rung is played on a day that doesn't offer one.
+        ${reason ? esc(reason.charAt(0).toUpperCase() + reason.slice(1)) : 'No NFL window is due yet.'}
+        The climb keeps its place — a rung is only played when a window offers one.
       </p>
     </div>`;
   }
@@ -5758,27 +5770,28 @@ function renderLadderPlay(ladder) {
     ? `<span class="ladder-status is-${esc(pick.status)}">${pick.status === 'won' ? '✅ Won' : pick.status === 'lost' ? '❌ Lost' : 'Void'}</span>`
     : '';
   const staleNote = play.stale
-    ? `<p class="ladder-play-note">Today's rung hasn't posted yet — this is the last one played.</p>`
+    ? `<p class="ladder-play-note">No rung is riding — this is the last one played.</p>`
     : '';
-  // Posted only when nothing cleared the preferred -200..+120/MIN_SCORE band
-  // and this is the best-scoring game on the rest of the slate instead — see
-  // worker/src/ladder.js's runLadderDaily. Said plainly rather than shown as
-  // an ordinary in-band rung.
-  const fallbackNote = pick.viaFallback
-    ? `<p class="ladder-play-note">Nothing today was priced in the ladder's usual ${esc(formatAmerican(ladder.band.min))} to ${esc(formatAmerican(ladder.band.max))} band — this is the best-scoring game on the rest of the slate instead.</p>`
-    : '';
-  return `<div class="ladder-play">
-    <div class="ladder-play-head">
-      <span class="ladder-play-title">Rung ${play.step} · ${esc(formatAmerican(pick.american))}</span>
-      ${statusChip}
-    </div>
-    ${staleNote}
-    ${fallbackNote}
-    <p class="ladder-play-pick">${esc(pick.selection)}</p>
+  const legs = Array.isArray(pick.legs) ? pick.legs : null;
+  const windowLabel = play.slot?.label ? ` · ${esc(play.slot.label)}` : '';
+  const body = legs
+    ? `<ul class="ladder-legs">${legs.map(renderLadderLeg).join('')}</ul>`
+    : `<p class="ladder-play-pick">${esc(pick.selection)}</p>
     <p class="ladder-play-sub">
       ${esc(pick.away)} @ ${esc(pick.home)} · ${esc(potdDateTimeFmt.format(new Date(pick.commenceMs)))}
       · ${esc(pick.book)}
-    </p>
+    </p>`;
+  const paid = play.paidDecimal && legs && pick.status === 'won' && Math.abs(play.paidDecimal - pick.decimal) > 1e-6
+    ? `<p class="ladder-play-note">A pushed leg dropped out; the ticket paid ${esc(formatAmerican(Math.round(play.paidDecimal >= 2 ? (play.paidDecimal - 1) * 100 : -100 / (play.paidDecimal - 1))))}.</p>`
+    : '';
+  return `<div class="ladder-play">
+    <div class="ladder-play-head">
+      <span class="ladder-play-title">Rung ${play.step}${windowLabel} · ${legs ? `${legs.length}-leg parlay ` : ''}${esc(formatAmerican(pick.american))}</span>
+      ${statusChip}
+    </div>
+    ${staleNote}
+    ${body}
+    ${paid}
     <p class="ladder-play-stake">
       Risking <strong>${ladderMoney(play.stake)}</strong> to return
       <strong>${ladderMoney(play.toReturn)}</strong>
@@ -5803,13 +5816,16 @@ function renderLadder(ladder) {
     <section class="ladder-card">
       <div class="ladder-head">
         <h2 class="ladder-title">Ladder Challenge</h2>
-        <span class="ladder-day">Day ${state.step}</span>
+        <span class="ladder-day">Rung ${state.step}</span>
       </div>
       <p class="ladder-intro">
-        One lower-risk play a day, around ${esc(formatAmerican(-200))}. Every win rides
+        One NFL parlay per kickoff window — Thursday night, the Sunday early and late windows,
+        Sunday night, Monday night — ${esc(String(ladder.legs?.min ?? 2))} to ${esc(String(ladder.legs?.max ?? 4))} legs across that
+        window's games, priced ${esc(formatAmerican(ladder.band.min))} to ${esc(formatAmerican(ladder.band.max))} combined,
+        only players confirmed playing, and never more than one rung riding at a time. Every win rides
         straight into the next rung — ${ladderMoney(ladder.base)} to ${ladderMoney(ladder.target)}
         in ${plan.rungs.length} steps, banking ${ladderMoney(plan.banked)} along the way.
-        One loss and the ladder starts over at ${ladderMoney(ladder.base)}, Day 1.
+        One loss and the ladder starts over at ${ladderMoney(ladder.base)}, rung 1.
       </p>
 
       <div class="ladder-stats">
@@ -5867,17 +5883,18 @@ async function loadLadder({ force = false } = {}) {
     // one played rather than today's recommendation, and a settled pick is
     // history. Only a live, pending rung is something to vouch for.
     const pick = ladder?.play?.stale ? null : ladder?.play?.pick;
-    registerPostedPicks('ladder', pick && (!pick.status || pick.status === 'pending')
-      ? [{
-          surfaceLabel: "today's Ladder Challenge rung",
-          selection: pick.selection,
-          marketKey: pick.marketKey,
-          american: pick.american ?? null,
-          score: pick.score ?? null,
-          home: pick.home ?? null,
-          away: pick.away ?? null,
-        }]
-      : []);
+    const live = pick && (!pick.status || pick.status === 'pending');
+    // A parlay rung registers leg by leg — someone pasting one of its legs
+    // is asking about that leg — and a pre-redesign rung as itself.
+    registerPostedPicks('ladder', !live ? [] : (Array.isArray(pick.legs) ? pick.legs : [pick]).map((leg) => ({
+      surfaceLabel: "the Ladder Challenge rung riding now",
+      selection: leg.selection,
+      marketKey: leg.marketKey,
+      american: leg.american ?? null,
+      score: leg.score ?? null,
+      home: leg.home ?? null,
+      away: leg.away ?? null,
+    })));
     renderLadder(ladder ?? null);
   } catch {
     ladderLoaded = false; // same as the other loaders: a hiccup isn't permanent
@@ -5915,11 +5932,11 @@ function renderLadderAsPropPlayCard(ladder) {
       ${statusChip}
     </div>
     <p class="prop-play-note">Today's prop play is the Ladder Challenge rung.</p>
-    <div class="prop-play-leg">
-      <div class="prop-play-leg-line"><strong>${esc(pick.selection)}</strong>
-        <span class="prop-play-price">${esc(formatAmerican(pick.american))}</span></div>
-      <div class="prop-play-leg-sub">${esc(pick.away)} @ ${esc(pick.home)} · ${esc(pick.book)}</div>
-    </div>
+    ${(Array.isArray(pick.legs) ? pick.legs : [pick]).map((leg) => `<div class="prop-play-leg">
+      <div class="prop-play-leg-line"><strong>${esc(leg.selection)}</strong>
+        <span class="prop-play-price">${esc(formatAmerican(leg.american))}</span></div>
+      <div class="prop-play-leg-sub">${esc(leg.away)} @ ${esc(leg.home)} · ${esc(leg.book)}</div>
+    </div>`).join('')}
     <p class="prop-play-stake-note">
       Staked as a ladder rung, not a unit play: risking
       <strong>${ladderMoney(play.stake)}</strong> to return
