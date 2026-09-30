@@ -24,7 +24,7 @@ async function fetchOptedInUsers(env) {
 }
 
 function summaryRowHtml(label, summary) {
-  const record = `${summary.wins}-${summary.losses}${summary.voided ? ` <span style="color:#7070aa;">(${summary.voided} void)</span>` : ''}`;
+  const record = `${summary.wins}-${summary.losses}${summary.voided ? ` <span style="color:#6B7280;">(${summary.voided} void)</span>` : ''}`;
   const roiColor = summary.roi >= 0 ? '#4ade80' : '#ff6b6b';
   return `<tr>
     <td style="padding:8px 12px; border-bottom:1px solid rgba(217,70,239,0.15);">${label}</td>
@@ -59,26 +59,26 @@ export async function sendWeeklyTrackingReport(env, now = Date.now()) {
   const rowsText = sections.map(([label, s]) => summaryRowText(label, s)).join('\n');
 
   const buildHtml = (username) => `
-    <div style="font-family: Arial, sans-serif; background: #05050A; color: #e0e0ff; padding: 20px;">
-      <div style="max-width: 600px; margin: 0 auto; border: 1px solid #9d4edd; border-radius: 8px; padding: 30px; background: #0a0515;">
+    <div style="font-family: Arial, sans-serif; background: #0F1116; color: #EEF0F4; padding: 20px;">
+      <div style="max-width: 600px; margin: 0 auto; border: 1px solid #2A2F3A; border-radius: 8px; padding: 30px; background: #161920;">
         ${EMAIL_LOGO_HTML}
-        <h2 style="color: #d946ef; margin-bottom: 8px;">Your Weekly Tracking Report</h2>
-        <p style="color: #7070aa; font-size: 13px; margin-bottom: 24px;">Hi ${username} — last ${REPORT_WINDOW_DAYS} days across every board.</p>
+        <h2 style="color: #4F7CEB; margin-bottom: 8px;">Your Weekly Tracking Report</h2>
+        <p style="color: #6B7280; font-size: 13px; margin-bottom: 24px;">Hi ${username} — last ${REPORT_WINDOW_DAYS} days across every board.</p>
         <table style="width: 100%; border-collapse: collapse; font-size: 14px;">
           <thead>
             <tr>
-              <th style="text-align:left; padding:8px 12px; color:#a0a0cc; font-size:11px; text-transform:uppercase; letter-spacing:0.05em;">Board</th>
-              <th style="text-align:left; padding:8px 12px; color:#a0a0cc; font-size:11px; text-transform:uppercase; letter-spacing:0.05em;">Record</th>
-              <th style="text-align:left; padding:8px 12px; color:#a0a0cc; font-size:11px; text-transform:uppercase; letter-spacing:0.05em;">ROI</th>
+              <th style="text-align:left; padding:8px 12px; color:#8A91A0; font-size:11px; text-transform:uppercase; letter-spacing:0.05em;">Board</th>
+              <th style="text-align:left; padding:8px 12px; color:#8A91A0; font-size:11px; text-transform:uppercase; letter-spacing:0.05em;">Record</th>
+              <th style="text-align:left; padding:8px 12px; color:#8A91A0; font-size:11px; text-transform:uppercase; letter-spacing:0.05em;">ROI</th>
             </tr>
           </thead>
           <tbody>${rowsHtml}</tbody>
         </table>
         <div style="text-align: center; margin: 28px 0 0;">
-          <a href="https://perpetualpicks.com/app.html" style="display: inline-block; background: linear-gradient(135deg, #d946ef 0%, #9d4edd 100%); color: #05050A; padding: 12px 28px; border-radius: 8px; text-decoration: none; font-weight: bold;">Open Tracking Dashboard</a>
+          <a href="https://perpetualpicks.com/app.html" style="display: inline-block; background: #4F7CEB; color: #ffffff; padding: 12px 28px; border-radius: 8px; text-decoration: none; font-weight: bold;">Open Tracking Dashboard</a>
         </div>
-        <p style="margin-top: 24px; color: #7070aa; font-size: 11px; text-align: center;">
-          Turn this off any time at <a href="https://perpetualpicks.com/account.html" style="color: #7070aa;">perpetualpicks.com/account.html</a>
+        <p style="margin-top: 24px; color: #6B7280; font-size: 11px; text-align: center;">
+          Turn this off any time at <a href="https://perpetualpicks.com/account.html" style="color: #6B7280;">perpetualpicks.com/account.html</a>
         </p>
       </div>
     </div>`;

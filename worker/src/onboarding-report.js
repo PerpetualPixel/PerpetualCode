@@ -79,30 +79,30 @@ export async function sendDailyOnboardingReport(env, now = Date.now()) {
           </tr>`,
         )
         .join('')
-    : `<tr><td colspan="2" style="padding:8px 12px; color:#7070aa;">No new signups today.</td></tr>`;
+    : `<tr><td colspan="2" style="padding:8px 12px; color:#6B7280;">No new signups today.</td></tr>`;
 
   const rowsText = todayUsers.length
     ? todayUsers.map((u) => `- ${u.username ?? '(no username)'} <${u.email}>`).join('\n')
     : 'No new signups today.';
 
   const html = `
-    <div style="font-family: Arial, sans-serif; background: #05050A; color: #e0e0ff; padding: 20px;">
-      <div style="max-width: 600px; margin: 0 auto; border: 1px solid #9d4edd; border-radius: 8px; padding: 30px; background: #0a0515;">
+    <div style="font-family: Arial, sans-serif; background: #0F1116; color: #EEF0F4; padding: 20px;">
+      <div style="max-width: 600px; margin: 0 auto; border: 1px solid #2A2F3A; border-radius: 8px; padding: 30px; background: #161920;">
         ${EMAIL_LOGO_HTML}
-        <h2 style="color: #d946ef; margin-bottom: 8px;">Daily Onboarding Report</h2>
-        <p style="color: #7070aa; font-size: 13px; margin-bottom: 24px;">${todayKey} (ET)</p>
+        <h2 style="color: #4F7CEB; margin-bottom: 8px;">Daily Onboarding Report</h2>
+        <p style="color: #6B7280; font-size: 13px; margin-bottom: 24px;">${todayKey} (ET)</p>
         <table style="width: 100%; border-collapse: collapse; font-size: 14px; margin-bottom: 24px;">
           <tbody>
-            <tr><td style="padding:6px 12px; color:#a0a0cc;">Onboarded today</td><td style="padding:6px 12px; font-weight:bold;">${todayUsers.length}</td></tr>
-            <tr><td style="padding:6px 12px; color:#a0a0cc;">Onboarded this week</td><td style="padding:6px 12px; font-weight:bold;">${weekCount}</td></tr>
-            <tr><td style="padding:6px 12px; color:#a0a0cc;">Onboarded this month</td><td style="padding:6px 12px; font-weight:bold;">${monthCount}</td></tr>
+            <tr><td style="padding:6px 12px; color:#8A91A0;">Onboarded today</td><td style="padding:6px 12px; font-weight:bold;">${todayUsers.length}</td></tr>
+            <tr><td style="padding:6px 12px; color:#8A91A0;">Onboarded this week</td><td style="padding:6px 12px; font-weight:bold;">${weekCount}</td></tr>
+            <tr><td style="padding:6px 12px; color:#8A91A0;">Onboarded this month</td><td style="padding:6px 12px; font-weight:bold;">${monthCount}</td></tr>
           </tbody>
         </table>
         <table style="width: 100%; border-collapse: collapse; font-size: 14px;">
           <thead>
             <tr>
-              <th style="text-align:left; padding:8px 12px; color:#a0a0cc; font-size:11px; text-transform:uppercase; letter-spacing:0.05em;">Username</th>
-              <th style="text-align:left; padding:8px 12px; color:#a0a0cc; font-size:11px; text-transform:uppercase; letter-spacing:0.05em;">Email</th>
+              <th style="text-align:left; padding:8px 12px; color:#8A91A0; font-size:11px; text-transform:uppercase; letter-spacing:0.05em;">Username</th>
+              <th style="text-align:left; padding:8px 12px; color:#8A91A0; font-size:11px; text-transform:uppercase; letter-spacing:0.05em;">Email</th>
             </tr>
           </thead>
           <tbody>${rowsHtml}</tbody>

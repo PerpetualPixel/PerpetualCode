@@ -11,8 +11,6 @@
  * for that team today.
  */
 
-const ESPN_LOGO_BASE = 'https://a.espncdn.com/i/teamlogos';
-
 const NFL = {
   'arizona cardinals': 'ari', 'atlanta falcons': 'atl', 'baltimore ravens': 'bal',
   'buffalo bills': 'buf', 'carolina panthers': 'car', 'chicago bears': 'chi',
@@ -118,9 +116,18 @@ export function espnAbbr(sportKey, teamName) {
   return league.teams[fold(teamName)] ?? null;
 }
 
+/**
+ * Rendered at 16–24px, so the 500px original is ~400x more pixels than the
+ * screen ever shows. Decoding a few dozen of those on every board refresh
+ * was a measurable part of the slate feeling sluggish on a phone; ESPN's own
+ * image combiner serves the same artwork resized, so ask for 2x the largest
+ * on-screen size instead.
+ */
+const LOGO_PX = 48;
+
 export function teamLogoUrl(sportKey, teamName) {
   const league = LEAGUES[sportKey];
   if (!league) return null;
   const abbr = league.teams[fold(teamName)];
-  return abbr ? `${ESPN_LOGO_BASE}/${league.path}/500/${abbr}.png` : null;
+  return abbr ? `https://a.espncdn.com/combiner/i?img=/i/teamlogos/${league.path}/500/${abbr}.png&w=${LOGO_PX}&h=${LOGO_PX}` : null;
 }

@@ -124,16 +124,16 @@ async function sendEmailChangeVerification(env, newEmail, username, token) {
     from: { email: 'verify@perpetualpicks.com', name: 'PerpetualPicks' },
     subject: 'Confirm Your New Email - PerpetualPicks',
     html: `
-      <div style="font-family: Arial, sans-serif; background: #05050A; color: #e0e0ff; padding: 20px;">
-        <div style="max-width: 600px; margin: 0 auto; border: 1px solid #9d4edd; border-radius: 8px; padding: 30px; background: #0a0515;">
+      <div style="font-family: Arial, sans-serif; background: #0F1116; color: #EEF0F4; padding: 20px;">
+        <div style="max-width: 600px; margin: 0 auto; border: 1px solid #2A2F3A; border-radius: 8px; padding: 30px; background: #161920;">
           ${EMAIL_LOGO_HTML}
-          <h2 style="color: #d946ef; margin-bottom: 20px;">Confirm Your New Email</h2>
+          <h2 style="color: #4F7CEB; margin-bottom: 20px;">Confirm Your New Email</h2>
           <p style="margin-bottom: 30px;">Hi ${username}, you requested to change your PerpetualPicks account email to this address. Click below to confirm:</p>
           <div style="text-align: center; margin: 30px 0;">
-            <a href="${confirmUrl}" style="display: inline-block; background: linear-gradient(135deg, #d946ef 0%, #9d4edd 100%); color: #05050A; padding: 14px 32px; border-radius: 8px; text-decoration: none; font-weight: bold; font-size: 16px;">Confirm New Email</a>
+            <a href="${confirmUrl}" style="display: inline-block; background: #4F7CEB; color: #ffffff; padding: 14px 32px; border-radius: 8px; text-decoration: none; font-weight: bold; font-size: 16px;">Confirm New Email</a>
           </div>
-          <p style="margin-top: 30px; color: #7070aa; font-size: 12px; text-align: center;">Link expires in 24 hours. If you didn't request this change, you can safely ignore this email — your account email won't change unless this link is clicked.</p>
-          <p style="text-align: center; color: #a0a0cc; font-size: 12px; word-break: break-all;">${confirmUrl}</p>
+          <p style="margin-top: 30px; color: #6B7280; font-size: 12px; text-align: center;">Link expires in 24 hours. If you didn't request this change, you can safely ignore this email — your account email won't change unless this link is clicked.</p>
+          <p style="text-align: center; color: #8A91A0; font-size: 12px; word-break: break-all;">${confirmUrl}</p>
         </div>
       </div>
     `,

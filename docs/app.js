@@ -3823,7 +3823,7 @@ function slateTeamRow(game, side, { gameState, scoreEvent, recommendedId, hideMa
   return `
     <div class="slate-team-row ${hideMarkets ? 'no-markets' : ''} ${isLoser ? 'is-loser' : ''}">
       <span class="slate-team">
-        ${logo ? `<img class="slate-logo" src="${esc(logo)}" alt="" loading="lazy">` : ''}
+        ${logo ? `<img class="slate-logo" src="${esc(logo)}" alt="" loading="lazy" decoding="async" width="24" height="24">` : ''}
         ${esc(team)}${winPct ? ` <span class="slate-team-pct">${winPct}</span>` : ''}
         ${score != null ? ` <span class="slate-team-score">${score}</span>` : ''}
       </span>
@@ -5031,7 +5031,13 @@ document.addEventListener(
   'error',
   (event) => {
     const img = event.target;
-    if (!(img instanceof HTMLImageElement) || !img.dataset.photoFallback) return;
+    if (!(img instanceof HTMLImageElement)) return;
+    // Team logos come through ESPN's image resizer (team-logos.js). Should
+    // that endpoint ever refuse one, fall back once to the full-size
+    // original rather than leaving a broken image in the row.
+    const resized = img.src.match(/^https:\/\/a\.espncdn\.com\/combiner\/i\?img=(\/i\/teamlogos\/[^&]+)/);
+    if (resized) { img.src = `https://a.espncdn.com${resized[1]}`; return; }
+    if (!img.dataset.photoFallback) return;
     const fallback = document.createElement('span');
     fallback.className = 'mma-photo mma-photo-fallback';
     fallback.textContent = img.dataset.photoFallback;

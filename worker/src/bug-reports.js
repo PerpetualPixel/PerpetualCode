@@ -30,11 +30,11 @@ async function notifyBugReportInbox(env, report) {
     from: { email: 'verify@perpetualpicks.com', name: 'PerpetualPicks' },
     subject: `[Ticket #${report.id}] ${typeLabel} from ${report.username}`,
     html: `
-      <div style="font-family: Arial, sans-serif; background: #05050A; color: #e0e0ff; padding: 20px;">
-        <div style="max-width: 600px; margin: 0 auto; border: 1px solid #9d4edd; border-radius: 8px; padding: 30px; background: #0a0515;">
+      <div style="font-family: Arial, sans-serif; background: #0F1116; color: #EEF0F4; padding: 20px;">
+        <div style="max-width: 600px; margin: 0 auto; border: 1px solid #2A2F3A; border-radius: 8px; padding: 30px; background: #161920;">
           ${EMAIL_LOGO_HTML}
-          <h2 style="color: #d946ef; margin-bottom: 8px;">Ticket #${report.id} &mdash; ${typeLabel}</h2>
-          <p style="color: #7070aa; font-size: 13px; margin-bottom: 20px;">
+          <h2 style="color: #4F7CEB; margin-bottom: 8px;">Ticket #${report.id} &mdash; ${typeLabel}</h2>
+          <p style="color: #6B7280; font-size: 13px; margin-bottom: 20px;">
             From ${report.username} (${report.email})
           </p>
           <p style="white-space: pre-wrap; background: rgba(255,255,255,0.05); padding: 16px; border-radius: 8px; line-height: 1.6;">${report.message.replace(/[<>&]/g, (c) => ({ '<': '&lt;', '>': '&gt;', '&': '&amp;' }[c]))}</p>

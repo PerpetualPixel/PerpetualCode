@@ -82,16 +82,16 @@ async function sendVerificationEmail(env, email, username, token) {
     from: { email: 'verify@perpetualpicks.com', name: 'PerpetualPicks' },
     subject: 'Verify Your Email - PerpetualPicks',
     html: `
-      <div style="font-family: Arial, sans-serif; background: #05050A; color: #e0e0ff; padding: 20px;">
-        <div style="max-width: 600px; margin: 0 auto; border: 1px solid #9d4edd; border-radius: 8px; padding: 30px; background: #0a0515;">
+      <div style="font-family: Arial, sans-serif; background: #0F1116; color: #EEF0F4; padding: 20px;">
+        <div style="max-width: 600px; margin: 0 auto; border: 1px solid #2A2F3A; border-radius: 8px; padding: 30px; background: #161920;">
           ${EMAIL_LOGO_HTML}
-          <h2 style="color: #d946ef; margin-bottom: 20px;">Verify Your Email</h2>
+          <h2 style="color: #4F7CEB; margin-bottom: 20px;">Verify Your Email</h2>
           <p style="margin-bottom: 30px;">Hi ${username}, welcome to PerpetualPicks! Click the button below to verify your email:</p>
           <div style="text-align: center; margin: 30px 0;">
-            <a href="${verifyUrl}" style="display: inline-block; background: linear-gradient(135deg, #d946ef 0%, #9d4edd 100%); color: #05050A; padding: 14px 32px; border-radius: 8px; text-decoration: none; font-weight: bold; font-size: 16px; cursor: pointer;">Verify Email</a>
+            <a href="${verifyUrl}" style="display: inline-block; background: #4F7CEB; color: #ffffff; padding: 14px 32px; border-radius: 8px; text-decoration: none; font-weight: bold; font-size: 16px; cursor: pointer;">Verify Email</a>
           </div>
-          <p style="margin-top: 30px; color: #7070aa; font-size: 12px; text-align: center;">Link expires in 24 hours. If the button doesn't work, copy this link into your browser:</p>
-          <p style="text-align: center; color: #a0a0cc; font-size: 12px; word-break: break-all;">${verifyUrl}</p>
+          <p style="margin-top: 30px; color: #6B7280; font-size: 12px; text-align: center;">Link expires in 24 hours. If the button doesn't work, copy this link into your browser:</p>
+          <p style="text-align: center; color: #8A91A0; font-size: 12px; word-break: break-all;">${verifyUrl}</p>
         </div>
       </div>
     `,
@@ -328,16 +328,16 @@ async function sendPasswordResetEmail(env, email, username, token) {
     from: { email: 'verify@perpetualpicks.com', name: 'PerpetualPicks' },
     subject: 'Reset Your Password - PerpetualPicks',
     html: `
-      <div style="font-family: Arial, sans-serif; background: #05050A; color: #e0e0ff; padding: 20px;">
-        <div style="max-width: 600px; margin: 0 auto; border: 1px solid #9d4edd; border-radius: 8px; padding: 30px; background: #0a0515;">
+      <div style="font-family: Arial, sans-serif; background: #0F1116; color: #EEF0F4; padding: 20px;">
+        <div style="max-width: 600px; margin: 0 auto; border: 1px solid #2A2F3A; border-radius: 8px; padding: 30px; background: #161920;">
           ${EMAIL_LOGO_HTML}
-          <h2 style="color: #d946ef; margin-bottom: 20px;">Reset Your Password</h2>
+          <h2 style="color: #4F7CEB; margin-bottom: 20px;">Reset Your Password</h2>
           <p style="margin-bottom: 30px;">Hi ${username}, you (or someone) requested a password reset for your PerpetualPicks account. Click below to choose a new password:</p>
           <div style="text-align: center; margin: 30px 0;">
-            <a href="${resetUrl}" style="display: inline-block; background: linear-gradient(135deg, #d946ef 0%, #9d4edd 100%); color: #05050A; padding: 14px 32px; border-radius: 8px; text-decoration: none; font-weight: bold; font-size: 16px;">Reset Password</a>
+            <a href="${resetUrl}" style="display: inline-block; background: #4F7CEB; color: #ffffff; padding: 14px 32px; border-radius: 8px; text-decoration: none; font-weight: bold; font-size: 16px;">Reset Password</a>
           </div>
-          <p style="margin-top: 30px; color: #7070aa; font-size: 12px; text-align: center;">Link expires in 1 hour. If you didn't request this, you can safely ignore this email — your password won't change unless this link is used.</p>
-          <p style="text-align: center; color: #a0a0cc; font-size: 12px; word-break: break-all;">${resetUrl}</p>
+          <p style="margin-top: 30px; color: #6B7280; font-size: 12px; text-align: center;">Link expires in 1 hour. If you didn't request this, you can safely ignore this email — your password won't change unless this link is used.</p>
+          <p style="text-align: center; color: #8A91A0; font-size: 12px; word-break: break-all;">${resetUrl}</p>
         </div>
       </div>
     `,

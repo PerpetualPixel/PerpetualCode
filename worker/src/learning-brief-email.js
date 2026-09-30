@@ -86,21 +86,21 @@ export async function sendLearningBriefEmail(env, review, now = Date.now()) {
     .join('');
 
   const html = `
-    <div style="font-family: Arial, sans-serif; background: #05050A; color: #e0e0ff; padding: 20px;">
-      <div style="max-width: 600px; margin: 0 auto; border: 1px solid #9d4edd; border-radius: 8px; padding: 30px; background: #0a0515;">
+    <div style="font-family: Arial, sans-serif; background: #0F1116; color: #EEF0F4; padding: 20px;">
+      <div style="max-width: 600px; margin: 0 auto; border: 1px solid #2A2F3A; border-radius: 8px; padding: 30px; background: #161920;">
         ${EMAIL_LOGO_HTML}
-        <h2 style="color: #d946ef; margin-bottom: 8px;">Algorithm check-in — ${escapeHtml(review.dateKey)}</h2>
+        <h2 style="color: #4F7CEB; margin-bottom: 8px;">Algorithm check-in — ${escapeHtml(review.dateKey)}</h2>
         <p style="line-height:1.6;">Morning — quick update from the picks engine.</p>
         <p style="line-height:1.6;"><strong>${escapeHtml(yesterdayLine)}</strong> ${escapeHtml(windowLine)}</p>
         <p style="line-height:1.6;">This morning's review made <strong>${nChanges} adjustment${nChanges === 1 ? '' : 's'}</strong>:</p>
         <ul style="padding-left: 20px;">${changesHtml}</ul>
-        <p style="color:#a0a0cc; font-size: 13px; line-height:1.6;">
+        <p style="color:#8A91A0; font-size: 13px; line-height:1.6;">
           How this works: nothing already picked or graded gets touched — these only change what makes
           tomorrow's board. A cold segment has to show a clearly better price to get picked; a hot one
           gets a small nudge at most. If a segment straightens out, its adjustment clears on its own.
         </p>
-        <p style="color:#7070aa; font-size: 12px;">Full detail (the nerd version) is on the Tracking Dashboard under Daily Learning.</p>
-        <p style="color:#a0a0cc;">— the engine</p>
+        <p style="color:#6B7280; font-size: 12px;">Full detail (the nerd version) is on the Tracking Dashboard under Daily Learning.</p>
+        <p style="color:#8A91A0;">— the engine</p>
       </div>
     </div>`;
 

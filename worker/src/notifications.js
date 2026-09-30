@@ -75,17 +75,17 @@ async function sendBatch(env, users, buildEmail) {
 
 function emailShell(username, title, bodyHtml) {
   return `
-    <div style="font-family: Arial, sans-serif; background: #05050A; color: #e0e0ff; padding: 20px;">
-      <div style="max-width: 600px; margin: 0 auto; border: 1px solid #9d4edd; border-radius: 8px; padding: 30px; background: #0a0515;">
+    <div style="font-family: Arial, sans-serif; background: #0F1116; color: #EEF0F4; padding: 20px;">
+      <div style="max-width: 600px; margin: 0 auto; border: 1px solid #2A2F3A; border-radius: 8px; padding: 30px; background: #161920;">
         ${EMAIL_LOGO_HTML}
-        <h2 style="color: #d946ef; margin-bottom: 8px;">${title}</h2>
-        <p style="color: #7070aa; font-size: 13px; margin-bottom: 20px;">Hi ${username},</p>
+        <h2 style="color: #4F7CEB; margin-bottom: 8px;">${title}</h2>
+        <p style="color: #6B7280; font-size: 13px; margin-bottom: 20px;">Hi ${username},</p>
         ${bodyHtml}
         <div style="text-align: center; margin: 30px 0 0;">
-          <a href="https://perpetualpicks.com/app.html" style="display: inline-block; background: linear-gradient(135deg, #d946ef 0%, #9d4edd 100%); color: #05050A; padding: 12px 28px; border-radius: 8px; text-decoration: none; font-weight: bold;">Open PerpetualPicks</a>
+          <a href="https://perpetualpicks.com/app.html" style="display: inline-block; background: #4F7CEB; color: #ffffff; padding: 12px 28px; border-radius: 8px; text-decoration: none; font-weight: bold;">Open PerpetualPicks</a>
         </div>
-        <p style="margin-top: 24px; color: #7070aa; font-size: 11px; text-align: center;">
-          Manage notification preferences at <a href="https://perpetualpicks.com/account.html" style="color: #7070aa;">perpetualpicks.com/account.html</a>
+        <p style="margin-top: 24px; color: #6B7280; font-size: 11px; text-align: center;">
+          Manage notification preferences at <a href="https://perpetualpicks.com/account.html" style="color: #6B7280;">perpetualpicks.com/account.html</a>
         </p>
       </div>
     </div>`;
@@ -107,7 +107,7 @@ export async function sendPotdNotifications(env, record) {
     subject: `Play of the Day: ${pick.selection} (${price})`,
     html: emailShell(user.username, 'Play of the Day is Ready', `
       <p style="margin-bottom: 8px; font-size: 18px; font-weight: bold;">${headline}</p>
-      <p style="margin-bottom: 20px; color: #a0a0cc;">${matchup} &middot; ${pick.selection} <span style="color: #00d9ff;">${price}</span></p>
+      <p style="margin-bottom: 20px; color: #8A91A0;">${matchup} &middot; ${pick.selection} <span style="color: #4F7CEB;">${price}</span></p>
     `),
     text: `Hi ${user.username}, Play of the Day: ${pick.selection} (${price})\n${matchup}\n\nOpen: https://perpetualpicks.com/app.html`,
   }));
@@ -131,7 +131,7 @@ export async function sendLadderNotifications(env, record, state) {
   const legs = Array.isArray(pick.legs) && pick.legs.length ? pick.legs : null;
   const window = record.slot?.label ? ` &middot; ${record.slot.label}` : '';
   const matchup = legs
-    ? legs.map((l) => `${l.selection} <span style="color: #00d9ff;">${formatAmerican(l.american)}</span> &middot; ${l.away} @ ${l.home}`).join('<br>')
+    ? legs.map((l) => `${l.selection} <span style="color: #4F7CEB;">${formatAmerican(l.american)}</span> &middot; ${l.away} @ ${l.home}`).join('<br>')
     : `${pick.away} @ ${pick.home}`;
   const matchupText = legs
     ? legs.map((l) => `${l.selection} (${formatAmerican(l.american)}) — ${l.away} @ ${l.home}`).join('\n')
@@ -146,13 +146,13 @@ export async function sendLadderNotifications(env, record, state) {
     from: FROM,
     subject: `Ladder Rung ${step}: ${headline} (${price}) — ${money(stake)} riding`,
     html: emailShell(user.username, `Ladder Challenge &middot; Rung ${step}${window}`, `
-      <p style="margin-bottom: 8px; font-size: 18px; font-weight: bold;">${headline} <span style="color: #00d9ff;">${price}</span></p>
-      <p style="margin-bottom: 20px; color: #a0a0cc;">${matchup}</p>
-      <p style="margin-bottom: 8px; color: #a0a0cc;">
+      <p style="margin-bottom: 8px; font-size: 18px; font-weight: bold;">${headline} <span style="color: #4F7CEB;">${price}</span></p>
+      <p style="margin-bottom: 20px; color: #8A91A0;">${matchup}</p>
+      <p style="margin-bottom: 8px; color: #8A91A0;">
         Staking <strong style="color: #fff;">${money(stake)}</strong> to return
         <strong style="color: #fff;">${money(toReturn)}</strong>${banked}
       </p>
-      <p style="margin: 0; color: #7070aa; font-size: 12px;">
+      <p style="margin: 0; color: #6B7280; font-size: 12px;">
         The whole bankroll rides each rung — a loss ends the climb and starts the next one back at $20.
       </p>
     `),
@@ -176,7 +176,7 @@ export async function sendPicksNotifications(env, picks, { isFinal = true } = {}
   if (!users.length) return;
 
   const rows = picks
-    .map((p) => `<li style="margin-bottom: 6px;">${p.away} @ ${p.home} &mdash; ${p.selection} <span style="color: #00d9ff;">${formatAmerican(p.american)}</span></li>`)
+    .map((p) => `<li style="margin-bottom: 6px;">${p.away} @ ${p.home} &mdash; ${p.selection} <span style="color: #4F7CEB;">${formatAmerican(p.american)}</span></li>`)
     .join('');
   const subject = isFinal
     ? `Pixel's Picks: ${picks.length} lock${picks.length === 1 ? '' : 's'} are in`
@@ -188,10 +188,10 @@ export async function sendPicksNotifications(env, picks, { isFinal = true } = {}
     from: FROM,
     subject,
     html: emailShell(user.username, heading, `
-      ${isFinal ? '' : `<p style="color: #a0a0cc; font-size: 13px; margin-bottom: 14px;">
+      ${isFinal ? '' : `<p style="color: #8A91A0; font-size: 13px; margin-bottom: 14px;">
         These locked with their own game${picks.length === 1 ? '' : 's'} starting soon, so they're going
         out ahead of the rest of today's board — more Pixel's Picks may still follow later today.</p>`}
-      <ul style="margin: 0 0 20px; padding-left: 20px; color: #e0e0ff; line-height: 1.7;">${rows}</ul>
+      <ul style="margin: 0 0 20px; padding-left: 20px; color: #EEF0F4; line-height: 1.7;">${rows}</ul>
     `),
     text: `Hi ${user.username}, Pixel's Picks (${picks.length}${isFinal ? '' : ', locked early — more may follow today'}):\n${picks.map((p) => `${p.away} @ ${p.home} — ${p.selection} (${formatAmerican(p.american)})`).join('\n')}\n\nOpen: https://perpetualpicks.com/app.html`,
   }));
