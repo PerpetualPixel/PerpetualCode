@@ -98,7 +98,15 @@ export async function sendPotdNotifications(env, record) {
 
   const { pick, writeup } = record;
   const headline = writeup?.headline ?? pick.selection;
-  const matchup = `${pick.away} @ ${pick.home}`;
+  // A ticket (docs/tickets.js) has two legs in two games; a pre-ticket
+  // record is one game.
+  const legs = Array.isArray(pick.legs) && pick.legs.length ? pick.legs : null;
+  const matchup = legs
+    ? legs.map((l) => `${l.selection} (${formatAmerican(l.american)}) &middot; ${l.away} @ ${l.home}`).join('<br>')
+    : `${pick.away} @ ${pick.home}`;
+  const matchupText = legs
+    ? legs.map((l) => `${l.selection} (${formatAmerican(l.american)}) — ${l.away} @ ${l.home}`).join('\n')
+    : `${pick.away} @ ${pick.home}`;
   const price = formatAmerican(pick.american);
 
   await sendBatch(env, users, (user) => ({
@@ -107,9 +115,9 @@ export async function sendPotdNotifications(env, record) {
     subject: `Play of the Day: ${pick.selection} (${price})`,
     html: emailShell(user.username, 'Play of the Day is Ready', `
       <p style="margin-bottom: 8px; font-size: 18px; font-weight: bold;">${headline}</p>
-      <p style="margin-bottom: 20px; color: #a0a0cc;">${matchup} &middot; ${pick.selection} <span style="color: #00d9ff;">${price}</span></p>
+      <p style="margin-bottom: 20px; color: #a0a0cc;">${matchup}${legs ? '' : ` &middot; ${pick.selection}`} <span style="color: #00d9ff;">${price}</span></p>
     `),
-    text: `Hi ${user.username}, Play of the Day: ${pick.selection} (${price})\n${matchup}\n\nOpen: https://perpetualpicks.com/app.html`,
+    text: `Hi ${user.username}, Play of the Day: ${pick.selection} (${price})\n${matchupText}\n\nOpen: https://perpetualpicks.com/app.html`,
   }));
 }
 
@@ -175,8 +183,15 @@ export async function sendPicksNotifications(env, picks, { isFinal = true } = {}
   const users = await fetchOptedInUsers(env, 'notify_picks_email');
   if (!users.length) return;
 
+  // A ticket lists its legs under the combined price; a single, its game.
+  const describe = (p) => (Array.isArray(p.legs) && p.legs.length
+    ? p.legs.map((l) => `${l.selection} (${formatAmerican(l.american)}) &middot; ${l.away} @ ${l.home}`).join('<br>&nbsp;&nbsp;+ ')
+    : `${p.away} @ ${p.home} &mdash; ${p.selection}`);
+  const describeText = (p) => (Array.isArray(p.legs) && p.legs.length
+    ? p.legs.map((l) => `${l.selection} (${formatAmerican(l.american)}) — ${l.away} @ ${l.home}`).join(' + ')
+    : `${p.away} @ ${p.home} — ${p.selection}`);
   const rows = picks
-    .map((p) => `<li style="margin-bottom: 6px;">${p.away} @ ${p.home} &mdash; ${p.selection} <span style="color: #00d9ff;">${formatAmerican(p.american)}</span></li>`)
+    .map((p) => `<li style="margin-bottom: 6px;">${describe(p)} <span style="color: #00d9ff;">${formatAmerican(p.american)}</span></li>`)
     .join('');
   const subject = isFinal
     ? `Pixel's Picks: ${picks.length} lock${picks.length === 1 ? '' : 's'} are in`
@@ -193,6 +208,6 @@ export async function sendPicksNotifications(env, picks, { isFinal = true } = {}
         out ahead of the rest of today's board — more Pixel's Picks may still follow later today.</p>`}
       <ul style="margin: 0 0 20px; padding-left: 20px; color: #e0e0ff; line-height: 1.7;">${rows}</ul>
     `),
-    text: `Hi ${user.username}, Pixel's Picks (${picks.length}${isFinal ? '' : ', locked early — more may follow today'}):\n${picks.map((p) => `${p.away} @ ${p.home} — ${p.selection} (${formatAmerican(p.american)})`).join('\n')}\n\nOpen: https://perpetualpicks.com/app.html`,
+    text: `Hi ${user.username}, Pixel's Picks (${picks.length}${isFinal ? '' : ', locked early — more may follow today'}):\n${picks.map((p) => `${describeText(p)} (${formatAmerican(p.american)})`).join('\n')}\n\nOpen: https://perpetualpicks.com/app.html`,
   }));
 }

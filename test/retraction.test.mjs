@@ -54,7 +54,7 @@ const BOOK_KEYS = {
  * straight-moneyline UNDERDOGS, so a favorite pick survives the null
  * archive and these fixtures produce a real tracked pick.
  */
-function makeEvent(id, { hoursOut = 2, outlier = 35, sport = 'baseball_mlb', sportTitle = 'MLB' } = {}) {
+function makeEvent(id, { hoursOut = 2, outlier = 35, sport = 'baseball_mlb', sportTitle = 'MLB', favoritePrice = -140, dogPrice = 120 } = {}) {
   return {
     id,
     sport_key: sport,
@@ -70,8 +70,8 @@ function makeEvent(id, { hoursOut = 2, outlier = 35, sport = 'baseball_mlb', spo
         key: 'h2h',
         last_update: new Date(NOW - 600000).toISOString(),
         outcomes: [
-          { name: `${id} Home`, price: -140 + (i === 0 ? outlier : 0) },
-          { name: `${id} Away`, price: 120 },
+          { name: `${id} Home`, price: favoritePrice + (i === 0 ? outlier : 0) },
+          { name: `${id} Away`, price: dogPrice },
         ],
       }],
     })),
@@ -214,9 +214,13 @@ test('resetFullSlateTracking clears retracted records too', async () => {
 /* Pixel's Picks retraction                                          */
 /* ---------------------------------------------------------------- */
 
-test('retractTop5Picks voids the WTA pick and frees its slot for the next batch', async () => {
+test('retractTop5Picks voids the WTA ticket and frees its slot for the next batch', async () => {
   const { env } = makeKvStore();
-  const events = [wtaEvent('wta1'), makeEvent('mlb1'), makeEvent('mlb2')];
+  // Pixel's Picks are two-leg tickets of anchor-grade favourites (docs/
+  // tickets.js); two WTA favourites pair into one ticket, two ATP into
+  // another, and the WTA ticket is the one the gate retracts.
+  const fav = { favoritePrice: -320, dogPrice: 255, outlier: 60 };
+  const events = [wtaEvent('wta1', fav), wtaEvent('wta2', fav), atpEvent('atp1', fav), atpEvent('atp2', fav)];
   await runTop5Batch(env, ctx, NOW, { fetchFullSlate: async () => events });
 
   const before = await getTop5(env, { dateKey: DATE_KEY });

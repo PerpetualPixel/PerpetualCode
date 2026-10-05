@@ -2,9 +2,13 @@
  * Server-side Pixel's Picks daily tracked picks (internally still named
  * "Top 5" throughout this file/KV keys — the count/timing changed, the name
  * didn't, to avoid a wide rename across every call site): a 2am ET batch
- * that runs the existing engine (unmodified — same topPicks()) against the
- * full slate and stores the result in KV so it survives independent of any
- * one user's browser and never changes after the fact — this is now the
+ * that grades the full slate with the existing engine and builds the day's
+ * ANCHOR + PARTNER TICKETS from it (docs/tickets.js, 2026-10-05 direction:
+ * every Pixel's Pick is a two-leg ticket — one safe leg, one favourite-side
+ * partner, priced -200 to +100 together, from NFL, NCAA football, MMA and
+ * tennis, with NFL alternate-line player props as anchors) and stores the
+ * result in KV so it survives independent of any one user's browser and
+ * never changes after the fact — this is now the
  * single source of truth the Pixel's Picks tab itself renders (docs/app.js's
  * loadPixelPicks()), not just a background tracker; an hourly CLV snapshot
  * for whatever's still pending; and a grading pass (also hourly, not just at
@@ -25,8 +29,11 @@
  * single, server-side, always-on history that doesn't depend on anyone
  * having the app open.
  */
-import { analyze, topPicks, applyBankrollBuilders, clearsMaxJuice, isNflPreseason, isNflPreseasonKey, suggestedStake, UNIT_DOLLARS, STAKE_BANDS, stakeUnitsForScore } from '../../docs/engine.js';
-import { fetchCapperConsensus, applyCapperConsensus, upgradeToValueStraight } from '../../docs/capper-consensus.js';
+import { analyze, clearsMaxJuice, isNflPreseason, isNflPreseasonKey, UNIT_DOLLARS, STAKE_BANDS, stakeUnitsForScore } from '../../docs/engine.js';
+import { buildTickets, legEligible, isTicketSport } from '../../docs/tickets.js';
+import { collectNflPropLegs, NFL_SPORT_KEY } from './football-props.js';
+import { gradeTicket, legsOf, nflStatsReader } from './ticket-grading.js';
+import { fetchCapperConsensus, applyCapperConsensus } from '../../docs/capper-consensus.js';
 import { isPower4Matchup } from '../../docs/ncaaf-conferences.js';
 import { gradePick } from '../../docs/learning.js';
 import { isMma, isTennis } from '../../docs/insights.js';
@@ -78,16 +85,12 @@ export const GENERATION_HOUR_ET = 2;
 
 /**
  * Pixel's Picks price band, per explicit product direction: "-200 straight is
- * okay ... near that range of -200 to +100. I don't want a -1800."
- *
- * SHARP is the standard a real lock is held to. HARD is the bound nothing
- * crosses, thin-day fallback included — see topPicks' own hardOddsMin note
- * for how a -1800 reached a live board that already claimed a -200 floor.
- * The hard ceiling sits above the sharp one because the two ends fail
- * differently: an extra-long dog is a bad-value bet, while a -1800 favorite
- * is a bet whose price makes the whole board's premise dishonest.
+ * okay ... near that range of -200 to +100. I don't want a -1800." Since
+ * 2026-10-05 it is the TICKET's combined price that answers to this band
+ * (docs/tickets.js's TICKET_BAND is the same -200..+100); the legs inside
+ * it are heavier favourites by design.
  */
-const PIXEL_ODDS = { SHARP_MIN: -200, SHARP_MAX: 100, HARD_MIN: -200, HARD_MAX: 150 };
+const PIXEL_ODDS = { SHARP_MIN: -200, SHARP_MAX: 100 };
 
 /**
  * Sides already taken by the other boards, as `eventId|marketKey|outcomeName`.
@@ -116,7 +119,8 @@ async function loadPublishedSides(env, dateKey) {
       env.POTD_KV.get(`slate:${dateKey}:manifest`),
       env.POTD_KV.get(`potd:${dateKey}`),
     ]);
-    if (potdRaw) add(JSON.parse(potdRaw)?.pick);
+    // A Play of the Day ticket publishes BOTH its legs' sides.
+    if (potdRaw) legsOf(JSON.parse(potdRaw)?.pick).forEach(add);
 
     const slateIds = slateManifestRaw ? (JSON.parse(slateManifestRaw).pickIds ?? []) : [];
     const slatePicks = await Promise.all(
@@ -160,17 +164,6 @@ const KV_TTL_SECONDS = 86400 * 90; // 90 days — long enough for weeks of calib
 // its pick locked in must not be pickable a second time under a new date.
 const EVENT_DEDUPE_LOOKBACK_DAYS = 2;
 
-// How many of the day's five Pixel's Picks run as 2-leg moneyline combos
-// rather than straight bets. Two of five by direction: enough to make the
-// board meaningfully safer without turning it into a parlay card, and it
-// leaves three straights to compare the style against.
-const PIXEL_COMBO_SLOTS = 2;
-
-// What counts as a "favourite" for a bankroll builder's legs: a side actually
-// laying juice. A pick'em or a dog can grade well and still has no place in a
-// ticket whose whole premise is stacking likely winners.
-const FAVOURITE_MAX_AMERICAN = -110;
-
 const FIXED_SPORT_KEYS = [
   'baseball_mlb',
   'americanfootball_nfl',
@@ -180,6 +173,17 @@ const FIXED_SPORT_KEYS = [
   'soccer_usa_mls',
   'icehockey_nhl',
 ];
+
+
+/**
+ * The game ids a stored pick id names. A ticket's id joins its legs' ids
+ * with '+' (see pickRecordFrom), and every leg id starts with its game's
+ * id — so a ticket spans two games, and both must be excluded from a later
+ * draw, not just the first.
+ */
+export function eventIdsOfPickId(pickId) {
+  return String(pickId ?? '').split('+').map((part) => part.split(':')[0]).filter(Boolean);
+}
 
 /** ET calendar date (YYYY-MM-DD) for a given instant — the day boundary every tracked pick is keyed on. */
 function etDate(ms) {
@@ -479,6 +483,21 @@ function comboLegRecord(leg) {
     home: leg.home,
     away: leg.away,
     commenceMs: leg.commenceMs,
+    consensusProb: leg.consensusProb ?? null,
+    score: Number.isFinite(leg.score) ? Math.round(leg.score) : null,
+    // A player-prop leg (worker/src/football-props.js): the player and the
+    // stat its grader settles on, the first winning value, the ESPN game it
+    // reads the final boxscore from, and the game-log profile the card and
+    // the write-up quote. All absent on a game-market leg.
+    ...(leg.kind === 'prop' ? {
+      kind: 'prop',
+      playerName: leg.playerName,
+      statKey: leg.statKey,
+      need: leg.need,
+      espnEventId: leg.espnEventId ?? null,
+      profile: leg.profile ?? null,
+      edge: leg.edge ?? null,
+    } : {}),
     status: 'pending',
   };
 }
@@ -509,6 +528,11 @@ export function pickRecordFrom(pick, dateKey, now, stakeUnits = null) {
       type: 'combo',
       legs: pick.legs.map(comboLegRecord),
       pairReason: pick.pairReason ?? null,
+      // The ticket's own expected value against its combined price, and
+      // which leg is the anchor (docs/tickets.js) — null on a combo written
+      // before the anchor + partner design.
+      ev: Number.isFinite(pick.ev) ? pick.ev : null,
+      anchorId: pick.anchorId ?? null,
     } : {}),
     eventId: leg.eventId,
     sportKey: leg.sportKey,
@@ -550,8 +574,10 @@ export function pickRecordFrom(pick, dateKey, now, stakeUnits = null) {
     // stored so the calibration report can compare it against actual
     // outcome frequency (a real Brier score), rather than only having the
     // 0-100 composite score, which blends in liquidity/agreement/freshness
-    // and isn't itself a probability.
-    consensusProb: leg.consensusProb,
+    // and isn't itself a probability. For a ticket it is the JOINT
+    // probability that both legs land — the claim the ticket makes about
+    // itself, and what the health review's z-test should hold it to.
+    consensusProb: isCombo && Number.isFinite(pick.prob) ? pick.prob : leg.consensusProb,
     commenceMs: leg.commenceMs,
     // The recommendation shown on the card is the UNITS — every user runs
     // a different dollar unit. The dollar figure is the tracked record's
@@ -610,7 +636,13 @@ export async function runTop5Batch(
   // Injected for testability, same reasoning as potd.js's runPotdDaily
   // taking fetchFullSlate as a parameter — lets tests supply a fixed event
   // list instead of needing to mock the network.
-  { fetchFullSlate = () => fetchFullSlateEvents(env, ctx) } = {},
+  {
+    fetchFullSlate = () => fetchFullSlateEvents(env, ctx),
+    // The NFL alternate-line prop legs (worker/src/football-props.js) —
+    // injectable so tests supply gated legs without the odds and ESPN
+    // fetches behind them. Given today's NFL games from the slate.
+    fetchPropLegs = (games) => collectNflPropLegs(games, env, ctx, now),
+  } = {},
 ) {
   const dateKey = etDate(now);
   // Before the generation hour, today's board simply doesn't exist yet —
@@ -689,7 +721,7 @@ export async function runTop5Batch(
     [
       ...existingPickIds,
       ...priorManifests.filter(Boolean).flatMap((raw) => JSON.parse(raw).pickIds ?? []),
-    ].map((id) => id.split(':')[0]),
+    ].flatMap(eventIdsOfPickId),
   );
   const analyzed = analyze(events, { now })
       .filter((c) => {
@@ -759,9 +791,12 @@ export async function runTop5Batch(
   // the live one grade an MMA fight the same way. Fetch failure degrades to
   // the unadjusted pool: consensus is a bonus, never a dependency.
   const consensusFeed = await fetchCapperConsensus(undefined, { force: true }).catch(() => null);
-  const drawPool = consensusFeed
+  const drawPool = (consensusFeed
     ? applyCapperConsensus(stillActionable, consensusFeed, { now })
-    : stillActionable;
+    : stillActionable)
+    // The boards draw from NFL, NCAA football, MMA and tennis only — see
+    // docs/tickets.js's TICKET_SPORTS.
+    .filter((c) => isTicketSport(c.sportKey));
 
   // The day's hierarchy, per explicit product direction (2026-08-21): the
   // Play of the Day is the slate's #1 and is drawn FIRST (index.js awaits
@@ -778,7 +813,10 @@ export async function runTop5Batch(
       env.POTD_KV.get(`propplay:${dateKey}`),
     ]);
     const potdRecord = potdRaw ? JSON.parse(potdRaw) : null;
-    if (potdRecord?.pick?.eventId) featuredEventIds.add(potdRecord.pick.eventId);
+    // Both games of a Play of the Day ticket are spoken for.
+    for (const leg of legsOf(potdRecord?.pick ?? null)) {
+      if (leg?.eventId) featuredEventIds.add(leg.eventId);
+    }
     const propPlay = propPlayRaw ? JSON.parse(propPlayRaw) : null;
     for (const leg of propPlay?.legs ?? []) {
       if (leg.oddsEventId) featuredEventIds.add(leg.oddsEventId);
@@ -792,81 +830,50 @@ export async function runTop5Batch(
     (c) => !contradictsPublishedBoard(c, publishedSides) && !featuredEventIds.has(c.eventId),
   );
 
-  const slate = topPicks(nonConflicting, {
-    oddsMin: PIXEL_ODDS.SHARP_MIN,
-    oddsMax: PIXEL_ODDS.SHARP_MAX,
-    // Enforced even by the thin-day fallback, which is what stops a -1800
-    // reaching a board that promises -200 or better.
-    hardOddsMin: PIXEL_ODDS.HARD_MIN,
-    hardOddsMax: PIXEL_ODDS.HARD_MAX,
-    count: needed,
-    minScore: convictionFloor,
+  // Every Pixel's Pick is an anchor + partner ticket (docs/tickets.js,
+  // 2026-10-05 direction). The leg pool is every game-market candidate that
+  // clears the board's own bars — a ticket sport, a bettable price, the edge
+  // and Kelly floors, the conviction floor, a favourite-side read — plus
+  // the NFL alternate-line player props whose game-log hit rate clears the
+  // prop gates (worker/src/football-props.js). The builder pairs them:
+  // two games per ticket, never arguing, -200 to +100 together, more
+  // likely than not to both land, ranked by the ticket's own expected
+  // value. A day that offers fewer than five such pairs posts short — there
+  // is no fallback tier, for the same reason topPicks lost its last-resort
+  // fill: the board is a promise about bets the engine itself rates.
+  const gameLegs = nonConflicting.filter((c) => legEligible(c, {
     minEv: algoConfig.MIN_EV_PCT,
     minKelly: algoConfig.MIN_KELLY_FRACTION,
-    // The sharp standard fills first; guaranteeCount's flagged fallback
-    // (odds band and score floor relaxed, EDGE BAR INTACT) fills what it
-    // can of the rest. There is no tier below that any more: the board
-    // posts short on a day the market offers fewer than five real edges,
-    // rather than padding the record with bets the engine itself grades as
-    // losers (see topPicks' own note on the removed last-resort tier).
-    guaranteeCount: true,
-    // Every Pixel's Pick is priced at a book the reader can bet — see
-    // buildCandidates' `bettable` for the record behind this.
-    requireBettable: true,
+    minScore: convictionFloor,
+  }));
+  // Prop legs come from today's NFL games the other boards haven't taken.
+  // A failed prop scan degrades to a game-market-only pool — props are an
+  // upgrade to the anchor supply, never a dependency of the board.
+  let propLegs = [];
+  try {
+    const nflGames = events.filter((e) => e.sport_key === NFL_SPORT_KEY
+      && etDate(new Date(e.commence_time).getTime()) === dateKey
+      && !existingEventIds.has(e.id) && !featuredEventIds.has(e.id));
+    propLegs = (await fetchPropLegs(nflGames)) ?? [];
+  } catch (e) {
+    console.error("Pixel's Picks prop legs failed:", e);
+  }
+  const tickets = buildTickets([...gameLegs, ...propLegs], {
+    count: needed,
+    usedEventIds: new Set([...existingEventIds, ...featuredEventIds]),
+    minAmerican: PIXEL_ODDS.SHARP_MIN,
+    maxAmerican: PIXEL_ODDS.SHARP_MAX,
+    minEv: algoConfig.MIN_EV_PCT,
   });
 
-  // Two of the five run as "bankroll builders" (2026-09-02 direction): two or
-  // three moneyline favourites from different games, stacked until the ticket
-  // itself pays plus money rather than laying heavy juice on any one of them.
-  //
-  // Every leg is a moneyline clearing the same conviction floor the board's
-  // singles clear, and legs are taken safest-first, so a ticket reaches plus
-  // money on the fewest and likeliest legs available. A pick with no legal
-  // ticket stays a single, so the board still posts five.
-  //
-  // See buildBankrollBuilder's own note on what this does and does not buy:
-  // stacking favourites raises variance rather than lowering it, and is a
-  // product choice made with that understood.
-  slate.picks = applyBankrollBuilders(slate.picks, nonConflicting, {
-    max: PIXEL_COMBO_SLOTS,
-    // The ticket obeys the board's own hard band exactly as a single does —
-    // a stack of favourites is still a Pixel's Pick, not an exception to what
-    // the board promises.
-    maxAmerican: PIXEL_ODDS.HARD_MAX,
-    // Legs must be actual FAVOURITES laying real juice, not merely moneylines
-    // clearing the score floor. Without this a +600 longshot that graded well
-    // qualified as a leg and the "bankroll builder" came out at +779.
-    // ...and each leg must carry a real edge of its own. Stacking
-    // favourites that are individually -EV multiplies the vig, not the
-    // bankroll — the ticket is only as good as its worst leg.
-    isEligible: (c) => c.marketKey === 'h2h'
-      && c.bettable !== false
-      && c.american <= FAVOURITE_MAX_AMERICAN
-      && c.american >= PIXEL_ODDS.HARD_MIN
-      && c.score >= convictionFloor
-      && c.ev > algoConfig.MIN_EV_PCT
-      && suggestedStake(c) >= algoConfig.MIN_KELLY_FRACTION,
-  });
-
-  // Belt-and-suspenders alongside the existingEventIds filter above: even
-  // though topPicks() can't return two same-event candidates from a single
-  // call, and the filter already stops it from seeing an event a prior call
-  // already used, a same-game clash between two picks WITHIN slate.picks
-  // itself would still be a real, visible contradiction on the board if it
-  // ever happened — so it's checked here directly against the actual
-  // eventIds, not assumed from the upstream filters holding. A leg whose
-  // game is already spoken for (by an existing pick or an earlier leg in
-  // this same slate) is dropped rather than written.
+  // Belt-and-suspenders alongside buildTickets' own bookkeeping: no two
+  // tickets on the board may share a game, counting every leg — a same-game
+  // clash between two tickets would be a real, visible contradiction, so it
+  // is checked here against the actual eventIds rather than assumed from
+  // the builder holding.
   const usedEventIds = new Set(existingEventIds);
   const newPickIds = [];
-  for (const pick of slate.picks) {
-    // MMA fights lock their best VALUE play, not automatically the priced
-    // market that earned the slot: a heavy moneyline gives way to the
-    // consensus's priced straight (method/round/distance) when the straight
-    // carries more value — see upgradeToValueStraight.
-    if (consensusFeed) pick.legs = pick.legs.map((leg) => upgradeToValueStraight(leg, consensusFeed));
-    // Every leg's game is spoken for, not just the anchor's — otherwise a
-    // later pick could take the other side of a combo's partner game.
+  for (const pick of tickets) {
     const eventIds = pick.legs.map((l) => l.eventId);
     if (eventIds.some((id) => usedEventIds.has(id))) continue;
     eventIds.forEach((id) => usedEventIds.add(id));
@@ -892,7 +899,7 @@ export async function runTop5Batch(
     }),
   );
 
-  return { skipped: false, dateKey, count: pickIds.length, added: newPickIds.length, poolSize: slate.poolSize };
+  return { skipped: false, dateKey, count: pickIds.length, added: newPickIds.length, poolSize: gameLegs.length + propLegs.length };
 }
 
 /**
@@ -1069,13 +1076,12 @@ export async function runGrading(
   const pending = picks.filter((p) => p.status === 'pending' || isRegradableTennisVoid(p));
   if (!pending.length) return { graded: 0, remaining: 0 };
 
-  // Every sport in play, counting a combo's SECOND leg — its sport can differ
+  // Every sport in play, counting a ticket's SECOND leg — its sport can differ
   // from the record's own (the record's sportKey is the anchor's), and a leg
   // whose scores were never fetched can never settle, which would leave the
   // whole ticket pending forever.
-  const legsOf = (p) => (p.type === 'combo' && Array.isArray(p.legs) ? p.legs : [p]);
   const allLegs = pending.flatMap(legsOf);
-  const sportsNeeded = [...new Set(allLegs.map((l) => l.sportKey))];
+  const sportsNeeded = [...new Set(allLegs.filter((l) => l.kind !== 'prop').map((l) => l.sportKey))];
   const fetched = await Promise.all(sportsNeeded.map((s) => fetchScoresFn(s)));
   const scoreEventsBySport = new Map(sportsNeeded.map((s, i) => [s, fetched[i].events ?? []]));
   const mmaResults = allLegs.some((l) => isMma(l.sportKey)) ? await fetchMmaResultsFn() : [];
@@ -1083,45 +1089,13 @@ export async function runGrading(
   // worker/src/tennis-espn.js's header) — ESPN's scoreboard is what actually
   // settles these. One fetch per pass covers every tournament in play.
   const tennisResults = allLegs.some((l) => isTennis(l.sportKey)) ? await fetchTennisResultsFn() : [];
-
-  /**
-   * Settle ONE leg to won/lost/void, through the same per-sport graders a
-   * single pick uses. Only the verdict is read: a parlay pays once, off the
-   * ticket's own combined price, so the nominal stake here never reaches a
-   * stored number. Returns null while the leg can't be settled yet.
-   */
-  const gradeLeg = async (leg) => {
-    const scoreEvent = (scoreEventsBySport.get(leg.sportKey) ?? []).find((e) => e.id === leg.eventId);
-    const probe = { ...leg, decimal: leg.decimal ?? 2, suggested_stake: 1 };
-    if (isMma(leg.sportKey)) return gradeMmaPickWithFallback(probe, scoreEvent, mmaResults);
-    if (isTennis(leg.sportKey)) return gradeTennisPickWithEspn(probe, scoreEvent, tennisResults, env, ctx, now);
-    return gradePick(probe, scoreEvent, now);
-  };
-
-  /**
-   * Settle a two-leg ticket from its legs' verdicts, on the same rule the
-   * Prop Play already uses for its own parlay: every leg must land, any loss
-   * loses the ticket, and a void leg voids it rather than being quietly
-   * dropped to leave a "parlay" of one. Stays pending until every leg has an
-   * answer — a ticket half-settled is not settled.
-   */
-  const gradeCombo = async (pick) => {
-    const outcomes = await Promise.all(pick.legs.map(gradeLeg));
-    if (outcomes.some((o) => !o)) return null;
-    pick.legs = pick.legs.map((leg, i) => ({
-      ...leg,
-      status: outcomes[i].void ? 'void' : outcomes[i].won ? 'won' : 'lost',
-      ...(outcomes[i].void ? { voidReason: outcomes[i].reason } : {}),
-      ...(outcomes[i].detail ? { detail: outcomes[i].detail } : {}),
-    }));
-    if (outcomes.some((o) => o.void)) {
-      return { void: true, reason: 'a leg voided, so the ticket voids with it' };
-    }
-    const won = outcomes.every((o) => o.won);
-    return {
-      won,
-      payout: won ? (pick.decimal - 1) * pick.suggested_stake : -pick.suggested_stake,
-    };
+  // Settling a ticket's legs, one shared way (worker/src/ticket-grading.js):
+  // the per-sport graders above for game legs, the final boxscore for a
+  // player-prop leg.
+  const ticketDeps = {
+    scoreEventFor: (leg) => (scoreEventsBySport.get(leg.sportKey) ?? []).find((e) => e.id === leg.eventId),
+    mmaResults, tennisResults, env, ctx, now,
+    nflStatsFor: nflStatsReader(ctx),
   };
 
   let graded = 0;
@@ -1153,7 +1127,7 @@ export async function runGrading(
 
     let outcome;
     if (pick.type === 'combo' && Array.isArray(pick.legs)) {
-      outcome = await gradeCombo(pick);
+      outcome = await gradeTicket(pick, ticketDeps);
     } else if (isMma(pick.sportKey)) {
       outcome = gradeMmaPickWithFallback(pick, scoreEvent, mmaResults);
     } else if (isTennis(pick.sportKey)) {
@@ -1221,7 +1195,7 @@ export async function getTop5Leaning(env, { now = Date.now(), dateKey } = {}) {
     env.POTD_KV.get(`track:${dk}:pool`),
   ]);
   const pool = poolRaw ? JSON.parse(poolRaw).entries : [];
-  const existingEventIds = new Set(pickIds.map((id) => id.split(':')[0]));
+  const existingEventIds = new Set(pickIds.flatMap(eventIdsOfPickId));
   const stillActionable = pool.filter((c) => c.commenceMs > now && !existingEventIds.has(c.eventId));
 
   // Same capper-consensus enrichment as the real batch below, so the lean
@@ -1232,20 +1206,21 @@ export async function getTop5Leaning(env, { now = Date.now(), dateKey } = {}) {
     ? applyCapperConsensus(stillActionable, consensusFeed, { now })
     : stillActionable;
 
-  const slate = topPicks(drawPool, {
-    count: needed,
-    oddsMin: CONFIG.ODDS_MIN_DEFAULT,
-    oddsMax: CONFIG.ODDS_MAX_DEFAULT,
-    minScore: algoConfig.MIN_SCORE,
+  // The lean is built the same way the lock is (docs/tickets.js) so the two
+  // can never disagree about what a Pixel's Pick is.
+  const legs = drawPool.filter((c) => legEligible(c, {
     minEv: algoConfig.MIN_EV_PCT,
     minKelly: algoConfig.MIN_KELLY_FRACTION,
-    guaranteeCount: false,
+    minScore: algoConfig.MIN_SCORE,
+  }));
+  const tickets = buildTickets(legs, {
+    count: needed,
+    usedEventIds: existingEventIds,
+    minAmerican: PIXEL_ODDS.SHARP_MIN,
+    maxAmerican: PIXEL_ODDS.SHARP_MAX,
+    minEv: algoConfig.MIN_EV_PCT,
   });
-
-  return slate.picks.map((pick) => {
-    if (consensusFeed) pick.legs = pick.legs.map((leg) => upgradeToValueStraight(leg, consensusFeed));
-    return pickRecordFrom(pick, dk, now);
-  });
+  return tickets.map((pick) => pickRecordFrom(pick, dk, now));
 }
 
 /**

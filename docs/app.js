@@ -1832,17 +1832,46 @@ function renderDegradedPick(pick) {
         ${unitsLineHtml(pick.stakeUnits)}
       </div>
 
+      ${record.type === 'combo' && record.pairReason ? `<p class="pair-note">${esc(record.pairReason)}</p>` : ''}
+
       <!-- Wrapped in .leg for the same 14px inset the live card's legs carry.
            Bare here, these two sat flush against the card's edge while the
            confidence block above them was inset — the same misalignment the
            units line had, on the surface that renders a started or finished
            pick. -->
-      <div class="leg">
+      ${record.type === 'combo' && Array.isArray(record.legs)
+        ? record.legs.map((leg, i) => renderTicketLegRow(leg, i, record)).join('')
+        : `<div class="leg">
         <p class="leg-selection">${esc(record.selection)}</p>
         <p class="leg-matchup">${esc(record.away)} @ ${esc(record.home)} ·
           <span class="schedule-result ${resultClass}">${esc(statusLabel)}</span></p>
-      </div>
+      </div>`}
     </article>`;
+}
+
+/**
+ * One leg of a stored ticket (docs/tickets.js), from the record alone: the
+ * selection, its game and price, and its own graded status once in — a
+ * ticket settles leg by leg, and which leg missed is the part worth
+ * seeing. A prop leg also quotes the game-log numbers it was chosen on.
+ */
+function renderTicketLegRow(leg, index, record) {
+  const status = leg.status && leg.status !== 'pending' ? leg.status
+    : record.status === 'pending' && leg.commenceMs > Date.now() ? 'locked'
+    : 'live';
+  const label = { won: 'Won', lost: 'Lost', void: 'Void', locked: 'Locked', live: 'Live / Final' }[status];
+  const cls = status === 'won' ? 'win' : status === 'lost' ? 'loss' : '';
+  const role = index === 0 ? 'Anchor' : 'Partner';
+  const profile = leg.kind === 'prop' && leg.profile
+    ? `<p class="leg-matchup">${esc(leg.playerName)} has cleared ${esc(String(leg.need))}+ in ${Math.round(leg.profile.season * 100)}% of ${leg.profile.games} games (${Math.round(leg.profile.l5 * 100)}% of the last 5), averaging ${esc(String(leg.profile.avgSeason))}.</p>`
+    : '';
+  return `<div class="leg">
+      <p class="chip">${role}${leg.sportTitle ? ` · ${esc(leg.sportTitle)}` : ''}</p>
+      <p class="leg-selection">${esc(leg.selection)} <span class="book">${esc(formatAmerican(leg.american))}</span></p>
+      <p class="leg-matchup">${esc(leg.away)} @ ${esc(leg.home)} · ${esc(leg.marketLabel ?? leg.marketKey ?? '')}${leg.book ? ` · ${esc(leg.book)}` : ''} ·
+        <span class="schedule-result ${cls}">${esc(label)}</span></p>
+      ${profile}
+    </div>`;
 }
 
 function renderSlate(slate) {
@@ -4911,15 +4940,17 @@ async function loadPixelPicks() {
     // guess that can still change (see the LEAN badge), so vouching for one
     // as a settled recommendation would be claiming more than the board
     // itself does.
-    registerPostedPicks('top5', (data.picks ?? []).map((r) => ({
+    // A ticket registers leg by leg: someone pasting one of its legs is
+    // asking about that leg, and the audit should recognise it as ours.
+    registerPostedPicks('top5', (data.picks ?? []).flatMap((r) => (Array.isArray(r.legs) ? r.legs : [r]).map((leg) => ({
       surfaceLabel: "one of Pixel's Picks",
-      selection: r.selection,
-      marketKey: r.marketKey,
-      american: r.american ?? null,
+      selection: leg.selection,
+      marketKey: leg.marketKey,
+      american: leg.american ?? null,
       score: r.score ?? null,
-      home: r.home ?? null,
-      away: r.away ?? null,
-    })));
+      home: leg.home ?? null,
+      away: leg.away ?? null,
+    }))));
   } catch (error) {
     el.picks.innerHTML = `<p class="empty">Couldn't reach the odds feed.
       ${esc(error.message)}</p>`;
@@ -5461,11 +5492,13 @@ function renderPotdCard(writeup, generatedAt, stale) {
         <span class="price">${esc(writeup.price)}</span>
       </div>
       ${staleNote}
-      <h2 class="potd-headline">${esc(writeup.headline)}</h2>
+      ${Array.isArray(writeup.legs) && writeup.legs.length
+        ? renderPotdTicketLegs(writeup)
+        : `<h2 class="potd-headline">${esc(writeup.headline)}</h2>
       <p class="potd-matchup">
         ${esc(writeup.matchup)} · ${esc(potdDateTimeFmt.format(new Date(writeup.commenceMs)))}
         · best price at ${esc(writeup.book)}
-      </p>
+      </p>`}
       ${renderPotdConfidence(writeup.score, writeup.stakeUnits)}
       <button type="button" class="potd-more-btn" aria-expanded="false" aria-controls="${detailId}">
         More info
@@ -5480,6 +5513,24 @@ function renderPotdCard(writeup, generatedAt, stale) {
         </p>
       </div>
     </article>`;
+}
+
+/**
+ * A ticket Play of the Day (docs/tickets.js): the combined price leads, then
+ * each leg with its game, its own price and the measured reason it's there.
+ */
+function renderPotdTicketLegs(writeup) {
+  return `
+      <h2 class="potd-headline">2-leg ticket · ${esc(writeup.price)}</h2>
+      <ol class="potd-legs">
+        ${writeup.legs.map((leg, i) => `<li class="potd-leg">
+          <p class="chip">${i === 0 ? 'Anchor' : 'Partner'} · ${esc(leg.sportTitle)}</p>
+          <p class="leg-selection">${esc(leg.selection)} <span class="book">${esc(leg.price)}</span></p>
+          <p class="leg-matchup">${esc(leg.matchup)} · ${esc(potdDateTimeFmt.format(new Date(leg.commenceMs)))}${leg.book ? ` · ${esc(leg.book)}` : ''}</p>
+          ${leg.note ? `<p class="potd-leg-note">${esc(leg.note)}</p>` : ''}
+        </li>`).join('')}
+      </ol>
+      ${writeup.pairReason ? `<p class="pair-note">${esc(writeup.pairReason)}</p>` : ''}`;
 }
 
 /**
@@ -5578,7 +5629,7 @@ function renderPotd(potd, leaning, hold = null) {
     // deliberately NOT registered for the audit: it isn't a live
     // recommendation, and treating it as one would have Tail or Fade vouch
     // for a bet whose game has already been played.
-    registerPostedPicks('potd', stale ? [] : [postedPickFromPotdWriteup(writeup, 'Play of the Day')].filter(Boolean));
+    registerPostedPicks('potd', stale ? [] : postedPicksFromPotdWriteup(writeup, 'Play of the Day'));
     el.potdBody.innerHTML = renderPotdCard(writeup, generatedAt, stale);
     return;
   }
@@ -7904,6 +7955,24 @@ function registerPostedPicks(surface, picks) {
  * here rather than changing the stored shape, which several other surfaces
  * already render from.
  */
+function postedPicksFromPotdWriteup(writeup, surfaceLabel) {
+  if (Array.isArray(writeup?.legs) && writeup.legs.length) {
+    return writeup.legs.map((leg) => ({
+      surfaceLabel,
+      selection: leg.selection,
+      marketKey: leg.marketKey ?? 'h2h',
+      american: leg.american ?? null,
+      score: writeup.score ?? null,
+      home: leg.home ?? null,
+      away: leg.away ?? null,
+      reasons: writeup.reasons ?? null,
+      sections: writeup.sections ?? null,
+    }));
+  }
+  const single = postedPickFromPotdWriteup(writeup, surfaceLabel);
+  return single ? [single] : [];
+}
+
 function postedPickFromPotdWriteup(writeup, surfaceLabel) {
   if (!writeup?.headline) return null;
   const selection = String(writeup.headline).replace(/\s*\([^)]*\)\s*$/, '').trim();

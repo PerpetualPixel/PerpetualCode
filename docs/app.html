@@ -36,7 +36,7 @@
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Syne:wght@600;700;800&family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
-<link rel="stylesheet" href="styles.css?v=1.187">
+<link rel="stylesheet" href="styles.css?v=1.188">
 </head>
 <body>
 
@@ -119,7 +119,10 @@
       Dashboard, untouched. Every price is now de-vigged with the power method and graded against
       the sharp market (Pinnacle) where it prices the game, and a curated pick is only ever a price
       at a book you can bet. The daily boards are simpler now: at 2am ET the
-      whole slate is ranked once — the #1 pick becomes the <strong>Play of the Day</strong>,
+      whole slate is graded once and built into two-leg tickets — one safe anchor leg (a
+      player-prop line far below the player's normal output, or a heavy favourite) plus a
+      favourite-side partner from another game, priced −200 to +100 together, from NFL, NCAA
+      football, MMA and tennis. The best ticket becomes the <strong>Play of the Day</strong>,
       the next five become <strong>Pixel's Picks</strong> (up to 5, never sharing a
       game with the Play of the Day), and a <strong>Prop Play</strong> and a
       <strong>Ladder</strong> rung — an NFL parlay per kickoff window — posts on its own schedule. Every pick on every board has to beat
@@ -240,17 +243,22 @@
        same one that used to sit open above the board on every visit. -->
   <details class="explainer tab-intro">
     <summary class="explainer-summary">
-      <span class="explainer-lede">Up to 5 picks, every day at 2am ET — the best real edges on the full slate after the Play of the Day takes #1.</span>
+      <span class="explainer-lede">Up to 5 two-leg tickets, every day at 2am ET — a safe anchor plus a favourite-side partner, −200 to +100 together, after the Play of the Day takes the best one.</span>
       <span class="explainer-more" aria-hidden="true">How they're chosen</span>
     </summary>
     <p class="explainer-body">
-      Once a day at 2am ET the whole slate — every league, every sportsbook —
-      is ranked. The #1 pick becomes the Play of the Day; these are the next
-      five, and they never share a game with it. The board is always exactly
-      5: when fewer than 5 clear the sharp standard (−200/+150 band, positive
-      EV, a real Kelly edge), the rest fill from the best available and are
-      visibly flagged rather than passed off as locks. Once posted, a pick
-      never changes. Every game regardless of price lives on the Full Slate tab.
+      Once a day at 2am ET the slate — NFL, NCAA football, MMA and tennis,
+      every sportsbook — is graded and built into two-leg tickets. Each
+      ticket pairs a safe anchor (an NFL player-prop line the player has
+      cleared in at least 75% of games this season and 80% of the last five,
+      or a side the market itself reads at 72% or better) with a
+      favourite-side partner from a different game, so the two together pay
+      −200 to +100 and are more likely than not to both land. Every leg is a
+      price you can bet, with a real edge at that price. The best ticket is
+      the Play of the Day; these are the next five, and they never share a
+      game with it or each other. A day with fewer qualifying pairs posts
+      fewer tickets. Once posted, a ticket never changes. Every game
+      regardless of price lives on the Full Slate tab.
     </p>
   </details>
   <div id="status" class="status" role="status" aria-live="polite">Loading the board…</div>
@@ -430,13 +438,14 @@
       on it, nothing hidden by odds or confidence, with a glowing ring
       around whichever side the algorithm leans toward on each market. Tap
       any price to see the case for it, and the case against it.
-      <strong>Pixel's Picks</strong> is fully automatic: at 2am ET the whole
-      slate is ranked once, the #1 pick becomes the Play of the Day, and
-      these are the next 5 — always exactly 5, never sharing a game with
-      the Play of the Day, posted all at once and never changed after.
-      <strong>Play of the Day</strong> is that #1 pick — one pick for the
-      whole day, the same for everyone, with a full written breakdown
-      instead of the compact card.</p>
+      <strong>Pixel's Picks</strong> is fully automatic: at 2am ET the slate
+      is graded once and built into two-leg tickets — a safe anchor leg plus
+      a favourite-side partner from another game, −200 to +100 together. The
+      best ticket becomes the Play of the Day and these are the next 5,
+      never sharing a game with it, posted all at once and never changed
+      after. <strong>Play of the Day</strong> is that best ticket — one play
+      for the whole day, the same for everyone, with a full written
+      breakdown instead of the compact card.</p>
     </details>
 
     <!--
@@ -493,9 +502,11 @@
       event can run past midnight) since fight cards don't follow the same
       daily schedule as league games.</p>
       <p><strong>5. The day's boards are drawn once, at 2am ET, in
-      order.</strong> The whole slate is ranked by grade. The #1 pick
-      becomes the Play of the Day. Pixel's Picks are the next 5, drawn
-      after it and never sharing its game. The Prop Play and the Ladder
+      order.</strong> The slate is graded and paired into two-leg tickets:
+      a safe anchor and a favourite-side partner from different games, −200
+      to +100 together. The best ticket becomes the Play of the Day. Pixel's
+      Picks are the next 5, drawn after it and never sharing its games. The
+      Prop Play and the Ladder
       rung post in the same pass. Every pick has to beat the market's
       no-vig line — anchored to the sharp market where Pinnacle prices the
       game — by the edge floor. On a quiet slate where fewer than 5 edges
@@ -522,12 +533,16 @@
 
     <details>
       <summary>Pixel's Picks' sharp standard</summary>
-      <p>Pixel's Picks always hands back exactly 5 picks, minimum and
-      maximum, drawn once a day at 2am ET from the ranked slate — after the
-      Play of the Day takes the #1 slot, and never sharing a game with it.
-      The sharp standard is −200/+150, graded 50 or higher, positive EV and
-      a real Kelly edge; whenever fewer than 5 clear that bar, the rest
-      fill in from the next-best prices available and are flagged "Outside
+      <p>Pixel's Picks are up to 5 two-leg tickets, drawn once a day at 2am
+      ET — after the Play of the Day takes the best one, and never sharing a
+      game with it. Each ticket is a safe anchor leg (a player-prop line the
+      player has cleared in 75% of games this season and 80% of the last
+      five, or a side the market reads at 72%+) plus a favourite-side partner
+      from a different game, −200 to +100 together and more likely than not
+      to both land. Every leg is graded 50 or higher with positive EV and a
+      real Kelly edge at a book you can bet. Tickets that clear that bar are
+      the only tickets; a thin day posts fewer. Older records may still carry
+      picks flagged "Outside
       standard criteria" — still real, gradeable bets, just not sharp
       enough to call locks without saying so. All 5 are tracked and count
       toward the Tracking Dashboard's win-rate math regardless of the
@@ -805,15 +820,17 @@
       </div>
       <details class="explainer">
         <summary class="explainer-summary">
-          <span class="explainer-lede">Pixel's Picks is exactly 5 a day; Play of the Day is the slate's #1; Prop Play is one prop ticket; Full Slate is every game.</span>
+          <span class="explainer-lede">Pixel's Picks are up to 5 two-leg tickets a day; Play of the Day is the best one; Prop Play is one prop ticket; Full Slate is every game.</span>
           <span class="explainer-more" aria-hidden="true">What each tracker covers</span>
         </summary>
         <p class="explainer-body">
-          <strong>Pixel's Picks</strong> is exactly 5 picks/day, min and max —
-        the best of the slate after the Play of the Day takes #1.
-        <strong>Play of the Day</strong> is that single #1 pick.
+          <strong>Pixel's Picks</strong> are up to 5 two-leg tickets a day —
+        a safe anchor leg plus a favourite-side partner from another game,
+        −200 to +100 together — the next best after the Play of the Day.
+        <strong>Play of the Day</strong> is the day's best such ticket.
         <strong>Prop Play</strong> is the day's one safe-line player-prop
-        ticket. All three post at 2am ET and are graded against real results.
+        ticket. All three post at 2am ET and are graded against real results;
+        a ticket wins only when both legs land.
         </p>
       </details>
       <div id="top5Summary" class="learning-grid">
@@ -1002,6 +1019,6 @@
   </div>
 </aside>
 
-<script type="module" src="app.js?v=1.187"></script>
+<script type="module" src="app.js?v=1.188"></script>
 </body>
 </html>
