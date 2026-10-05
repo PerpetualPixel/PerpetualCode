@@ -14,27 +14,19 @@
 
 import { gradePick } from '../../docs/learning.js';
 import { isMma, isTennis } from '../../docs/insights.js';
+import { gradePropLeg } from '../../docs/prop-legs.js';
 import { gradeMmaPickWithFallback } from './ufc-events.js';
 import { gradeTennisPickWithEspn } from './tennis-espn.js';
-import { fetchFinalNflStats, gradeNflPropLeg, NFL_SPORT_KEY } from './football-props.js';
-import { normalizeName } from '../../docs/nfl-props.js';
+import { propStatsReader } from './prop-legs.js';
+
+export { propStatsReader };
+
+/** Player names compared the way every props module compares them. */
+const foldName = (name) => String(name ?? '').normalize('NFD').replace(/[̀-ͯ]/g, '').toLowerCase().replace(/[^a-z0-9]+/g, ' ').trim();
 
 /** The legs a record settles on: its `legs` for a ticket, itself for a single. */
 export function legsOf(pick) {
   return pick?.type === 'combo' && Array.isArray(pick.legs) ? pick.legs : [pick];
-}
-
-/**
- * A memoised final-stats reader for the prop legs of one grading pass:
- * one ESPN summary per game, however many legs ride on it.
- */
-export function nflStatsReader(ctx) {
-  const cache = new Map();
-  return async (espnEventId) => {
-    if (!espnEventId) return null;
-    if (!cache.has(espnEventId)) cache.set(espnEventId, fetchFinalNflStats(espnEventId, ctx));
-    return cache.get(espnEventId);
-  };
 }
 
 /**
@@ -44,16 +36,16 @@ export function nflStatsReader(ctx) {
  *
  * `deps.scoreEventFor(leg)` returns the odds feed's score event for the
  * leg's game; `deps.mmaResults`/`deps.tennisResults` are the ESPN result
- * sets already fetched for the pass; `deps.nflStatsFor(espnEventId)` the
- * final boxscore rows (see nflStatsReader).
+ * sets already fetched for the pass; `deps.propStatsFor(sportKey,
+ * espnEventId)` the final boxscore rows (see propStatsReader).
  */
 export async function gradeTicketLeg(leg, deps) {
   if (leg.kind === 'prop') {
-    if (leg.sportKey !== NFL_SPORT_KEY || !deps.nflStatsFor) return null;
-    const rows = await deps.nflStatsFor(leg.espnEventId);
+    if (!deps.propStatsFor) return null;
+    const rows = await deps.propStatsFor(leg.sportKey, leg.espnEventId);
     if (!rows) return null;
-    const row = rows.find((r) => normalizeName(r.name) === normalizeName(leg.playerName)) ?? null;
-    return gradeNflPropLeg(leg, row);
+    const row = rows.find((r) => foldName(r.name) === foldName(leg.playerName)) ?? null;
+    return gradePropLeg(leg, row);
   }
   const scoreEvent = deps.scoreEventFor(leg);
   const probe = { ...leg, decimal: leg.decimal ?? 2, suggested_stake: 1 };
@@ -85,5 +77,19 @@ export async function gradeTicket(pick, deps) {
   return {
     won,
     payout: won ? (pick.decimal - 1) * pick.suggested_stake : -pick.suggested_stake,
+  };
+}
+
+/**
+ * Settle a straight player-prop play (a single whose record is itself a
+ * prop leg) — the same boxscore read, paying at the record's own price.
+ */
+export async function gradePropSingle(pick, deps) {
+  const outcome = await gradeTicketLeg(pick, deps);
+  if (!outcome) return null;
+  if (outcome.void) return { ...outcome, payout: 0 };
+  return {
+    ...outcome,
+    payout: outcome.won ? (pick.decimal - 1) * pick.suggested_stake : -pick.suggested_stake,
   };
 }

@@ -124,20 +124,34 @@ test('the richest pair by expected value is the day\'s play', async () => {
   assert.ok(result.pick.legs.some((l) => l.eventId === 'standout'));
 });
 
-test('legs that never pair inside the band post nothing — and the hold says so', async () => {
-  const { env, store } = makeKvStore();
+test('legs that never pair inside the band fall back to the best straight play standing in it', async () => {
+  const { env } = makeKvStore();
   // A -900 chalk (a fine anchor with a real edge, but 1.11x) and a -105
-  // favourite-side partner (1.95x): 2.17 together, past +100. No ticket,
-  // no fallback.
+  // favourite-side read (1.95x): 2.17 together, past +100. No ticket — so
+  // the -105, inside the band on its own, is the day's play.
   const events = [
     makeEvent('chalk', '2026-08-05T09:00:00Z', { favoritePrice: -1800, dogPrice: 1200, outlier: 900 }),
     makeEvent('light', '2026-08-05T09:30:00Z', { favoritePrice: -140, dogPrice: 120, outlier: 35 }),
   ];
   const result = await runPotdDaily(env, ctx, NOW, { fetchFullSlate: async () => events });
+  assert.equal(result.skipped, false);
+  assert.equal(result.pick.type, undefined, 'a straight play in the single-pick shape');
+  assert.equal(result.pick.eventId, 'light');
+  assert.equal(result.pick.american, -105);
+  const record = await getPotd(env, NOW);
+  assert.equal(record.writeup.marketLabel, 'Moneyline');
+  assert.equal(record.writeup.legs.length, 1);
+  assert.match(record.writeup.pairReason, /^Straight play:/);
+});
+
+test('a -900 chalk alone is neither a ticket nor a straight play — and the hold says so', async () => {
+  const { env, store } = makeKvStore();
+  const events = [makeEvent('chalk', '2026-08-05T09:00:00Z', { favoritePrice: -1800, dogPrice: 1200, outlier: 900 })];
+  const result = await runPotdDaily(env, ctx, NOW, { fetchFullSlate: async () => events });
   assert.equal(result.skipped, true);
-  assert.match(result.reason, /no two pair inside/);
+  assert.match(result.reason, /1 leg cleared the standard but none pairs inside .* and none stands in that band alone/);
   assert.equal(store.has('potd:2026-08-05'), false);
-  assert.match((await getPotdHold(env, NOW)).reason, /no two pair/);
+  assert.match((await getPotdHold(env, NOW)).reason, /none stands in that band alone/);
 });
 
 test('a candidate whose segment the weekly algorithm health review has paused is never a leg, even if it scores best', async () => {
@@ -176,7 +190,7 @@ test('a slate with literally no gradeable game posts nothing — and says so', a
   const { env, store } = makeKvStore();
   const result = await runPotdDaily(env, ctx, NOW, { fetchFullSlate: async () => [] });
   assert.equal(result.skipped, true);
-  assert.equal(result.reason, 'no gradeable NFL, NCAA football, MMA or tennis game on the slate today');
+  assert.equal(result.reason, 'no gradeable NFL, NCAA football, MMA, tennis or basketball-prop game on the slate today');
   // The only write is the day's hold record — never a pick.
   assert.deepEqual([...store.keys()], ['potd:hold:2026-08-05']);
 });
@@ -217,6 +231,29 @@ test('an NFL prop leg anchors the ticket when a game offers one', async () => {
   const record = await getPotd(env, NOW);
   assert.equal(record.writeup.legs[0].kind, 'prop');
   assert.match(record.writeup.legs[0].note, /cleared 50\+ in 100% of 5 games/);
+});
+
+test("two WNBA players' props from one game are a same game parlay Play of the Day, with no slate game at all", async () => {
+  const { env } = makeKvStore();
+  const prop = (id, playerName, statKey, american, decimal, prob, need, point) => ({
+    id: `w1:player_${statKey}_alternate:${playerName.toLowerCase()}:${point}:Over`, kind: 'prop', eventId: 'w1',
+    sportKey: 'basketball_wnba', sportTitle: 'WNBA', commenceMs: Date.parse('2026-08-05T23:00:00Z'), home: 'New York Liberty', away: 'Connecticut Sun',
+    marketKey: `player_${statKey}_alternate`, marketLabel: `${statKey} (alt)`, statKey, playerName,
+    outcomeName: 'Over', point, need, selection: `${playerName} ${need}+ ${statKey}`, american, decimal, book: 'DraftKings',
+    bookKey: 'draftkings', bettable: true, consensusProb: prob, ev: Math.round((prob * decimal - 1) * 1e4) / 1e4, score: 88, espnEventId: `40${id}`,
+    profile: { games: 20, season: 0.9, l10: 0.9, l5: 1, streak: 6, avgSeason: 18.4, avgL5: 19.2 }, edge: 0.05,
+  });
+  const legs = [prop('1', 'Pauline Astier', 'rebounds', -500, 1.2, 0.87, 2, 1.5), prop('2', 'Sabrina Ionescu', 'points', -320, 1.3125, 0.81, 12, 11.5)];
+  const result = await runPotdDaily(env, ctx, NOW, { fetchFullSlate: async () => [], fetchPropLegs: async () => legs });
+  assert.equal(result.skipped, false);
+  assert.equal(result.pick.type, 'combo');
+  assert.equal(result.pick.sameGame, true);
+  assert.equal(result.pick.american, -174);
+  const record = await getPotd(env, NOW);
+  assert.equal(record.writeup.marketLabel, 'Same game parlay');
+  assert.equal(record.writeup.sportTitle, 'WNBA');
+  assert.match(record.writeup.pairReason, /^Same game parlay\./);
+  assert.match(record.writeup.legs[1].note, /Sabrina Ionescu has cleared 12\+ in 90% of 20 games/);
 });
 
 test('before the generation hour, the day is not drawn at all', async () => {

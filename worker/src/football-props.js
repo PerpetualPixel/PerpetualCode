@@ -5,12 +5,11 @@
  * they average 15 to 20" — is an ALTERNATE line deep in a player's comfort
  * zone, not the ~-110 main line. For football that is 50+ receiving yards
  * for a receiver who averages 80, 3+ receptions for a back who catches 5 a
- * game, 200+ passing yards for a quarterback averaging 260. This module
+ * game, 10+ rushing yards for a quarterback who scrambles. This module
  * finds those lines, checks each one against the player's real ESPN game
- * log the same way the Prop Play already does for basketball (hit rate
- * this season and over the last five games, shrunk toward the price's own
- * implied probability, and required to beat it), and hands the survivors
- * to the ticket builder as legs with a probability the builder can price.
+ * log (docs/prop-legs.js: hit rate this season and over the last five
+ * games, shrunk toward the price's own implied probability, and required
+ * to beat it), and hands the survivors to the ticket builder as legs.
  *
  * Every number on a leg is measured: the hit-rate profile comes from the
  * game log, the price from the books, and grading reads the final boxscore
@@ -21,11 +20,18 @@
  * draw, bounded by MAX_GAMES_SCANNED; every ESPN call is free and cached.
  */
 
-import { americanToDecimal, decimalToAmerican, bookIdFor } from '../../docs/engine.js';
+import { bookIdFor } from '../../docs/engine.js';
 import { normalizeName } from '../../docs/nfl-props.js';
 import { espnAbbr } from '../../docs/team-logos.js';
-import { hitProfile, propEdge, PROP_MIN_EDGE } from './prop-play.js';
+import {
+  extractAltCandidates,
+  propLegFrom as sharedPropLegFrom,
+  clearsPropGates as sharedClearsPropGates,
+  gradePropLeg,
+} from '../../docs/prop-legs.js';
 import { UPSTREAM, REGIONS } from './odds.js';
+
+export { PROP_LEG_DECIMAL } from '../../docs/prop-legs.js';
 
 export const NFL_SPORT_KEY = 'americanfootball_nfl';
 
@@ -39,18 +45,10 @@ export const NFL_ALT_MARKETS = {
 export const NFL_ALT_MARKETS_PARAM = Object.keys(NFL_ALT_MARKETS).join(',');
 
 /**
- * The safe-line band per leg: -650 to -200. Heavier than -650 pays too
- * little even inside a two-leg ticket; lighter than -200 isn't the deep
- * comfort-zone line this leg exists to be.
- */
-export const PROP_LEG_DECIMAL = { MIN: 1 + 100 / 650, MAX: 1 + 100 / 200 };
-
-/**
  * Conviction gates from the player's game log. An NFL season is seventeen
  * games, so the sample is small by design: four games is the least a hit
  * rate can be read from at all (one game short of that is a streak, not a
- * rate), and the recent-form window is the last five rather than the Prop
- * Play's last ten.
+ * rate), and the recent-form window is the last five.
  */
 export const PROP_GATES = { MIN_GAMES: 4, MIN_SEASON_RATE: 0.75, MIN_L5_RATE: 0.8, MIN_BOOKS: 2 };
 
@@ -66,89 +64,19 @@ const SUMMARY_TTL = 900;
 const ODDS_TTL = 3600;
 
 /* ---------------------------------------------------------------- */
-/* Pure: candidate extraction                                        */
+/* Pure                                                              */
 /* ---------------------------------------------------------------- */
 
-/**
- * Every safe-band Over alternate from one game's per-event odds payload,
- * one candidate per player + market + line with its quotes across books.
- * The best price must be at a registry (bettable) book — the ticket's
- * record is a promise about a bet the reader can place — and at least
- * PROP_GATES.MIN_BOOKS books must price the line at all, so a single
- * book's stale alternate never becomes an anchor.
- */
+/** Every safe-band Over alternate from one game's per-event odds payload — see docs/prop-legs.js's extractAltCandidates. */
 export function extractNflAltCandidates(eventOdds, game, { now = Date.now() } = {}) {
-  if (!Number.isFinite(game?.commenceMs) || game.commenceMs <= now) return [];
-  const pool = new Map();
-  for (const book of eventOdds?.bookmakers ?? []) {
-    for (const market of book.markets ?? []) {
-      const spec = NFL_ALT_MARKETS[market.key];
-      if (!spec) continue;
-      const updatedMs = new Date(market.last_update ?? book.last_update ?? game.commenceMs).getTime();
-      for (const outcome of market.outcomes ?? []) {
-        if (String(outcome.name ?? '').toLowerCase() !== 'over') continue;
-        const playerName = outcome.description ?? '';
-        const point = Number(outcome.point);
-        const american = Number(outcome.price);
-        if (!playerName || !Number.isFinite(point) || !Number.isFinite(american)) continue;
-        const decimal = americanToDecimal(american);
-        if (decimal < PROP_LEG_DECIMAL.MIN || decimal > PROP_LEG_DECIMAL.MAX) continue;
-        const key = `${market.key}|${normalizeName(playerName)}|${point}`;
-        if (!pool.has(key)) {
-          pool.set(key, { marketKey: market.key, stat: spec.stat, label: spec.label, marketLabel: spec.marketLabel, playerName, point, quotes: [] });
-        }
-        pool.get(key).quotes.push({
-          book: book.title ?? book.key,
-          bookKey: book.key,
-          american,
-          decimal,
-          updatedMs: Number.isFinite(updatedMs) ? updatedMs : now,
-        });
-      }
-    }
-  }
-
-  const candidates = [];
-  for (const entry of pool.values()) {
-    if (entry.quotes.length < PROP_GATES.MIN_BOOKS) continue;
-    const registry = entry.quotes.filter((q) => bookIdFor(q.bookKey));
-    if (!registry.length) continue;
-    const best = registry.reduce((a, b) => (b.decimal > a.decimal ? b : a));
-    candidates.push({
-      id: `${game.eventId}:${entry.marketKey}:${normalizeName(entry.playerName)}:${entry.point}:Over`,
-      kind: 'prop',
-      eventId: game.eventId,
-      sportKey: game.sportKey ?? NFL_SPORT_KEY,
-      sportTitle: game.sportTitle ?? 'NFL',
-      commenceMs: game.commenceMs,
-      home: game.home,
-      away: game.away,
-      marketKey: entry.marketKey,
-      marketLabel: entry.marketLabel,
-      statKey: entry.stat,
-      playerName: entry.playerName,
-      outcomeName: 'Over',
-      point: entry.point,
-      // An Over on a .5 line lands at the next whole number; an integer line
-      // pushes when it lands exactly, so "need" is the first winning value.
-      need: Number.isInteger(entry.point) ? entry.point + 1 : Math.ceil(entry.point),
-      selection: `${entry.playerName} ${Number.isInteger(entry.point) ? entry.point + 1 : Math.ceil(entry.point)}+ ${entry.label}`,
-      american: best.american,
-      decimal: best.decimal,
-      book: best.book,
-      bookKey: best.bookKey,
-      bettable: true,
-      updatedMs: best.updatedMs,
-      bookCount: entry.quotes.length,
-      quotes: [...entry.quotes].sort((a, b) => b.decimal - a.decimal),
-    });
-  }
-  return candidates;
+  return extractAltCandidates(eventOdds, { sportKey: NFL_SPORT_KEY, sportTitle: 'NFL', ...game }, NFL_ALT_MARKETS, {
+    now, minBooks: PROP_GATES.MIN_BOOKS, isRegistryBook: (key) => Boolean(bookIdFor(key)), normalizeName,
+  });
 }
 
-/* ---------------------------------------------------------------- */
-/* Pure: ESPN game log and boxscore parsing                          */
-/* ---------------------------------------------------------------- */
+export const clearsPropGates = (profile) => sharedClearsPropGates(profile, PROP_GATES);
+export const propLegFrom = (candidate, values) => sharedPropLegFrom(candidate, values, PROP_GATES);
+export const gradeNflPropLeg = gradePropLeg;
 
 const GAMELOG_NAMES = {
   passYds: ['passingYards'],
@@ -190,8 +118,8 @@ export function gamelogStatIndex(gamelog, statKey) {
 /**
  * The player's per-game values for one stat, most recent first, regular
  * season (and postseason) only — a preseason line says nothing about a
- * starter's workload. Same defensive shape as the Prop Play's parser: an
- * unexpected payload yields [] and the candidate is skipped, never guessed.
+ * starter's workload. An unexpected payload yields [] and the candidate is
+ * skipped, never guessed.
  */
 export function parseNflGamelogValues(gamelog, statKey) {
   const idx = gamelogStatIndex(gamelog, statKey);
@@ -211,40 +139,6 @@ export function parseNflGamelogValues(gamelog, statKey) {
   }
   rows.sort((x, y) => y.date - x.date);
   return rows.map((r) => r.value);
-}
-
-/** Whether a game-log profile clears the conviction gates. */
-export function clearsPropGates(profile) {
-  return Boolean(profile)
-    && profile.games >= PROP_GATES.MIN_GAMES
-    && profile.season >= PROP_GATES.MIN_SEASON_RATE
-    && profile.l5 >= PROP_GATES.MIN_L5_RATE;
-}
-
-/**
- * A candidate line with its game-log profile attached, or null when the
- * gates or the edge floor say no. The leg's `consensusProb` is the shrunk
- * blended hit rate (the price's implied probability plus the measured
- * edge) — the probability the ticket builder prices with — and `score` is
- * the blend of season and recent hit rates on the board's 0-100 scale.
- */
-export function propLegFrom(candidate, values) {
-  const profile = hitProfile(values, candidate.need);
-  if (!clearsPropGates(profile)) return null;
-  const edge = propEdge(profile, candidate.decimal);
-  if (!(edge >= PROP_MIN_EDGE)) return null;
-  const implied = 1 / candidate.decimal;
-  const consensusProb = Math.min(0.97, implied + edge);
-  const ev = consensusProb * (candidate.decimal - 1) - (1 - consensusProb);
-  return {
-    ...candidate,
-    profile,
-    edge,
-    consensusProb: Math.round(consensusProb * 1e4) / 1e4,
-    fairAmerican: decimalToAmerican(1 / consensusProb),
-    ev: Math.round(ev * 1e4) / 1e4,
-    score: Math.min(95, Math.round(100 * (0.5 * profile.season + 0.5 * profile.l5))),
-  };
 }
 
 /**
@@ -285,19 +179,6 @@ export function nflBoxscoreRows(summary) {
     }
   }
   return [...byName.values()];
-}
-
-/**
- * Grade one prop leg against the player's final row. No row at all means
- * the player recorded nothing in any category — did not play — and the leg
- * voids, as a book would. A row without this stat is a real zero (a back
- * who never caught a pass still appears under rushing), and grades.
- */
-export function gradeNflPropLeg(leg, row) {
-  if (!row) return { void: true, reason: 'player not in the final boxscore — did not play' };
-  const actual = Number.isFinite(row[leg.statKey]) ? row[leg.statKey] : 0;
-  if (Number.isInteger(leg.point) && actual === leg.point) return { void: true, reason: 'push — landed exactly on the line', actual };
-  return { won: actual >= leg.need, actual };
 }
 
 /* ---------------------------------------------------------------- */
@@ -429,6 +310,6 @@ export async function collectNflPropLegs(games, env, ctx, now = Date.now(), { tr
     if (!espnEventIds.has(c.eventId)) espnEventIds.set(c.eventId, await resolveNflEspnEventId(c.home, c.away, ctx));
     legs.push({ ...leg, espnEventId: espnEventIds.get(c.eventId) ?? null });
   }
-  trace.push(`prop legs qualified: ${legs.length}`);
+  trace.push(`NFL prop legs qualified: ${legs.length}`);
   return legs;
 }

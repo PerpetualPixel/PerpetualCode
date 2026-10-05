@@ -30,9 +30,9 @@
  * having the app open.
  */
 import { analyze, clearsMaxJuice, isNflPreseason, isNflPreseasonKey, UNIT_DOLLARS, STAKE_BANDS, stakeUnitsForScore } from '../../docs/engine.js';
-import { buildTickets, legEligible, isTicketSport } from '../../docs/tickets.js';
-import { collectNflPropLegs, NFL_SPORT_KEY } from './football-props.js';
-import { gradeTicket, legsOf, nflStatsReader } from './ticket-grading.js';
+import { buildBoard, legEligible, isTicketSport } from '../../docs/tickets.js';
+import { collectPropLegs, PROP_SPORT_KEYS } from './prop-legs.js';
+import { gradeTicket, gradePropSingle, legsOf, propStatsReader } from './ticket-grading.js';
 import { fetchCapperConsensus, applyCapperConsensus } from '../../docs/capper-consensus.js';
 import { isPower4Matchup } from '../../docs/ncaaf-conferences.js';
 import { gradePick } from '../../docs/learning.js';
@@ -485,20 +485,27 @@ function comboLegRecord(leg) {
     commenceMs: leg.commenceMs,
     consensusProb: leg.consensusProb ?? null,
     score: Number.isFinite(leg.score) ? Math.round(leg.score) : null,
-    // A player-prop leg (worker/src/football-props.js): the player and the
-    // stat its grader settles on, the first winning value, the ESPN game it
-    // reads the final boxscore from, and the game-log profile the card and
-    // the write-up quote. All absent on a game-market leg.
-    ...(leg.kind === 'prop' ? {
-      kind: 'prop',
-      playerName: leg.playerName,
-      statKey: leg.statKey,
-      need: leg.need,
-      espnEventId: leg.espnEventId ?? null,
-      profile: leg.profile ?? null,
-      edge: leg.edge ?? null,
-    } : {}),
+    ...propFields(leg),
     status: 'pending',
+  };
+}
+
+/**
+ * A player-prop leg's own fields (worker/src/prop-legs.js): the player and
+ * the stat its grader settles on, the first winning value, the ESPN game it
+ * reads the final boxscore from, and the game-log profile the card and the
+ * write-up quote. Empty for a game-market leg.
+ */
+function propFields(leg) {
+  if (leg?.kind !== 'prop') return {};
+  return {
+    kind: 'prop',
+    playerName: leg.playerName,
+    statKey: leg.statKey,
+    need: leg.need,
+    espnEventId: leg.espnEventId ?? null,
+    profile: leg.profile ?? null,
+    edge: leg.edge ?? null,
   };
 }
 
@@ -533,7 +540,13 @@ export function pickRecordFrom(pick, dateKey, now, stakeUnits = null) {
       // before the anchor + partner design.
       ev: Number.isFinite(pick.ev) ? pick.ev : null,
       anchorId: pick.anchorId ?? null,
+      sameGame: pick.sameGame === true,
     } : {}),
+    // A straight player-prop play (docs/tickets.js's buildBoard) is itself a
+    // prop leg: it settles off the final boxscore, so it carries the same
+    // fields a ticket's prop leg does.
+    ...(!isCombo ? propFields(leg) : {}),
+    ...(!isCombo && pick.singleReason ? { singleReason: pick.singleReason } : {}),
     eventId: leg.eventId,
     sportKey: leg.sportKey,
     home: leg.home,
@@ -591,7 +604,9 @@ export function pickRecordFrom(pick, dateKey, now, stakeUnits = null) {
     // recorded as absent rather than silently tracking the anchor leg's
     // movement and labelling it the ticket's. top5ClvPct already drops nulls,
     // so a combo simply sits out the CLV average instead of skewing it.
-    clv: isCombo ? null : { openAmerican: leg.american, closeAmerican: leg.american, updatedAt: now },
+    // An alternate prop line isn't in the featured feed the snapshot reads
+    // either, so a straight prop play sits out CLV the same way.
+    clv: isCombo || leg.kind === 'prop' ? null : { openAmerican: leg.american, closeAmerican: leg.american, updatedAt: now },
     result: null,
     // Whether this pick actually cleared the sharp standard, or is a
     // guaranteeCount() fallback filling out the board on a thin day (see
@@ -638,10 +653,11 @@ export async function runTop5Batch(
   // list instead of needing to mock the network.
   {
     fetchFullSlate = () => fetchFullSlateEvents(env, ctx),
-    // The NFL alternate-line prop legs (worker/src/football-props.js) —
-    // injectable so tests supply gated legs without the odds and ESPN
-    // fetches behind them. Given today's NFL games from the slate.
-    fetchPropLegs = (games) => collectNflPropLegs(games, env, ctx, now),
+    // The alternate-line player-prop legs (worker/src/prop-legs.js: NFL,
+    // WNBA, NBA) — injectable so tests supply gated legs without the odds
+    // and ESPN fetches behind them. Given today's prop-league games from
+    // the slate and the day predicate for the leagues the slate lacks.
+    fetchPropLegs = (games, opts) => collectPropLegs(games, env, ctx, now, opts),
   } = {},
 ) {
   const dateKey = etDate(now);
@@ -794,8 +810,9 @@ export async function runTop5Batch(
   const drawPool = (consensusFeed
     ? applyCapperConsensus(stillActionable, consensusFeed, { now })
     : stillActionable)
-    // The boards draw from NFL, NCAA football, MMA and tennis only — see
-    // docs/tickets.js's TICKET_SPORTS.
+    // The boards draw from NFL, NCAA football, MMA and tennis game markets,
+    // plus NFL and basketball player props — see docs/tickets.js; legEligible
+    // below keeps a basketball MONEYLINE out, the league supplies props only.
     .filter((c) => isTicketSport(c.sportKey));
 
   // The day's hierarchy, per explicit product direction (2026-08-21): the
@@ -830,35 +847,39 @@ export async function runTop5Batch(
     (c) => !contradictsPublishedBoard(c, publishedSides) && !featuredEventIds.has(c.eventId),
   );
 
-  // Every Pixel's Pick is an anchor + partner ticket (docs/tickets.js,
-  // 2026-10-05 direction). The leg pool is every game-market candidate that
-  // clears the board's own bars — a ticket sport, a bettable price, the edge
-  // and Kelly floors, the conviction floor, a favourite-side read — plus
-  // the NFL alternate-line player props whose game-log hit rate clears the
-  // prop gates (worker/src/football-props.js). The builder pairs them:
-  // two games per ticket, never arguing, -200 to +100 together, more
-  // likely than not to both land, ranked by the ticket's own expected
-  // value. A day that offers fewer than five such pairs posts short — there
-  // is no fallback tier, for the same reason topPicks lost its last-resort
-  // fill: the board is a promise about bets the engine itself rates.
+  // Every Pixel's Pick is an anchor + partner ticket, or a straight play
+  // inside the same band when the day runs short of tickets (docs/
+  // tickets.js, 2026-10-05 direction). The leg pool is every game-market
+  // candidate that clears the board's own bars — a ticket sport, a bettable
+  // price, the edge and Kelly floors, the conviction floor, a favourite-side
+  // read — plus the NFL and basketball alternate-line player props whose
+  // game-log hit rate clears the prop gates (worker/src/prop-legs.js). The
+  // builder pairs them: never arguing, -200 to +100 together, more likely
+  // than not to both land, ranked by the ticket's own expected value; two
+  // players' props from one game may pair as a same-game parlay. Whatever
+  // slots the tickets leave go to the best legs that stand in the band on
+  // their own — still only bets the engine itself rates; a day short of
+  // both posts short.
   const gameLegs = nonConflicting.filter((c) => legEligible(c, {
     minEv: algoConfig.MIN_EV_PCT,
     minKelly: algoConfig.MIN_KELLY_FRACTION,
     minScore: convictionFloor,
   }));
-  // Prop legs come from today's NFL games the other boards haven't taken.
-  // A failed prop scan degrades to a game-market-only pool — props are an
-  // upgrade to the anchor supply, never a dependency of the board.
+  // Prop legs come from today's prop-league games the other boards haven't
+  // taken. A failed prop scan degrades to a game-market-only pool — props
+  // are an upgrade to the anchor supply, never a dependency of the board.
   let propLegs = [];
   try {
-    const nflGames = events.filter((e) => e.sport_key === NFL_SPORT_KEY
+    const propGames = events.filter((e) => PROP_SPORT_KEYS.has(e.sport_key)
       && etDate(new Date(e.commence_time).getTime()) === dateKey
       && !existingEventIds.has(e.id) && !featuredEventIds.has(e.id));
-    propLegs = (await fetchPropLegs(nflGames)) ?? [];
+    const sameDay = (ms) => etDate(ms) === dateKey;
+    propLegs = ((await fetchPropLegs(propGames, { sameDay })) ?? [])
+      .filter((l) => !existingEventIds.has(l.eventId) && !featuredEventIds.has(l.eventId));
   } catch (e) {
     console.error("Pixel's Picks prop legs failed:", e);
   }
-  const tickets = buildTickets([...gameLegs, ...propLegs], {
+  const board = buildBoard([...gameLegs, ...propLegs], {
     count: needed,
     usedEventIds: new Set([...existingEventIds, ...featuredEventIds]),
     minAmerican: PIXEL_ODDS.SHARP_MIN,
@@ -866,14 +887,14 @@ export async function runTop5Batch(
     minEv: algoConfig.MIN_EV_PCT,
   });
 
-  // Belt-and-suspenders alongside buildTickets' own bookkeeping: no two
-  // tickets on the board may share a game, counting every leg — a same-game
-  // clash between two tickets would be a real, visible contradiction, so it
+  // Belt-and-suspenders alongside buildBoard's own bookkeeping: no two
+  // plays on the board may share a game, counting every leg — a same-game
+  // clash between two plays would be a real, visible contradiction, so it
   // is checked here against the actual eventIds rather than assumed from
   // the builder holding.
   const usedEventIds = new Set(existingEventIds);
   const newPickIds = [];
-  for (const pick of tickets) {
+  for (const pick of board) {
     const eventIds = pick.legs.map((l) => l.eventId);
     if (eventIds.some((id) => usedEventIds.has(id))) continue;
     eventIds.forEach((id) => usedEventIds.add(id));
@@ -1095,7 +1116,7 @@ export async function runGrading(
   const ticketDeps = {
     scoreEventFor: (leg) => (scoreEventsBySport.get(leg.sportKey) ?? []).find((e) => e.id === leg.eventId),
     mmaResults, tennisResults, env, ctx, now,
-    nflStatsFor: nflStatsReader(ctx),
+    propStatsFor: propStatsReader(ctx),
   };
 
   let graded = 0;
@@ -1128,6 +1149,10 @@ export async function runGrading(
     let outcome;
     if (pick.type === 'combo' && Array.isArray(pick.legs)) {
       outcome = await gradeTicket(pick, ticketDeps);
+    } else if (pick.kind === 'prop') {
+      // A straight player-prop play settles off the final boxscore, the
+      // same read a ticket's prop leg gets.
+      outcome = await gradePropSingle(pick, ticketDeps);
     } else if (isMma(pick.sportKey)) {
       outcome = gradeMmaPickWithFallback(pick, scoreEvent, mmaResults);
     } else if (isTennis(pick.sportKey)) {
@@ -1213,14 +1238,14 @@ export async function getTop5Leaning(env, { now = Date.now(), dateKey } = {}) {
     minKelly: algoConfig.MIN_KELLY_FRACTION,
     minScore: algoConfig.MIN_SCORE,
   }));
-  const tickets = buildTickets(legs, {
+  const board = buildBoard(legs, {
     count: needed,
     usedEventIds: existingEventIds,
     minAmerican: PIXEL_ODDS.SHARP_MIN,
     maxAmerican: PIXEL_ODDS.SHARP_MAX,
     minEv: algoConfig.MIN_EV_PCT,
   });
-  return tickets.map((pick) => pickRecordFrom(pick, dk, now));
+  return board.map((pick) => pickRecordFrom(pick, dk, now));
 }
 
 /**

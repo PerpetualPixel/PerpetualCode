@@ -1785,7 +1785,7 @@ function renderPick(pick) {
       <div class="pick-head">
         <span class="pick-head-left">
           <span class="chip"><strong>${esc(sport)}</strong> ·
-            ${isCombo ? '2-leg combo' : 'Straight bet'}</span>
+            ${isCombo ? (pick.sameGame ? 'Same game parlay' : '2-leg ticket') : 'Straight bet'}</span>
           ${flagChipHtml(flagged, pick.flagReason)}
         </span>
         <span class="price">${esc(formatAmerican(pick.american))}</span>
@@ -1820,7 +1820,7 @@ function renderDegradedPick(pick) {
     <article class="pick ${flagged ? 'is-outside-standard' : ''}">
       <div class="pick-head">
         <span class="pick-head-left">
-          <span class="chip"><strong>${record.type === 'combo' ? '2-leg combo' : 'Straight bet'}</strong></span>
+          <span class="chip"><strong>${playKindLabel(record)}</strong></span>
           ${flagChipHtml(flagged, record.flagReason)}
         </span>
         <span class="price">${esc(formatAmerican(pick.american))}</span>
@@ -1833,6 +1833,7 @@ function renderDegradedPick(pick) {
       </div>
 
       ${record.type === 'combo' && record.pairReason ? `<p class="pair-note">${esc(record.pairReason)}</p>` : ''}
+      ${record.type !== 'combo' && record.singleReason ? `<p class="pair-note">${esc(record.singleReason)}</p>` : ''}
 
       <!-- Wrapped in .leg for the same 14px inset the live card's legs carry.
            Bare here, these two sat flush against the card's edge while the
@@ -1845,8 +1846,23 @@ function renderDegradedPick(pick) {
         <p class="leg-selection">${esc(record.selection)}</p>
         <p class="leg-matchup">${esc(record.away)} @ ${esc(record.home)} ·
           <span class="schedule-result ${resultClass}">${esc(statusLabel)}</span></p>
+        ${propProfileHtml(record)}
       </div>`}
     </article>`;
+}
+
+/** What a stored play is called on its card: the ticket's shape, or the straight play's kind. */
+function playKindLabel(record) {
+  if (record.type === 'combo') return record.sameGame ? 'Same game parlay' : '2-leg ticket';
+  return record.kind === 'prop' ? 'Player prop' : 'Straight bet';
+}
+
+/** The game-log case a player-prop leg or play was chosen on, from its stored profile. */
+function propProfileHtml(leg) {
+  if (leg?.kind !== 'prop' || !leg.profile) return '';
+  const p = leg.profile;
+  const actual = leg.actual != null ? ` Final: ${esc(String(leg.actual))}.` : '';
+  return `<p class="leg-matchup">${esc(leg.playerName)} has cleared ${esc(String(leg.need))}+ in ${Math.round(p.season * 100)}% of ${p.games} games (${Math.round(p.l5 * 100)}% of the last 5), averaging ${esc(String(p.avgSeason))}.${actual}</p>`;
 }
 
 /**
@@ -1862,9 +1878,7 @@ function renderTicketLegRow(leg, index, record) {
   const label = { won: 'Won', lost: 'Lost', void: 'Void', locked: 'Locked', live: 'Live / Final' }[status];
   const cls = status === 'won' ? 'win' : status === 'lost' ? 'loss' : '';
   const role = index === 0 ? 'Anchor' : 'Partner';
-  const profile = leg.kind === 'prop' && leg.profile
-    ? `<p class="leg-matchup">${esc(leg.playerName)} has cleared ${esc(String(leg.need))}+ in ${Math.round(leg.profile.season * 100)}% of ${leg.profile.games} games (${Math.round(leg.profile.l5 * 100)}% of the last 5), averaging ${esc(String(leg.profile.avgSeason))}.</p>`
-    : '';
+  const profile = propProfileHtml(leg);
   return `<div class="leg">
       <p class="chip">${role}${leg.sportTitle ? ` · ${esc(leg.sportTitle)}` : ''}</p>
       <p class="leg-selection">${esc(leg.selection)} <span class="book">${esc(formatAmerican(leg.american))}</span></p>
@@ -4861,6 +4875,7 @@ function pixelPickFromRecord(record) {
       stakeUnits: record.stakeUnits ?? null,
       isLean: record.isLean === true,
       pairReason: record.pairReason ?? null,
+      sameGame: record.sameGame === true,
     };
     if (legs.every(Boolean)) return { type: 'combo', legs, percentile: null, ...common };
     return { type: 'combo', degraded: true, record, legs: [{ commenceMs: record.commenceMs }], ...common };
@@ -5520,11 +5535,12 @@ function renderPotdCard(writeup, generatedAt, stale) {
  * each leg with its game, its own price and the measured reason it's there.
  */
 function renderPotdTicketLegs(writeup) {
+  const ticket = writeup.legs.length > 1;
   return `
-      <h2 class="potd-headline">2-leg ticket · ${esc(writeup.price)}</h2>
+      <h2 class="potd-headline">${esc(writeup.marketLabel ?? (ticket ? '2-leg ticket' : 'Straight play'))} · ${esc(writeup.price)}</h2>
       <ol class="potd-legs">
         ${writeup.legs.map((leg, i) => `<li class="potd-leg">
-          <p class="chip">${i === 0 ? 'Anchor' : 'Partner'} · ${esc(leg.sportTitle)}</p>
+          <p class="chip">${ticket ? (i === 0 ? 'Anchor' : 'Partner') : 'The play'} · ${esc(leg.sportTitle)}</p>
           <p class="leg-selection">${esc(leg.selection)} <span class="book">${esc(leg.price)}</span></p>
           <p class="leg-matchup">${esc(leg.matchup)} · ${esc(potdDateTimeFmt.format(new Date(leg.commenceMs)))}${leg.book ? ` · ${esc(leg.book)}` : ''}</p>
           ${leg.note ? `<p class="potd-leg-note">${esc(leg.note)}</p>` : ''}

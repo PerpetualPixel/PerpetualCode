@@ -1,11 +1,14 @@
 /**
  * Play of the Day — one editorially-selected play, posted once daily, the
  * same for every user that day. Since 2026-10-05 that play is the day's
- * best ANCHOR + PARTNER TICKET (docs/tickets.js): a safe leg — an NFL
- * alternate-line player prop far below the player's normal output, or a
- * side the market reads at 72% or better — paired with a favourite-side
- * partner from a different game, -200 to +100 together, from NFL, NCAA
- * football, MMA and tennis. Pixel's Picks are the next five such tickets.
+ * best ANCHOR + PARTNER TICKET (docs/tickets.js): a safe leg — an
+ * alternate-line player prop (NFL, WNBA, NBA) far below the player's
+ * normal output, or a side the market reads at 72% or better — paired
+ * with a favourite-side partner, -200 to +100 together, from NFL, NCAA
+ * football, MMA and tennis game markets and those props; two players'
+ * props from one game may pair as a same game parlay. On a day no two
+ * legs pair, the best leg standing inside the band on its own is the play.
+ * Pixel's Picks are the next five such plays.
  *
  * Timing: one draw at the generation hour (tracking.js's
  * GENERATION_HOUR_ET, 2am ET), immediately after the daily learning review
@@ -40,10 +43,10 @@
  */
 
 import { analyze, RULES, formatAmerican, suggestedStake, clearsMaxJuice, isNflPreseason, UNIT_DOLLARS, STAKE_BANDS, stakeUnitsForScore } from '../../docs/engine.js';
-import { buildTickets, legEligible, isTicketSport, TICKET_BAND } from '../../docs/tickets.js';
+import { buildBoard, legEligible, isTicketSport, TICKET_BAND } from '../../docs/tickets.js';
 import { fetchCapperConsensus, applyCapperConsensus } from '../../docs/capper-consensus.js';
-import { collectNflPropLegs, NFL_SPORT_KEY } from './football-props.js';
-import { gradeTicket, legsOf, nflStatsReader } from './ticket-grading.js';
+import { collectPropLegs, PROP_SPORT_KEYS } from './prop-legs.js';
+import { gradeTicket, gradePropSingle, legsOf, propStatsReader } from './ticket-grading.js';
 import { isPower4Matchup } from '../../docs/ncaaf-conferences.js';
 
 // What the Play of the Day counts as a favourite worth showcasing: a side
@@ -298,7 +301,7 @@ function legNote(leg) {
     const p = leg.profile;
     return `${leg.playerName} has cleared ${leg.need}+ in ${Math.round(p.season * 100)}% of ${p.games} games this season `
       + `and ${Math.round(p.l5 * 100)}% of the last five, averaging ${p.avgSeason} (${p.avgL5} over the last five) — `
-      + `the line sits well below normal output.`;
+      + `the line sits ${p.avgSeason >= leg.need * 1.5 ? 'well ' : ''}below normal output.`;
   }
   return `The market reads this side at ${Math.round(leg.consensusProb * 100)}%; `
     + `${formatAmerican(leg.american)} at ${leg.book} beats the no-vig consensus by ${(leg.ev * 100).toFixed(1)}% EV.`;
@@ -310,6 +313,13 @@ function legNote(leg) {
  * research and the sharp analysis are about; `ticket` carries both legs
  * and the combined price the card leads with.
  */
+/** What the card calls the play: a ticket by its shape, a straight play by its market. */
+function playLabel(ticket) {
+  if (ticket.type === 'combo') return ticket.sameGame ? 'Same game parlay' : '2-leg ticket';
+  const [leg] = ticket.legs;
+  return leg.kind === 'prop' ? 'Player prop' : (leg.marketLabel ?? 'Straight play');
+}
+
 function buildWriteup(ticket, candidate, research, now, analysis) {
   const legs = ticket.legs;
   const headline = `${legs.map((l) => l.selection).join(' + ')} (${formatAmerican(ticket.american)})`;
@@ -349,16 +359,17 @@ function buildWriteup(ticket, candidate, research, now, analysis) {
       commenceMs: l.commenceMs,
       note: legNote(l),
     })),
-    pairReason: ticket.pairReason ?? null,
+    pairReason: ticket.pairReason ?? ticket.singleReason ?? null,
+    sameGame: ticket.sameGame === true,
     sportTitle: [...new Set(legs.map((l) => l.sportTitle ?? l.sportKey))].join(' + '),
-    marketLabel: '2-leg ticket',
+    marketLabel: playLabel(ticket),
     price: formatAmerican(ticket.american),
     american: ticket.american,
     book: [...new Set(legs.map((l) => l.book))].join(' / '),
     quotes: candidate.quotes ?? [],
     score: Math.round(ticket.score),
     commenceMs: Math.min(...legs.map((l) => l.commenceMs)),
-    stake: suggestedStake({ consensusProb: ticket.prob, decimal: ticket.decimal }),
+    stake: suggestedStake({ consensusProb: ticket.prob ?? legs[0].consensusProb, decimal: ticket.decimal }),
     // The algorithm's own sizing for this play, in units — rendered on the
     // card itself (renderPotdConfidence). Same value stored on pick.stakeUnits.
     stakeUnits: stakeUnitsForScore(ticket.score, STAKE_BANDS.potd),
@@ -436,9 +447,9 @@ async function buildRecord(ticket, dateKey, now, env, ctx) {
  */
 export async function runPotdDaily(env, ctx, now = Date.now(), {
   fetchFullSlate,
-  // NFL alternate-line prop legs (worker/src/football-props.js); injectable
-  // for the tests, same as fetchFullSlate.
-  fetchPropLegs = (games) => collectNflPropLegs(games, env, ctx, now),
+  // Alternate-line player-prop legs (worker/src/prop-legs.js: NFL, WNBA,
+  // NBA); injectable for the tests, same as fetchFullSlate.
+  fetchPropLegs = (games, opts) => collectPropLegs(games, env, ctx, now, opts),
 } = {}) {
   const { date: dateKey, hour } = etParts(now);
   // One draw for the whole day, at the generation hour, per explicit
@@ -542,9 +553,10 @@ export async function runPotdDaily(env, ctx, now = Date.now(), {
 
   // The leg pool (docs/tickets.js): game-market legs clearing the board's
   // bars — bettable, the edge and Kelly floors, the conviction floor, a
-  // favourite-side read — plus NFL alternate-line props whose game-log hit
-  // rate clears the prop gates. A failed prop scan degrades to game legs
-  // alone; props widen the anchor supply, they are not a dependency.
+  // favourite-side read — plus NFL and basketball alternate-line props
+  // whose game-log hit rate clears the prop gates. A failed prop scan
+  // degrades to game legs alone; props widen the anchor supply, they are
+  // not a dependency.
   const gameLegs = drawPool.filter((c) => legEligible(c, {
     minEv: algoConfig.MIN_EV_PCT,
     minKelly: algoConfig.MIN_KELLY_FRACTION,
@@ -552,19 +564,22 @@ export async function runPotdDaily(env, ctx, now = Date.now(), {
   }));
   let propLegs = [];
   try {
-    const nflGames = events.filter((e) => e.sport_key === NFL_SPORT_KEY
+    const propGames = events.filter((e) => PROP_SPORT_KEYS.has(e.sport_key)
       && etParts(new Date(e.commence_time).getTime()).date === dateKey
       && !recentPotdEventIds.has(e.id));
-    propLegs = (await fetchPropLegs(nflGames)) ?? [];
+    const sameDay = (ms) => etParts(ms).date === dateKey;
+    propLegs = ((await fetchPropLegs(propGames, { sameDay })) ?? []).filter((l) => !recentPotdEventIds.has(l.eventId));
   } catch (e) {
     console.error('Play of the Day prop legs failed:', e);
   }
 
   // The day's single best ticket: the pair whose combined price most
-  // underrates the chance both legs land. Nothing below this relaxes — a
-  // ticket that doesn't clear the band, the joint-probability floor and the
-  // edge floor is not posted, and the hold says why.
-  const [ticket] = buildTickets([...gameLegs, ...propLegs], {
+  // underrates the chance both legs land — or, on a day no two legs pair,
+  // the best leg that stands inside the band on its own as a straight
+  // play. Nothing below this relaxes — a play that doesn't clear the band,
+  // the probability floor and the edge floor is not posted, and the hold
+  // says why.
+  const [ticket] = buildBoard([...gameLegs, ...propLegs], {
     count: 1,
     usedEventIds: recentPotdEventIds,
     minAmerican: TICKET_BAND.MIN_AMERICAN,
@@ -574,16 +589,16 @@ export async function runPotdDaily(env, ctx, now = Date.now(), {
   if (!ticket) {
     // Either an off day with no gradeable game at all, a slate priced
     // efficiently enough that no leg beats the market by the floor, or
-    // legs that never pair inside the band. All honest "no play" days;
+    // legs that neither pair nor stand inside the band. All honest "no play" days;
     // the hold is written so the card can say which rather than showing
     // yesterday's pick as if it were live.
     const anyGame = structurallySound.length > 0;
     const legCount = gameLegs.length + propLegs.length;
     const reason = !anyGame
-      ? 'no gradeable NFL, NCAA football, MMA or tennis game on the slate today'
-      : legCount < 2
-        ? `nothing on today's slate clears the edge floor (${(algoConfig.MIN_EV_PCT * 100).toFixed(1)}% EV against the no-vig consensus) on both sides of a ticket`
-        : `${legCount} legs cleared the standard but no two pair inside ${formatAmerican(TICKET_BAND.MIN_AMERICAN)} to ${formatAmerican(TICKET_BAND.MAX_AMERICAN)} with both more likely than not to land`;
+      ? 'no gradeable NFL, NCAA football, MMA, tennis or basketball-prop game on the slate today'
+      : legCount === 0
+        ? `nothing on today's slate clears the edge floor (${(algoConfig.MIN_EV_PCT * 100).toFixed(1)}% EV against the no-vig consensus)`
+        : `${legCount} leg${legCount === 1 ? '' : 's'} cleared the standard but none pairs inside ${formatAmerican(TICKET_BAND.MIN_AMERICAN)} to ${formatAmerican(TICKET_BAND.MAX_AMERICAN)} with both more likely than not to land, and none stands in that band alone`;
     await env.POTD_KV.put(holdKey(dateKey), JSON.stringify({ dateKey, reason, checkedAt: now, poolSize: candidates.length, legCount }), {
       expirationTtl: KV_TTL_SECONDS,
     });
@@ -703,7 +718,7 @@ async function gradePotdForDate(env, ctx, now, dateKey, pick, record, fetchScore
       mmaResults: legs.some((l) => isMma(l.sportKey)) ? await fetchMmaResultsFn() : [],
       tennisResults: legs.some((l) => isTennis(l.sportKey)) ? await fetchTennisResultsFn() : [],
       env, ctx, now,
-      nflStatsFor: nflStatsReader(ctx),
+      propStatsFor: propStatsReader(ctx),
     });
     if (!outcome) return false;
     pick.status = outcome.void ? 'void' : outcome.won ? 'won' : 'lost';
@@ -711,6 +726,20 @@ async function gradePotdForDate(env, ctx, now, dateKey, pick, record, fetchScore
       payout: outcome.payout,
       roiPercent: outcome.void ? 0 : (outcome.payout / pick.suggested_stake) * 100,
       voidReason: outcome.void ? outcome.reason : undefined,
+    };
+    await env.POTD_KV.put(`potd:${dateKey}`, JSON.stringify(record), { expirationTtl: KV_TTL_SECONDS });
+    return true;
+  }
+  if (pick.kind === 'prop') {
+    // A straight player-prop play settles off the final boxscore.
+    outcome = await gradePropSingle(pick, { env, ctx, now, propStatsFor: propStatsReader(ctx) });
+    if (!outcome) return false;
+    pick.status = outcome.void ? 'void' : outcome.won ? 'won' : 'lost';
+    pick.result = {
+      payout: outcome.payout,
+      roiPercent: outcome.void ? 0 : (outcome.payout / pick.suggested_stake) * 100,
+      voidReason: outcome.void ? outcome.reason : undefined,
+      actual: outcome.actual ?? undefined,
     };
     await env.POTD_KV.put(`potd:${dateKey}`, JSON.stringify(record), { expirationTtl: KV_TTL_SECONDS });
     return true;
