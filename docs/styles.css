@@ -626,6 +626,18 @@ body {
   line-height: 1.35;
 }
 
+/* A ticket Play of the Day's two legs (docs/tickets.js). */
+.potd-legs { list-style: none; margin: 10px 0 0; padding: 0; }
+.potd-leg { padding: 10px 0; border-top: 1px solid var(--line); }
+.potd-leg .chip { margin: 0 0 6px; }
+.potd-leg .leg-selection .book { margin-left: 6px; }
+.potd-leg-note {
+  margin: 6px 0 0;
+  font-size: 0.8rem;
+  line-height: 1.5;
+  color: var(--muted);
+}
+
 .potd-matchup {
   margin: 0 0 14px;
   font-family: var(--mono);

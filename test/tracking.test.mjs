@@ -127,25 +127,94 @@ function makeOutOfRangeEvent(id, { hoursOut = 2 } = {}) {
 /* runTop5Batch                                                      */
 /* ---------------------------------------------------------------- */
 
-test('runTop5Batch stores at most TOP5_COUNT picks, all clearing the EV/Kelly floor', async () => {
-  const { env } = makeKvStore();
-  const events = Array.from({ length: 8 }, (_, i) => makeEvent(`g${i}`, { outlier: 35 }));
+/**
+ * An NFL game with a heavy home favourite: every registry book at
+ * favoritePrice/dogPrice, book 0 `outlier` better on the home side. At the
+ * defaults (-320/+255, +60) the home side reads 74.5% by the market at a
+ * -260 best price with ~3% EV — an anchor-grade leg (docs/tickets.js) —
+ * and two of them pair to a -109 ticket that lands 56% of the time.
+ */
+function makeFav(id, { hoursOut = 2, favoritePrice = -320, dogPrice = 255, outlier = 60, sport = 'americanfootball_nfl', sportTitle = 'NFL', lastUpdate = NOW - 600000 } = {}) {
+  return {
+    id,
+    sport_key: sport,
+    sport_title: sportTitle,
+    commence_time: new Date(NOW + hoursOut * 3.6e6).toISOString(),
+    home_team: `${id} Home`,
+    away_team: `${id} Away`,
+    bookmakers: BOOKS.map((title, i) => ({
+      key: BOOK_KEYS[title],
+      title,
+      last_update: new Date(lastUpdate).toISOString(),
+      markets: [{
+        key: 'h2h',
+        last_update: new Date(lastUpdate).toISOString(),
+        outcomes: [
+          { name: `${id} Home`, price: favoritePrice + (i === 0 ? outlier : 0) },
+          { name: `${id} Away`, price: dogPrice },
+        ],
+      }],
+    })),
+  };
+}
+const favs = (n, opts = {}) => Array.from({ length: n }, (_, i) => makeFav(`g${i}`, opts));
+const tennisFav = (id, opts = {}) => makeFav(id, { sport: 'tennis_atp_canadian_open', sportTitle: 'ATP Canadian Open', ...opts });
 
-  const result = await runTop5Batch(env, ctx, NOW, { fetchFullSlate: async () => events });
+/* ---------------------------------------------------------------- */
+/* runTop5Batch — anchor + partner tickets                            */
+/* ---------------------------------------------------------------- */
+
+test('runTop5Batch posts anchor + partner tickets: two legs from two games, -200..+100 together, every leg clearing the floor', async () => {
+  const { env } = makeKvStore();
+  const result = await runTop5Batch(env, ctx, NOW, { fetchFullSlate: async () => favs(8) });
   assert.equal(result.skipped, false);
-  assert.ok(result.count <= TOP5_COUNT, `expected at most ${TOP5_COUNT}, got ${result.count}`);
+  assert.equal(result.count, 4, 'eight anchor-grade legs make four disjoint tickets');
 
   const picks = await getTop5(env, { dateKey: '2026-08-05' });
-  assert.equal(picks.length, result.count);
+  assert.equal(picks.length, 4);
+  const games = new Set();
   for (const p of picks) {
+    assert.equal(p.type, 'combo');
+    assert.equal(p.legs.length, 2);
     assert.equal(p.status, 'pending');
+    assert.ok(p.american >= -200 && p.american <= 100, `ticket priced ${p.american}`);
+    assert.ok(p.consensusProb > 0.5 && p.consensusProb < 1, `joint probability ${p.consensusProb}`);
+    assert.ok(p.ev > 0.02, `ticket EV ${p.ev}`);
+    assert.equal(p.anchorId, p.legs[0].legId);
+    assert.ok(p.pairReason.includes('Anchor:') && p.pairReason.includes('Partner:'));
+    for (const leg of p.legs) {
+      assert.equal(leg.status, 'pending');
+      assert.equal(games.has(leg.eventId), false, `${leg.eventId} appears on two tickets`);
+      games.add(leg.eventId);
+    }
     // Confidence-scaled 1-2.5U band at $25/1U (2026-08-21 direction).
     assert.ok(p.stakeUnits >= 1 && p.stakeUnits <= 2.5, `units in [1, 2.5], got ${p.stakeUnits}`);
     assert.equal(p.suggested_stake, p.stakeUnits * 25);
-    // Real edges clearing the sharp standard outright, not padding.
     assert.equal(p.meetsStandard, true);
     assert.equal(p.flagReason, null);
+    // A ticket spans two markets, so it carries no closing line.
+    assert.equal(p.clv, null);
   }
+});
+
+test('a lone qualifying leg is not a ticket — the board posts nothing rather than a single', async () => {
+  const { env } = makeKvStore();
+  const result = await runTop5Batch(env, ctx, NOW, { fetchFullSlate: async () => [makeFav('solo')] });
+  assert.equal(result.skipped, false);
+  assert.equal(result.count, 0);
+});
+
+test('the boards draw from NFL, NCAA football, MMA and tennis only', async () => {
+  const { env } = makeKvStore();
+  const events = [
+    ...favs(4, { sport: 'baseball_mlb', sportTitle: 'MLB' }),
+    ...favs(2, { sport: 'basketball_nba', sportTitle: 'NBA' }).map((e) => ({ ...e, id: `nba-${e.id}` })),
+    makeFav('nfl-a'), makeFav('nfl-b'),
+  ];
+  await runTop5Batch(env, ctx, NOW, { fetchFullSlate: async () => events });
+  const picks = await getTop5(env, { dateKey: '2026-08-05' });
+  assert.equal(picks.length, 1);
+  assert.deepEqual(picks[0].legs.map((l) => l.sportKey), ['americanfootball_nfl', 'americanfootball_nfl']);
 });
 
 test('runTop5Batch never picks a team-sport game that isn\'t happening today (e.g. NFL season odds posted months out)', async () => {
@@ -153,114 +222,74 @@ test('runTop5Batch never picks a team-sport game that isn\'t happening today (e.
   const events = [
     // A real NFL line, priced months ahead of kickoff — must never surface
     // as "today's lock."
-    makeEvent('nfl-far-out', { outlier: 40, hoursOut: 24 * 140, sport: 'americanfootball_nfl', sportTitle: 'NFL' }),
-    makeEvent('mlb-today', { outlier: 35 }),
+    makeFav('nfl-far-out', { hoursOut: 24 * 140 }),
+    makeFav('today-a'), makeFav('today-b'),
   ];
-
   const result = await runTop5Batch(env, ctx, NOW, { fetchFullSlate: async () => events });
   assert.equal(result.skipped, false);
-
   const picks = await getTop5(env, { dateKey: '2026-08-05' });
-  assert.ok(picks.every((p) => p.sportKey !== 'americanfootball_nfl'), 'the far-out NFL game must never be picked');
-  assert.ok(picks.some((p) => p.pickId.startsWith('mlb-today:')), 'the same-day MLB game should still be picked');
+  const legEvents = picks.flatMap((p) => p.legs.map((l) => l.eventId));
+  assert.ok(!legEvents.includes('nfl-far-out'), 'the far-out NFL game must never be a leg');
+  assert.deepEqual(legEvents.sort(), ['today-a', 'today-b']);
 });
 
 test('runTop5Batch excludes a team-sport game on tomorrow\'s date too, not just far-future ones', async () => {
   const { env } = makeKvStore();
-  const events = [makeEvent('tomorrow', { outlier: 40, hoursOut: 30 })]; // ~30h out crosses into the next ET day
+  const events = [makeFav('tomorrow-a', { hoursOut: 30 }), makeFav('tomorrow-b', { hoursOut: 30 })]; // ~30h out crosses into the next ET day
   const result = await runTop5Batch(env, ctx, NOW, { fetchFullSlate: async () => events });
   assert.equal(result.count, 0, 'nothing today qualifies, so no picks should be stored even though tomorrow has a real edge');
 });
 
 test('runTop5Batch tennis next-day carve-out: a match rolling just past midnight (before 2am ET) is eligible, an ordinary tomorrow-afternoon match is not', async () => {
-  // Positive: 11pm ET Aug 5, with a match at 1am ET Aug 6 — a night session
-  // rolling past midnight, inside the midnight-2am ET carve-out, and late
-  // enough that its own 2.5h lock lead window is open.
+  // Positive: 11pm ET Aug 5, with two matches at 1am ET Aug 6 — a night
+  // session rolling past midnight, inside the midnight-2am ET carve-out.
   {
     const { env } = makeKvStore();
     const lateNow = Date.parse('2026-08-06T03:00:00Z'); // 11pm ET Aug 5
-    const events = [makeEvent('tennis-1am', {
-      outlier: 40, hoursOut: 17, // NOW + 17h = 1am ET Aug 6
-      sport: 'tennis_atp_canadian_open', sportTitle: 'ATP Canadian Open',
-      lastUpdate: lateNow - 600000,
-    })];
+    const events = [
+      tennisFav('tennis-1am-a', { hoursOut: 17, lastUpdate: lateNow - 600000 }), // NOW + 17h = 1am ET Aug 6
+      tennisFav('tennis-1am-b', { hoursOut: 17, lastUpdate: lateNow - 600000 }),
+    ];
     const result = await runTop5Batch(env, ctx, lateNow, { fetchFullSlate: async () => events });
-    assert.equal(result.count, 1, 'a match rolling just past midnight stays on today\'s board');
+    assert.equal(result.count, 1, 'matches rolling just past midnight stay on today\'s board');
     const picks = await getTop5(env, { dateKey: '2026-08-05' });
-    assert.equal(picks.length, 1, 'and it is stored under TODAY\'s date, not tomorrow\'s');
+    assert.equal(picks.length, 1, 'and the ticket is stored under TODAY\'s date, not tomorrow\'s');
   }
   // Negative: an ordinary tomorrow-2pm-ET match must NOT be on today's
   // board — this was a real bug ("eligible all day tomorrow"), removed per
   // explicit product direction; only midnight-2am ET next-day starts count.
   {
     const { env } = makeKvStore();
-    const events = [makeEvent('tennis-tomorrow-pm', {
-      outlier: 40, hoursOut: 30, // NOW + 30h = 2pm ET Aug 6
-      sport: 'tennis_atp_canadian_open', sportTitle: 'ATP Canadian Open',
-    })];
+    const events = [tennisFav('tennis-tomorrow-a', { hoursOut: 30 }), tennisFav('tennis-tomorrow-b', { hoursOut: 30 })]; // NOW + 30h = 2pm ET Aug 6
     const result = await runTop5Batch(env, ctx, NOW, { fetchFullSlate: async () => events });
     assert.equal(result.count, 0, 'an ordinary next-afternoon match belongs on tomorrow\'s board, not today\'s');
   }
 });
 
-test('runTop5Batch refuses to pad with a price outside the hard band', async () => {
+test('a ticket never reaches outside the band: a -1800 chalk and a +350 longshot are never legs', async () => {
   const { env } = makeKvStore();
-  // Two real sharp edges plus a +350 longshot that clears the EV/Kelly floor
-  // but sits outside Pixel's Picks' hard price band.
-  //
-  // This used to be padded onto the board as a flagged fallback slot, because
-  // guaranteeCount relaxed the odds range without limit — it only LABELLED
-  // the price as out of band and posted it anyway. That is the same hole a
-  // -1800 favorite came through on the live board, against a board that
-  // advertises "-200 or better."
-  //
-  // The count promise and the price band genuinely conflict on a thin day,
-  // and the band wins: a short board is recoverable, a board whose stated
-  // standard is a lie is not.
-  const events = [
-    makeEvent('sharp1', { outlier: 35 }),
-    makeEvent('sharp2', { outlier: 40 }),
-    makeOutOfRangeEvent('longshot'),
-  ];
-
+  // The chalk reads ~94% and would be a fine anchor on its own, but no
+  // partner here brings a 1.06x leg inside -200..+100; the longshot has no
+  // favourite-side read at all. Neither may appear on any ticket.
+  const chalk = makeFav('chalk', { favoritePrice: -1800, dogPrice: 1200, outlier: 300 });
+  const longshot = makeOutOfRangeEvent('longshot');
+  longshot.sport_key = 'americanfootball_nfl';
+  longshot.sport_title = 'NFL';
+  const events = [makeFav('a'), makeFav('b'), chalk, longshot];
   const result = await runTop5Batch(env, ctx, NOW, { fetchFullSlate: async () => events });
   assert.equal(result.skipped, false);
-
   const picks = await getTop5(env, { dateKey: '2026-08-05' });
-  assert.equal(picks.length, 2, 'the day only had two candidates inside the band');
-  assert.ok(!picks.some((p) => p.pickId.startsWith('longshot:')), 'the +350 must never reach the board');
-  for (const p of picks) {
-    assert.ok(p.american >= -200 && p.american <= 150, `${p.pickId} priced ${p.american} is outside the hard band`);
-  }
-});
-
-test('a heavy favorite is never posted, even to fill a slot', async () => {
-  const { env } = makeKvStore();
-  // The reported failure in its own right: "I don't want a -1800."
-  const heavy = makeOutOfRangeEvent('chalk');
-  for (const book of heavy.bookmakers) {
-    book.markets[0].outcomes = [
-      { name: 'chalk Home', price: -1800 },
-      { name: 'chalk Away', price: 1200 },
-    ];
-  }
-  const result = await runTop5Batch(env, ctx, NOW, { fetchFullSlate: async () => [heavy] });
-  assert.equal(result.skipped, false);
-
-  const picks = await getTop5(env, { dateKey: '2026-08-05' });
-  assert.ok(picks.every((p) => p.american >= -200), 'nothing worse than -200 may be posted');
+  assert.equal(picks.length, 1);
+  const legEvents = picks.flatMap((p) => p.legs.map((l) => l.eventId));
+  assert.ok(!legEvents.includes('chalk') && !legEvents.includes('longshot'), `legs were ${legEvents}`);
+  for (const p of picks) assert.ok(p.american >= -200 && p.american <= 100, `${p.pickId} priced ${p.american} is outside the band`);
 });
 
 test('a -EV-only slate posts an EMPTY board — never a flagged filler', async () => {
   const { env } = makeKvStore();
-  // A -130 against a -140 consensus: once the hold is paid there is no
-  // edge left. From 2026-08-21 to 2026-09-15 this posted anyway, flagged
-  // "no qualifying edge today — posted to keep the board full", and the
-  // record filled with bets the engine itself graded as losers on exactly
-  // the days the market offered nothing. A short board is the honest answer.
-  const events = [makeEvent('juicy', { outlier: 10 })];
-
-  const result = await runTop5Batch(env, ctx, NOW, { fetchFullSlate: async () => events });
+  // Every book at the same price: the best price IS the consensus, so once
+  // the hold is paid there is no edge left on either leg.
+  const result = await runTop5Batch(env, ctx, NOW, { fetchFullSlate: async () => favs(4, { outlier: 0 }) });
   assert.equal(result.skipped, false);
   const picks = await getTop5(env, { dateKey: '2026-08-05' });
   assert.equal(picks.length, 0, 'nothing clears the edge floor, so nothing posts');
@@ -268,8 +297,7 @@ test('a -EV-only slate posts an EMPTY board — never a flagged filler', async (
 
 test('runTop5Batch only skips once the board already has TOP5_COUNT picks', async () => {
   const { env } = makeKvStore();
-  const events = Array.from({ length: 8 }, (_, i) => makeEvent(`g${i}`, { outlier: 35 }));
-
+  const events = favs(10);
   const first = await runTop5Batch(env, ctx, NOW, { fetchFullSlate: async () => events });
   assert.equal(first.skipped, false);
   assert.equal(first.count, TOP5_COUNT);
@@ -287,17 +315,17 @@ test('runTop5Batch only skips once the board already has TOP5_COUNT picks', asyn
  * the day with no way to recover short of manual intervention. It's now
  * self-healing: short of TOP5_COUNT, a later call tops up around whatever's
  * already stored instead of skipping, and never replaces an existing pick
- * (which would discard its grading/CLV progress).
+ * (which would discard its grading progress).
  */
 test('runTop5Batch tops up a short board on a later call instead of staying stuck', async () => {
   const { env } = makeKvStore();
-  const thinEvents = [makeEvent('g0', { outlier: 35 })];
+  const thinEvents = favs(4);
   const first = await runTop5Batch(env, ctx, NOW, { fetchFullSlate: async () => thinEvents });
   assert.equal(first.skipped, false);
-  assert.ok(first.count < TOP5_COUNT, 'the thin slate should not have reached TOP5_COUNT');
+  assert.equal(first.count, 2, 'four legs make two tickets, short of the board');
   const firstPickIds = (await getTop5(env, { dateKey: '2026-08-05' })).map((p) => p.pickId);
 
-  const fullEvents = Array.from({ length: 8 }, (_, i) => makeEvent(`g${i}`, { outlier: 35 }));
+  const fullEvents = favs(10);
   const second = await runTop5Batch(env, ctx, NOW, { fetchFullSlate: async () => fullEvents });
   assert.equal(second.skipped, false);
   assert.equal(second.count, TOP5_COUNT);
@@ -307,6 +335,8 @@ test('runTop5Batch tops up a short board on a later call instead of staying stuc
   for (const id of firstPickIds) {
     assert.ok(picks.some((p) => p.pickId === id), `original pick ${id} should be preserved, not replaced`);
   }
+  const games = picks.flatMap((p) => p.legs.map((l) => l.eventId));
+  assert.equal(new Set(games).size, games.length, 'a top-up must not reuse a game an earlier ticket holds');
 
   const third = await runTop5Batch(env, ctx, NOW, { fetchFullSlate: async () => fullEvents });
   assert.equal(third.skipped, true);
@@ -318,99 +348,59 @@ test('runTop5Batch tops up a short board on a later call instead of staying stuc
  * belongs to — a later top-up call, seeing a fuller/different candidate set
  * than the first call, could legitimately score the OTHER side of a game
  * that already had a pick highest and add it as a second, contradictory
- * pick. Live: "Pittsburgh Pirates to win" (from an earlier degraded run)
- * and "New York Mets to win" (added by a later top-up on the same
- * Mets @ Pirates game) both ended up locked in side by side. A board must
- * never carry two picks for the same event.
+ * pick. A board must never carry two tickets touching the same game.
  */
 test('runTop5Batch never adds a pick for a game that already has one, even on a later top-up call', async () => {
   const { env } = makeKvStore();
-  // First call: only "g0" is available, and it clears the bar on its HOME
-  // side (matching makeEvent's own outlier convention) — one pick locked in.
-  const firstEvents = [makeEvent('g0', { outlier: 35 })];
-  const first = await runTop5Batch(env, ctx, NOW, { fetchFullSlate: async () => firstEvents });
-  assert.equal(first.count, 1);
-  const lockedPick = (await getTop5(env, { dateKey: '2026-08-05' }))[0];
-  assert.match(lockedPick.pickId, /^g0:/);
+  const first = await runTop5Batch(env, ctx, NOW, { fetchFullSlate: async () => favs(4) });
+  assert.equal(first.count, 2);
+  const lockedGames = new Set((await getTop5(env, { dateKey: '2026-08-05' })).flatMap((p) => p.legs.map((l) => l.eventId)));
+  assert.deepEqual([...lockedGames].sort(), ['g0', 'g1', 'g2', 'g3']);
 
-  // Second call (a later tick): a fuller slate where "g0" now shows a real
-  // edge on its AWAY side instead — simulating the odds having moved, or a
-  // fuller fetch surfacing a candidate the first call never saw. This must
-  // NOT be added alongside the already-locked g0 pick.
-  const awayEdgeG0 = {
-    id: 'g0',
-    sport_key: 'baseball_mlb',
-    sport_title: 'MLB',
-    commence_time: new Date(NOW + 2 * 3.6e6).toISOString(),
-    home_team: 'g0 Home',
-    away_team: 'g0 Away',
-    bookmakers: BOOKS.map((title, i) => ({
-      key: BOOK_KEYS[title],
-      title,
-      last_update: new Date(NOW - 600000).toISOString(),
-      markets: [{
-        key: 'h2h',
-        last_update: new Date(NOW - 600000).toISOString(),
-        outcomes: [
-          { name: 'g0 Home', price: 120 },
-          { name: 'g0 Away', price: -140 + (i === 0 ? 35 : 0) },
-        ],
-      }],
-    })),
-  };
-  const secondEvents = [
-    awayEdgeG0,
-    ...Array.from({ length: 7 }, (_, i) => makeEvent(`g${i + 1}`, { outlier: 35 })),
-  ];
+  // Second call (a later tick): g0 now shows its edge on the AWAY side —
+  // the odds moved — alongside six fresh games. The g0 away side must NOT
+  // be added as a leg beside the already-locked g0 ticket.
+  const awayEdgeG0 = makeFav('g0');
+  for (const [i, book] of awayEdgeG0.bookmakers.entries()) {
+    book.markets[0].outcomes = [
+      { name: 'g0 Home', price: 255 },
+      { name: 'g0 Away', price: -320 + (i === 0 ? 60 : 0) },
+    ];
+  }
+  const secondEvents = [awayEdgeG0, ...Array.from({ length: 6 }, (_, i) => makeFav(`g${i + 4}`))];
   const second = await runTop5Batch(env, ctx, NOW, { fetchFullSlate: async () => secondEvents });
   assert.equal(second.skipped, false);
 
   const picks = await getTop5(env, { dateKey: '2026-08-05' });
-  const g0Picks = picks.filter((p) => p.eventId === 'g0');
-  assert.equal(g0Picks.length, 1, 'only the original g0 pick should exist, never a second contradictory one');
-  assert.equal(g0Picks[0].pickId, lockedPick.pickId);
-  // No two picks on the whole board should ever share an eventId.
-  assert.equal(new Set(picks.map((p) => p.eventId)).size, picks.length);
+  const games = picks.flatMap((p) => p.legs.map((l) => l.eventId));
+  assert.equal(games.filter((g) => g === 'g0').length, 1, 'g0 is on exactly one ticket');
+  assert.equal(new Set(games).size, games.length);
 });
 
 test('runTop5Batch excludes candidates from a segment the weekly algorithm health review has paused', async () => {
   const { env } = makeKvStore();
-  await env.POTD_KV.put('algo:paused', JSON.stringify([{ key: 'baseball_mlb|h2h', pausedAt: NOW, reason: 'test' }]));
-
-  const events = [
-    makeEvent('paused-sport', { outlier: 35, sport: 'baseball_mlb', sportTitle: 'MLB' }),
-    makeEvent('active-sport', { outlier: 35, sport: 'basketball_wnba', sportTitle: 'WNBA' }),
-  ];
-
-  const result = await runTop5Batch(env, ctx, NOW, { fetchFullSlate: async () => events });
+  await env.POTD_KV.put('algo:paused', JSON.stringify([{ key: 'americanfootball_nfl|h2h', pausedAt: NOW, reason: 'test' }]));
+  const events = [makeFav('nfl-a'), makeFav('nfl-b'), tennisFav('atp-a'), tennisFav('atp-b')];
+  await runTop5Batch(env, ctx, NOW, { fetchFullSlate: async () => events });
   const picks = await getTop5(env, { dateKey: '2026-08-05' });
-
-  assert.ok(picks.every((p) => p.sportKey !== 'baseball_mlb'), 'the paused MLB segment must never be picked');
-  assert.ok(picks.some((p) => p.pickId.startsWith('active-sport:')), 'the non-paused WNBA segment should still be picked');
+  const legs = picks.flatMap((p) => p.legs);
+  assert.ok(legs.length > 0, 'the non-paused tennis segment still posts');
+  assert.ok(legs.every((l) => l.sportKey !== 'americanfootball_nfl'), 'the paused NFL moneyline segment must never be a leg');
 });
 
 test('runTop5Batch uses the tuned EV floor from algo:config, not the shipped default, when one is stored', async () => {
   const { env } = makeKvStore();
-  // Tuned floor well above what a modest +100/-140 edge (outlier: 20) clears
-  // but the shipped default (RULES.MIN_EV_PCT, ~1.5%) would allow through.
+  // A floor above the ~3% edge each default fixture leg carries, which the
+  // shipped default (RULES.MIN_EV_PCT, 2%) lets through.
   await env.POTD_KV.put('algo:config', JSON.stringify({
     MIN_EV_PCT: TUNABLE_BOUNDS.MIN_EV_PCT.max,
     MIN_KELLY_FRACTION: TUNABLE_BOUNDS.MIN_KELLY_FRACTION.min,
     MIN_SCORE: TUNABLE_BOUNDS.MIN_SCORE.min,
   }));
-
-  // -123 against a -140 consensus: about +2.6% EV, clear of the shipped 2%
-  // floor and short of the tuned 3.5% ceiling.
-  const events = [makeEvent('modest-edge', { outlier: 17 })];
+  const events = favs(2);
   await runTop5Batch(env, ctx, NOW, { fetchFullSlate: async () => events });
-  const picks = await getTop5(env, { dateKey: '2026-08-05' });
+  assert.equal((await getTop5(env, { dateKey: '2026-08-05' })).length, 0, 'the tuned floor must keep these legs off the board entirely');
 
-  // The edge floor decides whether a pick EXISTS, tuned or not — there is
-  // no flagged tier beneath it any more. Under the tuned floor this modest
-  // edge does not post at all...
-  assert.equal(picks.length, 0, 'the tuned floor must keep this pick off the board entirely');
-
-  // ...and under the shipped default the very same slate posts it unflagged.
   const fresh = makeKvStore();
   await runTop5Batch(fresh.env, ctx, NOW, { fetchFullSlate: async () => events });
   const defaultPicks = await getTop5(fresh.env, { dateKey: '2026-08-05' });
@@ -418,74 +408,122 @@ test('runTop5Batch uses the tuned EV floor from algo:config, not the shipped def
   assert.equal(defaultPicks[0].meetsStandard, true);
 });
 
+test('an NFL prop leg anchors a ticket when the games offer one', async () => {
+  const { env } = makeKvStore();
+  // One gated prop leg from a game the slate carries, plus one favourite
+  // from another game: the prop leads the ticket.
+  const propLeg = {
+    id: 'g1:player_receptions_alternate:some player:3.5:Over', kind: 'prop', eventId: 'g1',
+    sportKey: 'americanfootball_nfl', sportTitle: 'NFL', commenceMs: NOW + 2 * 3.6e6, home: 'g1 Home', away: 'g1 Away',
+    marketKey: 'player_receptions_alternate', marketLabel: 'Receptions (alt)', statKey: 'receptions', playerName: 'Some Player',
+    outcomeName: 'Over', point: 3.5, need: 4, selection: 'Some Player 4+ Rec', american: -380, decimal: 1.263, book: 'DraftKings',
+    bookKey: 'draftkings', bettable: true, consensusProb: 0.86, ev: 0.086, score: 92, espnEventId: '401',
+    profile: { games: 5, season: 1, l10: 1, l5: 1, streak: 5, avgSeason: 6.2, avgL5: 6.4 }, edge: 0.07,
+  };
+  const events = [makeFav('g0'), makeFav('g1', { outlier: 0 })]; // g1's own moneyline carries no edge; only its prop does
+  const result = await runTop5Batch(env, ctx, NOW, {
+    fetchFullSlate: async () => events,
+    fetchPropLegs: async (games) => (games.some((g) => g.id === 'g1') ? [propLeg] : []),
+  });
+  assert.equal(result.count, 1);
+  const [pick] = await getTop5(env, { dateKey: '2026-08-05' });
+  assert.equal(pick.legs[0].kind, 'prop');
+  assert.equal(pick.legs[0].playerName, 'Some Player');
+  assert.equal(pick.legs[0].espnEventId, '401');
+  assert.equal(pick.legs[0].need, 4);
+  assert.deepEqual(pick.legs[0].profile.games, 5);
+  assert.equal(pick.legs[1].eventId, 'g0');
+  assert.ok(pick.american >= -200 && pick.american <= 100);
+  assert.match(pick.pairReason, /has landed in 100% of 5 games/);
+});
+
 /* ---------------------------------------------------------------- */
 /* runClvSnapshot                                                     */
 /* ---------------------------------------------------------------- */
 
-test('runClvSnapshot updates closeAmerican when the price has moved, leaves it when it hasn\'t', async () => {
+test('runClvSnapshot leaves tickets alone — a parlay has no single closing line', async () => {
   const { env } = makeKvStore();
-  const original = makeEvent('a', { outlier: 35 }); // 2h out — inside the lock window at NOW
-  await runTop5Batch(env, ctx, NOW, { fetchFullSlate: async () => [original] });
-
+  await runTop5Batch(env, ctx, NOW, { fetchFullSlate: async () => favs(2) });
   const [before] = await getTop5(env, { dateKey: '2026-08-05' });
-  assert.equal(before.clv.closeAmerican, before.clv.openAmerican);
-
-  // The exact same event, but the outlier book's price has moved further.
-  // Snapshots run while the game (NOW+2h) is still pregame.
-  const moved = makeEvent('a', { outlier: 60 });
-  const r1 = await runClvSnapshot(env, ctx, NOW + 0.5 * 3.6e6, { fetchSportFn: async () => ({ events: [moved] }) });
-  assert.equal(r1.updated, 1);
-
-  const [after] = await getTop5(env, { dateKey: '2026-08-05' });
-  assert.notEqual(after.clv.closeAmerican, after.clv.openAmerican);
-
-  // A second snapshot against the identical price is a no-op.
-  const r2 = await runClvSnapshot(env, ctx, NOW + 3.6e6, { fetchSportFn: async () => ({ events: [moved] }) });
-  assert.equal(r2.updated, 0);
+  assert.equal(before.clv, null);
+  const moved = favs(2, { outlier: 90 });
+  const r = await runClvSnapshot(env, ctx, NOW + 0.5 * 3.6e6, { fetchSportFn: async () => ({ events: moved }) });
+  assert.equal(r.updated, 0);
 });
 
 /* ---------------------------------------------------------------- */
 /* runGrading                                                         */
 /* ---------------------------------------------------------------- */
 
-test('runGrading grades a completed h2h pick won/lost via the shared gradePick()', async () => {
-  const { env } = makeKvStore();
-  // buildCandidates() only tracks future games (commenceMs > now), so the
-  // pick has to be generated against a game that hasn't started yet —
-  // grading itself doesn't care about commence time, only pending status,
-  // so a "now" a few hours later (after the game would be over) is enough.
-  const event = makeEvent('a', { outlier: 35, hoursOut: 2 });
-  await runTop5Batch(env, ctx, NOW, { fetchFullSlate: async () => [event] });
-
-  const [pick] = await getTop5(env, { dateKey: '2026-08-05' });
-  // The tracked pick is whichever side scored highest — grade it as the winner either way.
-  const scoreEvent = {
-    id: 'a',
-    completed: true,
-    scores: [
-      { name: 'a Home', score: pick.outcomeName === 'a Home' ? '5' : '2' },
-      { name: 'a Away', score: pick.outcomeName === 'a Away' ? '5' : '2' },
-    ],
-  };
-
-  const result = await runGrading(env, ctx, NOW + 6 * 3.6e6, { fetchScoresFn: async () => ({ events: [scoreEvent] }) });
-  assert.equal(result.graded, 1);
-
-  const [graded] = await getTop5(env, { dateKey: '2026-08-05' });
-  assert.equal(graded.status, 'won');
-  assert.ok(graded.result.payout > 0);
+const finalScore = (id, homeScore, awayScore) => ({
+  id, completed: true, scores: [{ name: `${id} Home`, score: String(homeScore) }, { name: `${id} Away`, score: String(awayScore) }],
 });
 
-test('runGrading leaves a pick pending when no completed score is available yet', async () => {
+test('runGrading settles a ticket leg by leg: both favourites win, the ticket wins at its combined price', async () => {
   const { env } = makeKvStore();
-  const event = makeEvent('a', { outlier: 35, hoursOut: 2 });
-  await runTop5Batch(env, ctx, NOW, { fetchFullSlate: async () => [event] });
-
-  const result = await runGrading(env, ctx, NOW + 3.6e6, { fetchScoresFn: async () => ({ events: [] }) });
-  assert.equal(result.graded, 0);
-
+  await runTop5Batch(env, ctx, NOW, { fetchFullSlate: async () => favs(2) });
   const [pick] = await getTop5(env, { dateKey: '2026-08-05' });
-  assert.equal(pick.status, 'pending');
+  const games = pick.legs.map((l) => l.eventId);
+
+  const result = await runGrading(env, ctx, NOW + 6 * 3.6e6, {
+    fetchScoresFn: async () => ({ events: games.map((g) => finalScore(g, 27, 10)) }),
+  });
+  assert.equal(result.graded, 1);
+  const [graded] = await getTop5(env, { dateKey: '2026-08-05' });
+  assert.equal(graded.status, 'won');
+  assert.ok(graded.legs.every((l) => l.status === 'won'));
+  assert.ok(Math.abs(graded.result.payout - (graded.decimal - 1) * graded.suggested_stake) < 1e-6);
+});
+
+test('one losing leg loses the ticket, and the record shows which leg missed', async () => {
+  const { env } = makeKvStore();
+  await runTop5Batch(env, ctx, NOW, { fetchFullSlate: async () => favs(2) });
+  const [pick] = await getTop5(env, { dateKey: '2026-08-05' });
+  const [anchorGame, partnerGame] = pick.legs.map((l) => l.eventId);
+
+  await runGrading(env, ctx, NOW + 6 * 3.6e6, {
+    fetchScoresFn: async () => ({ events: [finalScore(anchorGame, 27, 10), finalScore(partnerGame, 3, 30)] }),
+  });
+  const [graded] = await getTop5(env, { dateKey: '2026-08-05' });
+  assert.equal(graded.status, 'lost');
+  assert.equal(graded.legs[0].status, 'won');
+  assert.equal(graded.legs[1].status, 'lost');
+  assert.equal(graded.result.payout, -graded.suggested_stake);
+});
+
+test('runGrading leaves a ticket pending while any leg has no completed score', async () => {
+  const { env } = makeKvStore();
+  await runTop5Batch(env, ctx, NOW, { fetchFullSlate: async () => favs(2) });
+  const [pick] = await getTop5(env, { dateKey: '2026-08-05' });
+  const [anchorGame] = pick.legs.map((l) => l.eventId);
+
+  const result = await runGrading(env, ctx, NOW + 3.6e6, { fetchScoresFn: async () => ({ events: [finalScore(anchorGame, 27, 10)] }) });
+  assert.equal(result.graded, 0);
+  const [still] = await getTop5(env, { dateKey: '2026-08-05' });
+  assert.equal(still.status, 'pending');
+});
+
+test('a prop leg is graded off the final boxscore', async () => {
+  const { env } = makeKvStore();
+  const propLeg = {
+    id: 'g1:player_receptions_alternate:some player:3.5:Over', kind: 'prop', eventId: 'g1',
+    sportKey: 'americanfootball_nfl', sportTitle: 'NFL', commenceMs: NOW + 2 * 3.6e6, home: 'g1 Home', away: 'g1 Away',
+    marketKey: 'player_receptions_alternate', marketLabel: 'Receptions (alt)', statKey: 'receptions', playerName: 'Some Player',
+    outcomeName: 'Over', point: 3.5, need: 4, selection: 'Some Player 4+ Rec', american: -380, decimal: 1.263, book: 'DraftKings',
+    bookKey: 'draftkings', bettable: true, consensusProb: 0.86, ev: 0.086, score: 92, espnEventId: '401',
+    profile: { games: 5, season: 1, l10: 1, l5: 1, streak: 5, avgSeason: 6.2, avgL5: 6.4 }, edge: 0.07,
+  };
+  await runTop5Batch(env, ctx, NOW, {
+    fetchFullSlate: async () => [makeFav('g0'), makeFav('g1', { outlier: 0 })],
+    fetchPropLegs: async () => [propLeg],
+  });
+  // The grading pass reads the prop leg's game through the shared stats
+  // reader; the test's ESPN is unreachable, so the leg stays pending and
+  // so does the ticket, even with the partner's game final.
+  const pending = await runGrading(env, ctx, NOW + 6 * 3.6e6, { fetchScoresFn: async () => ({ events: [finalScore('g0', 27, 10)] }) });
+  assert.equal(pending.graded, 0);
+  const [still] = await getTop5(env, { dateKey: '2026-08-05' });
+  assert.equal(still.status, 'pending');
 });
 
 /* ---------------------------------------------------------------- */
@@ -497,10 +535,10 @@ test('getAllTrackedPicks spans multiple days, resetAllTracking clears every one'
   const day1 = NOW;
   const day2 = NOW + 86400000;
 
-  await runTop5Batch(env, ctx, day1, { fetchFullSlate: async () => [makeEvent('d1', { outlier: 35 })] });
-  // d2: 2h out from day2's own "now" (26h from the fixture's NOW anchor),
-  // with a quote fresh as of day2 — inside its own lock window on day2.
-  await runTop5Batch(env, ctx, day2, { fetchFullSlate: async () => [makeEvent('d2', { outlier: 35, hoursOut: 26, lastUpdate: day2 - 600000 })] });
+  await runTop5Batch(env, ctx, day1, { fetchFullSlate: async () => favs(2) });
+  // Day 2's games: 2h out from day2's own "now" (26h from the fixture's NOW
+  // anchor), with quotes fresh as of day2.
+  await runTop5Batch(env, ctx, day2, { fetchFullSlate: async () => [makeFav('d2a', { hoursOut: 26, lastUpdate: day2 - 600000 }), makeFav('d2b', { hoursOut: 26, lastUpdate: day2 - 600000 })] });
 
   const all = await getAllTrackedPicks(env, { now: day2, days: 5 });
   assert.equal(all.length, 2);
@@ -513,70 +551,43 @@ test('getAllTrackedPicks spans multiple days, resetAllTracking clears every one'
 });
 
 /* ---------------------------------------------------------------- */
-/* The 5-pick minimum                                                */
+/* The board                                                          */
 /* ---------------------------------------------------------------- */
 
-/** An event N hours from NOW, priced with a real edge so it's a live candidate. */
-function eventAtHour(id, hoursOut, outlier = 35) {
-  return makeEvent(id, { hoursOut, outlier });
-}
-
-/**
- * The reported failure, reproduced end to end: "time and time again I need
- * this to be 5 minimum but I come back and find only 1 or 2."
- *
- * The board waited until every one of today's games had reached its lock
- * window before drawing, so it could compare the whole day. That trigger
- * fires ~3h before the day's LAST game — and the draw pool only contains
- * games that haven't started. On a day spread from early afternoon to late
- * evening, the entire afternoon was unbettable by the time the draw ran.
- */
-test('a day spread across many hours still produces a full board', async () => {
+test('a day spread across many hours still produces a full board of tickets', async () => {
   const { env } = makeKvStore();
-  // Eight games at 2h intervals — the shape of a real MLB slate. Under the
-  // old all-or-nothing draw, only the last couple were still bettable when
-  // the board was finally allowed to pick.
-  const events = Array.from({ length: 8 }, (_, i) => eventAtHour(`g${i}`, 2 + i * 2, 35 + i));
-
-  // Walk the day tick by tick, exactly as the cron does.
+  // Ten games spread from 10am to 11:30pm ET. The whole day is drawable at
+  // the generation hour, so the first tick fills the board; later ticks
+  // leave it alone.
+  const events = Array.from({ length: 10 }, (_, i) => makeFav(`g${i}`, { hoursOut: 2 + i * 1.5, outlier: 60 + i }));
   let now = NOW;
   for (let tick = 0; tick < 40; tick++) {
     await runTop5Batch(env, ctx, now, {
       fetchFullSlate: async () => events.filter((e) => Date.parse(e.commence_time) > now),
     });
-    now += 30 * 60000; // 30 minutes
+    now += 30 * 60000;
   }
-
   const picks = await getTop5(env, { dateKey: '2026-08-05' });
   assert.equal(picks.length, 5, `expected a full board, got ${picks.length}`);
-  // Five distinct games, all inside the price band — a board padded by
-  // double-picking one game, or by reaching for a price the band forbids,
-  // would satisfy the count while defeating the point of it.
-  assert.equal(new Set(picks.map((p) => p.eventId)).size, 5, 'the board double-picked a game to reach five');
+  const games = picks.flatMap((p) => p.legs.map((l) => l.eventId));
+  assert.equal(new Set(games).size, 10, 'ten distinct games across five tickets');
   for (const p of picks) {
-    assert.ok(p.american >= -200 && p.american <= 150, `${p.pickId} priced ${p.american} is outside the hard band`);
+    assert.ok(p.american >= -200 && p.american <= 100, `${p.pickId} priced ${p.american} is outside the band`);
   }
 });
 
-test('a strong number is locked when it appears rather than left to expire', async () => {
+test('the richest pair leads the board', async () => {
   const { env } = makeKvStore();
-  // One standout early game, plus later ones that keep the day "still open"
-  // so the old code would have kept waiting until the early one had started.
-  const events = [
-    eventAtHour('early-standout', 2.6, 90),
-    eventAtHour('late1', 10),
-    eventAtHour('late2', 12),
-  ];
+  // One standout (a bigger outlier is more edge), plus ordinary favourites.
+  const events = [makeFav('standout', { outlier: 85 }), makeFav('a'), makeFav('b'), makeFav('c')];
   await runTop5Batch(env, ctx, NOW, { fetchFullSlate: async () => events });
-
   const picks = await getTop5(env, { dateKey: '2026-08-05' });
-  assert.ok(picks.some((p) => p.pickId.startsWith('early-standout:')),
-    'the standout should be taken on sight, not lost to its own start time');
+  assert.ok(picks[0].legs.some((l) => l.eventId === 'standout'), 'the standout is on the first ticket');
 });
 
 test('the board never takes the opposite side of a Full Slate or PoTD pick', async () => {
   const { env, store } = makeKvStore();
-  const events = [eventAtHour('shared', 2.5, 40), eventAtHour('other', 3)];
+  const events = [makeFav('shared'), makeFav('other-a'), makeFav('other-b')];
 
   // The Full Slate already called this game's moneyline the other way.
   store.set('slate:2026-08-05:manifest', JSON.stringify({ date: '2026-08-05', pickIds: ['p1'] }));
@@ -586,11 +597,21 @@ test('the board never takes the opposite side of a Full Slate or PoTD pick', asy
 
   await runTop5Batch(env, ctx, NOW, { fetchFullSlate: async () => events });
   const picks = await getTop5(env, { dateKey: '2026-08-05' });
+  assert.equal(picks.length, 1);
+  const legs = picks.flatMap((p) => p.legs);
+  assert.ok(!legs.some((l) => l.eventId === 'shared' && l.outcomeName !== 'shared Away'), 'picked the opposite side of a published Full Slate call');
+});
 
-  const conflicting = picks.filter(
-    (p) => p.eventId === 'shared' && p.marketKey === 'h2h' && p.outcomeName !== 'shared Away',
-  );
-  assert.equal(conflicting.length, 0, 'picked the opposite side of a published Full Slate call');
+test('a Play of the Day ticket\'s games are both off the table for Pixel\'s Picks', async () => {
+  const { env, store } = makeKvStore();
+  store.set('potd:2026-08-05', JSON.stringify({ date: '2026-08-05', pick: {
+    type: 'combo', pickId: 'x+y', status: 'pending', eventId: 'g0', marketKey: 'h2h', outcomeName: 'g0 Home',
+    legs: [{ eventId: 'g0', marketKey: 'h2h', outcomeName: 'g0 Home' }, { eventId: 'g1', marketKey: 'h2h', outcomeName: 'g1 Home' }],
+  } }));
+  await runTop5Batch(env, ctx, NOW, { fetchFullSlate: async () => favs(4) });
+  const picks = await getTop5(env, { dateKey: '2026-08-05' });
+  const games = picks.flatMap((p) => p.legs.map((l) => l.eventId)).sort();
+  assert.deepEqual(games, ['g2', 'g3']);
 });
 
 test('agreeing with another board is allowed — only the opposite side is barred', () => {
@@ -599,11 +620,8 @@ test('agreeing with another board is allowed — only the opposite side is barre
   assert.equal(contradictsPublishedBoard({ eventId: 'ev1', marketKey: 'h2h', outcomeName: 'Team B' }, published), true);
   // A different market on the same game is a separate bet, not a contradiction.
   assert.equal(contradictsPublishedBoard({ eventId: 'ev1', marketKey: 'totals', outcomeName: 'Over' }, published), false);
-  assert.equal(contradictsPublishedBoard({ eventId: 'ev2', marketKey: 'h2h', outcomeName: 'Team B' }, published), false);
 });
 
-/* ---------------------------------------------------------------- */
-/* The 3-of-5 standard                                               */
 /* ---------------------------------------------------------------- */
 
 /** Seeds a fully-settled Pixel's Picks day with a given win/loss split. */

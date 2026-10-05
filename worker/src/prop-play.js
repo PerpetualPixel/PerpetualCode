@@ -476,8 +476,10 @@ export async function runPropPlayDaily(env, ctx, now = Date.now(), { debug = fal
     const featured = new Set();
     const potd = potdRaw ? JSON.parse(potdRaw) : null;
     if (potd?.pick?.eventId) featured.add(potd.pick.eventId);
+    // A Pixel's Pick is a two-leg ticket whose id joins both legs' ids with
+    // '+' (worker/src/tracking.js's pickRecordFrom); both games are featured.
     for (const id of (top5ManifestRaw ? JSON.parse(top5ManifestRaw).pickIds ?? [] : [])) {
-      featured.add(id.split(':')[0]);
+      for (const part of String(id).split('+')) featured.add(part.split(':')[0]);
     }
     if (featured.size) {
       const before = qualified.length;

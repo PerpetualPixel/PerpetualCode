@@ -320,7 +320,13 @@ export async function ladderExclusions(env, dateKey, top5Picks = []) {
 
   const blockedEventIds = new Set();
   const potd = potdRaw ? JSON.parse(potdRaw) : null;
-  if (potd?.pick?.eventId) blockedEventIds.add(potd.pick.eventId);
+  // The Play of the Day and Pixel's Picks are two-leg tickets (docs/
+  // tickets.js): every leg's game is spoken for, and every leg is a side
+  // the ladder must not argue with.
+  const legsOf = (pick) => (pick?.type === 'combo' && Array.isArray(pick.legs) ? pick.legs : pick ? [pick] : []);
+  for (const leg of legsOf(potd?.pick)) {
+    if (leg?.eventId) blockedEventIds.add(leg.eventId);
+  }
   const prop = propRaw ? JSON.parse(propRaw) : null;
   for (const leg of prop?.legs ?? []) {
     if (leg.oddsEventId) blockedEventIds.add(leg.oddsEventId);
@@ -328,7 +334,7 @@ export async function ladderExclusions(env, dateKey, top5Picks = []) {
 
   return {
     blockedEventIds,
-    contradictable: [...(potd?.pick ? [potd.pick] : []), ...top5Picks],
+    contradictable: [...legsOf(potd?.pick), ...top5Picks.flatMap(legsOf)],
   };
 }
 
