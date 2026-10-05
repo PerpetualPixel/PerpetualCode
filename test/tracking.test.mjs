@@ -158,6 +158,9 @@ function makeFav(id, { hoursOut = 2, favoritePrice = -320, dogPrice = 255, outli
   };
 }
 const favs = (n, opts = {}) => Array.from({ length: n }, (_, i) => makeFav(`g${i}`, opts));
+const finalScore = (id, homeScore, awayScore) => ({
+  id, completed: true, scores: [{ name: `${id} Home`, score: String(homeScore) }, { name: `${id} Away`, score: String(awayScore) }],
+});
 const tennisFav = (id, opts = {}) => makeFav(id, { sport: 'tennis_atp_canadian_open', sportTitle: 'ATP Canadian Open', ...opts });
 
 /* ---------------------------------------------------------------- */
@@ -197,14 +200,90 @@ test('runTop5Batch posts anchor + partner tickets: two legs from two games, -200
   }
 });
 
-test('a lone qualifying leg is not a ticket — the board posts nothing rather than a single', async () => {
+test('a lone -260 leg is neither a ticket nor a straight play — heavier than the band, it posts nothing', async () => {
   const { env } = makeKvStore();
   const result = await runTop5Batch(env, ctx, NOW, { fetchFullSlate: async () => [makeFav('solo')] });
   assert.equal(result.skipped, false);
   assert.equal(result.count, 0);
 });
 
-test('the boards draw from NFL, NCAA football, MMA and tennis only', async () => {
+test('a favourite standing inside the band on its own fills a slot as a straight play when no ticket takes it', async () => {
+  const { env } = makeKvStore();
+  // -160/+140 with one book at -125: 1.8x, read 60% by the market, +8% EV —
+  // the -146 moneyline on the winning slips. Nothing pairs with it inside
+  // the band (1.8 x anything favourite-side lands past +100), so it posts
+  // as the straight play it is, beside the ticket the two chalks make.
+  const events = [makeFav('g0'), makeFav('g1'), makeFav('light', { favoritePrice: -160, dogPrice: 140, outlier: 35 })];
+  const result = await runTop5Batch(env, ctx, NOW, { fetchFullSlate: async () => events });
+  assert.equal(result.count, 2);
+  const picks = await getTop5(env, { dateKey: '2026-08-05' });
+  const single = picks.find((p) => p.type !== 'combo');
+  assert.ok(single, 'a straight play posted');
+  assert.equal(single.eventId, 'light');
+  assert.equal(single.american, -125);
+  assert.equal(single.legs, undefined, 'a straight play is stored in the single-pick shape');
+  assert.match(single.singleReason, /^Straight play: .* -125 stands inside the band/);
+  assert.ok(single.clv, 'a moneyline single tracks its closing line');
+  assert.equal(single.meetsStandard, true);
+});
+
+const wnbaProp = (id, playerName, { eventId = 'w1', statKey = 'points', american = -320, decimal = 1.3125, prob = 0.81, need = 12, point = 11.5, hoursOut = 2 } = {}) => ({
+  id: `${eventId}:player_${statKey}_alternate:${playerName.toLowerCase()}:${point}:Over`, kind: 'prop', eventId,
+  sportKey: 'basketball_wnba', sportTitle: 'WNBA', commenceMs: NOW + hoursOut * 3.6e6, home: `${eventId} Home`, away: `${eventId} Away`,
+  marketKey: `player_${statKey}_alternate`, marketLabel: `${statKey} (alt)`, statKey, playerName,
+  outcomeName: 'Over', point, need, selection: `${playerName} ${need}+ ${statKey}`, american, decimal, book: 'DraftKings',
+  bookKey: 'draftkings', bettable: true, consensusProb: prob, ev: Math.round((prob * decimal - 1) * 1e4) / 1e4, score: 88, espnEventId: '7' + id.length,
+  profile: { games: 20, season: 0.9, l10: 0.9, l5: 1, streak: 6, avgSeason: 18.4, avgL5: 19.2 }, edge: 0.05,
+});
+
+test("two WNBA players' props from one game post as a same game parlay", async () => {
+  const { env } = makeKvStore();
+  const astier = wnbaProp('a', 'Pauline Astier', { statKey: 'rebounds', american: -500, decimal: 1.2, prob: 0.87, need: 2, point: 1.5 });
+  const ionescu = wnbaProp('b', 'Sabrina Ionescu');
+  // No slate game at all: the prop legs arrive from the dispatcher alone.
+  const result = await runTop5Batch(env, ctx, NOW, {
+    fetchFullSlate: async () => [],
+    fetchPropLegs: async () => [astier, ionescu],
+  });
+  assert.equal(result.count, 1);
+  const [pick] = await getTop5(env, { dateKey: '2026-08-05' });
+  assert.equal(pick.type, 'combo');
+  assert.equal(pick.sameGame, true);
+  assert.equal(pick.american, -174);
+  assert.deepEqual(pick.legs.map((l) => l.playerName), ['Pauline Astier', 'Sabrina Ionescu']);
+  assert.ok(pick.legs.every((l) => l.sportKey === 'basketball_wnba' && l.kind === 'prop'));
+  assert.match(pick.pairReason, /^Same game parlay\./);
+});
+
+test('a light alternate line posts as a straight player-prop play, settles off the boxscore and sits out CLV', async () => {
+  const { env } = makeKvStore();
+  // 10+ alt rushing yards at -132: a partner-grade read, no anchor to pair with.
+  const stroud = {
+    ...wnbaProp('s', 'C.J. Stroud', { eventId: 'g1', statKey: 'rushYds', american: -132, decimal: 1.758, prob: 0.62, need: 10, point: 9.5 }),
+    sportKey: 'americanfootball_nfl', sportTitle: 'NFL', marketKey: 'player_rush_yds_alternate', marketLabel: 'Rushing Yards (alt)',
+  };
+  const result = await runTop5Batch(env, ctx, NOW, {
+    fetchFullSlate: async () => [makeFav('g1', { outlier: 0 })],
+    fetchPropLegs: async () => [stroud],
+  });
+  assert.equal(result.count, 1);
+  const [pick] = await getTop5(env, { dateKey: '2026-08-05' });
+  assert.equal(pick.type, undefined);
+  assert.equal(pick.kind, 'prop');
+  assert.equal(pick.playerName, 'C.J. Stroud');
+  assert.equal(pick.need, 10);
+  assert.equal(pick.statKey, 'rushYds');
+  assert.equal(pick.american, -132);
+  assert.equal(pick.clv, null, 'an alternate line has no closing line in the featured feed');
+  assert.equal(pick.profile.games, 20);
+  // The grading pass reads the boxscore through the stats reader; with ESPN
+  // unreachable the play stays pending rather than grading off a score.
+  const graded = await runGrading(env, ctx, NOW + 6 * 3.6e6, { fetchScoresFn: async () => ({ events: [finalScore('g1', 27, 10)] }) });
+  assert.equal(graded.graded, 0);
+  assert.equal((await getTop5(env, { dateKey: '2026-08-05' }))[0].status, 'pending');
+});
+
+test('game legs come from NFL, NCAA football, MMA and tennis; a basketball moneyline is never a leg', async () => {
   const { env } = makeKvStore();
   const events = [
     ...favs(4, { sport: 'baseball_mlb', sportTitle: 'MLB' }),
@@ -454,10 +533,6 @@ test('runClvSnapshot leaves tickets alone — a parlay has no single closing lin
 /* ---------------------------------------------------------------- */
 /* runGrading                                                         */
 /* ---------------------------------------------------------------- */
-
-const finalScore = (id, homeScore, awayScore) => ({
-  id, completed: true, scores: [{ name: `${id} Home`, score: String(homeScore) }, { name: `${id} Away`, score: String(awayScore) }],
-});
 
 test('runGrading settles a ticket leg by leg: both favourites win, the ticket wins at its combined price', async () => {
   const { env } = makeKvStore();

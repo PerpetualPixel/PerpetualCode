@@ -11,9 +11,14 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import {
   buildTickets,
+  buildBoard,
   legEligible,
+  legsConflict,
+  singleEligible,
   isAnchorLeg,
   isTicketSport,
+  isGameLegSport,
+  isPropLegSport,
   ticketPrice,
   ticketProb,
   TICKET_BAND,
@@ -27,19 +32,31 @@ const leg = (id, decimal, prob, extra = {}) => ({
   ...extra,
 });
 
-test('the sports are the ones the direction named: NFL, NCAA football, MMA, tennis', () => {
+test('game legs come from NFL, NCAA football, MMA and tennis; prop legs from NFL, WNBA and NBA', () => {
   for (const key of ['americanfootball_nfl', 'americanfootball_ncaaf', 'mma_mixed_martial_arts', 'tennis_atp_canadian_open', 'tennis_wta_us_open', 'tennis_atp_challenger_tour']) {
+    assert.equal(isGameLegSport(key), true, key);
     assert.equal(isTicketSport(key), true, key);
   }
-  for (const key of ['baseball_mlb', 'basketball_nba', 'basketball_wnba', 'icehockey_nhl', 'soccer_usa_mls', undefined]) {
+  for (const key of ['basketball_wnba', 'basketball_nba']) {
+    assert.equal(isPropLegSport(key), true, key);
+    assert.equal(isGameLegSport(key), false, `${key} supplies props, not moneylines`);
+    assert.equal(isTicketSport(key), true, key);
+  }
+  assert.equal(isPropLegSport('americanfootball_nfl'), true);
+  for (const key of ['baseball_mlb', 'icehockey_nhl', 'soccer_usa_mls', undefined]) {
     assert.equal(isTicketSport(key), false, String(key));
   }
+  // A basketball moneyline is never a leg; a basketball prop is.
+  const gates = { minEv: 0.02, minKelly: 0.005, minScore: 50 };
+  assert.equal(legEligible(leg('w', 1.35, 0.78, { sportKey: 'basketball_wnba' }), gates), false);
+  assert.equal(legEligible(leg('w', 1.3125, 0.81, { sportKey: 'basketball_wnba', kind: 'prop' }), gates), true);
 });
 
-test('an anchor is a gated prop line or a side the market reads at 72%+', () => {
+test('an anchor is any leg read at 72%+ — by the market or by the game log; a light prop line is not one', () => {
   assert.equal(isAnchorLeg(leg('a', 1.3, ANCHOR_MIN_PROB)), true);
   assert.equal(isAnchorLeg(leg('a', 1.5, 0.65)), false);
-  assert.equal(isAnchorLeg(leg('p', 1.25, 0.6, { kind: 'prop' })), true, 'a prop leg earned its place through the hit-rate gates');
+  assert.equal(isAnchorLeg(leg('p', 1.2, 0.87, { kind: 'prop' })), true, 'a -500 line the player clears every night');
+  assert.equal(isAnchorLeg(leg('p', 1.758, 0.62, { kind: 'prop' })), false, 'a -132 alternate is a partner or a straight play, never the anchor');
 });
 
 test('a leg must be a ticket sport, bettable, in a game market, with a real edge and a favourite-side read', () => {
@@ -54,8 +71,9 @@ test('a leg must be a ticket sport, bettable, in a game market, with a real edge
   // Totals need the stricter read.
   assert.equal(legEligible(leg('t', 1.6, 0.66, { marketKey: 'totals', outcomeName: 'Over' }), gates), true);
   assert.equal(legEligible(leg('t', 1.75, 0.6, { marketKey: 'totals', outcomeName: 'Over' }), gates), false);
-  // A prop leg passes on its sport and bettability alone — it was gated where it was built.
+  // A prop leg passes on its sport, bettability and a favourite-side read — it was gated where it was built.
   assert.equal(legEligible(leg('p', 1.25, 0.86, { kind: 'prop', ev: 0, score: 0 }), gates), true);
+  assert.equal(legEligible(leg('p', 1.95, 0.52, { kind: 'prop' }), gates), false, 'a coin-flip prop is not a leg either');
 });
 
 test('a ticket is two legs from two games, anchor first, priced inside -200..+100, both more likely than not to land', () => {
@@ -83,12 +101,74 @@ test('tickets are ranked by expected value and never share a game or a leg', () 
   assert.equal(new Set(events).size, events.length);
 });
 
-test('two legs that would argue, or two from one game, are never a ticket', () => {
+test('two legs that would argue, or two game legs from one game, are never a ticket', () => {
   // Same game, same market, opposite sides — and the same game, different markets.
   const a = leg('A', 1.3, 0.8, { eventId: 'g-1' });
   const bOther = leg('B', 1.4, 0.74, { eventId: 'g-1', outcomeName: 'B' });
   const total = leg('T', 1.4, 0.74, { eventId: 'g-1', marketKey: 'totals', outcomeName: 'Over' });
   assert.deepEqual(buildTickets([a, bOther, total], { count: 1 }), []);
+  assert.equal(legsConflict(a, total), true);
+  assert.equal(legsConflict(a, leg('C', 1.4, 0.74, { eventId: 'g-2' })), false);
+});
+
+const prop = (id, decimal, prob, playerName, eventId, extra = {}) => leg(id, decimal, prob, {
+  kind: 'prop', eventId, playerName, statKey: 'points', marketKey: 'player_points_alternate', outcomeName: 'Over',
+  sportKey: 'basketball_wnba', selection: `${playerName} 12+ Pts`,
+  profile: { games: 20, season: 0.9, l10: 0.9, l5: 1 }, ...extra,
+});
+
+test("two players' props from one game pair as a same-game parlay; one player's two stats, or a prop with its own game's side, never do", () => {
+  // The slip: 2+ rebounds at -500 with 12+ points at -320, one game, -174 together.
+  const astier = prop('astier-reb', 1.2, 0.87, 'Pauline Astier', 'g-1', { statKey: 'rebounds', selection: 'Pauline Astier 2+ Reb' });
+  const ionescu = prop('ionescu-pts', 1.3125, 0.81, 'Sabrina Ionescu', 'g-1');
+  assert.equal(legsConflict(astier, ionescu), false);
+  const [ticket] = buildTickets([astier, ionescu], { count: 1 });
+  assert.ok(ticket);
+  assert.equal(ticket.sameGame, true);
+  assert.equal(ticket.american, -174);
+  assert.match(ticket.pairReason, /^Same game parlay\. Anchor: Pauline Astier 2\+ Reb/);
+  assert.deepEqual(ticket.legs.map((l) => l.id), ['astier-reb', 'ionescu-pts'], 'the heavier read anchors');
+
+  const ionescuAst = prop('ionescu-ast', 1.25, 0.84, 'Sabrina Ionescu', 'g-1', { statKey: 'assists' });
+  assert.equal(legsConflict(ionescu, ionescuAst), true, 'one player twice moves together');
+  assert.equal(legsConflict(ionescu, leg('liberty', 1.3, 0.8, { eventId: 'g-1' })), true, 'a prop and its own game\'s side move together');
+  assert.deepEqual(buildTickets([ionescu, ionescuAst], { count: 1 }), []);
+  assert.deepEqual(buildTickets([ionescu, leg('liberty', 1.3, 0.8, { eventId: 'g-1' })], { count: 1 }), []);
+  // Accents and punctuation don't make two players of one.
+  assert.equal(legsConflict(ionescu, prop('x', 1.25, 0.84, 'Sabrina IONESCU', 'g-1', { statKey: 'assists' })), true);
+});
+
+test('a straight play stands inside the band on its own, with a favourite-side read and an edge', () => {
+  assert.equal(singleEligible(leg('ml', 1.685, 0.62)), true, '-146 moneyline');
+  assert.equal(singleEligible(prop('stroud', 1.758, 0.62, 'C.J. Stroud', 'g-9')), true, '10+ alt rushing yards at -132');
+  assert.equal(singleEligible(leg('chalk', 1.3, 0.8)), false, '-333 is heavier than the band');
+  assert.equal(singleEligible(leg('dog', 2.2, 0.5)), false, 'past +100');
+  assert.equal(singleEligible(leg('flip', 1.9, 0.53)), false, 'a coin flip');
+  assert.equal(singleEligible(leg('noedge', 1.6, 0.6), { minEv: 0.02 }), false, '1.6 x .6 = 0.96 — the price beats the read');
+});
+
+test('buildBoard fills the slots tickets leave with straight plays, never sharing a game, tickets first', () => {
+  const anchor = leg('A', 1.25, 0.82);
+  const partner = leg('B', 1.45, 0.72);
+  // Three legs that pair with nothing (each would price past +100 with any partner) but stand alone.
+  const s1 = leg('S1', 1.8, 0.6);
+  const s2 = leg('S2', 1.7, 0.62);
+  const s3 = leg('S3', 1.9, 0.56);
+  const board = buildBoard([anchor, partner, s1, s2, s3], { count: 3 });
+  assert.equal(board.length, 3);
+  assert.equal(board[0].type, 'combo');
+  assert.deepEqual(board.slice(1).map((p) => p.type), ['single', 'single']);
+  // Singles ranked by EV: S1 (1.8 x .6 = +8%) over S2 (1.7 x .62 = +5.4%) over S3 (+6.4%)... S3 beats S2.
+  assert.deepEqual(board.slice(1).map((p) => p.id), ['S1', 'S3']);
+  assert.deepEqual(board[1].legs.map((l) => l.id), ['S1'], 'a single carries itself as its one leg');
+  assert.match(board[1].singleReason, /^Straight play: S1 ML reads 60% by the market; -125 stands inside the band/);
+  const events = board.flatMap((p) => p.legs.map((l) => l.eventId));
+  assert.equal(new Set(events).size, events.length);
+  // A full board of tickets takes no singles at all.
+  assert.equal(buildBoard([anchor, partner, s1], { count: 1 }).length, 1);
+  assert.equal(buildBoard([anchor, partner, s1], { count: 1 })[0].type, 'combo');
+  // A single is never a game the day already used.
+  assert.deepEqual(buildBoard([s1, s2], { count: 2, usedEventIds: new Set(['g-S1']) }).map((p) => p.id), ['S2']);
 });
 
 test('a pair outside the band, or without an anchor, or not both-likely, is not a ticket', () => {
