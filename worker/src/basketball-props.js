@@ -1,5 +1,5 @@
 /**
- * WNBA and NBA alternate-line player props as ticket legs (docs/tickets.js)
+ * NBA alternate-line player props as ticket legs (docs/tickets.js)
  * — the shape of the winning slips this design was handed: "Allisha Gray
  * 2+ assists" at -320, "Tiffany Hayes 5+ points" at -500, "Sabrina Ionescu
  * 12+ points" — deep comfort-zone lines checked against the player's real
@@ -10,7 +10,7 @@
  * and boxscore shape.
  *
  * Cost: one per-event odds call per game (3 markets x 1 region) at the 2am
- * draw, bounded by MAX_GAMES_SCANNED per league; ESPN calls are free.
+ * draw, bounded by MAX_GAMES_SCANNED; ESPN calls are free.
  */
 
 import { bookIdFor } from '../../docs/engine.js';
@@ -21,12 +21,16 @@ import {
   propLegFrom as sharedPropLegFrom,
   clearsPropGates as sharedClearsPropGates,
   gradePropLeg,
+  seasonColumnValues,
 } from '../../docs/prop-legs.js';
 import { UPSTREAM, REGIONS } from './odds.js';
 
-/** The two leagues, with ESPN's path for each. */
+/**
+ * The league, with ESPN's path. The WNBA was here for a fortnight (its
+ * alternate lines were the shape of the winning slips) and left with the
+ * 2026-10-19 narrowing to four leagues; its season had ended regardless.
+ */
 export const BASKETBALL_SPORTS = {
-  basketball_wnba: { espn: 'wnba', title: 'WNBA' },
   basketball_nba: { espn: 'nba', title: 'NBA' },
 };
 export const isBasketballSport = (sportKey) => Boolean(BASKETBALL_SPORTS[sportKey]);
@@ -78,31 +82,17 @@ const GAMELOG_LABEL = { points: 'PTS', rebounds: 'REB', assists: 'AST' };
 const GAMELOG_NAMES = { points: ['points'], rebounds: ['rebounds', 'totalRebounds'], assists: ['assists'] };
 
 /**
- * The player's per-game values for one stat, most recent first. ESPN's
- * basketball game log carries one PTS/REB/AST column each, so the short
- * label is unambiguous; the camelCase key is still read first.
+ * The player's per-game values for one stat, most recent first, current
+ * season only (docs/prop-legs.js's currentSeasonBlocks). ESPN's basketball
+ * game log carries one PTS/REB/AST column each, so the short label is
+ * unambiguous; the camelCase key is still read first.
  */
 export function parseBasketballGamelogValues(gamelog, statKey) {
   const names = Array.isArray(gamelog?.names) ? gamelog.names : [];
   const labels = Array.isArray(gamelog?.labels) ? gamelog.labels : [];
   let idx = names.findIndex((n) => GAMELOG_NAMES[statKey]?.includes(n));
   if (idx < 0) idx = labels.indexOf(GAMELOG_LABEL[statKey]);
-  if (idx < 0) return [];
-  const eventMeta = gamelog?.events ?? {};
-  const rows = [];
-  for (const seasonType of gamelog?.seasonTypes ?? []) {
-    if (/preseason/i.test(String(seasonType?.displayName ?? ''))) continue;
-    for (const category of seasonType?.categories ?? []) {
-      for (const event of category?.events ?? []) {
-        const value = Number(event?.stats?.[idx]);
-        if (!Number.isFinite(value)) continue;
-        const meta = eventMeta[event.eventId] ?? {};
-        rows.push({ value, date: Date.parse(meta.gameDate ?? '') || 0 });
-      }
-    }
-  }
-  rows.sort((x, y) => y.date - x.date);
-  return rows.map((r) => r.value);
+  return seasonColumnValues(gamelog, idx);
 }
 
 /**
@@ -261,16 +251,3 @@ export async function collectBasketballPropLegs(games, env, ctx, now = Date.now(
   return legs;
 }
 
-/**
- * The league's upcoming games from the Odds API's (credit-free) events
- * list, as the same event objects the slate carries — for a prop league
- * the Full Slate doesn't fetch. Null-safe: an outage lists nothing.
- */
-export async function listBasketballGames(sportKey, env, ctx) {
-  if (!BASKETBALL_SPORTS[sportKey]) return [];
-  const url = new URL(`${UPSTREAM}/sports/${sportKey}/events`);
-  url.searchParams.set('apiKey', (env.ODDS_API_KEY ?? '').trim());
-  url.searchParams.set('dateFormat', 'iso');
-  const list = await cachedJson(url.toString(), ODDS_TTL, ctx);
-  return Array.isArray(list) ? list.filter((g) => g?.id && g?.commence_time) : [];
-}

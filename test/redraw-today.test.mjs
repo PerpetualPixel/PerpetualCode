@@ -122,7 +122,7 @@ test('redraw clears all four boards once past the generation hour', async () => 
   assert.equal(body.cleared.top5, 5, 'all five Pixel\'s Picks records dropped');
   assert.equal(body.cleared.potd, true);
   assert.equal(body.cleared.propPlay, true);
-  // The Ladder posts per NFL kickoff window on its own schedule (worker/src/
+  // The Ladder posts one props rung a day on its own schedule (worker/src/
   // ladder.js) and a riding rung has the whole bankroll on it — never part
   // of the daily redraw.
   assert.equal(body.cleared.ladder, false);

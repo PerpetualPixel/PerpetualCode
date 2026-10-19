@@ -29,7 +29,7 @@
  * single, server-side, always-on history that doesn't depend on anyone
  * having the app open.
  */
-import { analyze, clearsMaxJuice, isNflPreseason, isNflPreseasonKey, UNIT_DOLLARS, STAKE_BANDS, stakeUnitsForScore } from '../../docs/engine.js';
+import { analyze, clearsMaxJuice, isNflPreseason, UNIT_DOLLARS, STAKE_BANDS, stakeUnitsForScore } from '../../docs/engine.js';
 import { buildBoard, legEligible, isTicketSport } from '../../docs/tickets.js';
 import { collectPropLegs, PROP_SPORT_KEYS } from './prop-legs.js';
 import { gradeTicket, gradePropSingle, legsOf, propStatsReader } from './ticket-grading.js';
@@ -38,7 +38,7 @@ import { isPower4Matchup } from '../../docs/ncaaf-conferences.js';
 import { gradePick } from '../../docs/learning.js';
 import { isMma, isTennis } from '../../docs/insights.js';
 import { CONFIG } from '../../docs/config.js';
-import { fetchSport, fetchScores, fetchCatalogue, UPSTREAM, REGIONS, DEFAULT_CACHE_SECONDS } from './odds.js';
+import { fetchSport, fetchScores, UPSTREAM, REGIONS, DEFAULT_CACHE_SECONDS } from './odds.js';
 import { getAlgoConfig, getPausedSegments, isSegmentPaused } from './algo-health.js';
 import { getLearningProfile, applyLearningToCandidates } from './daily-learning.js';
 import { fetchMmaResults, gradeMmaPickWithFallback } from './ufc-events.js';
@@ -164,14 +164,19 @@ const KV_TTL_SECONDS = 86400 * 90; // 90 days — long enough for weeks of calib
 // its pick locked in must not be pickable a second time under a new date.
 const EVENT_DEDUPE_LOOKBACK_DAYS = 2;
 
+/**
+ * The four leagues the site covers (2026-10-19 direction): NFL, NHL, MMA
+ * and the NBA. MLB, NCAA football, the WNBA, MLS and the tennis tours came
+ * off with that narrowing — the record had tennis at -14% across both
+ * curated boards and NCAA football at 1-5, and the direction wants the
+ * site built on player props and current-season statistics, which only
+ * these four supply.
+ */
 const FIXED_SPORT_KEYS = [
-  'baseball_mlb',
   'americanfootball_nfl',
-  'americanfootball_ncaaf',
-  'basketball_wnba',
-  'mma_mixed_martial_arts',
-  'soccer_usa_mls',
   'icehockey_nhl',
+  'mma_mixed_martial_arts',
+  'basketball_nba',
 ];
 
 
@@ -364,71 +369,8 @@ export function scheduleStillOpen(events, dateKey, now) {
  * Pixel's Picks (runTop5Batch, below) and Play of the Day (potd.js) by
  * isNflPreseason — see that helper's own comment for why.
  */
-async function fullSlateSportKeys(env, ctx) {
-  const { sports } = await fetchCatalogue(env, ctx);
-  const keys = (sports ?? []).map((s) => s.key);
-  const tennisKeys = keys.filter((k) => k.startsWith('tennis_atp_') || k.startsWith('tennis_wta_'));
-  const preseasonKeys = keys.filter(isNflPreseasonKey);
-  return [...FIXED_SPORT_KEYS, ...tennisKeys, ...preseasonKeys];
-}
-
-// MLS's low-variance alternative markets (docs/soccer-markets.js) — not
-// part of the shared MARKETS constant every other sport's featured pull
-// uses, since requesting them for every sport would spend credits on
-// markets no other sport prices. A second, small featured-endpoint call
-// scoped to MLS alone (2 markets x 1 region = 2 credits), merged onto the
-// matching MLS events by book before analyze() ever sees them — so BTTS/
-// double-chance flow through the exact same generic candidate-building and
-// selection pipeline every other market already does, no special-casing
-// needed downstream. fetchFullSlateEvents only runs ~1-2x/day in practice
-// (see its callers), so this stays negligible.
-const MLS_EXTRA_MARKETS = 'btts,double_chance';
-
-async function fetchMlsExtraMarkets(env, ctx) {
-  const ttl = Number(env.CACHE_SECONDS ?? DEFAULT_CACHE_SECONDS);
-  const cacheKey = new Request(`https://pixel-pick.cache/odds/soccer_usa_mls?markets=${MLS_EXTRA_MARKETS}&regions=${REGIONS}`);
-  const cache = caches.default;
-
-  const cached = await cache.match(cacheKey);
-  if (cached) return cached.json();
-
-  const url = new URL(`${UPSTREAM}/sports/soccer_usa_mls/odds`);
-  url.searchParams.set('apiKey', (env.ODDS_API_KEY ?? '').trim());
-  url.searchParams.set('regions', REGIONS);
-  url.searchParams.set('markets', MLS_EXTRA_MARKETS);
-  url.searchParams.set('oddsFormat', 'american');
-  url.searchParams.set('dateFormat', 'iso');
-
-  try {
-    const upstream = await fetch(url.toString());
-    if (!upstream.ok) return [];
-    const body = await upstream.text();
-    ctx.waitUntil(cache.put(cacheKey, new Response(body, {
-      headers: { 'Content-Type': 'application/json', 'Cache-Control': `max-age=${ttl}` },
-    })));
-    return JSON.parse(body);
-  } catch {
-    return [];
-  }
-}
-
-/** Merges each MLS event's extra-market bookmaker entries into the matching base event, by book key, appending rather than replacing that book's existing markets. */
-function mergeExtraMarkets(baseEvents, extraEvents) {
-  const extraById = new Map(extraEvents.map((e) => [e.id, e]));
-  for (const event of baseEvents) {
-    const extra = extraById.get(event.id);
-    if (!extra) continue;
-    for (const extraBook of extra.bookmakers ?? []) {
-      let book = event.bookmakers?.find((b) => b.key === extraBook.key);
-      if (!book) {
-        book = { key: extraBook.key, title: extraBook.title, last_update: extraBook.last_update, markets: [] };
-        event.bookmakers = event.bookmakers ?? [];
-        event.bookmakers.push(book);
-      }
-      book.markets.push(...(extraBook.markets ?? []));
-    }
-  }
-  return baseEvents;
+async function fullSlateSportKeys() {
+  return [...FIXED_SPORT_KEYS];
 }
 
 /** Every event across the full slate, merged — sports that failed to fetch just contribute nothing rather than failing the whole batch. */
@@ -438,9 +380,6 @@ export async function fetchFullSlateEvents(env, ctx) {
   const events = [];
   for (const r of results) {
     if (r.events) events.push(...r.events);
-  }
-  if (keys.includes('soccer_usa_mls')) {
-    mergeExtraMarkets(events, await fetchMlsExtraMarkets(env, ctx));
   }
   // Collapse co-sanctioned / renamed tennis listings (Canadian Open ==
   // National Bank Open == ATP Montreal) to one event apiece. The existing

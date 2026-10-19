@@ -32,24 +32,23 @@ const leg = (id, decimal, prob, extra = {}) => ({
   ...extra,
 });
 
-test('game legs come from NFL, NCAA football, MMA and tennis; prop legs from NFL, WNBA and NBA', () => {
-  for (const key of ['americanfootball_nfl', 'americanfootball_ncaaf', 'mma_mixed_martial_arts', 'tennis_atp_canadian_open', 'tennis_wta_us_open', 'tennis_atp_challenger_tour']) {
+test('game legs come from NFL, NHL and MMA; prop legs from NFL, NBA and NHL; nothing else reaches the boards', () => {
+  for (const key of ['americanfootball_nfl', 'icehockey_nhl', 'mma_mixed_martial_arts']) {
     assert.equal(isGameLegSport(key), true, key);
     assert.equal(isTicketSport(key), true, key);
   }
-  for (const key of ['basketball_wnba', 'basketball_nba']) {
+  for (const key of ['americanfootball_nfl', 'basketball_nba', 'icehockey_nhl']) {
     assert.equal(isPropLegSport(key), true, key);
-    assert.equal(isGameLegSport(key), false, `${key} supplies props, not moneylines`);
-    assert.equal(isTicketSport(key), true, key);
   }
-  assert.equal(isPropLegSport('americanfootball_nfl'), true);
-  for (const key of ['baseball_mlb', 'icehockey_nhl', 'soccer_usa_mls', undefined]) {
+  assert.equal(isGameLegSport('basketball_nba'), false, 'the NBA supplies props, not moneylines');
+  assert.equal(isTicketSport('basketball_nba'), true);
+  for (const key of ['baseball_mlb', 'americanfootball_ncaaf', 'basketball_wnba', 'soccer_usa_mls', 'tennis_atp_canadian_open', 'tennis_wta_us_open', undefined]) {
     assert.equal(isTicketSport(key), false, String(key));
   }
   // A basketball moneyline is never a leg; a basketball prop is.
   const gates = { minEv: 0.02, minKelly: 0.005, minScore: 50 };
-  assert.equal(legEligible(leg('w', 1.35, 0.78, { sportKey: 'basketball_wnba' }), gates), false);
-  assert.equal(legEligible(leg('w', 1.3125, 0.81, { sportKey: 'basketball_wnba', kind: 'prop' }), gates), true);
+  assert.equal(legEligible(leg('w', 1.35, 0.78, { sportKey: 'basketball_nba' }), gates), false);
+  assert.equal(legEligible(leg('w', 1.3125, 0.81, { sportKey: 'basketball_nba', kind: 'prop' }), gates), true);
 });
 
 test('an anchor is any leg read at 72%+ — by the market or by the game log; a light prop line is not one', () => {
@@ -90,12 +89,12 @@ test('a ticket is two legs from two games, anchor first, priced inside -200..+10
 });
 
 test('tickets are ranked by expected value and never share a game or a leg', () => {
-  // A+C: 2.0 at 54% -> +8.2% EV. B+D: 1.82 at 59% -> +7.7%. A+B would pay
-  // 1.75 at 61% for +6.3%, so the builder prefers the two richer pairs.
+  // C+D: 2.08 at 53% -> +9.8% EV. A+B: 1.75 at 61% -> +6.3%. A+C would pay
+  // 2.0 at 54% for +8.2%, but it shares C with the richer pair.
   const legs = [leg('A', 1.25, 0.82), leg('B', 1.4, 0.74), leg('C', 1.6, 0.66), leg('D', 1.3, 0.8)];
   const tickets = buildTickets(legs, { count: 3 });
   assert.equal(tickets.length, 2, 'four legs make at most two disjoint tickets');
-  assert.deepEqual(tickets.map((t) => t.legs.map((l) => l.id).sort().join('+')), ['A+C', 'B+D']);
+  assert.deepEqual(tickets.map((t) => t.legs.map((l) => l.id).sort().join('+')), ['C+D', 'A+B']);
   assert.ok(tickets[0].ev >= tickets[1].ev, 'best ticket first');
   const events = tickets.flatMap((t) => t.legs.map((l) => l.eventId));
   assert.equal(new Set(events).size, events.length);
@@ -118,14 +117,16 @@ const prop = (id, decimal, prob, playerName, eventId, extra = {}) => leg(id, dec
 });
 
 test("two players' props from one game pair as a same-game parlay; one player's two stats, or a prop with its own game's side, never do", () => {
-  // The slip: 2+ rebounds at -500 with 12+ points at -320, one game, -174 together.
-  const astier = prop('astier-reb', 1.2, 0.87, 'Pauline Astier', 'g-1', { statKey: 'rebounds', selection: 'Pauline Astier 2+ Reb' });
+  // The slip's shape: 2+ rebounds at -350 with 12+ points at -320, one game, -146 together.
+  const astier = prop('astier-reb', 1.2857, 0.87, 'Pauline Astier', 'g-1', { statKey: 'rebounds', selection: 'Pauline Astier 2+ Reb' });
   const ionescu = prop('ionescu-pts', 1.3125, 0.81, 'Sabrina Ionescu', 'g-1');
   assert.equal(legsConflict(astier, ionescu), false);
   const [ticket] = buildTickets([astier, ionescu], { count: 1 });
   assert.ok(ticket);
   assert.equal(ticket.sameGame, true);
-  assert.equal(ticket.american, -174);
+  assert.equal(ticket.american, -145);
+  // A -500 leg can't reach the band's -150 floor with any partner, so it never pairs.
+  assert.deepEqual(buildTickets([prop('deep', 1.2, 0.9, 'Deep Line', 'g-1', { statKey: 'rebounds' }), ionescu], { count: 1 }), []);
   assert.match(ticket.pairReason, /^Same game parlay\. Anchor: Pauline Astier 2\+ Reb/);
   assert.deepEqual(ticket.legs.map((l) => l.id), ['astier-reb', 'ionescu-pts'], 'the heavier read anchors');
 
@@ -144,22 +145,24 @@ test('a straight play stands inside the band on its own, with a favourite-side r
   assert.equal(singleEligible(leg('chalk', 1.3, 0.8)), false, '-333 is heavier than the band');
   assert.equal(singleEligible(leg('dog', 2.2, 0.5)), false, 'past +100');
   assert.equal(singleEligible(leg('flip', 1.9, 0.53)), false, 'a coin flip');
+  assert.equal(singleEligible(leg('lean', 1.8, 0.57)), false, 'a 57% read is not high conviction');
   assert.equal(singleEligible(leg('noedge', 1.6, 0.6), { minEv: 0.02 }), false, '1.6 x .6 = 0.96 — the price beats the read');
 });
 
 test('buildBoard fills the slots tickets leave with straight plays, never sharing a game, tickets first', () => {
   const anchor = leg('A', 1.25, 0.82);
   const partner = leg('B', 1.45, 0.72);
-  // Three legs that pair with nothing (each would price past +100 with any partner) but stand alone.
+  // Three legs that pair with nothing (with the anchor, neither clears the
+  // joint-probability floor: .82 x .6 = 49%) but stand alone.
   const s1 = leg('S1', 1.8, 0.6);
-  const s2 = leg('S2', 1.7, 0.62);
-  const s3 = leg('S3', 1.9, 0.56);
+  const s2 = leg('S2', 1.72, 0.6);
+  const s3 = leg('S3', 1.9, 0.56); // a 56% read is not high conviction, so it never posts alone
   const board = buildBoard([anchor, partner, s1, s2, s3], { count: 3 });
   assert.equal(board.length, 3);
   assert.equal(board[0].type, 'combo');
   assert.deepEqual(board.slice(1).map((p) => p.type), ['single', 'single']);
-  // Singles ranked by EV: S1 (1.8 x .6 = +8%) over S2 (1.7 x .62 = +5.4%) over S3 (+6.4%)... S3 beats S2.
-  assert.deepEqual(board.slice(1).map((p) => p.id), ['S1', 'S3']);
+  // Singles ranked by EV: S1 (1.8 x .6 = +8%) over S2 (1.72 x .6 = +3.2%).
+  assert.deepEqual(board.slice(1).map((p) => p.id), ['S1', 'S2']);
   assert.deepEqual(board[1].legs.map((l) => l.id), ['S1'], 'a single carries itself as its one leg');
   assert.match(board[1].singleReason, /^Straight play: S1 ML reads 60% by the market; -125 stands inside the band/);
   const events = board.flatMap((p) => p.legs.map((l) => l.eventId));
@@ -169,6 +172,9 @@ test('buildBoard fills the slots tickets leave with straight plays, never sharin
   assert.equal(buildBoard([anchor, partner, s1], { count: 1 })[0].type, 'combo');
   // A single is never a game the day already used.
   assert.deepEqual(buildBoard([s1, s2], { count: 2, usedEventIds: new Set(['g-S1']) }).map((p) => p.id), ['S2']);
+  // A ticket pays no heavier than -150 and no lighter than +150.
+  assert.equal(TICKET_BAND.MIN_AMERICAN, -150);
+  assert.equal(TICKET_BAND.MAX_AMERICAN, 150);
 });
 
 test('a pair outside the band, or without an anchor, or not both-likely, is not a ticket', () => {

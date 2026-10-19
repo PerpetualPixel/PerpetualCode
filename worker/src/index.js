@@ -54,6 +54,7 @@ import { consumeQuota, getQuotaUsage } from './tail-fade-quota.js';
 import { runNhlPropsScan, runNhlPropsGrading, getAllNhlPropsTracked } from './nhl-props.js';
 import { runPotdDaily, runPotdClvSnapshot, runPotdGrading, backfillPotdAnalysis, getPotd, getPotdHold, getPotdLeaning, getPotdHistory, retractPotd, regradePotdTennisVoids, etParts } from './potd.js';
 import { runLadderDaily, runLadderGrading, getLadder, getLadderHistory } from './ladder.js';
+import { BUILD_INFO } from '../../docs/version.js';
 import { getOrGenerateAnalysis, getOrGeneratePropAnalysis } from './analysis.js';
 import { repairMissingPayouts } from './repair-payouts.js';
 import {
@@ -1719,6 +1720,17 @@ export default {
       }
     }
 
+    // Which build of the worker is serving. The site's About panel shows
+    // docs/version.js from GitHub Pages; this is the same file as bundled
+    // into the worker at `wrangler deploy` time, so the two disagreeing
+    // means the worker was deployed from a stale checkout — which is
+    // exactly what happened between 2026-09-15 and 2026-10-19, when six
+    // weeks of merged selection changes never ran in production. The
+    // tracking export snapshots this route beside the boards' histories.
+    if (pathname === '/version' && request.method === 'GET') {
+      return json({ ...BUILD_INFO, worker: env.CF_VERSION_METADATA?.id ?? null }, { headers: cors });
+    }
+
     if (pathname === '/algo-health' && request.method === 'GET') {
       try {
         const [config, paused, log] = await Promise.all([
@@ -2201,7 +2213,7 @@ export default {
         }
 
         // The Ladder is not part of the daily draw any more: it posts one
-        // NFL parlay per kickoff window on its own schedule (worker/src/
+        // props parlay a day on its own schedule (worker/src/
         // ladder.js), and a riding rung has the climb's whole bankroll on
         // it. It is never cleared or redrawn here.
         const cleared = {
@@ -2225,7 +2237,7 @@ export default {
         const potd = await runPotdDaily(env, ctx, now, { fetchFullSlate });
         const propPlay = await runPropPlayDaily(env, ctx, now);
         const top5 = await runTop5Batch(env, ctx, now, { fetchFullSlate });
-        const ladder = { skipped: true, reason: 'the Ladder posts per NFL kickoff window on its own schedule and is not part of the daily draw', dateKey };
+        const ladder = { skipped: true, reason: 'the Ladder posts one props rung a day on its own schedule and is not part of the daily draw', dateKey };
 
         return json({
           dateKey,

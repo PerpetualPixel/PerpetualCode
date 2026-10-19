@@ -1,5 +1,5 @@
 /**
- * WNBA/NBA alternate-line prop legs (worker/src/basketball-props.js) and
+ * NBA alternate-line prop legs (worker/src/basketball-props.js) and
  * the shared prop-leg maths (docs/prop-legs.js) — the pure halves: finding
  * lines in the -650..+100 band, reading a game log, gating on hit rate,
  * grading off the boxscore with a DNP voiding.
@@ -19,7 +19,7 @@ import { PROP_LEG_DECIMAL, needFor, propEdge, hitProfile } from '../docs/prop-le
 import { isAnchorLeg, legEligible, singleEligible } from '../docs/tickets.js';
 
 const NOW = Date.parse('2026-10-04T15:00:00Z');
-const game = { eventId: 'w1', sportKey: 'basketball_wnba', commenceMs: NOW + 3.6e6 * 4, home: 'New York Liberty', away: 'Connecticut Sun' };
+const game = { eventId: 'w1', sportKey: 'basketball_nba', commenceMs: NOW + 3.6e6 * 4, home: 'New York Liberty', away: 'Connecticut Sun' };
 
 const altOdds = (books) => ({
   bookmakers: books.map(([key, price]) => ({
@@ -47,7 +47,7 @@ test('the prop band runs -650 to +100: a -132 line is a candidate, +125 and -700
   const out = extractBasketballAltCandidates(altOdds([['draftkings', -320], ['fanduel', -300]]), game, { now: NOW });
   assert.deepEqual(out.map((c) => c.selection).sort(), ['Allisha Gray 2+ Ast', 'Pauline Astier 2+ Reb', 'Sabrina Ionescu 12+ Pts']);
   const ionescu = out.find((c) => c.playerName === 'Sabrina Ionescu');
-  assert.equal(ionescu.sportTitle, 'WNBA');
+  assert.equal(ionescu.sportTitle, 'NBA');
   assert.equal(ionescu.statKey, 'points');
   assert.equal(ionescu.need, 12);
   assert.equal(ionescu.american, -300, 'the best registry price');
@@ -138,7 +138,7 @@ test('boxscore rows carry points, rebounds and assists; a DNP has no row and voi
   assert.equal(gradeBasketballPropLeg({ statKey: 'rebounds', point: 2, need: 3 }, astier).void, true, 'landed exactly on an integer line');
 });
 
-test('both basketball leagues map to their ESPN paths', () => {
-  assert.deepEqual(Object.keys(BASKETBALL_SPORTS), ['basketball_wnba', 'basketball_nba']);
+test('the NBA maps to its ESPN path', () => {
+  assert.deepEqual(Object.keys(BASKETBALL_SPORTS), ['basketball_nba']);
   assert.equal(BASKETBALL_SPORTS.basketball_nba.espn, 'nba');
 });

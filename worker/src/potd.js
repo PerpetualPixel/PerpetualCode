@@ -595,7 +595,7 @@ export async function runPotdDaily(env, ctx, now = Date.now(), {
     const anyGame = structurallySound.length > 0;
     const legCount = gameLegs.length + propLegs.length;
     const reason = !anyGame
-      ? 'no gradeable NFL, NCAA football, MMA, tennis or basketball-prop game on the slate today'
+      ? 'no gradeable NFL, NHL, MMA or NBA game on the slate today'
       : legCount === 0
         ? `nothing on today's slate clears the edge floor (${(algoConfig.MIN_EV_PCT * 100).toFixed(1)}% EV against the no-vig consensus)`
         : `${legCount} leg${legCount === 1 ? '' : 's'} cleared the standard but none pairs inside ${formatAmerican(TICKET_BAND.MIN_AMERICAN)} to ${formatAmerican(TICKET_BAND.MAX_AMERICAN)} with both more likely than not to land, and none stands in that band alone`;

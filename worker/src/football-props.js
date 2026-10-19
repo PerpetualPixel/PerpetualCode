@@ -28,6 +28,7 @@ import {
   propLegFrom as sharedPropLegFrom,
   clearsPropGates as sharedClearsPropGates,
   gradePropLeg,
+  seasonColumnValues,
 } from '../../docs/prop-legs.js';
 import { UPSTREAM, REGIONS } from './odds.js';
 
@@ -116,29 +117,14 @@ export function gamelogStatIndex(gamelog, statKey) {
 }
 
 /**
- * The player's per-game values for one stat, most recent first, regular
- * season (and postseason) only — a preseason line says nothing about a
- * starter's workload. An unexpected payload yields [] and the candidate is
- * skipped, never guessed.
+ * The player's per-game values for one stat, most recent first, the
+ * CURRENT regular season (and its postseason) only — a preseason line says
+ * nothing about a starter's workload, and last season's games say nothing
+ * about this year's role (docs/prop-legs.js's currentSeasonBlocks). An
+ * unexpected payload yields [] and the candidate is skipped, never guessed.
  */
 export function parseNflGamelogValues(gamelog, statKey) {
-  const idx = gamelogStatIndex(gamelog, statKey);
-  if (idx < 0) return [];
-  const eventMeta = gamelog?.events ?? {};
-  const rows = [];
-  for (const seasonType of gamelog?.seasonTypes ?? []) {
-    if (/preseason/i.test(String(seasonType?.displayName ?? ''))) continue;
-    for (const category of seasonType?.categories ?? []) {
-      for (const event of category?.events ?? []) {
-        const value = Number(String(event?.stats?.[idx] ?? '').replace(/,/g, ''));
-        if (!Number.isFinite(value)) continue;
-        const meta = eventMeta[event.eventId] ?? {};
-        rows.push({ value, date: Date.parse(meta.gameDate ?? '') || 0 });
-      }
-    }
-  }
-  rows.sort((x, y) => y.date - x.date);
-  return rows.map((r) => r.value);
+  return seasonColumnValues(gamelog, gamelogStatIndex(gamelog, statKey));
 }
 
 /**

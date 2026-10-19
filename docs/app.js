@@ -1857,12 +1857,26 @@ function playKindLabel(record) {
   return record.kind === 'prop' ? 'Player prop' : 'Straight bet';
 }
 
-/** The game-log case a player-prop leg or play was chosen on, from its stored profile. */
+/**
+ * The game-log case a player-prop leg or play was chosen on, as the chip
+ * row every prop research tool shows: hit rate over the last five, the
+ * last ten and the season, the season average beside the line, and the
+ * final number once the game is in. One row, scannable, the same on every
+ * card.
+ */
 function propProfileHtml(leg) {
   if (leg?.kind !== 'prop' || !leg.profile) return '';
   const p = leg.profile;
-  const actual = leg.actual != null ? ` Final: ${esc(String(leg.actual))}.` : '';
-  return `<p class="leg-matchup">${esc(leg.playerName)} has cleared ${esc(String(leg.need))}+ in ${Math.round(p.season * 100)}% of ${p.games} games (${Math.round(p.l5 * 100)}% of the last 5), averaging ${esc(String(p.avgSeason))}.${actual}</p>`;
+  const pct = (v) => `${Math.round(v * 100)}%`;
+  const tone = (v) => (v >= 0.8 ? 'is-hot' : v >= 0.6 ? 'is-warm' : 'is-cold');
+  const chips = [
+    Number.isFinite(p.l5) ? `<span class="hit-chip ${tone(p.l5)}"><span class="hit-chip-k">L5</span>${pct(p.l5)}</span>` : '',
+    Number.isFinite(p.l10) ? `<span class="hit-chip ${tone(p.l10)}"><span class="hit-chip-k">L10</span>${pct(p.l10)}</span>` : '',
+    Number.isFinite(p.season) ? `<span class="hit-chip ${tone(p.season)}"><span class="hit-chip-k">Season</span>${pct(p.season)} <small>(${p.games})</small></span>` : '',
+    Number.isFinite(p.avgSeason) ? `<span class="hit-chip is-avg"><span class="hit-chip-k">Avg</span>${esc(String(p.avgSeason))}</span>` : '',
+    leg.actual != null ? `<span class="hit-chip is-final"><span class="hit-chip-k">Final</span>${esc(String(leg.actual))}</span>` : '',
+  ].filter(Boolean).join('');
+  return `<div class="hit-chips" aria-label="${esc(leg.playerName)} hit rates at ${esc(String(leg.need))}+">${chips}</div>`;
 }
 
 /**
@@ -5706,11 +5720,10 @@ async function loadPotd({ force = false } = {}) {
     const res = await fetch(new URL('/prop-play', CONFIG.WORKER_URL), { headers: { Accept: 'application/json' } });
     const { propPlay, hold } = await res.json();
     if (!propPlay && hold) {
-      // Same honesty as the main card above: the scan ran and nothing
-      // cleared the hit-rate and edge gates, so the slot says so.
+      // Nothing cleared the Prop Play's gates: the slot stays empty rather
+      // than announcing it — the Ladder rung below is the day's props play,
+      // and a daily "no play" line above it was clutter, not information.
       registerPostedPicks('propplay', []);
-      el.potdBody.insertAdjacentHTML('beforeend', `<p class="empty">
-        <strong>No Prop Play today.</strong> ${esc(hold)}</p>`);
     }
     if (propPlay) {
       // Registered leg by leg rather than as one combined ticket: someone
@@ -5805,11 +5818,12 @@ function renderLadderTrack(plan, state) {
 /** One leg of a parlay rung, with its own graded chip once the game is in. */
 function renderLadderLeg(leg) {
   const chip = leg.status && leg.status !== 'pending'
-    ? ` <span class="ladder-status is-${esc(leg.status)}">${leg.status === 'won' ? '✅' : leg.status === 'lost' ? '❌' : 'push'}</span>`
+    ? ` <span class="ladder-status is-${esc(leg.status)}">${leg.status === 'won' ? '✅' : leg.status === 'lost' ? '❌' : 'void'}</span>`
     : '';
   return `<li class="ladder-leg">
     <span class="ladder-leg-line"><strong>${esc(leg.selection)}</strong> ${esc(formatAmerican(leg.american))}${chip}</span>
-    <span class="ladder-leg-sub">${esc(leg.away)} @ ${esc(leg.home)} · ${esc(potdDateTimeFmt.format(new Date(leg.commenceMs)))} · ${esc(leg.book)}</span>
+    <span class="ladder-leg-sub">${leg.sportTitle ? `${esc(leg.sportTitle)} · ` : ''}${esc(leg.away)} @ ${esc(leg.home)} · ${esc(potdDateTimeFmt.format(new Date(leg.commenceMs)))} · ${esc(leg.book)}</span>
+    ${propProfileHtml(leg)}
   </li>`;
 }
 
@@ -5823,10 +5837,10 @@ function renderLadderPlay(ladder) {
     const status = ladder.todayStatus;
     const reason = status?.reason;
     return `<div class="ladder-play is-holding">
-      <p class="ladder-play-title">${status?.waiting ? 'Waiting for the next window' : 'Holding'}</p>
+      <p class="ladder-play-title">${status?.waiting ? 'Waiting for the next rung' : 'Holding'}</p>
       <p class="ladder-play-note">
-        ${reason ? esc(reason.charAt(0).toUpperCase() + reason.slice(1)) : 'No NFL window is due yet.'}
-        The climb keeps its place — a rung is only played when a window offers one.
+        ${reason ? esc(reason.charAt(0).toUpperCase() + reason.slice(1)) : 'No rung has posted yet today.'}
+        The climb keeps its place — a rung is only played when the day offers one.
       </p>
     </div>`;
   }
@@ -5840,7 +5854,7 @@ function renderLadderPlay(ladder) {
     ? `<p class="ladder-play-note">No rung is riding — this is the last one played.</p>`
     : '';
   const legs = Array.isArray(pick.legs) ? pick.legs : null;
-  const windowLabel = play.slot?.label ? ` · ${esc(play.slot.label)}` : '';
+  const windowLabel = play.slot?.label && play.slot.key !== 'PROPS' ? ` · ${esc(play.slot.label)}` : '';
   const body = legs
     ? `<ul class="ladder-legs">${legs.map(renderLadderLeg).join('')}</ul>`
     : `<p class="ladder-play-pick">${esc(pick.selection)}</p>
@@ -5853,7 +5867,7 @@ function renderLadderPlay(ladder) {
     : '';
   return `<div class="ladder-play">
     <div class="ladder-play-head">
-      <span class="ladder-play-title">Rung ${play.step}${windowLabel} · ${legs ? `${legs.length}-leg parlay ` : ''}${esc(formatAmerican(pick.american))}</span>
+      <span class="ladder-play-title">Rung ${play.step}${windowLabel} · ${legs ? `${legs.length}-leg ${legs.some((l) => l.kind === 'prop') ? 'props ' : ''}parlay ` : ''}${esc(formatAmerican(pick.american))}</span>
       ${statusChip}
     </div>
     ${staleNote}
@@ -5886,11 +5900,11 @@ function renderLadder(ladder) {
         <span class="ladder-day">Rung ${state.step}</span>
       </div>
       <p class="ladder-intro">
-        One NFL parlay per kickoff window — Thursday night, the Sunday early and late windows,
-        Sunday night, Monday night — ${esc(String(ladder.legs?.min ?? 2))} to ${esc(String(ladder.legs?.max ?? 4))} legs across that
-        window's games, priced ${esc(formatAmerican(ladder.band.min))} to ${esc(formatAmerican(ladder.band.max))} combined,
-        only players confirmed playing, and never more than one rung riding at a time. Every win rides
-        straight into the next rung — ${ladderMoney(ladder.base)} to ${ladderMoney(ladder.target)}
+        One rung a day: ${esc(String(ladder.legs?.min ?? 2))} to ${esc(String(ladder.legs?.max ?? 3))} low-level player props —
+        lines at ${Math.round((ladder.comfortRatio ?? 0.6) * 100)}% of the player's season average or lower, cleared in
+        ${Math.round((ladder.rates?.season ?? 0.85) * 100)}% of games this season — from NFL, NBA and NHL,
+        priced ${esc(formatAmerican(ladder.band.min))} to ${esc(formatAmerican(ladder.band.max))} combined, one rung riding at a time.
+        Every win rides straight into the next rung — ${ladderMoney(ladder.base)} to ${ladderMoney(ladder.target)}
         in ${plan.rungs.length} steps, banking ${ladderMoney(plan.banked)} along the way.
         One loss and the ladder starts over at ${ladderMoney(ladder.base)}, rung 1.
       </p>

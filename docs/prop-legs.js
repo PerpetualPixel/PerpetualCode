@@ -192,3 +192,50 @@ export function extractAltCandidates(eventOdds, game, markets, { now = Date.now(
   }
   return candidates;
 }
+
+/**
+ * Which of a game log's season blocks is the CURRENT season: the one whose
+ * display name carries the latest season year ("2026 Regular Season",
+ * "2026-27 Regular Season"). Preseason blocks never count. The site reads
+ * statistics from the current season only (2026-10-19 direction): a
+ * player's numbers from last year say nothing about this year's role, so
+ * a season with fewer logged games than the gates need yields no leg
+ * rather than borrowing last season's games to make one.
+ */
+export function currentSeasonBlocks(seasonTypes) {
+  const blocks = (Array.isArray(seasonTypes) ? seasonTypes : [])
+    .filter((s) => !/preseason/i.test(String(s?.displayName ?? '')))
+    .map((s) => ({ block: s, year: seasonYearOf(s?.displayName) }));
+  if (!blocks.length) return [];
+  const latest = Math.max(...blocks.map((b) => b.year));
+  return blocks.filter((b) => b.year === latest).map((b) => b.block);
+}
+
+/** The season year a block's display name names: the first four-digit year in it, 0 when it names none. */
+export function seasonYearOf(displayName) {
+  const m = /(20\d{2})/.exec(String(displayName ?? ''));
+  return m ? Number(m[1]) : 0;
+}
+
+/**
+ * Per-game values of one column across the current season's blocks, most
+ * recent first. `idx` is the column; `eventMeta` the log's `events` map
+ * (dates). Shared by every league's parser.
+ */
+export function seasonColumnValues(gamelog, idx, { parse = (v) => Number(String(v ?? '').replace(/,/g, '')) } = {}) {
+  if (idx < 0) return [];
+  const eventMeta = gamelog?.events ?? {};
+  const rows = [];
+  for (const seasonType of currentSeasonBlocks(gamelog?.seasonTypes)) {
+    for (const category of seasonType?.categories ?? []) {
+      for (const event of category?.events ?? []) {
+        const value = parse(event?.stats?.[idx]);
+        if (!Number.isFinite(value)) continue;
+        const meta = eventMeta[event.eventId] ?? {};
+        rows.push({ value, date: Date.parse(meta.gameDate ?? '') || 0 });
+      }
+    }
+  }
+  rows.sort((x, y) => y.date - x.date);
+  return rows.map((r) => r.value);
+}

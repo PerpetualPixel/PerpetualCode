@@ -145,7 +145,7 @@ export async function sendLadderNotifications(env, record, state) {
     ? legs.map((l) => `${l.selection} (${formatAmerican(l.american)}) — ${l.away} @ ${l.home}`).join('\n')
     : `${pick.away} @ ${pick.home}`;
   const price = formatAmerican(pick.american);
-  const headline = legs ? `${legs.length}-leg NFL parlay` : pick.selection;
+  const headline = legs ? `${legs.length}-leg ${legs.some((l) => l.kind === 'prop') ? 'props' : 'NFL'} parlay` : pick.selection;
   const money = (n) => `$${Number(n).toFixed(2)}`;
   const banked = state?.banked ? ` &middot; ${money(state.banked)} already banked` : '';
 

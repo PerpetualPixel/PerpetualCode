@@ -161,7 +161,7 @@ const favs = (n, opts = {}) => Array.from({ length: n }, (_, i) => makeFav(`g${i
 const finalScore = (id, homeScore, awayScore) => ({
   id, completed: true, scores: [{ name: `${id} Home`, score: String(homeScore) }, { name: `${id} Away`, score: String(awayScore) }],
 });
-const tennisFav = (id, opts = {}) => makeFav(id, { sport: 'tennis_atp_canadian_open', sportTitle: 'ATP Canadian Open', ...opts });
+const nhlFav = (id, opts = {}) => makeFav(id, { sport: 'icehockey_nhl', sportTitle: 'NHL', ...opts });
 
 /* ---------------------------------------------------------------- */
 /* runTop5Batch — anchor + partner tickets                            */
@@ -229,17 +229,17 @@ test('a favourite standing inside the band on its own fills a slot as a straight
 
 const wnbaProp = (id, playerName, { eventId = 'w1', statKey = 'points', american = -320, decimal = 1.3125, prob = 0.81, need = 12, point = 11.5, hoursOut = 2 } = {}) => ({
   id: `${eventId}:player_${statKey}_alternate:${playerName.toLowerCase()}:${point}:Over`, kind: 'prop', eventId,
-  sportKey: 'basketball_wnba', sportTitle: 'WNBA', commenceMs: NOW + hoursOut * 3.6e6, home: `${eventId} Home`, away: `${eventId} Away`,
+  sportKey: 'basketball_nba', sportTitle: 'NBA', commenceMs: NOW + hoursOut * 3.6e6, home: `${eventId} Home`, away: `${eventId} Away`,
   marketKey: `player_${statKey}_alternate`, marketLabel: `${statKey} (alt)`, statKey, playerName,
   outcomeName: 'Over', point, need, selection: `${playerName} ${need}+ ${statKey}`, american, decimal, book: 'DraftKings',
   bookKey: 'draftkings', bettable: true, consensusProb: prob, ev: Math.round((prob * decimal - 1) * 1e4) / 1e4, score: 88, espnEventId: '7' + id.length,
   profile: { games: 20, season: 0.9, l10: 0.9, l5: 1, streak: 6, avgSeason: 18.4, avgL5: 19.2 }, edge: 0.05,
 });
 
-test("two WNBA players' props from one game post as a same game parlay", async () => {
+test("two NBA players' props from one game post as a same game parlay", async () => {
   const { env } = makeKvStore();
-  const astier = wnbaProp('a', 'Pauline Astier', { statKey: 'rebounds', american: -500, decimal: 1.2, prob: 0.87, need: 2, point: 1.5 });
-  const ionescu = wnbaProp('b', 'Sabrina Ionescu');
+  const astier = wnbaProp('a', 'Josh Hart', { statKey: 'rebounds', american: -350, decimal: 1.2857, prob: 0.87, need: 4, point: 3.5 });
+  const ionescu = wnbaProp('b', 'Jalen Brunson');
   // No slate game at all: the prop legs arrive from the dispatcher alone.
   const result = await runTop5Batch(env, ctx, NOW, {
     fetchFullSlate: async () => [],
@@ -249,9 +249,9 @@ test("two WNBA players' props from one game post as a same game parlay", async (
   const [pick] = await getTop5(env, { dateKey: '2026-08-05' });
   assert.equal(pick.type, 'combo');
   assert.equal(pick.sameGame, true);
-  assert.equal(pick.american, -174);
-  assert.deepEqual(pick.legs.map((l) => l.playerName), ['Pauline Astier', 'Sabrina Ionescu']);
-  assert.ok(pick.legs.every((l) => l.sportKey === 'basketball_wnba' && l.kind === 'prop'));
+  assert.equal(pick.american, -145);
+  assert.deepEqual(pick.legs.map((l) => l.playerName), ['Josh Hart', 'Jalen Brunson']);
+  assert.ok(pick.legs.every((l) => l.sportKey === 'basketball_nba' && l.kind === 'prop'));
   assert.match(pick.pairReason, /^Same game parlay\./);
 });
 
@@ -283,7 +283,7 @@ test('a light alternate line posts as a straight player-prop play, settles off t
   assert.equal((await getTop5(env, { dateKey: '2026-08-05' }))[0].status, 'pending');
 });
 
-test('game legs come from NFL, NCAA football, MMA and tennis; a basketball moneyline is never a leg', async () => {
+test('game legs come from NFL, NHL and MMA; an MLB game or an NBA moneyline is never a leg', async () => {
   const { env } = makeKvStore();
   const events = [
     ...favs(4, { sport: 'baseball_mlb', sportTitle: 'MLB' }),
@@ -317,32 +317,6 @@ test('runTop5Batch excludes a team-sport game on tomorrow\'s date too, not just 
   const events = [makeFav('tomorrow-a', { hoursOut: 30 }), makeFav('tomorrow-b', { hoursOut: 30 })]; // ~30h out crosses into the next ET day
   const result = await runTop5Batch(env, ctx, NOW, { fetchFullSlate: async () => events });
   assert.equal(result.count, 0, 'nothing today qualifies, so no picks should be stored even though tomorrow has a real edge');
-});
-
-test('runTop5Batch tennis next-day carve-out: a match rolling just past midnight (before 2am ET) is eligible, an ordinary tomorrow-afternoon match is not', async () => {
-  // Positive: 11pm ET Aug 5, with two matches at 1am ET Aug 6 — a night
-  // session rolling past midnight, inside the midnight-2am ET carve-out.
-  {
-    const { env } = makeKvStore();
-    const lateNow = Date.parse('2026-08-06T03:00:00Z'); // 11pm ET Aug 5
-    const events = [
-      tennisFav('tennis-1am-a', { hoursOut: 17, lastUpdate: lateNow - 600000 }), // NOW + 17h = 1am ET Aug 6
-      tennisFav('tennis-1am-b', { hoursOut: 17, lastUpdate: lateNow - 600000 }),
-    ];
-    const result = await runTop5Batch(env, ctx, lateNow, { fetchFullSlate: async () => events });
-    assert.equal(result.count, 1, 'matches rolling just past midnight stay on today\'s board');
-    const picks = await getTop5(env, { dateKey: '2026-08-05' });
-    assert.equal(picks.length, 1, 'and the ticket is stored under TODAY\'s date, not tomorrow\'s');
-  }
-  // Negative: an ordinary tomorrow-2pm-ET match must NOT be on today's
-  // board — this was a real bug ("eligible all day tomorrow"), removed per
-  // explicit product direction; only midnight-2am ET next-day starts count.
-  {
-    const { env } = makeKvStore();
-    const events = [tennisFav('tennis-tomorrow-a', { hoursOut: 30 }), tennisFav('tennis-tomorrow-b', { hoursOut: 30 })]; // NOW + 30h = 2pm ET Aug 6
-    const result = await runTop5Batch(env, ctx, NOW, { fetchFullSlate: async () => events });
-    assert.equal(result.count, 0, 'an ordinary next-afternoon match belongs on tomorrow\'s board, not today\'s');
-  }
 });
 
 test('a ticket never reaches outside the band: a -1800 chalk and a +350 longshot are never legs', async () => {
@@ -459,11 +433,11 @@ test('runTop5Batch never adds a pick for a game that already has one, even on a 
 test('runTop5Batch excludes candidates from a segment the weekly algorithm health review has paused', async () => {
   const { env } = makeKvStore();
   await env.POTD_KV.put('algo:paused', JSON.stringify([{ key: 'americanfootball_nfl|h2h', pausedAt: NOW, reason: 'test' }]));
-  const events = [makeFav('nfl-a'), makeFav('nfl-b'), tennisFav('atp-a'), tennisFav('atp-b')];
+  const events = [makeFav('nfl-a'), makeFav('nfl-b'), nhlFav('nhl-a'), nhlFav('nhl-b')];
   await runTop5Batch(env, ctx, NOW, { fetchFullSlate: async () => events });
   const picks = await getTop5(env, { dateKey: '2026-08-05' });
   const legs = picks.flatMap((p) => p.legs);
-  assert.ok(legs.length > 0, 'the non-paused tennis segment still posts');
+  assert.ok(legs.length > 0, 'the non-paused NHL segment still posts');
   assert.ok(legs.every((l) => l.sportKey !== 'americanfootball_nfl'), 'the paused NFL moneyline segment must never be a leg');
 });
 
