@@ -84,14 +84,38 @@ const GAMELOG_NAMES = {
   rushYds: ['rushingYards'],
   recYds: ['receivingYards'],
   receptions: ['receptions'],
+  passCompletions: ['completions', 'passingCompletions'],
+  passAttempts: ['passingAttempts'],
+  passTds: ['passingTouchdowns'],
+  rushAttempts: ['rushingAttempts'],
+  targets: ['receivingTargets', 'targets'],
 };
 const GAMELOG_DISPLAY = {
   passYds: /^passing yards$/i,
   rushYds: /^rushing yards$/i,
   recYds: /^receiving yards$/i,
   receptions: /^receptions$/i,
+  passCompletions: /^completions$/i,
+  passAttempts: /^passing attempts$/i,
+  passTds: /^passing touchdowns$/i,
+  rushAttempts: /^rushing attempts$/i,
+  targets: /^(receiving )?targets$/i,
 };
-const GAMELOG_LABEL = { passYds: 'YDS', rushYds: 'YDS', recYds: 'YDS', receptions: 'REC' };
+const GAMELOG_LABEL = { passYds: 'YDS', rushYds: 'YDS', recYds: 'YDS', receptions: 'REC', passCompletions: 'CMP', passAttempts: 'ATT', passTds: 'TD', rushAttempts: 'CAR', targets: 'TGTS' };
+
+/**
+ * The markets the Trends tab scans for football: the four alternate
+ * yardage/reception ladders plus the main-line volume props a quarterback
+ * or back is judged on — completions, attempts, carries, passing
+ * touchdowns. Each settles on a column the game log carries by key.
+ */
+export const NFL_TREND_MARKETS = {
+  ...NFL_ALT_MARKETS,
+  player_pass_completions: { stat: 'passCompletions', label: 'Cmp', marketLabel: 'Pass Completions' },
+  player_pass_attempts: { stat: 'passAttempts', label: 'Att', marketLabel: 'Pass Attempts' },
+  player_pass_tds: { stat: 'passTds', label: 'Pass TD', marketLabel: 'Passing Touchdowns' },
+  player_rush_attempts: { stat: 'rushAttempts', label: 'Car', marketLabel: 'Rush Attempts' },
+};
 
 /**
  * Which column of the game log carries `statKey`. ESPN's common/v3 game
@@ -193,11 +217,11 @@ async function cachedJson(url, ttl, ctx) {
   }
 }
 
-export async function fetchNflAltProps(oddsEventId, env, ctx) {
+export async function fetchNflAltProps(oddsEventId, env, ctx, markets = NFL_ALT_MARKETS_PARAM) {
   const url = new URL(`${UPSTREAM}/sports/${NFL_SPORT_KEY}/events/${oddsEventId}/odds`);
   url.searchParams.set('apiKey', (env.ODDS_API_KEY ?? '').trim());
   url.searchParams.set('regions', REGIONS);
-  url.searchParams.set('markets', NFL_ALT_MARKETS_PARAM);
+  url.searchParams.set('markets', markets);
   url.searchParams.set('oddsFormat', 'american');
   url.searchParams.set('dateFormat', 'iso');
   return cachedJson(url.toString(), ODDS_TTL, ctx);

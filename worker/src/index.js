@@ -55,7 +55,7 @@ import { runNhlPropsScan, runNhlPropsGrading, getAllNhlPropsTracked } from './nh
 import { runPotdDaily, runPotdClvSnapshot, runPotdGrading, backfillPotdAnalysis, getPotd, getPotdHold, getPotdLeaning, getPotdHistory, retractPotd, regradePotdTennisVoids, etParts } from './potd.js';
 import { runLadderDaily, runLadderGrading, getLadder, getLadderHistory } from './ladder.js';
 import { BUILD_INFO } from '../../docs/version.js';
-import { runTrendsBuild, getTrends, TREND_SPORT_KEYS } from './trends.js';
+import { runTrendsBuild, getTrends, TREND_ENABLED_SPORTS } from './trends.js';
 import { getOrGenerateAnalysis, getOrGeneratePropAnalysis } from './analysis.js';
 import { repairMissingPayouts } from './repair-payouts.js';
 import {
@@ -1446,13 +1446,13 @@ export default {
     if (pathname === '/trends' && request.method === 'GET') {
       try {
         const wanted = new URL(request.url).searchParams.get('sport');
-        const keys = wanted && TREND_SPORT_KEYS.includes(wanted) ? [wanted] : TREND_SPORT_KEYS;
+        const keys = wanted && TREND_ENABLED_SPORTS.includes(wanted) ? [wanted] : TREND_ENABLED_SPORTS;
         const all = await Promise.all(keys.map((k) => getTrends(env, k)));
         const trends = all.find((t) => t.rows.length) ?? all[0];
         return json({
           trends,
-          leagues: TREND_SPORT_KEYS,
-          available: await Promise.all(TREND_SPORT_KEYS.map(async (k) => { const t = await getTrends(env, k); return { sportKey: k, title: t.title, rows: t.rows.length, builtAt: t.builtAt }; })),
+          leagues: TREND_ENABLED_SPORTS,
+          available: await Promise.all(TREND_ENABLED_SPORTS.map(async (k) => { const t = await getTrends(env, k); return { sportKey: k, title: t.title, rows: t.rows.length, builtAt: t.builtAt }; })),
         }, { headers: { ...cors, 'Cache-Control': 'public, max-age=300' } });
       } catch (error) {
         return json({ error: String(error).slice(0, 120) }, { status: 500, headers: cors });
