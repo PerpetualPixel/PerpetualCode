@@ -36,7 +36,7 @@
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Syne:wght@600;700;800&family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
-<link rel="stylesheet" href="styles.css?v=1.190">
+<link rel="stylesheet" href="styles.css?v=1.191">
 </head>
 <body>
 
@@ -95,6 +95,9 @@
   </button>
   <button id="tabPotd" class="top-tab" role="tab" aria-selected="false" aria-controls="potdView">
     Play of the Day
+  </button>
+  <button id="tabTrends" class="top-tab" role="tab" aria-selected="false" aria-controls="trendsView">
+    Trends
   </button>
 </nav>
 
@@ -295,6 +298,55 @@
        ladder is a compounding run, not another one-off pick, and the two
        are never graded or staked the same way. -->
   <div id="ladderBody" class="ladder"></div>
+</section>
+
+<!-- Trends: every player-prop line on the day's games with the player's
+     real hit rate at that number, the research view the prop tools lead
+     with. League chips, a window, a sort and a side filter; each row is
+     the player, the line, the best price, the hit rate and the last-N
+     bars; a tap opens the game log. Built server-side (worker/src/
+     trends.js), filtered and sorted here. -->
+<section id="trendsView" role="tabpanel" aria-labelledby="tabTrends" hidden>
+  <div class="trends-toolbar">
+    <div id="trendsLeagues" class="slate-league-tokens trends-leagues" role="group" aria-label="League"></div>
+    <div class="trends-controls">
+      <div class="trends-seg" role="group" aria-label="Window" data-trends-window>
+        <button type="button" data-window="l5">L5</button>
+        <button type="button" data-window="l10" class="is-active">L10</button>
+        <button type="button" data-window="l20">L20</button>
+        <button type="button" data-window="season">Season</button>
+      </div>
+      <div class="trends-seg" role="group" aria-label="Side" data-trends-side>
+        <button type="button" data-side="all" class="is-active">Both</button>
+        <button type="button" data-side="over">Over</button>
+        <button type="button" data-side="under">Under</button>
+      </div>
+      <label class="trends-field"><span class="sr-only">Stat</span>
+        <select id="trendsStat" class="slate-league-select"><option value="">All stats</option></select>
+      </label>
+      <label class="trends-field"><span class="sr-only">Sort</span>
+        <select id="trendsSort" class="slate-league-select">
+          <option value="hitRate">By hit rate</option>
+          <option value="odds">By odds</option>
+        </select>
+      </label>
+      <label class="trends-field"><span class="sr-only">Minimum hit rate</span>
+        <select id="trendsMinRate" class="slate-league-select">
+          <option value="0">Any hit rate</option>
+          <option value="0.6">60%+</option>
+          <option value="0.7">70%+</option>
+          <option value="0.8" selected>80%+</option>
+          <option value="0.9">90%+</option>
+          <option value="1">100%</option>
+        </select>
+      </label>
+      <label class="trends-field trends-search"><span class="sr-only">Player</span>
+        <input id="trendsSearch" type="search" class="slate-league-select" placeholder="Player or team" autocomplete="off">
+      </label>
+    </div>
+  </div>
+  <div id="trendsStatus" class="status" role="status" aria-live="polite">Loading trends…</div>
+  <section id="trendsBody" class="trends-body" aria-live="polite"></section>
 </section>
 </main>
 
@@ -536,6 +588,18 @@
       behind the AI's fighter-facts write-up.</p>
     </details>
 
+    <details>
+      <summary>Trends</summary>
+      <p>Every player-prop line on today's NFL, NBA and NHL games, with the
+      player's real hit rate at that exact number from this season's game
+      log. Pick a league, a window (last 5, 10 or 20 games, or the season),
+      Over or Under, a stat and a minimum hit rate, and the lines a player
+      clears most often float to the top — each row shows the best price you
+      can bet, the hit rate, and a bar per game with the line drawn across
+      it. Tap the arrow for the game log and every window's rate. Lines are
+      refreshed every few hours; the hit rate is history, not a prediction,
+      so read the average beside it.</p>
+    </details>
     <details>
       <summary>Pixel's Picks' sharp standard</summary>
       <p>Pixel's Picks are up to 5 plays, drawn once a day at 2am ET — after
@@ -1029,6 +1093,6 @@
   </div>
 </aside>
 
-<script type="module" src="app.js?v=1.190"></script>
+<script type="module" src="app.js?v=1.191"></script>
 </body>
 </html>

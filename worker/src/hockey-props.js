@@ -165,7 +165,7 @@ async function cachedJson(url, ttl, ctx) {
   }
 }
 
-async function fetchNhlProps(oddsEventId, env, ctx) {
+export async function fetchNhlProps(oddsEventId, env, ctx) {
   for (const markets of MARKET_PARAMS) {
     const url = new URL(`${UPSTREAM}/sports/${NHL_SPORT_KEY}/events/${oddsEventId}/odds`);
     url.searchParams.set('apiKey', (env.ODDS_API_KEY ?? '').trim());
@@ -179,7 +179,7 @@ async function fetchNhlProps(oddsEventId, env, ctx) {
   return null;
 }
 
-async function resolveNhlAthleteId(playerName, teamAbbrs, ctx) {
+export async function resolveNhlAthleteId(playerName, teamAbbrs, ctx) {
   const target = normalizeName(playerName);
   for (const abbr of teamAbbrs) {
     if (!abbr) continue;
@@ -260,4 +260,18 @@ export async function collectNhlPropLegs(games, env, ctx, now = Date.now(), { tr
   }
   trace.push(`NHL prop legs qualified: ${legs.length}`);
   return legs;
+}
+
+/** The player's ESPN game log (current season), cached; null when unreachable. Shared with worker/src/trends.js. */
+export async function fetchNhlGamelog(athleteId, ctx) {
+  return cachedJson(`${ESPN_GAMELOG}/${athleteId}/gamelog`, GAMELOG_TTL, ctx);
+}
+
+/** Which game-log column carries `statKey`, by key (shots never by label); -1 when absent. */
+export function nhlStatIndex(gamelog, statKey) {
+  const names = Array.isArray(gamelog?.names) ? gamelog.names : [];
+  const labels = Array.isArray(gamelog?.labels) ? gamelog.labels : [];
+  const idx = names.findIndex((n) => GAMELOG_NAMES[statKey]?.includes(n));
+  if (idx >= 0) return idx;
+  return GAMELOG_LABEL[statKey] ? labels.indexOf(GAMELOG_LABEL[statKey]) : -1;
 }

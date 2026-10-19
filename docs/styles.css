@@ -6392,3 +6392,62 @@ input[type="range"]:focus-visible {
 .hit-chip.is-cold { color: var(--danger, #f87171); background: rgba(248, 113, 113, 0.1); border-color: rgba(248, 113, 113, 0.4); }
 .hit-chip.is-avg { color: var(--text); }
 .hit-chip.is-final { color: var(--accent); border-color: color-mix(in srgb, var(--accent) 45%, transparent); }
+
+/* ---------------------------------------------------------------- */
+/* Trends                                                            */
+/* ---------------------------------------------------------------- */
+
+.trends-toolbar { max-width: var(--shell); margin: 0 auto; padding: 0 20px 10px; display: grid; gap: 10px; }
+.trends-controls { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
+.trends-seg { display: inline-flex; border: 1px solid var(--line); border-radius: 999px; overflow: hidden; background: var(--surface); }
+.trends-seg button {
+  background: transparent; border: 0; color: var(--muted); font-family: var(--sans); font-size: 0.74rem; font-weight: 700;
+  letter-spacing: 0.04em; padding: 7px 12px; cursor: pointer; min-height: 32px;
+}
+.trends-seg button + button { border-left: 1px solid var(--line); }
+.trends-seg button.is-active { color: var(--text); background: var(--accent-dim); }
+.trends-field { display: inline-flex; }
+.trends-search { flex: 1 1 160px; }
+.trends-search input { width: 100%; }
+.trends-body { max-width: var(--shell); margin: 0 auto; padding: 0 20px 24px; display: grid; gap: 10px; }
+.trend-card {
+  background: var(--surface); border: 1px solid var(--line); border-radius: var(--radius); padding: 12px 14px;
+}
+.trend-game { display: flex; align-items: center; gap: 8px; color: var(--muted); font-size: 0.76rem; margin-bottom: 8px; }
+.trend-game .league-chip-icon { width: 16px; height: 16px; }
+.trend-game strong { color: var(--text); font-weight: 700; letter-spacing: 0.02em; }
+.trend-main { display: grid; grid-template-columns: 1fr auto; gap: 8px 12px; align-items: start; }
+.trend-player { font-size: 1.02rem; font-weight: 700; margin: 0; }
+.trend-player small { color: var(--muted); font-weight: 600; margin-left: 6px; font-size: 0.78rem; }
+.trend-line { margin: 2px 0 0; color: var(--muted); font-size: 0.86rem; }
+.trend-price {
+  display: inline-flex; align-items: center; gap: 6px; font-family: var(--mono); font-weight: 800; font-size: 0.9rem;
+  color: var(--text); border: 1px solid color-mix(in srgb, var(--book, #888) 55%, transparent);
+  background: color-mix(in srgb, var(--book, #888) 14%, transparent); border-radius: 999px; padding: 4px 10px; white-space: nowrap;
+}
+.trend-price .trend-book { width: 8px; height: 8px; border-radius: 50%; background: var(--book, #888); box-shadow: 0 0 6px var(--book, #888); }
+.trend-rate-row { display: grid; grid-template-columns: auto 1fr auto; gap: 10px; align-items: center; margin-top: 10px; }
+.trend-rate { font-family: var(--mono); font-weight: 800; font-size: 0.98rem; }
+.trend-rate small { font-family: var(--sans); color: var(--muted); font-weight: 600; margin-left: 4px; font-size: 0.72rem; }
+.trend-rate.is-hot { color: var(--success); }
+.trend-rate.is-warm { color: #eab308; }
+.trend-rate.is-cold { color: #f87171; }
+.trend-bars { position: relative; display: flex; align-items: flex-end; gap: 3px; height: 34px; }
+.trend-bar { flex: 1; min-width: 4px; max-width: 18px; border-radius: 3px 3px 1px 1px; background: rgba(148, 163, 184, 0.35); }
+.trend-bar.is-hit { background: var(--success); box-shadow: 0 0 6px color-mix(in srgb, var(--success) 60%, transparent); }
+.trend-bar.is-push { background: #eab308; }
+.trend-bars .trend-line-mark { position: absolute; left: 0; right: 0; border-top: 1px dashed rgba(255, 255, 255, 0.45); pointer-events: none; }
+.trend-expand { background: transparent; border: 1px solid var(--line); border-radius: 50%; width: 30px; height: 30px; color: var(--muted); cursor: pointer; font-size: 1rem; line-height: 1; }
+.trend-expand[aria-expanded="true"] { transform: rotate(90deg); color: var(--text); }
+.trend-detail { margin-top: 10px; border-top: 1px dashed var(--line); padding-top: 10px; display: grid; gap: 8px; }
+.trend-windows { display: flex; flex-wrap: wrap; gap: 6px; }
+.trend-log { display: grid; grid-template-columns: repeat(auto-fill, minmax(96px, 1fr)); gap: 6px; }
+.trend-log-game { font-family: var(--mono); font-size: 0.72rem; color: var(--muted); border: 1px solid var(--line); border-radius: 8px; padding: 4px 6px; display: flex; justify-content: space-between; gap: 6px; }
+.trend-log-game strong { color: var(--text); }
+.trend-log-game.is-hit strong { color: var(--success); }
+.trend-log-game.is-push strong { color: #eab308; }
+.trends-meta { color: var(--muted); font-size: 0.74rem; text-align: right; }
+@media (max-width: 480px) {
+  .trend-rate-row { grid-template-columns: auto 1fr auto; }
+  .trend-bar { max-width: 12px; }
+}

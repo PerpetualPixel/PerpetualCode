@@ -239,3 +239,32 @@ export function seasonColumnValues(gamelog, idx, { parse = (v) => Number(String(
   rows.sort((x, y) => y.date - x.date);
   return rows.map((r) => r.value);
 }
+
+/**
+ * Per-game rows of one column across the current season's blocks, most
+ * recent first, each with the date and opponent ESPN files under the
+ * log's `events` map — what a trend chart labels its bars with.
+ */
+export function seasonColumnRows(gamelog, idx, { parse = (v) => Number(String(v ?? '').replace(/,/g, '')) } = {}) {
+  if (idx < 0) return [];
+  const eventMeta = gamelog?.events ?? {};
+  const rows = [];
+  for (const seasonType of currentSeasonBlocks(gamelog?.seasonTypes)) {
+    for (const category of seasonType?.categories ?? []) {
+      for (const event of category?.events ?? []) {
+        const value = parse(event?.stats?.[idx]);
+        if (!Number.isFinite(value)) continue;
+        const meta = eventMeta[event.eventId] ?? {};
+        rows.push({
+          value,
+          date: Date.parse(meta.gameDate ?? '') || 0,
+          opponent: meta.opponent?.abbreviation ?? meta.opponent?.displayName ?? null,
+          atVs: meta.atVs ?? null,
+          result: meta.gameResult ?? null,
+        });
+      }
+    }
+  }
+  rows.sort((x, y) => y.date - x.date);
+  return rows;
+}
