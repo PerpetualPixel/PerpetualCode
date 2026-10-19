@@ -8668,7 +8668,7 @@ el.tailFadeResult?.addEventListener('click', toggleTailFadeLegCard);
  * the line, the best price, the hit rate and the last-N bars.
  */
 const trendsState = {
-  sport: null,
+  sport: 'americanfootball_nfl',
   window: 'l10',
   side: 'all',
   stat: '',
@@ -8680,7 +8680,7 @@ const trendsState = {
   open: new Set(),
 };
 const TREND_LEAGUE_ICON = { americanfootball_nfl: 'nfl', basketball_nba: 'nba', icehockey_nhl: 'nhl' };
-const trendTimeFmt = new Intl.DateTimeFormat(undefined, { weekday: 'short', hour: 'numeric', minute: '2-digit' });
+const trendTimeFmt = new Intl.DateTimeFormat(undefined, { weekday: 'short', month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' });
 const trendDateFmt = new Intl.DateTimeFormat(undefined, { month: 'short', day: 'numeric' });
 
 async function loadTrends({ force = false } = {}) {

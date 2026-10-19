@@ -22,7 +22,7 @@ import { normalizeName as normalizeNflName } from '../../docs/nfl-props.js';
 import { normalizeName as normalizeNbaName } from '../../docs/wnba-props.js';
 import { normalizeName as normalizeNhlName } from '../../docs/nhl-props.js';
 import {
-  NFL_SPORT_KEY, NFL_ALT_MARKETS, fetchNflAltProps, resolveNflAthleteId, fetchNflGamelog, gamelogStatIndex,
+  NFL_SPORT_KEY, NFL_TREND_MARKETS, fetchNflAltProps, resolveNflAthleteId, fetchNflGamelog, gamelogStatIndex,
 } from './football-props.js';
 import {
   BASKETBALL_ALT_MARKETS, fetchAltProps, resolveAthleteId, fetchBasketballGamelog, basketballStatIndex,
@@ -32,11 +32,17 @@ import {
 } from './hockey-props.js';
 import { listLeagueGames } from './prop-legs.js';
 
-/** How long a league's rows are served before the tick rebuilds them. */
+/** How long a league's rows are served before the tick rebuilds them (a league may set its own). */
 export const TRENDS_TTL_MINUTES = 180;
-/** Games are scanned this far ahead — tonight's slate and tomorrow's early games. */
+/** Games are scanned this far ahead — tonight's slate and tomorrow's early games (a league may set its own). */
 export const LOOKAHEAD_HOURS = 30;
-export const MAX_GAMES = 12;
+export const MAX_GAMES = 16;
+/**
+ * The leagues Trends builds and shows today. NFL first (2026-10-19
+ * direction): the NBA and NHL readers are wired and tested and join this
+ * list when the direction says so — one line, no deploy of anything else.
+ */
+export const TREND_ENABLED_SPORTS = [NFL_SPORT_KEY];
 export const MAX_PLAYERS_PER_GAME = 24;
 /** Rows with fewer logged games than this have no rate worth sorting on. */
 const MIN_GAMES = 3;
@@ -49,9 +55,15 @@ const NBA_KEY = 'basketball_nba';
 export const TREND_SPORTS = {
   [NFL_SPORT_KEY]: {
     title: 'NFL',
-    markets: NFL_ALT_MARKETS,
+    markets: NFL_TREND_MARKETS,
+    // A football week is one slate: lines for Sunday post by Tuesday, so
+    // the whole week is scanned and refreshed every six hours — lines move
+    // on injury news, and six hours keeps a Sunday row from quoting
+    // Tuesday's number.
+    lookaheadHours: 7 * 24,
+    ttlMinutes: 360,
     normalizeName: normalizeNflName,
-    fetchOdds: (eventId, env, ctx) => fetchNflAltProps(eventId, env, ctx),
+    fetchOdds: (eventId, env, ctx) => fetchNflAltProps(eventId, env, ctx, Object.keys(NFL_TREND_MARKETS).join(',')),
     resolve: (name, abbrs, ctx) => resolveNflAthleteId(name, abbrs, ctx),
     gamelog: (athleteId, ctx) => fetchNflGamelog(athleteId, ctx),
     statIndex: gamelogStatIndex,
@@ -90,9 +102,10 @@ export async function getTrends(env, sportKey) {
 
 /** The games a league's build scans: unstarted, inside the lookahead, soonest first, from the slate or the events list. */
 export async function trendGamesFor(sportKey, events, env, ctx, now) {
+  const lookahead = TREND_SPORTS[sportKey]?.lookaheadHours ?? LOOKAHEAD_HOURS;
   const inWindow = (g) => {
     const ms = Date.parse(g?.commence_time ?? '');
-    return Number.isFinite(ms) && ms > now && ms - now <= LOOKAHEAD_HOURS * 3.6e6;
+    return Number.isFinite(ms) && ms > now && ms - now <= lookahead * 3.6e6;
   };
   let games = (events ?? []).filter((g) => g?.sport_key === sportKey && inWindow(g));
   if (!games.length) games = (await listLeagueGames(sportKey, env, ctx)).filter(inWindow);
@@ -164,10 +177,11 @@ export async function buildTrends(sportKey, games, env, ctx, now = Date.now(), d
  * hour instead of spending them all at once. `fetchFullSlate` supplies the
  * day's events (already fetched by the boards' own batch).
  */
-export async function runTrendsBuild(env, ctx, now = Date.now(), { fetchFullSlate = async () => [], deps } = {}) {
-  const stored = await Promise.all(TREND_SPORT_KEYS.map((k) => getTrends(env, k)));
+export async function runTrendsBuild(env, ctx, now = Date.now(), { fetchFullSlate = async () => [], deps, enabled = TREND_ENABLED_SPORTS } = {}) {
+  const stored = await Promise.all(enabled.map((k) => getTrends(env, k)));
+  const ttl = (k) => (TREND_SPORTS[k]?.ttlMinutes ?? TRENDS_TTL_MINUTES) * 60e3;
   const due = stored
-    .filter((s) => !s.builtAt || now - s.builtAt >= TRENDS_TTL_MINUTES * 60e3)
+    .filter((s) => !s.builtAt || now - s.builtAt >= ttl(s.sportKey))
     .sort((a, b) => (a.builtAt ?? 0) - (b.builtAt ?? 0));
   if (!due.length) return { skipped: true, reason: 'every league is fresh' };
   const events = await fetchFullSlate();

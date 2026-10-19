@@ -8,10 +8,12 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { extractTrendLines, hitFlags, hitRate, trendRowsFor, sortTrends, overNeed, underNeed } from '../docs/trends.js';
-import { buildTrends, runTrendsBuild, getTrends, TRENDS_TTL_MINUTES } from '../worker/src/trends.js';
+import { buildTrends, runTrendsBuild, getTrends, TRENDS_TTL_MINUTES, TREND_ENABLED_SPORTS, TREND_SPORTS, trendGamesFor } from '../worker/src/trends.js';
+import { gamelogStatIndex, NFL_TREND_MARKETS } from '../worker/src/football-props.js';
 import { espnAbbr } from '../docs/team-logos.js';
 
 const NOW = Date.parse('2026-10-22T15:00:00Z');
+const ctx = { waitUntil: (p) => p };
 const game = { eventId: 'n1', sportKey: 'basketball_nba', sportTitle: 'NBA', commenceMs: NOW + 5 * 3.6e6, home: 'New York Knicks', away: 'Boston Celtics' };
 const markets = { player_points_alternate: { stat: 'points', label: 'Pts', marketLabel: 'Points' } };
 const odds = {
@@ -89,6 +91,21 @@ test('sorting: by hit rate in the chosen window, ties to the better price; by od
   assert.deepEqual(sortTrends(rows, { by: 'odds' }).map((x) => x.id), ['d', 'b', 'c', 'a']);
 });
 
+test('NFL first: it is the only league enabled, scanned a week ahead with the volume props beside the yardage ladders', async () => {
+  assert.deepEqual(TREND_ENABLED_SPORTS, ['americanfootball_nfl']);
+  assert.equal(TREND_SPORTS.americanfootball_nfl.lookaheadHours, 168);
+  assert.ok(['player_pass_completions', 'player_rush_attempts', 'player_pass_tds', 'player_receptions_alternate'].every((k) => NFL_TREND_MARKETS[k]));
+  const log = { names: ['completions', 'passingAttempts', 'passingYards', 'passingTouchdowns'], labels: ['CMP', 'ATT', 'YDS', 'TD'] };
+  assert.equal(gamelogStatIndex(log, 'passCompletions'), 0);
+  assert.equal(gamelogStatIndex(log, 'passAttempts'), 1);
+  assert.equal(gamelogStatIndex(log, 'passTds'), 3);
+  assert.equal(gamelogStatIndex({ names: ['rushingAttempts', 'rushingYards'], labels: ['CAR', 'YDS'] }, 'rushAttempts'), 0);
+  // A Sunday game five days out is inside the football lookahead; the same game is outside a 30-hour league's.
+  const sunday = { id: 'f1', sport_key: 'americanfootball_nfl', commence_time: new Date(NOW + 5 * 24 * 3.6e6).toISOString() };
+  const env = { POTD_KV: { async get() { return null; } } };
+  assert.equal((await trendGamesFor('americanfootball_nfl', [sunday], env, ctx, NOW)).length, 1);
+});
+
 /* ---------------------------------------------------------------- */
 /* The worker build                                                  */
 /* ---------------------------------------------------------------- */
@@ -97,7 +114,6 @@ function makeKvStore() {
   const store = new Map();
   return { store, env: { POTD_KV: { async get(k) { return store.get(k) ?? null; }, async put(k, v) { store.set(k, v); }, async delete(k) { store.delete(k); } } } };
 }
-const ctx = { waitUntil: (p) => p };
 const gamelog = {
   names: ['minutes', 'rebounds', 'assists', 'points'],
   events: Object.fromEntries(Array.from({ length: 6 }, (_, i) => [`e${i}`, { gameDate: new Date(NOW - (i + 1) * 864e5).toISOString(), opponent: { abbreviation: 'BOS' }, atVs: '@' }])),
@@ -129,7 +145,7 @@ test('buildTrends stores one league\'s rows from the feed and the game logs, wit
 
 test('runTrendsBuild rebuilds one stale league per tick and leaves fresh ones alone', async () => {
   const { env } = makeKvStore();
-  const opts = { fetchFullSlate: async () => [nbaGame], deps: { basketball_nba: deps } };
+  const opts = { fetchFullSlate: async () => [nbaGame], deps: { basketball_nba: deps }, enabled: ['americanfootball_nfl', 'basketball_nba', 'icehockey_nhl'] };
   const first = await runTrendsBuild(env, ctx, NOW, opts);
   // The NFL and NHL have no games in the slate and no events list reachable, so the NBA builds.
   assert.equal(first.skipped, false);
