@@ -78,6 +78,13 @@ function makeEvent(id, { hoursOut = 2, outlier = 35, sport = 'baseball_mlb', spo
   };
 }
 
+const nhlEvent = (id, opts = {}) =>
+  makeEvent(id, { sport: 'icehockey_nhl', sportTitle: 'NHL', ...opts });
+const nflEvent = (id, opts = {}) =>
+  makeEvent(id, { sport: 'americanfootball_nfl', sportTitle: 'NFL', ...opts });
+const isNhlPick = (p) => p.sportKey === 'icehockey_nhl';
+// The Full Slate's own tennis gate is still exercised below against stored
+// tennis records; these fixtures feed that batch directly.
 const wtaEvent = (id, opts = {}) =>
   makeEvent(id, { sport: 'tennis_wta_canadian_open', sportTitle: 'WTA Canadian Open', ...opts });
 const atpEvent = (id, opts = {}) =>
@@ -214,26 +221,26 @@ test('resetFullSlateTracking clears retracted records too', async () => {
 /* Pixel's Picks retraction                                          */
 /* ---------------------------------------------------------------- */
 
-test('retractTop5Picks voids the WTA ticket and frees its slot for the next batch', async () => {
+test('retractTop5Picks voids the matched ticket and frees its slot for the next batch', async () => {
   const { env } = makeKvStore();
   // Pixel's Picks are two-leg tickets of anchor-grade favourites (docs/
-  // tickets.js); two WTA favourites pair into one ticket, two ATP into
-  // another, and the WTA ticket is the one the gate retracts.
+  // tickets.js); two NHL favourites pair into one ticket, two NFL into
+  // another, and the NHL ticket is the one the gate retracts.
   const fav = { favoritePrice: -320, dogPrice: 255, outlier: 60 };
-  const events = [wtaEvent('wta1', fav), wtaEvent('wta2', fav), atpEvent('atp1', fav), atpEvent('atp2', fav)];
+  const events = [nhlEvent('nhl1', fav), nhlEvent('nhl2', fav), nflEvent('nfl1', fav), nflEvent('nfl2', fav)];
   await runTop5Batch(env, ctx, NOW, { fetchFullSlate: async () => events });
 
   const before = await getTop5(env, { dateKey: DATE_KEY });
-  assert.ok(before.some(isWtaPick), 'fixture sanity: the WTA game made the board');
+  assert.ok(before.some(isNhlPick), 'fixture sanity: the NHL game made the board');
 
   const result = await retractTop5Picks(env, {
-    now: NOW, dateKey: DATE_KEY, match: isWtaPick, reason: 'form gate',
+    now: NOW, dateKey: DATE_KEY, match: isNhlPick, reason: 'form gate',
   });
   assert.equal(result.retracted, 1);
 
   const after = await getTop5(env, { dateKey: DATE_KEY });
   assert.equal(after.length, before.length, 'the void still shows on the board');
-  assert.equal(after.find(isWtaPick).status, 'void');
+  assert.equal(after.find(isNhlPick).status, 'void');
   assert.equal(after.filter((p) => p.status === 'pending').length, before.length - 1);
 });
 

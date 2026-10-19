@@ -59,7 +59,7 @@ jobs:
           }
           for route in top5-history potd-history full-slate-history ladder-history prop-play-history \
                        mlb-props-history nfl-props-history wnba-props-history nhl-props-history \
-                       learning algo-health stale-picks top5 potd ladder prop-play; do
+                       learning algo-health stale-picks top5 potd ladder prop-play version; do
             fetch "$route" "$WORKER/$route"
           done
           fetch gridiron-tracking-nfl "$GRIDIRON/tracking-nfl.json"

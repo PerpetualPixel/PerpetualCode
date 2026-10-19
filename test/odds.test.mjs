@@ -9,6 +9,7 @@ import {
   DEFAULT_SHARP_BOOKMAKERS,
   sharpBookmakersFor,
   mergeSharpQuotes,
+  isAllowedSport,
 } from '../worker/src/odds.js';
 
 /**
@@ -120,35 +121,16 @@ test('enrichMmaEvents falls back to date grouping for every fight when both scor
  * set for tennis keys only — team sports stay on `us` so the per-region API
  * cost isn't paid across the whole slate.
  */
-test('regionsFor widens tennis keys and leaves team sports on us', () => {
-  assert.equal(regionsFor('tennis_wta_cincinnati'), TENNIS_REGIONS);
-  assert.equal(regionsFor('tennis_atp_canadian_open'), TENNIS_REGIONS);
-  // us AND uk/eu: the US books carry the prices a reader can bet (without
-  // them every tennis pick's best price was at 1xBet or Pinnacle), the
-  // uk/eu books carry the sharp anchor and the depth for lower-tier draws.
+test('every sport the site covers prices off the us region — tennis, and its wider regions, left with the four-league narrowing', () => {
   assert.equal(TENNIS_REGIONS, 'us,uk,eu');
-
-  for (const key of ['baseball_mlb', 'americanfootball_nfl', 'mma_mixed_martial_arts', 'soccer_usa_mls']) {
+  for (const key of ['americanfootball_nfl', 'icehockey_nhl', 'mma_mixed_martial_arts', 'basketball_nba']) {
     assert.equal(regionsFor(key), REGIONS);
+    assert.equal(isAllowedSport(key), true, key);
   }
-});
-
-test('fetchSport requests the widened regions for a tennis key', async () => {
-  const requested = [];
-  globalThis.caches = { default: { async match() { return null; }, async put() {} } };
-  globalThis.fetch = async (url) => {
-    requested.push(String(url));
-    return {
-      ok: true,
-      async json() { return []; },
-      headers: { get: () => null },
-    };
-  };
-
-  await fetchSport('tennis_wta_cincinnati', { ODDS_API_KEY: 'k' }, ctx);
-  assert.equal(requested.length, 1, 'tennis makes no second sharp-quote call — its regions already carry Pinnacle');
-  const url = new URL(requested[0]);
-  assert.equal(url.searchParams.get('regions'), 'us,uk,eu');
+  for (const key of ['tennis_wta_cincinnati', 'tennis_atp_canadian_open', 'baseball_mlb', 'americanfootball_ncaaf', 'basketball_wnba', 'soccer_usa_mls']) {
+    assert.equal(isAllowedSport(key), false, key);
+  }
+  assert.equal(regionsFor('tennis_wta_cincinnati'), REGIONS, 'no sport key widens the regions any more');
 });
 
 test('fetchSport keeps team sports on the us region', async () => {
@@ -159,11 +141,11 @@ test('fetchSport keeps team sports on the us region', async () => {
     return { ok: true, async json() { return []; }, headers: { get: () => null } };
   };
 
-  await fetchSport('baseball_mlb', { ODDS_API_KEY: 'k' }, ctx);
+  await fetchSport('icehockey_nhl', { ODDS_API_KEY: 'k' }, ctx);
   assert.equal(new URL(requested[0]).searchParams.get('regions'), 'us');
 });
 
-test('fetchSport caches tennis under a region-specific key (no us-only collision)', async () => {
+test('fetchSport caches under a region-specific key', async () => {
   const puts = [];
   globalThis.caches = {
     default: {
@@ -173,24 +155,21 @@ test('fetchSport caches tennis under a region-specific key (no us-only collision
   };
   globalThis.fetch = async () => ({ ok: true, async json() { return []; }, headers: { get: () => null } });
 
-  await fetchSport('tennis_wta_cincinnati', { ODDS_API_KEY: 'k' }, ctx);
+  await fetchSport('icehockey_nhl', { ODDS_API_KEY: 'k' }, ctx);
   assert.ok(puts.length >= 1);
-  assert.ok(puts[0].includes('regions=us,uk,eu'), `cache key should carry the tennis regions, got ${puts[0]}`);
+  assert.ok(puts[0].includes('regions=us'), `cache key should carry the regions, got ${puts[0]}`);
 });
 
 /* ---------------------------------------------------------------- */
 /* Sharp anchor quotes                                               */
 /* ---------------------------------------------------------------- */
 
-test('sharpBookmakersFor asks for Pinnacle on US-region sports, never on tennis, and can be switched off', () => {
+test('sharpBookmakersFor asks for Pinnacle on every US-region sport, and can be switched off', () => {
   assert.equal(DEFAULT_SHARP_BOOKMAKERS, 'pinnacle');
-  assert.equal(sharpBookmakersFor({}, 'baseball_mlb'), 'pinnacle');
+  assert.equal(sharpBookmakersFor({}, 'icehockey_nhl'), 'pinnacle');
   assert.equal(sharpBookmakersFor({}, 'americanfootball_nfl'), 'pinnacle');
-  // Tennis already pulls uk/eu, where Pinnacle lives — a second call would
-  // pay again for quotes the first already returned.
-  assert.equal(sharpBookmakersFor({}, 'tennis_wta_cincinnati'), null);
-  assert.equal(sharpBookmakersFor({ SHARP_BOOKMAKERS: '' }, 'baseball_mlb'), null);
-  assert.equal(sharpBookmakersFor({ SHARP_BOOKMAKERS: 'pinnacle, betfair_ex_eu' }, 'baseball_mlb'), 'pinnacle,betfair_ex_eu');
+  assert.equal(sharpBookmakersFor({ SHARP_BOOKMAKERS: '' }, 'icehockey_nhl'), null);
+  assert.equal(sharpBookmakersFor({ SHARP_BOOKMAKERS: 'pinnacle, betfair_ex_eu' }, 'icehockey_nhl'), 'pinnacle,betfair_ex_eu');
 });
 
 test('mergeSharpQuotes folds the sharp book onto the matching event and drops events nobody can bet', () => {

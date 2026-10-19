@@ -1,3 +1,28 @@
+# Deploying the worker — every time
+
+The site (`docs/`) publishes itself from `main` through GitHub Pages. The
+worker does NOT: it runs whatever checkout `npx wrangler deploy` was run
+from. Between 2026-09-15 and 2026-10-19 the deployed worker was an early-
+September build while main carried six weeks of merged selection changes,
+and nothing on the boards reflected them.
+
+Before every deploy:
+
+```powershell
+cd C:\Users\mgbou\Claude\PerpetualCode
+git checkout main
+git pull origin main
+cd worker
+npx wrangler deploy
+```
+
+After it: open https://pixel-pick-odds.mgbouldering.workers.dev/version and
+check the `version` matches the one in the site's About panel. The daily
+tracking export snapshots the same route to `docs/data/tracking/version.json`,
+so a stale deploy shows up in the repo too.
+
+---
+
 # Deploy guide — Tail or Fade release
 
 Everything on `claude/mma-card-name-discovery-sqr8k7` / PR #58.

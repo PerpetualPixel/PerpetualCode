@@ -12,18 +12,15 @@ import { isNflPreseasonKey } from '../../docs/engine.js';
 
 export const UPSTREAM = 'https://api.the-odds-api.com/v4';
 
+// The four leagues the site covers since 2026-10-19 (see tracking.js's
+// FIXED_SPORT_KEYS): everything the catalogue, the slate and the boards
+// offer comes from these.
 export const ALLOWED_SPORTS = new Set([
   'upcoming',
   'americanfootball_nfl',
-  'americanfootball_ncaaf',
   'basketball_nba',
-  'basketball_wnba',
-  'basketball_ncaab',
-  'baseball_mlb',
   'icehockey_nhl',
   'mma_mixed_martial_arts',
-  'soccer_epl',
-  'soccer_usa_mls',
 ]);
 
 // Tennis is keyed per tournament (tennis_atp_canadian_open, and a different key
@@ -34,7 +31,7 @@ export const ALLOWED_SPORTS = new Set([
 // "is this tennis" test to decide the UK/EU region set, so anything added
 // here would also be priced off non-US books. Non-tennis dynamic keys (NFL
 // preseason) are matched separately in isAllowedSport instead.
-export const ALLOWED_SPORT_PREFIXES = ['tennis_atp_', 'tennis_wta_'];
+export const ALLOWED_SPORT_PREFIXES = [];
 
 export function isAllowedSport(key) {
   return (

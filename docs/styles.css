@@ -6373,3 +6373,22 @@ input[type="range"]:focus-visible {
 }
 
 .prop-play-stake-note strong { color: var(--text); }
+
+/* ---------------------------------------------------------------- */
+/* Hit-rate chips — the one prop-research row every card shares      */
+/* ---------------------------------------------------------------- */
+
+.hit-chips { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 6px; }
+.hit-chip {
+  display: inline-flex; align-items: baseline; gap: 5px;
+  font-family: var(--mono); font-size: 0.72rem; font-weight: 700;
+  color: var(--muted); background: rgba(148, 163, 184, 0.1);
+  border: 1px solid rgba(148, 163, 184, 0.22); border-radius: 999px; padding: 2px 9px;
+}
+.hit-chip small { font-weight: 500; opacity: 0.8; }
+.hit-chip-k { font-weight: 600; letter-spacing: 0.04em; text-transform: uppercase; font-size: 0.62rem; opacity: 0.85; }
+.hit-chip.is-hot { color: var(--success); background: color-mix(in srgb, var(--success) 12%, transparent); border-color: color-mix(in srgb, var(--success) 45%, transparent); }
+.hit-chip.is-warm { color: #eab308; background: rgba(234, 179, 8, 0.1); border-color: rgba(234, 179, 8, 0.4); }
+.hit-chip.is-cold { color: var(--danger, #f87171); background: rgba(248, 113, 113, 0.1); border-color: rgba(248, 113, 113, 0.4); }
+.hit-chip.is-avg { color: var(--text); }
+.hit-chip.is-final { color: var(--accent); border-color: color-mix(in srgb, var(--accent) 45%, transparent); }

@@ -27,8 +27,9 @@
  *   player's real game log. Every leg must be bettable at a book the reader
  *   can use and carry a real edge at its price — the bar the boards have
  *   always held.
- * - A ticket is exactly two legs, never arguing with each other, whose
- *   combined price lands inside TICKET_BAND and whose combined probability
+ * - A ticket is exactly two legs, each a comfort-zone line inside
+ *   PAIR_LEG_BAND, never arguing with each other, whose combined price lands
+ *   inside TICKET_BAND and whose combined probability
  *   clears TICKET_MIN_PROB ("more often than not both hit"). At least one
  *   leg is an ANCHOR — a leg read at ANCHOR_MIN_PROB or better, whether
  *   that read is the market's (a heavy favourite) or the game log's (a
@@ -48,24 +49,24 @@
 import { contradicts, decimalToAmerican, formatAmerican, suggestedStake } from './engine.js';
 
 /**
- * The leagues a GAME-MARKET leg (moneyline, spread, total) may come from —
- * the ones the direction named. NCAA football is further restricted
- * upstream to Power 4 matchups (docs/ncaaf-conferences.js), and NFL to the
- * regular season, exactly as the boards already were.
+ * The leagues a GAME-MARKET leg (moneyline, spread, total) may come from.
+ * Since 2026-10-19 the whole site is four leagues — NFL, NHL, MMA and the
+ * NBA — and the record says why: tennis went 53-62 for -14% across both
+ * boards and NCAA football 1-5, while MMA favourites and NHL lines held
+ * up. NFL is further restricted to the regular season upstream.
  */
 export const TICKET_SPORTS = {
-  keys: new Set(['americanfootball_nfl', 'americanfootball_ncaaf', 'mma_mixed_martial_arts']),
-  prefixes: ['tennis_'],
+  keys: new Set(['americanfootball_nfl', 'icehockey_nhl', 'mma_mixed_martial_arts']),
+  prefixes: [],
 };
 
 /**
- * The leagues a PLAYER-PROP leg may come from: football's alternate yardage
- * and reception lines, and basketball's alternate points, rebounds and
- * assists — the WNBA lines the winning slips were built on, and the NBA's
- * once its season is on. Basketball supplies props only: its moneylines
- * were never part of the direction.
+ * The leagues a PLAYER-PROP leg may come from: football's alternate
+ * yardage and reception lines, basketball's alternate points, rebounds
+ * and assists, hockey's shots, points and assists. Basketball supplies
+ * props only — the NBA's moneylines were never part of the direction.
  */
-export const PROP_SPORTS = new Set(['americanfootball_nfl', 'basketball_wnba', 'basketball_nba']);
+export const PROP_SPORTS = new Set(['americanfootball_nfl', 'basketball_nba', 'icehockey_nhl']);
 
 export function isGameLegSport(sportKey) {
   const key = String(sportKey ?? '');
@@ -81,8 +82,30 @@ export function isTicketSport(sportKey) {
   return isGameLegSport(sportKey) || isPropLegSport(sportKey);
 }
 
-/** Combined price the ticket must land in: -200 to +100. A straight play fills a slot inside the same band. */
-export const TICKET_BAND = { MIN_AMERICAN: -200, MAX_AMERICAN: 100 };
+/**
+ * Combined price the ticket must land in (2026-10-19 direction): "-150 or
+ * better but nothing near -200", two legs around -250 each adding up to
+ * +100 or better. Two -250s pay -104; -300 with -200 pays +100; -400 with
+ * -300 pays -150, the floor. A straight play fills a slot inside the same
+ * band. The record backs the floor: plays at -150 to -249 went 14-16 for
+ * -32% across both boards while -149 to +99 went 86-66 for +3%.
+ */
+export const TICKET_BAND = { MIN_AMERICAN: -150, MAX_AMERICAN: 150 };
+
+/**
+ * Each leg of a ticket is a "low-level" line: a comfort-zone number priced
+ * -400 to -120. Lighter than -120 it is a coin flip dressed as a leg;
+ * heavier than -400 it can't reach the band's floor with any partner.
+ */
+export const PAIR_LEG_BAND = { MIN_AMERICAN: -400, MAX_AMERICAN: -120 };
+
+/**
+ * A straight play is the "high conviction" alternative to a ticket: a leg
+ * read at 60%+ (about -150 fair) standing in the band on its own. The
+ * boards prefer a ticket that is easier to hit over a risky single, so a
+ * single posts only where no ticket does.
+ */
+export const SINGLE_MIN_PROB = 0.6;
 
 /**
  * The safe leg. By the market's own read a side at 72% is about -257 fair;
@@ -218,7 +241,8 @@ export function buildTickets(legs, {
   minProb = TICKET_MIN_PROB,
   minEv = 0,
 } = {}) {
-  const pool = drawable(legs, usedEventIds);
+  const legBand = bandDecimals(PAIR_LEG_BAND.MIN_AMERICAN, PAIR_LEG_BAND.MAX_AMERICAN);
+  const pool = drawable(legs, usedEventIds).filter((l) => inBand(l.decimal, legBand));
   const band = bandDecimals(minAmerican, maxAmerican);
 
   const pairs = [];
@@ -274,13 +298,14 @@ export function buildTickets(legs, {
 
 /**
  * Whether a leg stands on its own as a straight play: priced inside the
- * band, a favourite-side read, and worth more than its price says — the
- * -132 alternate rushing line and the -146 moneyline on the winning slips.
+ * band, read at SINGLE_MIN_PROB or better (high conviction), and worth more
+ * than its price says — the -132 alternate rushing line and the -146
+ * moneyline on the winning slips.
  */
 export function singleEligible(leg, {
   minAmerican = TICKET_BAND.MIN_AMERICAN,
   maxAmerican = TICKET_BAND.MAX_AMERICAN,
-  minProb = PARTNER_MIN_PROB,
+  minProb = SINGLE_MIN_PROB,
   minEv = 0,
 } = {}) {
   if (!leg || !Number.isFinite(leg.decimal) || !Number.isFinite(leg.consensusProb)) return false;
