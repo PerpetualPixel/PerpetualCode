@@ -193,7 +193,7 @@ async function cachedJson(url, ttl, ctx) {
   }
 }
 
-async function fetchNflAltProps(oddsEventId, env, ctx) {
+export async function fetchNflAltProps(oddsEventId, env, ctx) {
   const url = new URL(`${UPSTREAM}/sports/${NFL_SPORT_KEY}/events/${oddsEventId}/odds`);
   url.searchParams.set('apiKey', (env.ODDS_API_KEY ?? '').trim());
   url.searchParams.set('regions', REGIONS);
@@ -204,7 +204,7 @@ async function fetchNflAltProps(oddsEventId, env, ctx) {
 }
 
 /** ESPN athlete id for a player on either team, through the (free, cached) rosters. */
-async function resolveNflAthleteId(playerName, teamAbbrs, ctx) {
+export async function resolveNflAthleteId(playerName, teamAbbrs, ctx) {
   const target = normalizeName(playerName);
   for (const abbr of teamAbbrs) {
     if (!abbr) continue;
@@ -298,4 +298,9 @@ export async function collectNflPropLegs(games, env, ctx, now = Date.now(), { tr
   }
   trace.push(`NFL prop legs qualified: ${legs.length}`);
   return legs;
+}
+
+/** The player's ESPN game log (current season), cached; null when unreachable. Shared with worker/src/trends.js. */
+export async function fetchNflGamelog(athleteId, ctx) {
+  return cachedJson(`${ESPN_GAMELOG}/${athleteId}/gamelog`, GAMELOG_TTL, ctx);
 }

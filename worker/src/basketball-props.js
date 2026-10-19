@@ -150,7 +150,7 @@ async function cachedJson(url, ttl, ctx) {
   }
 }
 
-async function fetchAltProps(sportKey, oddsEventId, env, ctx) {
+export async function fetchAltProps(sportKey, oddsEventId, env, ctx) {
   const url = new URL(`${UPSTREAM}/sports/${sportKey}/events/${oddsEventId}/odds`);
   url.searchParams.set('apiKey', (env.ODDS_API_KEY ?? '').trim());
   url.searchParams.set('regions', REGIONS);
@@ -160,7 +160,7 @@ async function fetchAltProps(sportKey, oddsEventId, env, ctx) {
   return cachedJson(url.toString(), ODDS_TTL, ctx);
 }
 
-async function resolveAthleteId(sportKey, playerName, teamAbbrs, ctx) {
+export async function resolveAthleteId(sportKey, playerName, teamAbbrs, ctx) {
   const target = normalizeName(playerName);
   for (const abbr of teamAbbrs) {
     if (!abbr) continue;
@@ -251,3 +251,17 @@ export async function collectBasketballPropLegs(games, env, ctx, now = Date.now(
   return legs;
 }
 
+
+/** The player's ESPN game log (current season), cached; null when unreachable. Shared with worker/src/trends.js. */
+export async function fetchBasketballGamelog(sportKey, athleteId, ctx) {
+  if (!BASKETBALL_SPORTS[sportKey]) return null;
+  return cachedJson(gamelogUrl(sportKey, athleteId), GAMELOG_TTL, ctx);
+}
+
+/** Which game-log column carries `statKey`, by key first then label; -1 when absent. */
+export function basketballStatIndex(gamelog, statKey) {
+  const names = Array.isArray(gamelog?.names) ? gamelog.names : [];
+  const labels = Array.isArray(gamelog?.labels) ? gamelog.labels : [];
+  const idx = names.findIndex((n) => GAMELOG_NAMES[statKey]?.includes(n));
+  return idx >= 0 ? idx : labels.indexOf(GAMELOG_LABEL[statKey]);
+}

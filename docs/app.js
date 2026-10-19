@@ -13,8 +13,9 @@ if (!window.location.hostname.includes('perpetualpicks.com')) {
 
 import { CONFIG } from './config.js';
 import { DEMO_EVENTS } from './demo.js';
-import { teamLogoUrl } from './team-logos.js';
+import { teamLogoUrl, espnAbbr } from './team-logos.js';
 import { leagueIconSvg } from './league-icons.js';
+import { sortTrends } from './trends.js';
 import { enhanceSelect } from './custom-select.js';
 import { BUILD_INFO } from './version.js';
 import { summarizePicks, gradePick } from './learning.js';
@@ -839,6 +840,15 @@ const el = {
   statsBody: document.getElementById('statsBody'),
   tabBoard: document.getElementById('tabBoard'),
   tabPotd: document.getElementById('tabPotd'),
+  tabTrends: document.getElementById('tabTrends'),
+  trendsView: document.getElementById('trendsView'),
+  trendsLeagues: document.getElementById('trendsLeagues'),
+  trendsStat: document.getElementById('trendsStat'),
+  trendsSort: document.getElementById('trendsSort'),
+  trendsMinRate: document.getElementById('trendsMinRate'),
+  trendsSearch: document.getElementById('trendsSearch'),
+  trendsStatus: document.getElementById('trendsStatus'),
+  trendsBody: document.getElementById('trendsBody'),
   boardView: document.getElementById('boardView'),
   potdView: document.getElementById('potdView'),
   potdBody: document.getElementById('potdBody'),
@@ -6067,8 +6077,8 @@ function renderPropPlayCard(record) {
 }
 
 function setActiveTab(tab) {
-  const views = { slate: el.slateView, board: el.boardView, potd: el.potdView };
-  const tabs = { slate: el.tabSlate, board: el.tabBoard, potd: el.tabPotd };
+  const views = { slate: el.slateView, board: el.boardView, potd: el.potdView, trends: el.trendsView };
+  const tabs = { slate: el.tabSlate, board: el.tabBoard, potd: el.tabPotd, trends: el.tabTrends };
 
   for (const [name, view] of Object.entries(views)) {
     const active = name === tab;
@@ -6080,7 +6090,7 @@ function setActiveTab(tab) {
   // The day toggle applies to Full Slate only — Play of the Day and
   // Pixel's Picks are both fixed daily sets locked server-side, with no
   // Today/Tomorrow of their own to choose.
-  el.dayFilterBar.hidden = tab === 'potd' || tab === 'board';
+  el.dayFilterBar.hidden = tab === 'potd' || tab === 'board' || tab === 'trends';
 
   // Viewing a tab is what "seen" means — clear its pulse the moment the
   // user actually switches to it, using whatever date/dateKey that board's
@@ -6098,6 +6108,7 @@ function setActiveTab(tab) {
   }
 
   if (tab === 'potd') { loadPotd(); loadLadder(); }
+  if (tab === 'trends') loadTrends();
   // Re-render from whatever's already loaded rather than re-fetching —
   // everything loads once at boot (refreshAllLeagues), so switching tabs is
   // never itself a billed call.
@@ -6110,6 +6121,7 @@ function setActiveTab(tab) {
 el.tabSlate.addEventListener('click', () => setActiveTab('slate'));
 el.tabBoard.addEventListener('click', () => setActiveTab('board'));
 el.tabPotd.addEventListener('click', () => setActiveTab('potd'));
+el.tabTrends?.addEventListener('click', () => setActiveTab('trends'));
 
 /* ---------------------------------------------------------------- */
 /* Tracking Dashboard                                                */
@@ -8642,3 +8654,204 @@ el.tailFadeAudit?.addEventListener('click', async () => {
 // el.tailFadeResult's whole innerHTML on every audit, which would orphan
 // any listener attached directly to a leg card.
 el.tailFadeResult?.addEventListener('click', toggleTailFadeLegCard);
+
+/* ---------------------------------------------------------------- */
+/* Trends                                                            */
+/* ---------------------------------------------------------------- */
+
+/**
+ * The Trends tab (docs/trends.js, worker/src/trends.js): every player-prop
+ * line on the day's games with the player's real hit rate at that number.
+ * The worker builds the rows per league; this tab filters and sorts them
+ * the way the prop research tools do — league, window, side, stat, a
+ * minimum hit rate, a player search — and draws each row as the player,
+ * the line, the best price, the hit rate and the last-N bars.
+ */
+const trendsState = {
+  sport: null,
+  window: 'l10',
+  side: 'all',
+  stat: '',
+  sort: 'hitRate',
+  minRate: 0.8,
+  search: '',
+  data: null,
+  available: [],
+  open: new Set(),
+};
+const TREND_LEAGUE_ICON = { americanfootball_nfl: 'nfl', basketball_nba: 'nba', icehockey_nhl: 'nhl' };
+const trendTimeFmt = new Intl.DateTimeFormat(undefined, { weekday: 'short', hour: 'numeric', minute: '2-digit' });
+const trendDateFmt = new Intl.DateTimeFormat(undefined, { month: 'short', day: 'numeric' });
+
+async function loadTrends({ force = false } = {}) {
+  if (!el.trendsBody || !CONFIG.WORKER_URL) return;
+  if (trendsState.data && !force && trendsState.data.sportKey === trendsState.sport) { renderTrends(); return; }
+  el.trendsStatus.textContent = 'Loading trends…';
+  try {
+    const url = new URL('/trends', CONFIG.WORKER_URL);
+    if (trendsState.sport) url.searchParams.set('sport', trendsState.sport);
+    const res = await fetch(url, { headers: { Accept: 'application/json' } });
+    const body = await res.json();
+    trendsState.data = body.trends ?? null;
+    trendsState.available = body.available ?? [];
+    trendsState.sport = trendsState.data?.sportKey ?? trendsState.sport;
+    renderTrendLeagues();
+    renderTrendStats();
+    renderTrends();
+  } catch {
+    el.trendsStatus.textContent = "Couldn't reach the odds feed.";
+  }
+}
+
+function renderTrendLeagues() {
+  if (!el.trendsLeagues) return;
+  el.trendsLeagues.innerHTML = trendsState.available.map((a) => `
+    <button type="button" class="league-chip ${a.sportKey === trendsState.sport ? 'is-active' : ''} ${a.rows ? '' : 'is-off-season'}"
+            data-trends-league="${esc(a.sportKey)}" aria-pressed="${a.sportKey === trendsState.sport ? 'true' : 'false'}"
+            title="${a.rows ? `${a.rows} lines` : 'No games scanned yet'}">
+      ${leagueIconSvg(TREND_LEAGUE_ICON[a.sportKey] ?? a.sportKey)}<span class="league-chip-label">${esc(a.title)}</span>
+    </button>`).join('');
+}
+
+function renderTrendStats() {
+  if (!el.trendsStat) return;
+  const stats = new Map();
+  for (const r of trendsState.data?.rows ?? []) stats.set(r.statKey, r.marketLabel ?? r.statLabel);
+  const current = trendsState.stat;
+  el.trendsStat.innerHTML = `<option value="">All stats</option>${[...stats.entries()].map(([k, label]) => `<option value="${esc(k)}" ${k === current ? 'selected' : ''}>${esc(label)}</option>`).join('')}`;
+  if (current && !stats.has(current)) trendsState.stat = '';
+}
+
+/** The rows the controls leave standing, in the chosen order. */
+function visibleTrendRows() {
+  const rows = trendsState.data?.rows ?? [];
+  const w = trendsState.window;
+  const q = trendsState.search.trim().toLowerCase();
+  const kept = rows.filter((r) => {
+    if (trendsState.side !== 'all' && r.side !== trendsState.side) return false;
+    if (trendsState.stat && r.statKey !== trendsState.stat) return false;
+    const rate = r.rates?.[w];
+    if (!Number.isFinite(rate)) return false;
+    if (rate < trendsState.minRate - 1e-9) return false;
+    if (q && !`${r.playerName} ${r.team ?? ''} ${r.home} ${r.away}`.toLowerCase().includes(q)) return false;
+    return true;
+  });
+  return sortTrends(kept, { window: w, by: trendsState.sort });
+}
+
+const rateTone = (v) => (v >= 0.8 ? 'is-hot' : v >= 0.6 ? 'is-warm' : 'is-cold');
+const pct = (v) => `${Math.round(v * 100)}%`;
+const windowLabel = { l5: 'L5', l10: 'L10', l20: 'L20', season: 'Season' };
+
+function renderTrendBars(row) {
+  const n = { l5: 5, l10: 10, l20: 20, season: 20 }[trendsState.window] ?? 10;
+  const series = row.series.slice(0, n).slice().reverse(); // oldest left, most recent right
+  if (!series.length) return '';
+  const max = Math.max(row.point, ...series.map((s) => s.value), 1);
+  const lineTop = 100 - Math.min(100, (row.point / max) * 100);
+  return `<div class="trend-bars" role="img" aria-label="${esc(series.map((s) => s.value).join(', '))}">
+    <span class="trend-line-mark" style="top:${lineTop.toFixed(1)}%"></span>
+    ${series.map((s) => `<span class="trend-bar ${s.hit === 1 ? 'is-hit' : s.hit === null ? 'is-push' : ''}" style="height:${Math.max(8, (s.value / max) * 100).toFixed(1)}%" title="${esc(`${s.value} ${s.atVs ?? ''} ${s.opponent ?? ''}`.trim())}"></span>`).join('')}
+  </div>`;
+}
+
+function renderTrendCard(row) {
+  const rate = row.rates[trendsState.window];
+  const bookId = bookIdFor(row.bookKey);
+  const bookMeta = bookId ? SPORTSBOOKS[bookId] : null;
+  const open = trendsState.open.has(row.id);
+  const detailId = `trend-${row.id.replace(/[^a-z0-9]/gi, '')}`;
+  const detail = open ? `<div class="trend-detail" id="${detailId}">
+      <div class="trend-windows">
+        ${Object.entries(row.rates).filter(([, v]) => Number.isFinite(v)).map(([k, v]) => `<span class="hit-chip ${rateTone(v)}"><span class="hit-chip-k">${windowLabel[k]}</span>${pct(v)}</span>`).join('')}
+        ${Number.isFinite(row.avg?.l10) ? `<span class="hit-chip is-avg"><span class="hit-chip-k">Avg L10</span>${esc(String(row.avg.l10))}</span>` : ''}
+        ${Number.isFinite(row.avg?.season) ? `<span class="hit-chip is-avg"><span class="hit-chip-k">Avg</span>${esc(String(row.avg.season))} <small>(${row.games})</small></span>` : ''}
+        ${row.streak >= 3 ? `<span class="hit-chip is-hot"><span class="hit-chip-k">Streak</span>${row.streak}</span>` : ''}
+        <span class="hit-chip"><span class="hit-chip-k">Books</span>${row.bookCount}</span>
+      </div>
+      <div class="trend-log">
+        ${row.series.map((s) => `<span class="trend-log-game ${s.hit === 1 ? 'is-hit' : s.hit === null ? 'is-push' : ''}">
+          <span>${s.date ? esc(trendDateFmt.format(new Date(s.date))) : ''} ${esc(`${s.atVs ?? ''}${s.opponent ?? ''}`)}</span><strong>${esc(String(s.value))}</strong>
+        </span>`).join('')}
+      </div>
+    </div>` : '';
+  return `<article class="trend-card" data-trend-id="${esc(row.id)}">
+    <div class="trend-game">
+      ${leagueIconSvg(TREND_LEAGUE_ICON[row.sportKey] ?? row.sportKey)}
+      <strong>${esc(abbrevTeam(row.away))} @ ${esc(abbrevTeam(row.home))}</strong>
+      <span>· ${esc(trendTimeFmt.format(new Date(row.commenceMs)))}</span>
+    </div>
+    <div class="trend-main">
+      <div>
+        <p class="trend-player">${esc(row.playerName)}${row.team ? `<small>${esc(row.team)}</small>` : ''}</p>
+        <p class="trend-line">${esc(row.marketLabel ?? row.statLabel)} ${row.side === 'over' ? 'Over' : 'Under'} ${esc(String(row.point))}</p>
+      </div>
+      <span class="trend-price" style="--book:${esc(bookMeta?.color ?? '#8892a6')}" title="${esc(row.book)}">
+        <span class="trend-book" aria-hidden="true"></span>${esc(formatAmerican(row.american))}
+      </span>
+    </div>
+    <div class="trend-rate-row">
+      <span class="trend-rate ${rateTone(rate)}">${pct(rate)}<small>${windowLabel[trendsState.window]}</small></span>
+      ${renderTrendBars(row)}
+      <button type="button" class="trend-expand" aria-expanded="${open ? 'true' : 'false'}" aria-controls="${detailId}" data-trend-toggle="${esc(row.id)}" aria-label="Game log">›</button>
+    </div>
+    ${detail}
+  </article>`;
+}
+
+/** "New York Knicks" → "NYK" where the league map knows the team, else the last word. */
+function abbrevTeam(name) {
+  const abbr = espnAbbr(trendsState.sport, name);
+  return abbr ? abbr.toUpperCase() : String(name ?? '').split(' ').pop();
+}
+
+function renderTrends() {
+  if (!el.trendsBody) return;
+  const data = trendsState.data;
+  if (!data || !data.builtAt) {
+    el.trendsStatus.textContent = 'No lines scanned yet for this league — the worker builds Trends a few hours ahead of each slate.';
+    el.trendsBody.innerHTML = '';
+    return;
+  }
+  const rows = visibleTrendRows();
+  const built = new Date(data.builtAt);
+  el.trendsStatus.innerHTML = `${rows.length} of ${data.rows.length} lines across ${data.games} ${esc(data.title)} game${data.games === 1 ? '' : 's'} · hit rates from this season's game logs · <span class="trends-meta">lines as of ${esc(trendTimeFmt.format(built))}</span>`;
+  el.trendsBody.innerHTML = rows.length
+    ? rows.slice(0, 150).map(renderTrendCard).join('')
+    : `<p class="empty">Nothing clears that filter. Lower the minimum hit rate or widen the window.</p>`;
+}
+
+el.trendsLeagues?.addEventListener('click', (event) => {
+  const chip = event.target.closest('[data-trends-league]');
+  if (!chip) return;
+  trendsState.sport = chip.dataset.trendsLeague;
+  trendsState.open.clear();
+  loadTrends({ force: true });
+});
+document.querySelector('[data-trends-window]')?.addEventListener('click', (event) => {
+  const btn = event.target.closest('[data-window]');
+  if (!btn) return;
+  trendsState.window = btn.dataset.window;
+  for (const b of btn.parentElement.querySelectorAll('button')) b.classList.toggle('is-active', b === btn);
+  renderTrends();
+});
+document.querySelector('[data-trends-side]')?.addEventListener('click', (event) => {
+  const btn = event.target.closest('[data-side]');
+  if (!btn) return;
+  trendsState.side = btn.dataset.side;
+  for (const b of btn.parentElement.querySelectorAll('button')) b.classList.toggle('is-active', b === btn);
+  renderTrends();
+});
+el.trendsStat?.addEventListener('change', () => { trendsState.stat = el.trendsStat.value; renderTrends(); });
+el.trendsSort?.addEventListener('change', () => { trendsState.sort = el.trendsSort.value; renderTrends(); });
+el.trendsMinRate?.addEventListener('change', () => { trendsState.minRate = Number(el.trendsMinRate.value); renderTrends(); });
+el.trendsSearch?.addEventListener('input', () => { trendsState.search = el.trendsSearch.value; renderTrends(); });
+el.trendsBody?.addEventListener('click', (event) => {
+  const btn = event.target.closest('[data-trend-toggle]');
+  if (!btn) return;
+  const id = btn.dataset.trendToggle;
+  if (trendsState.open.has(id)) trendsState.open.delete(id); else trendsState.open.add(id);
+  const card = btn.closest('.trend-card');
+  const row = (trendsState.data?.rows ?? []).find((r) => r.id === id);
+  if (card && row) card.outerHTML = renderTrendCard(row);
+});

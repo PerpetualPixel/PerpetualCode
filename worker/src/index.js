@@ -55,6 +55,7 @@ import { runNhlPropsScan, runNhlPropsGrading, getAllNhlPropsTracked } from './nh
 import { runPotdDaily, runPotdClvSnapshot, runPotdGrading, backfillPotdAnalysis, getPotd, getPotdHold, getPotdLeaning, getPotdHistory, retractPotd, regradePotdTennisVoids, etParts } from './potd.js';
 import { runLadderDaily, runLadderGrading, getLadder, getLadderHistory } from './ladder.js';
 import { BUILD_INFO } from '../../docs/version.js';
+import { runTrendsBuild, getTrends, TREND_SPORT_KEYS } from './trends.js';
 import { getOrGenerateAnalysis, getOrGeneratePropAnalysis } from './analysis.js';
 import { repairMissingPayouts } from './repair-payouts.js';
 import {
@@ -738,6 +739,10 @@ export default {
     // bankroll — a rung left ungraded stalls the whole climb, not just one
     // pick's record. Same every-tick, idempotent shape as the rest.
     ctx.waitUntil(runLadderGrading(env, ctx, now));
+    // Trends rebuild one stale league per tick (worker/src/trends.js) —
+    // bounded, cached, and independent of the boards.
+    ctx.waitUntil(runTrendsBuild(env, ctx, now, { fetchFullSlate: () => fetchFullSlateEvents(env, ctx) })
+      .catch((e) => console.error('Trends build failed:', e)));
     ctx.waitUntil(runFullSlateClvSnapshot(env, ctx, now));
     ctx.waitUntil(runFullSlateGrading(env, ctx, now));
     // Self-healing: a still-pending pick's commenceMs can drift onto a
@@ -1434,6 +1439,26 @@ export default {
 
     // The Ladder Challenge's live state: the current climb, the day's rung,
     // and the ideal plan the section draws. KV only, no odds credit.
+    // Trends (docs/trends.js): every player-prop line on the day's games
+    // with the player's hit rate at that number, built by the scheduled
+    // tick (worker/src/trends.js) and served from KV. ?sport= picks the
+    // league; the default is the first with rows.
+    if (pathname === '/trends' && request.method === 'GET') {
+      try {
+        const wanted = new URL(request.url).searchParams.get('sport');
+        const keys = wanted && TREND_SPORT_KEYS.includes(wanted) ? [wanted] : TREND_SPORT_KEYS;
+        const all = await Promise.all(keys.map((k) => getTrends(env, k)));
+        const trends = all.find((t) => t.rows.length) ?? all[0];
+        return json({
+          trends,
+          leagues: TREND_SPORT_KEYS,
+          available: await Promise.all(TREND_SPORT_KEYS.map(async (k) => { const t = await getTrends(env, k); return { sportKey: k, title: t.title, rows: t.rows.length, builtAt: t.builtAt }; })),
+        }, { headers: { ...cors, 'Cache-Control': 'public, max-age=300' } });
+      } catch (error) {
+        return json({ error: String(error).slice(0, 120) }, { status: 500, headers: cors });
+      }
+    }
+
     if (pathname === '/ladder') {
       if (request.method !== 'GET') {
         return json({ error: 'Method not allowed' }, { status: 405, headers: cors });
