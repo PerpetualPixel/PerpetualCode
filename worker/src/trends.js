@@ -25,32 +25,35 @@ import {
   NFL_SPORT_KEY, NFL_TREND_MARKETS, fetchNflAltProps, resolveNflAthleteId, fetchNflGamelog, gamelogStatIndex, nflHeadshotUrl, fetchNflRoster,
 } from './football-props.js';
 import {
-  BASKETBALL_ALT_MARKETS, fetchAltProps, resolveAthleteId, fetchBasketballGamelog, basketballStatIndex,
+  BASKETBALL_ALT_MARKETS, fetchAltProps, resolveAthleteId, fetchBasketballGamelog, basketballStatIndex, basketballHeadshotUrl,
 } from './basketball-props.js';
 import {
-  NHL_SPORT_KEY, NHL_PROP_MARKETS, NHL_ALT_MARKETS, fetchNhlProps, resolveNhlAthleteId, fetchNhlGamelog, nhlStatIndex,
+  NHL_SPORT_KEY, NHL_PROP_MARKETS, NHL_ALT_MARKETS, fetchNhlProps, resolveNhlAthleteId, fetchNhlGamelog, nhlStatIndex, nhlHeadshotUrl,
 } from './hockey-props.js';
+import { seasonYearOf } from '../../docs/prop-legs.js';
 import { listLeagueGames } from './prop-legs.js';
 
-/** How long a league's rows are served before the tick rebuilds them (a league may set its own). */
+/** How long a game's rows are served before the tick rebuilds them (a league may set its own). */
 export const TRENDS_TTL_MINUTES = 180;
-/** Games are scanned this far ahead — tonight's slate and tomorrow's early games (a league may set its own). */
-export const LOOKAHEAD_HOURS = 30;
-export const MAX_GAMES = 16;
+/** Games are scanned this far ahead: today's and tomorrow's slate (a league may set its own). */
+export const LOOKAHEAD_HOURS = 48;
 /**
- * The leagues Trends builds and shows today. NFL first (2026-10-19
- * direction): the NBA and NHL readers are wired and tested and join this
- * list when the direction says so — one line, no deploy of anything else.
+ * How many games one tick builds. A game costs one odds call plus a
+ * roster and two game logs per player, so six games is a few hundred
+ * subrequests — well inside the Workers limit — and a 25-game night
+ * fills in over a handful of ticks rather than failing as one.
  */
-export const TREND_ENABLED_SPORTS = [NFL_SPORT_KEY];
-export const MAX_PLAYERS_PER_GAME = 24;
+export const MAX_GAMES_PER_TICK = 6;
+/** The leagues Trends builds and shows: every league the site covers that has player props (2026-10-20 direction). */
+export const TREND_ENABLED_SPORTS = [NFL_SPORT_KEY, 'basketball_nba', NHL_SPORT_KEY];
+export const MAX_PLAYERS_PER_GAME = 40;
 /** Rows with fewer logged games than this have no rate worth sorting on. */
 const MIN_GAMES = 3;
-/** A build that found no rows is tried again this soon, rather than after the league's full TTL. */
+/** A game whose build found no rows is tried again this soon, rather than after the league's full TTL. */
 export const RETRY_EMPTY_MINUTES = 30;
 /** How many diagnostic lines a build keeps for /trends to show. */
 const MAX_DIAG = 60;
-const MAX_ROWS = 500;
+const MAX_ROWS = 3000;
 const KV_TTL_SECONDS = 86400 * 2;
 
 const NBA_KEY = 'basketball_nba';
@@ -85,6 +88,11 @@ export const TREND_SPORTS = {
     fetchOdds: (eventId, env, ctx) => fetchAltProps(NBA_KEY, eventId, env, ctx),
     resolve: (name, abbrs, ctx) => resolveAthleteId(NBA_KEY, name, abbrs, ctx),
     gamelog: (athleteId, ctx) => fetchBasketballGamelog(NBA_KEY, athleteId, ctx),
+    // ESPN keys a basketball season by the year it ENDS (2025-26 is
+    // season=2026), and names it "2026-27": the first year in the current
+    // log's name is exactly the prior season's key.
+    priorGamelog: (athleteId, ctx, now, log) => { const y = seasonYearOf(log?.seasonTypes?.[0]?.displayName); return y ? fetchBasketballGamelog(NBA_KEY, athleteId, ctx, y) : null; },
+    headshot: (athleteId) => basketballHeadshotUrl(NBA_KEY, athleteId),
     statIndex: basketballStatIndex,
   },
   [NHL_SPORT_KEY]: {
@@ -94,6 +102,9 @@ export const TREND_SPORTS = {
     fetchOdds: (eventId, env, ctx) => fetchNhlProps(eventId, env, ctx),
     resolve: (name, abbrs, ctx) => resolveNhlAthleteId(name, abbrs, ctx),
     gamelog: (athleteId, ctx) => fetchNhlGamelog(athleteId, ctx),
+    // Same end-year convention as basketball.
+    priorGamelog: (athleteId, ctx, now, log) => { const y = seasonYearOf(log?.seasonTypes?.[0]?.displayName); return y ? fetchNhlGamelog(athleteId, ctx, y) : null; },
+    headshot: nhlHeadshotUrl,
     statIndex: nhlStatIndex,
   },
 };
@@ -101,13 +112,18 @@ export const TREND_SPORT_KEYS = Object.keys(TREND_SPORTS);
 
 const trendsKey = (sportKey) => `trends:${sportKey}`;
 
-/** Stored rows for a league: { sportKey, title, builtAt, games, rows } — empty when never built. */
+/**
+ * Stored rows for a league: { sportKey, title, builtAt, games, pending,
+ * rows, stamps, diag } — `stamps` is when each game's rows were built,
+ * `pending` how many games in the lookahead still wait for a tick. Empty
+ * when never built.
+ */
 export async function getTrends(env, sportKey) {
   const spec = TREND_SPORTS[sportKey];
   if (!spec) return null;
   const raw = await env.POTD_KV.get(trendsKey(sportKey));
   if (raw) return JSON.parse(raw);
-  return { sportKey, title: spec.title, builtAt: null, games: 0, rows: [] };
+  return { sportKey, title: spec.title, builtAt: null, games: 0, pending: 0, rows: [], stamps: {} };
 }
 
 /** The games a league's build scans: unstarted, inside the lookahead, soonest first, from the slate or the events list. */
@@ -119,7 +135,7 @@ export async function trendGamesFor(sportKey, events, env, ctx, now) {
   };
   let games = (events ?? []).filter((g) => g?.sport_key === sportKey && inWindow(g));
   if (!games.length) games = (await listLeagueGames(sportKey, env, ctx)).filter(inWindow);
-  return games.sort((a, b) => Date.parse(a.commence_time) - Date.parse(b.commence_time)).slice(0, MAX_GAMES);
+  return games.sort((a, b) => Date.parse(a.commence_time) - Date.parse(b.commence_time));
 }
 
 /**
@@ -179,7 +195,7 @@ export async function buildTrends(sportKey, games, env, ctx, now = Date.now(), d
       }
       const gamelog = await spec.gamelog(athleteId, ctx);
       if (!gamelog) { note(`${name} (${athleteId}): game log unreachable`); continue; }
-      const prior = spec.priorGamelog ? await spec.priorGamelog(athleteId, ctx, now).catch(() => null) : null;
+      const prior = spec.priorGamelog ? await Promise.resolve(spec.priorGamelog(athleteId, ctx, now, gamelog)).catch(() => null) : null;
       const merged = prior?.seasonTypes?.length
         ? { ...gamelog, seasonTypes: [...(gamelog.seasonTypes ?? []), ...prior.seasonTypes], events: { ...(prior.events ?? {}), ...(gamelog.events ?? {}) } }
         : gamelog;
@@ -200,13 +216,45 @@ export async function buildTrends(sportKey, games, env, ctx, now = Date.now(), d
     }
   }
   note(`rows built: ${rows.length}`);
+  return { sportKey, title: spec.title, builtAt: now, games: scanned, rows: sortTrends(rows, { window: 'l10' }), diag };
+}
+
+/**
+ * Build the next chunk of one league: the games in its lookahead whose
+ * rows are missing or older than the TTL, soonest first, up to
+ * MAX_GAMES_PER_TICK, merged into what's stored. Games that have started
+ * or left the lookahead drop out. Returns the stored payload, or null
+ * when nothing was due.
+ */
+export async function buildLeagueChunk(sportKey, events, env, ctx, now = Date.now(), { deps, limit = MAX_GAMES_PER_TICK } = {}) {
+  const stored = await getTrends(env, sportKey);
+  const ttl = (TREND_SPORTS[sportKey]?.ttlMinutes ?? TRENDS_TTL_MINUTES) * 60e3;
+  const games = await trendGamesFor(sportKey, events, env, ctx, now);
+  const live = new Set(games.map((g) => g.id));
+  const stamps = Object.fromEntries(Object.entries(stored.stamps ?? {}).filter(([id]) => live.has(id)));
+  const due = games.filter((g) => !Number.isFinite(stamps[g.id]) || now - stamps[g.id] >= ttl);
+  const keepRows = (stored.rows ?? []).filter((r) => live.has(r.eventId));
+  if (!due.length) {
+    if (!games.length || keepRows.length !== (stored.rows ?? []).length || stored.pending) {
+      const payload = { ...stored, builtAt: stored.builtAt ?? now, checkedAt: now, games: Object.keys(stamps).length, pending: 0, rows: keepRows, stamps, lastError: null };
+      await env.POTD_KV.put(trendsKey(sportKey), JSON.stringify(payload), { expirationTtl: KV_TTL_SECONDS });
+    }
+    return null;
+  }
+  const chunk = due.slice(0, limit);
+  const built = await buildTrends(sportKey, chunk, env, ctx, now, deps);
+  const chunkIds = new Set(chunk.map((g) => g.id));
+  for (const g of chunk) {
+    // A game that yielded nothing is retried sooner than the TTL: the
+    // diagnostics say why, and half an hour is long enough to read them.
+    const gotRows = built.rows.some((r) => r.eventId === g.id);
+    stamps[g.id] = gotRows ? now : now - ttl + RETRY_EMPTY_MINUTES * 60e3;
+  }
+  const rows = sortTrends([...keepRows.filter((r) => !chunkIds.has(r.eventId)), ...built.rows], { window: 'l10' }).slice(0, MAX_ROWS);
   const payload = {
-    sportKey,
-    title: spec.title,
-    builtAt: now,
-    games: scanned,
-    rows: sortTrends(rows, { window: 'l10' }).slice(0, MAX_ROWS),
-    diag,
+    sportKey, title: built.title, builtAt: now, checkedAt: now,
+    games: Object.keys(stamps).length, pending: due.length - chunk.length,
+    rows, stamps, diag: built.diag, lastError: null,
   };
   await env.POTD_KV.put(trendsKey(sportKey), JSON.stringify(payload), { expirationTtl: KV_TTL_SECONDS });
   return payload;
@@ -220,36 +268,25 @@ export async function buildTrends(sportKey, games, env, ctx, now = Date.now(), d
  * day's events (already fetched by the boards' own batch).
  */
 export async function runTrendsBuild(env, ctx, now = Date.now(), { fetchFullSlate = async () => [], deps, enabled = TREND_ENABLED_SPORTS } = {}) {
+  // The league checked longest ago goes first, so three leagues share the
+  // ticks evenly; one chunk per tick keeps every tick inside its budget.
   const stored = await Promise.all(enabled.map((k) => getTrends(env, k)));
-  const ttl = (k) => (TREND_SPORTS[k]?.ttlMinutes ?? TRENDS_TTL_MINUTES) * 60e3;
-  // An empty build retries soon: the gap between "no games" and "every
-  // row dropped" is what the diagnostics are for, and six hours is too
-  // long to wait to read them.
-  const due = stored
-    .filter((s) => !s.builtAt || now - s.builtAt >= (s.rows?.length ? ttl(s.sportKey) : Math.min(ttl(s.sportKey), RETRY_EMPTY_MINUTES * 60e3)))
-    .sort((a, b) => (a.builtAt ?? 0) - (b.builtAt ?? 0));
-  if (!due.length) return { skipped: true, reason: 'every league is fresh' };
+  const order = stored.sort((a, b) => (a.checkedAt ?? a.builtAt ?? 0) - (b.checkedAt ?? b.builtAt ?? 0)).map((s) => s.sportKey);
   const events = await fetchFullSlate();
-  for (const s of due) {
+  for (const sportKey of order) {
     // A build that throws is written down where /trends can show it — a
     // silent failure looks exactly like a league with no games, and the
     // worker's logs are not something the tab can read.
     try {
-      const games = await trendGamesFor(s.sportKey, events, env, ctx, now);
-      if (!games.length) {
-        // Nothing to scan: mark it checked so the next tick moves on to the
-        // next league rather than asking the same empty question every 15 min.
-        await env.POTD_KV.put(trendsKey(s.sportKey), JSON.stringify({ ...s, builtAt: now, games: 0, rows: s.rows ?? [], lastError: null, note: 'no game inside the lookahead' }), { expirationTtl: KV_TTL_SECONDS });
-        continue;
-      }
-      const payload = await buildTrends(s.sportKey, games, env, ctx, now, deps?.[s.sportKey]);
-      return { skipped: false, sportKey: s.sportKey, games: payload.games, rows: payload.rows.length };
+      const payload = await buildLeagueChunk(sportKey, events, env, ctx, now, { deps: deps?.[sportKey] });
+      if (payload) return { skipped: false, sportKey, games: payload.games, pending: payload.pending, rows: payload.rows.length };
     } catch (e) {
+      const s = await getTrends(env, sportKey);
       const lastError = `${new Date(now).toISOString()}: ${String(e?.stack ?? e).slice(0, 400)}`;
-      await env.POTD_KV.put(trendsKey(s.sportKey), JSON.stringify({ ...s, lastError, checkedAt: now }), { expirationTtl: KV_TTL_SECONDS });
-      console.error(`Trends build failed for ${s.sportKey}:`, e);
-      return { skipped: true, sportKey: s.sportKey, reason: 'build failed', error: lastError };
+      await env.POTD_KV.put(trendsKey(sportKey), JSON.stringify({ ...s, lastError, checkedAt: now }), { expirationTtl: KV_TTL_SECONDS });
+      console.error(`Trends build failed for ${sportKey}:`, e);
+      return { skipped: true, sportKey, reason: 'build failed', error: lastError };
     }
   }
-  return { skipped: true, reason: 'no league has a game inside the lookahead' };
+  return { skipped: true, reason: 'every game in every lookahead is fresh' };
 }

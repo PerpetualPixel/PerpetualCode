@@ -55,7 +55,7 @@ import { runNhlPropsScan, runNhlPropsGrading, getAllNhlPropsTracked } from './nh
 import { runPotdDaily, runPotdClvSnapshot, runPotdGrading, backfillPotdAnalysis, getPotd, getPotdHold, getPotdLeaning, getPotdHistory, retractPotd, regradePotdTennisVoids, etParts } from './potd.js';
 import { runLadderDaily, runLadderGrading, getLadder, getLadderHistory } from './ladder.js';
 import { BUILD_INFO } from '../../docs/version.js';
-import { runTrendsBuild, getTrends, buildTrends, trendGamesFor, TREND_ENABLED_SPORTS } from './trends.js';
+import { runTrendsBuild, getTrends, buildLeagueChunk, TREND_ENABLED_SPORTS } from './trends.js';
 import { getOrGenerateAnalysis, getOrGeneratePropAnalysis } from './analysis.js';
 import { repairMissingPayouts } from './repair-payouts.js';
 import {
@@ -1459,9 +1459,10 @@ export default {
       }
     }
 
-    // Owner-only: build one league's Trends rows now rather than on the
-    // next tick (same X-Owner-Key gate as /settings). Spends the same odds
-    // credits a scheduled build would. Body: {"sport": "americanfootball_nfl"}.
+    // Owner-only: build one league's next chunk of Trends rows now rather
+    // than on the next tick (same X-Owner-Key gate as /settings). Spends
+    // the same odds credits a scheduled build would. Body:
+    // {"sport": "americanfootball_nfl"}; call again while `pending` > 0.
     if (pathname === '/trends/build' && request.method === 'POST') {
       const auth = authorizeSettings(request, env);
       if (!auth.ok) return json({ error: auth.error }, { status: auth.status, headers: cors });
@@ -1469,9 +1470,9 @@ export default {
         const body = await request.json().catch(() => ({}));
         const sport = TREND_ENABLED_SPORTS.includes(body.sport) ? body.sport : TREND_ENABLED_SPORTS[0];
         const events = await fetchFullSlateEvents(env, ctx);
-        const games = await trendGamesFor(sport, events, env, ctx, Date.now());
-        const payload = await buildTrends(sport, games, env, ctx, Date.now());
-        return json({ sportKey: sport, games: payload.games, rows: payload.rows.length, builtAt: payload.builtAt }, { headers: cors });
+        const payload = await buildLeagueChunk(sport, events, env, ctx, Date.now());
+        if (!payload) return json({ sportKey: sport, skipped: true, reason: 'every game in the lookahead is fresh' }, { headers: cors });
+        return json({ sportKey: sport, games: payload.games, pending: payload.pending, rows: payload.rows.length, builtAt: payload.builtAt }, { headers: cors });
       } catch (error) {
         return json({ error: String(error?.stack ?? error).slice(0, 400) }, { status: 500, headers: cors });
       }

@@ -8,7 +8,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { extractTrendLines, hitFlags, hitRate, trendRowsFor, sortTrends, overNeed, underNeed } from '../docs/trends.js';
-import { buildTrends, runTrendsBuild, getTrends, TRENDS_TTL_MINUTES, TREND_ENABLED_SPORTS, TREND_SPORTS, trendGamesFor } from '../worker/src/trends.js';
+import { buildTrends, buildLeagueChunk, runTrendsBuild, getTrends, TRENDS_TTL_MINUTES, TREND_ENABLED_SPORTS, TREND_SPORTS, LOOKAHEAD_HOURS, MAX_GAMES_PER_TICK, trendGamesFor } from '../worker/src/trends.js';
 import { gamelogStatIndex, NFL_TREND_MARKETS } from '../worker/src/football-props.js';
 import { espnAbbr } from '../docs/team-logos.js';
 
@@ -108,19 +108,28 @@ test('sorting: by hit rate in the chosen period, ties to the better price; by od
   assert.deepEqual(sortTrends(rows, { by: 'date' }).map((x) => x.id), ['d', 'b', 'c', 'a'], 'soonest kickoff first');
 });
 
-test('NFL first: it is the only league enabled, scanned a week ahead with the volume props beside the yardage ladders', async () => {
-  assert.deepEqual(TREND_ENABLED_SPORTS, ['americanfootball_nfl']);
+test('every prop league is on: NFL a week ahead with the volume props beside the yardage ladders, NBA and NHL today and tomorrow', async () => {
+  assert.deepEqual(TREND_ENABLED_SPORTS, ['americanfootball_nfl', 'basketball_nba', 'icehockey_nhl']);
   assert.equal(TREND_SPORTS.americanfootball_nfl.lookaheadHours, 168);
+  assert.equal(LOOKAHEAD_HOURS, 48, 'the other leagues scan the full two-day slate');
+  assert.ok(TREND_SPORTS.basketball_nba.priorGamelog && TREND_SPORTS.basketball_nba.headshot, 'the NBA reads last season and shows headshots too');
+  assert.ok(TREND_SPORTS.icehockey_nhl.priorGamelog && TREND_SPORTS.icehockey_nhl.headshot);
+  assert.equal(TREND_SPORTS.basketball_nba.headshot('123'), 'https://a.espncdn.com/i/headshots/nba/players/full/123.png');
   assert.ok(['player_pass_completions', 'player_rush_attempts', 'player_pass_tds', 'player_receptions_alternate'].every((k) => NFL_TREND_MARKETS[k]));
   const log = { names: ['completions', 'passingAttempts', 'passingYards', 'passingTouchdowns'], labels: ['CMP', 'ATT', 'YDS', 'TD'] };
   assert.equal(gamelogStatIndex(log, 'passCompletions'), 0);
   assert.equal(gamelogStatIndex(log, 'passAttempts'), 1);
   assert.equal(gamelogStatIndex(log, 'passTds'), 3);
   assert.equal(gamelogStatIndex({ names: ['rushingAttempts', 'rushingYards'], labels: ['CAR', 'YDS'] }, 'rushAttempts'), 0);
-  // A Sunday game five days out is inside the football lookahead; the same game is outside a 30-hour league's.
+  // A Sunday game five days out is inside the football lookahead; the same game is outside a 48-hour league's.
   const sunday = { id: 'f1', sport_key: 'americanfootball_nfl', commence_time: new Date(NOW + 5 * 24 * 3.6e6).toISOString() };
   const env = { POTD_KV: { async get() { return null; } } };
   assert.equal((await trendGamesFor('americanfootball_nfl', [sunday], env, ctx, NOW)).length, 1);
+  // Nothing caps the slate: every game inside the window is scanned, soonest first.
+  const many = Array.from({ length: 25 }, (_, i) => ({ id: `f${i}`, sport_key: 'americanfootball_nfl', commence_time: new Date(NOW + (25 - i) * 3.6e6).toISOString() }));
+  const got = await trendGamesFor('americanfootball_nfl', many, env, ctx, NOW);
+  assert.equal(got.length, 25);
+  assert.equal(got[0].id, 'f24', 'soonest first');
 });
 
 /* ---------------------------------------------------------------- */
@@ -144,10 +153,11 @@ const deps = {
   gamelog: async () => gamelog,
 };
 
-test('buildTrends stores one league\'s rows from the feed and the game logs, with the player\'s team, sorted by L10 hit rate', async () => {
+test('buildTrends builds one league\'s rows from the feed and the game logs, with the player\'s team, sorted by L10 hit rate; the chunk builder stores them', async () => {
   const { env } = makeKvStore();
-  const payload = await buildTrends('basketball_nba', [nbaGame], env, ctx, NOW, deps);
+  const payload = await buildLeagueChunk('basketball_nba', [nbaGame], env, ctx, NOW, { deps });
   assert.equal(payload.games, 1);
+  assert.equal(payload.pending, 0);
   assert.equal(payload.rows.length, 3, 'two sides of the main line, one of the alternate');
   assert.ok(KNICKS, 'the league map knows the Knicks');
   assert.ok(payload.rows.every((r) => r.team === KNICKS.toUpperCase() && r.games === 6));
@@ -159,11 +169,43 @@ test('buildTrends stores one league\'s rows from the feed and the game logs, wit
   const stored = await getTrends(env, 'basketball_nba');
   assert.equal(stored.builtAt, NOW);
   assert.equal(stored.rows.length, 3);
-  assert.deepEqual(await getTrends(env, 'icehockey_nhl'), { sportKey: 'icehockey_nhl', title: 'NHL', builtAt: null, games: 0, rows: [] });
+  assert.deepEqual(stored.stamps, { n1: NOW }, 'each game remembers when its rows were built');
+  assert.deepEqual(await getTrends(env, 'icehockey_nhl'), { sportKey: 'icehockey_nhl', title: 'NHL', builtAt: null, games: 0, pending: 0, rows: [], stamps: {} });
   assert.equal(await getTrends(env, 'baseball_mlb'), null);
+  // The prior season is asked for by the END year of the current log's name.
+  const asked = [];
+  const withPrior = { ...deps, gamelog: async (id, c, season) => { asked.push(season ?? 'current'); return gamelog; } };
+  await buildTrends('basketball_nba', [nbaGame], env, ctx, NOW, { ...withPrior, priorGamelog: TREND_SPORTS.basketball_nba.priorGamelog });
+  assert.deepEqual(asked, ['current'], 'the spec\'s prior reader goes through the real fetcher, which the test deps replace');
 });
 
-test('runTrendsBuild rebuilds one stale league per tick and leaves fresh ones alone', async () => {
+test('a big slate builds a few games per tick, merges into what is stored, and drops games once they start', async () => {
+  const { env } = makeKvStore();
+  const games = Array.from({ length: 8 }, (_, i) => ({ ...nbaGame, id: `g${i}`, commence_time: new Date(NOW + (i + 1) * 3.6e6).toISOString() }));
+  const first = await buildLeagueChunk('basketball_nba', games, env, ctx, NOW, { deps });
+  assert.equal(first.games, MAX_GAMES_PER_TICK);
+  assert.equal(first.pending, 8 - MAX_GAMES_PER_TICK);
+  assert.equal(first.rows.length, 3 * MAX_GAMES_PER_TICK);
+  assert.deepEqual(Object.keys(first.stamps), games.slice(0, MAX_GAMES_PER_TICK).map((g) => g.id), 'soonest games first');
+  const second = await buildLeagueChunk('basketball_nba', games, env, ctx, NOW + 15 * 60e3, { deps });
+  assert.equal(second.games, 8);
+  assert.equal(second.pending, 0);
+  assert.equal(second.rows.length, 24, 'the first chunk\'s rows are kept beside the new ones');
+  assert.equal(await buildLeagueChunk('basketball_nba', games, env, ctx, NOW + 30 * 60e3, { deps }), null, 'nothing due: every game is fresh');
+  // Two hours on, the first two games have tipped off: their rows go, nothing is rebuilt yet.
+  assert.equal(await buildLeagueChunk('basketball_nba', games, env, ctx, NOW + 2 * 3.6e6 + 1, { deps }), null);
+  const trimmed = await getTrends(env, 'basketball_nba');
+  assert.equal(trimmed.games, 6);
+  assert.equal(trimmed.rows.length, 18);
+  assert.ok(trimmed.rows.every((r) => r.eventId !== 'g0' && r.eventId !== 'g1'));
+  // Past the TTL the stale games rebuild (a third game has tipped off by then), oldest stamp first.
+  const rebuilt = await buildLeagueChunk('basketball_nba', games, env, ctx, NOW + (TRENDS_TTL_MINUTES + 1) * 60e3, { deps });
+  assert.equal(rebuilt.games, 5);
+  assert.equal(rebuilt.rows.length, 15);
+  assert.equal(rebuilt.stamps.g3, NOW + (TRENDS_TTL_MINUTES + 1) * 60e3);
+});
+
+test('runTrendsBuild builds one league\'s chunk per tick, the league checked longest ago first, and leaves fresh ones alone', async () => {
   const { env } = makeKvStore();
   const opts = { fetchFullSlate: async () => [nbaGame], deps: { basketball_nba: deps }, enabled: ['americanfootball_nfl', 'basketball_nba', 'icehockey_nhl'] };
   const first = await runTrendsBuild(env, ctx, NOW, opts);
@@ -171,11 +213,19 @@ test('runTrendsBuild rebuilds one stale league per tick and leaves fresh ones al
   assert.equal(first.skipped, false);
   assert.equal(first.sportKey, 'basketball_nba');
   assert.equal(first.rows, 3);
+  assert.equal(first.pending, 0);
   const again = await runTrendsBuild(env, ctx, NOW + 10 * 60e3, opts);
   assert.equal(again.skipped, true);
   const later = await runTrendsBuild(env, ctx, NOW + (TRENDS_TTL_MINUTES + 1) * 60e3, opts);
   assert.equal(later.skipped, false);
   assert.equal(later.sportKey, 'basketball_nba');
+  // Two leagues with work: each tick takes the one checked longest ago, so they alternate.
+  const tomorrow = new Date(NOW + 40 * 3.6e6).toISOString();
+  const two = { ...opts, fetchFullSlate: async () => [{ ...nbaGame, id: 'n2', commence_time: tomorrow }, { ...nbaGame, id: 'h1', sport_key: 'icehockey_nhl', commence_time: tomorrow }], deps: { basketball_nba: deps, icehockey_nhl: deps } };
+  const t0 = NOW + 2 * (TRENDS_TTL_MINUTES + 1) * 60e3;
+  const a = await runTrendsBuild(env, ctx, t0, two);
+  const b = await runTrendsBuild(env, ctx, t0 + 15 * 60e3, two);
+  assert.deepEqual([a.sportKey, b.sportKey].sort(), ['basketball_nba', 'icehockey_nhl']);
 });
 
 test('a build that throws is written down for /trends to show, and the next tick tries again', async () => {
@@ -189,14 +239,15 @@ test('a build that throws is written down for /trends to show, and the next tick
   assert.match(stored.lastError, /feed down/);
   const fixed = await runTrendsBuild(env, ctx, NOW + 60e3, { fetchFullSlate: async () => [nbaGame], deps: { basketball_nba: deps }, enabled: ['basketball_nba'] });
   assert.equal(fixed.skipped, false);
-  assert.equal((await getTrends(env, 'basketball_nba')).lastError, undefined);
+  assert.equal((await getTrends(env, 'basketball_nba')).lastError, null);
 });
 
-test('a build keeps a diagnostic trace, and an empty build retries after 30 minutes instead of the full TTL', async () => {
+test('a build keeps a diagnostic trace, and a game whose build came up empty retries after 30 minutes instead of the full TTL', async () => {
   const { env } = makeKvStore();
   const noPlayers = { ...deps, resolve: async () => null, roster: async () => ({ athletes: [{ items: [{ displayName: 'Someone Else' }] }] }) };
-  const payload = await buildTrends('basketball_nba', [nbaGame], env, ctx, NOW, noPlayers);
+  const payload = await buildLeagueChunk('basketball_nba', [nbaGame], env, ctx, NOW, { deps: noPlayers });
   assert.equal(payload.rows.length, 0);
+  assert.equal(payload.games, 1);
   assert.ok(payload.diag.some((l) => /Jalen Brunson: no roster match/.test(l) && /sample \[Someone Else\]/.test(l)), payload.diag.join('\n'));
   assert.ok(payload.diag.some((l) => /2 lines, 1 players/.test(l)));
   assert.equal(payload.diag.at(-1), 'rows built: 0');

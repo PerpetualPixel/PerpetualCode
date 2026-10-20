@@ -253,10 +253,13 @@ export async function collectBasketballPropLegs(games, env, ctx, now = Date.now(
 
 
 /** The player's ESPN game log (current season), cached; null when unreachable. Shared with worker/src/trends.js. */
-export async function fetchBasketballGamelog(sportKey, athleteId, ctx) {
+export async function fetchBasketballGamelog(sportKey, athleteId, ctx, season = null) {
   if (!BASKETBALL_SPORTS[sportKey]) return null;
-  return cachedJson(gamelogUrl(sportKey, athleteId), GAMELOG_TTL, ctx);
+  return cachedJson(`${gamelogUrl(sportKey, athleteId)}${season ? `?season=${season}` : ''}`, GAMELOG_TTL, ctx);
 }
+
+/** ESPN's headshot for a player id. */
+export const basketballHeadshotUrl = (sportKey, athleteId) => (athleteId && BASKETBALL_SPORTS[sportKey] ? `https://a.espncdn.com/i/headshots/${BASKETBALL_SPORTS[sportKey].espn}/players/full/${athleteId}.png` : null);
 
 /** Which game-log column carries `statKey`, by key first then label; -1 when absent. */
 export function basketballStatIndex(gamelog, statKey) {
