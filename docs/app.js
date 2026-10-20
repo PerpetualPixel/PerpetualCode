@@ -843,10 +843,15 @@ const el = {
   tabTrends: document.getElementById('tabTrends'),
   trendsView: document.getElementById('trendsView'),
   trendsLeagues: document.getElementById('trendsLeagues'),
-  trendsStat: document.getElementById('trendsStat'),
-  trendsSort: document.getElementById('trendsSort'),
-  trendsMinRate: document.getElementById('trendsMinRate'),
   trendsSearch: document.getElementById('trendsSearch'),
+  trendsPeriodBtn: document.getElementById('trendsPeriodBtn'),
+  trendsPeriodLabel: document.getElementById('trendsPeriodLabel'),
+  trendsFilterBtn: document.getElementById('trendsFilterBtn'),
+  trendsFilterCount: document.getElementById('trendsFilterCount'),
+  trendsSortBtn: document.getElementById('trendsSortBtn'),
+  trendsSortLabel: document.getElementById('trendsSortLabel'),
+  trendsScrim: document.getElementById('trendsScrim'),
+  trendsSheet: document.getElementById('trendsSheet'),
   trendsStatus: document.getElementById('trendsStatus'),
   trendsBody: document.getElementById('trendsBody'),
   boardView: document.getElementById('boardView'),
@@ -8661,27 +8666,49 @@ el.tailFadeResult?.addEventListener('click', toggleTailFadeLegCard);
 
 /**
  * The Trends tab (docs/trends.js, worker/src/trends.js): every player-prop
- * line on the day's games with the player's real hit rate at that number.
- * The worker builds the rows per league; this tab filters and sorts them
- * the way the prop research tools do — league, window, side, stat, a
- * minimum hit rate, a player search — and draws each row as the player,
- * the line, the best price, the hit rate and the last-N bars.
+ * line on the week's games with the player's real hit rate at that
+ * number, laid out the way the prop research apps do it. The worker
+ * builds the rows per league; this tab filters and sorts them — period,
+ * side, markets, games, odds, sportsbooks, a minimum hit rate, a search —
+ * and draws each row as the player, the game, the line, the best price,
+ * the hit rate and the last-N bars. A tap opens the detail sheet: every
+ * period with its rate, the chart with values and opponents, the game log
+ * with finals, and every book's price on the line.
  */
 const trendsState = {
   sport: 'americanfootball_nfl',
-  window: 'l10',
+  period: 'l10',
+  sort: { by: 'hitRate', dir: 'desc' },
+  // Filters. An empty set means "everything", as the research apps read an
+  // unchecked list.
+  markets: new Set(),
+  games: new Set(),
+  books: new Set(),
+  odds: { min: null, max: null },
+  minRate: 0,
   side: 'all',
-  stat: '',
-  sort: 'hitRate',
-  minRate: 0.8,
   search: '',
   data: null,
   available: [],
-  open: new Set(),
+  sheet: null,     // { type, rowId? }
+  detailPeriod: null,
+  betMore: false,
 };
 const TREND_LEAGUE_ICON = { americanfootball_nfl: 'nfl', basketball_nba: 'nba', icehockey_nhl: 'nhl' };
-const trendTimeFmt = new Intl.DateTimeFormat(undefined, { weekday: 'short', month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' });
+const TREND_LOGO_PATH = { americanfootball_nfl: 'nfl', basketball_nba: 'nba', icehockey_nhl: 'nhl' };
+const trendTimeFmt = new Intl.DateTimeFormat(undefined, { weekday: 'short', hour: 'numeric', minute: '2-digit' });
 const trendDateFmt = new Intl.DateTimeFormat(undefined, { month: 'short', day: 'numeric' });
+const PERIOD_LABEL = { h2h: 'H2H', l5: 'L5', l10: 'L10', l20: 'L20' };
+const PERIOD_LONG = { h2h: 'Head to head', l5: 'Last 5', l10: 'Last 10', l20: 'Last 20' };
+const SORT_LABEL = { hitRate: 'By Hit Rate', odds: 'By Odds', date: 'By Event Date' };
+
+const periodLabel = (key) => PERIOD_LABEL[key] ?? (key.startsWith('s') ? key.slice(1) : key);
+const periodLong = (key) => PERIOD_LONG[key] ?? (key.startsWith('s') ? `${key.slice(1)} season` : key);
+const trendLogo = (sportKey, abbr) => (abbr ? `https://a.espncdn.com/i/teamlogos/${TREND_LOGO_PATH[sportKey] ?? 'nfl'}/500/${String(abbr).toLowerCase()}.png` : null);
+const rateTone = (v) => (v >= 0.7 ? 'is-hot' : v >= 0.5 ? 'is-warm' : 'is-cold');
+const pct = (v) => `${Math.round(v * 100)}%`;
+const teamAbbr = (name) => { const a = espnAbbr(trendsState.sport, name); return a ? a.toUpperCase() : String(name ?? '').split(' ').pop(); };
+const sideWord = (side) => (side === 'over' ? 'Over' : 'Under');
 
 async function loadTrends({ force = false } = {}) {
   if (!el.trendsBody || !CONFIG.WORKER_URL) return;
@@ -8696,7 +8723,6 @@ async function loadTrends({ force = false } = {}) {
     trendsState.available = body.available ?? [];
     trendsState.sport = trendsState.data?.sportKey ?? trendsState.sport;
     renderTrendLeagues();
-    renderTrendStats();
     renderTrends();
   } catch {
     el.trendsStatus.textContent = "Couldn't reach the odds feed.";
@@ -8708,106 +8734,109 @@ function renderTrendLeagues() {
   el.trendsLeagues.innerHTML = trendsState.available.map((a) => `
     <button type="button" class="league-chip ${a.sportKey === trendsState.sport ? 'is-active' : ''} ${a.rows ? '' : 'is-off-season'}"
             data-trends-league="${esc(a.sportKey)}" aria-pressed="${a.sportKey === trendsState.sport ? 'true' : 'false'}"
-            title="${a.rows ? `${a.rows} lines` : 'No games scanned yet'}">
+            title="${a.rows ? `${a.rows} lines` : 'No lines yet'}">
       ${leagueIconSvg(TREND_LEAGUE_ICON[a.sportKey] ?? a.sportKey)}<span class="league-chip-label">${esc(a.title)}</span>
     </button>`).join('');
 }
 
-function renderTrendStats() {
-  if (!el.trendsStat) return;
-  const stats = new Map();
-  for (const r of trendsState.data?.rows ?? []) stats.set(r.statKey, r.marketLabel ?? r.statLabel);
-  const current = trendsState.stat;
-  el.trendsStat.innerHTML = `<option value="">All stats</option>${[...stats.entries()].map(([k, label]) => `<option value="${esc(k)}" ${k === current ? 'selected' : ''}>${esc(label)}</option>`).join('')}`;
-  if (current && !stats.has(current)) trendsState.stat = '';
+/** The price a row shows under the current sportsbook filter: the best among the chosen books. */
+function trendQuote(row) {
+  const quotes = row.quotes ?? [{ american: row.american, decimal: row.decimal, book: row.book, bookKey: row.bookKey }];
+  const pool = trendsState.books.size ? quotes.filter((q) => trendsState.books.has(q.bookKey)) : quotes;
+  return pool[0] ?? null;
 }
 
 /** The rows the controls leave standing, in the chosen order. */
 function visibleTrendRows() {
   const rows = trendsState.data?.rows ?? [];
-  const w = trendsState.window;
+  const p = trendsState.period;
   const q = trendsState.search.trim().toLowerCase();
-  const kept = rows.filter((r) => {
-    if (trendsState.side !== 'all' && r.side !== trendsState.side) return false;
-    if (trendsState.stat && r.statKey !== trendsState.stat) return false;
-    const rate = r.rates?.[w];
-    if (!Number.isFinite(rate)) return false;
-    if (rate < trendsState.minRate - 1e-9) return false;
-    if (q && !`${r.playerName} ${r.team ?? ''} ${r.home} ${r.away}`.toLowerCase().includes(q)) return false;
-    return true;
-  });
-  return sortTrends(kept, { window: w, by: trendsState.sort });
+  const { min, max } = trendsState.odds;
+  const kept = [];
+  for (const r of rows) {
+    if (trendsState.side !== 'all' && r.side !== trendsState.side) continue;
+    if (trendsState.markets.size && !trendsState.markets.has(r.statKey)) continue;
+    if (trendsState.games.size && !trendsState.games.has(r.eventId)) continue;
+    const quote = trendQuote(r);
+    if (!quote) continue;
+    if (Number.isFinite(min) && quote.american < min) continue;
+    if (Number.isFinite(max) && quote.american > max) continue;
+    const rate = r.rates?.[p];
+    if (!Number.isFinite(rate)) continue;
+    if (rate < trendsState.minRate - 1e-9) continue;
+    if (q && !`${r.playerName} ${r.team ?? ''} ${r.home} ${r.away} ${r.marketLabel}`.toLowerCase().includes(q)) continue;
+    kept.push({ ...r, american: quote.american, decimal: quote.decimal, book: quote.book, bookKey: quote.bookKey });
+  }
+  return sortTrends(kept, { window: p, by: trendsState.sort.by, dir: trendsState.sort.dir });
 }
 
-const rateTone = (v) => (v >= 0.8 ? 'is-hot' : v >= 0.6 ? 'is-warm' : 'is-cold');
-const pct = (v) => `${Math.round(v * 100)}%`;
-const windowLabel = { l5: 'L5', l10: 'L10', l20: 'L20', season: 'Season' };
+function activeFilterCount() {
+  return (trendsState.markets.size ? 1 : 0) + (trendsState.games.size ? 1 : 0) + (trendsState.books.size ? 1 : 0)
+    + (Number.isFinite(trendsState.odds.min) || Number.isFinite(trendsState.odds.max) ? 1 : 0) + (trendsState.minRate > 0 ? 1 : 0) + (trendsState.side !== 'all' ? 1 : 0);
+}
 
-function renderTrendBars(row) {
-  const n = { l5: 5, l10: 10, l20: 20, season: 20 }[trendsState.window] ?? 10;
-  const series = row.series.slice(0, n).slice().reverse(); // oldest left, most recent right
-  if (!series.length) return '';
+function avatarHtml(row, cls = 'trend-avatar') {
+  const badge = row.team ? `<img class="trend-team-badge" src="${esc(trendLogo(row.sportKey, row.team))}" alt="" loading="lazy">` : '';
+  const initials = row.playerName.split(' ').map((w) => w[0]).join('').slice(0, 2);
+  const img = row.headshot
+    ? `<img class="trend-headshot" src="${esc(row.headshot)}" alt="" loading="lazy" data-initials="${esc(initials)}">`
+    : `<span class="trend-initials">${esc(initials)}</span>`;
+  return `<span class="${cls}">${img}${badge}</span>`;
+}
+
+function periodCount(period) {
+  return { h2h: 20, l5: 5, l10: 10, l20: 20 }[period] ?? 20;
+}
+
+/** The games a period draws: the last N, this opponent only, or one season. */
+function periodSeries(row, period) {
+  const s = row.series ?? [];
+  if (period === 'h2h') return s.filter((g) => g.opponent && row.opponent && g.opponent.toUpperCase() === row.opponent.toUpperCase());
+  if (period.startsWith('s')) return s.filter((g) => String(g.season) === period.slice(1));
+  return s.slice(0, periodCount(period));
+}
+
+function renderTrendBars(row, period, { height = 44, cls = 'trend-bars' } = {}) {
+  const series = periodSeries(row, period).slice().reverse(); // oldest left, most recent right
+  if (!series.length) return `<div class="${cls}"></div>`;
   const max = Math.max(row.point, ...series.map((s) => s.value), 1);
   const lineTop = 100 - Math.min(100, (row.point / max) * 100);
-  return `<div class="trend-bars" role="img" aria-label="${esc(series.map((s) => s.value).join(', '))}">
+  return `<div class="${cls}" style="height:${height}px" role="img" aria-label="${esc(series.map((s) => s.value).join(', '))}">
     <span class="trend-line-mark" style="top:${lineTop.toFixed(1)}%"></span>
-    ${series.map((s) => `<span class="trend-bar ${s.hit === 1 ? 'is-hit' : s.hit === null ? 'is-push' : ''}" style="height:${Math.max(8, (s.value / max) * 100).toFixed(1)}%" title="${esc(`${s.value} ${s.atVs ?? ''} ${s.opponent ?? ''}`.trim())}"></span>`).join('')}
+    ${series.map((s) => `<span class="trend-bar ${s.hit === 1 ? 'is-hit' : s.hit === null ? 'is-push' : 'is-miss'}" style="height:${Math.max(6, (s.value / max) * 100).toFixed(1)}%" title="${esc(`${s.value} ${s.atVs ?? ''} ${s.opponent ?? ''}`.trim())}"></span>`).join('')}
   </div>`;
 }
 
 function renderTrendCard(row) {
-  const rate = row.rates[trendsState.window];
-  const bookId = bookIdFor(row.bookKey);
-  const bookMeta = bookId ? SPORTSBOOKS[bookId] : null;
-  const open = trendsState.open.has(row.id);
-  const detailId = `trend-${row.id.replace(/[^a-z0-9]/gi, '')}`;
-  const detail = open ? `<div class="trend-detail" id="${detailId}">
-      <div class="trend-windows">
-        ${Object.entries(row.rates).filter(([, v]) => Number.isFinite(v)).map(([k, v]) => `<span class="hit-chip ${rateTone(v)}"><span class="hit-chip-k">${windowLabel[k]}</span>${pct(v)}</span>`).join('')}
-        ${Number.isFinite(row.avg?.l10) ? `<span class="hit-chip is-avg"><span class="hit-chip-k">Avg L10</span>${esc(String(row.avg.l10))}</span>` : ''}
-        ${Number.isFinite(row.avg?.season) ? `<span class="hit-chip is-avg"><span class="hit-chip-k">Avg</span>${esc(String(row.avg.season))} <small>(${row.games})</small></span>` : ''}
-        ${row.streak >= 3 ? `<span class="hit-chip is-hot"><span class="hit-chip-k">Streak</span>${row.streak}</span>` : ''}
-        <span class="hit-chip"><span class="hit-chip-k">Books</span>${row.bookCount}</span>
-      </div>
-      <div class="trend-log">
-        ${row.series.map((s) => `<span class="trend-log-game ${s.hit === 1 ? 'is-hit' : s.hit === null ? 'is-push' : ''}">
-          <span>${s.date ? esc(trendDateFmt.format(new Date(s.date))) : ''} ${esc(`${s.atVs ?? ''}${s.opponent ?? ''}`)}</span><strong>${esc(String(s.value))}</strong>
-        </span>`).join('')}
-      </div>
-    </div>` : '';
-  return `<article class="trend-card" data-trend-id="${esc(row.id)}">
-    <div class="trend-game">
-      ${leagueIconSvg(TREND_LEAGUE_ICON[row.sportKey] ?? row.sportKey)}
-      <strong>${esc(abbrevTeam(row.away))} @ ${esc(abbrevTeam(row.home))}</strong>
-      <span>· ${esc(trendTimeFmt.format(new Date(row.commenceMs)))}</span>
+  const rate = row.rates[trendsState.period];
+  return `<article class="trend-card" data-trend-id="${esc(row.id)}" tabindex="0" role="button" aria-label="${esc(row.selection)}, ${pct(rate)} in ${esc(periodLong(trendsState.period))}">
+    <div class="trend-head">
+      ${avatarHtml(row)}
+      <span class="trend-game"><strong>${esc(teamAbbr(row.away))} @ ${esc(teamAbbr(row.home))}</strong><span class="trend-dot"></span>${esc(trendTimeFmt.format(new Date(row.commenceMs)))}</span>
     </div>
     <div class="trend-main">
       <div>
         <p class="trend-player">${esc(row.playerName)}${row.team ? `<small>${esc(row.team)}</small>` : ''}</p>
-        <p class="trend-line">${esc(row.marketLabel ?? row.statLabel)} ${row.side === 'over' ? 'Over' : 'Under'} ${esc(String(row.point))}</p>
+        <p class="trend-line">${esc(row.marketLabel ?? row.statLabel)} ${sideWord(row.side)} ${esc(String(row.point))}</p>
       </div>
-      <span class="trend-price" style="--book:${esc(bookMeta?.color ?? '#8892a6')}" title="${esc(row.book)}">
-        <span class="trend-book" aria-hidden="true"></span>${esc(formatAmerican(row.american))}
-      </span>
+      <span class="trend-price" title="${esc(row.book)}">${esc(formatAmerican(row.american))}</span>
     </div>
     <div class="trend-rate-row">
-      <span class="trend-rate ${rateTone(rate)}">${pct(rate)}<small>${windowLabel[trendsState.window]}</small></span>
-      ${renderTrendBars(row)}
-      <button type="button" class="trend-expand" aria-expanded="${open ? 'true' : 'false'}" aria-controls="${detailId}" data-trend-toggle="${esc(row.id)}" aria-label="Game log">›</button>
+      <span class="trend-rate ${rateTone(rate)}">${pct(rate)}<small>${esc(periodLabel(trendsState.period))}</small></span>
+      ${renderTrendBars(row, trendsState.period)}
+      <span class="trend-expand" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M9 6l6 6-6 6" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"/></svg></span>
     </div>
-    ${detail}
   </article>`;
-}
-
-/** "New York Knicks" → "NYK" where the league map knows the team, else the last word. */
-function abbrevTeam(name) {
-  const abbr = espnAbbr(trendsState.sport, name);
-  return abbr ? abbr.toUpperCase() : String(name ?? '').split(' ').pop();
 }
 
 function renderTrends() {
   if (!el.trendsBody) return;
   const data = trendsState.data;
+  el.trendsPeriodLabel.textContent = periodLong(trendsState.period);
+  el.trendsSortLabel.textContent = SORT_LABEL[trendsState.sort.by];
+  const n = activeFilterCount();
+  el.trendsFilterCount.hidden = n === 0;
+  el.trendsFilterCount.textContent = String(n);
   if (!data || !data.builtAt) {
     el.trendsStatus.textContent = data?.lastError
       ? `The last Trends build failed — ${data.lastError}`
@@ -8817,43 +8846,276 @@ function renderTrends() {
   }
   const rows = visibleTrendRows();
   const built = new Date(data.builtAt);
-  el.trendsStatus.innerHTML = `${rows.length} of ${data.rows.length} lines across ${data.games} ${esc(data.title)} game${data.games === 1 ? '' : 's'} · hit rates from this season's game logs · <span class="trends-meta">lines as of ${esc(trendTimeFmt.format(built))}</span>`;
+  el.trendsStatus.innerHTML = `${rows.length} of ${data.rows.length} lines · ${data.games} ${esc(data.title)} game${data.games === 1 ? '' : 's'} · lines as of ${esc(trendTimeFmt.format(built))}`;
   el.trendsBody.innerHTML = rows.length
     ? rows.slice(0, 150).map(renderTrendCard).join('')
-    : `<p class="empty">Nothing clears that filter. Lower the minimum hit rate or widen the window.</p>`;
+    : `<p class="empty">Nothing clears those filters. Open Filters and loosen one, or change the period.</p>`;
 }
+
+/* ---- Sheets ---------------------------------------------------- */
+
+const SHEET_ICON = {
+  filters: '<svg viewBox="0 0 24 24"><path d="M4 8h10M18 8h2M4 16h2M10 16h10" stroke="currentColor" stroke-width="2" stroke-linecap="round"/><circle cx="16" cy="8" r="2.5" fill="none" stroke="currentColor" stroke-width="2"/><circle cx="8" cy="16" r="2.5" fill="none" stroke="currentColor" stroke-width="2"/></svg>',
+  markets: '<svg viewBox="0 0 24 24"><path d="M4 9l1.5-4h13L20 9M4 9v10h16V9M4 9h16M9 19v-5h6v5" fill="none" stroke="currentColor" stroke-width="2" stroke-linejoin="round"/></svg>',
+  games: '<svg viewBox="0 0 24 24"><rect x="3" y="5" width="18" height="15" rx="2" fill="none" stroke="currentColor" stroke-width="2"/><path d="M3 10h18M8 3v4M16 3v4" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>',
+  odds: '<svg viewBox="0 0 24 24"><path d="M12 3l3 6 6 3-6 3-3 6-3-6-6-3 6-3z" fill="none" stroke="currentColor" stroke-width="2" stroke-linejoin="round"/></svg>',
+  books: '<svg viewBox="0 0 24 24"><rect x="3" y="8" width="18" height="12" rx="2" fill="none" stroke="currentColor" stroke-width="2"/><path d="M9 8V5h6v3M3 13h18" stroke="currentColor" stroke-width="2"/></svg>',
+  minrate: '<svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="8" fill="none" stroke="currentColor" stroke-width="2"/><path d="M12 8v4l3 2" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>',
+  period: '<svg viewBox="0 0 24 24"><path d="M3 17l5-6 4 3 5-8 4 5" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>',
+  sort: '<svg viewBox="0 0 24 24"><path d="M4 7h16M7 12h10M10 17h4" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>',
+  side: '<svg viewBox="0 0 24 24"><path d="M12 4v16M6 9l6-5 6 5M6 15l6 5 6-5" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>',
+};
+const sheetHead = (type, title) => `<div class="sheet-grip"></div><h2 class="sheet-title" id="trendsSheetTitle">${SHEET_ICON[type] ?? ''}${esc(title)}</h2>`;
+const sheetClose = () => `<button type="button" class="sheet-close" data-sheet-close>Close</button>`;
+const checkRow = (name, value, checked, main, right = '') => `<label class="sheet-row"><input type="checkbox" name="${name}" value="${esc(value)}" ${checked ? 'checked' : ''}><span class="row-main">${main}</span>${right ? `<span class="row-right">${right}</span>` : ''}</label>`;
+
+function openTrendsSheet(type, extra = {}) {
+  trendsState.sheet = { type, ...extra };
+  renderTrendsSheet();
+}
+function closeTrendsSheet() {
+  trendsState.sheet = null;
+  el.trendsSheet.hidden = true;
+  el.trendsScrim.hidden = true;
+  el.trendsSheet.classList.remove('is-full');
+  document.body.style.overflow = '';
+}
+
+function renderTrendsSheet() {
+  const sheet = trendsState.sheet;
+  if (!sheet) return closeTrendsSheet();
+  const rows = trendsState.data?.rows ?? [];
+  let html = '';
+  let full = false;
+  if (sheet.type === 'filters') {
+    const tile = (type, label, state) => `<button type="button" class="sheet-tile ${state ? 'is-set' : ''}" data-sheet-open="${type}"><span class="tile-icon">${SHEET_ICON[type]}</span><span class="tile-label">${label}</span><span class="tile-state">${esc(state || 'All')}</span></button>`;
+    const oddsState = Number.isFinite(trendsState.odds.min) || Number.isFinite(trendsState.odds.max)
+      ? `${Number.isFinite(trendsState.odds.min) ? formatAmerican(trendsState.odds.min) : 'any'} to ${Number.isFinite(trendsState.odds.max) ? formatAmerican(trendsState.odds.max) : 'any'}` : '';
+    html = `${sheetHead('filters', 'Filters')}
+      <div class="sheet-tiles">
+        ${tile('markets', 'Markets', trendsState.markets.size ? `${trendsState.markets.size} chosen` : '')}
+        ${tile('games', 'Games', trendsState.games.size ? `${trendsState.games.size} chosen` : '')}
+        ${tile('odds', 'Odds', oddsState)}
+        ${tile('books', 'Sportsbooks', trendsState.books.size ? `${trendsState.books.size} chosen` : '')}
+        ${tile('minrate', 'Period Hit Rate', trendsState.minRate ? `${Math.round(trendsState.minRate * 100)}%+` : '')}
+        ${tile('side', 'Side', trendsState.side === 'all' ? '' : sideWord(trendsState.side))}
+      </div>
+      <div class="sheet-actions"><button type="button" class="sheet-pill" data-filters-reset>Reset all</button></div>
+      ${sheetClose()}`;
+  } else if (sheet.type === 'markets') {
+    const stats = new Map();
+    for (const r of rows) stats.set(r.statKey, r.marketLabel ?? r.statLabel);
+    html = `${sheetHead('markets', 'Markets')}<div class="sheet-list">${[...stats.entries()].map(([k, label]) => checkRow('market', k, trendsState.markets.has(k), esc(label))).join('')}</div>
+      <div class="sheet-actions"><button type="button" class="sheet-pill" data-select-all="market">${trendsState.markets.size ? 'Clear' : 'Select all'}</button></div>${sheetClose()}`;
+  } else if (sheet.type === 'games') {
+    const games = new Map();
+    for (const r of rows) if (!games.has(r.eventId)) games.set(r.eventId, r);
+    const list = [...games.values()].sort((a, b) => a.commenceMs - b.commenceMs);
+    html = `${sheetHead('games', 'Games')}<div class="sheet-list">${list.map((g) => checkRow('game', g.eventId, trendsState.games.has(g.eventId),
+      `<span class="row-logos"><img src="${esc(trendLogo(g.sportKey, teamAbbr(g.away)))}" alt=""><img src="${esc(trendLogo(g.sportKey, teamAbbr(g.home)))}" alt=""></span><b>${esc(teamAbbr(g.away))} @ ${esc(teamAbbr(g.home))}</b>`,
+      esc(trendTimeFmt.format(new Date(g.commenceMs))))).join('')}</div>
+      <div class="sheet-actions"><button type="button" class="sheet-pill" data-select-all="game">${trendsState.games.size ? 'Clear' : 'Select all'}</button></div>${sheetClose()}`;
+  } else if (sheet.type === 'odds') {
+    const prices = rows.map((r) => r.american).filter(Number.isFinite);
+    const lo = Math.min(-410, ...prices); const hi = Math.max(400, ...prices);
+    const bins = 24; const step = (hi - lo) / bins;
+    const counts = Array.from({ length: bins }, () => 0);
+    for (const p of prices) counts[Math.min(bins - 1, Math.floor((p - lo) / step))]++;
+    const top = Math.max(1, ...counts);
+    const { min, max } = trendsState.odds;
+    html = `${sheetHead('odds', 'Odds')}
+      <div class="odds-fields">
+        <label class="odds-field"><span>Minimum odds</span><input id="trendsOddsMin" type="number" step="5" placeholder="${esc(formatAmerican(lo))}" value="${Number.isFinite(min) ? min : ''}"></label>
+        <label class="odds-field"><span>Maximum odds</span><input id="trendsOddsMax" type="number" step="5" placeholder="${esc(formatAmerican(hi))}" value="${Number.isFinite(max) ? max : ''}"></label>
+      </div>
+      <div class="odds-hist">${counts.map((c, i) => { const a = lo + i * step; const b = a + step; const inRange = (!Number.isFinite(min) || b >= min) && (!Number.isFinite(max) || a <= max); return `<span class="${inRange ? 'is-in' : ''}" style="height:${Math.max(2, (c / top) * 100)}%"></span>`; }).join('')}</div>
+      <div class="odds-axis"><span>${esc(formatAmerican(lo))}</span><span>${esc(formatAmerican(hi))}</span></div>
+      <div class="sheet-actions"><button type="button" class="sheet-pill" data-odds-reset>Reset</button></div>${sheetClose()}`;
+  } else if (sheet.type === 'books') {
+    const seen = new Map();
+    for (const r of rows) for (const q of r.quotes ?? []) if (!seen.has(q.bookKey)) seen.set(q.bookKey, q.book);
+    const list = [...seen.entries()].sort((a, b) => a[1].localeCompare(b[1]));
+    html = `${sheetHead('books', 'Sportsbooks')}<div class="sheet-list">${list.map(([key, name]) => { const meta = bookIdFor(key) ? SPORTSBOOKS[bookIdFor(key)] : null; return checkRow('book', key, trendsState.books.has(key), esc(name), `<span class="row-dot" style="--book:${esc(meta?.color ?? '#8892a6')}"></span>`); }).join('')}</div>
+      <div class="sheet-actions"><button type="button" class="sheet-pill" data-select-all="book">${trendsState.books.size ? 'Clear' : 'Select all'}</button></div>${sheetClose()}`;
+  } else if (sheet.type === 'minrate') {
+    html = `${sheetHead('minrate', 'Period Hit Rate')}
+      <p class="row-sub" style="text-align:center;margin:0 0 12px">Only lines at or above this hit rate in the chosen period.</p>
+      <div class="rate-chips">${[0, 0.5, 0.6, 0.7, 0.8, 0.9, 1].map((v) => `<button type="button" class="rate-chip ${Math.abs(trendsState.minRate - v) < 1e-9 ? 'is-active' : ''}" data-min-rate="${v}">${v ? `${Math.round(v * 100)}%+` : 'Any'}</button>`).join('')}</div>${sheetClose()}`;
+  } else if (sheet.type === 'side') {
+    html = `${sheetHead('filters', 'Side')}
+      <div class="rate-chips">${[['all', 'Both'], ['over', 'Over'], ['under', 'Under']].map(([v, label]) => `<button type="button" class="rate-chip ${trendsState.side === v ? 'is-active' : ''}" data-side-pick="${v}">${label}</button>`).join('')}</div>${sheetClose()}`;
+  } else if (sheet.type === 'period') {
+    const sample = visibleTrendRows()[0] ?? rows[0] ?? null;
+    const seasons = trendsState.data?.rows?.[0]?.seasons ?? [];
+    const keys = ['h2h', 'l5', 'l10', 'l20', ...seasons.map((y) => `s${y}`)];
+    const mini = (key) => {
+      if (!sample) return '';
+      const series = periodSeries(sample, key).slice(0, 10).reverse();
+      if (!series.length) return '<div class="tile-mini"></div>';
+      const max = Math.max(sample.point, ...series.map((s) => s.value), 1);
+      return `<div class="tile-mini"><span class="mini-line" style="top:${(100 - (sample.point / max) * 100).toFixed(1)}%"></span>${series.map((s) => `<span class="${s.hit === 1 ? 'is-hit' : s.hit === null ? '' : 'is-miss'}" style="height:${Math.max(8, (s.value / max) * 100).toFixed(1)}%"></span>`).join('')}</div>`;
+    };
+    html = `${sheetHead('period', 'Period')}
+      <div class="sheet-tiles">${keys.map((k) => `<button type="button" class="sheet-tile ${trendsState.period === k ? 'is-on' : ''}" data-period="${k}"><span class="tile-label">${esc(periodLong(k))}</span><span class="tile-radio"></span>${mini(k)}</button>`).join('')}</div>${sheetClose()}`;
+  } else if (sheet.type === 'sort') {
+    const { by, dir } = trendsState.sort;
+    html = `${sheetHead('sort', 'Sorting')}
+      <div class="sheet-seg"><button type="button" class="${dir === 'asc' ? 'is-active' : ''}" data-sort-dir="asc">Ascending</button><button type="button" class="${dir === 'desc' ? 'is-active' : ''}" data-sort-dir="desc">Descending</button></div>
+      <div class="sheet-tiles">${[['hitRate', 'Hit Rate', 'period'], ['odds', 'Odds', 'odds'], ['date', 'Event Date', 'games']].map(([k, label, icon]) => `<button type="button" class="sheet-tile ${by === k ? 'is-on' : ''}" data-sort-by="${k}"><span class="tile-icon">${SHEET_ICON[icon]}</span><span class="tile-label">${label}</span><span class="tile-radio"></span></button>`).join('')}</div>${sheetClose()}`;
+  } else if (sheet.type === 'detail') {
+    const row = rows.find((r) => r.id === sheet.rowId);
+    if (!row) return closeTrendsSheet();
+    full = true;
+    html = renderTrendDetail(row);
+  }
+  el.trendsSheet.innerHTML = html;
+  el.trendsSheet.classList.toggle('is-full', full);
+  el.trendsSheet.hidden = false;
+  el.trendsScrim.hidden = false;
+  document.body.style.overflow = 'hidden';
+  el.trendsSheet.scrollTop = 0;
+}
+
+/* ---- Detail ---------------------------------------------------- */
+
+function renderTrendDetail(row) {
+  const period = trendsState.detailPeriod && row.periods[trendsState.detailPeriod] ? trendsState.detailPeriod : trendsState.period;
+  const keys = ['h2h', 'l5', 'l10', 'l20', ...(row.seasons ?? []).map((y) => `s${y}`)];
+  const stats = row.periods[period] ?? { rate: null, hits: 0, games: 0, avg: null, median: null };
+  const series = periodSeries(row, period).slice().reverse();
+  const max = Math.max(row.point, ...series.map((s) => s.value), 1);
+  const lineTop = 100 - Math.min(100, (row.point / max) * 100);
+  const hitShare = stats.games ? stats.hits / stats.games : 0;
+  const quote = trendQuote(row) ?? row.quotes?.[0];
+  const quotes = row.quotes ?? [];
+  const bookMeta = (key) => (bookIdFor(key) ? SPORTSBOOKS[bookIdFor(key)] : null);
+  const bookPill = (q) => { const m = bookMeta(q.bookKey); return `<span class="row-dot" style="--book:${esc(m?.color ?? '#8892a6')};background:${esc(m?.color ?? '#8892a6')}">${esc((m?.name ?? q.book).slice(0, 2))}</span>`; };
+  const log = (row.series ?? []).filter((g) => period === 'h2h' || period.startsWith('s') ? periodSeries(row, period).includes(g) : true).slice(0, 20);
+  return `<button type="button" class="sheet-back" data-sheet-close aria-label="Close"><svg viewBox="0 0 24 24" width="16" height="16"><path d="M6 6l12 12M18 6L6 18" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"/></svg></button>
+    <div class="sheet-grip"></div>
+    <div class="detail-top">
+      <div>
+        <div class="detail-game">${leagueIconSvg(TREND_LEAGUE_ICON[row.sportKey] ?? row.sportKey)}<strong>${esc(teamAbbr(row.away))} @ ${esc(teamAbbr(row.home))}</strong><span>▪</span>${esc(trendTimeFmt.format(new Date(row.commenceMs)))}</div>
+        <h2 class="detail-name" id="trendsSheetTitle">${esc(row.playerName)}${row.team ? `<small>${esc(row.team)}</small>` : ''}</h2>
+        <p class="detail-market">${esc(row.marketLabel ?? row.statLabel)} ${sideWord(row.side)} ${esc(String(row.point))}</p>
+      </div>
+      ${avatarHtml(row, 'detail-avatar')}
+    </div>
+    <div class="detail-periods">${keys.map((k) => { const p = row.periods[k]; const has = p && p.games > 0; return `<button type="button" class="period-tab ${k === period ? 'is-active' : ''}" data-detail-period="${k}" ${has ? '' : 'disabled'}>${k !== period && has ? `<span class="tab-pct">${pct(p.rate)}</span>` : ''}${esc(periodLabel(k))}</button>`; }).join('')}</div>
+    <div class="detail-split"><span class="is-hit" style="flex:${hitShare || 0.001}"></span><span class="is-miss" style="flex:${1 - hitShare || 0.001}"></span></div>
+    <div class="detail-summary">
+      <span class="big">${stats.rate === null ? '—' : pct(stats.rate)}<small>${stats.hits}/${stats.games} events</small></span>
+      <span class="stats">Avg <b>${stats.avg ?? '—'}</b> ▪ Median <b>${stats.median ?? '—'}</b></span>
+    </div>
+    ${series.length ? `<div class="detail-chart">
+      <span class="chart-line" style="top:${lineTop.toFixed(1)}%"></span><span class="chart-line-label" style="top:${lineTop.toFixed(1)}%">${esc(String(row.point))}</span>
+      ${series.map((s) => `<div class="chart-col"><div class="chart-bar ${s.hit === 1 ? 'is-hit' : s.hit === null ? 'is-push' : 'is-miss'}" style="height:${Math.max(2, (s.value / max) * 100).toFixed(1)}%"></div><span class="chart-val ${s.hit === 1 ? 'is-hit' : s.hit === null ? '' : 'is-miss'}">${esc(String(s.value))}</span><span class="chart-opp">${esc(s.atVs ?? '')}${s.opponent ? `<img src="${esc(trendLogo(row.sportKey, s.opponent))}" alt="${esc(s.opponent)}" loading="lazy">` : ''}</span></div>`).join('')}
+    </div>` : '<p class="empty">No games in this period.</p>'}
+    <div class="detail-log">
+      <div class="log-head">Final</div>
+      ${log.map((g) => `<div class="log-row ${g.hit === 1 ? 'is-hit' : g.hit === null ? '' : 'is-miss'}">
+        <span class="log-date">${g.date ? esc(trendDateFmt.format(new Date(g.date))) : ''}</span>
+        <span class="row-logos">${row.team ? `<img src="${esc(trendLogo(row.sportKey, row.team))}" alt="" loading="lazy">` : ''}${g.opponent ? `<img src="${esc(trendLogo(row.sportKey, g.opponent))}" alt="" loading="lazy">` : ''}</span>
+        <span class="log-opp"><small>${esc((g.atVs ?? 'vs').toUpperCase())}</small>${esc(g.opponent ?? '')}</span>
+        <span class="log-score">${g.score ? esc(String(g.score).replace(/^[WLT]\s*/, '')) : ''} <span class="log-val">${esc(String(g.value))}</span></span>
+      </div>`).join('')}
+    </div>
+    ${quote ? `<div class="detail-bet">
+      <div class="bet-row">
+        <span class="bet-book">${bookPill(quote)}${esc(formatAmerican(quote.american))}</span>
+        <a class="bet-btn" href="${esc(bookMeta(quote.bookKey)?.url ?? '#')}" target="_blank" rel="noopener">Bet <span aria-hidden="true">↗</span></a>
+        ${quotes.length > 1 ? `<button type="button" class="bet-more" data-bet-more>${trendsState.betMore ? 'Less' : `+${quotes.length - 1} more`} ${trendsState.betMore ? '▴' : '▾'}</button>` : ''}
+      </div>
+      ${trendsState.betMore ? `<div class="bet-list">${quotes.filter((q) => q !== quote).map((q) => `<a href="${esc(bookMeta(q.bookKey)?.url ?? '#')}" target="_blank" rel="noopener"><span>${bookPill(q)} ${esc(q.book)}</span><b>${esc(formatAmerican(q.american))}</b></a>`).join('')}</div>` : ''}
+    </div>` : ''}`;
+}
+
+/* ---- Events ---------------------------------------------------- */
 
 el.trendsLeagues?.addEventListener('click', (event) => {
   const chip = event.target.closest('[data-trends-league]');
   if (!chip) return;
   trendsState.sport = chip.dataset.trendsLeague;
-  trendsState.open.clear();
+  trendsState.games.clear();
   loadTrends({ force: true });
 });
-document.querySelector('[data-trends-window]')?.addEventListener('click', (event) => {
-  const btn = event.target.closest('[data-window]');
-  if (!btn) return;
-  trendsState.window = btn.dataset.window;
-  for (const b of btn.parentElement.querySelectorAll('button')) b.classList.toggle('is-active', b === btn);
-  renderTrends();
-});
-document.querySelector('[data-trends-side]')?.addEventListener('click', (event) => {
-  const btn = event.target.closest('[data-side]');
-  if (!btn) return;
-  trendsState.side = btn.dataset.side;
-  for (const b of btn.parentElement.querySelectorAll('button')) b.classList.toggle('is-active', b === btn);
-  renderTrends();
-});
-el.trendsStat?.addEventListener('change', () => { trendsState.stat = el.trendsStat.value; renderTrends(); });
-el.trendsSort?.addEventListener('change', () => { trendsState.sort = el.trendsSort.value; renderTrends(); });
-el.trendsMinRate?.addEventListener('change', () => { trendsState.minRate = Number(el.trendsMinRate.value); renderTrends(); });
 el.trendsSearch?.addEventListener('input', () => { trendsState.search = el.trendsSearch.value; renderTrends(); });
+// A headshot or crest ESPN doesn't have falls back to initials or nothing —
+// handled here, not inline, because the page's CSP forbids inline handlers.
+function trendImageFallback(event) {
+  const img = event.target;
+  if (!(img instanceof HTMLImageElement)) return;
+  if (img.classList.contains('trend-headshot') && img.dataset.initials) {
+    const span = document.createElement('span'); span.className = 'trend-initials'; span.textContent = img.dataset.initials; img.replaceWith(span);
+  } else if (img.closest('.chart-opp') && img.alt) {
+    img.replaceWith(document.createTextNode(img.alt));
+  } else {
+    img.remove();
+  }
+}
+el.trendsBody?.addEventListener('error', trendImageFallback, true);
+el.trendsSheet?.addEventListener('error', trendImageFallback, true);
+el.trendsPeriodBtn?.addEventListener('click', () => openTrendsSheet('period'));
+el.trendsFilterBtn?.addEventListener('click', () => openTrendsSheet('filters'));
+el.trendsSortBtn?.addEventListener('click', () => openTrendsSheet('sort'));
+el.trendsScrim?.addEventListener('click', closeTrendsSheet);
 el.trendsBody?.addEventListener('click', (event) => {
-  const btn = event.target.closest('[data-trend-toggle]');
-  if (!btn) return;
-  const id = btn.dataset.trendToggle;
-  if (trendsState.open.has(id)) trendsState.open.delete(id); else trendsState.open.add(id);
-  const card = btn.closest('.trend-card');
-  const row = (trendsState.data?.rows ?? []).find((r) => r.id === id);
-  if (card && row) card.outerHTML = renderTrendCard(row);
+  const card = event.target.closest('[data-trend-id]');
+  if (!card) return;
+  trendsState.detailPeriod = null;
+  trendsState.betMore = false;
+  openTrendsSheet('detail', { rowId: card.dataset.trendId });
+});
+el.trendsBody?.addEventListener('keydown', (event) => {
+  if (event.key !== 'Enter' && event.key !== ' ') return;
+  const card = event.target.closest('[data-trend-id]');
+  if (!card) return;
+  event.preventDefault();
+  trendsState.detailPeriod = null;
+  trendsState.betMore = false;
+  openTrendsSheet('detail', { rowId: card.dataset.trendId });
+});
+document.addEventListener('keydown', (event) => { if (event.key === 'Escape' && trendsState.sheet) closeTrendsSheet(); });
+
+el.trendsSheet?.addEventListener('click', (event) => {
+  const t = event.target;
+  const hit = (sel) => t.closest(sel);
+  let node;
+  if (hit('[data-sheet-close]')) return closeTrendsSheet();
+  if ((node = hit('[data-sheet-open]'))) return openTrendsSheet(node.dataset.sheetOpen);
+  if (hit('[data-filters-reset]')) {
+    trendsState.markets.clear(); trendsState.games.clear(); trendsState.books.clear();
+    trendsState.odds = { min: null, max: null }; trendsState.minRate = 0; trendsState.side = 'all';
+    renderTrends(); return renderTrendsSheet();
+  }
+  if ((node = hit('[data-select-all]'))) {
+    const kind = node.dataset.selectAll;
+    const set = { market: trendsState.markets, game: trendsState.games, book: trendsState.books }[kind];
+    if (set.size) set.clear();
+    else for (const input of el.trendsSheet.querySelectorAll(`input[name="${kind}"]`)) set.add(input.value);
+    renderTrends(); return renderTrendsSheet();
+  }
+  if (hit('[data-odds-reset]')) { trendsState.odds = { min: null, max: null }; renderTrends(); return renderTrendsSheet(); }
+  if ((node = hit('[data-min-rate]'))) { trendsState.minRate = Number(node.dataset.minRate); renderTrends(); return renderTrendsSheet(); }
+  if ((node = hit('[data-side-pick]'))) { trendsState.side = node.dataset.sidePick; renderTrends(); return renderTrendsSheet(); }
+  if ((node = hit('[data-period]'))) { trendsState.period = node.dataset.period; renderTrends(); return closeTrendsSheet(); }
+  if ((node = hit('[data-sort-dir]'))) { trendsState.sort.dir = node.dataset.sortDir; renderTrends(); return renderTrendsSheet(); }
+  if ((node = hit('[data-sort-by]'))) { trendsState.sort.by = node.dataset.sortBy; renderTrends(); return closeTrendsSheet(); }
+  if ((node = hit('[data-detail-period]'))) { trendsState.detailPeriod = node.dataset.detailPeriod; return renderTrendsSheet(); }
+  if (hit('[data-bet-more]')) { trendsState.betMore = !trendsState.betMore; return renderTrendsSheet(); }
+});
+el.trendsSheet?.addEventListener('change', (event) => {
+  const input = event.target;
+  if (!(input instanceof HTMLInputElement)) return;
+  const set = { market: trendsState.markets, game: trendsState.games, book: trendsState.books }[input.name];
+  if (set) { if (input.checked) set.add(input.value); else set.delete(input.value); renderTrends(); }
+});
+el.trendsSheet?.addEventListener('input', (event) => {
+  const input = event.target;
+  if (input.id === 'trendsOddsMin' || input.id === 'trendsOddsMax') {
+    const v = input.value.trim() === '' ? null : Number(input.value);
+    trendsState.odds[input.id === 'trendsOddsMin' ? 'min' : 'max'] = Number.isFinite(v) ? v : null;
+    renderTrends();
+    for (const span of el.trendsSheet.querySelectorAll('.odds-hist span')) span.classList.add('is-in');
+  }
 });

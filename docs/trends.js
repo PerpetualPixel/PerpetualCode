@@ -1,9 +1,10 @@
 /**
- * Trends — every player-prop line on today's games, with the player's real
- * hit rate at that exact number over the last 5, 10 and 20 games and the
- * season, and the per-game values a bar chart draws. The research view the
- * popular prop tools lead with: pick a league, a window and a sort, and
- * the lines a player clears most often float to the top.
+ * Trends — every player-prop line on the week's games, with the player's
+ * real hit rate at that exact number over the last 5, 10 and 20 games,
+ * each season, and head-to-head against this opponent, plus the per-game
+ * values a bar chart draws and every book's price on the line. The
+ * research view the prop tools lead with: pick a period, a sort and your
+ * filters, and the lines a player clears most often float to the top.
  *
  * Pure: the worker (worker/src/trends.js) feeds it per-event odds and ESPN
  * game logs and stores the rows; the browser (docs/app.js) sorts, filters
@@ -13,8 +14,12 @@
 
 import { decimalToAmerican } from './engine.js';
 
-/** The windows a hit rate is read over. 'season' is every logged game. */
-export const TREND_WINDOWS = ['l5', 'l10', 'l20', 'season'];
+/** The periods a hit rate is read over. Season keys are added per row ('s2026', 's2025'); 'h2h' is this opponent. */
+export const TREND_WINDOWS = ['l5', 'l10', 'l20'];
+/** How many of the most recent games a row carries for its chart and log. */
+export const SERIES_LENGTH = 20;
+/** How many books a side keeps, best price first. */
+export const MAX_QUOTES = 8;
 
 /** The first value that wins an Over on `point`, and the last that wins an Under. */
 export const overNeed = (point) => (Number.isInteger(point) ? point + 1 : Math.ceil(point));
@@ -22,9 +27,9 @@ export const underNeed = (point) => (Number.isInteger(point) ? point - 1 : Math.
 
 /**
  * Every priced line from one game's per-event odds payload, both sides,
- * one entry per player + market + number: the best registry price for
- * Over and for Under (with the book that posts it) and how many books
- * price the line. `markets` is { [marketKey]: { stat, label, marketLabel } }.
+ * one entry per player + market + number: every registry book's price for
+ * Over and for Under, best first, and how many books price the line.
+ * `markets` is { [marketKey]: { stat, label, marketLabel } }.
  */
 export function extractTrendLines(eventOdds, game, markets, { isRegistryBook = () => true, normalizeName = (n) => String(n ?? '').toLowerCase().trim() } = {}) {
   const pool = new Map();
@@ -48,17 +53,25 @@ export function extractTrendLines(eventOdds, game, markets, { isRegistryBook = (
             eventId: game.eventId, sportKey: game.sportKey, sportTitle: game.sportTitle,
             commenceMs: game.commenceMs, home: game.home, away: game.away,
             playerName, statKey: spec.stat, statLabel: spec.label, marketLabel: spec.marketLabel, point,
-            over: null, under: null, books: new Set(),
+            over: [], under: [], books: new Set(),
           });
         }
         const entry = pool.get(key);
         entry.books.add(book.key);
         const quote = { american, decimal, book: book.title ?? book.key, bookKey: book.key };
-        if (!entry[side] || decimal > entry[side].decimal) entry[side] = quote;
+        const list = entry[side];
+        const i = list.findIndex((q) => q.bookKey === book.key);
+        if (i < 0) list.push(quote); else if (decimal > list[i].decimal) list[i] = quote;
       }
     }
   }
-  return [...pool.values()].map((e) => ({ ...e, bookCount: e.books.size, books: undefined }));
+  return [...pool.values()].map((e) => ({
+    ...e,
+    over: e.over.length ? e.over.sort((a, b) => b.decimal - a.decimal).slice(0, MAX_QUOTES) : null,
+    under: e.under.length ? e.under.sort((a, b) => b.decimal - a.decimal).slice(0, MAX_QUOTES) : null,
+    bookCount: e.books.size,
+    books: undefined,
+  }));
 }
 
 /**
@@ -80,20 +93,58 @@ export function hitRate(flags, n = flags.length) {
   return Math.round((slice.reduce((s, f) => s + f, 0) / slice.length) * 1000) / 1000;
 }
 
+/** Hits and games counted for a window ("3/5 events"). */
+export function hitCount(flags, n = flags.length) {
+  const slice = flags.slice(0, n).filter((f) => f !== null);
+  return { hits: slice.reduce((s, f) => s + f, 0), games: slice.length };
+}
+
+const round1 = (v) => Math.round(v * 10) / 10;
+export const mean = (values) => (values.length ? round1(values.reduce((s, v) => s + v, 0) / values.length) : null);
+export function median(values) {
+  if (!values.length) return null;
+  const s = [...values].sort((a, b) => a - b);
+  const m = s.length >> 1;
+  return round1(s.length % 2 ? s[m] : (s[m - 1] + s[m]) / 2);
+}
+
+/** Period summary for one slice of rows: rate, count, average, median. */
+function periodStats(rows, point, side) {
+  const flags = hitFlags(rows, point, side);
+  const values = rows.map((r) => r.value);
+  const { hits, games } = hitCount(flags);
+  return { rate: hitRate(flags), hits, games, avg: mean(values), median: median(values) };
+}
+
 /**
- * One trend row per side of a line: the player's game rows (last 20,
- * most recent first), the hit flags, the hit rate per window, the
- * average, and the best price. `rows` is the player's per-game stat log
- * (docs/prop-legs.js's seasonColumnRows).
+ * One trend row per side of a line. `rows` is the player's per-game stat
+ * log, every season, most recent first (docs/prop-legs.js's
+ * seasonColumnRows with allSeasons). `opponent` is the ESPN abbreviation
+ * of the team the player faces in this game, for the head-to-head period.
+ *
+ * Each row carries: rates per period (l5, l10, l20, each season as
+ * 's<year>', and h2h), with hits/games/avg/median for each; the last
+ * SERIES_LENGTH games as bars with hit flags, opponent and final score;
+ * every book's price on the side, best first; and the player's team and
+ * headshot when the worker found them.
  */
-export function trendRowsFor(line, rows) {
-  const recent = rows.slice(0, 20);
-  const avg = (list) => (list.length ? Math.round((list.reduce((s, r) => s + r.value, 0) / list.length) * 10) / 10 : null);
+export function trendRowsFor(line, rows, { opponent = null } = {}) {
+  const recent = rows.slice(0, SERIES_LENGTH);
+  const seasons = [...new Set(rows.map((r) => r.season).filter((y) => y > 0))].sort((a, b) => b - a);
   const out = [];
   for (const side of ['over', 'under']) {
-    const quote = line[side];
-    if (!quote) continue;
+    const quotes = line[side];
+    if (!quotes?.length) continue;
     const flags = hitFlags(rows, line.point, side);
+    const periods = {
+      l5: periodStats(rows.slice(0, 5), line.point, side),
+      l10: periodStats(rows.slice(0, 10), line.point, side),
+      l20: periodStats(rows.slice(0, 20), line.point, side),
+    };
+    for (const y of seasons) periods[`s${y}`] = periodStats(rows.filter((r) => r.season === y), line.point, side);
+    const h2hRows = opponent ? rows.filter((r) => r.opponent && r.opponent.toUpperCase() === opponent.toUpperCase()) : [];
+    periods.h2h = h2hRows.length ? periodStats(h2hRows, line.point, side) : { rate: null, hits: 0, games: 0, avg: null, median: null };
+    const best = quotes[0];
     out.push({
       id: `${line.id}:${side}`,
       eventId: line.eventId,
@@ -104,39 +155,48 @@ export function trendRowsFor(line, rows) {
       away: line.away,
       playerName: line.playerName,
       team: line.team ?? null,
+      opponent,
+      athleteId: line.athleteId ?? null,
+      headshot: line.headshot ?? null,
       statKey: line.statKey,
       statLabel: line.statLabel,
       marketLabel: line.marketLabel,
       point: line.point,
       side,
       selection: `${line.playerName} ${side === 'over' ? 'Over' : 'Under'} ${line.point} ${line.statLabel}`,
-      american: quote.american,
-      decimal: quote.decimal,
-      book: quote.book,
-      bookKey: quote.bookKey,
+      american: best.american,
+      decimal: best.decimal,
+      book: best.book,
+      bookKey: best.bookKey,
+      quotes,
       bookCount: line.bookCount,
       games: rows.length,
-      rates: { l5: hitRate(flags, 5), l10: hitRate(flags, 10), l20: hitRate(flags, 20), season: hitRate(flags) },
-      avg: { l5: avg(rows.slice(0, 5)), l10: avg(rows.slice(0, 10)), season: avg(rows) },
+      seasons,
+      rates: Object.fromEntries(Object.entries(periods).map(([k, v]) => [k, v.rate])),
+      periods,
       streak: flags.findIndex((f) => f === 0) < 0 ? flags.filter((f) => f !== null).length : flags.findIndex((f) => f === 0),
-      series: recent.map((r, i) => ({ value: r.value, hit: flags[i], date: r.date, opponent: r.opponent, atVs: r.atVs })),
+      series: recent.map((r, i) => ({ value: r.value, hit: flags[i], date: r.date, season: r.season, opponent: r.opponent, atVs: r.atVs, score: r.score, result: r.result })),
     });
   }
   return out;
 }
 
 /**
- * Order rows for the board: by hit rate in the chosen window (ties to the
- * better price, then the larger sample), or by price (heaviest favourite
- * first — the lines the books are surest of). Rows without a rate in the
- * window sink to the bottom.
+ * Order rows for the board. `by` is 'hitRate' (in the chosen period),
+ * 'odds' (price) or 'date' (kickoff); `dir` 'desc' (the default) or 'asc'.
+ * Rows without a rate in the period sink to the bottom whichever way.
  */
-export function sortTrends(rows, { window = 'l10', by = 'hitRate' } = {}) {
-  const w = TREND_WINDOWS.includes(window) ? window : 'l10';
-  const rate = (r) => (Number.isFinite(r.rates?.[w]) ? r.rates[w] : -1);
+export function sortTrends(rows, { window = 'l10', by = 'hitRate', dir = 'desc' } = {}) {
+  const sign = dir === 'asc' ? -1 : 1;
+  const rate = (r) => (Number.isFinite(r.rates?.[window]) ? r.rates[window] : null);
   return [...rows].sort((a, b) => {
-    if (by === 'odds') return (a.decimal - b.decimal) || (rate(b) - rate(a));
-    return (rate(b) - rate(a)) || (b.decimal - a.decimal) || ((b.games ?? 0) - (a.games ?? 0));
+    if (by === 'odds') return sign * ((b.decimal ?? 0) - (a.decimal ?? 0)) || ((rate(b) ?? -1) - (rate(a) ?? -1));
+    if (by === 'date') return sign * ((a.commenceMs ?? 0) - (b.commenceMs ?? 0)) || ((rate(b) ?? -1) - (rate(a) ?? -1));
+    const ra = rate(a); const rb = rate(b);
+    if (ra === null && rb === null) return (b.decimal ?? 0) - (a.decimal ?? 0);
+    if (ra === null) return 1;
+    if (rb === null) return -1;
+    return sign * (rb - ra) || ((b.periods?.[window]?.games ?? 0) - (a.periods?.[window]?.games ?? 0)) || ((b.decimal ?? 0) - (a.decimal ?? 0));
   });
 }
 

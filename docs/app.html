@@ -307,46 +307,46 @@
      bars; a tap opens the game log. Built server-side (worker/src/
      trends.js), filtered and sorted here. -->
 <section id="trendsView" role="tabpanel" aria-labelledby="tabTrends" hidden>
-  <div class="trends-toolbar">
+  <!-- Trends: every player-prop line on the week's games with the player's
+       real hit rate at that number — laid out the way the prop research
+       apps do it. League chips and a search up top; a card per line
+       (headshot, game and kickoff, player, line, best price, hit rate and
+       the last-N bars); a floating bar at the bottom for Period, Filters
+       and Sort that open bottom sheets; a tap on a card opens the full
+       detail sheet (every period, the chart, the game log, every book).
+       Built server-side (worker/src/trends.js), filtered and sorted here. -->
+  <div class="trends-top">
     <div id="trendsLeagues" class="slate-league-tokens trends-leagues" role="group" aria-label="League"></div>
-    <div class="trends-controls">
-      <div class="trends-seg" role="group" aria-label="Window" data-trends-window>
-        <button type="button" data-window="l5">L5</button>
-        <button type="button" data-window="l10" class="is-active">L10</button>
-        <button type="button" data-window="l20">L20</button>
-        <button type="button" data-window="season">Season</button>
-      </div>
-      <div class="trends-seg" role="group" aria-label="Side" data-trends-side>
-        <button type="button" data-side="all" class="is-active">Both</button>
-        <button type="button" data-side="over">Over</button>
-        <button type="button" data-side="under">Under</button>
-      </div>
-      <label class="trends-field"><span class="sr-only">Stat</span>
-        <select id="trendsStat" class="slate-league-select"><option value="">All stats</option></select>
-      </label>
-      <label class="trends-field"><span class="sr-only">Sort</span>
-        <select id="trendsSort" class="slate-league-select">
-          <option value="hitRate">By hit rate</option>
-          <option value="odds">By odds</option>
-        </select>
-      </label>
-      <label class="trends-field"><span class="sr-only">Minimum hit rate</span>
-        <select id="trendsMinRate" class="slate-league-select">
-          <option value="0">Any hit rate</option>
-          <option value="0.6">60%+</option>
-          <option value="0.7">70%+</option>
-          <option value="0.8" selected>80%+</option>
-          <option value="0.9">90%+</option>
-          <option value="1">100%</option>
-        </select>
-      </label>
-      <label class="trends-field trends-search"><span class="sr-only">Player</span>
-        <input id="trendsSearch" type="search" class="slate-league-select" placeholder="Player or team" autocomplete="off">
-      </label>
-    </div>
+    <label class="trends-search">
+      <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false"><circle cx="11" cy="11" r="7" fill="none" stroke="currentColor" stroke-width="2"/><path d="M20 20l-3.5-3.5" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>
+      <span class="sr-only">Search players or teams</span>
+      <input id="trendsSearch" type="search" placeholder="Search" autocomplete="off">
+    </label>
   </div>
-  <div id="trendsStatus" class="status" role="status" aria-live="polite">Loading trends…</div>
+  <div id="trendsStatus" class="status trends-status" role="status" aria-live="polite">Loading trends…</div>
   <section id="trendsBody" class="trends-body" aria-live="polite"></section>
+
+  <!-- The floating controls, fixed to the bottom while this tab is open. -->
+  <div class="trends-dock" role="toolbar" aria-label="Trends controls">
+    <button type="button" class="trends-dock-btn" id="trendsPeriodBtn" aria-haspopup="dialog">
+      <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false"><rect x="4" y="11" width="3" height="8" rx="1" fill="currentColor"/><rect x="10.5" y="6" width="3" height="13" rx="1" fill="currentColor"/><rect x="17" y="9" width="3" height="10" rx="1" fill="currentColor"/></svg>
+      <span id="trendsPeriodLabel">Last 10</span>
+    </button>
+    <button type="button" class="trends-dock-btn is-icon" id="trendsFilterBtn" aria-haspopup="dialog" aria-label="Filters">
+      <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="M4 8h10M18 8h2M4 16h2M10 16h10" stroke="currentColor" stroke-width="2" stroke-linecap="round"/><circle cx="16" cy="8" r="2.5" fill="none" stroke="currentColor" stroke-width="2"/><circle cx="8" cy="16" r="2.5" fill="none" stroke="currentColor" stroke-width="2"/></svg>
+      <span id="trendsFilterCount" class="trends-dock-badge" hidden></span>
+    </button>
+    <button type="button" class="trends-dock-btn" id="trendsSortBtn" aria-haspopup="dialog">
+      <span id="trendsSortLabel">By Hit Rate</span>
+      <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="M4 7h16M7 12h10M10 17h4" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>
+    </button>
+  </div>
+
+  <!-- One sheet element, re-rendered per sheet type (Filters, Markets,
+       Games, Odds, Sportsbooks, Period Hit Rate, Period, Sort, Detail). -->
+  <div id="trendsScrim" class="trends-scrim" hidden></div>
+  <div id="trendsSheet" class="trends-sheet" role="dialog" aria-modal="true" aria-labelledby="trendsSheetTitle" hidden></div>
+</section>
 </section>
 </main>
 
