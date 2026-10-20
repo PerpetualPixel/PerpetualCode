@@ -157,3 +157,17 @@ test('runTrendsBuild rebuilds one stale league per tick and leaves fresh ones al
   assert.equal(later.skipped, false);
   assert.equal(later.sportKey, 'basketball_nba');
 });
+
+test('a build that throws is written down for /trends to show, and the next tick tries again', async () => {
+  const { env } = makeKvStore();
+  const broken = { ...deps, fetchOdds: async () => { throw new Error('feed down'); } };
+  const r = await runTrendsBuild(env, ctx, NOW, { fetchFullSlate: async () => [nbaGame], deps: { basketball_nba: broken }, enabled: ['basketball_nba'] });
+  assert.equal(r.skipped, true);
+  assert.equal(r.reason, 'build failed');
+  const stored = await getTrends(env, 'basketball_nba');
+  assert.equal(stored.builtAt, null);
+  assert.match(stored.lastError, /feed down/);
+  const fixed = await runTrendsBuild(env, ctx, NOW + 60e3, { fetchFullSlate: async () => [nbaGame], deps: { basketball_nba: deps }, enabled: ['basketball_nba'] });
+  assert.equal(fixed.skipped, false);
+  assert.equal((await getTrends(env, 'basketball_nba')).lastError, undefined);
+});
