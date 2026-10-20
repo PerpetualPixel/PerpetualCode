@@ -22,7 +22,7 @@ import { normalizeName as normalizeNflName } from '../../docs/nfl-props.js';
 import { normalizeName as normalizeNbaName } from '../../docs/wnba-props.js';
 import { normalizeName as normalizeNhlName } from '../../docs/nhl-props.js';
 import {
-  NFL_SPORT_KEY, NFL_TREND_MARKETS, fetchNflAltProps, resolveNflAthleteId, fetchNflGamelog, gamelogStatIndex,
+  NFL_SPORT_KEY, NFL_TREND_MARKETS, fetchNflAltProps, resolveNflAthleteId, fetchNflGamelog, gamelogStatIndex, nflHeadshotUrl,
 } from './football-props.js';
 import {
   BASKETBALL_ALT_MARKETS, fetchAltProps, resolveAthleteId, fetchBasketballGamelog, basketballStatIndex,
@@ -66,6 +66,11 @@ export const TREND_SPORTS = {
     fetchOdds: (eventId, env, ctx) => fetchNflAltProps(eventId, env, ctx, Object.keys(NFL_TREND_MARKETS).join(',')),
     resolve: (name, abbrs, ctx) => resolveNflAthleteId(name, abbrs, ctx),
     gamelog: (athleteId, ctx) => fetchNflGamelog(athleteId, ctx),
+    // Last season too, so L20 and the prior-season period can reach back
+    // past September the way every prop tool's do. A football season year
+    // is the year it kicks off in, so "last season" is simply year - 1.
+    priorGamelog: (athleteId, ctx, now) => fetchNflGamelog(athleteId, ctx, new Date(now).getUTCFullYear() - 1),
+    headshot: nflHeadshotUrl,
     statIndex: gamelogStatIndex,
   },
   [NBA_KEY]: {
@@ -150,12 +155,20 @@ export async function buildTrends(sportKey, games, env, ctx, now = Date.now(), d
       if (!athleteId) continue;
       const gamelog = await spec.gamelog(athleteId, ctx);
       if (!gamelog) continue;
+      const prior = spec.priorGamelog ? await spec.priorGamelog(athleteId, ctx, now).catch(() => null) : null;
+      const merged = prior?.seasonTypes?.length
+        ? { ...gamelog, seasonTypes: [...(gamelog.seasonTypes ?? []), ...prior.seasonTypes], events: { ...(prior.events ?? {}), ...(gamelog.events ?? {}) } }
+        : gamelog;
+      const opponent = team && abbrs.home && abbrs.away
+        ? String(team === String(abbrs.home).toUpperCase() ? abbrs.away : abbrs.home).toUpperCase()
+        : null;
+      const headshot = spec.headshot ? spec.headshot(athleteId) : null;
       const rowsByStat = new Map();
       for (const line of playerLines) {
-        if (!rowsByStat.has(line.statKey)) rowsByStat.set(line.statKey, seasonColumnRows(gamelog, spec.statIndex(gamelog, line.statKey)));
+        if (!rowsByStat.has(line.statKey)) rowsByStat.set(line.statKey, seasonColumnRows(merged, spec.statIndex(merged, line.statKey), { allSeasons: true }));
         const statRows = rowsByStat.get(line.statKey);
         if (statRows.length < MIN_GAMES) continue;
-        rows.push(...trendRowsFor({ ...line, team }, statRows));
+        rows.push(...trendRowsFor({ ...line, team, athleteId, headshot }, statRows, { opponent }));
       }
     }
   }

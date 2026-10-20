@@ -37,9 +37,10 @@ test('every line on a game is extracted once per player, stat and number, with t
   const lines = extractTrendLines(odds, game, markets, { isRegistryBook: (k) => k !== 'pinnacle' });
   assert.equal(lines.length, 2);
   const main = lines.find((l) => l.point === 24.5);
-  assert.equal(main.over.american, -115, 'FanDuel is the best Over; Pinnacle is not a book the reader can bet');
-  assert.equal(main.over.book, 'FanDuel');
-  assert.equal(main.under.american, -110);
+  assert.equal(main.over[0].american, -115, 'FanDuel is the best Over; Pinnacle is not a book the reader can bet');
+  assert.equal(main.over[0].book, 'FanDuel');
+  assert.deepEqual(main.over.map((q) => q.bookKey), ['fanduel', 'draftkings'], 'every registry book, best first');
+  assert.equal(main.under[0].american, -110);
   assert.equal(main.bookCount, 2);
   const alt = lines.find((l) => l.point === 19.5);
   assert.equal(alt.under, null, 'a line only priced one way has one side');
@@ -59,36 +60,52 @@ test('hit flags: a .5 line splits cleanly, an integer line pushes on the number,
   assert.equal(underNeed(24.5), 24); assert.equal(underNeed(24), 23);
 });
 
-const rowsFor = (values) => values.map((value, i) => ({ value, date: NOW - (i + 1) * 864e5, opponent: `OPP${i}`, atVs: i % 2 ? '@' : 'vs' }));
+// 22 games: the first 18 this season, the last 4 last season; BOS every third game.
+const rowsFor = (values) => values.map((value, i) => ({
+  value, date: NOW - (i + 1) * 864e5, season: i < 18 ? 2026 : 2025, opponent: i % 3 === 0 ? 'BOS' : `OPP${i}`, atVs: i % 2 ? '@' : 'vs', score: 'W 110-100',
+}));
 
-test('a trend row per side carries the rates per window, the averages, the streak and the last 20 games as bars', () => {
+test('a trend row per side carries every period — L5/L10/L20, each season, head-to-head — with counts, averages and medians, the streak, the last 20 games and every book', () => {
   const [line] = extractTrendLines(odds, game, markets, { isRegistryBook: (k) => k !== 'pinnacle' }).filter((l) => l.point === 24.5);
   const values = [31, 28, 22, 27, 30, 19, 26, 25, 33, 20, 24, 29, 27, 31, 26, 22, 28, 30, 25, 27, 21, 35];
-  const rows = trendRowsFor({ ...line, team: 'NYK' }, rowsFor(values));
+  const rows = trendRowsFor({ ...line, team: 'NYK', athleteId: '1', headshot: 'h.png' }, rowsFor(values), { opponent: 'bos' });
   assert.equal(rows.length, 2);
   const over = rows.find((r) => r.side === 'over');
   assert.equal(over.selection, 'Jalen Brunson Over 24.5 Pts');
   assert.equal(over.team, 'NYK');
+  assert.equal(over.opponent, 'bos');
+  assert.equal(over.headshot, 'h.png');
   assert.equal(over.games, 22);
+  assert.deepEqual(over.seasons, [2026, 2025]);
   assert.equal(over.rates.l5, 0.8);
   assert.equal(over.rates.l10, 0.7);
   assert.equal(over.rates.l20, 0.75);
-  assert.equal(over.rates.season, Math.round((16 / 22) * 1000) / 1000);
-  assert.equal(over.avg.l5, 27.6);
+  assert.deepEqual(over.periods.l5, { rate: 0.8, hits: 4, games: 5, avg: 27.6, median: 28 });
+  assert.equal(over.periods.s2026.games, 18);
+  assert.equal(over.periods.s2025.games, 4);
+  assert.equal(over.rates.s2025, 0.75, '25, 27, 21, 35 — three of four');
+  // Head-to-head: games 0, 3, 6, 9, 12, 15, 18, 21 — values 31, 27, 26, 20, 27, 22, 25, 35 — six of eight clear 24.5.
+  assert.deepEqual(over.periods.h2h, { rate: 0.75, hits: 6, games: 8, avg: 26.6, median: 26.5 });
   assert.equal(over.streak, 2, 'two straight hits before the 22');
   assert.equal(over.series.length, 20);
-  assert.deepEqual(over.series[0], { value: 31, hit: 1, date: NOW - 864e5, opponent: 'OPP0', atVs: 'vs' });
+  assert.deepEqual(over.series[0], { value: 31, hit: 1, date: NOW - 864e5, season: 2026, opponent: 'BOS', atVs: 'vs', score: 'W 110-100', result: undefined });
+  assert.deepEqual(over.quotes.map((q) => q.bookKey), ['fanduel', 'draftkings']);
   const under = rows.find((r) => r.side === 'under');
   assert.equal(under.rates.l10, 0.3);
   assert.equal(under.american, -110);
+  // No opponent known: the head-to-head period is empty rather than wrong.
+  assert.equal(trendRowsFor(line, rowsFor(values))[0].periods.h2h.games, 0);
 });
 
-test('sorting: by hit rate in the chosen window, ties to the better price; by odds, the heaviest favourite first; no rate sinks', () => {
-  const r = (id, l10, l5, decimal, games = 10) => ({ id, rates: { l10, l5 }, decimal, games });
-  const rows = [r('a', 0.7, 1, 1.9), r('b', 0.9, 0.6, 1.3), r('c', 0.9, 0.6, 1.5), r('d', null, null, 1.2)];
+test('sorting: by hit rate in the chosen period, ties to the better price; by odds; by kickoff; either direction; no rate sinks', () => {
+  const r = (id, l10, l5, decimal, commenceMs) => ({ id, rates: { l10, l5 }, decimal, commenceMs, periods: { l10: { games: 10 }, l5: { games: 5 } } });
+  const rows = [r('a', 0.7, 1, 1.9, 3), r('b', 0.9, 0.6, 1.3, 1), r('c', 0.9, 0.6, 1.5, 2), r('d', null, null, 1.2, 0)];
   assert.deepEqual(sortTrends(rows).map((x) => x.id), ['c', 'b', 'a', 'd']);
+  assert.deepEqual(sortTrends(rows, { dir: 'asc' }).map((x) => x.id), ['a', 'c', 'b', 'd'], 'ascending still sinks the rateless row');
   assert.deepEqual(sortTrends(rows, { window: 'l5' }).map((x) => x.id), ['a', 'c', 'b', 'd']);
-  assert.deepEqual(sortTrends(rows, { by: 'odds' }).map((x) => x.id), ['d', 'b', 'c', 'a']);
+  assert.deepEqual(sortTrends(rows, { by: 'odds' }).map((x) => x.id), ['a', 'c', 'b', 'd'], 'longest price first');
+  assert.deepEqual(sortTrends(rows, { by: 'odds', dir: 'asc' }).map((x) => x.id), ['d', 'b', 'c', 'a'], 'heaviest favourite first');
+  assert.deepEqual(sortTrends(rows, { by: 'date' }).map((x) => x.id), ['d', 'b', 'c', 'a'], 'soonest kickoff first');
 });
 
 test('NFL first: it is the only league enabled, scanned a week ahead with the volume props beside the yardage ladders', async () => {
@@ -136,6 +153,9 @@ test('buildTrends stores one league\'s rows from the feed and the game logs, wit
   assert.ok(payload.rows.every((r) => r.team === KNICKS.toUpperCase() && r.games === 6));
   assert.equal(payload.rows[0].rates.l10, 1, 'the alternate Over 19.5 lands every game and leads');
   assert.equal(payload.rows[0].point, 19.5);
+  assert.equal(payload.rows[0].opponent, espnAbbr('basketball_nba', 'Boston Celtics').toUpperCase(), 'the other team is the head-to-head opponent');
+  assert.equal(payload.rows[0].periods.h2h.games, 6, 'every logged game here was against Boston');
+  assert.equal(payload.rows[0].athleteId, '3934672');
   const stored = await getTrends(env, 'basketball_nba');
   assert.equal(stored.builtAt, NOW);
   assert.equal(stored.rows.length, 3);

@@ -245,22 +245,30 @@ export function seasonColumnValues(gamelog, idx, { parse = (v) => Number(String(
  * recent first, each with the date and opponent ESPN files under the
  * log's `events` map — what a trend chart labels its bars with.
  */
-export function seasonColumnRows(gamelog, idx, { parse = (v) => Number(String(v ?? '').replace(/,/g, '')) } = {}) {
+export function seasonColumnRows(gamelog, idx, { parse = (v) => Number(String(v ?? '').replace(/,/g, '')), allSeasons = false } = {}) {
   if (idx < 0) return [];
   const eventMeta = gamelog?.events ?? {};
+  const blocks = allSeasons
+    ? (Array.isArray(gamelog?.seasonTypes) ? gamelog.seasonTypes : []).filter((s) => !/preseason/i.test(String(s?.displayName ?? '')))
+    : currentSeasonBlocks(gamelog?.seasonTypes);
   const rows = [];
-  for (const seasonType of currentSeasonBlocks(gamelog?.seasonTypes)) {
+  const seen = new Set();
+  for (const seasonType of blocks) {
+    const season = seasonYearOf(seasonType?.displayName);
     for (const category of seasonType?.categories ?? []) {
       for (const event of category?.events ?? []) {
+        if (event?.eventId != null) { if (seen.has(event.eventId)) continue; seen.add(event.eventId); }
         const value = parse(event?.stats?.[idx]);
         if (!Number.isFinite(value)) continue;
         const meta = eventMeta[event.eventId] ?? {};
         rows.push({
           value,
           date: Date.parse(meta.gameDate ?? '') || 0,
+          season,
           opponent: meta.opponent?.abbreviation ?? meta.opponent?.displayName ?? null,
           atVs: meta.atVs ?? null,
           result: meta.gameResult ?? null,
+          score: meta.score ?? null,
         });
       }
     }

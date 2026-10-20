@@ -324,7 +324,10 @@ export async function collectNflPropLegs(games, env, ctx, now = Date.now(), { tr
   return legs;
 }
 
-/** The player's ESPN game log (current season), cached; null when unreachable. Shared with worker/src/trends.js. */
-export async function fetchNflGamelog(athleteId, ctx) {
-  return cachedJson(`${ESPN_GAMELOG}/${athleteId}/gamelog`, GAMELOG_TTL, ctx);
+/** The player's ESPN game log — the current season by default, or `season` (a year) when asked — cached; null when unreachable. Shared with worker/src/trends.js. */
+export async function fetchNflGamelog(athleteId, ctx, season = null) {
+  return cachedJson(`${ESPN_GAMELOG}/${athleteId}/gamelog${season ? `?season=${season}` : ''}`, GAMELOG_TTL, ctx);
 }
+
+/** ESPN's headshot for a player id — the same image every prop tool shows beside the name. */
+export const nflHeadshotUrl = (athleteId) => (athleteId ? `https://a.espncdn.com/i/headshots/nfl/players/full/${athleteId}.png` : null);
