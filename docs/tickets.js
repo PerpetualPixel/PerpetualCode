@@ -198,7 +198,8 @@ export function legsConflict(a, b) {
 function describeLeg(leg) {
   if (leg.kind === 'prop' && leg.profile) {
     const p = leg.profile;
-    return `${leg.selection} has landed in ${Math.round(p.season * 100)}% of ${p.games} games (${Math.round(p.l10 * 100)}% of the last 10)`;
+    const bridge = p.bridged ? `, ${p.bridged} of them from the end of last season` : '';
+    return `${leg.selection} has landed in ${Math.round(p.season * 100)}% of ${p.games} games (${Math.round(p.l10 * 100)}% of the last 10${bridge})`;
   }
   return `${leg.selection} reads ${Math.round(leg.consensusProb * 100)}% by the market`;
 }
@@ -223,11 +224,13 @@ function drawable(legs, usedEventIds) {
  *
  * Every non-conflicting pair (see legsConflict) is priced; a pair is a
  * ticket when it lands inside the band, clears the joint-probability
- * floor, and holds at least one anchor-grade leg. Tickets are ranked by
- * expected value (joint probability against the combined price), then by
- * joint probability, and taken greedily so no two tickets share a game or
- * a leg and no ticket touches a game in `usedEventIds` (the day's other
- * boards).
+ * floor, the ticket EV floor, and holds at least one anchor-grade leg.
+ * Tickets are ranked LOCKS FIRST (2026-10-20 direction: "if they're
+ * parlays they need to be very low level locks"): by joint probability,
+ * then by expected value — the band already bounds how deep two legs can
+ * go, so the likeliest pair inside it is the pair of the lowest lines —
+ * and taken greedily so no two tickets share a game or a leg and no
+ * ticket touches a game in `usedEventIds` (the day's other boards).
  *
  * Legs are ordered anchor first on the ticket so the record's "anchor leg"
  * fields (eventId, sportKey, home/away — see tracking.js's pickRecordFrom)
@@ -266,7 +269,7 @@ export function buildTickets(legs, {
       pairs.push({ legs: anchorFirst, decimal, american, prob, ev, sameGame: a.eventId === b.eventId });
     }
   }
-  pairs.sort((x, y) => (y.ev - x.ev) || (y.prob - x.prob));
+  pairs.sort((x, y) => (y.prob - x.prob) || (y.ev - x.ev));
 
   const tickets = [];
   const takenEvents = new Set(usedEventIds);
@@ -316,12 +319,22 @@ export function singleEligible(leg, {
 }
 
 /**
- * A board of `count` plays: every ticket the pool makes first, then — when
- * the day offers fewer tickets than slots — the best legs standing inside
- * the band on their own, as straight plays, ranked by expected value then
- * probability. No two plays share a game. Each straight play carries the
- * leg's own fields with `type: 'single'` and `legs: [leg]`, the shape the
- * record builder and the cards already read for a single.
+ * How many of a board's plays one league may fill while another league
+ * has a play for the slot (2026-10-20 direction: "I want to see variation
+ * on these picks"): half the board, rounded up — three of five.
+ */
+export const boardSportCap = (count) => Math.max(1, Math.ceil(count / 2));
+
+/**
+ * A board of `count` plays: the tickets the pool makes, locks first, then
+ * the best legs standing inside the band on their own as straight plays,
+ * ranked the same way. No two plays share a game. Two variation rules
+ * (2026-10-20 direction: "they can be straight plays or parlays"): a board
+ * of three or more keeps one slot for a straight play when one clears the
+ * standard, and no league fills more than boardSportCap(count) slots
+ * while another league has a play for one. Each straight play carries
+ * the leg's own fields with `type: 'single'` and `legs: [leg]`, the shape
+ * the record builder and the cards already read for a single.
  */
 export function buildBoard(legs, {
   count = 1,
@@ -333,28 +346,45 @@ export function buildBoard(legs, {
   // The straight-play conviction floor; a fallback tier may lower it.
   singleMinProb = SINGLE_MIN_PROB,
 } = {}) {
-  const tickets = buildTickets(legs, { count, usedEventIds, minAmerican, maxAmerican, minProb, minEv });
-  if (tickets.length >= count) return tickets;
-
-  const taken = new Set([...usedEventIds, ...tickets.flatMap((t) => t.legs.map((l) => l.eventId))]);
-  const singles = drawable(legs, taken)
+  // More tickets than slots, so the variation rules have alternates to
+  // reach for when the best few all come from one league.
+  const tickets = buildTickets(legs, { count: count * 3, usedEventIds, minAmerican, maxAmerican, minProb, minEv });
+  const singles = drawable(legs, usedEventIds)
     .filter((l) => singleEligible(l, { minAmerican, maxAmerican, minEv, minProb: singleMinProb }))
-    .map((l) => ({ leg: l, ev: Number.isFinite(l.ev) ? l.ev : l.consensusProb * l.decimal - 1 }))
-    .sort((x, y) => (y.ev - x.ev) || (y.leg.consensusProb - x.leg.consensusProb));
-
-  const board = [...tickets];
-  for (const { leg } of singles) {
-    if (board.length >= count) break;
-    if (taken.has(leg.eventId)) continue;
-    taken.add(leg.eventId);
-    board.push({
-      ...leg,
+    .map((l) => ({
+      ...l,
       type: 'single',
-      legs: [leg],
+      legs: [l],
       meetsStandard: true,
-      prob: leg.consensusProb,
-      singleReason: `Straight play: ${describeLeg(leg)}; ${formatAmerican(Number.isFinite(leg.american) ? leg.american : decimalToAmerican(leg.decimal))} stands inside the band on its own.`,
-    });
+      prob: l.consensusProb,
+      ev: Number.isFinite(l.ev) ? l.ev : l.consensusProb * l.decimal - 1,
+      singleReason: `Straight play: ${describeLeg(l)}; ${formatAmerican(Number.isFinite(l.american) ? l.american : decimalToAmerican(l.decimal))} stands inside the band on its own.`,
+    }))
+    .sort((x, y) => (y.prob - x.prob) || (y.ev - x.ev));
+  const plays = [...tickets, ...singles];
+
+  const cap = boardSportCap(count);
+  const board = [];
+  const taken = new Set(usedEventIds);
+  const perSport = new Map();
+  const sportsOf = (p) => new Set(p.legs.map((l) => l.sportKey));
+  const fits = (p) => !p.legs.some((l) => taken.has(l.eventId));
+  const capped = (p) => [...sportsOf(p)].some((s) => (perSport.get(s) ?? 0) >= cap);
+  const holdForSingle = count >= 3;
+  // Pass one honours the league cap; pass two fills what it left open.
+  for (const strict of [true, false]) {
+    for (const p of plays) {
+      if (board.length >= count) break;
+      if (board.includes(p) || !fits(p)) continue;
+      if (strict && capped(p)) continue;
+      // The last slot waits for a straight play while the board is all
+      // tickets and one still fits.
+      if (holdForSingle && p.type === 'combo' && board.length === count - 1
+        && !board.some((b) => b.type === 'single') && singles.some((s) => fits(s))) continue;
+      board.push(p);
+      p.legs.forEach((l) => taken.add(l.eventId));
+      for (const s of sportsOf(p)) perSport.set(s, (perSport.get(s) ?? 0) + 1);
+    }
   }
   return board;
 }

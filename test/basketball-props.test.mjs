@@ -142,3 +142,14 @@ test('the NBA maps to its ESPN path', () => {
   assert.deepEqual(Object.keys(BASKETBALL_SPORTS), ['basketball_nba']);
   assert.equal(BASKETBALL_SPORTS.basketball_nba.espn, 'nba');
 });
+
+test('the early-season bridge tops a short current season up from the end of last season, and names the prior season by its end year', async () => {
+  const { bridgeSeasonValues, priorSeasonKey, BRIDGE_GAMES } = await import('../docs/prop-legs.js');
+  assert.equal(BRIDGE_GAMES, 10);
+  assert.deepEqual(bridgeSeasonValues([25, 22], [30, 28, 27, 26, 24, 23, 21, 20, 19, 18, 17], { minGames: 6 }), { values: [25, 22, 30, 28, 27, 26, 24, 23, 21, 20], bridged: 8 });
+  assert.deepEqual(bridgeSeasonValues([], [30, 28], { minGames: 6 }), { values: [30, 28], bridged: 2 });
+  assert.deepEqual(bridgeSeasonValues([1, 2, 3, 4, 5, 6], [9, 9], { minGames: 6 }), { values: [1, 2, 3, 4, 5, 6], bridged: 0 }, 'a season at the gate borrows nothing');
+  assert.equal(priorSeasonKey({ seasonTypes: [{ displayName: '2026-27 Regular Season' }, { displayName: '2026-27 Preseason' }] }), 2026);
+  assert.equal(priorSeasonKey(null, Date.parse('2026-10-20T12:00:00Z')), 2026, 'October: the season that ended this year');
+  assert.equal(priorSeasonKey({}, Date.parse('2027-03-01T12:00:00Z')), 2026, 'March: last year\'s key');
+});

@@ -20,6 +20,8 @@ import {
   extractAltCandidates,
   propLegFrom as sharedPropLegFrom,
   clearsPropGates as sharedClearsPropGates,
+  bridgeSeasonValues,
+  priorSeasonKey,
   gradePropLeg,
   seasonColumnValues,
 } from '../../docs/prop-legs.js';
@@ -239,12 +241,21 @@ export async function collectBasketballPropLegs(games, env, ctx, now = Date.now(
       const athleteId = await resolveAthleteId(sportKey, c.playerName, abbrs, ctx);
       if (!athleteId) { trace.push(`${c.playerName}: no roster match`); continue; }
       const gamelog = await cachedJson(gamelogUrl(sportKey, athleteId), GAMELOG_TTL, ctx);
-      const values = parseBasketballGamelogValues(gamelog, c.statKey);
+      let values = parseBasketballGamelogValues(gamelog, c.statKey);
+      let bridged = 0;
+      // Early in the season the gate cannot be met from this season alone:
+      // top the sample up from the end of last season (docs/prop-legs.js's
+      // bridgeSeasonValues) and say so on the leg.
+      if (values.length < PROP_GATES.MIN_GAMES) {
+        const prior = await fetchBasketballGamelog(sportKey, athleteId, ctx, priorSeasonKey(gamelog, now)).catch(() => null);
+        ({ values, bridged } = bridgeSeasonValues(values, parseBasketballGamelogValues(prior, c.statKey), { minGames: PROP_GATES.MIN_GAMES }));
+        if (bridged) trace.push(`${c.playerName}: ${bridged} games from last season bridge a ${values.length - bridged}-game start`);
+      }
       if (!values.length) { trace.push(`${c.playerName}: no ${c.statKey} in the game log`); continue; }
       const leg = propLegFrom(c, values);
       if (!leg) { trace.push(`${c.selection}: gates or edge missed`); continue; }
       if (!espnEventIds.has(c.eventId)) espnEventIds.set(c.eventId, await resolveBasketballEspnEventId(sportKey, c.home, c.away, ctx));
-      legs.push({ ...leg, espnEventId: espnEventIds.get(c.eventId) ?? null });
+      legs.push({ ...leg, profile: { ...leg.profile, bridged }, espnEventId: espnEventIds.get(c.eventId) ?? null });
     }
     trace.push(`${BASKETBALL_SPORTS[sportKey].title} prop legs qualified: ${legs.length}`);
   }
