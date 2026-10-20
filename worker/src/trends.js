@@ -186,15 +186,25 @@ export async function runTrendsBuild(env, ctx, now = Date.now(), { fetchFullSlat
   if (!due.length) return { skipped: true, reason: 'every league is fresh' };
   const events = await fetchFullSlate();
   for (const s of due) {
-    const games = await trendGamesFor(s.sportKey, events, env, ctx, now);
-    if (!games.length) {
-      // Nothing to scan: mark it checked so the next tick moves on to the
-      // next league rather than asking the same empty question every 15 min.
-      await env.POTD_KV.put(trendsKey(s.sportKey), JSON.stringify({ ...s, builtAt: now, games: 0, rows: s.rows ?? [] }), { expirationTtl: KV_TTL_SECONDS });
-      continue;
+    // A build that throws is written down where /trends can show it — a
+    // silent failure looks exactly like a league with no games, and the
+    // worker's logs are not something the tab can read.
+    try {
+      const games = await trendGamesFor(s.sportKey, events, env, ctx, now);
+      if (!games.length) {
+        // Nothing to scan: mark it checked so the next tick moves on to the
+        // next league rather than asking the same empty question every 15 min.
+        await env.POTD_KV.put(trendsKey(s.sportKey), JSON.stringify({ ...s, builtAt: now, games: 0, rows: s.rows ?? [], lastError: null, note: 'no game inside the lookahead' }), { expirationTtl: KV_TTL_SECONDS });
+        continue;
+      }
+      const payload = await buildTrends(s.sportKey, games, env, ctx, now, deps?.[s.sportKey]);
+      return { skipped: false, sportKey: s.sportKey, games: payload.games, rows: payload.rows.length };
+    } catch (e) {
+      const lastError = `${new Date(now).toISOString()}: ${String(e?.stack ?? e).slice(0, 400)}`;
+      await env.POTD_KV.put(trendsKey(s.sportKey), JSON.stringify({ ...s, lastError, checkedAt: now }), { expirationTtl: KV_TTL_SECONDS });
+      console.error(`Trends build failed for ${s.sportKey}:`, e);
+      return { skipped: true, sportKey: s.sportKey, reason: 'build failed', error: lastError };
     }
-    const payload = await buildTrends(s.sportKey, games, env, ctx, now, deps?.[s.sportKey]);
-    return { skipped: false, sportKey: s.sportKey, games: payload.games, rows: payload.rows.length };
   }
   return { skipped: true, reason: 'no league has a game inside the lookahead' };
 }

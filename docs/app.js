@@ -8809,7 +8809,9 @@ function renderTrends() {
   if (!el.trendsBody) return;
   const data = trendsState.data;
   if (!data || !data.builtAt) {
-    el.trendsStatus.textContent = 'No lines scanned yet for this league — the worker builds Trends a few hours ahead of each slate.';
+    el.trendsStatus.textContent = data?.lastError
+      ? `The last Trends build failed — ${data.lastError}`
+      : 'No lines scanned yet for this league — the worker builds Trends on its next 15-minute tick.';
     el.trendsBody.innerHTML = '';
     return;
   }
