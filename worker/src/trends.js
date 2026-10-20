@@ -22,7 +22,7 @@ import { normalizeName as normalizeNflName } from '../../docs/nfl-props.js';
 import { normalizeName as normalizeNbaName } from '../../docs/wnba-props.js';
 import { normalizeName as normalizeNhlName } from '../../docs/nhl-props.js';
 import {
-  NFL_SPORT_KEY, NFL_TREND_MARKETS, fetchNflAltProps, resolveNflAthleteId, fetchNflGamelog, gamelogStatIndex, nflHeadshotUrl,
+  NFL_SPORT_KEY, NFL_TREND_MARKETS, fetchNflAltProps, resolveNflAthleteId, fetchNflGamelog, gamelogStatIndex, nflHeadshotUrl, fetchNflRoster,
 } from './football-props.js';
 import {
   BASKETBALL_ALT_MARKETS, fetchAltProps, resolveAthleteId, fetchBasketballGamelog, basketballStatIndex,
@@ -46,6 +46,10 @@ export const TREND_ENABLED_SPORTS = [NFL_SPORT_KEY];
 export const MAX_PLAYERS_PER_GAME = 24;
 /** Rows with fewer logged games than this have no rate worth sorting on. */
 const MIN_GAMES = 3;
+/** A build that found no rows is tried again this soon, rather than after the league's full TTL. */
+export const RETRY_EMPTY_MINUTES = 30;
+/** How many diagnostic lines a build keeps for /trends to show. */
+const MAX_DIAG = 60;
 const MAX_ROWS = 500;
 const KV_TTL_SECONDS = 86400 * 2;
 
@@ -71,6 +75,7 @@ export const TREND_SPORTS = {
     // is the year it kicks off in, so "last season" is simply year - 1.
     priorGamelog: (athleteId, ctx, now) => fetchNflGamelog(athleteId, ctx, new Date(now).getUTCFullYear() - 1),
     headshot: nflHeadshotUrl,
+    roster: (abbr, ctx) => fetchNflRoster(abbr, ctx),
     statIndex: gamelogStatIndex,
   },
   [NBA_KEY]: {
@@ -126,10 +131,19 @@ export async function buildTrends(sportKey, games, env, ctx, now = Date.now(), d
   const isRegistryBook = (key) => Boolean(bookIdFor(key));
   const rows = [];
   let scanned = 0;
+  // What the build saw at each stage, for /trends to show: a build that
+  // ends with no rows needs to say where the rows went, and the worker's
+  // logs are not something the tab (or its owner) can read.
+  const diag = [];
+  const note = (line) => { if (diag.length < MAX_DIAG) diag.push(line); };
+  const keysOf = (o) => (o && typeof o === 'object' ? Object.keys(o).slice(0, 12).join(',') : String(o));
+  let unresolvedLogged = 0;
+  let shortLogged = 0;
   for (const game of games) {
     const odds = await spec.fetchOdds(game.id, env, ctx);
-    if (!odds) continue;
+    if (!odds) { note(`${game.away_team} @ ${game.home_team}: no odds payload`); continue; }
     scanned++;
+    if (!Array.isArray(odds.bookmakers) || !odds.bookmakers.length) note(`${game.away_team} @ ${game.home_team}: payload has no bookmakers (keys: ${keysOf(odds)})`);
     const meta = {
       eventId: game.id, sportKey, sportTitle: spec.title, commenceMs: Date.parse(game.commence_time),
       home: game.home_team, away: game.away_team,
@@ -145,6 +159,8 @@ export async function buildTrends(sportKey, games, env, ctx, now = Date.now(), d
     }
     const players = [...byPlayer.entries()].slice(0, MAX_PLAYERS_PER_GAME);
     const abbrs = { home: espnAbbr(sportKey, game.home_team), away: espnAbbr(sportKey, game.away_team) };
+    const marketKeys = [...new Set((odds.bookmakers ?? []).flatMap((b) => (b.markets ?? []).map((m) => m.key)))];
+    note(`${game.away_team} @ ${game.home_team}: ${lines.length} lines, ${byPlayer.size} players, books [${(odds.bookmakers ?? []).map((b) => b.key).join(',')}], markets [${marketKeys.join(',')}], abbrs ${abbrs.away ?? '?'}/${abbrs.home ?? '?'}`);
     for (const [, playerLines] of players) {
       const name = playerLines[0].playerName;
       let team = null;
@@ -152,9 +168,17 @@ export async function buildTrends(sportKey, games, env, ctx, now = Date.now(), d
       if (athleteId) team = abbrs.home;
       else { athleteId = await spec.resolve(name, [abbrs.away], ctx); if (athleteId) team = abbrs.away; }
       team = team ? String(team).toUpperCase() : null;
-      if (!athleteId) continue;
+      if (!athleteId) {
+        if (unresolvedLogged++ < 3) {
+          const roster = spec.roster ? await spec.roster(abbrs.home ?? abbrs.away, ctx).catch(() => null) : undefined;
+          const groups = Array.isArray(roster?.athletes) ? roster.athletes : [];
+          const sample = groups.flatMap((g) => (Array.isArray(g?.items) ? g.items : [])).slice(0, 3).map((a) => a?.displayName).join(' | ');
+          note(`${name}: no roster match (${abbrs.away ?? '?'}/${abbrs.home ?? '?'}); roster ${roster === undefined ? 'not checked' : roster === null ? 'unreachable' : `keys ${keysOf(roster)}, ${groups.length} groups, sample [${sample}]`}`);
+        }
+        continue;
+      }
       const gamelog = await spec.gamelog(athleteId, ctx);
-      if (!gamelog) continue;
+      if (!gamelog) { note(`${name} (${athleteId}): game log unreachable`); continue; }
       const prior = spec.priorGamelog ? await spec.priorGamelog(athleteId, ctx, now).catch(() => null) : null;
       const merged = prior?.seasonTypes?.length
         ? { ...gamelog, seasonTypes: [...(gamelog.seasonTypes ?? []), ...prior.seasonTypes], events: { ...(prior.events ?? {}), ...(gamelog.events ?? {}) } }
@@ -167,17 +191,22 @@ export async function buildTrends(sportKey, games, env, ctx, now = Date.now(), d
       for (const line of playerLines) {
         if (!rowsByStat.has(line.statKey)) rowsByStat.set(line.statKey, seasonColumnRows(merged, spec.statIndex(merged, line.statKey), { allSeasons: true }));
         const statRows = rowsByStat.get(line.statKey);
-        if (statRows.length < MIN_GAMES) continue;
+        if (statRows.length < MIN_GAMES) {
+          if (shortLogged++ < 3) note(`${name}: ${line.statKey} has ${statRows.length} logged games; column ${spec.statIndex(merged, line.statKey)}; log keys ${keysOf(merged)}; names [${(merged.names ?? []).slice(0, 10).join(',')}]; seasons [${(merged.seasonTypes ?? []).map((s) => s?.displayName).join(' / ')}]`);
+          continue;
+        }
         rows.push(...trendRowsFor({ ...line, team, athleteId, headshot }, statRows, { opponent }));
       }
     }
   }
+  note(`rows built: ${rows.length}`);
   const payload = {
     sportKey,
     title: spec.title,
     builtAt: now,
     games: scanned,
     rows: sortTrends(rows, { window: 'l10' }).slice(0, MAX_ROWS),
+    diag,
   };
   await env.POTD_KV.put(trendsKey(sportKey), JSON.stringify(payload), { expirationTtl: KV_TTL_SECONDS });
   return payload;
@@ -193,8 +222,11 @@ export async function buildTrends(sportKey, games, env, ctx, now = Date.now(), d
 export async function runTrendsBuild(env, ctx, now = Date.now(), { fetchFullSlate = async () => [], deps, enabled = TREND_ENABLED_SPORTS } = {}) {
   const stored = await Promise.all(enabled.map((k) => getTrends(env, k)));
   const ttl = (k) => (TREND_SPORTS[k]?.ttlMinutes ?? TRENDS_TTL_MINUTES) * 60e3;
+  // An empty build retries soon: the gap between "no games" and "every
+  // row dropped" is what the diagnostics are for, and six hours is too
+  // long to wait to read them.
   const due = stored
-    .filter((s) => !s.builtAt || now - s.builtAt >= ttl(s.sportKey))
+    .filter((s) => !s.builtAt || now - s.builtAt >= (s.rows?.length ? ttl(s.sportKey) : Math.min(ttl(s.sportKey), RETRY_EMPTY_MINUTES * 60e3)))
     .sort((a, b) => (a.builtAt ?? 0) - (b.builtAt ?? 0));
   if (!due.length) return { skipped: true, reason: 'every league is fresh' };
   const events = await fetchFullSlate();

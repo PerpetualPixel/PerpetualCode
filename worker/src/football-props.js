@@ -331,3 +331,9 @@ export async function fetchNflGamelog(athleteId, ctx, season = null) {
 
 /** ESPN's headshot for a player id — the same image every prop tool shows beside the name. */
 export const nflHeadshotUrl = (athleteId) => (athleteId ? `https://a.espncdn.com/i/headshots/nfl/players/full/${athleteId}.png` : null);
+
+/** A team's ESPN roster payload, cached — exported so the Trends build can say what a roster looked like when a player wasn't found on it. */
+export async function fetchNflRoster(abbr, ctx) {
+  if (!abbr) return null;
+  return cachedJson(`${ESPN_SITE}/teams/${String(abbr).toLowerCase()}/roster`, ROSTER_TTL, ctx);
+}
