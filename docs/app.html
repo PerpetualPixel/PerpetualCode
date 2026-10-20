@@ -36,7 +36,7 @@
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Syne:wght@600;700;800&family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
-<link rel="stylesheet" href="styles.css?v=1.196">
+<link rel="stylesheet" href="styles.css?v=1.197">
 </head>
 <body>
 
@@ -133,7 +133,11 @@
       deep player-prop lines, every win rolled into the next rung — posts beside them. Every pick on every board has to beat
       the market's no-vig line by the edge floor; a pick that clears that but not the full
       sharp standard posts visibly flagged, and a day with fewer real edges posts fewer picks
-      rather than filling the board with bets the engine itself grades as losers.
+      rather than filling the board with bets the engine itself grades as losers. The one
+      exception is the Play of the Day, which posts every day: on a slate where nothing clears
+      the standard it posts the best play the day offers, flagged with why and sized at the
+      minimum, and tomorrow's goes up by 10pm ET the night before, so the tab shows today's and
+      tomorrow's, each dated.
       Every card now also shows the algorithm's own unit sizing, scaled to its confidence —
       3–5 units for the Play of the Day, 1–2.5 for Pixel's Picks and the Prop Play.
     </p>
@@ -502,7 +506,10 @@
       at once and never changed after.
       <strong>Play of the Day</strong> is that best play — one play
       for the whole day, the same for everyone, with a full written
-      breakdown instead of the compact card.</p>
+      breakdown instead of the compact card. It posts every day: tomorrow's
+      by 10pm ET the night before (so from then the tab shows today's and
+      tomorrow's, each dated), and on a thin slate the best play the day
+      offers, flagged and sized at the minimum.</p>
     </details>
 
     <!--
@@ -904,9 +911,10 @@
         high-conviction straight play filling in — the next best after the
         Play of the Day. <strong>Play of the Day</strong> is the day's best
         such play. The <strong>Ladder</strong> is one parlay a day of deep
-        player-prop lines, every win rolled into the next rung. All post at
-        2am ET and are graded against real results; a ticket wins only when
-        every leg lands.
+        player-prop lines, every win rolled into the next rung. Pixel's Picks
+        and the Ladder post at 2am ET; the Play of the Day posts every day,
+        tomorrow's by 10pm ET the night before. All are graded against real
+        results; a ticket wins only when every leg lands.
         </p>
       </details>
       <div id="top5Summary" class="learning-grid">
@@ -1095,6 +1103,6 @@
   </div>
 </aside>
 
-<script type="module" src="app.js?v=1.196"></script>
+<script type="module" src="app.js?v=1.197"></script>
 </body>
 </html>

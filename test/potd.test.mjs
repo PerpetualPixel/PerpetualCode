@@ -1,11 +1,14 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import {
-  POTD_HOUR,
+  NEXT_DAY_DRAW_HOUR_ET,
+  POTD_TIERS,
+  dateKeyPlusDays,
   runPotdDaily,
   runPotdClvSnapshot,
   runPotdGrading,
   getPotd,
+  getPotdNext,
   getPotdHold,
   getPotdHistory,
 } from '../worker/src/potd.js';
@@ -92,8 +95,12 @@ function makeEvent(id, commenceIso, { sport = 'americanfootball_nfl', sportTitle
 /* runPotdDaily — odds band                                          */
 /* ---------------------------------------------------------------- */
 
-test('POTD_HOUR is 2am ET', () => {
-  assert.equal(POTD_HOUR, 2);
+test('tomorrow\'s play is drawn from 8pm ET, so it is up by 10pm; the tiers are flagged, the standard is not', () => {
+  assert.equal(NEXT_DAY_DRAW_HOUR_ET, 20);
+  assert.equal(POTD_TIERS.standard, null);
+  assert.ok(['edge', 'read', 'showcase'].every((k) => /size it at the minimum/.test(POTD_TIERS[k])));
+  assert.equal(dateKeyPlusDays('2026-10-31', 1), '2026-11-01');
+  assert.equal(dateKeyPlusDays('2026-03-01', -1), '2026-02-28');
 });
 
 const nhl = { sport: 'icehockey_nhl', sportTitle: 'NHL' };
@@ -144,22 +151,31 @@ test('legs that never pair inside the band fall back to a HIGH-CONVICTION straig
   assert.equal(record.writeup.legs.length, 1);
   assert.match(record.writeup.pairReason, /^Straight play:/);
 
-  // The same shape with a -105 read at 57%: inside the band, but not high conviction. No play.
+  assert.equal(record.tier, null, 'the standard needs no flag');
+
+  // The same shape with a -105 read at 57%: inside the band, but not high
+  // conviction. The day still posts — the play of the day posts every day —
+  // flagged as the "read" tier and sized at the minimum.
   const lean = makeKvStore();
   const leanEvents = [events[0], makeEvent('lean', '2026-08-05T09:30:00Z', { favoritePrice: -140, dogPrice: 120, outlier: 35 })];
-  const held = await runPotdDaily(lean.env, ctx, NOW, { fetchFullSlate: async () => leanEvents });
-  assert.equal(held.skipped, true);
-  assert.match(held.reason, /none stands in that band alone/);
+  const flagged = await runPotdDaily(lean.env, ctx, NOW, { fetchFullSlate: async () => leanEvents });
+  assert.equal(flagged.skipped, false, JSON.stringify(flagged));
+  assert.equal(flagged.pick.eventId, 'lean');
+  assert.equal(flagged.tier.key, 'read');
+  assert.equal(flagged.pick.stakeUnits, (await getPotd(lean.env, NOW)).pick.stakeUnits);
+  assert.equal(await getPotdHold(lean.env, NOW), null);
 });
 
-test('a -900 chalk alone is neither a ticket nor a straight play — and the hold says so', async () => {
+test('a -900 chalk alone is neither a ticket nor a straight play — it posts as the showcase tier, flagged', async () => {
   const { env, store } = makeKvStore();
   const events = [makeEvent('chalk', '2026-08-05T09:00:00Z', { favoritePrice: -1800, dogPrice: 1200, outlier: 900 })];
   const result = await runPotdDaily(env, ctx, NOW, { fetchFullSlate: async () => events });
-  assert.equal(result.skipped, true);
-  assert.match(result.reason, /1 leg cleared the standard but none pairs inside .* and none stands in that band alone/);
-  assert.equal(store.has('potd:2026-08-05'), false);
-  assert.match((await getPotdHold(env, NOW)).reason, /none stands in that band alone/);
+  assert.equal(result.skipped, false);
+  assert.equal(result.tier.key, 'showcase');
+  assert.equal(result.pick.eventId, 'chalk');
+  assert.ok(store.has('potd:2026-08-05'));
+  assert.equal(await getPotdHold(env, NOW), null);
+  assert.match(JSON.parse(store.get('potd:2026-08-05')).tier.note, /Nothing on this slate priced inside the band/);
 });
 
 test('a candidate whose segment the weekly algorithm health review has paused is never a leg, even if it scores best', async () => {
@@ -179,26 +195,26 @@ test('the boards draw from NFL, NHL, MMA and the NBA only', async () => {
   assert.deepEqual(result.pick.legs.map((l) => l.eventId).sort(), ['nfl-a', 'nfl-b']);
 });
 
-test('a slate with no edge posts NO Play of the Day — and records why', async () => {
+test('a slate with no edge still posts — the best-read ticket inside the band, flagged as the edge tier', async () => {
   const { env, store } = makeKvStore();
   // Every book at exactly the same price: the best price IS the consensus,
-  // so the "edge" is the vig, negative. A bet the engine grades as a loser
-  // is not a Play of the Day at any label.
+  // so the "edge" is the vig, negative. The play of the day posts every
+  // day, so the ticket goes up flagged and at the minimum stake.
   const result = await runPotdDaily(env, ctx, NOW, { fetchFullSlate: async () => pair('weak-a', 'weak-b', { outlier: 0 }) });
-  assert.equal(result.skipped, true);
-  assert.match(result.reason, /clears the edge floor/);
-  assert.equal(store.has('potd:2026-08-05'), false, 'no pick written');
-  const hold = await getPotdHold(env, NOW);
-  assert.ok(hold, 'the hold is recorded so the card can say why');
-  assert.match(hold.reason, /edge floor/);
-  assert.equal(await getPotd(env, NOW), null);
+  assert.equal(result.skipped, false, JSON.stringify(result));
+  assert.equal(result.tier.key, 'edge');
+  assert.equal(result.pick.type, 'combo');
+  assert.ok(store.has('potd:2026-08-05'));
+  assert.equal(await getPotdHold(env, NOW), null);
+  assert.match((await getPotd(env, NOW)).tier.note, /edge floor/);
 });
 
 test('a slate with literally no gradeable game posts nothing — and says so', async () => {
   const { env, store } = makeKvStore();
   const result = await runPotdDaily(env, ctx, NOW, { fetchFullSlate: async () => [] });
   assert.equal(result.skipped, true);
-  assert.equal(result.reason, 'no gradeable NFL, NHL, MMA or NBA game on the slate today');
+  assert.equal(result.reason, 'no gradeable NFL, NHL, MMA or NBA game on the slate for 2026-08-05');
+  assert.deepEqual(result.posted, []);
   // The only write is the day's hold record — never a pick.
   assert.deepEqual([...store.keys()], ['potd:hold:2026-08-05']);
 });
@@ -209,7 +225,65 @@ test('a slate priced only at books the reader cannot bet posts no Play of the Da
   for (const e of events) e.bookmakers.forEach((b, i) => { b.key = `offshore${i}`; b.title = `Offshore ${i}`; });
   const result = await runPotdDaily(env, ctx, NOW, { fetchFullSlate: async () => events });
   assert.equal(result.skipped, true);
-  assert.match(result.reason, /clears the edge floor/);
+  assert.match(result.reason, /a book you can bet/);
+});
+
+/* ---------------------------------------------------------------- */
+/* runPotdDaily — tomorrow's play, the evening before                */
+/* ---------------------------------------------------------------- */
+
+// 8:15pm ET Aug 5 (EDT): inside the evening draw window.
+const EVENING = Date.parse('2026-08-06T00:15:00Z');
+
+test('from 8pm ET tomorrow\'s play posts beside today\'s, under its own date, never sharing a game', async () => {
+  const { env, store } = makeKvStore();
+  const events = [
+    ...pair('today-a', 'today-b').map((e) => ({ ...e, commence_time: '2026-08-06T01:00:00Z' })), // 9pm ET tonight
+    ...pair('tmrw-a', 'tmrw-b').map((e) => ({ ...e, commence_time: '2026-08-06T23:00:00Z' })), // 7pm ET tomorrow
+  ];
+  const afternoon = Date.parse('2026-08-05T19:00:00Z'); // 3pm ET: today only
+  const first = await runPotdDaily(env, ctx, afternoon, { fetchFullSlate: async () => events });
+  assert.equal(first.skipped, false);
+  assert.equal(first.dateKey, '2026-08-05');
+  assert.deepEqual(first.posted.map((d) => d.dateKey), ['2026-08-05']);
+  assert.equal(store.has('potd:2026-08-06'), false, 'before 8pm, tomorrow is not drawn');
+  assert.equal(await getPotdNext(env, afternoon), null);
+
+  const evening = await runPotdDaily(env, ctx, EVENING, { fetchFullSlate: async () => events });
+  assert.equal(evening.skipped, false, JSON.stringify(evening));
+  assert.deepEqual(evening.posted.map((d) => d.dateKey), ['2026-08-06'], 'today is already posted; tomorrow posts now');
+  assert.equal(evening.dateKey, '2026-08-06');
+  assert.deepEqual(evening.days.map((d) => d.reason ?? 'posted'), ['already generated', 'posted']);
+  const next = await getPotdNext(env, EVENING);
+  assert.equal(next.date, '2026-08-06');
+  assert.deepEqual(next.pick.legs.map((l) => l.eventId).sort(), ['tmrw-a', 'tmrw-b'], 'tomorrow\'s play is drawn from tomorrow\'s games');
+  assert.equal((await getPotd(env, EVENING)).date, '2026-08-05', 'today\'s stays up');
+
+  const again = await runPotdDaily(env, ctx, EVENING + 15 * 60e3, { fetchFullSlate: async () => events });
+  assert.equal(again.skipped, true);
+  assert.deepEqual(again.posted, []);
+});
+
+test('tomorrow\'s slate with no lines yet is tried again next tick, and today\'s play is not touched', async () => {
+  const { env, store } = makeKvStore();
+  const today = pair('today-a', 'today-b').map((e) => ({ ...e, commence_time: '2026-08-06T01:00:00Z' }));
+  const r = await runPotdDaily(env, ctx, EVENING, { fetchFullSlate: async () => today });
+  assert.deepEqual(r.posted.map((d) => d.dateKey), ['2026-08-05']);
+  assert.match(r.days[1].reason, /no gradeable .* game on the slate for 2026-08-06/);
+  assert.ok(store.has('potd:hold:2026-08-06'));
+  const tomorrow = pair('tmrw-a', 'tmrw-b').map((e) => ({ ...e, commence_time: '2026-08-06T23:00:00Z' }));
+  const later = await runPotdDaily(env, ctx, EVENING + 15 * 60e3, { fetchFullSlate: async () => [...today, ...tomorrow] });
+  assert.deepEqual(later.posted.map((d) => d.dateKey), ['2026-08-06']);
+  assert.equal(store.has('potd:hold:2026-08-06'), false, 'the pick clears the hold');
+});
+
+test('a failed draw for one date never costs the other its play', async () => {
+  const { env } = makeKvStore();
+  const tomorrow = pair('tmrw-a', 'tmrw-b').map((e) => ({ ...e, commence_time: '2026-08-06T23:00:00Z' }));
+  let calls = 0;
+  const r = await runPotdDaily(env, ctx, EVENING, { fetchFullSlate: async () => { if (calls++ === 0) throw new Error('feed down'); return tomorrow; } });
+  assert.match(r.days[0].reason, /draw failed: feed down/);
+  assert.deepEqual(r.posted.map((d) => d.dateKey), ['2026-08-06']);
 });
 
 test('a pick posting later in the day clears an earlier hold', async () => {
@@ -264,14 +338,13 @@ test("two NBA players' props from one game are a same game parlay Play of the Da
   assert.match(record.writeup.legs[1].note, /Jalen Brunson has cleared 12\+ in 90% of 20 games/);
 });
 
-test('before the generation hour, the day is not drawn at all', async () => {
+test('there is no generation hour: a day with no play yet is drawn by the first tick that finds a game, even at 1am', async () => {
   const { env, store } = makeKvStore();
   const oneAmEt = Date.parse('2026-08-05T05:00:00Z'); // 1am ET Aug 5 (EDT)
-  const events = [makeEvent('early', '2026-08-05T23:00:00Z', { outlier: 30 })];
+  const events = pair('early-a', 'early-b').map((e) => ({ ...e, commence_time: '2026-08-05T23:00:00Z' }));
   const result = await runPotdDaily(env, ctx, oneAmEt, { fetchFullSlate: async () => events });
-  assert.equal(result.skipped, true);
-  assert.equal(result.reason, 'before generation hour');
-  assert.equal(store.size, 0);
+  assert.equal(result.skipped, false);
+  assert.ok(store.has('potd:2026-08-05'));
 });
 
 test('an exhibition-format game is never a leg even if it scores well', async () => {
@@ -283,7 +356,9 @@ test('an exhibition-format game is never a leg even if it scores well', async ()
     o.name = o.name.includes('Home') ? 'Team LeBron' : 'Team Giannis';
   }));
   const result = await runPotdDaily(env, ctx, NOW, { fetchFullSlate: async () => events });
-  assert.equal(result.skipped, true, 'with the exhibition out, one leg is left, and one leg is not a ticket');
+  assert.equal(result.skipped, false, 'with the exhibition out, one leg is left: the showcase tier posts it');
+  assert.equal(result.pick.eventId, 'b');
+  assert.equal(result.tier.key, 'showcase');
 });
 
 /* ---------------------------------------------------------------- */

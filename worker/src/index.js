@@ -52,7 +52,7 @@ import { runPropPlayDaily, runPropPlayGrading, getAllPropPlays } from './prop-pl
 import { extractSlipFromImage } from './slip-vision.js';
 import { consumeQuota, getQuotaUsage } from './tail-fade-quota.js';
 import { runNhlPropsScan, runNhlPropsGrading, getAllNhlPropsTracked } from './nhl-props.js';
-import { runPotdDaily, runPotdClvSnapshot, runPotdGrading, backfillPotdAnalysis, getPotd, getPotdHold, getPotdLeaning, getPotdHistory, retractPotd, regradePotdTennisVoids, etParts } from './potd.js';
+import { runPotdDaily, runPotdClvSnapshot, runPotdGrading, backfillPotdAnalysis, getPotd, getPotdNext, getPotdHold, getPotdLeaning, getPotdHistory, retractPotd, regradePotdTennisVoids, etParts } from './potd.js';
 import { runLadderDaily, runLadderGrading, getLadder, getLadderHistory } from './ladder.js';
 import { BUILD_INFO } from '../../docs/version.js';
 import { runTrendsBuild, getTrends, buildLeagueChunk, TREND_ENABLED_SPORTS } from './trends.js';
@@ -660,7 +660,9 @@ export default {
           const isNowComplete = top5Picks.length >= TOP5_COUNT;
           try {
             const sends = [];
-            if (potdResult?.skipped === false) sends.push(sendPotdNotifications(env, await getPotd(env, now)));
+            // One email per play this tick posted — today's, or tomorrow's
+            // from the evening draw (potd.js's runPotdDaily), each dated.
+            for (const day of potdResult?.posted ?? []) sends.push(sendPotdNotifications(env, day.record));
 
             if (!wasComplete && isNowComplete) {
               sends.push(sendPicksNotifications(env, top5Picks, { isFinal: true }));
@@ -1536,17 +1538,18 @@ export default {
       }
       try {
         // `hold` is today's no-play record (see potd.js's getPotdHold) — set
-        // when the draw ran and nothing cleared the edge floor. The client
-        // shows it in place of yesterday's stale pick, which getPotd still
-        // returns for the days the draw simply hasn't happened yet.
-        const [potd, hold] = await Promise.all([getPotd(env), getPotdHold(env)]);
+        // when the draw ran and found no gradeable game. The client shows
+        // it in place of yesterday's stale pick, which getPotd still
+        // returns for the days the draw simply hasn't happened yet. `next`
+        // is tomorrow's play once the evening draw has posted it.
+        const [potd, next, hold] = await Promise.all([getPotd(env), getPotdNext(env), getPotdHold(env)]);
         const leaning = potd ? null : await getPotdLeaning(env);
         return json(
-          { potd, leaning, hold },
+          { potd, next, leaning, hold },
           { headers: { ...cors, 'Cache-Control': 'public, max-age=300' } },
         );
       } catch (error) {
-        return json({ potd: null, leaning: null, hold: null, reason: String(error).slice(0, 120) }, { headers: cors });
+        return json({ potd: null, next: null, leaning: null, hold: null, reason: String(error).slice(0, 120) }, { headers: cors });
       }
     }
 

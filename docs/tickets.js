@@ -330,13 +330,15 @@ export function buildBoard(legs, {
   maxAmerican = TICKET_BAND.MAX_AMERICAN,
   minProb = TICKET_MIN_PROB,
   minEv = 0,
+  // The straight-play conviction floor; a fallback tier may lower it.
+  singleMinProb = SINGLE_MIN_PROB,
 } = {}) {
   const tickets = buildTickets(legs, { count, usedEventIds, minAmerican, maxAmerican, minProb, minEv });
   if (tickets.length >= count) return tickets;
 
   const taken = new Set([...usedEventIds, ...tickets.flatMap((t) => t.legs.map((l) => l.eventId))]);
   const singles = drawable(legs, taken)
-    .filter((l) => singleEligible(l, { minAmerican, maxAmerican, minEv }))
+    .filter((l) => singleEligible(l, { minAmerican, maxAmerican, minEv, minProb: singleMinProb }))
     .map((l) => ({ leg: l, ev: Number.isFinite(l.ev) ? l.ev : l.consensusProb * l.decimal - 1 }))
     .sort((x, y) => (y.ev - x.ev) || (y.leg.consensusProb - x.leg.consensusProb));
 

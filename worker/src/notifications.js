@@ -108,16 +108,22 @@ export async function sendPotdNotifications(env, record) {
     ? legs.map((l) => `${l.selection} (${formatAmerican(l.american)}) — ${l.away} @ ${l.home}`).join('\n')
     : `${pick.away} @ ${pick.home}`;
   const price = formatAmerican(pick.american);
+  // Dated: tomorrow's play posts the evening before, so the reader must
+  // see which day it is for.
+  const day = record.date
+    ? new Intl.DateTimeFormat('en-US', { weekday: 'short', month: 'short', day: 'numeric', timeZone: 'America/New_York' }).format(Date.parse(`${record.date}T12:00:00Z`))
+    : null;
+  const title = day ? `Play of the Day for ${day}` : 'Play of the Day';
 
   await sendBatch(env, users, (user) => ({
     to: user.email,
     from: FROM,
-    subject: `Play of the Day: ${pick.selection} (${price})`,
-    html: emailShell(user.username, 'Play of the Day is Ready', `
+    subject: `${title}: ${pick.selection} (${price})`,
+    html: emailShell(user.username, `${title} is Ready`, `
       <p style="margin-bottom: 8px; font-size: 18px; font-weight: bold;">${headline}</p>
       <p style="margin-bottom: 20px; color: #a0a0cc;">${matchup}${legs ? '' : ` &middot; ${pick.selection}`} <span style="color: #00d9ff;">${price}</span></p>
     `),
-    text: `Hi ${user.username}, Play of the Day: ${pick.selection} (${price})\n${matchupText}\n\nOpen: https://perpetualpicks.com/app.html`,
+    text: `Hi ${user.username}, ${title}: ${pick.selection} (${price})\n${matchupText}\n\nOpen: https://perpetualpicks.com/app.html`,
   }));
 }
 
