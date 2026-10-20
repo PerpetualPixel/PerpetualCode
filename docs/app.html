@@ -36,7 +36,7 @@
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Syne:wght@600;700;800&family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
-<link rel="stylesheet" href="styles.css?v=1.198">
+<link rel="stylesheet" href="styles.css?v=1.199">
 </head>
 <body>
 
@@ -111,15 +111,15 @@
 <details id="whatsNewHint" class="notice" hidden>
   <summary class="notice-summary">
     <span class="notice-tag">New</span>
-    <span class="notice-title">Fresh slate: tracking restarted Sep 25 — every pick now graded against the sharp market</span>
+    <span class="notice-title">Fresh slate: tracking restarted Oct 20 — four leagues, low-level tickets, a Play of the Day every day</span>
     <span class="notice-more" aria-hidden="true">Details</span>
     <button type="button" id="whatsNewHintClose" class="icon-btn notice-close" aria-label="Dismiss">✕</button>
   </summary>
   <div class="notice-body">
     <p>
-      After a round of major changes, the tracked record was reset on Sep 25, 2026 —
-      everything before that (both earlier eras) lives under the <strong>Archive</strong> button in the Tracking
-      Dashboard, untouched. Every price is now de-vigged with the power method and graded against
+      After a round of major changes, the tracked record was reset on Oct 20, 2026 —
+      everything before that (three earlier eras) lives under the <strong>Archive</strong> button in the Tracking
+      Dashboard, untouched. Every price is de-vigged with the power method and graded against
       the sharp market (Pinnacle) where it prices the game, and a curated pick is only ever a price
       at a book you can bet. The daily boards are simpler now: at 2am ET the
       whole slate is graded once and built into two-leg tickets — two low-level lines (a
@@ -885,17 +885,17 @@
         themselves are profitable.
         </p>
       </details>
-      <!-- Everything before the Sep 25, 2026 reset lives behind this toggle
+      <!-- Everything before the Oct 20, 2026 reset lives behind this toggle
            — same data, untouched, just filed as the previous era so the
            live record starts clean. Wired in renderTrackerSection. -->
       <div class="tracker-era-row">
         <button type="button" id="trackerEraToggle" class="icon-btn tracker-era-btn"
-                aria-pressed="false">Archive — before Aug 21</button>
+                aria-pressed="false">Archive — before Oct 20</button>
         <p id="trackerEraNote" class="tracker-era-note" hidden>
           Viewing the archived record: everything tracked before the
-          Aug&nbsp;21,&nbsp;2026 reset. These picks were chosen by earlier
+          Oct&nbsp;20,&nbsp;2026 reset. These picks were chosen by earlier
           versions of the algorithm and are kept for transparency; the live
-          record above the line starts fresh from Aug&nbsp;21.
+          record above the line starts fresh from Oct&nbsp;20.
         </p>
       </div>
       <div id="trackerTabs" class="perf-period-tabs" role="group" aria-label="Which tracker to show">
@@ -1107,6 +1107,6 @@
   </div>
 </aside>
 
-<script type="module" src="app.js?v=1.198"></script>
+<script type="module" src="app.js?v=1.199"></script>
 </body>
 </html>
