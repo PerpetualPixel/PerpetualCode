@@ -88,14 +88,16 @@ test('a ticket is two legs from two games, anchor first, priced inside -200..+10
   assert.match(ticket.pairReason, /Anchor: .* Partner: .*chance both land/);
 });
 
-test('tickets are ranked by expected value and never share a game or a leg', () => {
-  // C+D: 2.08 at 53% -> +9.8% EV. A+B: 1.75 at 61% -> +6.3%. A+C would pay
-  // 2.0 at 54% for +8.2%, but it shares C with the richer pair.
+test('tickets are ranked locks first — joint probability, then expected value — and never share a game or a leg', () => {
+  // A+B: 1.75 at 61% -> +6.3% EV. C+D: 2.08 at 53% -> +9.8%. A+D would be
+  // the likeliest pair of all (66%) but pays 1.625, outside the band. The
+  // richer C+D is second: the likelier pair leads.
   const legs = [leg('A', 1.25, 0.82), leg('B', 1.4, 0.74), leg('C', 1.6, 0.66), leg('D', 1.3, 0.8)];
   const tickets = buildTickets(legs, { count: 3 });
   assert.equal(tickets.length, 2, 'four legs make at most two disjoint tickets');
-  assert.deepEqual(tickets.map((t) => t.legs.map((l) => l.id).sort().join('+')), ['C+D', 'A+B']);
-  assert.ok(tickets[0].ev >= tickets[1].ev, 'best ticket first');
+  assert.deepEqual(tickets.map((t) => t.legs.map((l) => l.id).sort().join('+')), ['A+B', 'C+D']);
+  assert.ok(tickets[0].prob >= tickets[1].prob, 'likeliest ticket first');
+  assert.ok(tickets[0].ev < tickets[1].ev, 'even though the second pays more');
   const events = tickets.flatMap((t) => t.legs.map((l) => l.eventId));
   assert.equal(new Set(events).size, events.length);
 });
@@ -206,4 +208,25 @@ test('price and probability multiply', () => {
   assert.ok(Math.abs(decimal - 2) < 1e-9);
   assert.equal(american, 100);
   assert.ok(Math.abs(ticketProb(legs) - 0.52) < 1e-9);
+});
+
+test('variation: a board keeps one slot for a straight play and no league fills more than half the board while another can', () => {
+  const nhl = { sportKey: 'icehockey_nhl' };
+  // Five NFL tickets' worth of legs and one NHL pair, all inside the band.
+  const nfl = ['A', 'B', 'C', 'D', 'E', 'F', 'G', 'H'].map((id) => leg(id, 1.3, 0.8));
+  const hockey = [leg('H1', 1.3, 0.78, nhl), leg('H2', 1.3, 0.78, nhl)];
+  const single = leg('S', 1.7, 0.62, nhl);
+  const board = buildBoard([...nfl, ...hockey, single], { count: 5 });
+  assert.equal(board.length, 5);
+  assert.equal(board.filter((p) => p.type === 'single').length, 1, 'one straight play on the board');
+  assert.equal(board.find((p) => p.type === 'single').id, 'S');
+  const nflPlays = board.filter((p) => p.legs.every((l) => l.sportKey === 'americanfootball_nfl'));
+  assert.equal(nflPlays.length, 3, 'half the board, rounded up, from one league');
+  assert.equal(board.filter((p) => p.legs.every((l) => l.sportKey === 'icehockey_nhl')).length, 2, 'the other league gets the rest');
+  // With one league only, the cap gives way and the board still fills.
+  assert.equal(buildBoard(nfl, { count: 4 }).length, 4);
+  // The cap yields too when the only play left for a slot is from the capped league.
+  assert.equal(buildBoard([...nfl, ...hockey], { count: 5 }).length, 5);
+  // A board of two holds no slot: two tickets when two fit, the single only filling what tickets leave.
+  assert.deepEqual(buildBoard([...nfl.slice(0, 4), leg('S2', 1.7, 0.62)], { count: 2 }).map((p) => p.type), ['combo', 'combo']);
 });

@@ -22,6 +22,8 @@ import {
   extractAltCandidates,
   propLegFrom as sharedPropLegFrom,
   clearsPropGates as sharedClearsPropGates,
+  bridgeSeasonValues,
+  priorSeasonKey,
   gradePropLeg,
   seasonColumnValues,
 } from '../../docs/prop-legs.js';
@@ -251,12 +253,21 @@ export async function collectNhlPropLegs(games, env, ctx, now = Date.now(), { tr
     const athleteId = await resolveNhlAthleteId(c.playerName, abbrs, ctx);
     if (!athleteId) { trace.push(`${c.playerName}: no roster match`); continue; }
     const gamelog = await cachedJson(`${ESPN_GAMELOG}/${athleteId}/gamelog`, GAMELOG_TTL, ctx);
-    const values = parseNhlGamelogValues(gamelog, c.statKey);
+    let values = parseNhlGamelogValues(gamelog, c.statKey);
+    let bridged = 0;
+    // Early in the season the gate cannot be met from this season alone:
+    // top the sample up from the end of last season (docs/prop-legs.js's
+    // bridgeSeasonValues) and say so on the leg.
+    if (values.length < PROP_GATES.MIN_GAMES) {
+      const prior = await fetchNhlGamelog(athleteId, ctx, priorSeasonKey(gamelog, now)).catch(() => null);
+      ({ values, bridged } = bridgeSeasonValues(values, parseNhlGamelogValues(prior, c.statKey), { minGames: PROP_GATES.MIN_GAMES }));
+      if (bridged) trace.push(`${c.playerName}: ${bridged} games from last season bridge a ${values.length - bridged}-game start`);
+    }
     if (!values.length) { trace.push(`${c.playerName}: no ${c.statKey} in the game log`); continue; }
     const leg = propLegFrom(c, values);
     if (!leg) { trace.push(`${c.selection}: gates or edge missed`); continue; }
     if (!espnEventIds.has(c.eventId)) espnEventIds.set(c.eventId, await resolveNhlEspnEventId(c.home, c.away, ctx));
-    legs.push({ ...leg, espnEventId: espnEventIds.get(c.eventId) ?? null });
+    legs.push({ ...leg, profile: { ...leg.profile, bridged }, espnEventId: espnEventIds.get(c.eventId) ?? null });
   }
   trace.push(`NHL prop legs qualified: ${legs.length}`);
   return legs;

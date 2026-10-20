@@ -35,6 +35,40 @@ export const PROP_MIN_EDGE = 0.04;
 /** Pseudo-games the measured hit rate is shrunk toward the price with — a short sample is evidence, not the truth. */
 export const PROP_PRIOR_GAMES = 10;
 
+/**
+ * The early-season bridge (2026-10-20 direction: NBA and NHL on the
+ * boards from opening week). A current season shorter than a league's
+ * gates need is topped up with the END of last season, most recent first,
+ * to this many games — the last-10 read every prop app shows across the
+ * season line — and the leg says how many it borrowed. Once the current
+ * season reaches the gate on its own, nothing is borrowed.
+ */
+export const BRIDGE_GAMES = 10;
+
+/** `current` topped up from `prior` (both most recent first) when short of `minGames`: { values, bridged }. */
+export function bridgeSeasonValues(current, prior, { minGames, to = BRIDGE_GAMES } = {}) {
+  const cur = Array.isArray(current) ? current : [];
+  if (cur.length >= minGames) return { values: cur, bridged: 0 };
+  const fill = (Array.isArray(prior) ? prior : []).slice(0, Math.max(0, to - cur.length));
+  return { values: [...cur, ...fill], bridged: fill.length };
+}
+
+/**
+ * ESPN's key for the season before the log's latest, for leagues keyed by
+ * the year a season ENDS (NBA, NHL): the first year of "2026-27" is 2026,
+ * the key of 2025-26. With no log at all (a player yet to play this
+ * season), the season that ended this calendar year — or last year's,
+ * before September.
+ */
+export function priorSeasonKey(gamelog, now = Date.now()) {
+  const years = (Array.isArray(gamelog?.seasonTypes) ? gamelog.seasonTypes : [])
+    .filter((s) => !/preseason/i.test(String(s?.displayName ?? '')))
+    .map((s) => seasonYearOf(s?.displayName)).filter(Boolean);
+  if (years.length) return Math.max(...years);
+  const d = new Date(now);
+  return d.getUTCMonth() >= 8 ? d.getUTCFullYear() : d.getUTCFullYear() - 1;
+}
+
 /** The first value that wins an Over on `point`: .5 lines round up, integer lines must be beaten. */
 export function needFor(point) {
   return Number.isInteger(point) ? point + 1 : Math.ceil(point);
