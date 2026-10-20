@@ -263,9 +263,12 @@ export async function collectNhlPropLegs(games, env, ctx, now = Date.now(), { tr
 }
 
 /** The player's ESPN game log (current season), cached; null when unreachable. Shared with worker/src/trends.js. */
-export async function fetchNhlGamelog(athleteId, ctx) {
-  return cachedJson(`${ESPN_GAMELOG}/${athleteId}/gamelog`, GAMELOG_TTL, ctx);
+export async function fetchNhlGamelog(athleteId, ctx, season = null) {
+  return cachedJson(`${ESPN_GAMELOG}/${athleteId}/gamelog${season ? `?season=${season}` : ''}`, GAMELOG_TTL, ctx);
 }
+
+/** ESPN's headshot for a player id. */
+export const nhlHeadshotUrl = (athleteId) => (athleteId ? `https://a.espncdn.com/i/headshots/nhl/players/full/${athleteId}.png` : null);
 
 /** Which game-log column carries `statKey`, by key (shots never by label); -1 when absent. */
 export function nhlStatIndex(gamelog, statKey) {

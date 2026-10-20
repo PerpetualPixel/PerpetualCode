@@ -8676,7 +8676,9 @@ el.tailFadeResult?.addEventListener('click', toggleTailFadeLegCard);
  * with finals, and every book's price on the line.
  */
 const trendsState = {
-  sport: 'americanfootball_nfl',
+  // No league chosen until the first load: the worker answers with the
+  // first league that has rows, so the tab opens on whatever is on today.
+  sport: null,
   period: 'l10',
   sort: { by: 'hitRate', dir: 'desc' },
   // Filters. An empty set means "everything", as the research apps read an
@@ -8846,7 +8848,10 @@ function renderTrends() {
   }
   const rows = visibleTrendRows();
   const built = new Date(data.builtAt);
-  el.trendsStatus.innerHTML = `${rows.length} of ${data.rows.length} lines · ${data.games} ${esc(data.title)} game${data.games === 1 ? '' : 's'} · lines as of ${esc(trendTimeFmt.format(built))}`;
+  // The worker builds a few games per 15-minute tick, so a big slate
+  // fills in over an hour or so: say how many games are still coming.
+  const pending = data.pending ? ` · ${data.pending} more game${data.pending === 1 ? '' : 's'} building` : '';
+  el.trendsStatus.innerHTML = `${rows.length} of ${data.rows.length} lines · ${data.games} ${esc(data.title)} game${data.games === 1 ? '' : 's'}${pending} · lines as of ${esc(trendTimeFmt.format(built))}`;
   el.trendsBody.innerHTML = rows.length
     ? rows.slice(0, 150).map(renderTrendCard).join('')
     : `<p class="empty">Nothing clears those filters. Open Filters and loosen one, or change the period.</p>`;
