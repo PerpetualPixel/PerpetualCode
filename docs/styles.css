@@ -610,6 +610,18 @@ body {
   margin-bottom: 12px;
 }
 
+/* The card's date line: two plays up at once (today's and tomorrow's) read as one per day. */
+.potd-date {
+  margin: 0 0 10px;
+  font-size: 0.78rem;
+  color: var(--muted);
+  letter-spacing: 0.01em;
+}
+.potd-date strong { color: var(--text); }
+.potd-card + .potd-card { margin-top: 18px; }
+
+/* A fallback-tier note (worker/src/potd.js's POTD_TIERS): same treatment as the stale note. */
+.potd-tier,
 .potd-stale {
   margin: 0 0 12px;
   padding: 8px 10px;

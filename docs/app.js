@@ -5524,18 +5524,36 @@ function renderPotdBooks(writeup) {
  * Same collapse-by-default pattern (and the same aria-expanded/aria-controls
  * wiring) Pixel's Picks already uses for its own legs.
  */
-function renderPotdCard(writeup, generatedAt, stale) {
+/** The ET calendar date (YYYY-MM-DD) a moment falls on — the key every play is filed under. */
+function etDateKey(ms = Date.now()) {
+  return new Intl.DateTimeFormat('en-CA', { timeZone: 'America/New_York', year: 'numeric', month: '2-digit', day: '2-digit' }).format(new Date(ms));
+}
+const potdDayFmt = new Intl.DateTimeFormat(undefined, { weekday: 'long', month: 'short', day: 'numeric' });
+
+/** "Tuesday, Oct 20 · Today's Play of the Day" — every card is dated, so two plays up at once read as one per day. */
+function potdDateLabel(dateKey) {
+  if (!dateKey) return '';
+  const today = etDateKey();
+  const which = dateKey === today ? "Today's" : dateKey === etDateKey(Date.now() + 864e5) ? "Tomorrow's" : dateKey < today ? "Yesterday's" : '';
+  return `<strong>${esc(potdDayFmt.format(new Date(`${dateKey}T12:00:00`)))}</strong> · ${which} Play of the Day`;
+}
+
+function renderPotdCard(writeup, generatedAt, stale, { date = null, tier = null } = {}) {
   const staleNote = stale
     ? `<p class="potd-stale">Today's pick hasn't posted yet. Showing yesterday's.</p>`
     : '';
-  const detailId = 'potdDetail';
+  // A fallback tier (worker/src/potd.js's POTD_TIERS): the play posted on a
+  // thin slate, flagged so the reader sizes it at the minimum.
+  const tierNote = tier?.note ? `<p class="potd-tier">${esc(tier.note)}</p>` : '';
+  const detailId = `potdDetail-${esc(date ?? 'x')}`;
   return `
     <article class="potd-card">
+      ${date ? `<p class="potd-date">${potdDateLabel(date)}</p>` : ''}
       <div class="potd-head">
         <span class="chip"><strong>${esc(writeup.sportTitle)}</strong> · ${esc(writeup.marketLabel)}</span>
         <span class="price">${esc(writeup.price)}</span>
       </div>
-      ${staleNote}
+      ${staleNote}${tierNote}
       ${Array.isArray(writeup.legs) && writeup.legs.length
         ? renderPotdTicketLegs(writeup)
         : `<h2 class="potd-headline">${esc(writeup.headline)}</h2>
@@ -5649,46 +5667,48 @@ function markTabSeen(storageKey, currentValue) {
 
 let potdCurrentDate = null;
 
-function renderPotd(potd, leaning, hold = null) {
+/**
+ * The tab: today's play, and from 8pm ET tomorrow's beneath it (worker/
+ * src/potd.js's runPotdDaily posts the next day's by 10pm). Each card is
+ * dated, so two cards read as one play per day, never two for one day.
+ */
+function renderPotd(potd, leaning, hold = null, next = null) {
   // A stale fallback (yesterday's pick, shown because today's hasn't
   // posted yet — see worker/src/potd.js's getPotd) isn't new content, so it
   // never lights up the tab; only a genuine, freshly-posted day does.
-  potdCurrentDate = potd && !potd.stale ? potd.date : null;
+  const today = potd && !potd.stale ? potd : null;
+  potdCurrentDate = next?.date ?? today?.date ?? null;
   updateNewIndicator(el.tabPotd, 'pp_potd_seen_date', potdCurrentDate);
 
-  // The draw ran today and posted nothing (worker/src/potd.js writes the
-  // reason): that is the day's answer, and it beats showing yesterday's
-  // already-played pick as though it were live. A no-edge day is a real
-  // outcome of a board that only posts bets its own numbers say are +EV.
-  if (hold && (!potd || potd.stale)) {
-    registerPostedPicks('potd', []);
-    el.potdBody.innerHTML = `<p class="empty">
-      <strong>No Play of the Day today.</strong> ${esc(hold.reason ?? 'Nothing on the slate cleared the standard.')}
-      A pass is a pick too: the board only posts a play when the price beats the market's no-vig line by the edge floor.</p>`;
-    return;
+  const cards = [];
+  // Live recommendations for the audit: today's and tomorrow's. A stale
+  // pick (yesterday's) is deliberately NOT registered: it isn't a live
+  // recommendation, and treating it as one would have Tail or Fade vouch
+  // for a bet whose game has already been played.
+  const posted = [];
+  if (today) {
+    posted.push(...postedPicksFromPotdWriteup(today.writeup, 'Play of the Day'));
+    cards.push(renderPotdCard(today.writeup, today.generatedAt, false, { date: today.date, tier: today.tier }));
+  } else if (hold) {
+    // The draw ran today and found no gradeable game (worker/src/potd.js
+    // writes the reason): that is the day's answer, and it beats showing
+    // yesterday's already-played pick as though it were live.
+    cards.push(`<p class="empty"><span class="potd-date">${potdDateLabel(hold.dateKey ?? etDateKey())}</span><br>
+      <strong>No Play of the Day today.</strong> ${esc(hold.reason ?? 'No gradeable game on the slate.')}</p>`);
+  } else if (potd) {
+    cards.push(renderPotdCard(potd.writeup, potd.generatedAt, true, { date: potd.date }));
+  } else if (leaning) {
+    cards.push(renderPotdLeanCard(leaning));
+  } else {
+    cards.push(`<p class="empty">
+      Today's Play of the Day posts as soon as the slate has a gradeable game; tomorrow's goes up by 10pm ET the night before.</p>`);
   }
-
-  if (potd) {
-    const { writeup, generatedAt, stale } = potd;
-    // A stale pick (yesterday's, shown because today's hasn't posted) is
-    // deliberately NOT registered for the audit: it isn't a live
-    // recommendation, and treating it as one would have Tail or Fade vouch
-    // for a bet whose game has already been played.
-    registerPostedPicks('potd', stale ? [] : postedPicksFromPotdWriteup(writeup, 'Play of the Day'));
-    el.potdBody.innerHTML = renderPotdCard(writeup, generatedAt, stale);
-    return;
+  if (next) {
+    posted.push(...postedPicksFromPotdWriteup(next.writeup, 'Play of the Day'));
+    cards.push(renderPotdCard(next.writeup, next.generatedAt, false, { date: next.date, tier: next.tier }));
   }
-
-  if (leaning) {
-    registerPostedPicks('potd', []);
-    el.potdBody.innerHTML = renderPotdLeanCard(leaning);
-    return;
-  }
-
-  registerPostedPicks('potd', []);
-
-  el.potdBody.innerHTML = `<p class="empty">
-    Today's Play of the Day posts at 2am ET, along with the rest of the day's boards.</p>`;
+  registerPostedPicks('potd', posted);
+  el.potdBody.innerHTML = cards.join('');
 }
 
 let potdLoaded = false;
@@ -5706,7 +5726,7 @@ async function loadPotd({ force = false } = {}) {
   try {
     const res = await fetch(new URL('/potd', CONFIG.WORKER_URL), { headers: { Accept: 'application/json' } });
     const data = await res.json();
-    renderPotd(data.potd ?? null, data.leaning ?? null, data.hold ?? null);
+    renderPotd(data.potd ?? null, data.leaning ?? null, data.hold ?? null, data.next ?? null);
   } catch {
     potdLoaded = false; // a network hiccup shouldn't permanently give up
     el.potdBody.innerHTML = `<p class="empty">Couldn't reach the odds feed.</p>`;

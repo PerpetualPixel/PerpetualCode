@@ -10,27 +10,22 @@
  * legs pair, the best leg standing inside the band on its own is the play.
  * Pixel's Picks are the next five such plays.
  *
- * Timing: one draw at the generation hour (tracking.js's
- * GENERATION_HOUR_ET, 2am ET), immediately after the daily learning review
- * and BEFORE the Pixel's Picks batch — per explicit product direction
- * (2026-08-21 reset), the Play of the Day is the slate's #1 pick, and
- * Pixel's Picks are the next 5, drawn afterward with this pick's game
- * excluded. The old accumulate-a-pool-through-the-day flow (each game
- * captured as its own lock window opened, drawn only once nothing was left
- * to wait for) is gone with the rest of the progressive-locking machinery.
+ * Timing (2026-10-20 direction): a Play of the Day posts EVERY day.
+ * Tomorrow's is drawn from NEXT_DAY_DRAW_HOUR_ET (8pm ET) so it is up by
+ * 10pm, and today's stays up through the day — the tab shows both, each
+ * dated. Today's is drawn by the first tick that finds a gradeable game if
+ * the evening draw found none. The draw runs BEFORE the Pixel's Picks
+ * batch — per explicit product direction (2026-08-21 reset), the Play of
+ * the Day is the slate's #1 pick, and Pixel's Picks are the next 5, drawn
+ * afterward with this pick's game excluded.
  *
- * Odds: restricted to POTD_MIN_AMERICAN..POTD_MAX_AMERICAN, a narrower band
- * than the rest of the app's general sharp-price rules — this is a single
- * showcase pick, held to a stricter range. A day with nothing in range
- * still posts where it can: the pick falls back in visible, flagged tiers
- * (confidence floor first, then the band). The one thing NO tier relaxes is
- * the edge floor (algo-health's MIN_EV_PCT / MIN_KELLY_FRACTION, the same
- * bar Pixel's Picks holds): until 2026-09-15 this board had no EV
- * requirement at all — a pick only had to clear the composite score, which
- * a zero-EV bet with clean numbers did comfortably — and the flagship of
- * the day was routinely a bet the engine's own numbers graded as a loser.
- * A day where nothing clears the edge floor posts NO Play of the Day, with
- * the reason written to KV (`potd:hold:<date>`) so the card can say why.
+ * Odds: the ticket band (docs/tickets.js's TICKET_BAND). A day with nothing
+ * clearing the standard still posts: the pick falls back in visible,
+ * flagged tiers (POTD_TIERS — the edge floor, then the conviction floor,
+ * then the band), each a note on the card and the minimum stake, down to
+ * the best-graded play on the slate. A day with no gradeable game at all
+ * posts nothing, with the reason written to KV (`potd:hold:<date>`) so the
+ * card can say why.
  *
  * Tracking: the stored pick carries the same status/clv/result fields
  * worker/src/tracking.js's Top 5 batch tracks its own picks with, graded via
@@ -89,7 +84,7 @@ import {
   isNoOpTennisRegrade,
   regradeTennisVoids,
 } from './tennis-espn.js';
-import { GENERATION_HOUR_ET, pickRecordFrom } from './tracking.js';
+import { pickRecordFrom } from './tracking.js';
 import { applyTennisFormSignal } from '../../docs/qualitative.js';
 import { loadTeamContextsFor, applyTeamFormSignal } from './team-form.js';
 import { fetchGridironFeed } from '../../docs/gridiron.js';
@@ -98,7 +93,6 @@ import { loadTennisArchive, loadTennisArchivesFor } from './tennis-archive.js';
 import { retractedRecord } from './retraction.js';
 
 const ET_TZ = 'America/New_York';
-export const POTD_HOUR = 2; // 2am ET — the daily learning review and the day's single draw (see header)
 const POTD_MIN_AMERICAN = -200;
 const POTD_MAX_AMERICAN = 150;
 /* Stake dollars come from docs/engine.js's UNIT_DOLLARS ($25/1U) — the
@@ -423,44 +417,71 @@ async function buildRecord(ticket, dateKey, now, env, ctx) {
 }
 
 /**
- * Runs hourly, all day (see index.js's scheduled()) — not a single 2am
- * batch anymore. Filters today's still-upcoming, non-exhibition, in-band
- * (-200..+150) candidates same as before, but only candidates whose own
- * game has reached its own reasonable pre-game lock time (tracking.js's
- * isPickWindowOpen) get captured into today's pool (see updatePotdPool).
- *
- * The actual winner isn't picked the moment something qualifies — that
- * would bias toward whichever early game happens to clear the bar first,
- * exactly the "might miss a genuinely better evening game" problem a pool
- * exists to avoid. Instead this waits until stillUpcoming goes false (every
- * one of today's eligible games has had its own window open, so the pool
- * is as complete as it's going to get), then picks the best pool entry
- * that's STILL ACTIONABLE — hasn't started yet. An entry that was
- * genuinely the day's best but has since started (this only happens on a
- * day where nothing later ever beat it, and by the time nothing's left to
- * wait for, its own game has already gone) is skipped in favor of the best
- * among what's still postable; it stays visible in the pool's own history
- * either way, just never becomes the actual Play of the Day.
- *
- * Skips (no-op) once today's KV entry already exists — either an earlier
- * tick already locked it, or a retried cron tick fired twice.
+ * The hour (ET) from which TOMORROW's Play of the Day is drawn: 8pm, so
+ * it is posted well before the 10pm promise (2026-10-20 direction: "I need
+ * at least the Play of the Day posted every day, by 10pm for the next
+ * day's pick"). From then until midnight the tab shows two dated plays —
+ * today's and tomorrow's — one for each day, never two for one day.
  */
-export async function runPotdDaily(env, ctx, now = Date.now(), {
+export const NEXT_DAY_DRAW_HOUR_ET = 20;
+
+/** A calendar date key some days after another (`2026-10-20` + 1 -> `2026-10-21`). */
+export function dateKeyPlusDays(dateKey, days) {
+  return new Date(Date.parse(`${dateKey}T12:00:00Z`) + days * 86400000).toISOString().slice(0, 10);
+}
+
+/**
+ * The fallback tiers a day's draw walks, in order, so a Play of the Day
+ * posts EVERY day (2026-10-20 direction). Each tier is a visible flag on
+ * the record, never a silent relaxation:
+ *
+ *   standard — the board's own bar: inside the band, both floors, the edge.
+ *   edge     — nothing beat the market by the edge floor; the best-read
+ *              play inside the band regardless of edge.
+ *   read     — nothing read at the conviction floor; the best play inside
+ *              the band read at a coin flip or better.
+ *   showcase — nothing inside the band at all; the best-graded bettable
+ *              favourite on the slate (chooseShowcasePick), any price.
+ *
+ * The one day with no play is a day with no gradeable game at all.
+ */
+export const POTD_TIERS = {
+  standard: null,
+  edge: 'No play on this slate beat the market by the edge floor. This is the best-read play inside the band — size it at the minimum.',
+  read: 'Nothing on this slate read at the conviction floor. This is the best play inside the band, read at a coin flip or better — size it at the minimum.',
+  showcase: 'Nothing on this slate priced inside the band. This is the best-graded play the day offers — size it at the minimum.',
+};
+
+/** The best-graded bettable play on a thin slate, wrapped in the straight-play shape the record builder reads. */
+function showcaseTicket(pool) {
+  const bettable = pool.filter((c) => c.bettable !== false
+    && Number.isFinite(c.decimal) && c.decimal > 1
+    && Number.isFinite(c.consensusProb) && c.consensusProb > 0 && c.consensusProb < 1
+    && Number.isFinite(c.score));
+  const inBand = bettable.filter((c) => c.american >= POTD_MIN_AMERICAN && c.american <= POTD_MAX_AMERICAN);
+  const leg = chooseShowcasePick(inBand.length ? inBand : bettable);
+  if (!leg) return null;
+  return {
+    ...leg,
+    type: 'single',
+    legs: [leg],
+    meetsStandard: false,
+    prob: leg.consensusProb,
+    singleReason: `Straight play on a thin slate: ${leg.selection} is the best-graded play the day offers at ${formatAmerican(leg.american)}.`,
+  };
+}
+
+/**
+ * Draw one date's Play of the Day — today's, or tomorrow's from
+ * NEXT_DAY_DRAW_HOUR_ET — once: the first tick that finds a gradeable game
+ * on that date posts, and every later tick skips. There is no generation
+ * hour any more: a day whose evening draw found no lines yet is drawn by
+ * the first tick that does, so a play is never missing for want of timing.
+ */
+async function drawPotdFor(env, ctx, now, dateKey, {
   fetchFullSlate,
-  // Alternate-line player-prop legs (worker/src/prop-legs.js: NFL, WNBA,
-  // NBA); injectable for the tests, same as fetchFullSlate.
   fetchPropLegs = (games, opts) => collectPropLegs(games, env, ctx, now, opts),
 } = {}) {
-  const { date: dateKey, hour } = etParts(now);
-  // One draw for the whole day, at the generation hour, per explicit
-  // product direction (2026-08-21 reset): the Play of the Day is the
-  // slate's #1 pick and is decided FIRST — index.js awaits this before the
-  // Pixel's Picks batch, which then excludes this pick's game — so the
-  // day's boards form one ranking rather than three independent draws.
-  // Before that hour, yesterday's pick is simply still the pick.
-  if (hour < GENERATION_HOUR_ET) {
-    return { skipped: true, reason: 'before generation hour', dateKey };
-  }
   const kvKey = `potd:${dateKey}`;
 
   const existing = await env.POTD_KV.get(kvKey);
@@ -482,23 +503,17 @@ export async function runPotdDaily(env, ctx, now = Date.now(), {
   // YESTERDAY whose start time then moved to today would read as a fresh,
   // eligible candidate and could be featured a second day running —
   // possibly on the opposite side, exactly the confirmed Full Slate
-  // incident. Two KV gets closes it.
+  // incident. Two KV gets closes it — and for tomorrow's draw the first of
+  // them is today's play, so the two never share a game.
   const [pausedSegments, learningProfile, algoConfig, ...recentPotdRaws] = await Promise.all([
     getPausedSegments(env),
     getLearningProfile(env),
     // The same EV/Kelly floor Pixel's Picks reads (worker/src/algo-health.js)
     // — tightened by the weekly review, never loosened below RULES.
     getAlgoConfig(env),
-    env.POTD_KV.get(`potd:${etDatePlusDays(now, -1)}`),
-    env.POTD_KV.get(`potd:${etDatePlusDays(now, -2)}`),
+    env.POTD_KV.get(`potd:${dateKeyPlusDays(dateKey, -1)}`),
+    env.POTD_KV.get(`potd:${dateKeyPlusDays(dateKey, -2)}`),
   ]);
-  // The one bar no fallback tier below relaxes — see the file header.
-  // ...and a price the reader can take (buildCandidates' `bettable`): a
-  // Play of the Day at 1xBet or Pinnacle is a number, not a bet, and in the
-  // record those went 12-13 for -24%.
-  const clearsEdge = (c) => c.bettable !== false
-    && c.ev > algoConfig.MIN_EV_PCT
-    && suggestedStake(c) >= algoConfig.MIN_KELLY_FRACTION;
   // Every game a recent ticket touched, both legs.
   const recentPotdEventIds = new Set(
     recentPotdRaws.filter(Boolean).flatMap((raw) => legsOf(JSON.parse(raw)?.pick ?? null).map((l) => l?.eventId)).filter(Boolean),
@@ -523,10 +538,9 @@ export async function runPotdDaily(env, ctx, now = Date.now(), {
     learningProfile,
   );
   // The checks about the GAME's legitimacy, before any pricing: a ticket
-  // sport, today's date (tennis keeps its next-day carve-out), not an
-  // exhibition, not NFL preseason, Power 4 only for NCAAF, not a segment the
-  // health review paused, not a game a recent Play of the Day already
-  // featured, and not started.
+  // sport, the date being drawn, not an exhibition, not NFL preseason,
+  // Power 4 only for NCAAF, not a segment the health review paused, not a
+  // game a recent Play of the Day already featured, and not started.
   const structurallySound = candidates.filter((c) => {
     if (!isTicketSport(c.sportKey)) return false;
     if (isExhibition(c)) return false;
@@ -536,7 +550,6 @@ export async function runPotdDaily(env, ctx, now = Date.now(), {
     if (c.commenceMs <= now) return false;
     if (isSegmentPaused(c, pausedSegments)) return false;
     if (recentPotdEventIds.has(c.eventId)) return false;
-    if (isTennis(c.sportKey)) return isEligibleTennisMatch(c.commenceMs, now);
     return etParts(c.commenceMs).date === dateKey;
   });
 
@@ -562,13 +575,16 @@ export async function runPotdDaily(env, ctx, now = Date.now(), {
     minKelly: algoConfig.MIN_KELLY_FRACTION,
     minScore: RULES.MIN_SCORE,
   }));
+  // The same legs with the edge, Kelly and conviction floors off — what the
+  // fallback tiers draw from. Still bettable, still a favourite-side read.
+  const looseLegs = drawPool.filter((c) => legEligible(c, { minEv: -Infinity, minKelly: 0, minScore: 0 }));
   let propLegs = [];
   try {
     const propGames = events.filter((e) => PROP_SPORT_KEYS.has(e.sport_key)
       && etParts(new Date(e.commence_time).getTime()).date === dateKey
       && !recentPotdEventIds.has(e.id));
     const sameDay = (ms) => etParts(ms).date === dateKey;
-    propLegs = ((await fetchPropLegs(propGames, { sameDay })) ?? []).filter((l) => !recentPotdEventIds.has(l.eventId));
+    propLegs = ((await fetchPropLegs(propGames, { sameDay })) ?? []).filter((l) => !recentPotdEventIds.has(l.eventId) && l.commenceMs > now);
   } catch (e) {
     console.error('Play of the Day prop legs failed:', e);
   }
@@ -576,43 +592,78 @@ export async function runPotdDaily(env, ctx, now = Date.now(), {
   // The day's single best ticket: the pair whose combined price most
   // underrates the chance both legs land — or, on a day no two legs pair,
   // the best leg that stands inside the band on its own as a straight
-  // play. Nothing below this relaxes — a play that doesn't clear the band,
-  // the probability floor and the edge floor is not posted, and the hold
-  // says why.
-  const [ticket] = buildBoard([...gameLegs, ...propLegs], {
+  // play. A day that offers no such play still posts: the tiers below
+  // relax one bar at a time, each a visible flag on the record (see
+  // POTD_TIERS), down to the best-graded play on the slate. The only day
+  // with no play is a day with no gradeable game.
+  const board = (legs, opts) => buildBoard(legs, {
     count: 1,
     usedEventIds: recentPotdEventIds,
     minAmerican: TICKET_BAND.MIN_AMERICAN,
     maxAmerican: TICKET_BAND.MAX_AMERICAN,
-    minEv: algoConfig.MIN_EV_PCT,
-  });
+    ...opts,
+  })[0] ?? null;
+  const tiers = [
+    ['standard', () => board([...gameLegs, ...propLegs], { minEv: algoConfig.MIN_EV_PCT })],
+    ['edge', () => board([...looseLegs, ...propLegs], { minEv: -1 })],
+    ['read', () => board([...looseLegs, ...propLegs], { minEv: -1, minProb: 0.4, singleMinProb: 0.5 })],
+    ['showcase', () => showcaseTicket([...drawPool, ...propLegs])],
+  ];
+  let ticket = null;
+  let tier = 'standard';
+  for (const [key, draw] of tiers) {
+    ticket = draw();
+    tier = key;
+    if (ticket) break;
+  }
   if (!ticket) {
-    // Either an off day with no gradeable game at all, a slate priced
-    // efficiently enough that no leg beats the market by the floor, or
-    // legs that neither pair nor stand inside the band. All honest "no play" days;
-    // the hold is written so the card can say which rather than showing
-    // yesterday's pick as if it were live.
-    const anyGame = structurallySound.length > 0;
-    const legCount = gameLegs.length + propLegs.length;
+    // An off day with no gradeable game at all, or a slate priced only at
+    // books the reader cannot bet. The hold is written so the card can say
+    // which rather than showing yesterday's pick as if it were live.
+    const anyGame = structurallySound.length > 0 || propLegs.length > 0;
     const reason = !anyGame
-      ? 'no gradeable NFL, NHL, MMA or NBA game on the slate today'
-      : legCount === 0
-        ? `nothing on today's slate clears the edge floor (${(algoConfig.MIN_EV_PCT * 100).toFixed(1)}% EV against the no-vig consensus)`
-        : `${legCount} leg${legCount === 1 ? '' : 's'} cleared the standard but none pairs inside ${formatAmerican(TICKET_BAND.MIN_AMERICAN)} to ${formatAmerican(TICKET_BAND.MAX_AMERICAN)} with both more likely than not to land, and none stands in that band alone`;
-    await env.POTD_KV.put(holdKey(dateKey), JSON.stringify({ dateKey, reason, checkedAt: now, poolSize: candidates.length, legCount }), {
+      ? `no gradeable NFL, NHL, MMA or NBA game on the slate for ${dateKey}`
+      : `nothing on the slate for ${dateKey} carries a price at a book you can bet`;
+    await env.POTD_KV.put(holdKey(dateKey), JSON.stringify({ dateKey, reason, checkedAt: now, poolSize: candidates.length, legCount: gameLegs.length + propLegs.length }), {
       expirationTtl: KV_TTL_SECONDS,
     });
     return { skipped: true, reason, dateKey };
   }
+  if (tier !== 'standard') ticket = { ...ticket, meetsStandard: false };
 
-  const record = await buildRecord(ticket, dateKey, now, env, ctx);
+  const record = { ...(await buildRecord(ticket, dateKey, now, env, ctx)), tier: tier === 'standard' ? null : { key: tier, note: POTD_TIERS[tier] } };
   // A day's pick, once posted, doesn't move even if the market does — it's
   // an editorial call made at a point in time, not a live-repriced candidate.
   await env.POTD_KV.put(kvKey, JSON.stringify(record), { expirationTtl: KV_TTL_SECONDS });
   // A pick supersedes any hold an earlier tick wrote for the day (a slate
   // that filled in late, a redraw) — the card must never show both.
   try { await env.POTD_KV.delete(holdKey(dateKey)); } catch { /* best-effort */ }
-  return { skipped: false, dateKey, pick: record.pick };
+  return { skipped: false, dateKey, pick: record.pick, record, tier: record.tier };
+}
+
+/**
+ * The daily draw, called on every scheduled tick (see index.js's
+ * scheduled()): today's Play of the Day if it has not posted yet, and from
+ * NEXT_DAY_DRAW_HOUR_ET tomorrow's as well. Each date posts once; a date
+ * whose slate has no gradeable game yet is tried again next tick. The
+ * result carries every record this call posted (`posted`) for the
+ * notification step, and the top-level fields of the first of them —
+ * `skipped` is true only when nothing posted.
+ */
+export async function runPotdDaily(env, ctx, now = Date.now(), opts = {}) {
+  const { date: today, hour } = etParts(now);
+  const dates = [today];
+  if (hour >= NEXT_DAY_DRAW_HOUR_ET) dates.push(etDatePlusDays(now, 1));
+  const days = [];
+  for (const dateKey of dates) {
+    // A failed draw for one date never costs the other its play.
+    days.push(await drawPotdFor(env, ctx, now, dateKey, opts).catch((e) => {
+      console.error(`Play of the Day draw failed for ${dateKey}:`, e);
+      return { skipped: true, reason: `draw failed: ${String(e?.message ?? e).slice(0, 200)}`, dateKey };
+    }));
+  }
+  const posted = days.filter((d) => !d.skipped);
+  return { ...(posted[0] ?? days[0]), posted, days };
 }
 
 /**
@@ -813,14 +864,20 @@ export async function runPotdGrading(env, ctx, now = Date.now(), {
   return { graded };
 }
 
-/** Today's Play of the Day, or yesterday's as a labelled fallback if today's
- * hasn't been generated yet (e.g. it's 1am ET and the cron hasn't fired). */
 /** Today's hold record ({ dateKey, reason, checkedAt }) when the draw ran and posted nothing, else null. */
 export async function getPotdHold(env, now = Date.now()) {
   const raw = await env.POTD_KV.get(holdKey(etParts(now).date));
   return raw ? JSON.parse(raw) : null;
 }
 
+/** Tomorrow's Play of the Day once it has posted (from NEXT_DAY_DRAW_HOUR_ET), else null. */
+export async function getPotdNext(env, now = Date.now()) {
+  const raw = await env.POTD_KV.get(`potd:${etDatePlusDays(now, 1)}`);
+  return raw ? JSON.parse(raw) : null;
+}
+
+/** Today's Play of the Day, or yesterday's as a labelled fallback if today's
+ * hasn't posted yet. */
 export async function getPotd(env, now = Date.now()) {
   const today = etParts(now).date;
   const todayRaw = await env.POTD_KV.get(`potd:${today}`);
