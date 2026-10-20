@@ -109,19 +109,21 @@ let enhancedSportFilter = null;
    is deleted, the worker's history endpoints still return both eras and this
    is where they're split.
 
-   Moved from 2026-08-21 to 2026-09-01 (2026-09-02 direction), then to
-   2026-09-25 (2026-09-24 direction): the worker that grades every pick
-   against a sharp anchor with the power de-vig, holds every board to the
-   edge floor and refuses prices a reader can't bet was deployed on
-   2026-09-24, so the live record starts with the first 2am ET draw made
-   entirely under it. Everything before — both earlier eras — is archived.
-   The old boundaries are why this is a constant rather than a hardcoded
-   date in each filter — moving the era is meant to be one edit. */
-const TRACKING_EPOCH = '2026-09-25';
+   Moved from 2026-08-21 to 2026-09-01 (2026-09-02 direction), to
+   2026-09-25 (2026-09-24 direction), and to 2026-10-20 (2026-10-20
+   direction: "a tracking archive starting today"): the boards narrowed to
+   NFL, NHL, NBA and MMA, two-leg tickets of low-level lines ranked locks
+   first, a Play of the Day every day, and NBA and NHL props from opening
+   week all landed on 2026-10-20, so the live record starts with the first
+   plays made entirely under them. Everything before — three earlier eras —
+   is archived. The old boundaries are why this is a constant rather than
+   a hardcoded date in each filter — moving the era is meant to be one
+   edit. */
+const TRACKING_EPOCH = '2026-10-20';
 // The same boundary as an instant: midnight ET on the reset date (EDT,
 // UTC-4) — for records keyed by timestamp (ladder runs) rather than by ET
 // dateKey.
-const TRACKING_EPOCH_MS = Date.parse('2026-09-25T04:00:00Z');
+const TRACKING_EPOCH_MS = Date.parse('2026-10-20T04:00:00Z');
 /** Which side of the reset a dateKey-carrying record falls on. */
 function inTrackingEra(record, era) {
   const key = record?.dateKey ?? record?.date ?? '';
@@ -930,7 +932,7 @@ const state = {
   // Calibration & Audit and Algorithm Health stay Pixel's-Picks-scoped
   // regardless of this (see renderTrackerSection's own comment).
   activeTracker: 'top5',
-  // 'live' (the record since the 2026-09-25 reset) or 'archive' (before it).
+  // 'live' (the record since the 2026-10-20 reset) or 'archive' (before it).
   trackerEra: 'live',
   // The /ladder-history payload, kept so the era toggle can re-render the
   // ladder panel without refetching.
@@ -5288,7 +5290,7 @@ el.trackerEraToggle?.addEventListener('click', () => {
   const archived = state.trackerEra === 'archive';
   el.trackerEraToggle.classList.toggle('is-active', archived);
   el.trackerEraToggle.setAttribute('aria-pressed', String(archived));
-  el.trackerEraToggle.textContent = archived ? 'Back to the live record' : 'Archive — before Aug 21';
+  el.trackerEraToggle.textContent = archived ? 'Back to the live record' : 'Archive — before Oct 20';
   if (el.trackerEraNote) el.trackerEraNote.hidden = !archived;
   renderTrackerSection();
   renderLadderDashboard(state.ladderHistory ?? null);
@@ -6344,7 +6346,7 @@ const TRACKER_EMPTY_MESSAGES = {
   // reached its lock time today, not that a daily draw is still pending.
   fullslate: 'Nothing tracked in this record yet. Full Slate locks each game a few hours before it starts.',
 };
-const TRACKER_EMPTY_ARCHIVE = 'Nothing in the archive for this tracker — it started after the Sep 25, 2026 reset.';
+const TRACKER_EMPTY_ARCHIVE = 'Nothing in the archive for this tracker — it started after the Oct 20, 2026 reset.';
 
 /**
  * Fetches all four server-side trackers' full history once — Full Slate
@@ -6522,7 +6524,7 @@ function renderLadderDashboard(data) {
     ${runs.length
       ? `<div class="ladder-runs">${runs.map((run) => renderLadderRun(run, plan)).join('')}</div>`
       : `<p class="empty">${archived
-        ? 'No climbs finished before the Sep 25, 2026 reset.'
+        ? 'No climbs finished before the Oct 20, 2026 reset.'
         : 'No finished climbs in this record yet — the one above is the first.'}</p>`}`;
 }
 
@@ -7632,7 +7634,7 @@ function showWelcomeToastIfFresh() {
 // Versioned so a future, meaningfully different change can show its own
 // hint again even to someone who already dismissed this one — bump the
 // suffix, don't reuse the key.
-const WHATS_NEW_LEAN_FINAL_KEY = 'pp_seen_hint_reset_v3';
+const WHATS_NEW_LEAN_FINAL_KEY = 'pp_seen_hint_reset_v4'; // bumped for the Oct 20, 2026 reset so the notice shows once more
 
 /** One-time explainer for the 2026-08-21 fresh-slate reset (tracking
  * archived, boards drawn once daily at 2am ET) — localStorage, not
