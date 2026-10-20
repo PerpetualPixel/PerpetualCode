@@ -191,3 +191,19 @@ test('a build that throws is written down for /trends to show, and the next tick
   assert.equal(fixed.skipped, false);
   assert.equal((await getTrends(env, 'basketball_nba')).lastError, undefined);
 });
+
+test('a build keeps a diagnostic trace, and an empty build retries after 30 minutes instead of the full TTL', async () => {
+  const { env } = makeKvStore();
+  const noPlayers = { ...deps, resolve: async () => null, roster: async () => ({ athletes: [{ items: [{ displayName: 'Someone Else' }] }] }) };
+  const payload = await buildTrends('basketball_nba', [nbaGame], env, ctx, NOW, noPlayers);
+  assert.equal(payload.rows.length, 0);
+  assert.ok(payload.diag.some((l) => /Jalen Brunson: no roster match/.test(l) && /sample \[Someone Else\]/.test(l)), payload.diag.join('\n'));
+  assert.ok(payload.diag.some((l) => /2 lines, 1 players/.test(l)));
+  assert.equal(payload.diag.at(-1), 'rows built: 0');
+  const opts = { fetchFullSlate: async () => [nbaGame], deps: { basketball_nba: noPlayers }, enabled: ['basketball_nba'] };
+  assert.equal((await runTrendsBuild(env, ctx, NOW + 10 * 60e3, opts)).skipped, true, 'ten minutes on, still fresh');
+  const retried = await runTrendsBuild(env, ctx, NOW + 31 * 60e3, opts);
+  assert.equal(retried.skipped, false, 'an empty build is retried after half an hour');
+  const full = await buildTrends('basketball_nba', [nbaGame], env, ctx, NOW, deps);
+  assert.equal(full.diag.at(-1), 'rows built: 3');
+});
