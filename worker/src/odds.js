@@ -215,6 +215,14 @@ function extractMoneylineOdds(event) {
   };
 }
 
+/**
+ * What the last MMA schedule fetch found — read by /version so a slate of
+ * bare "Card - MM/DD" labels can be told apart from one ESPN named: how
+ * many events the schedule carried, their names, or the error that emptied
+ * it. In-memory per isolate; good enough for a look.
+ */
+export const mmaScheduleDiag = { at: null, events: 0, names: [], error: null };
+
 export async function enrichMmaEvents(events, ctx) {
   if (!events || !Array.isArray(events)) return events;
 
@@ -226,8 +234,10 @@ export async function enrichMmaEvents(events, ctx) {
   let schedule;
   try {
     schedule = await fetchMmaSchedule(ctx);
-  } catch {
+    Object.assign(mmaScheduleDiag, { at: Date.now(), events: schedule.length, names: schedule.map((e) => e.name).slice(0, 12), error: null });
+  } catch (e) {
     schedule = [];
+    Object.assign(mmaScheduleDiag, { at: Date.now(), events: 0, names: [], error: String(e?.message ?? e).slice(0, 200) });
   }
 
   const enriched = await Promise.all(

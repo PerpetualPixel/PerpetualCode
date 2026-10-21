@@ -155,45 +155,39 @@ const RECOMMENDED_UNIT_PCT = 0.02;
  * renders nothing) the rest of the year.
  * Everything else already has one stable key.
  */
+/* The site covers four leagues (2026-10-19 direction: "hone down to just
+   MMA, hockey, NFL and upcoming NBA games"): every other group below is
+   `hidden` — kept so saved preferences, key discovery and the tennis
+   clustering still resolve, never fetched and never shown. Bringing one
+   back is one flag. Order here is the chip order. */
 const LEAGUE_GROUPS = [
-  { id: 'mlb', label: 'MLB', keys: ['baseball_mlb'] },
   { id: 'nfl', label: 'NFL', keys: ['americanfootball_nfl'] },
+  { id: 'nba', label: 'NBA', keys: ['basketball_nba'] },
+  { id: 'nhl', label: 'NHL', keys: ['icehockey_nhl'] },
+  { id: 'mma', label: 'MMA', keys: ['mma_mixed_martial_arts'] },
+  { id: 'mlb', label: 'MLB', keys: ['baseball_mlb'], hidden: true },
   // Full Slate only — never Pixel's Picks or Play of the Day (see
   // isNflPreseason in docs/engine.js). seasonal:true hides the group
   // entirely whenever its discovered key list is empty, which is most of
   // the year: unlike ATP/WTA (also key-discovered, but live nearly
   // year-round), preseason runs about four weeks, and a permanent
   // "NFL Pre: 0 games" token would read as broken rather than out of season.
-  { id: 'nflpre', label: 'NFL Pre', keys: [], seasonal: true },
+  { id: 'nflpre', label: 'NFL Pre', keys: [], seasonal: true, hidden: true },
   // Labelled NCAAF, not "NCAA": it sits in the same picker as NCAAB, and
   // the bare "NCAA" read as ambiguous next to it. Id stays `ncaa` — that's
   // what saved league preferences are keyed on.
-  { id: 'ncaa', label: 'NCAAF', keys: ['americanfootball_ncaaf'] },
-  { id: 'atp', label: 'ATP', keys: [] },
-  { id: 'wta', label: 'WTA', keys: [] },
-  { id: 'wnba', label: 'WNBA', keys: ['basketball_wnba'] },
-  { id: 'mma', label: 'MMA', keys: ['mma_mixed_martial_arts'] },
-  { id: 'mls', label: 'MLS', keys: ['soccer_usa_mls'] },
-  // offSeason:true here only affects THIS client-side Full Slate browsing
-  // tab (refreshAllLeagues() skips the key, renderFullSlate() shows "coming
-  // soon" instead of fetching) — unlike NBA/NCAAB below, NHL is still
-  // tracked year-round server-side (FIXED_SPORT_KEYS in worker/src/
-  // tracking.js, and the NHL Shots on Goal prop pipeline), and that side is
-  // untouched: it already finds zero games during the off-season and
-  // correctly does nothing, at negligible cost, by the same "0 games -> 0
-  // picks, no error" handling every sport gets. This flag just stops the
-  // dashboard tab itself from looking "live" when there's nothing to show.
-  // Flip back once the season starts.
-  { id: 'nhl', label: 'NHL', keys: ['icehockey_nhl'], offSeason: true },
-  // Placeholders only — both leagues are off-season AND have never been
-  // wired into server-side tracking at all (unlike NHL above). offSeason:true
-  // keeps refreshAllLeagues() from fetching either key at all (see that
-  // function) and renderFullSlate() from attempting any live score/pick
-  // refresh for them, so onboarding these now costs zero real requests.
-  // Flip this off (and give NCAAB its own Power-4-style conference filter,
-  // mirroring docs/ncaaf-conferences.js) once each season actually starts.
-  { id: 'nba', label: 'NBA', keys: ['basketball_nba'], offSeason: true },
-  { id: 'ncaab', label: 'NCAAB', keys: ['basketball_ncaab'], offSeason: true },
+  { id: 'ncaa', label: 'NCAAF', keys: ['americanfootball_ncaaf'], hidden: true },
+  { id: 'atp', label: 'ATP', keys: [], hidden: true },
+  { id: 'wta', label: 'WTA', keys: [], hidden: true },
+  { id: 'wnba', label: 'WNBA', keys: ['basketball_wnba'], hidden: true },
+  { id: 'mls', label: 'MLS', keys: ['soccer_usa_mls'], hidden: true },
+  // offSeason:true only affects this client-side tab: refreshAllLeagues()
+  // skips the key and renderFullSlate() shows "coming soon" instead of
+  // fetching. NHL and NBA are in season (2026-10-21 direction: "NBA should
+  // be lit up and have the games pulled. NHL as well") and tracked
+  // server-side (FIXED_SPORT_KEYS in worker/src/tracking.js). NCAAB has
+  // never been wired into tracking; it stays a hidden placeholder.
+  { id: 'ncaab', label: 'NCAAB', keys: ['basketball_ncaab'], offSeason: true, hidden: true },
 ];
 const LEAGUE_GROUP_BY_ID = new Map(LEAGUE_GROUPS.map((g) => [g.id, g]));
 
@@ -228,7 +222,7 @@ function populateDynamicGroups() {
  * stays put, so the row doesn't reshuffle as game counts move.
  */
 function visibleLeagueGroups() {
-  return LEAGUE_GROUPS.filter((g) => !g.seasonal || g.keys.length > 0);
+  return LEAGUE_GROUPS.filter((g) => !g.hidden && (!g.seasonal || g.keys.length > 0));
 }
 
 const ONE_DAY_MS = 24 * 60 * 60 * 1000;
@@ -1200,7 +1194,7 @@ async function refreshAllLeagues() {
   // offSeason groups (NBA/NCAAB placeholders — see LEAGUE_GROUPS) are
   // deliberately excluded here: no live fetch for either until someone
   // flips that flag off once the season actually starts.
-  const allKeys = [...new Set(LEAGUE_GROUPS.filter((g) => !g.offSeason).flatMap((g) => g.keys))];
+  const allKeys = [...new Set(LEAGUE_GROUPS.filter((g) => !g.offSeason && !g.hidden).flatMap((g) => g.keys))];
   const results = await Promise.allSettled(allKeys.map((key) => fetchSingleLeague(key)));
   const failed = results.filter((r) => r.status === 'rejected').length;
 
@@ -4462,7 +4456,7 @@ function renderSlateLeagueOptions() {
   // ends while the tab is open), so the selection is re-validated against
   // what's actually visible, not just against "is anything selected."
   if (!state.slateLeague || !groups.some((g) => g.id === state.slateLeague)) {
-    state.slateLeague = LEAGUE_GROUPS[0].id;
+    state.slateLeague = groups[0].id;
   }
 
   el.slateLeagueSelect.innerHTML = groups
@@ -4534,7 +4528,9 @@ const UNKNOWN_MMA_CARD = 'Other Fights';
 
 function filterMmaGames(games) {
   const now = Date.now();
-  const oneWeekMs = 9 * 24 * 60 * 60 * 1000;
+  // Two weeks: the next UFC card is what the tab shows (see mmaClusters),
+  // and a card can be more than a week out between fight weeks.
+  const oneWeekMs = 14 * 24 * 60 * 60 * 1000;
 
   return games.filter((game) => {
     // A fight that has already started — live or finished — is real
@@ -4558,36 +4554,43 @@ function filterMmaGames(games) {
   });
 }
 
+/** A card the worker could only label by date (ESPN's schedule named nothing) — see worker/src/ufc-events.js. */
+const isDateOnlyCard = (name) => /^Card - \d\d\/\d\d$/.test(String(name ?? ''));
+const mmaCardDayFmt = new Intl.DateTimeFormat(undefined, { weekday: 'short', month: 'short', day: 'numeric' });
+
 /**
- * Group MMA bouts into cards by UFC event name. Only includes UFC/PFL events
- * with moneyline markets coming up soon.
+ * The next UFC card, as one cluster — every fight on it, nothing from any
+ * other card (2026-10-21 direction: "MMA should have the next UFC event on
+ * there only, and all the fights"). Fights are grouped by the worker's
+ * event name; the card shown is the soonest one ESPN named as UFC, or,
+ * when the schedule named nothing (date-only labels), the biggest card in
+ * the window — a UFC card is a dozen fights, a stray bout from another
+ * promotion is one. A date-only card is labelled as the next UFC card by
+ * its day. Finished and live fights on that card stay on it.
  */
 function mmaClusters(games) {
-  // Filter to only UFC/PFL events with markets, coming soon
   const filtered = filterMmaGames(games);
   if (!filtered.length) return [];
 
-  // Group by UFC event name
   const byEvent = new Map();
   for (const game of filtered) {
     const eventKey = game.ufc_event?.event ?? UNKNOWN_MMA_CARD;
     if (!byEvent.has(eventKey)) byEvent.set(eventKey, []);
     byEvent.get(eventKey).push(game);
   }
+  const cards = [...byEvent.entries()]
+    .map(([eventKey, cardGames]) => ({ eventKey, games: cardGames.sort((a, b) => a.commenceMs - b.commenceMs) }))
+    .sort((a, b) => (a.games[0]?.commenceMs ?? 0) - (b.games[0]?.commenceMs ?? 0));
 
-  return [...byEvent.entries()]
-    .map(([eventKey, cardGames]) => {
-      const label = cardGames.length > 1
-        ? `${eventKey}: ${cardGames.length} fights`
-        : eventKey;
-      return { eventKey, games: cardGames, label };
-    })
-    .sort((a, b) => {
-      // Sort by first game's commence time
-      const aTime = a.games[0]?.commenceMs ?? 0;
-      const bTime = b.games[0]?.commenceMs ?? 0;
-      return aTime - bTime;
-    });
+  const named = cards.filter((c) => /\bUFC\b/i.test(c.eventKey));
+  const next = named[0]
+    ?? cards.reduce((best, c) => (!best || c.games.length > best.games.length ? c : best), null);
+  if (!next) return [];
+  const first = next.games[0]?.commenceMs;
+  const name = isDateOnlyCard(next.eventKey) && Number.isFinite(first)
+    ? `Next UFC card · ${mmaCardDayFmt.format(new Date(first))}`
+    : next.eventKey;
+  return [{ eventKey: next.eventKey, games: next.games, name, label: `${name}: ${next.games.length} fight${next.games.length === 1 ? '' : 's'}` }];
 }
 
 /**
@@ -4626,7 +4629,7 @@ function renderFullSlate() {
   renderedSlateCells.length = 0;
   renderedSlateGames.length = 0;
 
-  const group = LEAGUE_GROUP_BY_ID.get(state.slateLeague) ?? LEAGUE_GROUPS[0];
+  const group = LEAGUE_GROUP_BY_ID.get(state.slateLeague) ?? visibleLeagueGroups()[0];
 
   // NBA/NCAAB are onboarded as placeholders only (see LEAGUE_GROUPS) — no
   // live fetch happens for either, in-season or not, until someone
@@ -4746,7 +4749,9 @@ function renderFullSlate() {
     for (const game of games) {
       let eventName;
       if (group.id === 'mma') {
-        eventName = game.ufc_event?.event ?? UNKNOWN_MMA_CARD;
+        // The cluster's display name (a date-only card reads as the next
+        // UFC card by its day), never the raw worker label.
+        eventName = clusters.find((c) => c.eventKey === (game.ufc_event?.event ?? UNKNOWN_MMA_CARD))?.name ?? game.ufc_event?.event ?? UNKNOWN_MMA_CARD;
       } else if (group.id === 'atp' || group.id === 'wta') {
         eventName = state.catalogue.find((s) => s.key === game.sportKey)?.title ?? group.label;
       } else {
@@ -4786,7 +4791,7 @@ function renderFullSlate() {
     const emptyMsg = state.slateGameFilter !== 'upcoming'
       ? `No ${state.slateGameFilter} games for ${group.label} right now.`
       : group.id === 'mma'
-        ? 'No upcoming UFC/PFL events with moneyline markets. Check back soon!'
+        ? 'No UFC card with moneyline markets in the next two weeks. Check back closer to fight week.'
         : `Nothing on the board for ${group.label} right now.`;
     el.slateBody.innerHTML = `<p class="empty">${esc(emptyMsg)}</p>`;
   }
@@ -4836,7 +4841,7 @@ async function fetchSingleLeague(sportKey) {
  * client-side throttle beyond disabling the button mid-fetch).
  */
 async function loadSlate() {
-  const group = LEAGUE_GROUP_BY_ID.get(state.slateLeague) ?? LEAGUE_GROUPS[0];
+  const group = LEAGUE_GROUP_BY_ID.get(state.slateLeague) ?? visibleLeagueGroups()[0];
   el.slateLoad.disabled = true;
   el.slateBody.innerHTML = `<p class="empty">Refreshing ${esc(group.label)}…</p>`;
   try {
