@@ -65,6 +65,7 @@ import {
   isAllowedSport,
   ALLOWED_SPORTS,
   fetchSport,
+  mmaScheduleDiag,
   fetchScores,
   fetchCatalogue,
 } from './odds.js';
@@ -1775,7 +1776,10 @@ export default {
     // weeks of merged selection changes never ran in production. The
     // tracking export snapshots this route beside the boards' histories.
     if (pathname === '/version' && request.method === 'GET') {
-      return json({ ...BUILD_INFO, worker: env.CF_VERSION_METADATA?.id ?? null }, { headers: cors });
+      // `mmaSchedule` says what the last ESPN MMA schedule fetch found (see
+      // odds.js's mmaScheduleDiag): a Full Slate of "Card - MM/DD" labels
+      // means it found nothing, and this says why.
+      return json({ ...BUILD_INFO, worker: env.CF_VERSION_METADATA?.id ?? null, mmaSchedule: mmaScheduleDiag }, { headers: cors });
     }
 
     if (pathname === '/algo-health' && request.method === 'GET') {
