@@ -56,6 +56,9 @@ import { runPotdDaily, runPotdClvSnapshot, runPotdGrading, backfillPotdAnalysis,
 import { runLadderDaily, runLadderGrading, getLadder, getLadderHistory } from './ladder.js';
 import { BUILD_INFO } from '../../docs/version.js';
 import { runTrendsBuild, getTrends, buildLeagueChunk, TREND_ENABLED_SPORTS } from './trends.js';
+
+/** The Trends build's own cron (must match wrangler.toml's second trigger exactly — Cloudflare hands the string back as written). */
+export const TRENDS_CRON = '7,22,37,52 * * * *';
 import { getOrGenerateAnalysis, getOrGeneratePropAnalysis } from './analysis.js';
 import { repairMissingPayouts } from './repair-payouts.js';
 import {
@@ -449,6 +452,18 @@ export default {
   async scheduled(event, env, ctx) {
     const now = event.scheduledTime ?? Date.now();
 
+    // The Trends build has its own schedule (wrangler.toml's second cron)
+    // and so its own invocation and subrequest budget: a chunk of games is
+    // hundreds of ESPN requests, and inside the main tick — after the
+    // boards, the prop scans and the grading — it hit the per-invocation
+    // limit and every game log came back unreachable. Nothing else runs on
+    // this schedule.
+    if (event.cron === TRENDS_CRON) {
+      ctx.waitUntil(runTrendsBuild(env, ctx, now, { fetchFullSlate: () => fetchFullSlateEvents(env, ctx) })
+        .catch((e) => console.error('Trends build failed:', e)));
+      return;
+    }
+
     // 4am ET: pre-warm the 'upcoming' board (the same "next games across
     // every sport" pull the Full Slate/Pixel Picks tabs make on their own
     // first tap) so it's already cached before anyone's awake, rather than
@@ -742,10 +757,6 @@ export default {
     // bankroll — a rung left ungraded stalls the whole climb, not just one
     // pick's record. Same every-tick, idempotent shape as the rest.
     ctx.waitUntil(runLadderGrading(env, ctx, now));
-    // Trends rebuild one stale league per tick (worker/src/trends.js) —
-    // bounded, cached, and independent of the boards.
-    ctx.waitUntil(runTrendsBuild(env, ctx, now, { fetchFullSlate: () => fetchFullSlateEvents(env, ctx) })
-      .catch((e) => console.error('Trends build failed:', e)));
     ctx.waitUntil(runFullSlateClvSnapshot(env, ctx, now));
     ctx.waitUntil(runFullSlateGrading(env, ctx, now));
     // Self-healing: a still-pending pick's commenceMs can drift onto a

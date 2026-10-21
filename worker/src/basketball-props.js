@@ -132,6 +132,10 @@ export function basketballBoxscoreRows(summary) {
 /* Impure: fetching                                                  */
 /* ---------------------------------------------------------------- */
 
+/** The last fetch this module could not complete — what a Trends diagnostic line quotes beside "unreachable". */
+export const fetchDiag = { lastError: null };
+const noteFetchError = (url, what) => { fetchDiag.lastError = `${what} for ${new URL(url).pathname.slice(0, 80)}`; };
+
 async function cachedJson(url, ttl, ctx) {
   const cache = globalThis.caches?.default ?? null;
   const cacheKey = cache ? new Request(`https://pixel-pick.cache/basketball-props/${encodeURIComponent(url)}`) : null;
@@ -139,7 +143,7 @@ async function cachedJson(url, ttl, ctx) {
     const hit = cache ? await cache.match(cacheKey) : null;
     if (hit) return hit.json();
     const res = await fetch(url, { headers: { Accept: 'application/json' } });
-    if (!res.ok) return null;
+    if (!res.ok) { noteFetchError(url, `HTTP ${res.status}`); return null; }
     const body = await res.text();
     if (cache) {
       ctx.waitUntil(cache.put(cacheKey, new Response(body, {
@@ -147,7 +151,8 @@ async function cachedJson(url, ttl, ctx) {
       })));
     }
     return JSON.parse(body);
-  } catch {
+  } catch (e) {
+    noteFetchError(url, String(e?.message ?? e).slice(0, 120));
     return null;
   }
 }

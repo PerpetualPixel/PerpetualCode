@@ -4382,8 +4382,7 @@ input[type="range"]:focus-visible {
   display: flex;
   align-items: center;
   gap: 10px;
-  /* Right padding clears the absolutely-positioned dismiss button. */
-  padding: 10px 44px 10px 14px;
+  padding: 8px 10px 8px 14px;
   cursor: pointer;
   list-style: none;
   font-size: 0.78rem;
@@ -4435,14 +4434,17 @@ input[type="range"]:focus-visible {
 }
 .notice-body p { margin: 0; }
 
+/* A flex item of the summary row, so it centres on the same line as the
+   text and never drifts below it (it used to be absolutely positioned
+   against the strip and sat on the border). */
 .notice-close {
-  position: absolute;
-  top: 7px;
-  right: 8px;
+  position: static;
   width: 26px;
   height: 26px;
   min-height: 26px;
+  margin-left: auto;
   padding: 0;
+  line-height: 26px;
   font-size: 0.8rem;
   flex: none;
 }

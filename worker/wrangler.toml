@@ -121,4 +121,9 @@ id = "15a94259af1c4d4cb4bc19076d0be2d9"
 # actual usage after this has run for a few days; if it's climbing higher
 # than expected, widen both back out together, never just one.
 [triggers]
-crons = ["*/15 * * * *"]
+# The second schedule is the Trends build's own (worker/src/index.js's
+# TRENDS_CRON): a chunk of games costs hundreds of ESPN requests, and
+# sharing the main tick's invocation with the boards, grading and prop
+# scans ran it into the per-invocation subrequest limit. Its own
+# invocation is its own budget.
+crons = ["*/15 * * * *", "7,22,37,52 * * * *"]

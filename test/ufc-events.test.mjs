@@ -681,3 +681,19 @@ test('gradeMmaStraight prices a real payout instead of $NaN — a win at +180 pa
   assert.equal(voided.void, true);
   assert.equal(voided.payout, 0);
 });
+
+test('the ESPN fetch works without the Cache API (a runner, a local node run)', async () => {
+  const { fetchMmaSchedule } = await import('../worker/src/ufc-events.js');
+  const hadCaches = 'caches' in globalThis;
+  const saved = globalThis.caches;
+  delete globalThis.caches;
+  const savedFetch = globalThis.fetch;
+  globalThis.fetch = async () => new Response(JSON.stringify({ events: [{ name: 'UFC 333: A vs B', date: '2026-10-24T22:00Z', competitions: [] }] }), { status: 200 });
+  try {
+    const sched = await fetchMmaSchedule({ waitUntil() {} }, Date.parse('2026-10-21T12:00:00Z'));
+    assert.ok(sched.some((e) => e.name === 'UFC 333: A vs B'));
+  } finally {
+    globalThis.fetch = savedFetch;
+    if (hadCaches) globalThis.caches = saved;
+  }
+});
