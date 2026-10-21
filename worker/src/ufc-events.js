@@ -160,20 +160,24 @@ function lookbackDateRangeParam(now, daysBack) {
 }
 
 async function cachedJson(url, ttl, ctx) {
-  const cacheKey = new Request(`https://pixel-pick.cache/ufc-events/${encodeURIComponent(url)}`);
-  const cache = caches.default;
+  // The Cache API only exists in the Workers runtime; without it (the
+  // diagnostic script on a runner, a local node run) the fetch is uncached.
+  const cache = globalThis.caches?.default ?? null;
+  const cacheKey = cache ? new Request(`https://pixel-pick.cache/ufc-events/${encodeURIComponent(url)}`) : null;
 
-  const hit = await cache.match(cacheKey);
+  const hit = cache ? await cache.match(cacheKey) : null;
   if (hit) return hit.json();
 
   const response = await fetch(url, { headers: { Accept: 'application/json' } });
   if (!response.ok) throw new Error(`ESPN MMA scoreboard returned ${response.status}`);
   const body = await response.text();
-  ctx.waitUntil(
-    cache.put(cacheKey, new Response(body, {
-      headers: { 'Content-Type': 'application/json', 'Cache-Control': `max-age=${ttl}` },
-    })),
-  );
+  if (cache) {
+    ctx.waitUntil(
+      cache.put(cacheKey, new Response(body, {
+        headers: { 'Content-Type': 'application/json', 'Cache-Control': `max-age=${ttl}` },
+      })),
+    );
+  }
   return JSON.parse(body);
 }
 

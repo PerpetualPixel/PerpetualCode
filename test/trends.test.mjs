@@ -258,3 +258,11 @@ test('a build keeps a diagnostic trace, and a game whose build came up empty ret
   const full = await buildTrends('basketball_nba', [nbaGame], env, ctx, NOW, deps);
   assert.equal(full.diag.at(-1), 'rows built: 3');
 });
+
+test('an unreachable game log names the fetch failure, so a subrequest limit reads as one', async () => {
+  const { env } = makeKvStore();
+  const fetchDiag = { lastError: 'Too many subrequests for /apis/common/v3/sports/basketball/nba/athletes/3934672/gamelog' };
+  const payload = await buildTrends('basketball_nba', [nbaGame], env, ctx, NOW, { ...deps, gamelog: async () => null, fetchDiag });
+  assert.equal(payload.rows.length, 0);
+  assert.ok(payload.diag.some((l) => /game log unreachable \(Too many subrequests/.test(l)), payload.diag.join('\n'));
+});

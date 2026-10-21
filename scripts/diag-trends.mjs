@@ -74,3 +74,5 @@ try {
 } catch (e) {
   say(`schedule failed: ${e?.message ?? e}`);
 }
+
+// Run 2: the MMA schedule check needs the Cache API guard in worker/src/ufc-events.js.

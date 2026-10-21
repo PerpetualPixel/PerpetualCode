@@ -23,12 +23,15 @@ import { normalizeName as normalizeNbaName } from '../../docs/wnba-props.js';
 import { normalizeName as normalizeNhlName } from '../../docs/nhl-props.js';
 import {
   NFL_SPORT_KEY, NFL_TREND_MARKETS, fetchNflAltProps, resolveNflAthleteId, fetchNflGamelog, gamelogStatIndex, nflHeadshotUrl, fetchNflRoster,
+  fetchDiag as nflFetchDiag,
 } from './football-props.js';
 import {
   BASKETBALL_ALT_MARKETS, fetchAltProps, resolveAthleteId, fetchBasketballGamelog, basketballStatIndex, basketballHeadshotUrl,
+  fetchDiag as nbaFetchDiag,
 } from './basketball-props.js';
 import {
   NHL_SPORT_KEY, NHL_PROP_MARKETS, NHL_ALT_MARKETS, fetchNhlProps, resolveNhlAthleteId, fetchNhlGamelog, nhlStatIndex, nhlHeadshotUrl,
+  fetchDiag as nhlFetchDiag,
 } from './hockey-props.js';
 import { seasonYearOf } from '../../docs/prop-legs.js';
 import { listLeagueGames } from './prop-legs.js';
@@ -53,7 +56,7 @@ const MIN_GAMES = 3;
 export const RETRY_EMPTY_MINUTES = 30;
 /** How many diagnostic lines a build keeps for /trends to show. */
 const MAX_DIAG = 60;
-const MAX_ROWS = 3000;
+const MAX_ROWS = 2000;
 const KV_TTL_SECONDS = 86400 * 2;
 
 const NBA_KEY = 'basketball_nba';
@@ -79,6 +82,7 @@ export const TREND_SPORTS = {
     priorGamelog: (athleteId, ctx, now) => fetchNflGamelog(athleteId, ctx, new Date(now).getUTCFullYear() - 1),
     headshot: nflHeadshotUrl,
     roster: (abbr, ctx) => fetchNflRoster(abbr, ctx),
+    fetchDiag: nflFetchDiag,
     statIndex: gamelogStatIndex,
   },
   [NBA_KEY]: {
@@ -94,6 +98,7 @@ export const TREND_SPORTS = {
     priorGamelog: (athleteId, ctx, now, log) => { const y = seasonYearOf(log?.seasonTypes?.[0]?.displayName); return y ? fetchBasketballGamelog(NBA_KEY, athleteId, ctx, y) : null; },
     headshot: (athleteId) => basketballHeadshotUrl(NBA_KEY, athleteId),
     statIndex: basketballStatIndex,
+    fetchDiag: nbaFetchDiag,
   },
   [NHL_SPORT_KEY]: {
     title: 'NHL',
@@ -106,6 +111,7 @@ export const TREND_SPORTS = {
     priorGamelog: (athleteId, ctx, now, log) => { const y = seasonYearOf(log?.seasonTypes?.[0]?.displayName); return y ? fetchNhlGamelog(athleteId, ctx, y) : null; },
     headshot: nhlHeadshotUrl,
     statIndex: nhlStatIndex,
+    fetchDiag: nhlFetchDiag,
   },
 };
 export const TREND_SPORT_KEYS = Object.keys(TREND_SPORTS);
@@ -189,12 +195,14 @@ export async function buildTrends(sportKey, games, env, ctx, now = Date.now(), d
           const roster = spec.roster ? await spec.roster(abbrs.home ?? abbrs.away, ctx).catch(() => null) : undefined;
           const groups = Array.isArray(roster?.athletes) ? roster.athletes : [];
           const sample = groups.flatMap((g) => (Array.isArray(g?.items) ? g.items : [])).slice(0, 3).map((a) => a?.displayName).join(' | ');
-          note(`${name}: no roster match (${abbrs.away ?? '?'}/${abbrs.home ?? '?'}); roster ${roster === undefined ? 'not checked' : roster === null ? 'unreachable' : `keys ${keysOf(roster)}, ${groups.length} groups, sample [${sample}]`}`);
+          note(`${name}: no roster match (${abbrs.away ?? '?'}/${abbrs.home ?? '?'}); roster ${roster === undefined ? 'not checked' : roster === null ? `unreachable (${spec.fetchDiag?.lastError ?? 'no error recorded'})` : `keys ${keysOf(roster)}, ${groups.length} groups, sample [${sample}]`}`);
         }
         continue;
       }
       const gamelog = await spec.gamelog(athleteId, ctx);
-      if (!gamelog) { note(`${name} (${athleteId}): game log unreachable`); continue; }
+      // The module's last fetch failure is the reason — "Too many
+      // subrequests" and an HTTP status look identical from here otherwise.
+      if (!gamelog) { note(`${name} (${athleteId}): game log unreachable (${spec.fetchDiag?.lastError ?? 'no error recorded'})`); continue; }
       const prior = spec.priorGamelog ? await Promise.resolve(spec.priorGamelog(athleteId, ctx, now, gamelog)).catch(() => null) : null;
       const merged = prior?.seasonTypes?.length
         ? { ...gamelog, seasonTypes: [...(gamelog.seasonTypes ?? []), ...prior.seasonTypes], events: { ...(prior.events ?? {}), ...(gamelog.events ?? {}) } }
