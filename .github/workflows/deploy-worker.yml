@@ -1,0 +1,62 @@
+# Deploy the worker from main — so what runs is what was merged, every
+# time, without a laptop checkout in between. Between 2026-09-15 and
+# 2026-10-19 the deployed worker was a six-week-old build, and again from
+# 2026-10-19 to 2026-10-22 it stayed on 1.192 while main moved to 1.201:
+# every "pull and deploy" step that was skipped or failed quietly left the
+# boards running old rules. This job removes the step.
+#
+# One-time setup (repository Settings → Secrets and variables → Actions):
+#   CLOUDFLARE_API_TOKEN   an API token made from the "Edit Cloudflare
+#                          Workers" template at dash.cloudflare.com →
+#                          My Profile → API Tokens
+#   CLOUDFLARE_ACCOUNT_ID  the account id shown on the Workers overview page
+# Worker secrets (ODDS_API_KEY, ANTHROPIC_API_KEY, …) live in Cloudflare and
+# are untouched by a deploy.
+name: Deploy worker
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - worker/**
+      - docs/*.js
+      - .github/workflows/deploy-worker.yml
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: deploy-worker
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Check the secrets are set
+        env:
+          TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          ACCOUNT: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+        run: |
+          if [ -z "$TOKEN" ] || [ -z "$ACCOUNT" ]; then
+            echo "::error::CLOUDFLARE_API_TOKEN and CLOUDFLARE_ACCOUNT_ID are not both set — see the comment at the top of this workflow."
+            exit 1
+          fi
+      - uses: cloudflare/wrangler-action@v3
+        with:
+          apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          accountId: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          workingDirectory: worker
+          command: deploy
+      - name: Confirm the live version
+        run: |
+          sleep 10
+          live=$(curl -fsSL https://pixel-pick-odds.mgbouldering.workers.dev/version)
+          echo "live: $live"
+          want=$(node -e "import('./docs/version.js').then((m) => console.log((m.BUILD_INFO ?? m.default).version))")
+          echo "$live" | grep -q "\"version\":\"$want\"" || { echo "::error::live version is not $want"; exit 1; }

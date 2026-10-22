@@ -200,11 +200,11 @@ test('runTop5Batch posts anchor + partner tickets: two legs from two games, -200
   }
 });
 
-test('a lone -260 leg is neither a ticket nor a straight play — heavier than the band, it posts nothing', async () => {
+test('a lone -260 leg is neither a ticket nor a straight play — heavier than the band, no tier posts it', async () => {
   const { env } = makeKvStore();
   const result = await runTop5Batch(env, ctx, NOW, { fetchFullSlate: async () => [makeFav('solo')] });
   assert.equal(result.skipped, false);
-  assert.equal(result.count, 0);
+  assert.equal(result.count, 0, 'the fallback tiers relax the floors, never the band');
 });
 
 test('a favourite standing inside the band on its own fills a slot as a straight play when no ticket takes it', async () => {
@@ -338,14 +338,26 @@ test('a ticket never reaches outside the band: a -1800 chalk and a +350 longshot
   for (const p of picks) assert.ok(p.american >= -200 && p.american <= 100, `${p.pickId} priced ${p.american} is outside the band`);
 });
 
-test('a -EV-only slate posts an EMPTY board — never a flagged filler', async () => {
+test('a -EV-only slate still posts — the best-read tickets inside the band, flagged as fallbacks at the minimum stake', async () => {
   const { env } = makeKvStore();
   // Every book at the same price: the best price IS the consensus, so once
-  // the hold is paid there is no edge left on either leg.
+  // the hold is paid there is no edge left on either leg. The board posts
+  // anyway (2026-10-22 direction), every play flagged and out of the
+  // standard record.
   const result = await runTop5Batch(env, ctx, NOW, { fetchFullSlate: async () => favs(4, { outlier: 0 }) });
   assert.equal(result.skipped, false);
   const picks = await getTop5(env, { dateKey: '2026-08-05' });
-  assert.equal(picks.length, 0, 'nothing clears the edge floor, so nothing posts');
+  assert.equal(picks.length, 2, 'four legs make two tickets');
+  assert.ok(picks.every((p) => p.meetsStandard === false && /edge floor/.test(p.flagReason)), JSON.stringify(picks.map((p) => p.flagReason)));
+  assert.ok(picks.every((p) => p.type === 'combo'));
+  assert.ok(picks.every((p) => p.stakeUnits === picks[0].stakeUnits), 'every fallback sits at the same minimum stake');
+  // A real edge on the slate beside them posts unflagged and first in the record.
+  const mixed = makeKvStore();
+  await runTop5Batch(mixed.env, ctx, NOW, { fetchFullSlate: async () => [...favs(2), ...favs(2, { outlier: 0 }).map((e, i) => ({ ...e, id: `flat${i}`, home_team: `flat${i} Home`, away_team: `flat${i} Away`, bookmakers: e.bookmakers.map((b) => ({ ...b, markets: b.markets.map((m) => ({ ...m, outcomes: m.outcomes.map((o) => ({ ...o, name: o.name.replace(e.id, `flat${i}`) })) })) })) }))] });
+  const mixedPicks = await getTop5(mixed.env, { dateKey: '2026-08-05' });
+  assert.equal(mixedPicks.length, 2);
+  assert.equal(mixedPicks.filter((p) => p.meetsStandard !== false).length, 1, 'the standard ticket');
+  assert.equal(mixedPicks.filter((p) => p.meetsStandard === false).length, 1, 'the flagged one fills the next slot');
 });
 
 test('runTop5Batch only skips once the board already has TOP5_COUNT picks', async () => {
@@ -452,7 +464,10 @@ test('runTop5Batch uses the tuned EV floor from algo:config, not the shipped def
   }));
   const events = favs(2);
   await runTop5Batch(env, ctx, NOW, { fetchFullSlate: async () => events });
-  assert.equal((await getTop5(env, { dateKey: '2026-08-05' })).length, 0, 'the tuned floor must keep these legs off the board entirely');
+  const tuned = await getTop5(env, { dateKey: '2026-08-05' });
+  assert.equal(tuned.length, 1, 'under the tuned floor the ticket posts only as a flagged fallback');
+  assert.equal(tuned[0].meetsStandard, false, 'the tuned floor keeps these legs out of the standard record');
+  assert.match(tuned[0].flagReason, /edge floor/);
 
   const fresh = makeKvStore();
   await runTop5Batch(fresh.env, ctx, NOW, { fetchFullSlate: async () => events });

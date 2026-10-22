@@ -36,7 +36,7 @@
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Syne:wght@600;700;800&family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
-<link rel="stylesheet" href="styles.css?v=1.201">
+<link rel="stylesheet" href="styles.css?v=1.202">
 </head>
 <body>
 
@@ -133,9 +133,10 @@
       game with the Play of the Day), and the <strong>Ladder</strong> rung — one parlay a day of
       deep player-prop lines, every win rolled into the next rung — posts beside them. Every pick on every board has to beat
       the market's no-vig line by the edge floor; a pick that clears that but not the full
-      sharp standard posts visibly flagged, and a day with fewer real edges posts fewer picks
-      rather than filling the board with bets the engine itself grades as losers. The one
-      exception is the Play of the Day, which posts every day: on a slate where nothing clears
+      sharp standard posts visibly flagged. A day with fewer real edges no longer posts short:
+      the open slots fill with the best-read plays inside the band, each flagged "Fallback"
+      with the reason and sized at the minimum, and kept out of the standard record's
+      win-rate and ROI. The Play of the Day posts every day: on a slate where nothing clears
       the standard it posts the best play the day offers, flagged with why and sized at the
       minimum, and tomorrow's goes up by 10pm ET the night before, so the tab shows today's and
       tomorrow's, each dated.
@@ -576,11 +577,11 @@
       no-vig line — anchored to the sharp market where Pinnacle prices the
       game — by the edge floor. On a quiet slate where fewer than 5 edges
       clear the full sharp standard (price band and confidence floor), the
-      remaining slots fill only from prices that still clear the edge floor
-      and are explicitly flagged "Outside standard criteria"; if nothing
-      does, the board posts short. A board of five bets the engine itself
-      grades as losers is not a board. Every posted pick counts toward the
-      Tracking Dashboard's win-rate math regardless of its flag; the flag is
+      remaining slots fill with the best-read plays inside the band — first
+      with the edge floor off, then with the conviction floor lowered to a
+      coin flip — each explicitly flagged "Fallback" with its reason and
+      sized at the minimum. The band itself never relaxes. Every posted pick
+      shows in the Tracking Dashboard's day-by-day history; the flag is
       transparency about how the pick was chosen, not an exclusion.</p>
       <p><strong>6. The write-up explains the pick that was already made. It
       never re-decides.</strong> Once a side is chosen by the math above, the
@@ -626,8 +627,9 @@
       ranked locks first — the likeliest pair inside the band — and a board
       mixes leagues and keeps a slot for a straight play. Every
       game leg is graded 50 or higher with positive EV and a real Kelly edge
-      at a book you can bet. Plays that clear that bar are the only plays; a
-      thin day posts fewer. Older records may still carry
+      at a book you can bet. On a thin day the open slots fill with flagged
+      fallback plays (the edge floor off, then the conviction floor lowered),
+      still inside the band and sized at the minimum. Records carry
       picks flagged "Outside
       standard criteria" — still real, gradeable bets, just not sharp
       enough to call locks without saying so. All 5 are tracked and count
@@ -1107,6 +1109,6 @@
   </div>
 </aside>
 
-<script type="module" src="app.js?v=1.201"></script>
+<script type="module" src="app.js?v=1.202"></script>
 </body>
 </html>
