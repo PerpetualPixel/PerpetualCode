@@ -92,6 +92,12 @@ export const GENERATION_HOUR_ET = 2;
  */
 const PIXEL_ODDS = { SHARP_MIN: -200, SHARP_MAX: 100 };
 
+/** Why a fallback Pixel's Pick is flagged — the chip's tooltip (see runTop5Batch). */
+export const PIXEL_FALLBACK = {
+  edge: 'no play on this slate beat the market by the edge floor; this is the best-read play inside the band, sized at the minimum',
+  read: 'nothing on this slate read at the conviction floor; this is the best play inside the band, read at a coin flip or better, sized at the minimum',
+};
+
 /**
  * Sides already taken by the other boards, as `eventId|marketKey|outcomeName`.
  *
@@ -797,8 +803,9 @@ export async function runTop5Batch(
   // than not to both land, ranked by the ticket's own expected value; two
   // players' props from one game may pair as a same-game parlay. Whatever
   // slots the tickets leave go to the best legs that stand in the band on
-  // their own — still only bets the engine itself rates; a day short of
-  // both posts short.
+  // their own. A day short of both no longer posts short: the flagged
+  // fallback tiers below fill the open slots (2026-10-22 direction: "I
+  // need some sort of high confidence play").
   const gameLegs = nonConflicting.filter((c) => legEligible(c, {
     minEv: algoConfig.MIN_EV_PCT,
     minKelly: algoConfig.MIN_KELLY_FRACTION,
@@ -825,6 +832,37 @@ export async function runTop5Batch(
     maxAmerican: PIXEL_ODDS.SHARP_MAX,
     minEv: algoConfig.MIN_EV_PCT,
   });
+
+  // The flagged fallback tiers — the board's mirror of potd.js's
+  // POTD_TIERS (2026-10-22 direction: a high-confidence play every day,
+  // not an empty board). A thin day fills its open slots with the
+  // best-read plays inside the band: first with the edge floor off, then
+  // with the conviction floor lowered to a coin flip. Each is flagged
+  // (meetsStandard false, the reason on the chip), sized at the minimum,
+  // and kept out of the standard record's win-rate and ROI. Never the
+  // "showcase" tier — a play outside the band is the Play of the Day's
+  // last resort, not a Pixel's Pick.
+  if (board.length < needed) {
+    const looseLegs = nonConflicting.filter((c) => legEligible(c, { minEv: -Infinity, minKelly: 0, minScore: 0 }));
+    const taken = new Set([...existingEventIds, ...featuredEventIds, ...board.flatMap((p) => p.legs.map((l) => l.eventId))]);
+    for (const [flagReason, opts] of [
+      [PIXEL_FALLBACK.edge, { minEv: -1 }],
+      [PIXEL_FALLBACK.read, { minEv: -1, minProb: 0.4, singleMinProb: 0.5 }],
+    ]) {
+      if (board.length >= needed) break;
+      const extra = buildBoard([...looseLegs, ...propLegs], {
+        count: needed - board.length,
+        usedEventIds: taken,
+        minAmerican: PIXEL_ODDS.SHARP_MIN,
+        maxAmerican: PIXEL_ODDS.SHARP_MAX,
+        ...opts,
+      });
+      for (const play of extra) {
+        board.push({ ...play, meetsStandard: false, flagReason });
+        play.legs.forEach((l) => taken.add(l.eventId));
+      }
+    }
+  }
 
   // Belt-and-suspenders alongside buildBoard's own bookkeeping: no two
   // plays on the board may share a game, counting every leg — a same-game

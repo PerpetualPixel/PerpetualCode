@@ -1,10 +1,32 @@
 # Deploying the worker — every time
 
 The site (`docs/`) publishes itself from `main` through GitHub Pages. The
-worker does NOT: it runs whatever checkout `npx wrangler deploy` was run
-from. Between 2026-09-15 and 2026-10-19 the deployed worker was an early-
-September build while main carried six weeks of merged selection changes,
-and nothing on the boards reflected them.
+worker does NOT by itself: it runs whatever was last deployed. Between
+2026-09-15 and 2026-10-19 the deployed worker was an early-September build
+while main carried six weeks of merged selection changes, and from
+2026-10-19 to 2026-10-22 it stayed on 1.192 while main moved to 1.201 —
+both times nothing on the boards reflected what was merged.
+
+## The fix: deploy from GitHub (one-time setup, two secrets)
+
+`.github/workflows/deploy-worker.yml` deploys the worker from `main` on
+every merge that touches it, and checks the live `/version` afterwards.
+It needs two repository secrets (GitHub → the repo → Settings → Secrets
+and variables → Actions → New repository secret):
+
+1. `CLOUDFLARE_API_TOKEN` — at https://dash.cloudflare.com/profile/api-tokens
+   choose **Create Token** → the **Edit Cloudflare Workers** template →
+   Continue → Create Token, and paste the token.
+2. `CLOUDFLARE_ACCOUNT_ID` — the Account ID shown on the Workers & Pages
+   overview page (right-hand column), or in the dashboard URL after
+   `dash.cloudflare.com/`.
+
+Then run the workflow once by hand (Actions → Deploy worker → Run
+workflow) and check it ends green with the live version it printed. From
+then on, merging to `main` deploys. Worker secrets (`ODDS_API_KEY`,
+`ANTHROPIC_API_KEY`, …) live in Cloudflare and are untouched.
+
+## By hand, until the secrets are set
 
 Before every deploy:
 
