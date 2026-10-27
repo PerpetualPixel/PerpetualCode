@@ -26,7 +26,7 @@ import {
   fetchDiag as nflFetchDiag,
 } from './football-props.js';
 import {
-  BASKETBALL_ALT_MARKETS, fetchAltProps, resolveAthleteId, fetchBasketballGamelog, basketballStatIndex, basketballHeadshotUrl,
+  NBA_TREND_MARKETS, fetchNbaTrendProps, resolveAthleteId, fetchBasketballGamelog, basketballStatIndex, basketballStatRows, basketballHeadshotUrl,
   fetchDiag as nbaFetchDiag,
 } from './basketball-props.js';
 import {
@@ -47,8 +47,13 @@ export const LOOKAHEAD_HOURS = 48;
  * fills in over a handful of ticks rather than failing as one.
  */
 export const MAX_GAMES_PER_TICK = 6;
-/** The leagues Trends builds and shows: every league the site covers that has player props (2026-10-20 direction). */
-export const TREND_ENABLED_SPORTS = [NFL_SPORT_KEY, 'basketball_nba', NHL_SPORT_KEY];
+/**
+ * The leagues Trends builds and shows. NBA only for now (2026-10-27
+ * direction: every NBA player, every prop, the last 20 games, so a
+ * near-100% hit rate is easy to find daily); the NFL and NHL readers stay
+ * wired and tested and join this list when the direction says so.
+ */
+export const TREND_ENABLED_SPORTS = ['basketball_nba'];
 export const MAX_PLAYERS_PER_GAME = 40;
 /** Rows with fewer logged games than this have no rate worth sorting on. */
 const MIN_GAMES = 3;
@@ -87,9 +92,13 @@ export const TREND_SPORTS = {
   },
   [NBA_KEY]: {
     title: 'NBA',
-    markets: BASKETBALL_ALT_MARKETS,
+    markets: NBA_TREND_MARKETS,
     normalizeName: normalizeNbaName,
-    fetchOdds: (eventId, env, ctx) => fetchAltProps(NBA_KEY, eventId, env, ctx),
+    fetchOdds: (eventId, env, ctx) => fetchNbaTrendProps(eventId, env, ctx),
+    // Threes, field goals and the combined stats are not one column of the
+    // log: basketballStatRows reads the made count of a "made-attempted"
+    // column and sums a combo's parts game by game.
+    statRows: (log, statKey) => basketballStatRows(log, statKey, { allSeasons: true }),
     resolve: (name, abbrs, ctx) => resolveAthleteId(NBA_KEY, name, abbrs, ctx),
     gamelog: (athleteId, ctx) => fetchBasketballGamelog(NBA_KEY, athleteId, ctx),
     // ESPN keys a basketball season by the year it ENDS (2025-26 is
@@ -163,7 +172,7 @@ export async function buildTrends(sportKey, games, env, ctx, now = Date.now(), d
   let shortLogged = 0;
   for (const game of games) {
     const odds = await spec.fetchOdds(game.id, env, ctx);
-    if (!odds) { note(`${game.away_team} @ ${game.home_team}: no odds payload`); continue; }
+    if (!odds) { note(`${game.away_team} @ ${game.home_team}: no odds payload (${spec.fetchDiag?.lastError ?? 'no error recorded'})`); continue; }
     scanned++;
     if (!Array.isArray(odds.bookmakers) || !odds.bookmakers.length) note(`${game.away_team} @ ${game.home_team}: payload has no bookmakers (keys: ${keysOf(odds)})`);
     const meta = {
@@ -213,7 +222,11 @@ export async function buildTrends(sportKey, games, env, ctx, now = Date.now(), d
       const headshot = spec.headshot ? spec.headshot(athleteId) : null;
       const rowsByStat = new Map();
       for (const line of playerLines) {
-        if (!rowsByStat.has(line.statKey)) rowsByStat.set(line.statKey, seasonColumnRows(merged, spec.statIndex(merged, line.statKey), { allSeasons: true }));
+        if (!rowsByStat.has(line.statKey)) {
+          rowsByStat.set(line.statKey, spec.statRows
+            ? spec.statRows(merged, line.statKey)
+            : seasonColumnRows(merged, spec.statIndex(merged, line.statKey), { allSeasons: true }));
+        }
         const statRows = rowsByStat.get(line.statKey);
         if (statRows.length < MIN_GAMES) {
           if (shortLogged++ < 3) note(`${name}: ${line.statKey} has ${statRows.length} logged games; column ${spec.statIndex(merged, line.statKey)}; log keys ${keysOf(merged)}; names [${(merged.names ?? []).slice(0, 10).join(',')}]; seasons [${(merged.seasonTypes ?? []).map((s) => s?.displayName).join(' / ')}]`);
@@ -224,7 +237,7 @@ export async function buildTrends(sportKey, games, env, ctx, now = Date.now(), d
     }
   }
   note(`rows built: ${rows.length}`);
-  return { sportKey, title: spec.title, builtAt: now, games: scanned, rows: sortTrends(rows, { window: 'l10' }), diag };
+  return { sportKey, title: spec.title, builtAt: now, games: scanned, rows: sortTrends(rows, { window: 'l20' }), diag };
 }
 
 /**
@@ -258,7 +271,7 @@ export async function buildLeagueChunk(sportKey, events, env, ctx, now = Date.no
     const gotRows = built.rows.some((r) => r.eventId === g.id);
     stamps[g.id] = gotRows ? now : now - ttl + RETRY_EMPTY_MINUTES * 60e3;
   }
-  const rows = sortTrends([...keepRows.filter((r) => !chunkIds.has(r.eventId)), ...built.rows], { window: 'l10' }).slice(0, MAX_ROWS);
+  const rows = sortTrends([...keepRows.filter((r) => !chunkIds.has(r.eventId)), ...built.rows], { window: 'l20' }).slice(0, MAX_ROWS);
   const payload = {
     sportKey, title: built.title, builtAt: now, checkedAt: now,
     games: Object.keys(stamps).length, pending: due.length - chunk.length,

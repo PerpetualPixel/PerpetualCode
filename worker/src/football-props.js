@@ -208,7 +208,7 @@ async function cachedJson(url, ttl, ctx) {
     const hit = cache ? await cache.match(cacheKey) : null;
     if (hit) return hit.json();
     const res = await fetch(url, { headers: { Accept: 'application/json' } });
-    if (!res.ok) { noteFetchError(url, `HTTP ${res.status}`); return null; }
+    if (!res.ok) { noteFetchError(url, `HTTP ${res.status} ${(await res.text().catch(() => '')).slice(0, 80)}`); return null; }
     const body = await res.text();
     if (cache) {
       ctx.waitUntil(cache.put(cacheKey, new Response(body, {

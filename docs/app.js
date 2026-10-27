@@ -8706,7 +8706,9 @@ const trendsState = {
   // No league chosen until the first load: the worker answers with the
   // first league that has rows, so the tab opens on whatever is on today.
   sport: null,
-  period: 'l10',
+  // Last 20 by default (2026-10-27 direction): the hit rate the research
+  // apps lead with, and the span the chart draws.
+  period: 'l20',
   sort: { by: 'hitRate', dir: 'desc' },
   // Filters. An empty set means "everything", as the research apps read an
   // unchecked list.

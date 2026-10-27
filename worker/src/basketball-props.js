@@ -24,6 +24,7 @@ import {
   priorSeasonKey,
   gradePropLeg,
   seasonColumnValues,
+  seasonColumnRows,
 } from '../../docs/prop-legs.js';
 import { UPSTREAM, REGIONS } from './odds.js';
 
@@ -80,8 +81,63 @@ export const clearsPropGates = (profile) => sharedClearsPropGates(profile, PROP_
 export const propLegFrom = (candidate, values) => sharedPropLegFrom(candidate, values, PROP_GATES);
 export const gradeBasketballPropLeg = gradePropLeg;
 
-const GAMELOG_LABEL = { points: 'PTS', rebounds: 'REB', assists: 'AST' };
-const GAMELOG_NAMES = { points: ['points'], rebounds: ['rebounds', 'totalRebounds'], assists: ['assists'] };
+const GAMELOG_LABEL = { points: 'PTS', rebounds: 'REB', assists: 'AST', blocks: 'BLK', steals: 'STL', turnovers: 'TO' };
+const GAMELOG_NAMES = { points: ['points'], rebounds: ['rebounds', 'totalRebounds'], assists: ['assists'], blocks: ['blocks'], steals: ['steals'], turnovers: ['turnovers'] };
+/** Columns ESPN writes as "made-attempted": the made count is the stat. */
+const GAMELOG_DASH = {
+  threes: { names: ['threePointFieldGoalsMade-threePointFieldGoalsAttempted'], label: '3PT' },
+  fgm: { names: ['fieldGoalsMade-fieldGoalsAttempted'], label: 'FG' },
+  ftm: { names: ['freeThrowsMade-freeThrowsAttempted'], label: 'FT' },
+};
+/** Combined stats: the sum of their parts, game by game. */
+const GAMELOG_COMBO = {
+  pra: ['points', 'rebounds', 'assists'],
+  pr: ['points', 'rebounds'],
+  pa: ['points', 'assists'],
+  ra: ['rebounds', 'assists'],
+  stocks: ['blocks', 'steals'],
+};
+
+/**
+ * The markets the Trends tab scans for the NBA (2026-10-27 direction:
+ * "all props" — every line a book hangs on a player, main and alternate),
+ * the stat each settles on, and how a card names it. Every stat here is
+ * read from ESPN's game log by basketballStatRows: a plain column, the
+ * made count of a "made-attempted" column, or a sum of columns.
+ */
+export const NBA_TREND_MARKETS = {
+  player_points: { stat: 'points', label: 'Pts', marketLabel: 'Points' },
+  player_rebounds: { stat: 'rebounds', label: 'Reb', marketLabel: 'Rebounds' },
+  player_assists: { stat: 'assists', label: 'Ast', marketLabel: 'Assists' },
+  player_threes: { stat: 'threes', label: '3PM', marketLabel: 'Three Pointers Made' },
+  player_blocks: { stat: 'blocks', label: 'Blk', marketLabel: 'Blocks' },
+  player_steals: { stat: 'steals', label: 'Stl', marketLabel: 'Steals' },
+  player_turnovers: { stat: 'turnovers', label: 'TO', marketLabel: 'Turnovers' },
+  player_blocks_steals: { stat: 'stocks', label: 'Blk+Stl', marketLabel: 'Blocks + Steals' },
+  player_points_rebounds_assists: { stat: 'pra', label: 'PRA', marketLabel: 'Points + Rebounds + Assists' },
+  player_points_rebounds: { stat: 'pr', label: 'Pts+Reb', marketLabel: 'Points + Rebounds' },
+  player_points_assists: { stat: 'pa', label: 'Pts+Ast', marketLabel: 'Points + Assists' },
+  player_rebounds_assists: { stat: 'ra', label: 'Reb+Ast', marketLabel: 'Rebounds + Assists' },
+  player_points_alternate: { stat: 'points', label: 'Pts', marketLabel: 'Points (alt)' },
+  player_rebounds_alternate: { stat: 'rebounds', label: 'Reb', marketLabel: 'Rebounds (alt)' },
+  player_assists_alternate: { stat: 'assists', label: 'Ast', marketLabel: 'Assists (alt)' },
+  player_threes_alternate: { stat: 'threes', label: '3PM', marketLabel: 'Three Pointers Made (alt)' },
+  player_blocks_alternate: { stat: 'blocks', label: 'Blk', marketLabel: 'Blocks (alt)' },
+  player_steals_alternate: { stat: 'steals', label: 'Stl', marketLabel: 'Steals (alt)' },
+  player_turnovers_alternate: { stat: 'turnovers', label: 'TO', marketLabel: 'Turnovers (alt)' },
+  player_points_rebounds_assists_alternate: { stat: 'pra', label: 'PRA', marketLabel: 'Points + Rebounds + Assists (alt)' },
+  player_points_rebounds_alternate: { stat: 'pr', label: 'Pts+Reb', marketLabel: 'Points + Rebounds (alt)' },
+  player_points_assists_alternate: { stat: 'pa', label: 'Pts+Ast', marketLabel: 'Points + Assists (alt)' },
+  player_rebounds_assists_alternate: { stat: 'ra', label: 'Reb+Ast', marketLabel: 'Rebounds + Assists (alt)' },
+};
+/**
+ * The market lists asked for, in order: everything, then the core eight
+ * (the feed rejects a whole call over one market key it doesn't know).
+ */
+export const NBA_TREND_MARKET_PARAMS = [
+  Object.keys(NBA_TREND_MARKETS).join(','),
+  ['player_points', 'player_rebounds', 'player_assists', 'player_threes', 'player_points_rebounds_assists', 'player_points_alternate', 'player_rebounds_alternate', 'player_assists_alternate'].join(','),
+];
 
 /**
  * The player's per-game values for one stat, most recent first, current
@@ -143,7 +199,7 @@ async function cachedJson(url, ttl, ctx) {
     const hit = cache ? await cache.match(cacheKey) : null;
     if (hit) return hit.json();
     const res = await fetch(url, { headers: { Accept: 'application/json' } });
-    if (!res.ok) { noteFetchError(url, `HTTP ${res.status}`); return null; }
+    if (!res.ok) { noteFetchError(url, `HTTP ${res.status} ${(await res.text().catch(() => '')).slice(0, 80)}`); return null; }
     const body = await res.text();
     if (cache) {
       ctx.waitUntil(cache.put(cacheKey, new Response(body, {
@@ -157,11 +213,11 @@ async function cachedJson(url, ttl, ctx) {
   }
 }
 
-export async function fetchAltProps(sportKey, oddsEventId, env, ctx) {
+export async function fetchAltProps(sportKey, oddsEventId, env, ctx, markets = BASKETBALL_ALT_MARKETS_PARAM) {
   const url = new URL(`${UPSTREAM}/sports/${sportKey}/events/${oddsEventId}/odds`);
   url.searchParams.set('apiKey', (env.ODDS_API_KEY ?? '').trim());
   url.searchParams.set('regions', REGIONS);
-  url.searchParams.set('markets', BASKETBALL_ALT_MARKETS_PARAM);
+  url.searchParams.set('markets', markets);
   url.searchParams.set('oddsFormat', 'american');
   url.searchParams.set('dateFormat', 'iso');
   return cachedJson(url.toString(), ODDS_TTL, ctx);
@@ -281,6 +337,48 @@ export const basketballHeadshotUrl = (sportKey, athleteId) => (athleteId && BASK
 export function basketballStatIndex(gamelog, statKey) {
   const names = Array.isArray(gamelog?.names) ? gamelog.names : [];
   const labels = Array.isArray(gamelog?.labels) ? gamelog.labels : [];
-  const idx = names.findIndex((n) => GAMELOG_NAMES[statKey]?.includes(n));
-  return idx >= 0 ? idx : labels.indexOf(GAMELOG_LABEL[statKey]);
+  const dash = GAMELOG_DASH[statKey];
+  const wantNames = dash ? dash.names : (GAMELOG_NAMES[statKey] ?? []);
+  const idx = names.findIndex((n) => wantNames.includes(n));
+  if (idx >= 0) return idx;
+  const label = dash ? dash.label : GAMELOG_LABEL[statKey];
+  return label ? labels.indexOf(label) : -1;
+}
+
+/** Every NBA Trends prop payload for a game: every market first, the core eight if the feed refuses the list. */
+export async function fetchNbaTrendProps(oddsEventId, env, ctx) {
+  for (const markets of NBA_TREND_MARKET_PARAMS) {
+    const odds = await fetchAltProps('basketball_nba', oddsEventId, env, ctx, markets);
+    if (odds) return odds;
+  }
+  return null;
+}
+
+/**
+ * Per-game rows of one Trends stat from a basketball game log, most recent
+ * first (docs/prop-legs.js's seasonColumnRows shape): a plain column, the
+ * made count of a "made-attempted" column (threes, field goals, free
+ * throws), or a combined stat summed game by game from its parts — a game
+ * missing any part is left out rather than summed short.
+ */
+export function basketballStatRows(gamelog, statKey, { allSeasons = true } = {}) {
+  const parts = GAMELOG_COMBO[statKey];
+  if (parts) {
+    const partRows = parts.map((p) => basketballStatRows(gamelog, p, { allSeasons }));
+    if (partRows.some((rows) => !rows.length)) return [];
+    const byEvent = new Map(partRows[0].map((r) => [r.eventId, { ...r }]));
+    for (const rows of partRows.slice(1)) {
+      const seen = new Set();
+      for (const r of rows) {
+        const sum = byEvent.get(r.eventId);
+        if (sum) { sum.value += r.value; seen.add(r.eventId); }
+      }
+      for (const id of [...byEvent.keys()]) if (!seen.has(id)) byEvent.delete(id);
+    }
+    return [...byEvent.values()].sort((x, y) => y.date - x.date);
+  }
+  const parse = GAMELOG_DASH[statKey]
+    ? (v) => Number(String(v ?? '').split('-')[0])
+    : (v) => Number(String(v ?? '').replace(/,/g, ''));
+  return seasonColumnRows(gamelog, basketballStatIndex(gamelog, statKey), { parse, allSeasons });
 }
