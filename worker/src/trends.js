@@ -49,12 +49,12 @@ export const LOOKAHEAD_HOURS = 48;
  */
 export const MAX_GAMES_PER_TICK = 6;
 /**
- * The leagues Trends builds and shows. NBA only for now (2026-10-27
- * direction: every NBA player, every prop, the last 20 games, so a
- * near-100% hit rate is easy to find daily); the NFL and NHL readers stay
- * wired and tested and join this list when the direction says so.
+ * The leagues Trends builds and shows: NBA and NFL (2026-10-27 direction:
+ * "the trends to cover NFL and NBA only"). The NHL reader stays wired and
+ * tested and joins this list when the direction says so. NBA first: it is
+ * the league the tab opens on when both have rows.
  */
-export const TREND_ENABLED_SPORTS = ['basketball_nba'];
+export const TREND_ENABLED_SPORTS = ['basketball_nba', NFL_SPORT_KEY];
 export const MAX_PLAYERS_PER_GAME = 40;
 /** Rows with fewer logged games than this have no rate worth sorting on. */
 const MIN_GAMES = 3;
@@ -77,7 +77,11 @@ export const TREND_SPORTS = {
     // on injury news, and six hours keeps a Sunday row from quoting
     // Tuesday's number.
     lookaheadHours: 7 * 24,
-    ttlMinutes: 360,
+    // Twice a day: a week of games at 8 markets each is about 250 credits a
+    // build, and a Sunday line does not need refreshing four times a day
+    // on Tuesday. With the NBA's ~1,000 a day this keeps the month near
+    // 40,000 of the plan's 100,000.
+    ttlMinutes: 720,
     normalizeName: normalizeNflName,
     fetchOdds: (eventId, env, ctx) => fetchNflAltProps(eventId, env, ctx, Object.keys(NFL_TREND_MARKETS).join(',')),
     resolve: (name, abbrs, ctx) => resolveNflAthleteId(name, abbrs, ctx),
