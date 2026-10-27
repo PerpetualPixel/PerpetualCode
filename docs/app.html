@@ -36,7 +36,7 @@
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Syne:wght@600;700;800&family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
-<link rel="stylesheet" href="styles.css?v=1.209">
+<link rel="stylesheet" href="styles.css?v=1.210">
 </head>
 <body>
 
@@ -88,18 +88,23 @@
   </div>
 </header>
 
-<nav class="top-tabs" role="tablist" aria-label="Sections" hidden>
-  <button id="tabSlate" class="top-tab is-active" role="tab" aria-selected="true" aria-controls="slateView">
+<nav class="top-tabs" role="tablist" aria-label="Sections">
+  <!-- The old board tabs stay for their scripts but are hidden; the site is
+       Trends and the Pixel's Picks drawn from it. -->
+  <button id="tabSlate" class="top-tab" role="tab" aria-selected="false" aria-controls="slateView" hidden>
     Full Slate
   </button>
-  <button id="tabBoard" class="top-tab" role="tab" aria-selected="false" aria-controls="boardView">
-    Pixel's Picks
+  <button id="tabBoard" class="top-tab" role="tab" aria-selected="false" aria-controls="boardView" hidden>
+    Board
   </button>
-  <button id="tabPotd" class="top-tab" role="tab" aria-selected="false" aria-controls="potdView">
+  <button id="tabPotd" class="top-tab" role="tab" aria-selected="false" aria-controls="potdView" hidden>
     Play of the Day
   </button>
-  <button id="tabTrends" class="top-tab" role="tab" aria-selected="false" aria-controls="trendsView">
+  <button id="tabTrends" class="top-tab is-active" role="tab" aria-selected="true" aria-controls="trendsView">
     Trends
+  </button>
+  <button id="tabTrendPicks" class="top-tab" role="tab" aria-selected="false" aria-controls="trendPicksView">
+    Pixel's Picks
   </button>
 </nav>
 
@@ -314,6 +319,17 @@
      the player, the line, the best price, the hit rate and the last-N
      bars; a tap opens the game log. Built server-side (worker/src/
      trends.js), filtered and sorted here. -->
+<!-- Pixel's Picks: the Trends lines that landed in every one of the last
+     20 games and every time against today's opponent, researched before
+     they post (worker/src/trend-picks.js), with the running record and the
+     last 30 days underneath. -->
+<section id="trendPicksView" role="tabpanel" aria-labelledby="tabTrendPicks" hidden>
+  <div id="trendPicksStatus" class="status trends-status" role="status" aria-live="polite">Loading picks…</div>
+  <section id="trendPicksBody" class="trends-body" aria-live="polite"></section>
+  <h2 class="trend-picks-heading">Record</h2>
+  <section id="trendPicksHistory" class="trend-picks-history"></section>
+</section>
+
 <section id="trendsView" role="tabpanel" aria-labelledby="tabTrends" hidden>
   <!-- Trends: every player-prop line on the week's games with the player's
        real hit rate at that number — laid out the way the prop research
@@ -424,258 +440,62 @@
   </div>
   <div class="guide-body">
     <details open>
+      <summary>What Trends shows</summary>
+      <p>Every player prop a sportsbook is offering on today's and tomorrow's NBA and NFL games, with the player's real results at that number. Each card is one line: the player, the game, the stat and the number, the best price and the book offering it, the hit rate for the period you chose, and a bar for each game in that period. Green bars cleared the number, red bars missed it, grey bars landed on it exactly.</p>
+      <p>A game stays on the tab while it is being played and leaves once it is over. Tomorrow's games appear as soon as the books post lines on them, usually the evening before.</p>
+    </details>
+
+    <details>
+      <summary>Where the numbers come from</summary>
+      <p>Lines and prices come from the sportsbooks through The Odds API. Results come from ESPN's game logs. A hit rate counts the games in the period where the player reached the number. Last 20 means the player's last 20 games, including the end of last season early in the year. Head to head means every logged game against the opponent he plays today. The season periods count only that season.</p>
+      <p>Lines are refreshed three times a day for the NBA and twice a day for the NFL. The time at the top of the tab is when the lines were last pulled, so a price can have moved since.</p>
+    </details>
+
+    <details>
+      <summary>Period, Filters and Sort</summary>
+      <p>The three buttons at the bottom of the screen control the whole tab. Period picks which games the hit rate and the bars cover: head to head, last 5, last 10, last 20, or a season. Sort orders the cards by hit rate, by price, or by game time, in either direction. The tab opens sorted by hit rate with the 100% lines first.</p>
+      <p>Filters narrow the list. Markets limits it to the stats you want. Games limits it to certain games. Odds keeps only prices inside a range. Period Hit Rate hides every line under the rate you set, so 90% and up shows only the lines that almost always land. Side keeps overs or unders only. The search box matches players, teams and markets.</p>
+    </details>
+
+    <details>
+      <summary>Your sportsbooks</summary>
+      <p>Open Filters, then Sportsbooks, and tick the books you have an account with. From then on a line shows only if one of your books is offering it, at the best price among them, and the price on the card is one you can actually bet. With no book ticked, every book counts. Your choice is saved to your account, so it applies on every device you sign in from.</p>
+    </details>
+
+    <details>
+      <summary>The detail sheet</summary>
+      <p>Tap a card to open it. The tabs along the top show the hit rate in every period at once. Below them is the split of hits and misses, the average and the median for that period, the chart with the value of every game and the opponent under each bar, the game log with dates and finals, and every sportsbook's price on the line.</p>
+    </details>
+
+    <details>
+      <summary>Pixel's Picks</summary>
+      <p>Pixel's Picks are the Trends lines that pass a fixed test, then a research check. The test does not change: the line must have landed in every one of the player's last 20 games, at least ten of them logged, and in every game against today's opponent if he has played them before. One line per player and stat qualifies, the best paying of his 100% lines.</p>
+      <p>Each qualifying line is then researched before it can post. Is the player on limited minutes, measured as his last three games against his last twenty? Is he out, doubtful or questionable on the injury report? Is he a starter or a bench player? Does ESPN project a blowout that would sit him in the fourth quarter? Is a teammate out, which changes who gets the ball? Is there a defender or a scheme that hinders this line? If any answer goes against the line, it passes and the tab says why. If everything comes back favorable, it posts, and anything still worth knowing goes in the note under the pick.</p>
+      <p>Most days that is one pick or two. Some days it is none, and the tab says what qualified and what the research found. Every posted pick is graded against the player's final line the morning after and kept in the record at the bottom of the tab, one unit a pick, wins and losses alike.</p>
+    </details>
+
+    <details>
       <summary>American odds, in plain terms</summary>
-      <p>A minus number (like <strong>-150</strong>) is the favorite: bet $150
-      to win $100. A plus number (like <strong>+150</strong>) is the underdog:
-      bet $100 to win $150. The bigger the minus number, the more likely that
-      side is thought to win, and the less it pays out if it does.</p>
-    </details>
-
-    <details>
-      <summary>What "Confidence" means</summary>
-      <p>Every price gets graded 0–100. It isn't a guess at who wins, it's how
-      good the <em>price</em> is relative to what the betting market itself
-      thinks is fair, once you strip out the sportsbook's own fee. A higher
-      confidence means a bigger gap between what you're being offered and what
-      the market's own consensus says the bet is actually worth.</p>
-      <p>"Beats X% of the board" shows where that grade ranks against every
-      other bet available right now, useful when you're choosing between a
-      few decent-looking picks.</p>
-    </details>
-
-    <details>
-      <summary>No-vig fair value and expected value (EV)</summary>
-      <p>Sportsbooks build a small fee into every price, the "vig." Strip it
-      out across enough books and you get a consensus for what a bet is
-      actually worth, fee-free. If the best price you can find beats that fair
-      value, you have positive expected value: over many bets like this you'd
-      expect to come out ahead, even though any single bet can still lose.</p>
-    </details>
-
-    <details>
-      <summary>Why every pick shows several sportsbooks</summary>
-      <p>The same bet is often priced slightly differently at different books.
-      "Line shopping" (checking several and taking the best number) costs
-      nothing extra and is one of the most reliable ways to improve results
-      over time. Every pick shows a button per sportsbook; greyed-out ones
-      simply aren't offering that exact line.</p>
-    </details>
-
-    <details>
-      <summary>Suggested stake, and what "¼-Kelly" means</summary>
-      <p>The Kelly Criterion is a formula for how much of your bankroll to risk
-      based on how big the edge is. Betting the <em>full</em> amount it
-      suggests produces wild bankroll swings, so this app uses a quarter of
-      that number instead: smoother, and still scaled to the size of the
-      edge. A bigger suggested stake means a bigger edge, not just a bigger
-      favorite.</p>
-      <p>Set a bankroll and a unit size under the Bankroll button to see that
-      suggestion as a recommended number of units to bet instead of just a
-      percentage.</p>
-      <p>The tracked boards carry their own sizing, printed right on each
-      card: the algorithm scales every play's units to its confidence —
-      Play of the Day 3–5 units, Pixel's Picks and the Prop Play 1–2.5 —
-      and a pick that only made the board as a flagged fallback always
-      sits at its band's minimum. Units, not dollars, since your unit is
-      yours; the Tracking Dashboard's own dollar math counts 1 unit as $25.</p>
-    </details>
-
-    <details>
-      <summary>Bankroll and units</summary>
-      <p>A "unit" is a fixed slice of your bankroll (usually 1-2%) used as
-      your basic betting increment instead of raw dollars. Betting "1.5 units"
-      instead of "$30" keeps stakes proportional as your bankroll grows or
-      shrinks, and it's how most bettors track their own results.</p>
-    </details>
-
-    <details>
-      <summary>Closing Line Value (CLV)</summary>
-      <p>The single best long-run signal that you're actually finding good
-      bets, separate from whether any one of them won: did you get a better
-      price than the market eventually settled on? The Tracking Dashboard's
-      server-tracked picks show an Avg CLV figure for exactly this.</p>
-    </details>
-
-    <details>
-      <summary>The three tabs</summary>
-      <p><strong>Full Slate</strong> shows every game in a league with a price
-      on it, nothing hidden by odds or confidence, with a glowing ring
-      around whichever side the algorithm leans toward on each market. Tap
-      any price to see the case for it, and the case against it.
-      <strong>Pixel's Picks</strong> is fully automatic: at 2am ET the slate
-      is graded once and built into two-leg tickets of low-level lines,
-      −150 to +150 together — with a high-conviction straight play filling a
-      slot only when nothing pairs. The best play becomes the Play of the
-      Day and these are the next 5, never sharing a game with it, posted all
-      at once and never changed after.
-      <strong>Play of the Day</strong> is that best play — one play
-      for the whole day, the same for everyone, with a full written
-      breakdown instead of the compact card. It posts every day: tomorrow's
-      by 10pm ET the night before (so from then the tab shows today's and
-      tomorrow's, each dated), and on a thin slate the best play the day
-      offers, flagged and sized at the minimum.</p>
-    </details>
-
-    <!--
-      IMPORTANT: this block documents the actual pick pipeline in
-      docs/engine.js (scoreCandidate/analyze/topPicks), docs/qualitative.js,
-      worker/src/tracking.js (runTop5Batch), and worker/src/analysis.js.
-      Keep it in sync any time that pipeline changes — a stale explanation
-      here is worse than none, since a reader has no way to tell it's out of
-      date.
-    -->
-    <details>
-      <summary>How picks are made, step by step</summary>
-      <p><strong>1. Every priced game becomes a candidate.</strong> For each
-      league, every market (moneyline, spread, total) on every live
-      sportsbook quote is pulled in, nothing is excluded up front by odds or
-      "gut feel." Each book's own price is stripped of its built-in fee
-      (de-vigged) to get that book's honest read, using the power method:
-      books load their margin onto the longshot, not evenly, so a proportional
-      rescale would hand every underdog a point or two of probability it
-      doesn't have. Then a consensus fair value is built from every book
-      <em>except</em> the one offering the best price, and where the sharp
-      market (Pinnacle) prices the game, its line carries 70% of that
-      consensus. Excluding the best price keeps it from inflating its own
-      benchmark, and anchoring to the sharp line keeps "better than the slow
-      books" from passing as "better than the truth." The best price itself
-      is always one from a book you can actually bet at.</p>
-      <p><strong>2. Each candidate is graded 0–100.</strong> The best available
-      price is compared against that consensus to get its real expected value
-      (EV), and the grade is that edge <em>multiplied</em> by a confidence
-      factor: how many books agree (35% of the confidence), how tightly they
-      agree (25%), whether a sharp anchor set the consensus (15%), how much
-      better the best price is than the field average, "line shopping" gain
-      (15%), and how fresh the quote is relative to kickoff (10%). Confidence
-      scales an edge; it never substitutes for one, so a zero-EV bet with a
-      tidy number can't grade above the low 30s. For
-      team sports only (never MMA, see below), a small, capped adjustment
-      from recent form, head-to-head history, and injury news can nudge the
-      grade up to about 8 points either way; it can sharpen a close call but
-      can't manufacture an edge that isn't there in the price.</p>
-      <p><strong>3. Long-shot and heavy-favorite prices are filtered out.</strong>
-      Only prices between −250 and +150 are considered at all. Anything more
-      extreme is excluded regardless of how good its grade looks, since the
-      Kelly math and win-rate assumptions this app runs on stop being
-      reliable that far from even money. A pick also has to clear a minimum
-      real edge (at least 1.5% EV) and a minimum suggested stake (a
-      rounding-error-sized edge doesn't count even if the score looks
-      decent). Scoring well on liquidity and freshness alone isn't enough;
-      the price itself has to actually be worth taking.</p>
-      <p><strong>4. Only today's games are eligible.</strong> A team-sport
-      game has to be happening today (same ET calendar date) to be
-      considered. A real edge on an NFL line for a game months out never
-      gets to compete with tonight's board. MMA gets its own version of this
-      window (today, or before 6am ET the next morning, since a late main
-      event can run past midnight) since fight cards don't follow the same
-      daily schedule as league games.</p>
-      <p><strong>5. The day's boards are drawn once, at 2am ET, in
-      order.</strong> The slate is graded and paired into two-leg tickets
-      of low-level lines, −150 to +150 together, with a high-conviction
-      straight play filling in only when nothing pairs. The best play becomes the Play of the Day. Pixel's
-      Picks are the next 5, drawn after it and never sharing its games. The
-      Prop Play and the Ladder
-      rung post in the same pass. Every pick has to beat the market's
-      no-vig line — anchored to the sharp market where Pinnacle prices the
-      game — by the edge floor. On a quiet slate where fewer than 5 edges
-      clear the full sharp standard (price band and confidence floor), the
-      remaining slots fill with the best-read plays inside the band — first
-      with the edge floor off, then with the conviction floor lowered to a
-      coin flip — each explicitly flagged "Fallback" with its reason and
-      sized at the minimum. The band itself never relaxes. Every posted pick
-      shows in the Tracking Dashboard's day-by-day history; the flag is
-      transparency about how the pick was chosen, not an exclusion.</p>
-      <p><strong>6. The write-up explains the pick that was already made. It
-      never re-decides.</strong> Once a side is chosen by the math above, the
-      AI matchup analysis is told which side that is and asked to build the
-      strongest honest case <em>for</em> it from real facts (form,
-      head-to-head, injuries), plus genuine risks specific to that pick. It
-      is never asked to independently guess who's favored, so it can't
-      contradict the pick shown on the card. MMA gets no qualitative scoring
-      at all (see step 2); Sherdog/UFC.com research is shown for context,
-      but an MMA pick, underdog or favorite, is chosen purely on the price
-      math in steps 1-3, and the "Market &amp; Price Case" section always
-      stays visible for MMA specifically so that reasoning is never hidden
-      behind the AI's fighter-facts write-up.</p>
-    </details>
-
-    <details>
-      <summary>Trends</summary>
-      <p>Every player-prop line on this week's NFL games — passing, rushing
-      and receiving yards, receptions, completions, attempts, carries and
-      passing touchdowns — with the player's real hit rate at that exact
-      number from this season's game log. (NBA and NHL follow.) Pick a
-      window (last 5, 10 or 20 games, or the season),
-      Over or Under, a stat and a minimum hit rate, and the lines a player
-      clears most often float to the top — each row shows the best price you
-      can bet, the hit rate, and a bar per game with the line drawn across
-      it. Tap the arrow for the game log and every window's rate. Lines are
-      refreshed every few hours; the hit rate is history, not a prediction,
-      so read the average beside it.</p>
-    </details>
-    <details>
-      <summary>Pixel's Picks' sharp standard</summary>
-      <p>Pixel's Picks are up to 5 plays, drawn once a day at 2am ET — after
-      the Play of the Day takes the best one, and never sharing a game with
-      it. A play is a two-leg ticket of low-level lines — each leg −400 to
-      −120: a player-prop number the player has cleared in 75% of games this
-      season and 80% of the last five, or a side the market reads at 72%+ —
-      priced −150 to +150 together and more likely than not to both land;
-      two players' props from one game may pair as a same game parlay. When
-      nothing pairs, a high-conviction leg (60%+) standing inside the band
-      on its own posts as a straight play. Game legs come from NFL, NHL and
-      MMA; prop legs from NFL, NBA and NHL lines, current season only (topped
-      up from the end of last season in a league's first weeks). Parlays are
-      ranked locks first — the likeliest pair inside the band — and a board
-      mixes leagues and keeps a slot for a straight play. Every
-      game leg is graded 50 or higher with positive EV and a real Kelly edge
-      at a book you can bet. On a thin day the open slots fill with flagged
-      fallback plays (the edge floor off, then the conviction floor lowered),
-      still inside the band and sized at the minimum. Records carry
-      picks flagged "Outside
-      standard criteria" — still real, gradeable bets, just not sharp
-      enough to call locks without saying so. All 5 are tracked and count
-      toward the Tracking Dashboard's win-rate math regardless of the
-      flag. Once posted, the board never changes, regardless of how the
-      market moves afterward.</p>
+      <p>A minus number such as -150 means bet 150 to win 100: the book thinks the line is more likely than not to land. A plus number such as +120 means bet 100 to win 120: the book thinks it is less likely than not. A 100% hit rate at -300 is a line the market already expects to land; a 100% hit rate at -110 is the one worth a closer look.</p>
     </details>
   </div>
 </aside>
 
-<aside id="aboutPanel" class="history" aria-label="About Pixel Pick" hidden>
+<aside id="aboutPanel" class="history" aria-label="About Perpetual Picks" hidden>
   <div class="history-head">
     <h2>About</h2>
     <button id="aboutClose" class="icon-btn overlay-close-btn" aria-label="Close about">✕</button>
   </div>
   <div class="guide-body">
     <p class="about-intro">
-      Hey — I'm Perpetual Pixel. IT technician by day, sports gambler
-      pretty much every hour I'm not doing that. I built this because I was
-      sick of the same thing you probably are: group chats full of "hot
-      picks" from guys who never once show you their real record, and paid
-      tout services that vanish the moment a cold streak hits. So I built
-      the tool I actually wanted for myself — something that runs the same
-      cold, no-vig math a sharp bettor does by hand, on every book, for
-      every game, and then tracks its own results in the open. Every pick,
-      win or lose, stays on the board. Nothing gets quietly deleted on a
-      bad week.
+      I'm Perpetual Pixel. I work in IT by day and I bet on sports most of the hours I'm not working. I built this because the research I wanted to do before a bet took too long by hand: pull up a player's last twenty games, check how often he cleared a number, check what he did against tonight's opponent, then find which book has the best price. Perpetual Picks does that for every player prop on the board, every day, and shows the work.
     </p>
     <p class="about-intro">
-      I'm not selling a system, and I'm not promising you'll get rich. I'm
-      still putting my own money on these same numbers. If this saves you
-      from a bad bet, or helps you find a real edge you'd have missed
-      otherwise, that's the whole point — I built the thing I wanted to
-      exist, and I figured other people chasing an honest edge could use it
-      too.
+      Trends is the whole site. Every line a sportsbook is offering on today's and tomorrow's NBA and NFL games, with the player's real hit rate at that number over the period you choose, sorted so the lines that always land come first. Pixel's Picks are the lines that meet one fixed test, a hundred percent over the last twenty and against today's opponent, and then survive a research check on minutes, injuries, role, blowout risk and matchup. They are graded the morning after and the record stays up, wins and losses alike.
     </p>
-    <p>Under the hood: Pixel Pick prices every game on the board against
-    the market's own no-vig consensus and surfaces the real edges — Full
-    Slate for every market on every game, Play of the Day for the slate's
-    single #1 pick, and Pixel's Picks for the next 5 — all drawn in one
-    ranked pass at 2am ET, posted daily without exception.
-    Every tracked pick is graded against its actual result, win or lose, so
-    the Tracking Dashboard reflects real performance, not a marketing
-    number.</p>
+    <p>
+      Nothing here predicts a game. It counts what happened, puts the price next to it, and tells you what to check before you bet. That is the tool I wanted, so I made it and kept it open.
+    </p>
     <div class="report-bug-section">
       <button type="button" id="reportBugToggle" class="action-btn" aria-expanded="false" aria-controls="reportBugForm">
         Report a Bug / Suggestion
@@ -1111,6 +931,6 @@
   </div>
 </aside>
 
-<script type="module" src="app.js?v=1.209"></script>
+<script type="module" src="app.js?v=1.210"></script>
 </body>
 </html>
