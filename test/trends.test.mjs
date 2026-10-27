@@ -200,11 +200,14 @@ test('a big slate builds a few games per tick, merges into what is stored, and d
   assert.equal(trimmed.games, 6);
   assert.equal(trimmed.rows.length, 18);
   assert.ok(trimmed.rows.every((r) => r.eventId !== 'g0' && r.eventId !== 'g1'));
-  // Past the TTL the stale games rebuild (a third game has tipped off by then), oldest stamp first.
-  const rebuilt = await buildLeagueChunk('basketball_nba', games, env, ctx, NOW + (TRENDS_TTL_MINUTES + 1) * 60e3, { deps });
-  assert.equal(rebuilt.games, 5);
-  assert.equal(rebuilt.rows.length, 15);
-  assert.equal(rebuilt.stamps.g3, NOW + (TRENDS_TTL_MINUTES + 1) * 60e3);
+  // Past the league's TTL the stale games rebuild (eight hours on, every game has tipped off but the chunk still refreshes what is left), oldest stamp first.
+  const nbaTtl = TREND_SPORTS.basketball_nba.ttlMinutes;
+  const later = games.map((g, i) => ({ ...g, commence_time: new Date(NOW + (nbaTtl + 60 + i) * 60e3).toISOString() }));
+  const rebuilt = await buildLeagueChunk('basketball_nba', later, env, ctx, NOW + (nbaTtl + 1) * 60e3, { deps });
+  assert.equal(rebuilt.games, 8, 'every game is live again at its new time');
+  assert.equal(rebuilt.rows.length, 24, 'six games rebuilt beside the two still-fresh ones');
+  assert.equal(rebuilt.stamps.g0, NOW + (nbaTtl + 1) * 60e3);
+  assert.equal(rebuilt.pending, 0);
 });
 
 test('runTrendsBuild builds one league\'s chunk per tick, the league checked longest ago first, and leaves fresh ones alone', async () => {
@@ -218,13 +221,15 @@ test('runTrendsBuild builds one league\'s chunk per tick, the league checked lon
   assert.equal(first.pending, 0);
   const again = await runTrendsBuild(env, ctx, NOW + 10 * 60e3, opts);
   assert.equal(again.skipped, true);
-  const later = await runTrendsBuild(env, ctx, NOW + (TRENDS_TTL_MINUTES + 1) * 60e3, opts);
+  const nbaTtl = TREND_SPORTS.basketball_nba.ttlMinutes;
+  const laterGame = { ...nbaGame, commence_time: new Date(NOW + (nbaTtl + 120) * 60e3).toISOString() };
+  const later = await runTrendsBuild(env, ctx, NOW + (nbaTtl + 1) * 60e3, { ...opts, fetchFullSlate: async () => [laterGame] });
   assert.equal(later.skipped, false);
   assert.equal(later.sportKey, 'basketball_nba');
   // Two leagues with work: each tick takes the one checked longest ago, so they alternate.
-  const tomorrow = new Date(NOW + 40 * 3.6e6).toISOString();
+  const t0 = NOW + 2 * (nbaTtl + 1) * 60e3;
+  const tomorrow = new Date(t0 + 26 * 3.6e6).toISOString();
   const two = { ...opts, fetchFullSlate: async () => [{ ...nbaGame, id: 'n2', commence_time: tomorrow }, { ...nbaGame, id: 'h1', sport_key: 'icehockey_nhl', commence_time: tomorrow }], deps: { basketball_nba: deps, icehockey_nhl: deps } };
-  const t0 = NOW + 2 * (TRENDS_TTL_MINUTES + 1) * 60e3;
   const a = await runTrendsBuild(env, ctx, t0, two);
   const b = await runTrendsBuild(env, ctx, t0 + 15 * 60e3, two);
   assert.deepEqual([a.sportKey, b.sportKey].sort(), ['basketball_nba', 'icehockey_nhl']);
@@ -267,4 +272,22 @@ test('an unreachable game log names the fetch failure, so a subrequest limit rea
   const payload = await buildTrends('basketball_nba', [nbaGame], env, ctx, NOW, { ...deps, gamelog: async () => null, fetchDiag });
   assert.equal(payload.rows.length, 0);
   assert.ok(payload.diag.some((l) => /game log unreachable \(Too many subrequests/.test(l)), payload.diag.join('\n'));
+});
+
+test('the build keeps its hands off the odds credits the boards need: a spent quota or a refused call holds it', async () => {
+  const { trendsCreditHold, TRENDS_CREDIT_FLOOR } = await import('../worker/src/trends.js');
+  const { env } = makeKvStore();
+  assert.equal(await trendsCreditHold(env, NOW), null, 'nothing recorded yet: build');
+  await env.POTD_KV.put('odds:diag', JSON.stringify({ at: NOW - 60e3, ok: false, status: 401, detail: 'OUT_OF_USAGE_CREDITS' }));
+  assert.match(await trendsCreditHold(env, NOW), /refused its last call \(HTTP 401\)/);
+  assert.equal(await trendsCreditHold(env, NOW + 2 * 3600e3), null, 'an hour on, try again');
+  await env.POTD_KV.put('odds:diag', JSON.stringify({ at: NOW, ok: true, status: 200, remaining: String(TRENDS_CREDIT_FLOOR - 1) }));
+  assert.match(await trendsCreditHold(env, NOW), /odds credits left, under the/);
+  await env.POTD_KV.put('odds:diag', JSON.stringify({ at: NOW, ok: true, status: 200, remaining: '48000' }));
+  assert.equal(await trendsCreditHold(env, NOW), null);
+  const opts = { fetchFullSlate: async () => [nbaGame], deps: { basketball_nba: deps }, enabled: ['basketball_nba'] };
+  await env.POTD_KV.put('odds:diag', JSON.stringify({ at: NOW, ok: true, status: 200, remaining: '10' }));
+  assert.equal((await runTrendsBuild(env, ctx, NOW, opts)).skipped, true);
+  assert.equal(TREND_SPORTS.basketball_nba.ttlMinutes, 480);
+  assert.equal(TREND_SPORTS.basketball_nba.lookaheadHours, 30);
 });

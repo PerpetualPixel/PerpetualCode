@@ -17,6 +17,7 @@
 import { bookIdFor } from '../../docs/engine.js';
 import { espnAbbr } from '../../docs/team-logos.js';
 import { seasonColumnRows } from '../../docs/prop-legs.js';
+import { ODDS_DIAG_KEY } from './odds.js';
 import { extractTrendLines, trendRowsFor, sortTrends } from '../../docs/trends.js';
 import { normalizeName as normalizeNflName } from '../../docs/nfl-props.js';
 import { normalizeName as normalizeNbaName } from '../../docs/wnba-props.js';
@@ -92,6 +93,11 @@ export const TREND_SPORTS = {
   },
   [NBA_KEY]: {
     title: 'NBA',
+    // Today's and tomorrow's games, rebuilt three times a day: 23 markets
+    // a game is 23 credits a game per build, and the month's credits ran
+    // out on 2026-10-25 building every three hours.
+    lookaheadHours: 30,
+    ttlMinutes: 480,
     markets: NBA_TREND_MARKETS,
     normalizeName: normalizeNbaName,
     fetchOdds: (eventId, env, ctx) => fetchNbaTrendProps(eventId, env, ctx),
@@ -288,7 +294,28 @@ export async function buildLeagueChunk(sportKey, events, env, ctx, now = Date.no
  * hour instead of spending them all at once. `fetchFullSlate` supplies the
  * day's events (already fetched by the boards' own batch).
  */
+/**
+ * Odds API credits the Trends build leaves for the boards: a build is
+ * skipped while the feed's last call reported fewer remaining, or refused
+ * the call outright within the last hour (a spent quota, a bad key). The
+ * boards post from one slate fetch a tick; Trends is the big spender.
+ */
+export const TRENDS_CREDIT_FLOOR = 1500;
+
+/** Why the build should not spend right now, or null. */
+export async function trendsCreditHold(env, now = Date.now()) {
+  const raw = await env.POTD_KV.get(ODDS_DIAG_KEY).catch(() => null);
+  if (!raw) return null;
+  const diag = JSON.parse(raw);
+  if (diag.ok === false && now - (diag.at ?? 0) < 60 * 60e3) return `the odds feed refused its last call (HTTP ${diag.status})`;
+  const remaining = Number(diag.remaining);
+  if (diag.ok && Number.isFinite(remaining) && remaining < TRENDS_CREDIT_FLOOR) return `${remaining} odds credits left, under the ${TRENDS_CREDIT_FLOOR} the boards keep`;
+  return null;
+}
+
 export async function runTrendsBuild(env, ctx, now = Date.now(), { fetchFullSlate = async () => [], deps, enabled = TREND_ENABLED_SPORTS } = {}) {
+  const hold = await trendsCreditHold(env, now);
+  if (hold) return { skipped: true, reason: hold };
   // The league checked longest ago goes first, so three leagues share the
   // ticks evenly; one chunk per tick keeps every tick inside its budget.
   const stored = await Promise.all(enabled.map((k) => getTrends(env, k)));

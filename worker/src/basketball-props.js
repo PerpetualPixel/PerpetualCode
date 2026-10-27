@@ -61,7 +61,7 @@ const ROSTER_TTL = 3600 * 6;
 const GAMELOG_TTL = 3600 * 3;
 const SCHEDULE_TTL = 3600 * 6;
 const SUMMARY_TTL = 900;
-const ODDS_TTL = 3600;
+const ODDS_TTL = 3600 * 3; // prop lines move slowly; the draws are at 2am and 8pm ET, and every refetch is one credit per market
 
 const siteUrl = (sportKey) => `${ESPN_BASE}/site/v2/sports/basketball/${BASKETBALL_SPORTS[sportKey].espn}`;
 const gamelogUrl = (sportKey, athleteId) => `${ESPN_BASE}/common/v3/sports/basketball/${BASKETBALL_SPORTS[sportKey].espn}/athletes/${athleteId}/gamelog`;

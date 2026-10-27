@@ -8721,6 +8721,7 @@ const trendsState = {
   search: '',
   data: null,
   available: [],
+  feed: null,       // the odds feed's last call (worker/src/odds.js's recordOddsDiag)
   sheet: null,     // { type, rowId? }
   detailPeriod: null,
   betMore: false,
@@ -8752,6 +8753,7 @@ async function loadTrends({ force = false } = {}) {
     const body = await res.json();
     trendsState.data = body.trends ?? null;
     trendsState.available = body.available ?? [];
+    trendsState.feed = body.feed ?? null;
     trendsState.sport = trendsState.data?.sportKey ?? trendsState.sport;
     renderTrendLeagues();
     renderTrends();
@@ -8868,10 +8870,18 @@ function renderTrends() {
   const n = activeFilterCount();
   el.trendsFilterCount.hidden = n === 0;
   el.trendsFilterCount.textContent = String(n);
-  if (!data || !data.builtAt) {
-    el.trendsStatus.textContent = data?.lastError
-      ? `The last Trends build failed — ${data.lastError}`
-      : 'No lines scanned yet for this league — the worker builds Trends on its next 15-minute tick.';
+  // The odds feed refusing calls (a spent monthly quota, a bad key) is
+  // the one reason this tab can go dark with the build itself healthy —
+  // it says so, in the feed's own words, rather than "no lines yet".
+  const feed = trendsState.feed;
+  const feedDown = feed && feed.ok === false
+    ? `The odds feed refused its last call (HTTP ${esc(String(feed.status))}${feed.detail ? `: ${esc(String(feed.detail).replace(/[{}"]/g, ' ').slice(0, 120))}` : ''}). Nothing new builds until it answers.`
+    : null;
+  if (!data || !data.builtAt || (feedDown && !data.rows?.length)) {
+    el.trendsStatus.textContent = feedDown
+      ?? (data?.lastError
+        ? `The last Trends build failed — ${data.lastError}`
+        : 'No lines scanned yet for this league — the worker builds Trends on its next 15-minute tick.');
     el.trendsBody.innerHTML = '';
     return;
   }
