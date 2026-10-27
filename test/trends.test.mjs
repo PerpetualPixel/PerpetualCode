@@ -281,7 +281,7 @@ test('the build keeps its hands off the odds credits the boards need: a spent qu
   assert.equal(await trendsCreditHold(env, NOW), null, 'nothing recorded yet: build');
   await env.POTD_KV.put('odds:diag', JSON.stringify({ at: NOW - 60e3, ok: false, status: 401, detail: 'OUT_OF_USAGE_CREDITS' }));
   assert.match(await trendsCreditHold(env, NOW), /refused its last call \(HTTP 401\)/);
-  assert.equal(await trendsCreditHold(env, NOW + 2 * 3600e3), null, 'an hour on, try again');
+  assert.equal(await trendsCreditHold(env, NOW + 15 * 60e3), null, 'a tick on, try again');
   await env.POTD_KV.put('odds:diag', JSON.stringify({ at: NOW, ok: true, status: 200, remaining: String(TRENDS_CREDIT_FLOOR - 1) }));
   assert.match(await trendsCreditHold(env, NOW), /odds credits left, under the/);
   await env.POTD_KV.put('odds:diag', JSON.stringify({ at: NOW, ok: true, status: 200, remaining: '48000' }));

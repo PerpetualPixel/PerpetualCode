@@ -8955,7 +8955,7 @@ function renderTrends() {
   // it says so, in the feed's own words, rather than "no lines yet".
   const feed = trendsState.feed;
   const feedDown = feed && feed.ok === false
-    ? `The odds feed refused its last call (HTTP ${esc(String(feed.status))}${feed.detail ? `: ${esc(String(feed.detail).replace(/[{}"]/g, ' ').slice(0, 120))}` : ''}). Nothing new builds until it answers.`
+    ? `The odds feed refused its last call at ${esc(trendTimeFmt.format(new Date(feed.at ?? Date.now())))} (HTTP ${esc(String(feed.status))}${feed.detail ? `: ${esc(String(feed.detail).replace(/[{}"]/g, ' ').slice(0, 120))}` : ''}). The build tries again every 15 minutes; a new key is picked up on the next try.`
     : null;
   if (!data || !data.builtAt || (feedDown && !data.rows?.length)) {
     el.trendsStatus.textContent = feedDown
