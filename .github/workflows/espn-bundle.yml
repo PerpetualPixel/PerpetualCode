@@ -1,0 +1,38 @@
+# The ESPN half of the Trends build, from a runner ESPN answers: rosters
+# and game logs for every team playing today or tomorrow, written into
+# the worker's KV (scripts/espn-bundle.mjs; worker/src/espn-bundle.js
+# reads them). ESPN refuses the worker itself, so without this the
+# Trends tab has games and no player lines.
+#
+# Three times a day: after the West Coast games are final (06:15 ET), at
+# midday for roster and injury changes, and before the evening slate.
+# Needs the same two secrets as the deploy workflow; the token's
+# "Edit Cloudflare Workers" template carries KV write.
+name: ESPN bundle
+
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: '15 10,16,21 * * *'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: espn-bundle
+  cancel-in-progress: false
+
+jobs:
+  bundle:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Pull ESPN and write KV
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+        run: node scripts/espn-bundle.mjs

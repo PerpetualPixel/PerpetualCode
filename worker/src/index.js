@@ -56,6 +56,7 @@ import { runPotdDaily, runPotdClvSnapshot, runPotdGrading, backfillPotdAnalysis,
 import { runLadderDaily, runLadderGrading, getLadder, getLadderHistory } from './ladder.js';
 import { BUILD_INFO } from '../../docs/version.js';
 import { runTrendsBuild, getTrends, buildLeagueChunk, TREND_ENABLED_SPORTS } from './trends.js';
+import { loadBundleIndex } from './espn-bundle.js';
 import { runTrendPicksDaily, runTrendPicksGrading, getTrendPicks } from './trend-picks.js';
 
 /** The Trends build's own cron (must match wrangler.toml's second trigger exactly — Cloudflare hands the string back as written). */
@@ -1833,8 +1834,12 @@ export default {
       // means it found nothing, and this says why.
       // `odds` is the last Odds API call's outcome (odds.js's recordOddsDiag):
       // a failing key or a spent quota shows here as its status and body.
+      // `espn` is what the runner's ESPN bundle last wrote per league
+      // (espn-bundle.js): null means the "ESPN bundle" workflow has not
+      // run, and the Trends build has no players to match.
       const oddsDiagRaw = await env.POTD_KV.get(ODDS_DIAG_KEY).catch(() => null);
-      return json({ ...BUILD_INFO, worker: env.CF_VERSION_METADATA?.id ?? null, mmaSchedule: mmaScheduleDiag, odds: oddsDiagRaw ? JSON.parse(oddsDiagRaw) : null }, { headers: cors });
+      const espn = Object.fromEntries(await Promise.all(TREND_ENABLED_SPORTS.map(async (k) => [k, await loadBundleIndex(env, k)])));
+      return json({ ...BUILD_INFO, worker: env.CF_VERSION_METADATA?.id ?? null, mmaSchedule: mmaScheduleDiag, odds: oddsDiagRaw ? JSON.parse(oddsDiagRaw) : null, espn }, { headers: cors });
     }
 
     if (pathname === '/algo-health' && request.method === 'GET') {
