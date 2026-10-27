@@ -69,7 +69,7 @@ export const PARLAY_TARGET = 100;
 /** A parlay leg's own price: heavy favourites are what make a +100 ticket. */
 export const LEG_RANGE = [-450, 150];
 /** The stored record's shape; an older day is drawn again. */
-export const RECORD_VERSION = 5;
+export const RECORD_VERSION = 6;
 /**
  * PrizePicks is a pick'em app, not a book: no single picks, two to six
  * projections a lineup, different players from at least two teams, paid
@@ -495,20 +495,34 @@ export async function runTrendPicksDaily(env, ctx, now = Date.now(), { deps = {}
   // ticket, so a line priced -1100 everywhere is not worth a research
   // call: the day's calls go to the lines that could post.
   const usable = groups.filter((g) => g.lines.some((l) => l.quotes.some((q) => inRange(q.american, LEG_RANGE))));
+  // The research is the player's (minutes, health, role, blowout,
+  // matchup), so it runs once per player and every one of his
+  // qualifying lines rides on it: his points line at one book and his
+  // points-and-rebounds line at another are both there for the ticket
+  // builder, which never puts the same player on a ticket twice.
   const research = new Map();
+  const byPlayer = new Map();
   const passed = [];
   const posted = [];
   for (const g of usable.slice(0, PICK_MAX_RESEARCHED)) {
-    if (posted.some((p) => fold(p.playerName) === fold(g.playerName))) continue;
-    const r = await researchPick(g.best, env, ctx, { now, deps });
+    const who = fold(g.playerName);
+    let r = byPlayer.get(who);
+    if (!r) {
+      r = await researchPick(g.best, env, ctx, { now, deps });
+      byPlayer.set(who, r);
+      if (r.verdict !== 'post') passed.push({ selection: g.best.selection, reasons: r.flags.filter((f) => f.startsWith('pass:')).map((f) => f.slice(6)) });
+    }
     if (r.verdict === 'post') { research.set(g.key, r); posted.push(g); }
-    else passed.push({ selection: g.best.selection, reasons: r.flags.filter((f) => f.startsWith('pass:')).map((f) => f.slice(6)) });
   }
   const bets = buildBets(posted).map((b, i) => betRecord(b, i, dateKey, research, now));
-  // A line that passed research but is on no ticket: the day's two bets
-  // were already full, or no listed book priced it in range.
+  // A player who passed research but is on no ticket: the day's two
+  // bets were already full, or no listed book priced him in range.
   const betLegs = new Set(bets.flatMap((b) => b.legs.map((l) => fold(l.playerName))));
-  const unused = posted.filter((g) => !betLegs.has(fold(g.playerName))).map((g) => ({ selection: g.best.selection, reason: bets.length >= PICK_MAX_BETS ? 'two bets a day' : 'no ticket at a usable price' }));
+  const unused = [];
+  for (const g of posted) {
+    if (betLegs.has(fold(g.playerName)) || unused.some((u) => fold(u.player) === fold(g.playerName))) continue;
+    unused.push({ player: g.playerName, selection: g.best.selection, reason: bets.length >= PICK_MAX_BETS ? 'two bets a day' : 'no ticket at a usable price' });
+  }
   const record = {
     version: RECORD_VERSION,
     date: dateKey,

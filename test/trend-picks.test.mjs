@@ -192,7 +192,7 @@ test('the day researches the ranked groups, builds the tickets from the ones tha
   assert.equal(r.posted, 2);
   assert.equal(r.considered, 5);
   const rec = JSON.parse(store.get('trendpicks:2026-10-27'));
-  assert.equal(rec.version, 5);
+  assert.equal(rec.version, 6);
   assert.equal(rec.usable, 4, 'a line priced -1100 everywhere can sit on no ticket');
   assert.ok(!researched.includes('Luka Doncic'), 'and is not worth a research call');
   // Every pair prices past +150, so the top two ride straight: Miller then Ball; Bridges passes on minutes; Sexton is left over.
@@ -200,7 +200,21 @@ test('the day researches the ranked groups, builds the tickets from the ones tha
   assert.equal(rec.bets[0].link, 'https://draftkings.example/d', 'a straight carries the line\'s deep link');
   assert.deepEqual(rec.passed.map((p) => p.selection), ['Miles Bridges Over 9.5 Pts']);
   assert.match(rec.passed[0].reasons[0], /minutes are down/);
-  assert.deepEqual(rec.unused, [{ selection: 'Collin Sexton Over 9.5 Pts', reason: 'two bets a day' }], 'a line that passed but did not fit is listed, not lost');
+  assert.deepEqual(rec.unused, [{ player: 'Collin Sexton', selection: 'Collin Sexton Over 9.5 Pts', reason: 'two bets a day' }], 'a line that passed but did not fit is listed, not lost');
+
+  // A player's other qualifying lines ride on his one research call: Holiday's points-and-rebounds line is PrizePicks only, his points line is DraftKings -261, and with Williams at DraftKings -348 the two make a -128 ticket.
+  const multi = makeKvStore();
+  const calls = [];
+  const mrows = [
+    row('h1', { player: 'Jrue Holiday', american: -137, books: { prizepicks: -137 }, statKey: 'pr', team: 'POR', eventId: 'e-9' }),
+    row('h2', { player: 'Jrue Holiday', american: -261, books: { draftkings: -261 }, statKey: 'points', point: 7.5, team: 'POR', eventId: 'e-9' }),
+    row('w1', { player: 'Robert Williams', american: -348, books: { draftkings: -348 }, statKey: 'rebounds', point: 4.5, team: 'POR', eventId: 'e-9' }),
+  ];
+  await runTrendPicksDaily(multi.env, ctx, NOW, { deps: { ...deps, rowsFor: async () => mrows, minutes: async (r) => { calls.push(r.playerName); return Array(20).fill(32); } }, enabled: ['basketball_nba'] });
+  const mrec = JSON.parse(multi.store.get('trendpicks:2026-10-27'));
+  assert.deepEqual(calls, ['Jrue Holiday', 'Robert Williams'], 'one research call per player');
+  assert.deepEqual(mrec.bets.map((b) => [b.type, b.book, b.american, b.legs.map((l) => l.selection)]), [['parlay', 'DraftKings', -128, ['Jrue Holiday Over 7.5 Pts', 'Robert Williams Over 4.5 Pts']]]);
+  assert.deepEqual(mrec.unused, []);
   assert.equal(rec.final, true);
   assert.equal(rec.bets[0].status, 'pending');
   assert.equal((await runTrendPicksDaily(env, ctx, NOW + 60e3, { deps, enabled: ['basketball_nba'] })).reason, 'posted');
