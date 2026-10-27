@@ -159,6 +159,7 @@ const gamelog = {
 const nbaGame = { id: 'n1', sport_key: 'basketball_nba', commence_time: new Date(NOW + 5 * 3.6e6).toISOString(), home_team: 'New York Knicks', away_team: 'Boston Celtics' };
 const KNICKS = espnAbbr('basketball_nba', 'New York Knicks');
 const deps = {
+  probe: async () => 'espn probe: stubbed',
   fetchOdds: async () => odds,
   resolve: async (name, abbrs) => (abbrs[0] === KNICKS ? '3934672' : null),
   gamelog: async () => gamelog,

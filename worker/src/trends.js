@@ -19,6 +19,7 @@ import { espnAbbr } from '../../docs/team-logos.js';
 import { seasonColumnRows } from '../../docs/prop-legs.js';
 import { ODDS_DIAG_KEY } from './odds.js';
 import { etParts, etDatePlusDays } from './potd.js';
+import { probeEspn } from './espn-search.js';
 import { extractTrendLines, trendRowsFor, sortTrends } from '../../docs/trends.js';
 import { normalizeName as normalizeNflName } from '../../docs/nfl-props.js';
 import { normalizeName as normalizeNbaName } from '../../docs/wnba-props.js';
@@ -186,6 +187,10 @@ export async function buildTrends(sportKey, games, env, ctx, now = Date.now(), d
   const keysOf = (o) => (o && typeof o === 'object' ? Object.keys(o).slice(0, 12).join(',') : String(o));
   let unresolvedLogged = 0;
   let shortLogged = 0;
+  // Which ESPN endpoints this Worker can reach, once per build: the
+  // 2026-10-27 trace showed the roster path refused with a 403 while a
+  // runner fetched it fine, and the next block will look the same.
+  note(await (spec.probe ? spec.probe(ctx) : probeEspn(ctx)));
   for (const game of games) {
     const odds = await spec.fetchOdds(game.id, env, ctx);
     if (!odds) { note(`${game.away_team} @ ${game.home_team}: no odds payload (${spec.fetchDiag?.lastError ?? 'no error recorded'})`); continue; }

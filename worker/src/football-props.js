@@ -31,6 +31,7 @@ import {
   seasonColumnValues,
 } from '../../docs/prop-legs.js';
 import { UPSTREAM, REGIONS } from './odds.js';
+import { searchAthleteId } from './espn-search.js';
 
 export { PROP_LEG_DECIMAL } from '../../docs/prop-legs.js';
 
@@ -248,7 +249,9 @@ export async function resolveNflAthleteId(playerName, teamAbbrs, ctx) {
       }
     }
   }
-  return null;
+  // The roster path is refused from a Worker (an HTML 403, 2026-10-27);
+  // ESPN's search answers the same name on another path.
+  return searchAthleteId(playerName, 'nfl', ctx, { normalizeName });
 }
 
 /** ESPN's event id for a matchup, via the home team's schedule — needed at grading time. */
