@@ -135,18 +135,21 @@ test('the research pass: minutes down, listed out or questionable, or a projecte
 
 test('the day researches the ranked groups, builds the tickets from the ones that pass, says what passed and why, and is final once anything posts', async () => {
   const { env, store } = makeKvStore();
-  const rows = [row('a'), row('b', { player: 'LaMelo Ball', american: -110, h2h: period(null, 0), eventId: 'e-2' }), row('c', { player: 'Miles Bridges', american: -105 }), row('d', { player: 'Brandon Miller', american: -102, eventId: 'e-3' })];
+  const rows = [row('a'), row('b', { player: 'LaMelo Ball', american: -110, h2h: period(null, 0), eventId: 'e-2' }), row('c', { player: 'Miles Bridges', american: -105 }), row('d', { player: 'Brandon Miller', american: -102, eventId: 'e-3' }), row('h', { player: 'Luka Doncic', american: -1100, games: 20, eventId: 'e-4' })];
+  const researched = [];
   const deps = {
     rowsFor: async () => rows,
-    minutes: async (r) => (r.playerName === 'Miles Bridges' ? [10, 12, 11, ...Array(17).fill(30)] : Array(20).fill(32)),
+    minutes: async (r) => { researched.push(r.playerName); return r.playerName === 'Miles Bridges' ? [10, 12, 11, ...Array(17).fill(30)] : Array(20).fill(32); },
     context: async () => null,
     model: async () => '{"verdict":"post","reason":"ok","note":"none"}',
   };
   const r = await runTrendPicksDaily(env, ctx, NOW, { deps, enabled: ['basketball_nba'] });
   assert.equal(r.posted, 2);
-  assert.equal(r.considered, 4);
+  assert.equal(r.considered, 5);
   const rec = JSON.parse(store.get('trendpicks:2026-10-27'));
-  assert.equal(rec.version, 2);
+  assert.equal(rec.version, 3);
+  assert.equal(rec.usable, 4, 'a line priced -1100 everywhere can sit on no ticket');
+  assert.ok(!researched.includes('Luka Doncic'), 'and is not worth a research call');
   // Every pair prices past +150, so the top two ride straight: Miller then Ball; Bridges passes on minutes; Sexton is left over.
   assert.deepEqual(rec.bets.map((b) => [b.type, b.legs[0].playerName, b.american, b.book, b.units, b.stake]), [['straight', 'Brandon Miller', -102, 'DraftKings', 1, UNIT_DOLLARS], ['straight', 'LaMelo Ball', -110, 'DraftKings', 1, UNIT_DOLLARS]]);
   assert.equal(rec.bets[0].link, 'https://draftkings.example/d', 'a straight carries the line\'s deep link');
@@ -168,7 +171,7 @@ test('the day researches the ranked groups, builds the tickets from the ones tha
 
   // A day stored by the older build is drawn again, whatever it said.
   const old = makeKvStore();
-  old.store.set('trendpicks:2026-10-27', JSON.stringify({ date: '2026-10-27', final: true, checkedAt: NOW, picks: [{ playerName: 'Someone', book: 'BetRivers' }] }));
+  old.store.set('trendpicks:2026-10-27', JSON.stringify({ version: 2, date: '2026-10-27', final: true, checkedAt: NOW, bets: [] }));
   assert.equal((await runTrendPicksDaily(old.env, ctx, NOW + 60e3, { deps, enabled: ['basketball_nba'] })).posted, 2);
 
   // A day with nothing qualifying is checked again in an hour, not every tick.
