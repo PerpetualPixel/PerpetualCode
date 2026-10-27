@@ -20,6 +20,7 @@ import { seasonColumnRows } from '../../docs/prop-legs.js';
 import { ODDS_DIAG_KEY } from './odds.js';
 import { etParts, etDatePlusDays } from './potd.js';
 import { probeEspn } from './espn-search.js';
+import { loadBundleTeams, bundleDeps, bundleLine } from './espn-bundle.js';
 import { extractTrendLines, trendRowsFor, sortTrends } from '../../docs/trends.js';
 import { normalizeName as normalizeNflName } from '../../docs/nfl-props.js';
 import { normalizeName as normalizeNbaName } from '../../docs/wnba-props.js';
@@ -198,6 +199,13 @@ export async function buildTrends(sportKey, games, env, ctx, now = Date.now(), d
   // 2026-10-27 trace showed the roster path refused with a 403 while a
   // runner fetched it fine, and the next block will look the same.
   note(await (spec.probe ? spec.probe(ctx) : probeEspn(ctx)));
+  // The runner's ESPN records for the chunk's teams (espn-bundle.js):
+  // players come from there, and a team it holds never sends the build
+  // to ESPN. Tests that pass their own readers set `bundle: false`.
+  const chunkAbbrs = games.flatMap((g) => [espnAbbr(sportKey, g.home_team), espnAbbr(sportKey, g.away_team)]).filter(Boolean);
+  const bundled = spec.bundle === false ? new Map() : await loadBundleTeams(env, sportKey, chunkAbbrs);
+  if (spec.bundle !== false) note(bundleLine(bundled, chunkAbbrs, now));
+  if (bundled.size) Object.assign(spec, bundleDeps(bundled, { ...spec }));
   for (const game of games) {
     const odds = await spec.fetchOdds(game.id, env, ctx);
     if (!odds) { note(`${game.away_team} @ ${game.home_team}: no odds payload (${spec.fetchDiag?.lastError ?? 'no error recorded'})`); continue; }

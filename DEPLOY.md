@@ -26,6 +26,20 @@ workflow) and check it ends green with the live version it printed. From
 then on, merging to `main` deploys. Worker secrets (`ODDS_API_KEY`,
 `ANTHROPIC_API_KEY`, …) live in Cloudflare and are untouched.
 
+## The ESPN bundle (same two secrets)
+
+ESPN refuses every one of its JSON endpoints from a Cloudflare Worker,
+so the Trends build cannot match a prop to a player on its own.
+`.github/workflows/espn-bundle.yml` runs `scripts/espn-bundle.mjs` on a
+GitHub runner three times a day: it pulls the roster and the game logs
+(this season and last) for every NBA and NFL team playing today or
+tomorrow and writes one record per team into the worker's KV, where the
+build reads them. It uses the same two secrets; the token's "Edit
+Cloudflare Workers" template includes Workers KV Storage: Edit. Run it by
+hand (Actions → ESPN bundle → Run workflow) whenever the Trends tab shows
+games and no lines, and read `/version`'s `espn` field to see when each
+league was last written.
+
 ## By hand, until the secrets are set
 
 Before every deploy:

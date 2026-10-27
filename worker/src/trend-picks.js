@@ -19,6 +19,7 @@ import { etParts, etDatePlusDays } from './potd.js';
 import { fetchContext, hasContext } from './context.js';
 import { fetchBasketballGamelog, basketballStatRows } from './basketball-props.js';
 import { fetchNflGamelog, gamelogStatIndex } from './football-props.js';
+import { bundlePlayer, loadBundleTeams } from './espn-bundle.js';
 import { seasonColumnRows } from '../../docs/prop-legs.js';
 import { overNeed, underNeed } from '../../docs/trends.js';
 
@@ -63,14 +64,46 @@ export function qualifyingRows(rows, dateKey, now) {
   return [...best.values()].sort((a, b) => (b.periods.l20.games - a.periods.l20.games) || (seasonRate(b) - seasonRate(a)) || ((b.american ?? 0) - (a.american ?? 0)));
 }
 
+/**
+ * The player's game log: the runner's bundled record for the player's
+ * team first (espn-bundle.js — ESPN refuses the worker directly), then
+ * the league's own fetch.
+ */
+async function gamelogFor(env, sportKey, team, athleteId, ctx) {
+  const bundled = await bundlePlayer(env, sportKey, team, athleteId).catch(() => null);
+  if (bundled?.log) return bundled.log;
+  if (sportKey === 'basketball_nba') return fetchBasketballGamelog(sportKey, athleteId, ctx).catch(() => null);
+  if (sportKey === 'americanfootball_nfl') return fetchNflGamelog(athleteId, ctx).catch(() => null);
+  return null;
+}
+
 /** The player's minutes per game, most recent first, from the league's game log; [] when the league has none. */
-async function minutesFor(row, ctx) {
+async function minutesFor(row, env, ctx) {
   if (!row.athleteId) return [];
   if (row.sportKey === 'basketball_nba') {
-    const log = await fetchBasketballGamelog(row.sportKey, row.athleteId, ctx).catch(() => null);
+    const log = await gamelogFor(env, row.sportKey, row.team, row.athleteId, ctx);
     return basketballStatRows(log, 'minutes', { allSeasons: false }).map((r) => r.value);
   }
   return [];
+}
+
+/**
+ * Both teams' injury reports from the bundled rosters, in the shape the
+ * ESPN summary gives (context.js), for when the summary is out of reach.
+ */
+async function bundledInjuries(env, row) {
+  const sides = [];
+  for (const abbr of [row.team, row.opponent]) {
+    if (!abbr) continue;
+    const teams = await loadBundleTeams(env, row.sportKey, [abbr]).catch(() => new Map());
+    const record = teams.get(String(abbr).toUpperCase());
+    if (!record) continue;
+    sides.push({
+      name: abbr,
+      injuries: record.players.flatMap((p) => (p.injuries ?? []).map((i) => ({ name: p.name, status: i.status ?? '', detail: i.detail ?? '' }))),
+    });
+  }
+  return sides;
 }
 
 /** Status words that say the player may not play, or may not play his usual minutes. */
@@ -102,7 +135,7 @@ export async function researchPick(row, env, ctx, { now = Date.now(), deps = {} 
   let verdict = 'post';
   const pass = (why) => { verdict = 'pass'; flags.push(`pass: ${why}`); };
 
-  const minutes = await (deps.minutes ? deps.minutes(row) : minutesFor(row, ctx));
+  const minutes = await (deps.minutes ? deps.minutes(row) : minutesFor(row, env, ctx));
   let minutesLine = null;
   if (minutes.length >= 5) {
     const avg = (list) => list.reduce((s, v) => s + v, 0) / list.length;
@@ -120,7 +153,8 @@ export async function researchPick(row, env, ctx, { now = Date.now(), deps = {} 
   const sideFor = (team) => (row.team && context ? (String(team?.shortName ?? '').toUpperCase() === row.team || fold(team?.name).includes(fold(row.home)) === (row.team === row.home) ? team : team) : team);
   void sideFor;
   const player = fold(row.playerName);
-  for (const side of [context?.home, context?.away].filter(Boolean)) {
+  const injurySides = context ? [context.home, context.away].filter(Boolean) : await (deps.injuries ? deps.injuries(row) : bundledInjuries(env, row));
+  for (const side of injurySides) {
     for (const inj of side.injuries ?? []) {
       const name = fold(inj.name ?? inj.athlete ?? inj.player);
       const status = String(inj.status ?? inj.type ?? '');
@@ -289,17 +323,13 @@ export async function runTrendPicksDaily(env, ctx, now = Date.now(), { deps = {}
 }
 
 /** The player's value for the pick's stat on the pick's game date, from the game log, or null when the log has no such game yet. */
-async function actualFor(pick, ctx, deps = {}) {
+async function actualFor(pick, env, ctx, deps = {}) {
   if (deps.actual) return deps.actual(pick);
   if (!pick.athleteId) return null;
   let rows = [];
-  if (pick.sportKey === 'basketball_nba') {
-    const log = await fetchBasketballGamelog(pick.sportKey, pick.athleteId, ctx).catch(() => null);
-    rows = basketballStatRows(log, pick.statKey, { allSeasons: false });
-  } else if (pick.sportKey === 'americanfootball_nfl') {
-    const log = await fetchNflGamelog(pick.athleteId, ctx).catch(() => null);
-    rows = seasonColumnRows(log, gamelogStatIndex(log, pick.statKey));
-  }
+  const log = await gamelogFor(env, pick.sportKey, pick.team, pick.athleteId, ctx);
+  if (pick.sportKey === 'basketball_nba') rows = basketballStatRows(log, pick.statKey, { allSeasons: false });
+  else if (pick.sportKey === 'americanfootball_nfl') rows = seasonColumnRows(log, gamelogStatIndex(log, pick.statKey));
   const row = rows.find((r) => r.date && etParts(r.date).date === pick.gameDate);
   return row ? row.value : null;
 }
@@ -323,7 +353,7 @@ export async function runTrendPicksGrading(env, ctx, now = Date.now(), { deps = 
     let changed = false;
     for (const pick of record.picks ?? []) {
       if (pick.status !== 'pending' || now < pick.commenceMs + 3 * 3600e3) continue;
-      const actual = await actualFor(pick, ctx, deps);
+      const actual = await actualFor(pick, env, ctx, deps);
       if (actual === null) {
         if (now > pick.commenceMs + 36 * 3600e3) { pick.status = 'void'; pick.result = 'void'; pick.gradedAt = now; changed = true; graded++; }
         continue;
