@@ -73,13 +73,18 @@ test('the bet builder: a same-book two-leg parlay nearest +100 first, three legs
   assert.equal(bets.length, 1);
   assert.equal(bets[0].american, 100);
   assert.equal(bets[0].legs.find((l) => l.group.playerName === 'Collin Sexton').line.point, 7.5);
-  // Three -300 legs: no pair lands in range (-129), the three together do (+137).
+  // Three -300 legs: a pair prices -129 and three together +137; the three are nearer +100, so the three it is.
   bets = buildBets(q([
     row('a', { american: -300 }), row('b', { american: -300, player: 'LaMelo Ball', eventId: 'e-2' }), row('c', { american: -300, player: 'Miles Bridges', eventId: 'e-3' }),
   ]));
   assert.equal(bets.length, 1);
   assert.equal(bets[0].legs.length, 3);
   assert.equal(bets[0].american, 137);
+  // Two heavy lines alone: -260 and -350 make -128, inside the -150 floor; -400 and -400 make -167 and do not.
+  bets = buildBets(q([row('a', { american: -260 }), row('b', { american: -350, player: 'LaMelo Ball', eventId: 'e-2' })]));
+  assert.deepEqual(bets.map((b) => [b.type, b.american]), [['parlay', -128]]);
+  bets = buildBets(q([row('a', { american: -400 }), row('b', { american: -400, player: 'LaMelo Ball', eventId: 'e-2' })]));
+  assert.deepEqual(bets, []);
   // Legs on different books never share a ticket, a -250 or a +160 is no straight, and a day can come up empty.
   bets = buildBets(q([
     row('a', { american: -250, books: { draftkings: -250 } }), row('b', { american: -230, player: 'LaMelo Ball', books: { fanduel: -230 }, eventId: 'e-2' }), row('c', { american: 160, player: 'Miles Bridges' }),
@@ -187,7 +192,7 @@ test('the day researches the ranked groups, builds the tickets from the ones tha
   assert.equal(r.posted, 2);
   assert.equal(r.considered, 5);
   const rec = JSON.parse(store.get('trendpicks:2026-10-27'));
-  assert.equal(rec.version, 4);
+  assert.equal(rec.version, 5);
   assert.equal(rec.usable, 4, 'a line priced -1100 everywhere can sit on no ticket');
   assert.ok(!researched.includes('Luka Doncic'), 'and is not worth a research call');
   // Every pair prices past +150, so the top two ride straight: Miller then Ball; Bridges passes on minutes; Sexton is left over.
