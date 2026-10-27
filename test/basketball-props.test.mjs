@@ -187,3 +187,20 @@ test('a generational suffix is not part of the name: the books\' "Paul Reed Jr" 
   assert.equal(nfl('Kenneth Walker III'), 'kenneth walker');
   assert.equal(normalizeName('Victor Wembanyama'), 'victor wembanyama');
 });
+
+test('the Trends prop fetch names its books instead of a region: ten of them, the owner\'s PrizePicks, Hard Rock and bet365 among them, so the credits stay at one region', async () => {
+  const { fetchAltProps } = await import('../worker/src/basketball-props.js');
+  const { TREND_BOOKMAKERS } = await import('../worker/src/odds.js');
+  const names = TREND_BOOKMAKERS.split(',');
+  assert.equal(names.length, 10, 'a block of ten is one region; an eleventh name doubles the cost');
+  for (const book of ['prizepicks', 'hardrockbet', 'bet365', 'draftkings', 'fanduel', 'williamhill_us', 'fanatics', 'betmgm']) assert.ok(names.includes(book), book);
+  const requested = [];
+  const realFetch = globalThis.fetch;
+  globalThis.fetch = async (url) => { requested.push(String(url)); return new Response('{"bookmakers":[]}', { status: 200, headers: { 'Content-Type': 'application/json' } }); };
+  try {
+    await fetchAltProps('basketball_nba', 'evt1', { ODDS_API_KEY: 'k' }, { waitUntil() {} }, 'player_points');
+  } finally { globalThis.fetch = realFetch; }
+  const u = new URL(requested[0]);
+  assert.equal(u.searchParams.get('bookmakers'), TREND_BOOKMAKERS);
+  assert.equal(u.searchParams.has('regions'), false, 'bookmakers takes priority upstream; never send both');
+});

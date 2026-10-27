@@ -78,7 +78,7 @@ export const RETRY_EMPTY_MINUTES = 30;
  * find. Bumped 2026-10-27: builds that failed on the spent key, and on
  * the refused roster path, had stamped their games as tried for hours.
  */
-export const STAMPS_VERSION = 3;
+export const STAMPS_VERSION = 4;
 /** How many diagnostic lines a build keeps for /trends to show. */
 const MAX_DIAG = 60;
 /**
