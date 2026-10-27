@@ -27,6 +27,7 @@ import {
   seasonColumnRows,
 } from '../../docs/prop-legs.js';
 import { UPSTREAM, REGIONS, recordOddsDiag } from './odds.js';
+import { searchAthleteId } from './espn-search.js';
 
 /**
  * The league, with ESPN's path. The WNBA was here for a fortnight (its
@@ -246,7 +247,9 @@ export async function resolveAthleteId(sportKey, playerName, teamAbbrs, ctx) {
       }
     }
   }
-  return null;
+  // The roster path is refused from a Worker (an HTML 403, 2026-10-27);
+  // ESPN's search answers the same name on another path.
+  return searchAthleteId(playerName, BASKETBALL_SPORTS[sportKey]?.espn ?? 'nba', ctx, { normalizeName });
 }
 
 /** ESPN's event id for a matchup, via the home team's schedule — needed at grading time. */
