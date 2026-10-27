@@ -57,14 +57,19 @@ const PICK_BOOK_NAMES = { prizepicks: 'PrizePicks', sleeper: 'Sleeper', underdog
 export const UNIT_DOLLARS = 5;
 /** Bets a day, at most. */
 export const PICK_MAX_BETS = 2;
-/** A straight bet's price, and a parlay's; the parlay aims at PARLAY_TARGET. */
+/**
+ * A straight bet's price, and a parlay's; the parlay aims at
+ * PARLAY_TARGET. The parlay floor sits at -150: two lines that have
+ * landed every game for twenty games priced -260 and -350 make a -128
+ * ticket, and "I will take what I can get" (2026-10-27).
+ */
 export const STRAIGHT_RANGE = [-200, 150];
-export const PARLAY_RANGE = [-120, 150];
+export const PARLAY_RANGE = [-150, 150];
 export const PARLAY_TARGET = 100;
 /** A parlay leg's own price: heavy favourites are what make a +100 ticket. */
 export const LEG_RANGE = [-450, 150];
 /** The stored record's shape; an older day is drawn again. */
-export const RECORD_VERSION = 4;
+export const RECORD_VERSION = 5;
 /**
  * PrizePicks is a pick'em app, not a book: no single picks, two to six
  * projections a lineup, different players from at least two teams, paid
