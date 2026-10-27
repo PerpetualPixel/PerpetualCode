@@ -45,6 +45,11 @@ test('every line on a game is extracted once per player, stat and number, with t
   const alt = lines.find((l) => l.point === 19.5);
   assert.equal(alt.under, null, 'a line only priced one way has one side');
   assert.equal(alt.id, 'n1:points:jalen brunson:19.5');
+  // A deep link on the outcome rides on its quote; a book without one carries null.
+  const linked = { bookmakers: [{ key: 'draftkings', title: 'DraftKings', link: 'https://dk/book', markets: [{ key: 'player_points_alternate', link: 'https://dk/market', outcomes: [{ name: 'Over', description: 'Jalen Brunson', point: 24.5, price: -120, link: 'https://dk/slip?line=1' }] }] }, { key: 'fanduel', title: 'FanDuel', markets: [{ key: 'player_points_alternate', outcomes: [{ name: 'Over', description: 'Jalen Brunson', point: 24.5, price: -115 }] }] }] };
+  const [line] = extractTrendLines(linked, game, markets);
+  assert.equal(line.over.find((q) => q.bookKey === 'draftkings').link, 'https://dk/slip?line=1');
+  assert.equal(line.over.find((q) => q.bookKey === 'fanduel').link, null);
 });
 
 test('hit flags: a .5 line splits cleanly, an integer line pushes on the number, and pushes count for neither side', () => {

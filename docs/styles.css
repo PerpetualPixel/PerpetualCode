@@ -6650,3 +6650,6 @@ input[type="range"]:focus-visible {
 .pick-day h3 { margin: 0 0 6px; font-size: 0.82rem; color: var(--muted); font-weight: 700; }
 .pick-row { display: flex; justify-content: space-between; align-items: center; gap: 10px; padding: 4px 0; font-size: 0.9rem; }
 .pick-row-sel small { color: var(--muted); margin-left: 6px; }
+a.trend-price { text-decoration: none; }
+a.trend-price.is-slip { border-color: var(--success); }
+a.trend-price:hover { background: rgba(255, 255, 255, 0.06); }

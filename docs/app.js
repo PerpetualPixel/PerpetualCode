@@ -8812,6 +8812,21 @@ const sideWord = (side) => (side === 'over' ? 'Over' : 'Under');
  * monogram in its brand colour behind it when the image fails to load
  * (see trendImageFallback). An unlisted book gets the monogram only.
  */
+/**
+ * The price pill is a link: to the book's slip with this exact line on it
+ * when the feed carried a deep link for the book (2026-10-27 direction:
+ * "when I click the odds, import the slip to my book"), else to the
+ * book's front door. Opens in a new tab; a tap on it never opens the
+ * card's detail sheet.
+ */
+function pricePill(bookKey, bookName, american, link) {
+  const id = bookIdFor(bookKey);
+  const href = link ?? (id ? SPORTSBOOKS[id]?.url : null);
+  const inner = `${bookBadge(bookKey, bookName)}${esc(formatAmerican(american))}`;
+  if (!href) return `<span class="trend-price" title="${esc(bookName ?? '')}">${inner}</span>`;
+  return `<a class="trend-price ${link ? 'is-slip' : ''}" href="${esc(href)}" target="_blank" rel="noopener" title="${esc(link ? `Open this line on your ${bookName} slip` : `Open ${bookName}`)}" data-price-link>${inner}</a>`;
+}
+
 function bookBadge(bookKey, bookName, cls = 'book-badge') {
   const id = bookIdFor(bookKey);
   const meta = id ? SPORTSBOOKS[id] : null;
@@ -8909,7 +8924,7 @@ function visibleTrendRows() {
     if (!Number.isFinite(rate)) continue;
     if (rate < trendsState.minRate - 1e-9) continue;
     if (q && !`${r.playerName} ${r.team ?? ''} ${r.home} ${r.away} ${r.marketLabel}`.toLowerCase().includes(q)) continue;
-    kept.push({ ...r, american: quote.american, decimal: quote.decimal, book: quote.book, bookKey: quote.bookKey });
+    kept.push({ ...r, american: quote.american, decimal: quote.decimal, book: quote.book, bookKey: quote.bookKey, link: quote.link ?? null });
   }
   return sortTrends(kept, { window: p, by: trendsState.sort.by, dir: trendsState.sort.dir });
 }
@@ -8963,7 +8978,7 @@ function renderTrendCard(row) {
         <p class="trend-player">${esc(row.playerName)}${row.team ? `<small>${esc(row.team)}</small>` : ''}</p>
         <p class="trend-line">${esc(row.marketLabel ?? row.statLabel)} ${sideWord(row.side)} ${esc(String(row.point))}</p>
       </div>
-      <span class="trend-price" title="${esc(row.book)}">${bookBadge(row.bookKey, row.book)}${esc(formatAmerican(row.american))}</span>
+      ${pricePill(row.bookKey, row.book, row.american, row.link)}
     </div>
     <div class="trend-rate-row">
       <span class="trend-rate ${rateTone(rate)}">${pct(rate)}<small>${esc(periodLabel(trendsState.period))}</small></span>
@@ -9188,10 +9203,10 @@ function renderTrendDetail(row) {
     ${quote ? `<div class="detail-bet">
       <div class="bet-row">
         <span class="bet-book">${bookPill(quote)}${esc(formatAmerican(quote.american))}</span>
-        <a class="bet-btn" href="${esc(bookMeta(quote.bookKey)?.url ?? '#')}" target="_blank" rel="noopener">Bet <span aria-hidden="true">↗</span></a>
+        <a class="bet-btn" href="${esc(quote.link ?? bookMeta(quote.bookKey)?.url ?? '#')}" target="_blank" rel="noopener" title="${esc(quote.link ? `Open this line on your ${quote.book} slip` : `Open ${quote.book}`)}">${quote.link ? 'Add to slip' : 'Bet'} <span aria-hidden="true">↗</span></a>
         ${quotes.length > 1 ? `<button type="button" class="bet-more" data-bet-more>${trendsState.betMore ? 'Less' : `+${quotes.length - 1} more`} ${trendsState.betMore ? '▴' : '▾'}</button>` : ''}
       </div>
-      ${trendsState.betMore ? `<div class="bet-list">${quotes.filter((q) => q !== quote).map((q) => `<a href="${esc(bookMeta(q.bookKey)?.url ?? '#')}" target="_blank" rel="noopener"><span>${bookPill(q)} ${esc(q.book)}</span><b>${esc(formatAmerican(q.american))}</b></a>`).join('')}</div>` : ''}
+      ${trendsState.betMore ? `<div class="bet-list">${quotes.filter((q) => q !== quote).map((q) => `<a href="${esc(q.link ?? bookMeta(q.bookKey)?.url ?? '#')}" target="_blank" rel="noopener"><span>${bookPill(q)} ${esc(q.book)}</span><b>${esc(formatAmerican(q.american))}</b></a>`).join('')}</div>` : ''}
     </div>` : ''}`;
 }
 
@@ -9227,6 +9242,7 @@ el.trendsFilterBtn?.addEventListener('click', () => openTrendsSheet('filters'));
 el.trendsSortBtn?.addEventListener('click', () => openTrendsSheet('sort'));
 el.trendsScrim?.addEventListener('click', closeTrendsSheet);
 el.trendsBody?.addEventListener('click', (event) => {
+  if (event.target.closest('[data-price-link]')) return; // the price pill is the book's link, not the card
   const card = event.target.closest('[data-trend-id]');
   if (!card) return;
   trendsState.detailPeriod = null;
@@ -9330,7 +9346,7 @@ function renderTrendPickCard(p) {
         <p class="trend-player">${esc(p.playerName)}${p.team ? `<small>${esc(p.team)}</small>` : ''}</p>
         <p class="trend-line">${esc(p.marketLabel ?? p.statLabel)} ${sideWord(p.side)} ${esc(String(p.point))}</p>
       </div>
-      <span class="trend-price" title="${esc(p.book ?? '')}">${bookBadge(p.bookKey, p.book)}${esc(formatAmerican(p.american))}</span>
+      ${pricePill(p.bookKey, p.book, p.american, p.quotes?.[0]?.link ?? null)}
     </div>
     <div class="trend-rate-row">
       <span class="trend-rate is-hot">100%<small>L20</small></span>

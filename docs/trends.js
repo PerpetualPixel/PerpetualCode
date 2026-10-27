@@ -58,7 +58,11 @@ export function extractTrendLines(eventOdds, game, markets, { isRegistryBook = (
         }
         const entry = pool.get(key);
         entry.books.add(book.key);
-        const quote = { american, decimal, book: book.title ?? book.key, bookKey: book.key };
+        // The feed's deep link for this exact line at this book, when the
+        // book supports one (The Odds API's includeLinks): opens the book
+        // with the line on the slip. Outcome, then market, then the book.
+        const link = outcome.link ?? market.link ?? book.link ?? null;
+        const quote = { american, decimal, book: book.title ?? book.key, bookKey: book.key, link };
         const list = entry[side];
         const i = list.findIndex((q) => q.bookKey === book.key);
         if (i < 0) list.push(quote); else if (decimal > list[i].decimal) list[i] = quote;
