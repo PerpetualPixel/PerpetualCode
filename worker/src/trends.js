@@ -71,6 +71,13 @@ export const MAX_PLAYERS_PER_GAME = 40;
 const MIN_GAMES = 3;
 /** A game whose build found no rows is tried again this soon, rather than after the league's full TTL. */
 export const RETRY_EMPTY_MINUTES = 30;
+/**
+ * Stamps written by an older build are dropped once, so every game is
+ * rebuilt on the first tick after a deploy that changes what a build can
+ * find. Bumped 2026-10-27: builds that failed on the spent key, and on
+ * the refused roster path, had stamped their games as tried for hours.
+ */
+export const STAMPS_VERSION = 2;
 /** How many diagnostic lines a build keeps for /trends to show. */
 const MAX_DIAG = 60;
 const MAX_ROWS = 2000;
@@ -273,7 +280,8 @@ export async function buildLeagueChunk(sportKey, events, env, ctx, now = Date.no
   const ttl = (TREND_SPORTS[sportKey]?.ttlMinutes ?? TRENDS_TTL_MINUTES) * 60e3;
   const games = await trendGamesFor(sportKey, events, env, ctx, now);
   const live = new Set(games.map((g) => g.id));
-  const stamps = Object.fromEntries(Object.entries(stored.stamps ?? {}).filter(([id]) => live.has(id)));
+  const fresh = stored.stampsVersion === STAMPS_VERSION;
+  const stamps = fresh ? Object.fromEntries(Object.entries(stored.stamps ?? {}).filter(([id]) => live.has(id))) : {};
   // A game that has tipped off keeps the rows it has (the books pull
   // pregame props at tip, so there is nothing new to fetch) and leaves
   // the tab once it is over; only unstarted games are rebuilt.
@@ -281,7 +289,7 @@ export async function buildLeagueChunk(sportKey, events, env, ctx, now = Date.no
   const keepRows = (stored.rows ?? []).filter((r) => live.has(r.eventId));
   if (!due.length) {
     if (!games.length || keepRows.length !== (stored.rows ?? []).length || stored.pending) {
-      const payload = { ...stored, builtAt: stored.builtAt ?? now, checkedAt: now, games: Object.keys(stamps).length, pending: 0, rows: keepRows, stamps, lastError: null };
+      const payload = { ...stored, builtAt: stored.builtAt ?? now, checkedAt: now, games: Object.keys(stamps).length, pending: 0, rows: keepRows, stamps, stampsVersion: STAMPS_VERSION, lastError: null };
       await env.POTD_KV.put(trendsKey(sportKey), JSON.stringify(payload), { expirationTtl: KV_TTL_SECONDS });
     }
     return null;
@@ -299,7 +307,7 @@ export async function buildLeagueChunk(sportKey, events, env, ctx, now = Date.no
   const payload = {
     sportKey, title: built.title, builtAt: now, checkedAt: now,
     games: Object.keys(stamps).length, pending: due.length - chunk.length,
-    rows, stamps, diag: built.diag, lastError: null,
+    rows, stamps, stampsVersion: STAMPS_VERSION, diag: built.diag, lastError: null,
   };
   await env.POTD_KV.put(trendsKey(sportKey), JSON.stringify(payload), { expirationTtl: KV_TTL_SECONDS });
   return payload;
