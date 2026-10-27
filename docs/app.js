@@ -8805,6 +8805,26 @@ const pct = (v) => `${Math.round(v * 100)}%`;
 const teamAbbr = (name) => { const a = espnAbbr(trendsState.sport, name); return a ? a.toUpperCase() : String(name ?? '').split(' ').pop(); };
 const sideWord = (side) => (side === 'over' ? 'Over' : 'Under');
 
+/**
+ * A sportsbook's mark for a price pill (2026-10-27 direction: the book's
+ * logo in the pill): the book's favicon through Google's favicon service,
+ * which the page's image policy allows, with the book's two-letter
+ * monogram in its brand colour behind it when the image fails to load
+ * (see trendImageFallback). An unlisted book gets the monogram only.
+ */
+function bookBadge(bookKey, bookName, cls = 'book-badge') {
+  const id = bookIdFor(bookKey);
+  const meta = id ? SPORTSBOOKS[id] : null;
+  const name = meta?.name ?? bookName ?? bookKey ?? '';
+  const mono = String(name).replace(/[^A-Za-z0-9]/g, '').slice(0, 2).toUpperCase();
+  const color = meta?.color ?? '#8892a6';
+  let logo = '';
+  try {
+    if (meta?.url) logo = `<img class="book-logo" src="https://www.google.com/s2/favicons?domain=${encodeURIComponent(new URL(meta.url).hostname)}&amp;sz=64" alt="" width="18" height="18" loading="lazy" data-mono="${esc(mono)}">`;
+  } catch { logo = ''; }
+  return `<span class="${cls}" style="--book:${esc(color)}" title="${esc(name)}">${logo || esc(mono)}</span>`;
+}
+
 async function loadTrends({ force = false } = {}) {
   if (!el.trendsBody || !CONFIG.WORKER_URL) return;
   if (trendsState.data && !force && trendsState.data.sportKey === trendsState.sport) { renderTrends(); return; }
@@ -8943,7 +8963,7 @@ function renderTrendCard(row) {
         <p class="trend-player">${esc(row.playerName)}${row.team ? `<small>${esc(row.team)}</small>` : ''}</p>
         <p class="trend-line">${esc(row.marketLabel ?? row.statLabel)} ${sideWord(row.side)} ${esc(String(row.point))}</p>
       </div>
-      <span class="trend-price" title="${esc(row.book)}">${esc(formatAmerican(row.american))}</span>
+      <span class="trend-price" title="${esc(row.book)}">${bookBadge(row.bookKey, row.book)}${esc(formatAmerican(row.american))}</span>
     </div>
     <div class="trend-rate-row">
       <span class="trend-rate ${rateTone(rate)}">${pct(rate)}<small>${esc(periodLabel(trendsState.period))}</small></span>
@@ -9079,7 +9099,7 @@ function renderTrendsSheet() {
     const saved = settingsHeaders() ? 'Saved to your account — the same books on every device.' : 'Saved on this device. Sign in to keep them on every device.';
     html = `${sheetHead('books', 'Sportsbooks')}
       <p class="row-sub" style="text-align:center;margin:0 0 12px">Only lines these books price, at their best price. ${esc(saved)}</p>
-      <div class="sheet-list">${list.map(([id, name, color]) => checkRow('book', id, trendsState.books.has(id), esc(name), `<span class="row-dot" style="--book:${esc(color)}"></span>`)).join('')}</div>
+      <div class="sheet-list">${list.map(([id, name]) => checkRow('book', id, trendsState.books.has(id), esc(name), bookBadge(SPORTSBOOKS[id]?.keys?.[0] ?? id, name, 'book-badge is-large'))).join('')}</div>
       <div class="sheet-actions"><button type="button" class="sheet-pill" data-select-all="book">${trendsState.books.size ? 'Clear' : 'Select all'}</button></div>${sheetClose()}`;
   } else if (sheet.type === 'minrate') {
     html = `${sheetHead('minrate', 'Period Hit Rate')}
@@ -9134,7 +9154,7 @@ function renderTrendDetail(row) {
   const quote = trendQuote(row) ?? row.quotes?.[0];
   const quotes = row.quotes ?? [];
   const bookMeta = (key) => (bookIdFor(key) ? SPORTSBOOKS[bookIdFor(key)] : null);
-  const bookPill = (q) => { const m = bookMeta(q.bookKey); return `<span class="row-dot" style="--book:${esc(m?.color ?? '#8892a6')};background:${esc(m?.color ?? '#8892a6')}">${esc((m?.name ?? q.book).slice(0, 2))}</span>`; };
+  const bookPill = (q) => bookBadge(q.bookKey, q.book, 'book-badge is-large');
   const log = (row.series ?? []).filter((g) => period === 'h2h' || period.startsWith('s') ? periodSeries(row, period).includes(g) : true).slice(0, 20);
   return `<button type="button" class="sheet-back" data-sheet-close aria-label="Close"><svg viewBox="0 0 24 24" width="16" height="16"><path d="M6 6l12 12M18 6L6 18" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"/></svg></button>
     <div class="sheet-grip"></div>
@@ -9192,6 +9212,8 @@ function trendImageFallback(event) {
   if (!(img instanceof HTMLImageElement)) return;
   if (img.classList.contains('trend-headshot') && img.dataset.initials) {
     const span = document.createElement('span'); span.className = 'trend-initials'; span.textContent = img.dataset.initials; img.replaceWith(span);
+  } else if (img.classList.contains('book-logo')) {
+    img.replaceWith(document.createTextNode(img.dataset.mono ?? ''));
   } else if (img.closest('.chart-opp') && img.alt) {
     img.replaceWith(document.createTextNode(img.alt));
   } else {
@@ -9308,7 +9330,7 @@ function renderTrendPickCard(p) {
         <p class="trend-player">${esc(p.playerName)}${p.team ? `<small>${esc(p.team)}</small>` : ''}</p>
         <p class="trend-line">${esc(p.marketLabel ?? p.statLabel)} ${sideWord(p.side)} ${esc(String(p.point))}</p>
       </div>
-      <span class="trend-price" title="${esc(p.book ?? '')}">${esc(formatAmerican(p.american))}</span>
+      <span class="trend-price" title="${esc(p.book ?? '')}">${bookBadge(p.bookKey, p.book)}${esc(formatAmerican(p.american))}</span>
     </div>
     <div class="trend-rate-row">
       <span class="trend-rate is-hot">100%<small>L20</small></span>
