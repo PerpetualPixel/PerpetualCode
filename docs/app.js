@@ -844,6 +844,9 @@ const el = {
   trendPicksStatus: document.getElementById('trendPicksStatus'),
   trendPicksBody: document.getElementById('trendPicksBody'),
   trendPicksHistory: document.getElementById('trendPicksHistory'),
+  trendPicksFilters: document.getElementById('trendPicksFilters'),
+  trendPicksRecord: document.getElementById('trendPicksRecord'),
+  trendPicksGraph: document.getElementById('trendPicksGraph'),
   trendsLeagues: document.getElementById('trendsLeagues'),
   trendsSearch: document.getElementById('trendsSearch'),
   trendsPeriodBtn: document.getElementById('trendsPeriodBtn'),
@@ -9380,11 +9383,13 @@ el.trendsSheet?.addEventListener('input', (event) => {
 });
 
 /* ================================================================ */
-/* Pixel's Picks, drawn from the Trends rows (worker/src/trend-picks.js) */
+/* Pixel's Picks: the day's tickets from the Trends rows (worker/src/trend-picks.js) */
 /* ================================================================ */
 
-const trendPicksState = { data: null, loaded: false };
+const trendPicksState = { data: null, loaded: false, filter: 'all', hover: null };
 const pickDayFmt = new Intl.DateTimeFormat(undefined, { weekday: 'short', month: 'short', day: 'numeric' });
+const pickShortFmt = new Intl.DateTimeFormat(undefined, { month: 'numeric', day: 'numeric' });
+const PICK_FILTERS = [['all', 'All'], ['basketball_nba', 'NBA'], ['americanfootball_nfl', 'NFL']];
 
 async function loadTrendPicks({ force = false } = {}) {
   if (!el.trendPicksBody || !CONFIG.WORKER_URL) return;
@@ -9401,65 +9406,173 @@ async function loadTrendPicks({ force = false } = {}) {
 }
 
 const RESULT_LABEL = { win: 'Won', loss: 'Lost', push: 'Push', void: 'No action' };
+const unitDollars = () => trendPicksState.data?.unitDollars ?? 5;
+const money = (dollars) => `${dollars < 0 ? '-' : '+'}$${Math.abs(dollars).toFixed(2)}`;
+const signedUnits = (units) => `${units < 0 ? '' : '+'}${units.toFixed(2)}`;
+const betMatches = (bet) => trendPicksState.filter === 'all' || bet.sportKey === trendPicksState.filter;
+const betTypeLabel = (bet) => (bet.type === 'parlay' ? `${bet.legs.length}-leg parlay` : 'Straight');
 
-function renderTrendPickCard(p) {
-  const row = { ...p, rates: p.rates ?? {}, periods: p.periods ?? {}, series: p.series ?? [] };
-  const h2h = p.periods?.h2h;
-  const result = p.status === 'graded' || p.status === 'void'
-    ? `<span class="pick-result is-${esc(p.result)}">${esc(RESULT_LABEL[p.result] ?? p.result)}${Number.isFinite(p.actual) ? ` · ${esc(String(p.actual))} ${esc(p.statLabel)}` : ''}</span>`
-    : p.commenceMs <= Date.now() ? '<span class="pick-result is-live">In play</span>' : '';
-  return `<article class="trend-card trend-pick-card" data-trend-id="${esc(p.id)}" tabindex="0" role="button" aria-label="${esc(p.selection)}">
+function betResultBadge(bet) {
+  if (bet.status === 'graded' || bet.status === 'void') {
+    return `<span class="pick-result is-${esc(bet.result)}">${esc(RESULT_LABEL[bet.result] ?? bet.result)}${Number.isFinite(bet.net) && bet.result !== 'void' ? ` · ${esc(money(bet.net * unitDollars()))}` : ''}</span>`;
+  }
+  return bet.commenceMs <= Date.now() ? '<span class="pick-result is-live">In play</span>' : '<span class="pick-result">Pending</span>';
+}
+
+function renderPickLeg(leg, bet) {
+  const row = { ...leg, rates: leg.rates ?? {}, periods: leg.periods ?? {}, series: leg.series ?? [] };
+  const h2h = leg.periods?.h2h;
+  const legResult = leg.result
+    ? `<span class="pick-leg-result is-${esc(leg.result)}">${esc(RESULT_LABEL[leg.result] ?? leg.result)}${Number.isFinite(leg.actual) ? ` · ${esc(String(leg.actual))} ${esc(leg.statLabel)}` : ''}</span>`
+    : '';
+  return `<div class="pick-leg">
     <div class="trend-head">
       ${avatarHtml(row)}
-      <span class="trend-game"><strong>${esc(teamAbbr(p.away))} @ ${esc(teamAbbr(p.home))}</strong><span class="trend-dot"></span>${esc(trendTimeFmt.format(new Date(p.commenceMs)))}</span>
-      ${result}
+      <span class="trend-game"><strong>${esc(teamAbbr(leg.away))} @ ${esc(teamAbbr(leg.home))}</strong><span class="trend-dot"></span>${esc(trendTimeFmt.format(new Date(leg.commenceMs)))}</span>
+      ${legResult}
     </div>
     <div class="trend-main">
       <div>
-        <p class="trend-player">${esc(p.playerName)}${p.team ? `<small>${esc(p.team)}</small>` : ''}</p>
-        <p class="trend-line">${esc(p.marketLabel ?? p.statLabel)} ${sideWord(p.side)} ${esc(String(p.point))}</p>
+        <p class="trend-player">${esc(leg.playerName)}${leg.team ? `<small>${esc(leg.team)}</small>` : ''}</p>
+        <p class="trend-line">${esc(leg.marketLabel ?? leg.statLabel)} ${sideWord(leg.side)} ${esc(String(leg.point))}</p>
       </div>
-      ${pricePill(p.bookKey, p.book, p.american, p.quotes?.[0]?.link ?? null)}
+      ${bet.type === 'parlay' ? `<span class="pick-leg-price">${esc(formatAmerican(leg.american))}</span>` : pricePill(bet.bookId, bet.book, leg.american, leg.link)}
     </div>
     <div class="trend-rate-row">
       <span class="trend-rate is-hot">100%<small>L20</small></span>
       ${renderTrendBars(row, 'l20')}
-      <span class="pick-h2h">${h2h?.games ? `${esc(String(h2h.hits))} of ${esc(String(h2h.games))} vs ${esc(p.opponent ?? '')}` : 'no games vs ' + esc(p.opponent ?? 'them')}</span>
+      <span class="pick-h2h">${h2h?.games ? `${esc(String(h2h.hits))} of ${esc(String(h2h.games))} vs ${esc(leg.opponent ?? '')}` : 'no games vs ' + esc(leg.opponent ?? 'them')}</span>
     </div>
-    <p class="pick-note">${p.note ? esc(p.note) : 'Nothing worth flagging: minutes steady, no injury listing, no blowout projected.'}</p>
+    ${leg.note ? `<p class="pick-note">${esc(leg.note)}</p>` : ''}
+  </div>`;
+}
+
+function renderBetCard(bet) {
+  const href = bet.link ?? bet.bookUrl;
+  const slip = href ? `<a class="pick-bet-link" href="${esc(href)}" target="_blank" rel="noopener">${bet.link ? `Open on your ${esc(bet.book)} slip` : `Open ${esc(bet.book)}`}</a>` : '';
+  return `<article class="trend-card pick-bet-card" aria-label="${esc(betTypeLabel(bet))} at ${esc(bet.book)}">
+    <div class="pick-bet-head">
+      <span class="pick-bet-type">${esc(betTypeLabel(bet))}</span>
+      <span class="pick-bet-book">${bookBadge(bet.bookId, bet.book)}${esc(bet.book)}</span>
+      <span class="pick-bet-price">${esc(formatAmerican(bet.american))}</span>
+      <span class="pick-bet-stake">${esc(String(bet.units))} unit · $${esc(String(bet.stake))}</span>
+      ${betResultBadge(bet)}
+    </div>
+    <div class="pick-legs">${bet.legs.map((leg) => renderPickLeg(leg, bet)).join('')}</div>
+    ${bet.legs.every((l) => !l.note) ? '<p class="pick-note">Nothing worth flagging: minutes steady, no injury listing, no blowout projected.</p>' : ''}
+    ${slip ? `<div class="pick-bet-foot">${slip}</div>` : ''}
   </article>`;
+}
+
+/** The days with a settled bet in the filter, oldest first, each with its net and the running total in dollars. */
+function pickGraphDays() {
+  const days = [...(trendPicksState.data?.history ?? [])].reverse();
+  const out = [];
+  let running = 0;
+  for (const day of days) {
+    const bets = (day.bets ?? []).filter((b) => betMatches(b) && (b.status === 'graded' || b.status === 'void'));
+    if (!bets.length) continue;
+    const net = bets.reduce((s, b) => s + (b.net ?? 0), 0) * unitDollars();
+    running += net;
+    out.push({ date: day.date, bets, net, cumulative: running });
+  }
+  return out;
+}
+
+function renderPickGraph() {
+  if (!el.trendPicksGraph) return;
+  const days = pickGraphDays();
+  if (!days.length) {
+    el.trendPicksGraph.innerHTML = '<p class="empty">The graph starts once the first ticket settles.</p>';
+    return;
+  }
+  const W = 920; const H = 260; const PAD_L = 54; const PAD_R = 20; const PAD_T = 24; const PAD_B = 34;
+  const values = days.map((d) => d.cumulative);
+  const minV = Math.min(0, ...values); const maxV = Math.max(0, ...values);
+  const range = maxV - minV || 1;
+  const xAt = (i) => PAD_L + (days.length === 1 ? (W - PAD_L - PAD_R) / 2 : (i / (days.length - 1)) * (W - PAD_L - PAD_R));
+  const yAt = (v) => PAD_T + (1 - (v - minV) / range) * (H - PAD_T - PAD_B);
+  const last = days[days.length - 1].cumulative;
+  const lineColor = last >= 0 ? '#4ade80' : '#ef4444';
+  const points = days.map((d, i) => `${xAt(i).toFixed(1)},${yAt(d.cumulative).toFixed(1)}`).join(' ');
+  const area = `${xAt(0).toFixed(1)},${yAt(0).toFixed(1)} ${points} ${xAt(days.length - 1).toFixed(1)},${yAt(0).toFixed(1)}`;
+  const ticks = [minV, 0, maxV].filter((v, i, a) => a.indexOf(v) === i).sort((a, b) => a - b);
+  const grid = ticks.map((v) => `<line x1="${PAD_L}" y1="${yAt(v).toFixed(1)}" x2="${W - PAD_R}" y2="${yAt(v).toFixed(1)}" stroke="var(--line)" stroke-width="${v === 0 ? 1.5 : 0.6}" ${v === 0 ? '' : 'stroke-dasharray="3,3"'}/><text x="${PAD_L - 8}" y="${(yAt(v) + 3).toFixed(1)}" font-size="10" fill="var(--muted)" text-anchor="end">${esc(money(v))}</text>`).join('');
+  const labelEvery = Math.max(1, Math.ceil(days.length / 8));
+  const labels = days.map((d, i) => (i % labelEvery === 0 || i === days.length - 1) ? `<text x="${xAt(i).toFixed(1)}" y="${H - 10}" font-size="10" fill="var(--muted)" text-anchor="middle">${esc(pickShortFmt.format(new Date(`${d.date}T12:00:00`)))}</text>` : '').join('');
+  const dots = days.map((d, i) => `<g class="pick-dot ${trendPicksState.hover === i ? 'is-on' : ''}" data-pick-day="${i}" tabindex="0" role="button" aria-label="${esc(pickDayFmt.format(new Date(`${d.date}T12:00:00`)))}: ${esc(money(d.net))}">
+      <circle cx="${xAt(i).toFixed(1)}" cy="${yAt(d.cumulative).toFixed(1)}" r="16" fill="transparent"/>
+      <circle cx="${xAt(i).toFixed(1)}" cy="${yAt(d.cumulative).toFixed(1)}" r="5" fill="${d.net >= 0 ? '#4ade80' : '#ef4444'}" stroke="#0b0b14" stroke-width="2"/>
+    </g>`).join('');
+  const hover = trendPicksState.hover != null ? days[trendPicksState.hover] : null;
+  const tip = hover ? `<div class="pick-tip" style="left:${(xAt(trendPicksState.hover) / W * 100).toFixed(2)}%">
+      <p class="pick-tip-head"><strong>${esc(pickDayFmt.format(new Date(`${hover.date}T12:00:00`)))}</strong> <span class="${hover.net >= 0 ? 'is-win' : 'is-loss'}">${esc(money(hover.net))}</span> <small>${esc(money(hover.cumulative))} to date</small></p>
+      ${hover.bets.map((b) => `<p class="pick-tip-bet"><span class="pick-result is-${esc(b.result)}">${esc(RESULT_LABEL[b.result] ?? b.result)}</span> ${esc(betTypeLabel(b))} at ${esc(b.book)} ${esc(formatAmerican(b.american))}: ${esc(b.legs.map((l) => l.selection).join(' + '))}</p>`).join('')}
+    </div>` : '';
+  el.trendPicksGraph.innerHTML = `<div class="pick-graph-wrap">
+    <svg class="pick-graph-svg" viewBox="0 0 ${W} ${H}" role="img" aria-label="Running total in dollars by day">
+      ${grid}
+      <polygon points="${area}" fill="${lineColor}" opacity="0.08"/>
+      <polyline points="${points}" fill="none" stroke="${lineColor}" stroke-width="2.5" stroke-linejoin="round" stroke-linecap="round"/>
+      ${dots}${labels}
+    </svg>${tip}</div>
+    <p class="pick-graph-foot">Each dot is a day; hover or tap it for the day's tickets. ${esc(money(last))} over ${days.length} day${days.length === 1 ? '' : 's'} at $${esc(String(unitDollars()))} a unit.</p>`;
 }
 
 function renderTrendPicks() {
   if (!el.trendPicksBody) return;
   const d = trendPicksState.data;
+  if (el.trendPicksFilters) {
+    el.trendPicksFilters.innerHTML = PICK_FILTERS.map(([key, label]) => `<button type="button" class="league-chip ${trendPicksState.filter === key ? 'is-active' : ''}" data-pick-filter="${esc(key)}" aria-pressed="${trendPicksState.filter === key ? 'true' : 'false'}"><span class="league-chip-label">${esc(label)}</span></button>`).join('');
+  }
   const today = d?.today ?? null;
-  const picks = today?.picks ?? [];
-  if (picks.length) {
-    el.trendPicksStatus.textContent = `${picks.length} pick${picks.length === 1 ? '' : 's'} today · posted ${trendTimeFmt.format(new Date(picks[0].postedAt))}`;
-    el.trendPicksBody.innerHTML = picks.map(renderTrendPickCard).join('');
+  const bets = (today?.bets ?? []).filter(betMatches);
+  if (bets.length) {
+    el.trendPicksStatus.textContent = `${bets.length} ticket${bets.length === 1 ? '' : 's'} today · posted ${trendTimeFmt.format(new Date(bets[0].postedAt))} · one unit ($${unitDollars()}) each`;
+    el.trendPicksBody.innerHTML = bets.map(renderBetCard).join('');
   } else {
     const checked = today?.checkedAt ? ` Last checked ${trendTimeFmt.format(new Date(today.checkedAt))}; it looks again every hour until the day's games start.` : '';
     el.trendPicksStatus.textContent = today
-      ? (today.considered
-        ? `No pick today: ${today.considered} line${today.considered === 1 ? '' : 's'} qualified and ${today.passed?.length === today.considered ? 'all' : today.passed?.length ?? 0} passed on research.${checked}`
-        : `No pick today: nothing is at 100% over the last 20 games yet.${checked}`)
-      : 'No picks drawn yet today. The draw runs after each Trends build.';
-    el.trendPicksBody.innerHTML = today?.passed?.length
-      ? `<div class="pick-passed"><p class="row-sub">Qualified, then passed on research:</p><ul>${today.passed.map((x) => `<li><strong>${esc(x.selection)}</strong> — ${esc((x.reasons ?? []).join('; ') || 'the research came back against it')}</li>`).join('')}</ul></div>`.replaceAll(' — ', ': ')
-      : '';
+      ? (today.bets?.length
+        ? 'No ticket in this league today.'
+        : today.considered
+          ? `No ticket today: ${today.considered} line${today.considered === 1 ? '' : 's'} qualified and ${today.passed?.length === today.considered ? 'all' : today.passed?.length ?? 0} passed on research${today.unused?.length ? ', the rest had no usable price at your books' : ''}.${checked}`
+          : `No ticket today: nothing is at 100% over the last 20 games yet.${checked}`)
+      : 'No tickets drawn yet today. The draw runs after each Trends build.';
+    const notes = [...(today?.passed ?? []).map((x) => `<li><strong>${esc(x.selection)}</strong>: ${esc((x.reasons ?? []).join('; ') || 'the research came back against it')}</li>`), ...(today?.unused ?? []).map((x) => `<li><strong>${esc(x.selection)}</strong>: passed research, ${esc(x.reason)}</li>`)];
+    el.trendPicksBody.innerHTML = notes.length ? `<div class="pick-passed"><p class="row-sub">Qualified today:</p><ul>${notes.join('')}</ul></div>` : '';
   }
-  const rec = d?.record;
-  const history = (d?.history ?? []).filter((day) => (day.picks ?? []).length);
-  const units = rec ? (rec.units >= 0 ? `+${rec.units.toFixed(2)}` : rec.units.toFixed(2)) : '0.00';
-  el.trendPicksHistory.innerHTML = `
-    <p class="pick-record">${rec ? `${rec.wins}-${rec.losses}${rec.pushes ? `-${rec.pushes}` : ''}` : '0-0'} <small>${units} units at one unit a pick</small></p>
-    ${history.length ? history.map((day) => `
+  const rec = trendPicksState.filter === 'all' ? d?.record : d?.bySport?.[trendPicksState.filter];
+  if (el.trendPicksRecord) {
+    el.trendPicksRecord.innerHTML = rec
+      ? `<p class="pick-record">${rec.wins}-${rec.losses}${rec.pushes ? `-${rec.pushes}` : ''} <small>${esc(signedUnits(rec.units))} units · ${esc(money(rec.dollars))} at $${esc(String(unitDollars()))} a unit, one unit a ticket</small></p>`
+      : '<p class="pick-record">0-0</p>';
+  }
+  renderPickGraph();
+  const history = (d?.history ?? []).map((day) => ({ ...day, bets: (day.bets ?? []).filter(betMatches) })).filter((day) => day.bets.length);
+  el.trendPicksHistory.innerHTML = history.length ? history.map((day) => `
       <div class="pick-day">
         <h3>${esc(pickDayFmt.format(new Date(`${day.date}T12:00:00`)))}</h3>
-        ${day.picks.map((p) => `<div class="pick-row">
-          <span class="pick-row-sel">${esc(p.selection)} <small>${esc(formatAmerican(p.american))}</small></span>
-          <span class="pick-result is-${esc(p.result ?? 'pending')}">${esc(p.status === 'pending' ? (p.commenceMs <= Date.now() ? 'In play' : 'Pending') : (RESULT_LABEL[p.result] ?? p.result))}${Number.isFinite(p.actual) ? ` · ${esc(String(p.actual))}` : ''}</span>
+        ${day.bets.map((b) => `<div class="pick-row">
+          <span class="pick-row-sel"><b>${esc(betTypeLabel(b))}</b> at ${esc(b.book)} <small>${esc(formatAmerican(b.american))}</small><br><span class="pick-row-legs">${esc(b.legs.map((l) => `${l.selection}${l.result ? ` (${RESULT_LABEL[l.result] ?? l.result}${Number.isFinite(l.actual) ? ` ${l.actual}` : ''})` : ''}`).join(' + '))}</span></span>
+          <span class="pick-result is-${esc(b.result ?? 'pending')}">${esc(b.status === 'pending' ? (b.commenceMs <= Date.now() ? 'In play' : 'Pending') : (RESULT_LABEL[b.result] ?? b.result))}${Number.isFinite(b.net) && b.status !== 'pending' && b.result !== 'void' ? ` · ${esc(money(b.net * unitDollars()))}` : ''}</span>
         </div>`).join('')}
-      </div>`).join('') : '<p class="empty">No picks in the last 30 days yet.</p>'}`;
+      </div>`).join('') : '<p class="empty">No tickets in the last 60 days yet.</p>';
 }
+
+el.trendPicksView?.addEventListener('click', (event) => {
+  const chip = event.target.closest('[data-pick-filter]');
+  if (chip) { trendPicksState.filter = chip.dataset.pickFilter; trendPicksState.hover = null; renderTrendPicks(); return; }
+  const dot = event.target.closest('[data-pick-day]');
+  if (dot) { const i = Number(dot.dataset.pickDay); trendPicksState.hover = trendPicksState.hover === i ? null : i; renderPickGraph(); }
+});
+el.trendPicksView?.addEventListener('pointerover', (event) => {
+  const dot = event.target.closest('[data-pick-day]');
+  if (!dot || event.pointerType === 'touch') return;
+  const i = Number(dot.dataset.pickDay);
+  if (trendPicksState.hover !== i) { trendPicksState.hover = i; renderPickGraph(); }
+});
+el.trendPicksView?.addEventListener('keydown', (event) => {
+  const dot = event.target.closest('[data-pick-day]');
+  if (dot && (event.key === 'Enter' || event.key === ' ')) { event.preventDefault(); const i = Number(dot.dataset.pickDay); trendPicksState.hover = trendPicksState.hover === i ? null : i; renderPickGraph(); }
+});

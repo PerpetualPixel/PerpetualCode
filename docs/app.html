@@ -36,7 +36,7 @@
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Syne:wght@600;700;800&family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
-<link rel="stylesheet" href="styles.css?v=1.219">
+<link rel="stylesheet" href="styles.css?v=1.220">
 </head>
 <body>
 
@@ -330,9 +330,18 @@
      they post (worker/src/trend-picks.js), with the running record and the
      last 30 days underneath. -->
 <section id="trendPicksView" role="tabpanel" aria-labelledby="tabTrendPicks" hidden>
+  <!-- Pixel's Picks: the day's tickets (a same-book parlay near +100 or a
+       straight between -200 and +150, at most two a day, one unit each),
+       the record, a running-total graph with a tooltip per day, and the
+       history, all filtered by league. Built in docs/app.js's
+       renderTrendPicks from the worker's /trend-picks. -->
+  <div id="trendPicksFilters" class="trend-leagues pick-filters" role="group" aria-label="League"></div>
   <div id="trendPicksStatus" class="status trends-status" role="status" aria-live="polite">Loading picks…</div>
   <section id="trendPicksBody" class="trends-body" aria-live="polite"></section>
   <h2 class="trend-picks-heading">Record</h2>
+  <section id="trendPicksRecord" class="trend-picks-record"></section>
+  <section id="trendPicksGraph" class="pick-graph" aria-live="polite"></section>
+  <h2 class="trend-picks-heading">History</h2>
   <section id="trendPicksHistory" class="trend-picks-history"></section>
 </section>
 
@@ -477,7 +486,8 @@
       <summary>Pixel's Picks</summary>
       <p>Pixel's Picks are the Trends lines that pass a fixed test, then a research check. The test does not change: the line must have landed in every one of the player's last 20 games, at least ten of them logged, and in every game against today's opponent if he has played them before. One line per player and stat qualifies, the best paying of his 100% lines.</p>
       <p>Each qualifying line is then researched before it can post. Is the player on limited minutes, measured as his last three games against his last twenty? Is he out, doubtful or questionable on the injury report? Is he a starter or a bench player? Does ESPN project a blowout that would sit him in the fourth quarter? Is a teammate out, which changes who gets the ball? Is there a defender or a scheme that hinders this line? If any answer goes against the line, it passes and the tab says why. If everything comes back favorable, it posts, and anything still worth knowing goes in the note under the pick.</p>
-      <p>Most days that is one pick or two. Some days it is none, and the tab says what qualified and what the research found. Every posted pick is graded against the player's final line the morning after and kept in the record at the bottom of the tab, one unit a pick, wins and losses alike.</p>
+      <p>The lines that pass become the day's tickets, priced only at the books Pixel plays: FanDuel, DraftKings, Caesars, Hard Rock, PrizePicks, bet365, Fanatics, BetMGM, Sleeper and Underdog. The first choice is a two leg parlay on one book as close to +100 as the lines allow, three legs when that is what fits under +150. Otherwise a straight bet between -200 and +150. A two leg ticket at +100 beats one straight at -200. At most two tickets a day, one unit each, and a unit is five dollars. Some days it is none, and the tab says what qualified and what the research found.</p>
+      <p>Every ticket is graded the morning after as one bet, the way the book settles it: a lost leg loses the ticket, a pushed or voided leg drops out and the ticket pays at the legs left. The record at the bottom of the tab keeps the running total in units and dollars, a graph of it by day you can hover or tap to see each day's tickets and what won or lost, and the full history, filtered by NBA, NFL or both.</p>
     </details>
 
     <details>
@@ -497,7 +507,7 @@
       I'm Perpetual Pixel. I work in IT by day and I bet on sports most of the hours I'm not working. I built this because the research I wanted to do before a bet took too long by hand: pull up a player's last twenty games, check how often he cleared a number, check what he did against tonight's opponent, then find which book has the best price. Perpetual Picks does that for every player prop on the board, every day, and shows the work.
     </p>
     <p class="about-intro">
-      Trends is the whole site. Every line a sportsbook is offering on today's and tomorrow's NBA and NFL games, with the player's real hit rate at that number over the period you choose, sorted so the lines that always land come first. Pixel's Picks are the lines that meet one fixed test, a hundred percent over the last twenty and against today's opponent, and then survive a research check on minutes, injuries, role, blowout risk and matchup. They are graded the morning after and the record stays up, wins and losses alike.
+      Trends is the whole site. Every line a sportsbook is offering on today's and tomorrow's NBA and NFL games, with the player's real hit rate at that number over the period you choose, sorted so the lines that always land come first. Pixel's Picks are the lines that meet one fixed test, a hundred percent over the last twenty and against today's opponent, and then survive a research check on minutes, injuries, role, blowout risk and matchup. The ones that pass become at most two tickets a day at the books I play, a parlay near +100 or a straight between -200 and +150, one unit of five dollars each. They are graded the morning after and the record stays up, wins and losses alike, with a graph of the running total by day.
     </p>
     <p>
       Nothing here predicts a game. It counts what happened, puts the price next to it, and tells you what to check before you bet. That is the tool I wanted, so I made it and kept it open.
@@ -937,6 +947,6 @@
   </div>
 </aside>
 
-<script type="module" src="app.js?v=1.219"></script>
+<script type="module" src="app.js?v=1.220"></script>
 </body>
 </html>

@@ -6690,6 +6690,45 @@ input[type="range"]:focus-visible {
 .pick-record { font-family: var(--mono); font-size: 1.6rem; font-weight: 800; margin: 0 0 12px; }
 .pick-record small { font-family: var(--sans); font-size: 0.8rem; color: var(--muted); margin-left: 8px; font-weight: 600; }
 .pick-day { border-top: 1px solid var(--line); padding: 10px 0; }
+/* Tickets: one card per bet, its legs stacked inside. */
+.pick-filters { margin-bottom: 10px; }
+.pick-bet-card { cursor: default; padding: 0; overflow: hidden; }
+.pick-bet-head { display: flex; align-items: center; flex-wrap: wrap; gap: 8px 12px; padding: 12px 16px; background: var(--surface-2); border-bottom: 1px solid var(--line); font-size: 0.86rem; }
+.pick-bet-type { font-weight: 800; letter-spacing: 0.06em; text-transform: uppercase; font-size: 0.74rem; color: var(--accent, #c084fc); }
+.pick-bet-book { display: inline-flex; align-items: center; gap: 6px; font-weight: 700; }
+.pick-bet-price { font-family: var(--mono); font-weight: 800; font-size: 1rem; }
+.pick-bet-stake { color: var(--muted); font-weight: 600; }
+.pick-bet-head .pick-result { margin-left: auto; }
+.pick-legs { display: grid; }
+.pick-leg { padding: 14px 16px; border-top: 1px solid var(--line); }
+.pick-leg:first-child { border-top: 0; }
+.pick-leg-price { font-family: var(--mono); font-weight: 800; color: var(--muted); align-self: center; }
+.pick-leg-result { margin-left: auto; font-size: 0.72rem; font-weight: 800; letter-spacing: 0.04em; text-transform: uppercase; color: var(--muted); white-space: nowrap; }
+.pick-leg-result.is-win { color: var(--success); }
+.pick-leg-result.is-loss { color: var(--danger, #ff5c7a); }
+.pick-bet-card > .pick-note { margin: 0 16px 14px; }
+.pick-bet-foot { padding: 0 16px 14px; }
+.pick-bet-link { display: inline-flex; align-items: center; justify-content: center; width: 100%; padding: 11px 14px; border-radius: 12px; background: var(--success); color: #06120a; font-weight: 800; text-decoration: none; letter-spacing: 0.02em; }
+.pick-bet-link:hover { filter: brightness(1.08); }
+.pick-result.is-push, .pick-result.is-void { color: var(--muted); }
+.pick-row-legs { color: var(--muted); font-size: 0.82rem; }
+.trend-picks-record { margin-bottom: 8px; }
+/* The running total by day: an SVG line with a dot per day and a tooltip for the day under the pointer. */
+.pick-graph { margin-bottom: 20px; }
+.pick-graph-wrap { position: relative; background: var(--surface); border: 1px solid var(--line); border-radius: var(--radius); padding: 8px; }
+.pick-graph-svg { width: 100%; height: auto; display: block; }
+.pick-dot { cursor: pointer; outline: none; }
+.pick-dot.is-on circle:last-child, .pick-dot:hover circle:last-child, .pick-dot:focus-visible circle:last-child { r: 7; }
+.pick-tip { position: absolute; top: 8px; transform: translateX(-50%); max-width: min(92%, 360px); padding: 10px 12px; border-radius: 12px; background: rgba(16, 14, 28, 0.97); border: 1px solid var(--line); box-shadow: 0 10px 30px rgba(0, 0, 0, 0.5); font-size: 0.82rem; line-height: 1.4; z-index: 2; pointer-events: none; }
+.pick-tip-head { margin: 0 0 6px; }
+.pick-tip-head .is-win { color: var(--success); font-weight: 800; }
+.pick-tip-head .is-loss { color: var(--danger, #ff5c7a); font-weight: 800; }
+.pick-tip-head small { color: var(--muted); margin-left: 6px; }
+.pick-tip-bet { margin: 4px 0 0; color: var(--text); }
+.pick-tip-bet .pick-result { margin: 0 6px 0 0; font-size: 0.64rem; padding: 2px 6px; }
+.pick-graph-foot { margin: 8px 2px 0; color: var(--muted); font-size: 0.8rem; }
+/* On a phone the day's tickets read below the graph rather than over it. */
+@media (max-width: 520px) { .pick-tip { position: static; transform: none; max-width: none; margin-top: 8px; box-shadow: none; } }
 .pick-day h3 { margin: 0 0 6px; font-size: 0.82rem; color: var(--muted); font-weight: 700; }
 .pick-row { display: flex; justify-content: space-between; align-items: center; gap: 10px; padding: 4px 0; font-size: 0.9rem; }
 .pick-row-sel small { color: var(--muted); margin-left: 6px; }
