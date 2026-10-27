@@ -267,6 +267,21 @@ export async function enrichMmaEvents(events, ctx) {
  * draw from and contribute to the same cache entry, so none of them pay for
  * a redundant fetch within the window.
  */
+/**
+ * What the last Odds API call saw — the HTTP status and body of a failure,
+ * or the quota headers of a success — written to KV so /version can show
+ * it from any isolate. Three days of empty boards (2026-10-25..27) were
+ * three days of every odds call failing with nothing on the site saying
+ * so; this is the line that says so.
+ */
+export const ODDS_DIAG_KEY = 'odds:diag';
+function recordOddsDiag(env, ctx, diag) {
+  try {
+    const put = env?.POTD_KV?.put(ODDS_DIAG_KEY, JSON.stringify(diag), { expirationTtl: 86400 * 7 });
+    if (put && ctx?.waitUntil) ctx.waitUntil(put.catch(() => {}));
+  } catch { /* diagnostics never cost a fetch */ }
+}
+
 export async function fetchSport(sport, env, ctx) {
   const regions = regionsFor(sport);
   const url = new URL(`${UPSTREAM}/sports/${sport}/odds`);
@@ -307,6 +322,7 @@ export async function fetchSport(sport, env, ctx) {
   const upstream = await fetch(url.toString());
   if (!upstream.ok) {
     const detail = await upstream.text();
+    recordOddsDiag(env, ctx, { at: Date.now(), sport, ok: false, status: upstream.status, detail: detail.slice(0, 200) });
     return { error: { sport, status: upstream.status, detail: detail.slice(0, 300) } };
   }
 
@@ -316,6 +332,7 @@ export async function fetchSport(sport, env, ctx) {
     used: upstream.headers.get('x-requests-used'),
     lastCost: upstream.headers.get('x-requests-last'),
   };
+  recordOddsDiag(env, ctx, { at: Date.now(), sport, ok: true, status: upstream.status, ...quota });
 
   // An empty board holds far longer than a live one — see
   // EMPTY_BOARD_CACHE_SECONDS. Cached BEFORE the sharp merge and the MMA

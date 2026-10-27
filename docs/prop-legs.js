@@ -297,6 +297,7 @@ export function seasonColumnRows(gamelog, idx, { parse = (v) => Number(String(v 
         const meta = eventMeta[event.eventId] ?? {};
         rows.push({
           value,
+          eventId: event?.eventId ?? null,
           date: Date.parse(meta.gameDate ?? '') || 0,
           season,
           opponent: meta.opponent?.abbreviation ?? meta.opponent?.displayName ?? null,

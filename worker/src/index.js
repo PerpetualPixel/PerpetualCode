@@ -69,6 +69,7 @@ import {
   ALLOWED_SPORTS,
   fetchSport,
   mmaScheduleDiag,
+  ODDS_DIAG_KEY,
   fetchScores,
   fetchCatalogue,
 } from './odds.js';
@@ -1790,7 +1791,10 @@ export default {
       // `mmaSchedule` says what the last ESPN MMA schedule fetch found (see
       // odds.js's mmaScheduleDiag): a Full Slate of "Card - MM/DD" labels
       // means it found nothing, and this says why.
-      return json({ ...BUILD_INFO, worker: env.CF_VERSION_METADATA?.id ?? null, mmaSchedule: mmaScheduleDiag }, { headers: cors });
+      // `odds` is the last Odds API call's outcome (odds.js's recordOddsDiag):
+      // a failing key or a spent quota shows here as its status and body.
+      const oddsDiagRaw = await env.POTD_KV.get(ODDS_DIAG_KEY).catch(() => null);
+      return json({ ...BUILD_INFO, worker: env.CF_VERSION_METADATA?.id ?? null, mmaSchedule: mmaScheduleDiag, odds: oddsDiagRaw ? JSON.parse(oddsDiagRaw) : null }, { headers: cors });
     }
 
     if (pathname === '/algo-health' && request.method === 'GET') {

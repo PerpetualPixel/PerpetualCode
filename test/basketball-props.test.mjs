@@ -153,3 +153,27 @@ test('the early-season bridge tops a short current season up from the end of las
   assert.equal(priorSeasonKey(null, Date.parse('2026-10-20T12:00:00Z')), 2026, 'October: the season that ended this year');
   assert.equal(priorSeasonKey({}, Date.parse('2027-03-01T12:00:00Z')), 2026, 'March: last year\'s key');
 });
+
+test('basketballStatRows reads plain columns, the made count of made-attempted columns, and sums a combined stat game by game', async () => {
+  const { basketballStatRows, NBA_TREND_MARKETS, NBA_TREND_MARKET_PARAMS } = await import('../worker/src/basketball-props.js');
+  const log = {
+    names: ['minutes', 'fieldGoalsMade-fieldGoalsAttempted', 'threePointFieldGoalsMade-threePointFieldGoalsAttempted', 'totalRebounds', 'assists', 'blocks', 'steals', 'turnovers', 'points'],
+    labels: ['MIN', 'FG', '3PT', 'REB', 'AST', 'BLK', 'STL', 'TO', 'PTS'],
+    events: { e1: { gameDate: '2026-10-25T00:00Z', opponent: { abbreviation: 'BOS' } }, e2: { gameDate: '2026-10-23T00:00Z', opponent: { abbreviation: 'PHI' } } },
+    seasonTypes: [{ displayName: '2026-27 Regular Season', categories: [{ events: [
+      { eventId: 'e2', stats: ['34', '8-15', '3-7', '5', '7', '1', '2', '3', '21'] },
+      { eventId: 'e1', stats: ['36', '10-18', '4-9', '6', '9', '0', '1', '2', '28'] },
+    ] }] }],
+  };
+  assert.deepEqual(basketballStatRows(log, 'points').map((r) => r.value), [28, 21], 'most recent first');
+  assert.deepEqual(basketballStatRows(log, 'threes').map((r) => r.value), [4, 3], 'the made count');
+  assert.deepEqual(basketballStatRows(log, 'fgm').map((r) => r.value), [10, 8]);
+  assert.deepEqual(basketballStatRows(log, 'pra').map((r) => r.value), [43, 33]);
+  assert.deepEqual(basketballStatRows(log, 'ra').map((r) => r.value), [15, 12]);
+  assert.deepEqual(basketballStatRows(log, 'stocks').map((r) => r.value), [1, 3]);
+  assert.equal(basketballStatRows(log, 'pra')[0].opponent, 'BOS', 'a combined row keeps the game\'s files');
+  assert.deepEqual(basketballStatRows({ ...log, names: log.names.filter((n) => n !== 'assists'), labels: log.labels.filter((l) => l !== 'AST') }, 'pa'), [], 'a combo missing a part is empty, never summed short');
+  assert.equal(Object.keys(NBA_TREND_MARKETS).length, 23);
+  assert.equal(NBA_TREND_MARKET_PARAMS.length, 2, 'the full list, then the core eight');
+  assert.ok(NBA_TREND_MARKET_PARAMS[1].split(',').every((k) => NBA_TREND_MARKETS[k]));
+});
