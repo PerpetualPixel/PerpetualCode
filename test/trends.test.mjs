@@ -316,3 +316,20 @@ test('stamps from an older build are dropped once: every live game is rebuilt on
   assert.equal(rebuilt.stamps[nbaGame.id], NOW + 2 * 60e3);
   assert.equal(rebuilt.stampsVersion, STAMPS_VERSION);
 });
+
+test('the stored shape shares one series per player and stat, and every line gets its own back with the right hit flags', async () => {
+  const { detachSeries, attachSeries, logKeyFor } = await import('../docs/trends.js');
+  const { env } = makeKvStore();
+  const built = await buildTrends('basketball_nba', [nbaGame], env, ctx, NOW, deps);
+  assert.ok(built.rows.length >= 2);
+  const { rows, logs } = detachSeries(built.rows);
+  assert.ok(rows.every((r) => !('series' in r) && r.logKey === logKeyFor(r)));
+  assert.ok(Object.keys(logs).length < rows.length, 'lines on the same player and stat share a log');
+  assert.ok(Object.values(logs).every((games) => games.every((g) => !('hit' in g))), 'the flags are the line\'s, not the log\'s');
+  const back = attachSeries(JSON.parse(JSON.stringify(rows)), JSON.parse(JSON.stringify(logs)));
+  assert.deepEqual(back.map((r) => r.series), built.rows.map((r) => r.series), 'the round trip is exact, pushes included');
+  assert.deepEqual(attachSeries([{ point: 1.5, side: 'over', statKey: 'x', playerName: 'nobody' }], logs)[0].series, [], 'a line with no log shows an empty series');
+  const { env: kv } = makeKvStore();
+  const stored = await buildLeagueChunk('basketball_nba', [nbaGame], kv, ctx, NOW, { deps });
+  assert.ok(stored.logs && stored.rows.every((r) => r.logKey in stored.logs), 'the chunk stores the shared shape');
+});

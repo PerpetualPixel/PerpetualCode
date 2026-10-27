@@ -15,7 +15,7 @@ import { CONFIG } from './config.js';
 import { DEMO_EVENTS } from './demo.js';
 import { teamLogoUrl, espnAbbr } from './team-logos.js';
 import { leagueIconSvg } from './league-icons.js';
-import { sortTrends } from './trends.js';
+import { sortTrends, attachSeries } from './trends.js';
 import { enhanceSelect } from './custom-select.js';
 import { BUILD_INFO } from './version.js';
 import { summarizePicks, gradePick } from './learning.js';
@@ -8850,6 +8850,9 @@ async function loadTrends({ force = false } = {}) {
     const res = await fetch(url, { headers: { Accept: 'application/json' } });
     const body = await res.json();
     trendsState.data = body.trends ?? null;
+    // The worker shares one game series per player and stat; each line
+    // gets its own copy back here, hit flags for its number and side.
+    if (trendsState.data?.rows) trendsState.data.rows = attachSeries(trendsState.data.rows, trendsState.data.logs);
     trendsState.available = body.available ?? [];
     trendsState.feed = body.feed ?? null;
     trendsState.sport = trendsState.data?.sportKey ?? trendsState.sport;

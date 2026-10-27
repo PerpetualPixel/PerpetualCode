@@ -21,7 +21,7 @@ import { ODDS_DIAG_KEY } from './odds.js';
 import { etParts, etDatePlusDays } from './potd.js';
 import { probeEspn } from './espn-search.js';
 import { loadBundleTeams, bundleDeps, bundleLine } from './espn-bundle.js';
-import { extractTrendLines, trendRowsFor, sortTrends } from '../../docs/trends.js';
+import { extractTrendLines, trendRowsFor, sortTrends, detachSeries, attachSeries } from '../../docs/trends.js';
 import { normalizeName as normalizeNflName } from '../../docs/nfl-props.js';
 import { normalizeName as normalizeNbaName } from '../../docs/wnba-props.js';
 import { normalizeName as normalizeNhlName } from '../../docs/nhl-props.js';
@@ -78,10 +78,15 @@ export const RETRY_EMPTY_MINUTES = 30;
  * find. Bumped 2026-10-27: builds that failed on the spent key, and on
  * the refused roster path, had stamped their games as tried for hours.
  */
-export const STAMPS_VERSION = 2;
+export const STAMPS_VERSION = 3;
 /** How many diagnostic lines a build keeps for /trends to show. */
 const MAX_DIAG = 60;
-const MAX_ROWS = 2000;
+/**
+ * Lines kept per league, the best hit rates first. The series is shared
+ * per player and stat (docs/trends.js's detachSeries), so a line is a
+ * couple of kilobytes and six thousand sit well inside a KV value.
+ */
+const MAX_ROWS = 6000;
 const KV_TTL_SECONDS = 86400 * 2;
 
 const NBA_KEY = 'basketball_nba';
@@ -297,7 +302,8 @@ export async function buildLeagueChunk(sportKey, events, env, ctx, now = Date.no
   const keepRows = (stored.rows ?? []).filter((r) => live.has(r.eventId));
   if (!due.length) {
     if (!games.length || keepRows.length !== (stored.rows ?? []).length || stored.pending) {
-      const payload = { ...stored, builtAt: stored.builtAt ?? now, checkedAt: now, games: Object.keys(stamps).length, pending: 0, rows: keepRows, stamps, stampsVersion: STAMPS_VERSION, lastError: null };
+      const kept = detachSeries(attachSeries(keepRows, stored.logs));
+      const payload = { ...stored, builtAt: stored.builtAt ?? now, checkedAt: now, games: Object.keys(stamps).length, pending: 0, rows: kept.rows, logs: kept.logs, stamps, stampsVersion: STAMPS_VERSION, lastError: null };
       await env.POTD_KV.put(trendsKey(sportKey), JSON.stringify(payload), { expirationTtl: KV_TTL_SECONDS });
     }
     return null;
@@ -311,11 +317,12 @@ export async function buildLeagueChunk(sportKey, events, env, ctx, now = Date.no
     const gotRows = built.rows.some((r) => r.eventId === g.id);
     stamps[g.id] = gotRows ? now : now - ttl + RETRY_EMPTY_MINUTES * 60e3;
   }
-  const rows = sortTrends([...keepRows.filter((r) => !chunkIds.has(r.eventId)), ...built.rows], { window: 'l20' }).slice(0, MAX_ROWS);
+  const merged = sortTrends([...attachSeries(keepRows.filter((r) => !chunkIds.has(r.eventId)), stored.logs), ...built.rows], { window: 'l20' }).slice(0, MAX_ROWS);
+  const { rows, logs } = detachSeries(merged);
   const payload = {
     sportKey, title: built.title, builtAt: now, checkedAt: now,
     games: Object.keys(stamps).length, pending: due.length - chunk.length,
-    rows, stamps, stampsVersion: STAMPS_VERSION, diag: built.diag, lastError: null,
+    rows, logs, stamps, stampsVersion: STAMPS_VERSION, diag: built.diag, lastError: null,
   };
   await env.POTD_KV.put(trendsKey(sportKey), JSON.stringify(payload), { expirationTtl: KV_TTL_SECONDS });
   return payload;

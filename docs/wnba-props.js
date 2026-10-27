@@ -106,7 +106,10 @@ export function normalizeName(name) {
     .normalize('NFD').replace(/[̀-ͯ]/g, '')
     .toLowerCase()
     .replace(/[^a-z0-9]+/g, ' ')
-    .trim();
+    .trim()
+    // The books write "Paul Reed Jr" and "Robert Williams"; ESPN writes
+    // "Paul Reed" and "Robert Williams III". Neither suffix is the name.
+    .replace(/\s+(jr|sr|ii|iii|iv|v)$/, '');
 }
 
 /** Same shape/reasoning as docs/nfl-props.js's buildQbPropCandidates — see that module's header. */

@@ -177,3 +177,13 @@ test('basketballStatRows reads plain columns, the made count of made-attempted c
   assert.equal(NBA_TREND_MARKET_PARAMS.length, 2, 'the full list, then the core eight');
   assert.ok(NBA_TREND_MARKET_PARAMS[1].split(',').every((k) => NBA_TREND_MARKETS[k]));
 });
+
+test('a generational suffix is not part of the name: the books\' "Paul Reed Jr" meets ESPN\'s "Paul Reed", and "Robert Williams" meets "Robert Williams III"', async () => {
+  const { normalizeName } = await import('../docs/wnba-props.js');
+  const { normalizeName: nfl } = await import('../docs/nfl-props.js');
+  assert.equal(normalizeName('Paul Reed Jr'), normalizeName('Paul Reed'));
+  assert.equal(normalizeName('Robert Williams III'), normalizeName('Robert Williams'));
+  assert.equal(nfl('Marvin Harrison Jr.'), 'marvin harrison');
+  assert.equal(nfl('Kenneth Walker III'), 'kenneth walker');
+  assert.equal(normalizeName('Victor Wembanyama'), 'victor wembanyama');
+});
