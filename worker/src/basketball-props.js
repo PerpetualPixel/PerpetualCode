@@ -228,6 +228,9 @@ export async function fetchAltProps(sportKey, oddsEventId, env, ctx, markets = B
   url.searchParams.set('markets', markets);
   url.searchParams.set('oddsFormat', 'american');
   url.searchParams.set('dateFormat', 'iso');
+  // Deep links to the book's slip for each line, where the book offers
+  // one — a request flag, not a credit.
+  url.searchParams.set('includeLinks', 'true');
   return cachedJson(url.toString(), ODDS_TTL, ctx, env);
 }
 

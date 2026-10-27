@@ -6449,9 +6449,18 @@ input[type="range"]:focus-visible {
 .trend-player small { color: var(--muted); font-weight: 600; margin-left: 6px; font-size: 0.8rem; }
 .trend-line { margin: 2px 0 0; color: var(--muted); font-size: 0.95rem; }
 .trend-price {
+  display: inline-flex; align-items: center; gap: 7px;
   font-family: var(--mono); font-weight: 800; font-size: 0.95rem; color: var(--text); border: 1px solid rgba(255, 255, 255, 0.22);
-  border-radius: 10px; padding: 6px 10px; white-space: nowrap; font-variant-numeric: tabular-nums;
+  border-radius: 10px; padding: 5px 10px 5px 6px; white-space: nowrap; font-variant-numeric: tabular-nums;
 }
+/* The book's mark in a price pill: its favicon, or its monogram on the brand colour. */
+.book-badge {
+  display: inline-grid; place-items: center; width: 20px; height: 20px; border-radius: 6px; overflow: hidden; flex: none;
+  background: var(--book, #8892a6); color: #fff; font-family: var(--sans); font-size: 0.58rem; font-weight: 800; letter-spacing: 0.02em;
+}
+.book-badge img { width: 20px; height: 20px; object-fit: cover; display: block; background: #fff; }
+.book-badge.is-large { width: 26px; height: 26px; border-radius: 8px; font-size: 0.7rem; }
+.book-badge.is-large img { width: 26px; height: 26px; }
 .trend-rate-row { display: grid; grid-template-columns: auto 1fr auto; gap: 12px; align-items: center; margin-top: 10px; padding-top: 10px; border-top: 1px solid var(--line); }
 .trend-rate { font-family: var(--mono); font-weight: 800; font-size: 1.25rem; font-variant-numeric: tabular-nums; }
 .trend-rate small { font-family: var(--sans); color: var(--muted); font-weight: 600; margin-left: 5px; font-size: 0.78rem; }
@@ -6641,3 +6650,6 @@ input[type="range"]:focus-visible {
 .pick-day h3 { margin: 0 0 6px; font-size: 0.82rem; color: var(--muted); font-weight: 700; }
 .pick-row { display: flex; justify-content: space-between; align-items: center; gap: 10px; padding: 4px 0; font-size: 0.9rem; }
 .pick-row-sel small { color: var(--muted); margin-left: 6px; }
+a.trend-price { text-decoration: none; }
+a.trend-price.is-slip { border-color: var(--success); }
+a.trend-price:hover { background: rgba(255, 255, 255, 0.06); }
