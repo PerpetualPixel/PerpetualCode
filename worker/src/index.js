@@ -45,9 +45,9 @@ import {
   fetchStartingPitchers,
   fetchPitcherOutings,
 } from './mlb-stats.js';
-import { runMlbPropsScan, runMlbPropsGrading, getAllMlbPropsTracked } from './mlb-props.js';
+import { runMlbPropsGrading, getAllMlbPropsTracked } from './mlb-props.js';
 import { runNflPropsScan, runNflPropsGrading, getAllNflPropsTracked } from './nfl-props.js';
-import { runWnbaPropsScan, runWnbaPropsGrading, getAllWnbaPropsTracked } from './wnba-props.js';
+import { runWnbaPropsGrading, getAllWnbaPropsTracked } from './wnba-props.js';
 import { runPropPlayDaily, runPropPlayGrading, getAllPropPlays } from './prop-play.js';
 import { extractSlipFromImage } from './slip-vision.js';
 import { consumeQuota, getQuotaUsage } from './tail-fade-quota.js';
@@ -483,7 +483,10 @@ export default {
     // hours of its own first pitch, whichever tick first notices. Cheap on
     // every other tick — one cached KV read for the day's game list, no
     // fetch, when nothing is currently in-window.
-    ctx.waitUntil(runMlbPropsScan(env, ctx, now, { fetchFullSlate: () => fetchFullSlateEvents(env, ctx) }));
+    // The MLB scan is off (2026-10-27): the league left the site with the
+    // 2026-10-19 narrowing, and every scan was still spending odds credits
+    // — the month's quota ran out on 2026-10-25 and every board went dark.
+    // Grading stays so the record settles.
     ctx.waitUntil(runMlbPropsGrading(env, ctx, now));
 
     // Every tick: NFL starting-QB props (Pass Completions, Pass Attempts) —
@@ -493,7 +496,7 @@ export default {
 
     // Every tick: WNBA player props (PRA, Rebounds+Assists) — same per-game
     // dynamic window, see worker/src/wnba-props.js.
-    ctx.waitUntil(runWnbaPropsScan(env, ctx, now, { fetchFullSlate: () => fetchFullSlateEvents(env, ctx) }));
+    // The WNBA scan is off for the same reason as the MLB one above.
     ctx.waitUntil(runWnbaPropsGrading(env, ctx, now));
     // Prop Play selection moved into the ordered selection chain below —
     // it has to be decided after the Play of the Day and before Pixel's
@@ -1464,8 +1467,13 @@ export default {
         const keys = wanted && TREND_ENABLED_SPORTS.includes(wanted) ? [wanted] : TREND_ENABLED_SPORTS;
         const all = await Promise.all(keys.map((k) => getTrends(env, k)));
         const trends = all.find((t) => t.rows.length) ?? all[0];
+        // `feed` is the last Odds API call's outcome (odds.js's
+        // recordOddsDiag): a tab with no rows can say the feed refused the
+        // call rather than look like a build that never ran.
+        const feedRaw = await env.POTD_KV.get(ODDS_DIAG_KEY).catch(() => null);
         return json({
           trends,
+          feed: feedRaw ? JSON.parse(feedRaw) : null,
           leagues: TREND_ENABLED_SPORTS,
           available: await Promise.all(TREND_ENABLED_SPORTS.map(async (k) => { const t = await getTrends(env, k); return { sportKey: k, title: t.title, rows: t.rows.length, builtAt: t.builtAt }; })),
         }, { headers: { ...cors, 'Cache-Control': 'public, max-age=300' } });

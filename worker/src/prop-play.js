@@ -22,7 +22,7 @@
  * generic so an NBA/NFL variant is a constants change, not a rewrite.
  */
 
-import { fetchSport, fetchScores, UPSTREAM, REGIONS } from './odds.js';
+import { fetchSport, fetchScores, UPSTREAM, REGIONS, ALLOWED_SPORTS } from './odds.js';
 import { UNIT_DOLLARS, STAKE_BANDS } from '../../docs/engine.js';
 import { gradePick } from '../../docs/learning.js';
 import { normalizeName } from '../../docs/wnba-props.js';
@@ -389,7 +389,11 @@ export async function runPropPlayDaily(env, ctx, now = Date.now(), { debug = fal
   const alreadyPosted = Boolean(existing);
 
   const trace = [];
-  const { events } = await fetchSport('basketball_wnba', env, ctx);
+  // The WNBA left the site with the 2026-10-19 narrowing: no odds call
+  // for it (the month's credits ran out on 2026-10-25 with scans like this
+  // one still spending them). The moneyline pool below still draws from
+  // the slate sports.
+  const { events } = ALLOWED_SPORTS.has('basketball_wnba') ? await fetchSport('basketball_wnba', env, ctx) : { events: [] };
   const games = (events ?? [])
     .filter((e) => etDate(new Date(e.commence_time).getTime()) === dateKey)
     .filter((e) => new Date(e.commence_time).getTime() > now)
