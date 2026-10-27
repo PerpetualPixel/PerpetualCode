@@ -207,3 +207,17 @@ test('/admin/regrade-tennis reads its resume offset from the query string', asyn
   assert.equal(body.nextOffsetDays, null);
   assert.equal(body.done, true);
 });
+
+test('the Trends sportsbooks save beside the bankroll: each PUT keeps the other field, and the list is cleaned', async () => {
+  const env = makeEnv();
+  await worker.fetch(call('/settings', { method: 'PUT', token: TOKEN, body: { bankroll: { amount: 2500, unit: 50, displayMode: 'units', confirmed: true } } }), env, ctx);
+  const put = await worker.fetch(call('/settings', { method: 'PUT', token: TOKEN, body: { trendBooks: ['draftkings', 'FanDuel ', 'draftkings', 'bad key!', 'williamhill_us'] } }), env, ctx);
+  assert.equal(put.status, 200);
+  const { settings } = await (await worker.fetch(call('/settings', { token: TOKEN }), env, ctx)).json();
+  assert.deepEqual(settings.trendBooks, ['draftkings', 'fanduel', 'williamhill_us'], 'lowercased, deduped, bad tokens dropped');
+  assert.equal(settings.bankroll.amount, 2500, 'a books-only save leaves the bankroll alone');
+  await worker.fetch(call('/settings', { method: 'PUT', token: TOKEN, body: { bankroll: { amount: 100, unit: 5 } } }), env, ctx);
+  const after = await (await worker.fetch(call('/settings', { token: TOKEN }), env, ctx)).json();
+  assert.deepEqual(after.settings.trendBooks, ['draftkings', 'fanduel', 'williamhill_us'], 'a bankroll-only save leaves the books alone');
+  assert.equal(after.settings.bankroll.amount, 100);
+});

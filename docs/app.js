@@ -3258,6 +3258,12 @@ async function loadSettings() {
       state.bankroll = { ...state.bankroll, ...settings.bankroll };
       saveJSON(BANKROLL_KEY, state.bankroll); // keep the offline copy in step
     }
+    // The user's sportsbooks (see persistTrendBooks): the account's list
+    // wins over this device's, same as the bankroll.
+    if (Array.isArray(settings?.trendBooks)) {
+      trendsState.books = new Set(settings.trendBooks);
+      saveJSON(TREND_BOOKS_KEY, settings.trendBooks);
+    }
     return { ok: true, hadRecord: Boolean(settings) };
   } catch {
     return { ok: false, reason: 'unavailable' };
@@ -7683,6 +7689,9 @@ const TRENDS_ONLY = true;
 
   if (TRENDS_ONLY) {
     setActiveTab('trends');
+    // The account's sportsbooks first, so the first render is already
+    // filtered to the books the user plays at.
+    await loadSettings();
     await loadTrends();
     startUpdateChecks();
     return;
@@ -8719,6 +8728,9 @@ el.tailFadeResult?.addEventListener('click', toggleTailFadeLegCard);
  * period with its rate, the chart with values and opponents, the game log
  * with finals, and every book's price on the line.
  */
+/** This device's copy of the user's sportsbooks (the account's list wins when signed in). */
+const TREND_BOOKS_KEY = 'pixelpick.trendBooks.v1';
+
 const trendsState = {
   // No league chosen until the first load: the worker answers with the
   // first league that has rows, so the tab opens on whatever is on today.
@@ -8731,7 +8743,10 @@ const trendsState = {
   // unchecked list.
   markets: new Set(),
   games: new Set(),
-  books: new Set(),
+  // The user's sportsbooks, by registry id (docs/engine.js's SPORTSBOOKS)
+  // or a feed key the registry doesn't list. Saved to the account
+  // (persistTrendBooks) and to this device; the account's list wins.
+  books: new Set((() => { try { const v = loadJSON(TREND_BOOKS_KEY, []); return Array.isArray(v) ? v : []; } catch { return []; } })()),
   odds: { min: null, max: null },
   minRate: 0,
   side: 'all',
@@ -8814,10 +8829,34 @@ function renderTrendLeagues() {
 }
 
 /** The price a row shows under the current sportsbook filter: the best among the chosen books. */
+/** Whether a quote's book is one the user chose — by registry id, or by the feed's own key for an unlisted book. */
+const bookChosen = (bookKey) => trendsState.books.has(bookIdFor(bookKey) ?? bookKey) || trendsState.books.has(bookKey);
+
 function trendQuote(row) {
   const quotes = row.quotes ?? [{ american: row.american, decimal: row.decimal, book: row.book, bookKey: row.bookKey }];
-  const pool = trendsState.books.size ? quotes.filter((q) => trendsState.books.has(q.bookKey)) : quotes;
+  const pool = trendsState.books.size ? quotes.filter((q) => bookChosen(q.bookKey)) : quotes;
   return pool[0] ?? null;
+}
+
+/**
+ * Save the user's sportsbooks: to this device at once, and to the account
+ * (one PUT, coalesced) when signed in — so the same books apply on every
+ * device, and the tab opens already filtered to them.
+ */
+let trendBooksPushTimer = null;
+function persistTrendBooks() {
+  const list = [...trendsState.books];
+  saveJSON(TREND_BOOKS_KEY, list);
+  const headers = settingsHeaders();
+  if (!headers || !CONFIG.WORKER_URL) return;
+  clearTimeout(trendBooksPushTimer);
+  trendBooksPushTimer = setTimeout(() => {
+    fetch(new URL('/settings', CONFIG.WORKER_URL), {
+      method: 'PUT',
+      headers: { ...headers, 'Content-Type': 'application/json' },
+      body: JSON.stringify({ trendBooks: list }),
+    }).catch(() => { /* the device copy stands; the next change retries */ });
+  }, 600);
 }
 
 /** The rows the controls leave standing, in the chosen order. */
@@ -9017,10 +9056,19 @@ function renderTrendsSheet() {
       <div class="odds-axis"><span>${esc(formatAmerican(lo))}</span><span>${esc(formatAmerican(hi))}</span></div>
       <div class="sheet-actions"><button type="button" class="sheet-pill" data-odds-reset>Reset</button></div>${sheetClose()}`;
   } else if (sheet.type === 'books') {
-    const seen = new Map();
-    for (const r of rows) for (const q of r.quotes ?? []) if (!seen.has(q.bookKey)) seen.set(q.bookKey, q.book);
-    const list = [...seen.entries()].sort((a, b) => a[1].localeCompare(b[1]));
-    html = `${sheetHead('books', 'Sportsbooks')}<div class="sheet-list">${list.map(([key, name]) => { const meta = bookIdFor(key) ? SPORTSBOOKS[bookIdFor(key)] : null; return checkRow('book', key, trendsState.books.has(key), esc(name), `<span class="row-dot" style="--book:${esc(meta?.color ?? '#8892a6')}"></span>`); }).join('')}</div>
+    // Every book the registry knows, so the user can pick theirs before the
+    // first build lands, plus any book the rows price that it doesn't.
+    const list = Object.entries(SPORTSBOOKS).map(([id, meta]) => [id, meta.name, meta.color]);
+    const seen = new Set(list.map(([id]) => id));
+    for (const r of rows) for (const q of r.quotes ?? []) {
+      if (bookIdFor(q.bookKey) || seen.has(q.bookKey)) continue;
+      seen.add(q.bookKey); list.push([q.bookKey, q.book, '#8892a6']);
+    }
+    list.sort((a, b) => a[1].localeCompare(b[1]));
+    const saved = settingsHeaders() ? 'Saved to your account — the same books on every device.' : 'Saved on this device. Sign in to keep them on every device.';
+    html = `${sheetHead('books', 'Sportsbooks')}
+      <p class="row-sub" style="text-align:center;margin:0 0 12px">Only lines these books price, at their best price. ${esc(saved)}</p>
+      <div class="sheet-list">${list.map(([id, name, color]) => checkRow('book', id, trendsState.books.has(id), esc(name), `<span class="row-dot" style="--book:${esc(color)}"></span>`)).join('')}</div>
       <div class="sheet-actions"><button type="button" class="sheet-pill" data-select-all="book">${trendsState.books.size ? 'Clear' : 'Select all'}</button></div>${sheetClose()}`;
   } else if (sheet.type === 'minrate') {
     html = `${sheetHead('minrate', 'Period Hit Rate')}
@@ -9170,7 +9218,7 @@ el.trendsSheet?.addEventListener('click', (event) => {
   if (hit('[data-sheet-close]')) return closeTrendsSheet();
   if ((node = hit('[data-sheet-open]'))) return openTrendsSheet(node.dataset.sheetOpen);
   if (hit('[data-filters-reset]')) {
-    trendsState.markets.clear(); trendsState.games.clear(); trendsState.books.clear();
+    trendsState.markets.clear(); trendsState.games.clear(); trendsState.books.clear(); persistTrendBooks();
     trendsState.odds = { min: null, max: null }; trendsState.minRate = 0; trendsState.side = 'all';
     renderTrends(); return renderTrendsSheet();
   }
@@ -9179,6 +9227,7 @@ el.trendsSheet?.addEventListener('click', (event) => {
     const set = { market: trendsState.markets, game: trendsState.games, book: trendsState.books }[kind];
     if (set.size) set.clear();
     else for (const input of el.trendsSheet.querySelectorAll(`input[name="${kind}"]`)) set.add(input.value);
+    if (kind === 'book') persistTrendBooks();
     renderTrends(); return renderTrendsSheet();
   }
   if (hit('[data-odds-reset]')) { trendsState.odds = { min: null, max: null }; renderTrends(); return renderTrendsSheet(); }
@@ -9194,7 +9243,7 @@ el.trendsSheet?.addEventListener('change', (event) => {
   const input = event.target;
   if (!(input instanceof HTMLInputElement)) return;
   const set = { market: trendsState.markets, game: trendsState.games, book: trendsState.books }[input.name];
-  if (set) { if (input.checked) set.add(input.value); else set.delete(input.value); renderTrends(); }
+  if (set) { if (input.checked) set.add(input.value); else set.delete(input.value); if (input.name === 'book') persistTrendBooks(); renderTrends(); }
 });
 el.trendsSheet?.addEventListener('input', (event) => {
   const input = event.target;

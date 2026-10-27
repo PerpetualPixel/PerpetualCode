@@ -85,12 +85,28 @@ function cleanAmount(value) {
 }
 
 /**
+ * The sportsbooks a user plays at (2026-10-27 direction: the books the
+ * user selects, per profile, filter the Trends tab to what those books
+ * offer): registry ids from docs/engine.js's SPORTSBOOKS, or a feed's own
+ * bookmaker key for a book the registry doesn't list. Short lowercase
+ * tokens, at most 30. Null when the client sent no list at all, so a
+ * bankroll-only save leaves the books alone.
+ */
+function cleanBooks(value) {
+  if (!Array.isArray(value)) return null;
+  const keys = value.map((v) => String(v ?? '').toLowerCase().trim()).filter((v) => /^[a-z0-9_]{2,32}$/.test(v));
+  return [...new Set(keys)].slice(0, 30);
+}
+
+/**
  * Normalize whatever the client sent into exactly the shape we store.
  * Whitelisted field by field rather than spread, so a client can't grow the
- * record with arbitrary keys.
+ * record with arbitrary keys. A field the client left out keeps what
+ * `existing` holds — the bankroll panel and the Trends tab each save their
+ * own field without wiping the other's.
  */
-function normalize(input) {
-  const bankroll = input?.bankroll ?? {};
+function normalize(input, existing = null) {
+  const bankroll = input?.bankroll ?? existing?.bankroll ?? {};
   return {
     version: SETTINGS_VERSION,
     bankroll: {
@@ -99,6 +115,7 @@ function normalize(input) {
       displayMode: bankroll.displayMode === 'units' ? 'units' : 'dollars',
       confirmed: bankroll.confirmed === true,
     },
+    trendBooks: cleanBooks(input?.trendBooks) ?? cleanBooks(existing?.trendBooks) ?? [],
     updatedAt: Date.now(),
   };
 }
@@ -116,7 +133,7 @@ export async function getSettings(env, identity = 'owner') {
 
 /** Replace an identity's settings. Returns exactly what was stored. */
 export async function putSettings(env, input, identity = 'owner') {
-  const record = normalize(input);
+  const record = normalize(input, await getSettings(env, identity));
   await env.POTD_KV.put(settingsKey(identity), JSON.stringify(record));
   return record;
 }
