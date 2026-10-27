@@ -8764,6 +8764,10 @@ const trendsState = {
   books: new Set((() => { try { const v = loadJSON(TREND_BOOKS_KEY, []); return Array.isArray(v) ? v : []; } catch { return []; } })()),
   odds: { min: null, max: null },
   minRate: 0,
+  // The head-to-head floor, 0 to 1 in tenths: a line must have landed this often against today's opponent, whatever period is shown. 0 is off.
+  h2hMin: 0,
+  // Where the "last N" slider sits (5 to 20); kept while head to head or a season is shown, so the tile comes back where it was.
+  lastN: 20,
   side: 'all',
   search: '',
   data: null,
@@ -8805,8 +8809,36 @@ function trendSeasons() {
   const seasons = [...seen].filter((y) => y > 0).sort((a, b) => b - a);
   return seasons.length ? seasons : defaultSeasons();
 }
-const periodLabel = (key) => PERIOD_LABEL[key] ?? (key.startsWith('s') ? seasonName(key.slice(1)) : key);
-const periodLong = (key) => PERIOD_LONG[key] ?? (key.startsWith('s') ? `${seasonName(key.slice(1))} season` : key);
+/** A "last N" period key's N (5 to 20), or null for any other key. */
+const lastN = (key) => { const m = /^l(\d+)$/.exec(String(key ?? '')); return m ? Number(m[1]) : null; };
+const periodLabel = (key) => PERIOD_LABEL[key] ?? (lastN(key) ? `L${lastN(key)}` : key.startsWith('s') ? seasonName(key.slice(1)) : key);
+const periodLong = (key) => PERIOD_LONG[key] ?? (lastN(key) ? `Last ${lastN(key)}` : key.startsWith('s') ? `${seasonName(key.slice(1))} season` : key);
+/** The dock's Period label: the period, and the head-to-head floor when one is set. */
+const periodDockLabel = () => `${periodLong(trendsState.period)}${trendsState.h2hMin > 0 ? ` · H2H ${Math.round(trendsState.h2hMin * 100)}%+` : ''}`;
+
+/**
+ * A row with stats for `period`. The worker stores L5, L10, L20, the
+ * seasons and head to head; any other "last N" (the Period slider) is
+ * read here from the row's series, the same way: pushes count for
+ * neither side. Returns the row itself when it already has the period.
+ */
+function withPeriod(row, period) {
+  if (row.periods?.[period]) return row;
+  const n = lastN(period);
+  if (!n) return row;
+  const games = (row.series ?? []).slice(0, n);
+  const flags = games.map((g) => g.hit).filter((f) => f !== null);
+  const values = games.map((g) => g.value);
+  const rate = flags.length ? Math.round((flags.reduce((a, f) => a + f, 0) / flags.length) * 1000) / 1000 : null;
+  const sorted = [...values].sort((a, b) => a - b);
+  const mid = sorted.length >> 1;
+  const stats = {
+    rate, hits: flags.reduce((a, f) => a + f, 0), games: flags.length,
+    avg: values.length ? Math.round((values.reduce((a, v) => a + v, 0) / values.length) * 10) / 10 : null,
+    median: sorted.length ? Math.round((sorted.length % 2 ? sorted[mid] : (sorted[mid - 1] + sorted[mid]) / 2) * 10) / 10 : null,
+  };
+  return { ...row, periods: { ...(row.periods ?? {}), [period]: stats }, rates: { ...(row.rates ?? {}), [period]: rate } };
+}
 const trendLogo = (sportKey, abbr) => (abbr ? `https://a.espncdn.com/i/teamlogos/${TREND_LOGO_PATH[sportKey] ?? 'nfl'}/500/${String(abbr).toLowerCase()}.png` : null);
 const rateTone = (v) => (v >= 0.7 ? 'is-hot' : v >= 0.5 ? 'is-warm' : 'is-cold');
 const pct = (v) => `${Math.round(v * 100)}%`;
@@ -8931,18 +8963,23 @@ function visibleTrendRows() {
     if (!quote) continue;
     if (Number.isFinite(min) && quote.american < min) continue;
     if (Number.isFinite(max) && quote.american > max) continue;
-    const rate = r.rates?.[p];
+    const rr = withPeriod(r, p);
+    const rate = rr.rates?.[p];
     if (!Number.isFinite(rate)) continue;
     if (rate < trendsState.minRate - 1e-9) continue;
+    if (trendsState.h2hMin > 0) {
+      const h2h = r.periods?.h2h;
+      if (!h2h || !h2h.games || !(h2h.rate >= trendsState.h2hMin - 1e-9)) continue;
+    }
     if (q && !`${r.playerName} ${r.team ?? ''} ${r.home} ${r.away} ${r.marketLabel}`.toLowerCase().includes(q)) continue;
-    kept.push({ ...r, american: quote.american, decimal: quote.decimal, book: quote.book, bookKey: quote.bookKey, link: quote.link ?? null });
+    kept.push({ ...rr, american: quote.american, decimal: quote.decimal, book: quote.book, bookKey: quote.bookKey, link: quote.link ?? null });
   }
   return sortTrends(kept, { window: p, by: trendsState.sort.by, dir: trendsState.sort.dir });
 }
 
 function activeFilterCount() {
   return (trendsState.markets.size ? 1 : 0) + (trendsState.games.size ? 1 : 0) + (trendsState.books.size ? 1 : 0)
-    + (Number.isFinite(trendsState.odds.min) || Number.isFinite(trendsState.odds.max) ? 1 : 0) + (trendsState.minRate > 0 ? 1 : 0) + (trendsState.side !== 'all' ? 1 : 0);
+    + (Number.isFinite(trendsState.odds.min) || Number.isFinite(trendsState.odds.max) ? 1 : 0) + (trendsState.minRate > 0 ? 1 : 0) + (trendsState.h2hMin > 0 ? 1 : 0) + (trendsState.side !== 'all' ? 1 : 0);
 }
 
 function avatarHtml(row, cls = 'trend-avatar') {
@@ -8955,7 +8992,7 @@ function avatarHtml(row, cls = 'trend-avatar') {
 }
 
 function periodCount(period) {
-  return { h2h: 20, l5: 5, l10: 10, l20: 20 }[period] ?? 20;
+  return lastN(period) ?? 20;
 }
 
 /** The games a period draws: the last N, this opponent only, or one season. */
@@ -9002,7 +9039,7 @@ function renderTrendCard(row) {
 function renderTrends() {
   if (!el.trendsBody) return;
   const data = trendsState.data;
-  el.trendsPeriodLabel.textContent = periodLong(trendsState.period);
+  el.trendsPeriodLabel.textContent = periodDockLabel();
   el.trendsSortLabel.textContent = SORT_LABEL[trendsState.sort.by];
   const n = activeFilterCount();
   el.trendsFilterCount.hidden = n === 0;
@@ -9152,16 +9189,35 @@ function renderTrendsSheet() {
     const sample = visibleTrendRows()[0] ?? rows[0] ?? null;
     // Head to head, the three recent windows, then every season the rows
     // carry (this one and last, always) — the order the research apps use.
-    const keys = ['h2h', 'l5', 'l10', 'l20', ...trendSeasons().map((y) => `s${y}`)];
-    const mini = (key) => {
+    // Head to head, one "last N" tile with a slider from 5 to 20, then
+    // every season the rows carry (this one and last, always). Under
+    // them, the head-to-head floor: a slider from any to 100% in tenths
+    // that filters whichever period is shown.
+    const n = lastN(trendsState.period) ?? trendsState.lastN ?? 20;
+    const lastKey = `l${n}`;
+    const keys = ['h2h', lastKey, ...trendSeasons().map((y) => `s${y}`)];
+    const mini = (key, count = 10) => {
       if (!sample) return '';
-      const series = periodSeries(sample, key).slice(0, 10).reverse();
+      const series = periodSeries(sample, key).slice(0, count).reverse();
       if (!series.length) return '<div class="tile-mini"></div>';
       const max = Math.max(sample.point, ...series.map((s) => s.value), 1);
       return `<div class="tile-mini"><span class="mini-line" style="top:${(100 - (sample.point / max) * 100).toFixed(1)}%"></span>${series.map((s) => `<span class="${s.hit === 1 ? 'is-hit' : s.hit === null ? '' : 'is-miss'}" style="height:${Math.max(8, (s.value / max) * 100).toFixed(1)}%"></span>`).join('')}</div>`;
     };
+    const tile = (k) => (lastN(k)
+      ? `<div class="sheet-tile sheet-tile-slider ${trendsState.period === k ? 'is-on' : ''}" data-period-last>
+          <button type="button" class="tile-pick" data-period="${k}" aria-label="Last ${n}"><span class="tile-label">Last <span id="trendsLastNLabel">${n}</span></span><span class="tile-radio"></span></button>
+          <input id="trendsLastN" type="range" min="5" max="20" step="1" value="${n}" aria-label="Last how many games">
+          <div id="trendsLastNMini">${mini(k, n)}</div>
+        </div>`
+      : `<button type="button" class="sheet-tile ${trendsState.period === k ? 'is-on' : ''}" data-period="${k}"><span class="tile-label">${esc(periodLong(k))}</span><span class="tile-radio"></span>${mini(k)}</button>`);
+    const h2hPct = Math.round(trendsState.h2hMin * 100);
     html = `${sheetHead('period', 'Period')}
-      <div class="sheet-tiles">${keys.map((k) => `<button type="button" class="sheet-tile ${trendsState.period === k ? 'is-on' : ''}" data-period="${k}"><span class="tile-label">${esc(periodLong(k))}</span><span class="tile-radio"></span>${mini(k)}</button>`).join('')}</div>${sheetClose()}`;
+      <div class="sheet-tiles">${keys.map(tile).join('')}</div>
+      <div class="h2h-floor">
+        <div class="h2h-floor-head"><span>Head to head at least</span><strong id="trendsH2hMinLabel">${h2hPct ? `${h2hPct}%` : 'Any'}</strong></div>
+        <input id="trendsH2hMin" type="range" min="0" max="100" step="10" value="${h2hPct}" aria-label="Head to head hit rate at least">
+        <p class="row-sub">Lines that have landed this often against today's opponent, in whichever period is shown. A player with no games against them drops out while this is set.</p>
+      </div>${sheetClose()}`;
   } else if (sheet.type === 'sort') {
     const { by, dir } = trendsState.sort;
     html = `${sheetHead('sort', 'Sorting')}
@@ -9184,8 +9240,11 @@ function renderTrendsSheet() {
 /* ---- Detail ---------------------------------------------------- */
 
 function renderTrendDetail(row) {
-  const period = trendsState.detailPeriod && row.periods[trendsState.detailPeriod] ? trendsState.detailPeriod : trendsState.period;
-  const keys = ['h2h', 'l5', 'l10', 'l20', ...(row.seasons ?? []).map((y) => `s${y}`)];
+  row = { ...row };
+  const period = trendsState.detailPeriod && (row.periods[trendsState.detailPeriod] || lastN(trendsState.detailPeriod)) ? trendsState.detailPeriod : trendsState.period;
+  row = withPeriod(withPeriod(row, period), trendsState.period);
+  const lastKeys = [...new Set([5, 10, 20, lastN(period), lastN(trendsState.period), trendsState.lastN].filter(Boolean))].sort((a, b) => a - b).map((k) => `l${k}`);
+  const keys = ['h2h', ...lastKeys, ...(row.seasons ?? []).map((y) => `s${y}`)];
   const stats = row.periods[period] ?? { rate: null, hits: 0, games: 0, avg: null, median: null };
   const series = periodSeries(row, period).slice().reverse();
   const max = Math.max(row.point, ...series.map((s) => s.value), 1);
@@ -9206,7 +9265,7 @@ function renderTrendDetail(row) {
       </div>
       ${avatarHtml(row, 'detail-avatar')}
     </div>
-    <div class="detail-periods">${keys.map((k) => { const p = row.periods[k]; const has = p && p.games > 0; return `<button type="button" class="period-tab ${k === period ? 'is-active' : ''}" data-detail-period="${k}" ${has ? '' : 'disabled'}>${k !== period && has ? `<span class="tab-pct">${pct(p.rate)}</span>` : ''}${esc(periodLabel(k))}</button>`; }).join('')}</div>
+    <div class="detail-periods">${keys.map((k) => { const p = withPeriod(row, k).periods[k]; const has = p && p.games > 0; return `<button type="button" class="period-tab ${k === period ? 'is-active' : ''}" data-detail-period="${k}" ${has ? '' : 'disabled'}>${k !== period && has ? `<span class="tab-pct">${pct(p.rate)}</span>` : ''}${esc(periodLabel(k))}</button>`; }).join('')}</div>
     <div class="detail-split"><span class="is-hit" style="flex:${hitShare || 0.001}"></span><span class="is-miss" style="flex:${1 - hitShare || 0.001}"></span></div>
     <div class="detail-summary">
       <span class="big">${stats.rate === null ? '—' : pct(stats.rate)}<small>${stats.hits}/${stats.games} events</small></span>
@@ -9293,7 +9352,7 @@ el.trendsSheet?.addEventListener('click', (event) => {
   if ((node = hit('[data-sheet-open]'))) return openTrendsSheet(node.dataset.sheetOpen);
   if (hit('[data-filters-reset]')) {
     trendsState.markets.clear(); trendsState.games.clear(); trendsState.books.clear(); persistTrendBooks();
-    trendsState.odds = { min: null, max: null }; trendsState.minRate = 0; trendsState.side = 'all';
+    trendsState.odds = { min: null, max: null }; trendsState.minRate = 0; trendsState.h2hMin = 0; trendsState.side = 'all';
     renderTrends(); return renderTrendsSheet();
   }
   if ((node = hit('[data-select-all]'))) {
@@ -9368,6 +9427,26 @@ el.trendsSheet?.addEventListener('input', (event) => {
   if (input.id === 'trendsOddsMin' || input.id === 'trendsOddsMax') {
     const v = input.value.trim() === '' ? null : Number(input.value);
     trendsState.odds[input.id === 'trendsOddsMin' ? 'min' : 'max'] = Number.isFinite(v) ? v : null;
+  } else if (input.id === 'trendsLastN') {
+    const n = Math.min(20, Math.max(5, Number(input.value) || 20));
+    trendsState.period = `l${n}`;
+    trendsState.lastN = n;
+    trendsState.detailPeriod = null;
+    const label = el.trendsSheet.querySelector('#trendsLastNLabel'); if (label) label.textContent = String(n);
+    const tile = input.closest('[data-period-last]'); if (tile) { tile.classList.add('is-on'); tile.querySelector('[data-period]')?.setAttribute('data-period', `l${n}`); }
+    for (const other of el.trendsSheet.querySelectorAll('.sheet-tile:not([data-period-last])')) other.classList.remove('is-on');
+    const mini = el.trendsSheet.querySelector('#trendsLastNMini');
+    const sample = visibleTrendRows()[0] ?? null;
+    if (mini && sample) {
+      const series = periodSeries(sample, `l${n}`).slice(0, n).reverse();
+      const max = Math.max(sample.point, ...series.map((s) => s.value), 1);
+      mini.innerHTML = series.length ? `<div class="tile-mini"><span class="mini-line" style="top:${(100 - (sample.point / max) * 100).toFixed(1)}%"></span>${series.map((s) => `<span class="${s.hit === 1 ? 'is-hit' : s.hit === null ? '' : 'is-miss'}" style="height:${Math.max(8, (s.value / max) * 100).toFixed(1)}%"></span>`).join('')}</div>` : '<div class="tile-mini"></div>';
+    }
+    if (el.trendsPeriodLabel) el.trendsPeriodLabel.textContent = periodDockLabel();
+  } else if (input.id === 'trendsH2hMin') {
+    trendsState.h2hMin = Math.round(Number(input.value) / 10) / 10;
+    const label = el.trendsSheet.querySelector('#trendsH2hMinLabel'); if (label) label.textContent = trendsState.h2hMin ? `${Math.round(trendsState.h2hMin * 100)}%` : 'Any';
+    if (el.trendsPeriodLabel) el.trendsPeriodLabel.textContent = periodDockLabel();
   } else if (input.id === 'trendsOddsLo' || input.id === 'trendsOddsHi') {
     const range = input.closest('.odds-range');
     const scale = oddsScale(Number(range.dataset.oddsLo), Number(range.dataset.oddsHi));
@@ -9377,7 +9456,7 @@ el.trendsSheet?.addEventListener('input', (event) => {
     if (lo > hi) { if (input.id === 'trendsOddsLo') hi = lo; else lo = hi; }
     trendsState.odds = { min: lo <= 0 ? null : scale.price(lo), max: hi >= 1 ? null : scale.price(hi) };
   } else return;
-  syncOddsSheet(input);
+  if (input.closest('.odds-range') || input.id === 'trendsOddsMin' || input.id === 'trendsOddsMax') syncOddsSheet(input);
   // One repaint of the board per frame while a handle is dragged.
   if (!oddsRenderQueued) { oddsRenderQueued = true; requestAnimationFrame(() => { oddsRenderQueued = false; renderTrends(); }); }
 });

@@ -6560,6 +6560,18 @@ input[type="range"]:focus-visible {
 .sheet-tile .tile-radio { position: absolute; top: 12px; right: 12px; width: 26px; height: 26px; border-radius: 50%; border: 2px solid rgba(255, 255, 255, 0.25); }
 .sheet-tile.is-on .tile-radio { border-color: var(--success); box-shadow: inset 0 0 0 4px #141222; background: var(--success); }
 .sheet-tile .tile-mini { display: flex; align-items: flex-end; gap: 4px; height: 36px; margin-top: 10px; position: relative; }
+/* The "last N" tile: its label is the pick, a slider from 5 to 20 under it, the bars for that many games below. */
+.sheet-tile-slider { cursor: default; gap: 8px; }
+.sheet-tile-slider .tile-pick { all: unset; cursor: pointer; display: block; font: inherit; color: inherit; }
+.sheet-tile-slider .tile-pick .tile-label { font-weight: 800; font-size: 1.05rem; }
+.sheet-tile-slider input[type="range"] { width: 100%; margin: 0; accent-color: var(--success); cursor: pointer; }
+.sheet-tile-slider .tile-mini { margin-top: 2px; }
+/* The head-to-head floor under the period tiles. */
+.h2h-floor { margin-top: 14px; padding: 14px; border-radius: 16px; background: var(--surface-2); border: 1px solid var(--line); }
+.h2h-floor-head { display: flex; justify-content: space-between; align-items: center; font-weight: 700; margin-bottom: 8px; }
+.h2h-floor-head strong { font-family: var(--mono); font-size: 1.05rem; color: var(--success); }
+.h2h-floor input[type="range"] { width: 100%; margin: 0; accent-color: var(--success); cursor: pointer; }
+.h2h-floor .row-sub { margin: 8px 0 0; line-height: 1.4; }
 .sheet-tile .tile-mini span { flex: 1; border-radius: 3px; background: rgba(148, 163, 184, 0.35); }
 .sheet-tile .tile-mini .is-hit { background: #4fd36a; }
 .sheet-tile .tile-mini .is-miss { background: #e05252; }
