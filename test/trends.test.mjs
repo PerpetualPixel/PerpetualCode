@@ -108,8 +108,9 @@ test('sorting: by hit rate in the chosen period, ties to the better price; by od
   assert.deepEqual(sortTrends(rows, { by: 'date' }).map((x) => x.id), ['d', 'b', 'c', 'a'], 'soonest kickoff first');
 });
 
-test('NBA only for now, every prop market; NFL keeps its week-ahead spec, NBA and NHL today and tomorrow', async () => {
-  assert.deepEqual(TREND_ENABLED_SPORTS, ['basketball_nba']);
+test('NBA and NFL only, every NBA prop market; the NFL keeps its week-ahead spec, rebuilt twice a day', async () => {
+  assert.deepEqual(TREND_ENABLED_SPORTS, ['basketball_nba', 'americanfootball_nfl']);
+  assert.equal(TREND_SPORTS.americanfootball_nfl.ttlMinutes, 720);
   assert.ok(['player_points', 'player_threes', 'player_points_rebounds_assists', 'player_blocks_steals', 'player_rebounds_assists_alternate'].every((k) => TREND_SPORTS.basketball_nba.markets[k]), 'main and alternate lines for every NBA stat');
   assert.equal(typeof TREND_SPORTS.basketball_nba.statRows, 'function');
   assert.equal(TREND_SPORTS.americanfootball_nfl.lookaheadHours, 168);
