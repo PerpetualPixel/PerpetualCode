@@ -21,7 +21,7 @@ import { fetchBasketballGamelog, basketballStatRows } from './basketball-props.j
 import { fetchNflGamelog, gamelogStatIndex } from './football-props.js';
 import { bundlePlayer, loadBundleTeams } from './espn-bundle.js';
 import { seasonColumnRows } from '../../docs/prop-legs.js';
-import { overNeed, underNeed } from '../../docs/trends.js';
+import { overNeed, underNeed, attachSeries } from '../../docs/trends.js';
 
 /** A line needs this many logged games at 100% before it is a pick: ten 100%s is a pattern, three is a start. */
 export const PICK_MIN_GAMES = 10;
@@ -296,7 +296,7 @@ export async function runTrendPicksDaily(env, ctx, now = Date.now(), { deps = {}
 
   const rows = [];
   for (const sportKey of enabled) {
-    const stored = deps.rowsFor ? await deps.rowsFor(sportKey) : (await getTrends(env, sportKey))?.rows;
+    const stored = deps.rowsFor ? await deps.rowsFor(sportKey) : await getTrends(env, sportKey).then((t) => attachSeries(t?.rows, t?.logs));
     rows.push(...(stored ?? []));
   }
   const candidates = qualifyingRows(rows, dateKey, now);

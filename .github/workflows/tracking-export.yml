@@ -67,6 +67,7 @@ jobs:
           fetch trends-nfl "$WORKER/trends?sport=americanfootball_nfl"
           fetch trends-nba "$WORKER/trends?sport=basketball_nba"
           fetch trends-nhl "$WORKER/trends?sport=icehockey_nhl"
+          fetch trend-picks "$WORKER/trend-picks"
           fetch gridiron-tracking-nfl "$GRIDIRON/tracking-nfl.json"
           fetch gridiron-tracking-ncaa "$GRIDIRON/tracking-ncaa.json"
           fetch gridiron-picks "$GRIDIRON/picks.json"

@@ -186,6 +186,38 @@ export function trendRowsFor(line, rows, { opponent = null } = {}) {
 }
 
 /**
+ * The stored shape shares one game series per player and stat instead
+ * of repeating it on every line: a slate's thousands of lines are a few
+ * hundred players' logs. detachSeries moves each row's series into
+ * `logs` under the row's `logKey` (the hit flags go, they are the line's
+ * and come back from the value); attachSeries puts it back, flags
+ * recomputed for the row's point and side.
+ */
+export const logKeyFor = (row) => `${row.athleteId ?? row.playerName}:${row.statKey}`;
+
+export function detachSeries(rows) {
+  const logs = {};
+  const slim = (rows ?? []).map((row) => {
+    if (!Array.isArray(row.series)) return row;
+    const { series, ...rest } = row;
+    const logKey = logKeyFor(row);
+    if (!logs[logKey]) logs[logKey] = series.map(({ hit, ...g }) => { void hit; return g; });
+    return { ...rest, logKey };
+  });
+  return { rows: slim, logs };
+}
+
+export function attachSeries(rows, logs) {
+  return (rows ?? []).map((row) => {
+    if (Array.isArray(row.series)) return row;
+    const games = logs?.[row.logKey ?? logKeyFor(row)];
+    if (!Array.isArray(games)) return { ...row, series: [] };
+    const flags = hitFlags(games, row.point, row.side);
+    return { ...row, series: games.map((g, i) => ({ ...g, hit: flags[i] })) };
+  });
+}
+
+/**
  * Order rows for the board. `by` is 'hitRate' (in the chosen period),
  * 'odds' (price) or 'date' (kickoff); `dir` 'desc' (the default) or 'asc'.
  * Rows without a rate in the period sink to the bottom whichever way.
