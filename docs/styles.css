@@ -279,6 +279,58 @@ body {
 }
 
 /* ---------------------------------------------------------------- */
+/* Under construction tape                                           */
+/* ---------------------------------------------------------------- */
+/* A strip of hazard tape across the very top of the page while the site
+   is being rebuilt around Trends. Yellow and black diagonal stripes on
+   the edges, a solid yellow center so the words read, bold caps in the
+   wordmark face. Removed by deleting the element; nothing else depends
+   on it. */
+.construction-tape-wrap {
+  position: relative;
+  z-index: 70;
+  overflow: hidden;
+  padding-top: 4px;
+}
+.construction-tape {
+  position: relative;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 14px;
+  padding: 10px 16px;
+  background: repeating-linear-gradient(
+    -45deg,
+    #f5c400 0 22px,
+    #0b0b0b 22px 44px
+  );
+  border-bottom: 3px solid #0b0b0b;
+  box-shadow: 0 4px 18px rgba(0, 0, 0, 0.6);
+  text-align: center;
+  transform: rotate(-0.4deg);
+  margin: 0 -8px 6px;
+}
+.construction-tape-text {
+  display: inline-block;
+  padding: 6px 22px;
+  background: #f5c400;
+  color: #0b0b0b;
+  font-family: 'Syne', var(--sans, system-ui, sans-serif);
+  font-weight: 800;
+  font-size: clamp(18px, 3.4vw, 30px);
+  letter-spacing: 0.22em;
+  text-transform: uppercase;
+  line-height: 1.1;
+  border: 2px solid #0b0b0b;
+  transform: rotate(0.4deg);
+  white-space: nowrap;
+}
+@media (max-width: 520px) {
+  .construction-tape { gap: 8px; padding: 8px 10px; }
+  .construction-tape-text { letter-spacing: 0.12em; padding: 5px 12px; white-space: normal; }
+}
+
+/* ---------------------------------------------------------------- */
 /* Top bar                                                           */
 /* ---------------------------------------------------------------- */
 
