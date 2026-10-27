@@ -9489,7 +9489,7 @@ const unitDollars = () => trendPicksState.data?.unitDollars ?? 5;
 const money = (dollars) => `${dollars < 0 ? '-' : '+'}$${Math.abs(dollars).toFixed(2)}`;
 const signedUnits = (units) => `${units < 0 ? '' : '+'}${units.toFixed(2)}`;
 const betMatches = (bet) => trendPicksState.filter === 'all' || bet.sportKey === trendPicksState.filter;
-const betTypeLabel = (bet) => (bet.type === 'parlay' ? `${bet.legs.length}-leg parlay` : 'Straight');
+const betTypeLabel = (bet) => (bet.play ? bet.play.replace(/^PrizePicks /, '') : bet.type === 'parlay' ? `${bet.legs.length}-leg parlay` : 'Straight');
 
 function betResultBadge(bet) {
   if (bet.status === 'graded' || bet.status === 'void') {

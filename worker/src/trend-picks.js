@@ -26,6 +26,7 @@ import { bundlePlayer, loadBundleTeams } from './espn-bundle.js';
 import { seasonColumnRows } from '../../docs/prop-legs.js';
 import { overNeed, underNeed, attachSeries } from '../../docs/trends.js';
 import { bookIdFor, SPORTSBOOKS, americanToDecimal } from '../../docs/engine.js';
+import { espnAbbr } from '../../docs/team-logos.js';
 
 /** A line needs this many logged games at 100% before it is a pick: ten 100%s is a pattern, three is a start. */
 export const PICK_MIN_GAMES = 10;
@@ -63,7 +64,23 @@ export const PARLAY_TARGET = 100;
 /** A parlay leg's own price: heavy favourites are what make a +100 ticket. */
 export const LEG_RANGE = [-450, 150];
 /** The stored record's shape; an older day is drawn again. */
-export const RECORD_VERSION = 3;
+export const RECORD_VERSION = 4;
+/**
+ * PrizePicks is a pick'em app, not a book: no single picks, two to six
+ * projections a lineup, different players from at least two teams, paid
+ * at a fixed multiplier whatever the feed writes per leg. Two shapes
+ * here (2026-10-27 direction): the 2-pick Power Play, 3x with both in,
+ * allowed past PARLAY_RANGE because that is simply what it pays; and
+ * the 3-pick Flex Play, 2.25x with all three in and 1.25x with two. A
+ * projection removed as a DNP or a tie drops the lineup a tier: a Flex
+ * with two left pays as a Power Play, a Power Play with one left is a
+ * refund.
+ */
+export const PRIZEPICKS = 'prizepicks';
+export const PRIZEPICKS_PLAYS = {
+  power2: { legs: 2, payouts: { 2: 3 }, label: '2-pick Power Play' },
+  flex3: { legs: 3, payouts: { 3: 2.25, 2: 1.25 }, label: '3-pick Flex Play' },
+};
 
 /** The registry id of a quote's book when it is one the picks may use, else null. */
 export function pickBookId(bookKey) {
@@ -142,18 +159,33 @@ export function buildBets(groups, { maxBets = PICK_MAX_BETS } = {}) {
       const score = Math.abs(american - PARLAY_TARGET) + (legs.length - games) * 15 + (legs.length - 2) * 10 + legs.reduce((s, l) => s + l.group.rank, 0) * 2;
       if (!best || score < best.score) best = { legs, decimal, american, score };
     };
+    // A PrizePicks lineup: two or three projections, different players
+    // from at least two teams, paid at the play's own multiplier; the
+    // feed's price per leg only says the projection exists.
+    const considerLineup = (legs) => {
+      if (new Set(legs.map((l) => fold(l.group.playerName))).size < legs.length) return;
+      if (new Set(legs.map((l) => l.line.team ?? l.group.key)).size < 2) return;
+      const shape = legs.length === 2 ? 'power2' : 'flex3';
+      const play = PRIZEPICKS_PLAYS[shape];
+      const decimal = play.payouts[legs.length];
+      const american = toAmerican(decimal);
+      const games = new Set(legs.map((l) => l.group.eventId)).size;
+      const score = Math.abs(american - PARLAY_TARGET) + (legs.length - games) * 15 + (legs.length - 2) * 10 + legs.reduce((s, l) => s + l.group.rank, 0) * 2;
+      if (!best || score < best.score) best = { legs, decimal, american, score, shape };
+    };
     for (const bookId of books) {
       const bySport = new Map();
       for (const g of pool) {
-        const opts = legOptions(g, bookId, LEG_RANGE);
+        const opts = bookId === PRIZEPICKS ? legOptions(g, bookId, [-Infinity, Infinity]).slice(0, 1) : legOptions(g, bookId, LEG_RANGE);
         if (!opts.length) continue;
         if (!bySport.has(g.sportKey)) bySport.set(g.sportKey, []);
         bySport.get(g.sportKey).push(opts);
       }
       for (const groupsOpts of bySport.values()) {
         for (let i = 0; i < groupsOpts.length; i++) for (let j = i + 1; j < groupsOpts.length; j++) {
-          for (const a of groupsOpts[i]) for (const b of groupsOpts[j]) consider([a, b]);
-          for (let k = j + 1; k < groupsOpts.length; k++) for (const a of groupsOpts[i]) for (const b of groupsOpts[j]) for (const c of groupsOpts[k]) consider([a, b, c]);
+          const weigh = bookId === PRIZEPICKS ? considerLineup : consider;
+          for (const a of groupsOpts[i]) for (const b of groupsOpts[j]) weigh([a, b]);
+          for (let k = j + 1; k < groupsOpts.length; k++) for (const a of groupsOpts[i]) for (const b of groupsOpts[j]) for (const c of groupsOpts[k]) weigh([a, b, c]);
         }
       }
     }
@@ -161,7 +193,8 @@ export function buildBets(groups, { maxBets = PICK_MAX_BETS } = {}) {
   };
   const bestStraight = (pool) => {
     for (const g of pool) {
-      const opts = g.lines.flatMap((line) => line.quotes.filter((q) => inRange(q.american, STRAIGHT_RANGE)).map((q) => ({ group: g, line, bookId: q.bookId, american: q.american, decimal: q.decimal ?? americanToDecimal(q.american), link: q.link ?? null })));
+      // No single picks at PrizePicks.
+      const opts = g.lines.flatMap((line) => line.quotes.filter((q) => q.bookId !== PRIZEPICKS && inRange(q.american, STRAIGHT_RANGE)).map((q) => ({ group: g, line, bookId: q.bookId, american: q.american, decimal: q.decimal ?? americanToDecimal(q.american), link: q.link ?? null })));
       if (!opts.length) continue;
       opts.sort((a, b) => b.american - a.american);
       return { legs: [opts[0]], decimal: opts[0].decimal, american: opts[0].american };
@@ -175,7 +208,7 @@ export function buildBets(groups, { maxBets = PICK_MAX_BETS } = {}) {
     const parlay = pool.length >= 2 ? bestParlay(pool) : null;
     const bet = parlay ?? bestStraight(pool);
     if (!bet) break;
-    bets.push({ type: bet.legs.length > 1 ? 'parlay' : 'straight', legs: bet.legs, american: bet.american, decimal: bet.decimal });
+    bets.push({ type: bet.legs.length > 1 ? 'parlay' : 'straight', shape: bet.shape ?? null, legs: bet.legs, american: bet.american, decimal: bet.decimal });
     const used = new Set(bet.legs.map((l) => l.group.key));
     pool = pool.filter((g) => !used.has(g.key));
   }
@@ -266,10 +299,12 @@ export async function researchPick(row, env, ctx, { now = Date.now(), deps = {} 
   }
 
   const context = await (deps.context ? deps.context(row) : (hasContext(row.sportKey) ? fetchContext({ sportKey: row.sportKey, home: row.home, away: row.away }, ctx).catch(() => null) : null));
-  const mine = context ? (fold(context.home?.name) === fold(row.home) ? context.home : context.away) : null;
-  const theirs = context ? (mine === context.home ? context.away : context.home) : null;
-  const sideFor = (team) => (row.team && context ? (String(team?.shortName ?? '').toUpperCase() === row.team || fold(team?.name).includes(fold(row.home)) === (row.team === row.home) ? team : team) : team);
-  void sideFor;
+  // The player's own side of the context: his team is an ESPN
+  // abbreviation (row.team), the context names the home team in full.
+  const homeAbbr = String(espnAbbr(row.sportKey, row.home) ?? '').toUpperCase();
+  const isHome = !row.team || !homeAbbr || String(row.team).toUpperCase() === homeAbbr;
+  const mine = context ? (isHome ? context.home : context.away) : null;
+  const theirs = context ? (isHome ? context.away : context.home) : null;
   const player = fold(row.playerName);
   const injurySides = context ? [context.home, context.away].filter(Boolean) : await (deps.injuries ? deps.injuries(row) : bundledInjuries(env, row));
   for (const side of injurySides) {
@@ -408,6 +443,8 @@ function betRecord(bet, index, dateKey, research, now) {
     id: `${dateKey}:${index + 1}`,
     postedAt: now,
     type: bet.type,
+    shape: bet.shape ?? null,
+    play: bet.shape && PRIZEPICKS_PLAYS[bet.shape] ? `PrizePicks ${PRIZEPICKS_PLAYS[bet.shape].label}` : null,
     sportKey: legs[0].sportKey,
     sportTitle: legs[0].sportTitle,
     bookId,
@@ -513,6 +550,17 @@ export function settleBet(bet) {
   const legs = bet.legs ?? [];
   if (legs.some((l) => l.result == null)) return null;
   const units = bet.units ?? 1;
+  if (bet.shape && PRIZEPICKS_PLAYS[bet.shape]) {
+    // PrizePicks: a DNP or a tie removes the projection and the lineup
+    // drops a tier; three left pays the Flex table, two left pays as a
+    // 2-pick Power Play, fewer is a refund.
+    const live = legs.filter((l) => l.result === 'win' || l.result === 'loss');
+    const wins = live.filter((l) => l.result === 'win').length;
+    if (live.length < 2) return { result: legs.every((l) => l.result === 'void') ? 'void' : 'push', net: 0 };
+    const multiplier = live.length === 3 ? (PRIZEPICKS_PLAYS.flex3.payouts[wins] ?? 0) : (wins === 2 ? PRIZEPICKS_PLAYS.power2.payouts[2] : 0);
+    if (!multiplier) return { result: 'loss', net: -units };
+    return { result: 'win', net: Math.round(units * (multiplier - 1) * 100) / 100 };
+  }
   if (legs.some((l) => l.result === 'loss')) return { result: 'loss', net: -units };
   const live = legs.filter((l) => l.result === 'win');
   if (!live.length) return { result: legs.every((l) => l.result === 'void') ? 'void' : 'push', net: 0 };
