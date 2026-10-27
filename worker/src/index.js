@@ -56,6 +56,7 @@ import { runPotdDaily, runPotdClvSnapshot, runPotdGrading, backfillPotdAnalysis,
 import { runLadderDaily, runLadderGrading, getLadder, getLadderHistory } from './ladder.js';
 import { BUILD_INFO } from '../../docs/version.js';
 import { runTrendsBuild, getTrends, buildLeagueChunk, TREND_ENABLED_SPORTS } from './trends.js';
+import { runTrendPicksDaily, runTrendPicksGrading, getTrendPicks } from './trend-picks.js';
 
 /** The Trends build's own cron (must match wrangler.toml's second trigger exactly — Cloudflare hands the string back as written). */
 export const TRENDS_CRON = '7,22,37,52 * * * *';
@@ -475,6 +476,11 @@ export default {
       // The games come from the feed's events listing (free of credits —
       // worker/src/prop-legs.js's listLeagueGames), never the odds board.
       ctx.waitUntil(runTrendsBuild(env, ctx, now, { fetchFullSlate: async () => [] })
+        // Then the day's Pixel's Picks from the rows just built, and the
+        // grading of the last days' picks (worker/src/trend-picks.js) —
+        // ESPN and KV only, no odds credits.
+        .then(() => runTrendPicksGrading(env, ctx, now))
+        .then(() => runTrendPicksDaily(env, ctx, now))
         .catch((e) => console.error('Trends build failed:', e)));
       return;
     }
@@ -1477,6 +1483,16 @@ export default {
     // with the player's hit rate at that number, built by the scheduled
     // tick (worker/src/trends.js) and served from KV. ?sport= picks the
     // league; the default is the first with rows.
+    // Today's Pixel's Picks and the last 30 days, with the running record
+    // (worker/src/trend-picks.js). KV only.
+    if (pathname === '/trend-picks' && request.method === 'GET') {
+      try {
+        return json(await getTrendPicks(env, Date.now()), { headers: { ...cors, 'Cache-Control': 'public, max-age=120' } });
+      } catch (error) {
+        return json({ today: null, history: [], record: null, error: String(error).slice(0, 120) }, { status: 500, headers: cors });
+      }
+    }
+
     if (pathname === '/trends' && request.method === 'GET') {
       try {
         const wanted = new URL(request.url).searchParams.get('sport');

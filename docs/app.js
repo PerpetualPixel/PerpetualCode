@@ -838,6 +838,11 @@ const el = {
   tabPotd: document.getElementById('tabPotd'),
   tabTrends: document.getElementById('tabTrends'),
   trendsView: document.getElementById('trendsView'),
+  tabTrendPicks: document.getElementById('tabTrendPicks'),
+  trendPicksView: document.getElementById('trendPicksView'),
+  trendPicksStatus: document.getElementById('trendPicksStatus'),
+  trendPicksBody: document.getElementById('trendPicksBody'),
+  trendPicksHistory: document.getElementById('trendPicksHistory'),
   trendsLeagues: document.getElementById('trendsLeagues'),
   trendsSearch: document.getElementById('trendsSearch'),
   trendsPeriodBtn: document.getElementById('trendsPeriodBtn'),
@@ -6115,8 +6120,8 @@ function renderPropPlayCard(record) {
 }
 
 function setActiveTab(tab) {
-  const views = { slate: el.slateView, board: el.boardView, potd: el.potdView, trends: el.trendsView };
-  const tabs = { slate: el.tabSlate, board: el.tabBoard, potd: el.tabPotd, trends: el.tabTrends };
+  const views = { slate: el.slateView, board: el.boardView, potd: el.potdView, trends: el.trendsView, trendPicks: el.trendPicksView };
+  const tabs = { slate: el.tabSlate, board: el.tabBoard, potd: el.tabPotd, trends: el.tabTrends, trendPicks: el.tabTrendPicks };
 
   for (const [name, view] of Object.entries(views)) {
     const active = name === tab;
@@ -6128,7 +6133,8 @@ function setActiveTab(tab) {
   // The day toggle applies to Full Slate only — Play of the Day and
   // Pixel's Picks are both fixed daily sets locked server-side, with no
   // Today/Tomorrow of their own to choose.
-  el.dayFilterBar.hidden = tab === 'potd' || tab === 'board' || tab === 'trends';
+  el.dayFilterBar.hidden = tab === 'potd' || tab === 'board' || tab === 'trends' || tab === 'trendPicks';
+  if (tab === 'trendPicks') loadTrendPicks();
 
   // Viewing a tab is what "seen" means — clear its pulse the moment the
   // user actually switches to it, using whatever date/dateKey that board's
@@ -6160,6 +6166,7 @@ el.tabSlate.addEventListener('click', () => setActiveTab('slate'));
 el.tabBoard.addEventListener('click', () => setActiveTab('board'));
 el.tabPotd.addEventListener('click', () => setActiveTab('potd'));
 el.tabTrends?.addEventListener('click', () => setActiveTab('trends'));
+el.tabTrendPicks?.addEventListener('click', () => setActiveTab('trendPicks'));
 
 /* ---------------------------------------------------------------- */
 /* Tracking Dashboard                                                */
@@ -8866,7 +8873,11 @@ function visibleTrendRows() {
   const q = trendsState.search.trim().toLowerCase();
   const { min, max } = trendsState.odds;
   const kept = [];
+  const now = Date.now();
   for (const r of rows) {
+    // A game stays through play and leaves once it is over (four hours
+    // after tip-off), whatever the stored rows still carry.
+    if (Number.isFinite(r.commenceMs) && r.commenceMs + 4 * 3.6e6 < now) continue;
     if (trendsState.side !== 'all' && r.side !== trendsState.side) continue;
     if (trendsState.markets.size && !trendsState.markets.has(r.statKey)) continue;
     if (trendsState.games.size && !trendsState.games.has(r.eventId)) continue;
@@ -8925,7 +8936,7 @@ function renderTrendCard(row) {
   return `<article class="trend-card" data-trend-id="${esc(row.id)}" tabindex="0" role="button" aria-label="${esc(row.selection)}, ${pct(rate)} in ${esc(periodLong(trendsState.period))}">
     <div class="trend-head">
       ${avatarHtml(row)}
-      <span class="trend-game"><strong>${esc(teamAbbr(row.away))} @ ${esc(teamAbbr(row.home))}</strong><span class="trend-dot"></span>${esc(trendTimeFmt.format(new Date(row.commenceMs)))}</span>
+      <span class="trend-game"><strong>${esc(teamAbbr(row.away))} @ ${esc(teamAbbr(row.home))}</strong><span class="trend-dot"></span>${row.commenceMs <= Date.now() ? '<span class="trend-live">Live</span>' : esc(trendTimeFmt.format(new Date(row.commenceMs)))}</span>
     </div>
     <div class="trend-main">
       <div>
@@ -9233,9 +9244,11 @@ el.trendsSheet?.addEventListener('click', (event) => {
   if (hit('[data-odds-reset]')) { trendsState.odds = { min: null, max: null }; renderTrends(); return renderTrendsSheet(); }
   if ((node = hit('[data-min-rate]'))) { trendsState.minRate = Number(node.dataset.minRate); renderTrends(); return renderTrendsSheet(); }
   if ((node = hit('[data-side-pick]'))) { trendsState.side = node.dataset.sidePick; renderTrends(); return renderTrendsSheet(); }
-  if ((node = hit('[data-period]'))) { trendsState.period = node.dataset.period; renderTrends(); return closeTrendsSheet(); }
+  // Close first, re-render the list on the next frame: the sheet leaves
+  // the screen at once instead of waiting on 150 cards.
+  if ((node = hit('[data-period]'))) { trendsState.period = node.dataset.period; closeTrendsSheet(); return requestAnimationFrame(renderTrends); }
   if ((node = hit('[data-sort-dir]'))) { trendsState.sort.dir = node.dataset.sortDir; renderTrends(); return renderTrendsSheet(); }
-  if ((node = hit('[data-sort-by]'))) { trendsState.sort.by = node.dataset.sortBy; renderTrends(); return closeTrendsSheet(); }
+  if ((node = hit('[data-sort-by]'))) { trendsState.sort.by = node.dataset.sortBy; closeTrendsSheet(); return requestAnimationFrame(renderTrends); }
   if ((node = hit('[data-detail-period]'))) { trendsState.detailPeriod = node.dataset.detailPeriod; return renderTrendsSheet(); }
   if (hit('[data-bet-more]')) { trendsState.betMore = !trendsState.betMore; return renderTrendsSheet(); }
 });
@@ -9254,3 +9267,88 @@ el.trendsSheet?.addEventListener('input', (event) => {
     for (const span of el.trendsSheet.querySelectorAll('.odds-hist span')) span.classList.add('is-in');
   }
 });
+
+/* ================================================================ */
+/* Pixel's Picks, drawn from the Trends rows (worker/src/trend-picks.js) */
+/* ================================================================ */
+
+const trendPicksState = { data: null, loaded: false };
+const pickDayFmt = new Intl.DateTimeFormat(undefined, { weekday: 'short', month: 'short', day: 'numeric' });
+
+async function loadTrendPicks({ force = false } = {}) {
+  if (!el.trendPicksBody || !CONFIG.WORKER_URL) return;
+  if (trendPicksState.loaded && !force) { renderTrendPicks(); return; }
+  el.trendPicksStatus.textContent = 'Loading picks…';
+  try {
+    const res = await fetch(new URL('/trend-picks', CONFIG.WORKER_URL), { headers: { Accept: 'application/json' } });
+    trendPicksState.data = await res.json();
+    trendPicksState.loaded = true;
+    renderTrendPicks();
+  } catch {
+    el.trendPicksStatus.textContent = "Couldn't reach the worker.";
+  }
+}
+
+const RESULT_LABEL = { win: 'Won', loss: 'Lost', push: 'Push', void: 'No action' };
+
+function renderTrendPickCard(p) {
+  const row = { ...p, rates: p.rates ?? {}, periods: p.periods ?? {}, series: p.series ?? [] };
+  const h2h = p.periods?.h2h;
+  const result = p.status === 'graded' || p.status === 'void'
+    ? `<span class="pick-result is-${esc(p.result)}">${esc(RESULT_LABEL[p.result] ?? p.result)}${Number.isFinite(p.actual) ? ` · ${esc(String(p.actual))} ${esc(p.statLabel)}` : ''}</span>`
+    : p.commenceMs <= Date.now() ? '<span class="pick-result is-live">In play</span>' : '';
+  return `<article class="trend-card trend-pick-card" data-trend-id="${esc(p.id)}" tabindex="0" role="button" aria-label="${esc(p.selection)}">
+    <div class="trend-head">
+      ${avatarHtml(row)}
+      <span class="trend-game"><strong>${esc(teamAbbr(p.away))} @ ${esc(teamAbbr(p.home))}</strong><span class="trend-dot"></span>${esc(trendTimeFmt.format(new Date(p.commenceMs)))}</span>
+      ${result}
+    </div>
+    <div class="trend-main">
+      <div>
+        <p class="trend-player">${esc(p.playerName)}${p.team ? `<small>${esc(p.team)}</small>` : ''}</p>
+        <p class="trend-line">${esc(p.marketLabel ?? p.statLabel)} ${sideWord(p.side)} ${esc(String(p.point))}</p>
+      </div>
+      <span class="trend-price" title="${esc(p.book ?? '')}">${esc(formatAmerican(p.american))}</span>
+    </div>
+    <div class="trend-rate-row">
+      <span class="trend-rate is-hot">100%<small>L20</small></span>
+      ${renderTrendBars(row, 'l20')}
+      <span class="pick-h2h">${h2h?.games ? `${esc(String(h2h.hits))} of ${esc(String(h2h.games))} vs ${esc(p.opponent ?? '')}` : 'no games vs ' + esc(p.opponent ?? 'them')}</span>
+    </div>
+    <p class="pick-note">${p.note ? esc(p.note) : 'Nothing worth flagging: minutes steady, no injury listing, no blowout projected.'}</p>
+  </article>`;
+}
+
+function renderTrendPicks() {
+  if (!el.trendPicksBody) return;
+  const d = trendPicksState.data;
+  const today = d?.today ?? null;
+  const picks = today?.picks ?? [];
+  if (picks.length) {
+    el.trendPicksStatus.textContent = `${picks.length} pick${picks.length === 1 ? '' : 's'} today · posted ${trendTimeFmt.format(new Date(picks[0].postedAt))}`;
+    el.trendPicksBody.innerHTML = picks.map(renderTrendPickCard).join('');
+  } else {
+    const checked = today?.checkedAt ? ` Last checked ${trendTimeFmt.format(new Date(today.checkedAt))}; it looks again every hour until the day's games start.` : '';
+    el.trendPicksStatus.textContent = today
+      ? (today.considered
+        ? `No pick today: ${today.considered} line${today.considered === 1 ? '' : 's'} qualified and ${today.passed?.length === today.considered ? 'all' : today.passed?.length ?? 0} passed on research.${checked}`
+        : `No pick today: nothing is at 100% over the last 20 games yet.${checked}`)
+      : 'No picks drawn yet today. The draw runs after each Trends build.';
+    el.trendPicksBody.innerHTML = today?.passed?.length
+      ? `<div class="pick-passed"><p class="row-sub">Qualified, then passed on research:</p><ul>${today.passed.map((x) => `<li><strong>${esc(x.selection)}</strong> — ${esc((x.reasons ?? []).join('; ') || 'the research came back against it')}</li>`).join('')}</ul></div>`.replaceAll(' — ', ': ')
+      : '';
+  }
+  const rec = d?.record;
+  const history = (d?.history ?? []).filter((day) => (day.picks ?? []).length);
+  const units = rec ? (rec.units >= 0 ? `+${rec.units.toFixed(2)}` : rec.units.toFixed(2)) : '0.00';
+  el.trendPicksHistory.innerHTML = `
+    <p class="pick-record">${rec ? `${rec.wins}-${rec.losses}${rec.pushes ? `-${rec.pushes}` : ''}` : '0-0'} <small>${units} units at one unit a pick</small></p>
+    ${history.length ? history.map((day) => `
+      <div class="pick-day">
+        <h3>${esc(pickDayFmt.format(new Date(`${day.date}T12:00:00`)))}</h3>
+        ${day.picks.map((p) => `<div class="pick-row">
+          <span class="pick-row-sel">${esc(p.selection)} <small>${esc(formatAmerican(p.american))}</small></span>
+          <span class="pick-result is-${esc(p.result ?? 'pending')}">${esc(p.status === 'pending' ? (p.commenceMs <= Date.now() ? 'In play' : 'Pending') : (RESULT_LABEL[p.result] ?? p.result))}${Number.isFinite(p.actual) ? ` · ${esc(String(p.actual))}` : ''}</span>
+        </div>`).join('')}
+      </div>`).join('') : '<p class="empty">No picks in the last 30 days yet.</p>'}`;
+}

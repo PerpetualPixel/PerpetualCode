@@ -81,8 +81,8 @@ export const clearsPropGates = (profile) => sharedClearsPropGates(profile, PROP_
 export const propLegFrom = (candidate, values) => sharedPropLegFrom(candidate, values, PROP_GATES);
 export const gradeBasketballPropLeg = gradePropLeg;
 
-const GAMELOG_LABEL = { points: 'PTS', rebounds: 'REB', assists: 'AST', blocks: 'BLK', steals: 'STL', turnovers: 'TO' };
-const GAMELOG_NAMES = { points: ['points'], rebounds: ['rebounds', 'totalRebounds'], assists: ['assists'], blocks: ['blocks'], steals: ['steals'], turnovers: ['turnovers'] };
+const GAMELOG_LABEL = { points: 'PTS', rebounds: 'REB', assists: 'AST', blocks: 'BLK', steals: 'STL', turnovers: 'TO', minutes: 'MIN' };
+const GAMELOG_NAMES = { points: ['points'], rebounds: ['rebounds', 'totalRebounds'], assists: ['assists'], blocks: ['blocks'], steals: ['steals'], turnovers: ['turnovers'], minutes: ['minutes'] };
 /** Columns ESPN writes as "made-attempted": the made count is the stat. */
 const GAMELOG_DASH = {
   threes: { names: ['threePointFieldGoalsMade-threePointFieldGoalsAttempted'], label: '3PT' },

@@ -18,6 +18,7 @@ import { bookIdFor } from '../../docs/engine.js';
 import { espnAbbr } from '../../docs/team-logos.js';
 import { seasonColumnRows } from '../../docs/prop-legs.js';
 import { ODDS_DIAG_KEY } from './odds.js';
+import { etParts, etDatePlusDays } from './potd.js';
 import { extractTrendLines, trendRowsFor, sortTrends } from '../../docs/trends.js';
 import { normalizeName as normalizeNflName } from '../../docs/nfl-props.js';
 import { normalizeName as normalizeNbaName } from '../../docs/wnba-props.js';
@@ -39,8 +40,17 @@ import { listLeagueGames } from './prop-legs.js';
 
 /** How long a game's rows are served before the tick rebuilds them (a league may set its own). */
 export const TRENDS_TTL_MINUTES = 180;
-/** Games are scanned this far ahead: today's and tomorrow's slate (a league may set its own). */
-export const LOOKAHEAD_HOURS = 48;
+/**
+ * A game stays on the tab through play and leaves this long after tip-off
+ * (2026-10-27 direction: props before and during games, gone once the
+ * game is over): the longest NBA or NFL game is done inside four hours.
+ * No scores call is spent to know it.
+ */
+export const GAME_HOURS = 4;
+/** The two ET dates a game may fall on to be shown: today and tomorrow. */
+export function trendDayKeys(now) {
+  return [etParts(now).date, etDatePlusDays(now, 1)];
+}
 /**
  * How many games one tick builds. A game costs one odds call plus a
  * roster and two game logs per player, so six games is a few hundred
@@ -76,11 +86,8 @@ export const TREND_SPORTS = {
     // the whole week is scanned and refreshed every six hours — lines move
     // on injury news, and six hours keeps a Sunday row from quoting
     // Tuesday's number.
-    lookaheadHours: 7 * 24,
-    // Twice a day: a week of games at 8 markets each is about 250 credits a
-    // build, and a Sunday line does not need refreshing four times a day
-    // on Tuesday. With the NBA's ~1,000 a day this keeps the month near
-    // 40,000 of the plan's 100,000.
+    // Today's and tomorrow's games (trendGamesFor), rebuilt twice a day:
+    // a Sunday slate at 8 markets a game is about 130 credits a build.
     ttlMinutes: 720,
     normalizeName: normalizeNflName,
     fetchOdds: (eventId, env, ctx) => fetchNflAltProps(eventId, env, ctx, Object.keys(NFL_TREND_MARKETS).join(',')),
@@ -97,10 +104,9 @@ export const TREND_SPORTS = {
   },
   [NBA_KEY]: {
     title: 'NBA',
-    // Today's and tomorrow's games, rebuilt three times a day: 23 markets
-    // a game is 23 credits a game per build, and the month's credits ran
-    // out on 2026-10-25 building every three hours.
-    lookaheadHours: 30,
+    // Today's and tomorrow's games (trendGamesFor), rebuilt three times a
+    // day: 23 markets a game is 23 credits a game per build, and the
+    // month's credits ran out on 2026-10-25 building every three hours.
     ttlMinutes: 480,
     markets: NBA_TREND_MARKETS,
     normalizeName: normalizeNbaName,
@@ -151,12 +157,12 @@ export async function getTrends(env, sportKey) {
   return { sportKey, title: spec.title, builtAt: null, games: 0, pending: 0, rows: [], stamps: {} };
 }
 
-/** The games a league's build scans: unstarted, inside the lookahead, soonest first, from the slate or the events list. */
+/** The games a league shows: today's and tomorrow's (ET), not yet over, soonest first, from the slate or the events list. */
 export async function trendGamesFor(sportKey, events, env, ctx, now) {
-  const lookahead = TREND_SPORTS[sportKey]?.lookaheadHours ?? LOOKAHEAD_HOURS;
+  const days = new Set(trendDayKeys(now));
   const inWindow = (g) => {
     const ms = Date.parse(g?.commence_time ?? '');
-    return Number.isFinite(ms) && ms > now && ms - now <= lookahead * 3.6e6;
+    return Number.isFinite(ms) && ms + GAME_HOURS * 3.6e6 > now && days.has(etParts(ms).date);
   };
   let games = (events ?? []).filter((g) => g?.sport_key === sportKey && inWindow(g));
   if (!games.length) games = (await listLeagueGames(sportKey, env, ctx)).filter(inWindow);
@@ -263,7 +269,10 @@ export async function buildLeagueChunk(sportKey, events, env, ctx, now = Date.no
   const games = await trendGamesFor(sportKey, events, env, ctx, now);
   const live = new Set(games.map((g) => g.id));
   const stamps = Object.fromEntries(Object.entries(stored.stamps ?? {}).filter(([id]) => live.has(id)));
-  const due = games.filter((g) => !Number.isFinite(stamps[g.id]) || now - stamps[g.id] >= ttl);
+  // A game that has tipped off keeps the rows it has (the books pull
+  // pregame props at tip, so there is nothing new to fetch) and leaves
+  // the tab once it is over; only unstarted games are rebuilt.
+  const due = games.filter((g) => Date.parse(g.commence_time) > now && (!Number.isFinite(stamps[g.id]) || now - stamps[g.id] >= ttl));
   const keepRows = (stored.rows ?? []).filter((r) => live.has(r.eventId));
   if (!due.length) {
     if (!games.length || keepRows.length !== (stored.rows ?? []).length || stored.pending) {

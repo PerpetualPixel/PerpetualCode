@@ -8,7 +8,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { extractTrendLines, hitFlags, hitRate, trendRowsFor, sortTrends, overNeed, underNeed } from '../docs/trends.js';
-import { buildTrends, buildLeagueChunk, runTrendsBuild, getTrends, TRENDS_TTL_MINUTES, TREND_ENABLED_SPORTS, TREND_SPORTS, LOOKAHEAD_HOURS, MAX_GAMES_PER_TICK, trendGamesFor } from '../worker/src/trends.js';
+import { buildTrends, buildLeagueChunk, runTrendsBuild, getTrends, TRENDS_TTL_MINUTES, TREND_ENABLED_SPORTS, TREND_SPORTS, GAME_HOURS, trendDayKeys, MAX_GAMES_PER_TICK, trendGamesFor } from '../worker/src/trends.js';
 import { gamelogStatIndex, NFL_TREND_MARKETS } from '../worker/src/football-props.js';
 import { espnAbbr } from '../docs/team-logos.js';
 
@@ -113,8 +113,8 @@ test('NBA and NFL only, every NBA prop market; the NFL keeps its week-ahead spec
   assert.equal(TREND_SPORTS.americanfootball_nfl.ttlMinutes, 720);
   assert.ok(['player_points', 'player_threes', 'player_points_rebounds_assists', 'player_blocks_steals', 'player_rebounds_assists_alternate'].every((k) => TREND_SPORTS.basketball_nba.markets[k]), 'main and alternate lines for every NBA stat');
   assert.equal(typeof TREND_SPORTS.basketball_nba.statRows, 'function');
-  assert.equal(TREND_SPORTS.americanfootball_nfl.lookaheadHours, 168);
-  assert.equal(LOOKAHEAD_HOURS, 48, 'the other leagues scan the full two-day slate');
+  assert.deepEqual(trendDayKeys(NOW), ['2026-10-22', '2026-10-23'], 'today and tomorrow, ET');
+  assert.equal(GAME_HOURS, 4);
   assert.ok(TREND_SPORTS.basketball_nba.priorGamelog && TREND_SPORTS.basketball_nba.headshot, 'the NBA reads last season and shows headshots too');
   assert.ok(TREND_SPORTS.icehockey_nhl.priorGamelog && TREND_SPORTS.icehockey_nhl.headshot);
   assert.equal(TREND_SPORTS.basketball_nba.headshot('123'), 'https://a.espncdn.com/i/headshots/nba/players/full/123.png');
@@ -124,10 +124,13 @@ test('NBA and NFL only, every NBA prop market; the NFL keeps its week-ahead spec
   assert.equal(gamelogStatIndex(log, 'passAttempts'), 1);
   assert.equal(gamelogStatIndex(log, 'passTds'), 3);
   assert.equal(gamelogStatIndex({ names: ['rushingAttempts', 'rushingYards'], labels: ['CAR', 'YDS'] }, 'rushAttempts'), 0);
-  // A Sunday game five days out is inside the football lookahead; the same game is outside a 48-hour league's.
+  // A Sunday game five days out is not today's or tomorrow's; a game that tipped off two hours ago still is; one over four hours ago is gone.
   const sunday = { id: 'f1', sport_key: 'americanfootball_nfl', commence_time: new Date(NOW + 5 * 24 * 3.6e6).toISOString() };
   const env = { POTD_KV: { async get() { return null; } } };
-  assert.equal((await trendGamesFor('americanfootball_nfl', [sunday], env, ctx, NOW)).length, 1);
+  assert.equal((await trendGamesFor('americanfootball_nfl', [sunday], env, ctx, NOW)).length, 0);
+  const live = { id: 'f2', sport_key: 'americanfootball_nfl', commence_time: new Date(NOW - 2 * 3.6e6).toISOString() };
+  const over = { id: 'f3', sport_key: 'americanfootball_nfl', commence_time: new Date(NOW - 5 * 3.6e6).toISOString() };
+  assert.deepEqual((await trendGamesFor('americanfootball_nfl', [live, over], env, ctx, NOW)).map((g) => g.id), ['f2']);
   // Nothing caps the slate: every game inside the window is scanned, soonest first.
   const many = Array.from({ length: 25 }, (_, i) => ({ id: `f${i}`, sport_key: 'americanfootball_nfl', commence_time: new Date(NOW + (25 - i) * 3.6e6).toISOString() }));
   const got = await trendGamesFor('americanfootball_nfl', many, env, ctx, NOW);
@@ -195,12 +198,15 @@ test('a big slate builds a few games per tick, merges into what is stored, and d
   assert.equal(second.pending, 0);
   assert.equal(second.rows.length, 24, 'the first chunk\'s rows are kept beside the new ones');
   assert.equal(await buildLeagueChunk('basketball_nba', games, env, ctx, NOW + 30 * 60e3, { deps }), null, 'nothing due: every game is fresh');
-  // Two hours on, the first two games have tipped off: their rows go, nothing is rebuilt yet.
+  // Two hours on, the first two games have tipped off: their rows stay up through play, and nothing is rebuilt.
   assert.equal(await buildLeagueChunk('basketball_nba', games, env, ctx, NOW + 2 * 3.6e6 + 1, { deps }), null);
+  assert.equal((await getTrends(env, 'basketball_nba')).rows.length, 24, 'a game in play keeps its rows');
+  // Five hours on, the first game is over: its rows go.
+  assert.equal(await buildLeagueChunk('basketball_nba', games, env, ctx, NOW + 5 * 3.6e6 + 1, { deps }), null);
   const trimmed = await getTrends(env, 'basketball_nba');
-  assert.equal(trimmed.games, 6);
-  assert.equal(trimmed.rows.length, 18);
-  assert.ok(trimmed.rows.every((r) => r.eventId !== 'g0' && r.eventId !== 'g1'));
+  assert.equal(trimmed.games, 7);
+  assert.equal(trimmed.rows.length, 21);
+  assert.ok(trimmed.rows.every((r) => r.eventId !== 'g0'));
   // Past the league's TTL the stale games rebuild (eight hours on, every game has tipped off but the chunk still refreshes what is left), oldest stamp first.
   const nbaTtl = TREND_SPORTS.basketball_nba.ttlMinutes;
   const later = games.map((g, i) => ({ ...g, commence_time: new Date(NOW + (nbaTtl + 60 + i) * 60e3).toISOString() }));
@@ -229,7 +235,7 @@ test('runTrendsBuild builds one league\'s chunk per tick, the league checked lon
   assert.equal(later.sportKey, 'basketball_nba');
   // Two leagues with work: each tick takes the one checked longest ago, so they alternate.
   const t0 = NOW + 2 * (nbaTtl + 1) * 60e3;
-  const tomorrow = new Date(t0 + 26 * 3.6e6).toISOString();
+  const tomorrow = new Date(t0 + 12 * 3.6e6).toISOString();
   const two = { ...opts, fetchFullSlate: async () => [{ ...nbaGame, id: 'n2', commence_time: tomorrow }, { ...nbaGame, id: 'h1', sport_key: 'icehockey_nhl', commence_time: tomorrow }], deps: { basketball_nba: deps, icehockey_nhl: deps } };
   const a = await runTrendsBuild(env, ctx, t0, two);
   const b = await runTrendsBuild(env, ctx, t0 + 15 * 60e3, two);
@@ -290,5 +296,4 @@ test('the build keeps its hands off the odds credits the boards need: a spent qu
   await env.POTD_KV.put('odds:diag', JSON.stringify({ at: NOW, ok: true, status: 200, remaining: '10' }));
   assert.equal((await runTrendsBuild(env, ctx, NOW, opts)).skipped, true);
   assert.equal(TREND_SPORTS.basketball_nba.ttlMinutes, 480);
-  assert.equal(TREND_SPORTS.basketball_nba.lookaheadHours, 30);
 });

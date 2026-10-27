@@ -9,7 +9,7 @@
 import { collectNflPropLegs, fetchFinalNflStats, NFL_SPORT_KEY } from './football-props.js';
 import { collectBasketballPropLegs, fetchFinalBasketballStats, isBasketballSport, BASKETBALL_SPORTS } from './basketball-props.js';
 import { collectNhlPropLegs, fetchFinalNhlStats, NHL_SPORT_KEY } from './hockey-props.js';
-import { UPSTREAM } from './odds.js';
+import { UPSTREAM, recordOddsDiag } from './odds.js';
 
 /** The leagues whose player props become legs: NFL, NBA, NHL. */
 export const PROP_SPORT_KEYS = new Set([NFL_SPORT_KEY, ...Object.keys(BASKETBALL_SPORTS), NHL_SPORT_KEY]);
@@ -31,6 +31,13 @@ export async function listLeagueGames(sportKey, env, ctx) {
     const hit = cache ? await cache.match(cacheKey) : null;
     if (hit) return hit.json();
     const res = await fetch(url.toString(), { headers: { Accept: 'application/json' } });
+    // The events listing is the first Odds API call a Trends build makes:
+    // it reports its outcome too (odds.js's recordOddsDiag), so a key that
+    // fails here is seen on /version rather than leaving the last record
+    // standing forever.
+    recordOddsDiag(env, ctx, res.ok
+      ? { at: Date.now(), sport: sportKey, ok: true, status: res.status, remaining: res.headers.get('x-requests-remaining'), used: res.headers.get('x-requests-used'), lastCost: res.headers.get('x-requests-last') }
+      : { at: Date.now(), sport: sportKey, ok: false, status: res.status, detail: (await res.clone().text().catch(() => '')).slice(0, 200) });
     if (!res.ok) return [];
     const body = await res.text();
     if (cache) {
