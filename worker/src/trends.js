@@ -311,7 +311,10 @@ export async function trendsCreditHold(env, now = Date.now()) {
   const raw = await env.POTD_KV.get(ODDS_DIAG_KEY).catch(() => null);
   if (!raw) return null;
   const diag = JSON.parse(raw);
-  if (diag.ok === false && now - (diag.at ?? 0) < 60 * 60e3) return `the odds feed refused its last call (HTTP ${diag.status})`;
+  // One tick, not an hour: a refused call costs no credits, and a key
+  // changed in the dashboard should be tried on the next tick, not after
+  // the last refusal ages out.
+  if (diag.ok === false && now - (diag.at ?? 0) < 14 * 60e3) return `the odds feed refused its last call (HTTP ${diag.status})`;
   const remaining = Number(diag.remaining);
   if (diag.ok && Number.isFinite(remaining) && remaining < TRENDS_CREDIT_FLOOR) return `${remaining} odds credits left, under the ${TRENDS_CREDIT_FLOOR} the boards keep`;
   return null;
