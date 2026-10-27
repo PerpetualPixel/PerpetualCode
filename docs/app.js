@@ -33,6 +33,7 @@ import {
   bookIdFor,
   impliedProb,
   americanToDecimal,
+  decimalToAmerican,
   suggestedStake,
   scoreCandidate,
   isNflPreseasonKey,
@@ -7695,6 +7696,10 @@ const TRENDS_ONLY = true;
   el.pixelSort.value = state.pixelSort;
 
   if (TRENDS_ONLY) {
+    // This boot runs before the rest of the module (the Trends state is
+    // declared further down); one turn of the microtask queue lets the
+    // module finish evaluating before the tab is opened.
+    await null;
     setActiveTab('trends');
     // The account's sportsbooks first, so the first render is already
     // filtered to the books the user plays at.
@@ -9089,19 +9094,33 @@ function renderTrendsSheet() {
       esc(trendTimeFmt.format(new Date(g.commenceMs))))).join('')}</div>
       <div class="sheet-actions"><button type="button" class="sheet-pill" data-select-all="game">${trendsState.games.size ? 'Clear' : 'Select all'}</button></div>${sheetClose()}`;
   } else if (sheet.type === 'odds') {
-    const prices = rows.map((r) => r.american).filter(Number.isFinite);
-    const lo = Math.min(-410, ...prices); const hi = Math.max(400, ...prices);
-    const bins = 24; const step = (hi - lo) / bins;
+    const prices = rows.map((r) => r.american).filter(Number.isFinite).sort((a, b) => a - b);
+    // The histogram and the two handles share one scale: the log of the
+    // decimal price between the 1st and 99th percentile prices, so the
+    // crowd between -400 and +300 is spread out and a lone -10000 or
+    // +10000 alternate line sits in the end bin instead of pushing
+    // everything else into a corner. The ends still mean "any".
+    const pct = (q) => prices[Math.min(prices.length - 1, Math.floor(q * prices.length))];
+    const lo = Math.min(-410, prices.length ? pct(0.01) : -410); const hi = Math.max(400, prices.length ? pct(0.99) : 400);
+    const scale = oddsScale(lo, hi);
+    const bins = 24; const step = 1 / bins;
     const counts = Array.from({ length: bins }, () => 0);
-    for (const p of prices) counts[Math.min(bins - 1, Math.floor((p - lo) / step))]++;
+    for (const p of prices) counts[Math.min(bins - 1, Math.floor(scale.pos(p) / step))]++;
     const top = Math.max(1, ...counts);
     const { min, max } = trendsState.odds;
+    const loPos = Number.isFinite(min) ? scale.pos(min) : 0;
+    const hiPos = Number.isFinite(max) ? scale.pos(max) : 1;
     html = `${sheetHead('odds', 'Odds')}
       <div class="odds-fields">
         <label class="odds-field"><span>Minimum odds</span><input id="trendsOddsMin" type="number" step="5" placeholder="${esc(formatAmerican(lo))}" value="${Number.isFinite(min) ? min : ''}"></label>
         <label class="odds-field"><span>Maximum odds</span><input id="trendsOddsMax" type="number" step="5" placeholder="${esc(formatAmerican(hi))}" value="${Number.isFinite(max) ? max : ''}"></label>
       </div>
-      <div class="odds-hist">${counts.map((c, i) => { const a = lo + i * step; const b = a + step; const inRange = (!Number.isFinite(min) || b >= min) && (!Number.isFinite(max) || a <= max); return `<span class="${inRange ? 'is-in' : ''}" style="height:${Math.max(2, (c / top) * 100)}%"></span>`; }).join('')}</div>
+      <div class="odds-hist">${counts.map((c, i) => { const a = i * step; const b = a + step; const inRange = b >= loPos && a <= hiPos; return `<span class="${inRange ? 'is-in' : ''}" style="height:${Math.max(2, (c / top) * 100)}%"></span>`; }).join('')}</div>
+      <div class="odds-range" data-odds-lo="${lo}" data-odds-hi="${hi}" style="--lo:${(loPos * 100).toFixed(2)}%;--hi:${(hiPos * 100).toFixed(2)}%">
+        <div class="odds-range-track"><div class="odds-range-fill"></div></div>
+        <input id="trendsOddsLo" type="range" min="0" max="1000" step="1" value="${Math.round(loPos * 1000)}" aria-label="Minimum odds">
+        <input id="trendsOddsHi" type="range" min="0" max="1000" step="1" value="${Math.round(hiPos * 1000)}" aria-label="Maximum odds">
+      </div>
       <div class="odds-axis"><span>${esc(formatAmerican(lo))}</span><span>${esc(formatAmerican(hi))}</span></div>
       <div class="sheet-actions"><button type="button" class="sheet-pill" data-odds-reset>Reset</button></div>${sheetClose()}`;
   } else if (sheet.type === 'books') {
@@ -9299,14 +9318,65 @@ el.trendsSheet?.addEventListener('change', (event) => {
   const set = { market: trendsState.markets, game: trendsState.games, book: trendsState.books }[input.name];
   if (set) { if (input.checked) set.add(input.value); else set.delete(input.value); if (input.name === 'book') persistTrendBooks(); renderTrends(); }
 });
+/**
+ * The Odds sheet's scale: a price's position on the slider and histogram,
+ * 0 at `lo` and 1 at `hi`, by the log of its decimal odds, and the price
+ * at a position, to the nearest 5. Either end of the slider means "any".
+ */
+function oddsScale(lo, hi) {
+  const t = (a) => Math.log(americanToDecimal(a));
+  const t0 = t(lo); const t1 = t(hi);
+  return {
+    pos: (a) => Math.min(1, Math.max(0, (t(a) - t0) / (t1 - t0 || 1))),
+    price: (pos) => {
+      if (pos <= 0) return lo;
+      if (pos >= 1) return hi;
+      const a = decimalToAmerican(Math.exp(t0 + pos * (t1 - t0)));
+      const rounded = Math.round(a / 5) * 5;
+      return Math.abs(rounded) < 100 ? (a >= 0 ? 100 : -100) : rounded;
+    },
+  };
+}
+
+/** Repaint the Odds sheet's handles, fill, bars and numbers from trendsState.odds, without rebuilding it; `source` is the control being edited and keeps its own value. */
+function syncOddsSheet(source = null) {
+  const range = el.trendsSheet?.querySelector('.odds-range');
+  if (!range) return;
+  const scale = oddsScale(Number(range.dataset.oddsLo), Number(range.dataset.oddsHi));
+  const { min, max } = trendsState.odds;
+  const loPos = Number.isFinite(min) ? scale.pos(min) : 0;
+  const hiPos = Number.isFinite(max) ? scale.pos(max) : 1;
+  range.style.setProperty('--lo', `${(loPos * 100).toFixed(2)}%`);
+  range.style.setProperty('--hi', `${(hiPos * 100).toFixed(2)}%`);
+  const loInput = range.querySelector('#trendsOddsLo'); const hiInput = range.querySelector('#trendsOddsHi');
+  if (source !== loInput) loInput.value = Math.round(loPos * 1000);
+  if (source !== hiInput) hiInput.value = Math.round(hiPos * 1000);
+  const minField = el.trendsSheet.querySelector('#trendsOddsMin'); const maxField = el.trendsSheet.querySelector('#trendsOddsMax');
+  if (source !== minField) minField.value = Number.isFinite(min) ? min : '';
+  if (source !== maxField) maxField.value = Number.isFinite(max) ? max : '';
+  const bars = [...el.trendsSheet.querySelectorAll('.odds-hist span')];
+  bars.forEach((bar, i) => { const a = i / bars.length; const b = (i + 1) / bars.length; bar.classList.toggle('is-in', b >= loPos && a <= hiPos); });
+}
+
+let oddsRenderQueued = false;
 el.trendsSheet?.addEventListener('input', (event) => {
   const input = event.target;
+  if (!(input instanceof HTMLInputElement)) return;
   if (input.id === 'trendsOddsMin' || input.id === 'trendsOddsMax') {
     const v = input.value.trim() === '' ? null : Number(input.value);
     trendsState.odds[input.id === 'trendsOddsMin' ? 'min' : 'max'] = Number.isFinite(v) ? v : null;
-    renderTrends();
-    for (const span of el.trendsSheet.querySelectorAll('.odds-hist span')) span.classList.add('is-in');
-  }
+  } else if (input.id === 'trendsOddsLo' || input.id === 'trendsOddsHi') {
+    const range = input.closest('.odds-range');
+    const scale = oddsScale(Number(range.dataset.oddsLo), Number(range.dataset.oddsHi));
+    let lo = Number(range.querySelector('#trendsOddsLo').value) / 1000;
+    let hi = Number(range.querySelector('#trendsOddsHi').value) / 1000;
+    // The handles never cross: the one being dragged pushes the other.
+    if (lo > hi) { if (input.id === 'trendsOddsLo') hi = lo; else lo = hi; }
+    trendsState.odds = { min: lo <= 0 ? null : scale.price(lo), max: hi >= 1 ? null : scale.price(hi) };
+  } else return;
+  syncOddsSheet(input);
+  // One repaint of the board per frame while a handle is dragged.
+  if (!oddsRenderQueued) { oddsRenderQueued = true; requestAnimationFrame(() => { oddsRenderQueued = false; renderTrends(); }); }
 });
 
 /* ================================================================ */
