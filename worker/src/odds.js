@@ -275,7 +275,7 @@ export async function enrichMmaEvents(events, ctx) {
  * so; this is the line that says so.
  */
 export const ODDS_DIAG_KEY = 'odds:diag';
-function recordOddsDiag(env, ctx, diag) {
+export function recordOddsDiag(env, ctx, diag) {
   try {
     const put = env?.POTD_KV?.put(ODDS_DIAG_KEY, JSON.stringify(diag), { expirationTtl: 86400 * 7 });
     if (put && ctx?.waitUntil) ctx.waitUntil(put.catch(() => {}));

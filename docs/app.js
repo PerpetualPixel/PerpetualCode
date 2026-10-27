@@ -7639,7 +7639,7 @@ function showWelcomeToastIfFresh() {
 // Versioned so a future, meaningfully different change can show its own
 // hint again even to someone who already dismissed this one — bump the
 // suffix, don't reuse the key.
-const WHATS_NEW_LEAN_FINAL_KEY = 'pp_seen_hint_reset_v4'; // bumped for the Oct 20, 2026 reset so the notice shows once more
+const WHATS_NEW_LEAN_FINAL_KEY = 'pp_seen_hint_trends_v1'; // bumped for the 2026-10-27 Trends-only site so the notice shows once more
 
 /** One-time explainer for the 2026-08-21 fresh-slate reset (tracking
  * archived, boards drawn once daily at 2am ET) — localStorage, not
@@ -7662,6 +7662,16 @@ el.whatsNewHintClose.addEventListener('click', (event) => {
 });
 
 
+/**
+ * Trends only (2026-10-27 direction: "revamp the website to just be the
+ * Trends tab, that is all"). The boards, the slate, the ladder and their
+ * polling stay in this file but never run: every one of them spent Odds
+ * API credits, and the month's 100,000 ran out on 2026-10-25. The Trends
+ * tab reads rows the worker built (one KV read, no credits), so any
+ * number of visitors cost nothing.
+ */
+const TRENDS_ONLY = true;
+
 (async function init() {
   if (!checkAuth()) return;
 
@@ -7670,6 +7680,13 @@ el.whatsNewHintClose.addEventListener('click', (event) => {
 
   el.accountLink.hidden = !getToken();
   el.pixelSort.value = state.pixelSort;
+
+  if (TRENDS_ONLY) {
+    setActiveTab('trends');
+    await loadTrends();
+    startUpdateChecks();
+    return;
+  }
 
   renderDayToggle();
   renderSlateStateToggle();

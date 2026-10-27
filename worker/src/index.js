@@ -59,6 +59,18 @@ import { runTrendsBuild, getTrends, buildLeagueChunk, TREND_ENABLED_SPORTS } fro
 
 /** The Trends build's own cron (must match wrangler.toml's second trigger exactly — Cloudflare hands the string back as written). */
 export const TRENDS_CRON = '7,22,37,52 * * * *';
+
+/**
+ * Trends only (2026-10-27 direction): the site is the Trends tab, and the
+ * worker spends Odds API credits on nothing else. The boards, the prop
+ * scans, the grading, the CLV snapshots and the slate routes all stay in
+ * the code but neither the tick nor a client can run them — the month's
+ * 100,000 credits ran out on 2026-10-25 with all of them spending. What
+ * Trends spends is bounded by its schedule: up to 15 NBA games a day, 23
+ * markets a game, three builds a day — about 1,000 credits a day, a third
+ * of the plan.
+ */
+export const TRENDS_ONLY = true;
 import { getOrGenerateAnalysis, getOrGeneratePropAnalysis } from './analysis.js';
 import { repairMissingPayouts } from './repair-payouts.js';
 import {
@@ -460,10 +472,14 @@ export default {
     // limit and every game log came back unreachable. Nothing else runs on
     // this schedule.
     if (event.cron === TRENDS_CRON) {
-      ctx.waitUntil(runTrendsBuild(env, ctx, now, { fetchFullSlate: () => fetchFullSlateEvents(env, ctx) })
+      // The games come from the feed's events listing (free of credits —
+      // worker/src/prop-legs.js's listLeagueGames), never the odds board.
+      ctx.waitUntil(runTrendsBuild(env, ctx, now, { fetchFullSlate: async () => [] })
         .catch((e) => console.error('Trends build failed:', e)));
       return;
     }
+    // Trends only: the main tick does nothing (see TRENDS_ONLY).
+    if (TRENDS_ONLY) return;
 
     // 4am ET: pre-warm the 'upcoming' board (the same "next games across
     // every sport" pull the Full Slate/Pixel Picks tabs make on their own
@@ -2442,6 +2458,11 @@ export default {
 
 
     if (pathname === '/odds' || pathname === '/sports' || pathname === '/scores') {
+      // Trends only: the odds board and the scores feed are off — an old
+      // tab still open on the slate must not spend a credit (see TRENDS_ONLY).
+      if (TRENDS_ONLY && pathname !== '/sports') {
+        return json({ error: 'Perpetual Picks is Trends only now; the odds board is off.' }, { status: 410, headers: cors });
+      }
       if (request.method !== 'GET') {
         return json({ error: 'Method not allowed' }, { status: 405, headers: cors });
       }

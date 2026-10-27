@@ -300,7 +300,7 @@ export async function buildLeagueChunk(sportKey, events, env, ctx, now = Date.no
  * the call outright within the last hour (a spent quota, a bad key). The
  * boards post from one slate fetch a tick; Trends is the big spender.
  */
-export const TRENDS_CREDIT_FLOOR = 1500;
+export const TRENDS_CREDIT_FLOOR = 300;
 
 /** Why the build should not spend right now, or null. */
 export async function trendsCreditHold(env, now = Date.now()) {
