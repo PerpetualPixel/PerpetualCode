@@ -26,7 +26,7 @@ import {
   seasonColumnValues,
   seasonColumnRows,
 } from '../../docs/prop-legs.js';
-import { UPSTREAM, REGIONS } from './odds.js';
+import { UPSTREAM, REGIONS, recordOddsDiag } from './odds.js';
 
 /**
  * The league, with ESPN's path. The WNBA was here for a fortnight (its
@@ -192,13 +192,21 @@ export function basketballBoxscoreRows(summary) {
 export const fetchDiag = { lastError: null };
 const noteFetchError = (url, what) => { fetchDiag.lastError = `${what} for ${new URL(url).pathname.slice(0, 80)}`; };
 
-async function cachedJson(url, ttl, ctx) {
+async function cachedJson(url, ttl, ctx, env = null) {
   const cache = globalThis.caches?.default ?? null;
   const cacheKey = cache ? new Request(`https://pixel-pick.cache/basketball-props/${encodeURIComponent(url)}`) : null;
   try {
     const hit = cache ? await cache.match(cacheKey) : null;
     if (hit) return hit.json();
     const res = await fetch(url, { headers: { Accept: 'application/json' } });
+    // An Odds API call reports its outcome and the credits left (odds.js's
+    // recordOddsDiag) — with Trends the only spender, this is where /version
+    // learns the balance.
+    if (env && url.startsWith(UPSTREAM)) {
+      recordOddsDiag(env, ctx, res.ok
+        ? { at: Date.now(), sport: 'basketball_nba', ok: true, status: res.status, remaining: res.headers.get('x-requests-remaining'), used: res.headers.get('x-requests-used'), lastCost: res.headers.get('x-requests-last') }
+        : { at: Date.now(), sport: 'basketball_nba', ok: false, status: res.status, detail: (await res.clone().text().catch(() => '')).slice(0, 200) });
+    }
     if (!res.ok) { noteFetchError(url, `HTTP ${res.status} ${(await res.text().catch(() => '')).slice(0, 80)}`); return null; }
     const body = await res.text();
     if (cache) {
@@ -220,7 +228,7 @@ export async function fetchAltProps(sportKey, oddsEventId, env, ctx, markets = B
   url.searchParams.set('markets', markets);
   url.searchParams.set('oddsFormat', 'american');
   url.searchParams.set('dateFormat', 'iso');
-  return cachedJson(url.toString(), ODDS_TTL, ctx);
+  return cachedJson(url.toString(), ODDS_TTL, ctx, env);
 }
 
 export async function resolveAthleteId(sportKey, playerName, teamAbbrs, ctx) {

@@ -36,7 +36,7 @@
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Syne:wght@600;700;800&family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
-<link rel="stylesheet" href="styles.css?v=1.204">
+<link rel="stylesheet" href="styles.css?v=1.205">
 </head>
 <body>
 
@@ -64,7 +64,9 @@
         About
       </button>
     </div>
-    <div class="topbar-group">
+    <!-- Trends only (2026-10-27 direction): the Bankroll and Tracking tools
+         and the board tabs stay in the page for their scripts but are hidden. -->
+    <div class="topbar-group" hidden>
       <button id="bankrollToggle" class="icon-btn is-primary" aria-expanded="false" aria-controls="bankrollPanel">
         Bankroll
       </button>
@@ -86,7 +88,7 @@
   </div>
 </header>
 
-<nav class="top-tabs" role="tablist" aria-label="Sections">
+<nav class="top-tabs" role="tablist" aria-label="Sections" hidden>
   <button id="tabSlate" class="top-tab is-active" role="tab" aria-selected="true" aria-controls="slateView">
     Full Slate
   </button>
@@ -111,7 +113,7 @@
 <details id="whatsNewHint" class="notice" hidden>
   <summary class="notice-summary">
     <span class="notice-tag">New</span>
-    <span class="notice-title">Fresh slate: tracking restarted Oct 20 — four leagues, low-level tickets, a Play of the Day every day</span>
+    <span class="notice-title">Perpetual Picks is now Trends: every NBA player prop with its last-20 hit rate, built three times a day</span>
     <span class="notice-more" aria-hidden="true">Details</span>
     <button type="button" id="whatsNewHintClose" class="icon-btn notice-close" aria-label="Dismiss">✕</button>
   </summary>
@@ -1109,6 +1111,6 @@
   </div>
 </aside>
 
-<script type="module" src="app.js?v=1.204"></script>
+<script type="module" src="app.js?v=1.205"></script>
 </body>
 </html>
