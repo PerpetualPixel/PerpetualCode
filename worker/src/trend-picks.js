@@ -30,7 +30,7 @@ import { bookIdFor, SPORTSBOOKS, americanToDecimal } from '../../docs/engine.js'
 /** A line needs this many logged games at 100% before it is a pick: ten 100%s is a pattern, three is a start. */
 export const PICK_MIN_GAMES = 10;
 /** How many qualifying lines are researched a day (each is an ESPN read and a model call): enough to build a ticket from. */
-export const PICK_MAX_RESEARCHED = 6;
+export const PICK_MAX_RESEARCHED = 8;
 /** Minutes: the last three games against the last twenty. Under this ratio the role has changed. */
 export const PICK_MIN_MINUTES_RATIO = 0.8;
 /** A win probability this lopsided (either side) is a blowout in the making: starters sit in the fourth. */
@@ -63,7 +63,7 @@ export const PARLAY_TARGET = 100;
 /** A parlay leg's own price: heavy favourites are what make a +100 ticket. */
 export const LEG_RANGE = [-450, 150];
 /** The stored record's shape; an older day is drawn again. */
-export const RECORD_VERSION = 2;
+export const RECORD_VERSION = 3;
 
 /** The registry id of a quote's book when it is one the picks may use, else null. */
 export function pickBookId(bookKey) {
@@ -449,10 +449,14 @@ export async function runTrendPicksDaily(env, ctx, now = Date.now(), { deps = {}
     rows.push(...(stored ?? []));
   }
   const groups = qualifyingRows(rows, dateKey, now);
+  // Only a line some listed book prices inside LEG_RANGE can sit on a
+  // ticket, so a line priced -1100 everywhere is not worth a research
+  // call: the day's calls go to the lines that could post.
+  const usable = groups.filter((g) => g.lines.some((l) => l.quotes.some((q) => inRange(q.american, LEG_RANGE))));
   const research = new Map();
   const passed = [];
   const posted = [];
-  for (const g of groups.slice(0, PICK_MAX_RESEARCHED)) {
+  for (const g of usable.slice(0, PICK_MAX_RESEARCHED)) {
     if (posted.some((p) => fold(p.playerName) === fold(g.playerName))) continue;
     const r = await researchPick(g.best, env, ctx, { now, deps });
     if (r.verdict === 'post') { research.set(g.key, r); posted.push(g); }
@@ -470,6 +474,7 @@ export async function runTrendPicksDaily(env, ctx, now = Date.now(), { deps = {}
     checkedAt: now,
     final: bets.length > 0,
     considered: groups.length,
+    usable: usable.length,
     bets,
     passed,
     unused,
