@@ -8749,10 +8749,34 @@ const trendTimeFmt = new Intl.DateTimeFormat(undefined, { weekday: 'short', hour
 const trendDateFmt = new Intl.DateTimeFormat(undefined, { month: 'short', day: 'numeric' });
 const PERIOD_LABEL = { h2h: 'H2H', l5: 'L5', l10: 'L10', l20: 'L20' };
 const PERIOD_LONG = { h2h: 'Head to head', l5: 'Last 5', l10: 'Last 10', l20: 'Last 20' };
+// The default: hit rate, highest first, so the 100% lines lead the tab.
 const SORT_LABEL = { hitRate: 'By Hit Rate', odds: 'By Odds', date: 'By Event Date' };
 
-const periodLabel = (key) => PERIOD_LABEL[key] ?? (key.startsWith('s') ? key.slice(1) : key);
-const periodLong = (key) => PERIOD_LONG[key] ?? (key.startsWith('s') ? `${key.slice(1)} season` : key);
+/**
+ * A season's name the way its league says it (2026-10-27 direction:
+ * "season 26-27 and 25-26"): the NBA and NHL span two years and are keyed
+ * by the first, so 2026 reads "2026-27"; an NFL season is one year.
+ */
+const TWO_YEAR_SEASON = new Set(['basketball_nba', 'icehockey_nhl']);
+function seasonName(year, sportKey = trendsState.sport) {
+  const y = Number(year);
+  return TWO_YEAR_SEASON.has(sportKey) ? `${y}-${String(y + 1).slice(-2)}` : String(y);
+}
+/** The season under way and the one before it, by the calendar: a league's year starts in September. */
+function defaultSeasons() {
+  const d = new Date();
+  const y = d.getMonth() >= 8 ? d.getFullYear() : d.getFullYear() - 1;
+  return [y, y - 1];
+}
+/** Every season the rows carry, newest first — both default seasons when the rows carry none yet. */
+function trendSeasons() {
+  const rows = trendsState.data?.rows ?? [];
+  const seen = new Set(rows.flatMap((r) => r.seasons ?? []));
+  const seasons = [...seen].filter((y) => y > 0).sort((a, b) => b - a);
+  return seasons.length ? seasons : defaultSeasons();
+}
+const periodLabel = (key) => PERIOD_LABEL[key] ?? (key.startsWith('s') ? seasonName(key.slice(1)) : key);
+const periodLong = (key) => PERIOD_LONG[key] ?? (key.startsWith('s') ? `${seasonName(key.slice(1))} season` : key);
 const trendLogo = (sportKey, abbr) => (abbr ? `https://a.espncdn.com/i/teamlogos/${TREND_LOGO_PATH[sportKey] ?? 'nfl'}/500/${String(abbr).toLowerCase()}.png` : null);
 const rateTone = (v) => (v >= 0.7 ? 'is-hot' : v >= 0.5 ? 'is-warm' : 'is-cold');
 const pct = (v) => `${Math.round(v * 100)}%`;
@@ -9007,8 +9031,9 @@ function renderTrendsSheet() {
       <div class="rate-chips">${[['all', 'Both'], ['over', 'Over'], ['under', 'Under']].map(([v, label]) => `<button type="button" class="rate-chip ${trendsState.side === v ? 'is-active' : ''}" data-side-pick="${v}">${label}</button>`).join('')}</div>${sheetClose()}`;
   } else if (sheet.type === 'period') {
     const sample = visibleTrendRows()[0] ?? rows[0] ?? null;
-    const seasons = trendsState.data?.rows?.[0]?.seasons ?? [];
-    const keys = ['h2h', 'l5', 'l10', 'l20', ...seasons.map((y) => `s${y}`)];
+    // Head to head, the three recent windows, then every season the rows
+    // carry (this one and last, always) — the order the research apps use.
+    const keys = ['h2h', 'l5', 'l10', 'l20', ...trendSeasons().map((y) => `s${y}`)];
     const mini = (key) => {
       if (!sample) return '';
       const series = periodSeries(sample, key).slice(0, 10).reverse();
