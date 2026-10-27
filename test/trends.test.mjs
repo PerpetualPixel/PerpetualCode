@@ -8,7 +8,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { extractTrendLines, hitFlags, hitRate, trendRowsFor, sortTrends, overNeed, underNeed } from '../docs/trends.js';
-import { buildTrends, buildLeagueChunk, runTrendsBuild, getTrends, TRENDS_TTL_MINUTES, TREND_ENABLED_SPORTS, TREND_SPORTS, GAME_HOURS, trendDayKeys, MAX_GAMES_PER_TICK, trendGamesFor } from '../worker/src/trends.js';
+import { buildTrends, buildLeagueChunk, runTrendsBuild, getTrends, STAMPS_VERSION, TRENDS_TTL_MINUTES, TREND_ENABLED_SPORTS, TREND_SPORTS, GAME_HOURS, trendDayKeys, MAX_GAMES_PER_TICK, trendGamesFor } from '../worker/src/trends.js';
 import { gamelogStatIndex, NFL_TREND_MARKETS } from '../worker/src/football-props.js';
 import { espnAbbr } from '../docs/team-logos.js';
 
@@ -302,4 +302,17 @@ test('the build keeps its hands off the odds credits the boards need: a spent qu
   await env.POTD_KV.put('odds:diag', JSON.stringify({ at: NOW, ok: true, status: 200, remaining: '10' }));
   assert.equal((await runTrendsBuild(env, ctx, NOW, opts)).skipped, true);
   assert.equal(TREND_SPORTS.basketball_nba.ttlMinutes, 480);
+});
+
+test('stamps from an older build are dropped once: every live game is rebuilt on the first tick after the bump, then the stamps hold', async () => {
+  const { env } = makeKvStore();
+  const first = await buildLeagueChunk('basketball_nba', [nbaGame], env, ctx, NOW, { deps });
+  assert.equal(first.stampsVersion, STAMPS_VERSION);
+  assert.equal(await buildLeagueChunk('basketball_nba', [nbaGame], env, ctx, NOW + 60e3, { deps }), null, 'fresh stamps hold');
+  // A record written before the bump: its games were stamped by a build that could not find anything.
+  await env.POTD_KV.put(`trends:${nbaGame.sport_key}`, JSON.stringify({ ...first, stampsVersion: STAMPS_VERSION - 1 }));
+  const rebuilt = await buildLeagueChunk('basketball_nba', [nbaGame], env, ctx, NOW + 2 * 60e3, { deps });
+  assert.ok(rebuilt, 'the stale stamps are ignored and the game is rebuilt');
+  assert.equal(rebuilt.stamps[nbaGame.id], NOW + 2 * 60e3);
+  assert.equal(rebuilt.stampsVersion, STAMPS_VERSION);
 });
