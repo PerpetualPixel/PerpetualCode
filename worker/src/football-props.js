@@ -30,7 +30,7 @@ import {
   gradePropLeg,
   seasonColumnValues,
 } from '../../docs/prop-legs.js';
-import { UPSTREAM, REGIONS } from './odds.js';
+import { UPSTREAM, TREND_BOOKMAKERS } from './odds.js';
 import { searchAthleteId } from './espn-search.js';
 
 export { PROP_LEG_DECIMAL } from '../../docs/prop-legs.js';
@@ -226,7 +226,8 @@ async function cachedJson(url, ttl, ctx) {
 export async function fetchNflAltProps(oddsEventId, env, ctx, markets = NFL_ALT_MARKETS_PARAM) {
   const url = new URL(`${UPSTREAM}/sports/${NFL_SPORT_KEY}/events/${oddsEventId}/odds`);
   url.searchParams.set('apiKey', (env.ODDS_API_KEY ?? '').trim());
-  url.searchParams.set('regions', REGIONS);
+  // Named books in place of a region (odds.js's TREND_BOOKMAKERS): the same credits, the owner's books included.
+  url.searchParams.set('bookmakers', TREND_BOOKMAKERS);
   url.searchParams.set('markets', markets);
   url.searchParams.set('oddsFormat', 'american');
   url.searchParams.set('dateFormat', 'iso');

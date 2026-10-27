@@ -148,6 +148,9 @@ export const SPORTSBOOKS = {
   caesars:    { name: 'Caesars',    color: '#c8aa6e', url: 'https://sportsbook.caesars.com/',     keys: ['williamhill_us', 'caesars'] },
   betrivers:  { name: 'BetRivers',  color: '#2b7fd4', url: 'https://betrivers.com/',              keys: ['betrivers'] },
   espnbet:    { name: 'ESPN BET',   color: '#ff2e4d', url: 'https://espnbet.com/',                keys: ['espnbet'] },
+  // A pick'em app, not a sportsbook: the feed lists its lines under the
+  // us_dfs region with the payout written as a price per leg.
+  prizepicks: { name: 'PrizePicks', color: '#8c52ff', url: 'https://app.prizepicks.com/',         keys: ['prizepicks'] },
 };
 
 /** Pre-selected on first run; the user can change this in the UI. */

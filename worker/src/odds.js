@@ -48,6 +48,15 @@ export function isAllowedSport(key) {
 
 export const MARKETS = 'h2h,spreads,totals';
 export const REGIONS = 'us';
+/**
+ * The books the Trends build asks for, by name rather than by region:
+ * the feed bills a named list per block of ten as one region, and the
+ * names may come from any region. So the owner's books outside the US
+ * region (PrizePicks, Hard Rock, bet365) ride along at the cost of the
+ * one region the build already paid for, in place of two offshore books
+ * nobody here plays at. Ten names, never more, or the cost doubles.
+ */
+export const TREND_BOOKMAKERS = 'draftkings,fanduel,williamhill_us,fanatics,betmgm,prizepicks,hardrockbet,bet365,betrivers,bovada';
 // Lower-tier tennis (WTA/ATP 125s, qualifying draws) is frequently priced
 // only by international books until close to start — US books post those
 // matches late or not at all. That left them coming back with fewer than
