@@ -20,11 +20,11 @@ function makeKvStore() {
 }
 const period = (rate, games) => ({ rate, hits: Math.round(rate * games), games, avg: 12, median: 12 });
 const dec = (american) => (american < 0 ? 1 + 100 / -american : 1 + american / 100);
-function row(id, { rate = 1, games = 20, h2h = period(1, 3), american = -140, player = 'Collin Sexton', commenceMs = NOW + 8 * 3.6e6, point = 9.5, side = 'over', statKey = 'points', books = { draftkings: american }, eventId = `e-${id}` } = {}) {
+function row(id, { rate = 1, games = 20, h2h = period(1, 3), american = -140, player = 'Collin Sexton', commenceMs = NOW + 8 * 3.6e6, point = 9.5, side = 'over', statKey = 'points', books = { draftkings: american }, eventId = `e-${id}`, team = 'CHA' } = {}) {
   const quotes = Object.entries(books).map(([bookKey, price]) => ({ bookKey, book: bookKey, american: price, decimal: dec(price), link: `https://${bookKey}.example/${id}` })).sort((a, b) => b.american - a.american);
   return {
     id, eventId, sportKey: 'basketball_nba', sportTitle: 'NBA', commenceMs, home: 'Charlotte Hornets', away: 'Orlando Magic',
-    playerName: player, team: 'CHA', opponent: 'ORL', athleteId: '4', headshot: null, statKey, statLabel: 'Pts', marketLabel: 'Points', point, side,
+    playerName: player, team, opponent: 'ORL', athleteId: '4', headshot: null, statKey, statLabel: 'Pts', marketLabel: 'Points', point, side,
     selection: `${player} ${side === 'over' ? 'Over' : 'Under'} ${point} Pts`, american, decimal: dec(american), book: 'DraftKings', quotes,
     seasons: [2026, 2025], rates: { l20: rate, h2h: h2h.rate, s2026: 1 }, periods: { l5: period(1, 5), l10: period(1, 10), l20: period(rate, games), h2h, s2026: period(1, 5) }, series: [],
   };
@@ -90,6 +90,40 @@ test('the bet builder: a same-book two-leg parlay nearest +100 first, three legs
   assert.equal(PICK_MAX_BETS, 2);
 });
 
+test('PrizePicks: never a single pick; two projections from two teams are a 2-pick Power Play at 3x, three make a 3-pick Flex Play at 2.25x', () => {
+  const q = (rows) => qualifyingRows(rows, '2026-10-27', NOW);
+  // Two Trail Blazers priced only at PrizePicks: no single picks, and one team is not a lineup.
+  let bets = buildBets(q([
+    row('a', { american: -137, player: 'Jrue Holiday', books: { prizepicks: -137 }, team: 'POR' }),
+    row('b', { american: -137, player: 'Robert Williams', books: { prizepicks: -137 }, team: 'POR', eventId: 'e-1' }),
+  ]));
+  assert.deepEqual(bets, []);
+  // Two teams: a 2-pick Power Play, +200 because that is what it pays, the cap notwithstanding.
+  bets = buildBets(q([
+    row('a', { american: -137, player: 'Jrue Holiday', books: { prizepicks: -137 }, team: 'POR' }),
+    row('c', { american: -137, player: 'Derrick White', books: { prizepicks: -137 }, team: 'BOS', eventId: 'e-2' }),
+  ]));
+  assert.deepEqual(bets.map((b) => [b.type, b.shape, b.american, b.decimal]), [['parlay', 'power2', 200, 3]]);
+  // A third projection makes the Flex Play, nearer +100 than the Power Play; the feed's -137 per leg is not the price, the table is.
+  bets = buildBets(q([
+    row('a', { american: -137, player: 'Jrue Holiday', books: { prizepicks: -137 }, team: 'POR' }),
+    row('b', { american: -137, player: 'Robert Williams', books: { prizepicks: -137 }, team: 'POR', eventId: 'e-1' }),
+    row('c', { american: -137, player: 'Derrick White', books: { prizepicks: -137 }, team: 'BOS', eventId: 'e-2' }),
+  ]));
+  assert.equal(bets.length, 1);
+  assert.equal(bets[0].shape, 'flex3');
+  assert.equal(bets[0].american, 125);
+  assert.equal(bets[0].decimal, 2.25);
+  assert.deepEqual(bets[0].legs.map((l) => l.group.playerName).sort(), ['Derrick White', 'Jrue Holiday', 'Robert Williams']);
+  // A sportsbook parlay nearer +100 beats the lineup; a -1100 line at PrizePicks still counts as a projection.
+  bets = buildBets(q([
+    row('a', { american: -250, player: 'Jrue Holiday', books: { draftkings: -250, prizepicks: -137 }, team: 'POR' }),
+    row('b', { american: -230, player: 'Derrick White', books: { draftkings: -230, prizepicks: -137 }, team: 'BOS', eventId: 'e-2' }),
+    row('c', { american: -1100, player: 'Luka Doncic', books: { prizepicks: -1100 }, team: 'LAL', eventId: 'e-3' }),
+  ]));
+  assert.deepEqual(bets.map((b) => [b.type, b.shape, b.american]), [['parlay', null, 101]]);
+});
+
 test('the research pass: minutes down, listed out or questionable, or a projected blowout pass the line; a bench role, day to day, a teammate out or a lopsided projection become notes', async () => {
   const env = {};
   const base = row('a');
@@ -118,6 +152,12 @@ test('the research pass: minutes down, listed out or questionable, or a projecte
   assert.match(dtd.note, /72% favourite/);
   const blowout = await researchPick(base, env, ctx, { now: NOW, deps: { minutes: async () => steady, context: context('Active', null, { home: 85, away: 15 }), model: async () => null } });
   assert.equal(blowout.verdict, 'pass');
+  // The teammate-out note reads the player's own side: an away player's team is the away side, not the home team's.
+  const awayPlayer = row('z', { player: 'Paolo Banchero', team: 'ORL' });
+  const awayCtx = async () => ({ home: { name: 'Charlotte Hornets', injuries: [{ name: 'Mark Williams', status: 'Out' }] }, away: { name: 'Orlando Magic', injuries: [{ name: 'Jalen Suggs', status: 'Out' }] }, projection: null });
+  const away = await researchPick(awayPlayer, env, ctx, { now: NOW, deps: { minutes: async () => steady, context: awayCtx, model: async () => null } });
+  assert.match(away.note, /Jalen Suggs is out/);
+  assert.doesNotMatch(away.note, /Mark Williams/);
   const bench = await researchPick(base, env, ctx, { now: NOW, deps: { minutes: async () => Array(20).fill(19), context: async () => null, model: async () => '{"verdict":"post","reason":"ok","note":"The Magic switch everything, so his catch-and-shoot looks shrink."}' } });
   assert.equal(bench.verdict, 'post');
   assert.match(bench.note, /bench role/);
@@ -147,7 +187,7 @@ test('the day researches the ranked groups, builds the tickets from the ones tha
   assert.equal(r.posted, 2);
   assert.equal(r.considered, 5);
   const rec = JSON.parse(store.get('trendpicks:2026-10-27'));
-  assert.equal(rec.version, 3);
+  assert.equal(rec.version, 4);
   assert.equal(rec.usable, 4, 'a line priced -1100 everywhere can sit on no ticket');
   assert.ok(!researched.includes('Luka Doncic'), 'and is not worth a research call');
   // Every pair prices past +150, so the top two ride straight: Miller then Ball; Bridges passes on minutes; Sexton is left over.
@@ -192,6 +232,20 @@ test('a ticket settles like the book settles it: a lost leg loses it, a pushed o
   assert.deepEqual(settleBet({ units: 1, legs: [leg('void', -250)] }), { result: 'void', net: 0 });
   assert.deepEqual(settleBet({ units: 1, legs: [leg('loss', -250), leg('void', -250)] }), { result: 'loss', net: -1 });
   assert.deepEqual(settleBet({ units: 1, legs: [leg('win', 100)] }), { result: 'win', net: 1 });
+  // PrizePicks 3-pick Flex: 2.25x with three in, 1.25x with two, a loss under that; a DNP drops it to a 2-pick Power Play at 3x.
+  const flex = (...results) => ({ units: 1, shape: 'flex3', legs: results.map((r) => leg(r, -137)) });
+  assert.deepEqual(settleBet(flex('win', 'win', 'win')), { result: 'win', net: 1.25 });
+  assert.deepEqual(settleBet(flex('win', 'win', 'loss')), { result: 'win', net: 0.25 });
+  assert.deepEqual(settleBet(flex('win', 'loss', 'loss')), { result: 'loss', net: -1 });
+  assert.deepEqual(settleBet(flex('win', 'win', 'void')), { result: 'win', net: 2 });
+  assert.deepEqual(settleBet(flex('win', 'loss', 'push')), { result: 'loss', net: -1 });
+  assert.deepEqual(settleBet(flex('win', 'void', 'push')), { result: 'push', net: 0 });
+  assert.deepEqual(settleBet(flex('void', 'void', 'void')), { result: 'void', net: 0 });
+  assert.equal(settleBet(flex('win', null, 'win')), null);
+  const power = (...results) => ({ units: 1, shape: 'power2', legs: results.map((r) => leg(r, -137)) });
+  assert.deepEqual(settleBet(power('win', 'win')), { result: 'win', net: 2 });
+  assert.deepEqual(settleBet(power('win', 'loss')), { result: 'loss', net: -1 });
+  assert.deepEqual(settleBet(power('win', 'void')), { result: 'push', net: 0 }, 'a DNP in a 2-pick is a refund');
 });
 
 test('bets are graded leg by leg off the game log once the games are over, a no-show voids its leg a day and a half on, and the history carries the record overall and per league', async () => {
