@@ -3,8 +3,7 @@
  * and write it into the worker's KV (see worker/src/espn-bundle.js for
  * why: ESPN refuses every JSON path from a Cloudflare Worker).
  *
- * For each league in LEAGUES: the teams playing today or tomorrow (ET),
- * from ESPN's scoreboard; each team's roster; each player's game log
+ * For each league in LEAGUES: every team's roster; each player's game log
  * this season and last, merged and trimmed to what the parsers read.
  * One KV record per team, plus an index per league.
  *
@@ -16,7 +15,6 @@
  * Workers" template the deploy workflow's token was made from has it.
  */
 import { readFileSync } from 'node:fs';
-import { etParts, etDatePlusDays } from '../worker/src/potd.js';
 import { espnAbbr } from '../docs/team-logos.js';
 import { priorSeasonKey } from '../docs/prop-legs.js';
 import { bundleKey, bundleIndexKey } from '../worker/src/espn-bundle.js';
@@ -95,19 +93,20 @@ function mergeLogs(current, prior) {
   return { ...current, seasonTypes: [...current.seasonTypes, ...prior.seasonTypes], events: { ...prior.events, ...current.events } };
 }
 
-/** Teams on the scoreboard for today and tomorrow ET, keyed the way the worker keys them (docs/team-logos.js). */
-async function teamsPlaying(league, now) {
-  const days = [etParts(now).date, etDatePlusDays(now, 1)].map((d) => String(d).replace(/-/g, ''));
+/**
+ * Every team in the league, keyed the way the worker keys them
+ * (docs/team-logos.js). The whole league rather than the scoreboard's
+ * teams: ESPN answered a day's scoreboard with a broken body on the first
+ * run, which left four teams out, and the runner pulls thirty teams'
+ * logs in seconds anyway. The worker reads only the teams it needs.
+ */
+async function leagueTeams(league) {
+  const list = await getJson(`${league.site}/teams?limit=40`);
   const teams = new Map();
-  for (const day of days) {
-    const board = await getJson(`${league.site}/scoreboard?dates=${day}`);
-    for (const ev of board?.events ?? []) {
-      for (const c of ev?.competitions?.[0]?.competitors ?? []) {
-        const name = c?.team?.displayName;
-        const abbr = (espnAbbr(league.sportKey, name) ?? c?.team?.abbreviation ?? '').toLowerCase();
-        if (abbr) teams.set(abbr.toUpperCase(), { abbr, name });
-      }
-    }
+  for (const entry of list?.sports?.[0]?.leagues?.[0]?.teams ?? []) {
+    const name = entry?.team?.displayName;
+    const abbr = (espnAbbr(league.sportKey, name) ?? entry?.team?.abbreviation ?? '').toLowerCase();
+    if (abbr) teams.set(abbr.toUpperCase(), { abbr, name });
   }
   return [...teams.values()];
 }
@@ -164,8 +163,9 @@ let failed = false;
 for (const [name, league] of Object.entries(LEAGUES)) {
   if (ONLY && ONLY !== name) continue;
   say(`\n=== ${name.toUpperCase()} (${league.sportKey}) ===`);
-  const teams = await teamsPlaying(league, now);
-  say(`teams playing today/tomorrow: [${teams.map((t) => t.abbr.toUpperCase()).join(',')}]`);
+  const teams = await leagueTeams(league);
+  say(`teams: [${teams.map((t) => t.abbr.toUpperCase()).join(',')}]`);
+  if (!teams.length) { failed = true; say('  ! no teams: the league list did not load'); continue; }
   const records = [];
   for (const team of teams) records.push(await buildTeam(league, team, now));
   const entries = records.map((r) => ({ key: bundleKey(league.sportKey, r.team), value: r }));

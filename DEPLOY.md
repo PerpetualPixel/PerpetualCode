@@ -32,8 +32,8 @@ ESPN refuses every one of its JSON endpoints from a Cloudflare Worker,
 so the Trends build cannot match a prop to a player on its own.
 `.github/workflows/espn-bundle.yml` runs `scripts/espn-bundle.mjs` on a
 GitHub runner three times a day: it pulls the roster and the game logs
-(this season and last) for every NBA and NFL team playing today or
-tomorrow and writes one record per team into the worker's KV, where the
+(this season and last) for every NBA and NFL team and writes one
+record per team into the worker's KV, where the
 build reads them. It uses the same two secrets; the token's "Edit
 Cloudflare Workers" template includes Workers KV Storage: Edit. Run it by
 hand (Actions → ESPN bundle → Run workflow) whenever the Trends tab shows

@@ -6,8 +6,8 @@
  * paths alike; the Trends trace's "espn probe" line shows it), while a
  * GitHub runner fetches the same URLs without trouble. So the runner
  * does the ESPN half: scripts/espn-bundle.mjs pulls the roster and the
- * game logs (this season and last) for every team playing today or
- * tomorrow and writes one record per team here, and the Trends build and
+ * game logs (this season and last) for every team in the league and
+ * writes one record per team here, and the Trends build and
  * Pixel's Picks read players from these records instead of calling ESPN.
  *
  * Keys: `espn:<sportKey>:<ABBR>` holds a team, `espn:<sportKey>` the

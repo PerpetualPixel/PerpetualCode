@@ -1,5 +1,5 @@
 # The ESPN half of the Trends build, from a runner ESPN answers: rosters
-# and game logs for every team playing today or tomorrow, written into
+# and game logs for every NBA and NFL team, written into
 # the worker's KV (scripts/espn-bundle.mjs; worker/src/espn-bundle.js
 # reads them). ESPN refuses the worker itself, so without this the
 # Trends tab has games and no player lines.
