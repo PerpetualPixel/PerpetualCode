@@ -333,3 +333,11 @@ test('the stored shape shares one series per player and stat, and every line get
   const stored = await buildLeagueChunk('basketball_nba', [nbaGame], kv, ctx, NOW, { deps });
   assert.ok(stored.logs && stored.rows.every((r) => r.logKey in stored.logs), 'the chunk stores the shared shape');
 });
+
+test('football posts the whole week: a Sunday game on a Wednesday is in the window, a game next Tuesday is not', async () => {
+  const { env } = makeKvStore();
+  const wed = Date.parse('2026-10-28T16:00:00Z');
+  const game = (id, iso) => ({ id, sport_key: 'americanfootball_nfl', commence_time: iso, home_team: 'Detroit Lions', away_team: 'Minnesota Vikings' });
+  const games = await trendGamesFor('americanfootball_nfl', [game('thu', '2026-10-30T00:15:00Z'), game('sun', '2026-11-01T18:00:00Z'), game('mon', '2026-11-03T01:15:00Z'), game('nextThu', '2026-11-06T01:15:00Z'), game('done', '2026-10-27T00:15:00Z')], env, ctx, wed);
+  assert.deepEqual(games.map((g) => g.id), ['thu', 'sun', 'mon'], 'Thursday, Sunday and Monday night (which is Tuesday 01:15 UTC, still Monday in the East); not next week, not Monday\'s finished game');
+});

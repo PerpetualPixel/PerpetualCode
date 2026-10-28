@@ -21,7 +21,7 @@ import { ODDS_DIAG_KEY } from './odds.js';
 import { etParts, etDatePlusDays } from './potd.js';
 import { probeEspn } from './espn-search.js';
 import { loadBundleTeams, bundleDeps, bundleLine } from './espn-bundle.js';
-import { extractTrendLines, trendRowsFor, sortTrends, detachSeries, attachSeries } from '../../docs/trends.js';
+import { extractTrendLines, trendRowsFor, sortTrends, nflWeekDates, detachSeries, attachSeries } from '../../docs/trends.js';
 import { normalizeName as normalizeNflName } from '../../docs/nfl-props.js';
 import { normalizeName as normalizeNbaName } from '../../docs/wnba-props.js';
 import { normalizeName as normalizeNhlName } from '../../docs/nhl-props.js';
@@ -100,8 +100,9 @@ export const TREND_SPORTS = {
     // the whole week is scanned and refreshed every six hours — lines move
     // on injury news, and six hours keeps a Sunday row from quoting
     // Tuesday's number.
-    // Today's and tomorrow's games (trendGamesFor), rebuilt twice a day:
-    // a Sunday slate at 8 markets a game is about 130 credits a build.
+    // The whole week's games, Tuesday to Monday (trendGamesFor's
+    // nflWeekDates), rebuilt twice a day: a full week at 8 markets a
+    // game is about 110 credits a build.
     ttlMinutes: 720,
     normalizeName: normalizeNflName,
     fetchOdds: (eventId, env, ctx) => fetchNflAltProps(eventId, env, ctx, Object.keys(NFL_TREND_MARKETS).join(',')),
@@ -173,7 +174,8 @@ export async function getTrends(env, sportKey) {
 
 /** The games a league shows: today's and tomorrow's (ET), not yet over, soonest first, from the slate or the events list. */
 export async function trendGamesFor(sportKey, events, env, ctx, now) {
-  const days = new Set(trendDayKeys(now));
+  // Football posts the whole week (Tuesday to Monday); the rest, today and tomorrow.
+  const days = new Set(sportKey === NFL_SPORT_KEY ? nflWeekDates(now) : trendDayKeys(now));
   const inWindow = (g) => {
     const ms = Date.parse(g?.commence_time ?? '');
     return Number.isFinite(ms) && ms + GAME_HOURS * 3.6e6 > now && days.has(etParts(ms).date);

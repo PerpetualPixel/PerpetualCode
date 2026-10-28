@@ -17,7 +17,9 @@
 import { readFileSync } from 'node:fs';
 import { espnAbbr } from '../docs/team-logos.js';
 import { priorSeasonKey } from '../docs/prop-legs.js';
-import { bundleKey, bundleIndexKey } from '../worker/src/espn-bundle.js';
+import { bundleKey, bundleIndexKey, playersIndexKey } from '../worker/src/espn-bundle.js';
+import { basketballHeadshotUrl } from '../worker/src/basketball-props.js';
+import { nflHeadshotUrl } from '../worker/src/football-props.js';
 
 const args = process.argv.slice(2);
 const DRY = args.includes('--dry-run');
@@ -170,6 +172,9 @@ for (const [name, league] of Object.entries(LEAGUES)) {
   for (const team of teams) records.push(await buildTeam(league, team, now));
   const entries = records.map((r) => ({ key: bundleKey(league.sportKey, r.team), value: r }));
   entries.push({ key: bundleIndexKey(league.sportKey), value: { sportKey: league.sportKey, builtAt: now, teams: records.map((r) => r.team), players: records.reduce((n, r) => n + r.players.length, 0) } });
+  // Every player in the league, light enough for the Players tab to search as the user types (worker/src/player-search.js).
+  const headshot = league.sportKey === 'americanfootball_nfl' ? nflHeadshotUrl : (id) => basketballHeadshotUrl(league.sportKey, id);
+  entries.push({ key: playersIndexKey(league.sportKey), value: { sportKey: league.sportKey, builtAt: now, players: records.flatMap((r) => r.players.map((p) => ({ id: p.id, name: p.name, team: r.team, position: p.position ?? null, headshot: headshot(p.id) }))) } });
   const size = entries.reduce((n, e) => n + JSON.stringify(e.value).length, 0);
   say(`${records.length} team records, ${(size / 1e6).toFixed(2)} MB`);
   if (DRY) continue;

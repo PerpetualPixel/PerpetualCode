@@ -218,6 +218,35 @@ export function attachSeries(rows, logs) {
 }
 
 /**
+ * The NFL week (2026-10-28 direction: the NFL tab posts the whole week,
+ * not two days). A week runs Tuesday to Monday, Eastern. nflWeekDates
+ * lists the ET dates from today to the week's Monday; nflWeek numbers
+ * the week from the season's first Tuesday, the day after Labor Day
+ * (the season opens that Thursday), so 2026-10-28 is Week 8.
+ */
+const ET_TZ = 'America/New_York';
+const DAY_MS = 864e5;
+function etDateOf(ms) {
+  const p = Object.fromEntries(new Intl.DateTimeFormat('en-US', { timeZone: ET_TZ, year: 'numeric', month: '2-digit', day: '2-digit' }).formatToParts(ms).map((x) => [x.type, x.value]));
+  return `${p.year}-${p.month}-${p.day}`;
+}
+const noonOf = (date) => Date.parse(`${date}T12:00:00Z`);
+export function nflWeekDates(now = Date.now()) {
+  const today = noonOf(etDateOf(now));
+  const weekday = new Date(today).getUTCDay();
+  const count = ((2 - weekday + 7) % 7) || 7;
+  return Array.from({ length: count }, (_, i) => new Date(today + i * DAY_MS).toISOString().slice(0, 10));
+}
+export function nflWeek(now = Date.now()) {
+  const today = etDateOf(now);
+  const year = Number(today.slice(0, 4));
+  const seasonYear = Number(today.slice(5, 7)) >= 8 ? year : year - 1;
+  const sep1 = noonOf(`${seasonYear}-09-01`);
+  const laborDay = sep1 + ((1 - new Date(sep1).getUTCDay() + 7) % 7) * DAY_MS;
+  return Math.floor((noonOf(today) - (laborDay + DAY_MS)) / (7 * DAY_MS)) + 1;
+}
+
+/**
  * Order rows for the board. `by` is 'hitRate' (in the chosen period),
  * 'odds' (price) or 'date' (kickoff); `dir` 'desc' (the default) or 'asc'.
  * Rows without a rate in the period sink to the bottom whichever way.

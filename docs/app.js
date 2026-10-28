@@ -15,7 +15,7 @@ import { CONFIG } from './config.js';
 import { DEMO_EVENTS } from './demo.js';
 import { teamLogoUrl, espnAbbr } from './team-logos.js';
 import { leagueIconSvg } from './league-icons.js';
-import { sortTrends, attachSeries } from './trends.js';
+import { sortTrends, attachSeries, hitFlags, nflWeek } from './trends.js';
 import { enhanceSelect } from './custom-select.js';
 import { BUILD_INFO } from './version.js';
 import { summarizePicks, gradePick } from './learning.js';
@@ -845,6 +845,19 @@ const el = {
   trendPicksBody: document.getElementById('trendPicksBody'),
   trendPicksHistory: document.getElementById('trendPicksHistory'),
   trendPicksFilters: document.getElementById('trendPicksFilters'),
+  tabPlayers: document.getElementById('tabPlayers'),
+  playersView: document.getElementById('playersView'),
+  playersLeagues: document.getElementById('playersLeagues'),
+  playersQuery: document.getElementById('playersQuery'),
+  playersList: document.getElementById('playersList'),
+  playersPicked: document.getElementById('playersPicked'),
+  playersForm: document.getElementById('playersForm'),
+  playersStat: document.getElementById('playersStat'),
+  playersSide: document.getElementById('playersSide'),
+  playersPoint: document.getElementById('playersPoint'),
+  playersSearchBtn: document.getElementById('playersSearchBtn'),
+  playersStatus: document.getElementById('playersStatus'),
+  playersResult: document.getElementById('playersResult'),
   trendPicksRecord: document.getElementById('trendPicksRecord'),
   trendPicksGraph: document.getElementById('trendPicksGraph'),
   trendsLeagues: document.getElementById('trendsLeagues'),
@@ -6124,8 +6137,8 @@ function renderPropPlayCard(record) {
 }
 
 function setActiveTab(tab) {
-  const views = { slate: el.slateView, board: el.boardView, potd: el.potdView, trends: el.trendsView, trendPicks: el.trendPicksView };
-  const tabs = { slate: el.tabSlate, board: el.tabBoard, potd: el.tabPotd, trends: el.tabTrends, trendPicks: el.tabTrendPicks };
+  const views = { slate: el.slateView, board: el.boardView, potd: el.potdView, trends: el.trendsView, trendPicks: el.trendPicksView, players: el.playersView };
+  const tabs = { slate: el.tabSlate, board: el.tabBoard, potd: el.tabPotd, trends: el.tabTrends, trendPicks: el.tabTrendPicks, players: el.tabPlayers };
 
   for (const [name, view] of Object.entries(views)) {
     const active = name === tab;
@@ -6137,7 +6150,7 @@ function setActiveTab(tab) {
   // The day toggle applies to Full Slate only — Play of the Day and
   // Pixel's Picks are both fixed daily sets locked server-side, with no
   // Today/Tomorrow of their own to choose.
-  el.dayFilterBar.hidden = tab === 'potd' || tab === 'board' || tab === 'trends' || tab === 'trendPicks';
+  el.dayFilterBar.hidden = tab === 'potd' || tab === 'board' || tab === 'trends' || tab === 'trendPicks' || tab === 'players';
   if (tab === 'trendPicks') loadTrendPicks();
 
   // Viewing a tab is what "seen" means — clear its pulse the moment the
@@ -6157,6 +6170,7 @@ function setActiveTab(tab) {
 
   if (tab === 'potd') { loadPotd(); loadLadder(); }
   if (tab === 'trends') loadTrends();
+  if (tab === 'players') loadPlayers();
   // Re-render from whatever's already loaded rather than re-fetching —
   // everything loads once at boot (refreshAllLeagues), so switching tabs is
   // never itself a billed call.
@@ -6171,6 +6185,7 @@ el.tabBoard.addEventListener('click', () => setActiveTab('board'));
 el.tabPotd.addEventListener('click', () => setActiveTab('potd'));
 el.tabTrends?.addEventListener('click', () => setActiveTab('trends'));
 el.tabTrendPicks?.addEventListener('click', () => setActiveTab('trendPicks'));
+el.tabPlayers?.addEventListener('click', () => setActiveTab('players'));
 
 /* ---------------------------------------------------------------- */
 /* Tracking Dashboard                                                */
@@ -9064,7 +9079,8 @@ function renderTrends() {
   // The worker builds a few games per 15-minute tick, so a big slate
   // fills in over an hour or so: say how many games are still coming.
   const pending = data.pending ? ` · ${data.pending} more game${data.pending === 1 ? '' : 's'} building` : '';
-  el.trendsStatus.innerHTML = `${rows.length} of ${data.rows.length} lines · ${data.games} ${esc(data.title)} game${data.games === 1 ? '' : 's'}${pending} · lines as of ${esc(trendTimeFmt.format(built))}`;
+  const week = data.sportKey === 'americanfootball_nfl' ? ` · Week ${nflWeek()}` : '';
+  el.trendsStatus.innerHTML = `${rows.length} of ${data.rows.length} lines · ${data.games} ${esc(data.title)} game${data.games === 1 ? '' : 's'}${esc(week)}${pending} · lines as of ${esc(trendTimeFmt.format(built))}`;
   el.trendsBody.innerHTML = rows.length
     ? rows.slice(0, 150).map(renderTrendCard).join('')
     : `<p class="empty">Nothing clears those filters. Open Filters and loosen one, or change the period.</p>`;
@@ -9265,6 +9281,7 @@ function renderTrendDetail(row) {
         <div class="detail-game">${leagueIconSvg(TREND_LEAGUE_ICON[row.sportKey] ?? row.sportKey)}<strong>${esc(teamAbbr(row.away))} @ ${esc(teamAbbr(row.home))}</strong><span>▪</span>${esc(trendTimeFmt.format(new Date(row.commenceMs)))}</div>
         <h2 class="detail-name" id="trendsSheetTitle">${esc(row.playerName)}${row.team ? `<small>${esc(row.team)}</small>` : ''}</h2>
         <p class="detail-market">${esc(row.marketLabel ?? row.statLabel)} ${sideWord(row.side)} ${esc(String(row.point))}</p>
+        ${row.athleteId ? `<button type="button" class="detail-stats" data-view-stats>View stats <span aria-hidden="true">↗</span></button>` : ''}
       </div>
       ${avatarHtml(row, 'detail-avatar')}
     </div>
@@ -9352,6 +9369,12 @@ el.trendsSheet?.addEventListener('click', (event) => {
   const hit = (sel) => t.closest(sel);
   let node;
   if (hit('[data-sheet-close]')) return closeTrendsSheet();
+  if (hit('[data-view-stats]')) {
+    const sheet = trendsState.sheet;
+    const row = (trendsState.data?.rows ?? []).find((r) => r.id === sheet?.rowId) ?? sheet?.row;
+    if (row) openPlayerSearch({ sportKey: row.sportKey, id: row.athleteId, name: row.playerName, team: row.team, headshot: row.headshot, stat: row.statKey, point: row.point, side: row.side });
+    return;
+  }
   if ((node = hit('[data-sheet-open]'))) return openTrendsSheet(node.dataset.sheetOpen);
   if (hit('[data-filters-reset]')) {
     trendsState.markets.clear(); trendsState.games.clear(); trendsState.books.clear(); persistTrendBooks();
@@ -9680,3 +9703,217 @@ el.trendPicksView?.addEventListener('keydown', (event) => {
   const dot = event.target.closest('[data-pick-day]');
   if (dot && (event.key === 'Enter' || event.key === ' ')) { event.preventDefault(); const i = Number(dot.dataset.pickDay); trendPicksState.hover = trendPicksState.hover === i ? null : i; renderPickGraph(); }
 });
+
+/* ================================================================ */
+/* Players: any NBA or NFL player's game log at a number (worker/src/player-search.js) */
+/* ================================================================ */
+
+const playersState = {
+  sport: 'basketball_nba', index: {}, stats: {}, player: null, stat: '', side: 'over', point: '',
+  log: null, loading: false, window: 'all', filters: { opponent: '', venue: 'both', seasons: null, playoffs: 'include' }, focus: -1,
+};
+const PLAYER_LEAGUES = [['basketball_nba', 'NBA'], ['americanfootball_nfl', 'NFL']];
+const foldName = (s) => String(s ?? '').normalize('NFD').replace(/[̀-ͯ]/g, '').toLowerCase().replace(/[^a-z0-9]+/g, ' ').trim();
+
+async function loadPlayers(sport = playersState.sport) {
+  if (!el.playersView || !CONFIG.WORKER_URL) return;
+  if (playersState.index[sport]) { renderPlayers(); return; }
+  el.playersStatus.textContent = 'Loading players…';
+  try {
+    const url = new URL('/players', CONFIG.WORKER_URL); url.searchParams.set('sport', sport);
+    const res = await fetch(url, { headers: { Accept: 'application/json' } });
+    const body = await res.json();
+    playersState.index[sport] = body.players ?? [];
+    playersState.stats[sport] = body.stats ?? [];
+    el.playersStatus.textContent = body.players?.length ? '' : 'No players yet: the ESPN bundle has not run for this league.';
+  } catch {
+    el.playersStatus.textContent = "Couldn't reach the worker.";
+  }
+  renderPlayers();
+}
+
+/** Players whose name contains the typed words, as the user types; up to twelve. */
+function playerMatches(query) {
+  const words = foldName(query).split(' ').filter(Boolean);
+  if (!words.length) return [];
+  const list = playersState.index[playersState.sport] ?? [];
+  const scored = [];
+  for (const p of list) {
+    const name = foldName(p.name);
+    if (!words.every((w) => name.includes(w))) continue;
+    scored.push({ p, rank: name.startsWith(words[0]) ? 0 : name.split(' ').some((part) => part.startsWith(words[0])) ? 1 : 2 });
+  }
+  return scored.sort((a, b) => a.rank - b.rank || a.p.name.localeCompare(b.p.name)).slice(0, 12).map((x) => x.p);
+}
+
+function renderPlayerList() {
+  const matches = playerMatches(el.playersQuery.value);
+  el.playersList.hidden = !matches.length;
+  el.playersList.innerHTML = matches.map((p, i) => `<li role="option" class="${i === playersState.focus ? 'is-focus' : ''}" data-player-id="${esc(p.id)}" data-player-team="${esc(p.team)}" aria-selected="${i === playersState.focus}">
+      ${p.headshot ? `<img src="${esc(p.headshot)}" alt="" loading="lazy">` : '<span class="players-initials"></span>'}
+      <span class="players-name">${esc(p.name)}</span><span class="players-meta">${esc(p.team)}${p.position ? ` · ${esc(p.position)}` : ''}</span>
+    </li>`).join('');
+}
+
+function pickPlayer(player) {
+  playersState.player = player;
+  playersState.log = null;
+  playersState.filters = { opponent: '', venue: 'both', seasons: null, playoffs: 'include' };
+  el.playersQuery.value = player.name;
+  el.playersList.hidden = true;
+  renderPlayers();
+}
+
+function renderPlayers() {
+  if (!el.playersView) return;
+  el.playersLeagues.innerHTML = PLAYER_LEAGUES.map(([key, label]) => `<button type="button" class="league-chip ${playersState.sport === key ? 'is-active' : ''}" data-players-league="${esc(key)}" aria-pressed="${playersState.sport === key}">${leagueIconSvg(TREND_LEAGUE_ICON[key] ?? key)}<span class="league-chip-label">${esc(label)}</span></button>`).join('');
+  const stats = playersState.stats[playersState.sport] ?? [];
+  if (!stats.some((s) => s.key === playersState.stat)) playersState.stat = stats[0]?.key ?? '';
+  el.playersStat.innerHTML = stats.map((s) => `<option value="${esc(s.key)}" ${s.key === playersState.stat ? 'selected' : ''}>${esc(s.label)}</option>`).join('');
+  el.playersSide.value = playersState.side;
+  if (document.activeElement !== el.playersPoint) el.playersPoint.value = playersState.point;
+  const p = playersState.player;
+  el.playersPicked.innerHTML = p ? `<div class="players-card">${avatarHtml({ playerName: p.name, team: p.team, sportKey: playersState.sport, headshot: p.headshot }, 'trend-avatar')}<div><p class="trend-player">${esc(p.name)}<small>${esc(p.team)}</small></p><p class="trend-line">${esc(p.position ?? '')}</p></div><button type="button" class="players-clear" data-players-clear aria-label="Clear player">✕</button></div>` : '';
+  el.playersSearchBtn.disabled = !(p && playersState.stat && Number.isFinite(Number(playersState.point)) && playersState.point !== '');
+  renderPlayerResult();
+}
+
+/** The rows the filters leave, most recent first. */
+function filteredPlayerRows() {
+  const f = playersState.filters;
+  return (playersState.log?.rows ?? []).filter((r) => {
+    if (f.opponent && String(r.opponent ?? '').toUpperCase() !== f.opponent) return false;
+    if (f.venue === 'home' && r.atVs === '@') return false;
+    if (f.venue === 'away' && r.atVs !== '@') return false;
+    if (f.seasons && !f.seasons.has(r.season)) return false;
+    const playoff = /post|playoff/i.test(String(r.seasonType ?? ''));
+    if (f.playoffs === 'exclude' && playoff) return false;
+    if (f.playoffs === 'only' && !playoff) return false;
+    return true;
+  });
+}
+
+function renderPlayerResult() {
+  const log = playersState.log;
+  if (!log) { el.playersResult.innerHTML = ''; return; }
+  const point = Number(playersState.point); const side = playersState.side;
+  const all = filteredPlayerRows();
+  const n = playersState.window === 'all' ? all.length : Number(playersState.window.slice(1));
+  const rows = all.slice(0, n);
+  const flags = hitFlags(rows, point, side);
+  const counted = flags.filter((f) => f !== null);
+  const hits = counted.reduce((s, f) => s + f, 0);
+  const rate = counted.length ? hits / counted.length : null;
+  const values = rows.map((r) => r.value);
+  const avg = values.length ? (values.reduce((s, v) => s + v, 0) / values.length) : null;
+  const sorted = [...values].sort((a, b) => a - b); const mid = sorted.length >> 1;
+  const median = sorted.length ? (sorted.length % 2 ? sorted[mid] : (sorted[mid - 1] + sorted[mid]) / 2) : null;
+  const statLabel = (playersState.stats[playersState.sport] ?? []).find((s) => s.key === log.stat);
+  const opponents = [...new Set((log.rows ?? []).map((r) => String(r.opponent ?? '').toUpperCase()).filter(Boolean))].sort();
+  const seasons = [...new Set((log.rows ?? []).map((r) => r.season).filter((y) => y > 0))].sort((a, b) => b - a);
+  const f = playersState.filters;
+  const chart = rows.slice(0, 20).map((r, i) => ({ ...r, hit: flags[i] })).reverse();
+  const max = Math.max(point, ...chart.map((s) => s.value), 1);
+  const lineTop = 100 - Math.min(100, (point / max) * 100);
+  const seg = (name, options, value) => `<div class="sheet-seg players-seg">${options.map(([v, label]) => `<button type="button" class="${value === v ? 'is-active' : ''}" data-players-filter="${name}" data-value="${esc(v)}">${esc(label)}</button>`).join('')}</div>`;
+  el.playersResult.innerHTML = `
+    <div class="players-filters">
+      <label class="players-select"><span>Opponent</span><select data-players-opponent><option value="">Any</option>${opponents.map((o) => `<option value="${esc(o)}" ${f.opponent === o ? 'selected' : ''}>${esc(o)}</option>`).join('')}</select></label>
+      <div class="players-filter"><span>Home or away</span>${seg('venue', [['both', 'Both'], ['home', 'Home'], ['away', 'Away']], f.venue)}</div>
+      <div class="players-filter"><span>Seasons</span><div class="rate-chips">${seasons.map((y) => `<button type="button" class="rate-chip ${!f.seasons || f.seasons.has(y) ? 'is-active' : ''}" data-players-season="${y}">${esc(seasonName(y, playersState.sport))}</button>`).join('')}</div></div>
+      <div class="players-filter"><span>Playoffs</span>${seg('playoffs', [['include', 'Include'], ['exclude', 'Exclude'], ['only', 'Only']], f.playoffs)}</div>
+      <div class="players-filter"><span>Games</span><div class="rate-chips">${[['all', `All ${all.length}`], ['l5', 'Last 5'], ['l10', 'Last 10'], ['l20', 'Last 20']].map(([k, label]) => `<button type="button" class="rate-chip ${playersState.window === k ? 'is-active' : ''}" data-players-window="${k}">${esc(label)}</button>`).join('')}</div></div>
+    </div>
+    <div class="detail-summary players-summary">
+      <span class="big ${rate === null ? '' : rateTone(rate)}">${rate === null ? '—' : pct(rate)}<small>${hits}/${counted.length} games ${sideWord(side).toLowerCase()} ${esc(String(point))} ${esc(statLabel?.short ?? log.stat)}</small></span>
+      <span class="stats">Avg <b>${avg === null ? '—' : esc(String(Math.round(avg * 10) / 10))}</b> ▪ Median <b>${median === null ? '—' : esc(String(median))}</b></span>
+    </div>
+    ${chart.length ? `<div class="detail-chart ${chart.length > 12 ? 'is-dense' : ''}">
+      <span class="chart-line" style="top:${lineTop.toFixed(1)}%"></span><span class="chart-line-label" style="top:${lineTop.toFixed(1)}%">${esc(String(point))}</span>
+      ${chart.map((s) => `<div class="chart-col"><div class="chart-bar ${s.hit === 1 ? 'is-hit' : s.hit === null ? 'is-push' : 'is-miss'}" style="height:${Math.max(2, (s.value / max) * 100).toFixed(1)}%"></div><span class="chart-val ${s.hit === 1 ? 'is-hit' : s.hit === null ? '' : 'is-miss'}">${esc(String(s.value))}</span><span class="chart-opp">${esc(s.atVs ?? '')}${s.opponent ? `<img src="${esc(trendLogo(playersState.sport, s.opponent))}" alt="${esc(s.opponent)}" loading="lazy">` : ''}</span></div>`).join('')}
+    </div>` : '<p class="empty">No games match those filters.</p>'}
+    <div class="detail-log">
+      <div class="log-head">Final</div>
+      ${rows.map((g, i) => `<div class="log-row ${flags[i] === 1 ? 'is-hit' : flags[i] === null ? '' : 'is-miss'}">
+        <span class="log-date">${g.date ? esc(trendDateFmt.format(new Date(g.date))) : ''}</span>
+        <span class="row-logos"><img src="${esc(trendLogo(playersState.sport, log.player.team))}" alt="" loading="lazy">${g.opponent ? `<img src="${esc(trendLogo(playersState.sport, g.opponent))}" alt="" loading="lazy">` : ''}</span>
+        <span class="log-opp"><small>${esc((g.atVs ?? 'vs').toUpperCase())}</small>${esc(g.opponent ?? '')}</span>
+        <span class="log-score">${g.score ? esc(String(g.score).replace(/^[WLT]\s*/, '')) : ''} <span class="log-val">${esc(String(g.value))}</span></span>
+      </div>`).join('')}
+    </div>`;
+}
+
+async function runPlayerSearch() {
+  const p = playersState.player;
+  if (!p || !playersState.stat || playersState.point === '') return;
+  playersState.loading = true;
+  el.playersStatus.textContent = `Loading ${p.name}'s game log…`;
+  try {
+    const url = new URL('/player', CONFIG.WORKER_URL);
+    url.searchParams.set('sport', playersState.sport); url.searchParams.set('team', p.team); url.searchParams.set('id', p.id); url.searchParams.set('stat', playersState.stat);
+    const res = await fetch(url, { headers: { Accept: 'application/json' } });
+    const body = await res.json();
+    if (!res.ok || !body.rows) { el.playersStatus.textContent = body.error ? `No luck: ${body.error}.` : "Couldn't load that game log."; playersState.log = null; }
+    else { playersState.log = body; el.playersStatus.textContent = `${body.rows.length} games logged across ${new Set(body.rows.map((r) => r.season)).size} season${new Set(body.rows.map((r) => r.season)).size === 1 ? '' : 's'}.`; }
+  } catch {
+    el.playersStatus.textContent = "Couldn't reach the worker.";
+  }
+  playersState.loading = false;
+  renderPlayerResult();
+}
+
+/** From a Trends or Pixel's Picks detail sheet: the same player, stat and number on the Players tab. */
+async function openPlayerSearch({ sportKey, id, name, team, headshot, stat, point, side }) {
+  playersState.sport = PLAYER_LEAGUES.some(([k]) => k === sportKey) ? sportKey : playersState.sport;
+  playersState.stat = stat ?? '';
+  playersState.side = side === 'under' ? 'under' : 'over';
+  playersState.point = Number.isFinite(point) ? String(point) : '';
+  playersState.window = 'all';
+  closeTrendsSheet();
+  setActiveTab('players');
+  await loadPlayers(playersState.sport);
+  const known = (playersState.index[playersState.sport] ?? []).find((x) => String(x.id) === String(id));
+  pickPlayer(known ?? { id, name, team, headshot: headshot ?? null, position: null });
+  if (playersState.player.id && playersState.player.team) await runPlayerSearch();
+  else el.playersStatus.textContent = 'This player is not in the ESPN bundle yet.';
+}
+
+el.playersView?.addEventListener('click', (event) => {
+  const chip = event.target.closest('[data-players-league]');
+  if (chip) { playersState.sport = chip.dataset.playersLeague; playersState.player = null; playersState.log = null; el.playersQuery.value = ''; el.playersList.hidden = true; loadPlayers(playersState.sport); return; }
+  const item = event.target.closest('[data-player-id]');
+  if (item) { const p = (playersState.index[playersState.sport] ?? []).find((x) => String(x.id) === item.dataset.playerId && x.team === item.dataset.playerTeam); if (p) pickPlayer(p); return; }
+  if (event.target.closest('[data-players-clear]')) { playersState.player = null; playersState.log = null; el.playersQuery.value = ''; renderPlayers(); el.playersQuery.focus(); return; }
+  const filter = event.target.closest('[data-players-filter]');
+  if (filter) { playersState.filters[filter.dataset.playersFilter] = filter.dataset.value; renderPlayerResult(); return; }
+  const season = event.target.closest('[data-players-season]');
+  if (season) {
+    const y = Number(season.dataset.playersSeason);
+    const seasons = [...new Set((playersState.log?.rows ?? []).map((r) => r.season))];
+    const set = new Set(playersState.filters.seasons ?? seasons);
+    if (set.has(y)) { if (set.size > 1) set.delete(y); } else set.add(y);
+    playersState.filters.seasons = set.size === seasons.length ? null : set;
+    renderPlayerResult(); return;
+  }
+  const win = event.target.closest('[data-players-window]');
+  if (win) { playersState.window = win.dataset.playersWindow; renderPlayerResult(); }
+});
+el.playersView?.addEventListener('change', (event) => {
+  const sel = event.target.closest('[data-players-opponent]');
+  if (sel) { playersState.filters.opponent = sel.value; renderPlayerResult(); return; }
+  if (event.target === el.playersStat) { playersState.stat = el.playersStat.value; playersState.log = null; renderPlayers(); }
+  if (event.target === el.playersSide) { playersState.side = el.playersSide.value; renderPlayerResult(); renderPlayers(); }
+});
+el.playersPoint?.addEventListener('input', () => { playersState.point = el.playersPoint.value.trim(); el.playersSearchBtn.disabled = !(playersState.player && playersState.stat && playersState.point !== '' && Number.isFinite(Number(playersState.point))); if (playersState.log) renderPlayerResult(); });
+el.playersQuery?.addEventListener('input', () => { playersState.focus = -1; if (playersState.player && el.playersQuery.value !== playersState.player.name) { playersState.player = null; playersState.log = null; renderPlayers(); } renderPlayerList(); });
+el.playersQuery?.addEventListener('focus', renderPlayerList);
+el.playersQuery?.addEventListener('keydown', (event) => {
+  const items = el.playersList.hidden ? [] : [...el.playersList.querySelectorAll('[data-player-id]')];
+  if (!items.length) return;
+  if (event.key === 'ArrowDown') { event.preventDefault(); playersState.focus = Math.min(items.length - 1, playersState.focus + 1); renderPlayerList(); }
+  else if (event.key === 'ArrowUp') { event.preventDefault(); playersState.focus = Math.max(0, playersState.focus - 1); renderPlayerList(); }
+  else if (event.key === 'Enter') { event.preventDefault(); items[Math.max(0, playersState.focus)]?.click(); }
+  else if (event.key === 'Escape') { el.playersList.hidden = true; }
+});
+document.addEventListener('click', (event) => { if (el.playersList && !event.target.closest('.players-search')) el.playersList.hidden = true; });
+el.playersForm?.addEventListener('submit', (event) => { event.preventDefault(); playersState.point = el.playersPoint.value.trim(); runPlayerSearch(); });

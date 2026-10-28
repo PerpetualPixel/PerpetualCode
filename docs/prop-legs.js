@@ -304,6 +304,7 @@ export function seasonColumnRows(gamelog, idx, { parse = (v) => Number(String(v 
           atVs: meta.atVs ?? null,
           result: meta.gameResult ?? null,
           score: meta.score ?? null,
+          seasonType: seasonType?.displayName ?? null,
         });
       }
     }
