@@ -9271,7 +9271,7 @@ function renderTrendDetail(row) {
       <span class="big">${stats.rate === null ? '—' : pct(stats.rate)}<small>${stats.hits}/${stats.games} events</small></span>
       <span class="stats">Avg <b>${stats.avg ?? '—'}</b> ▪ Median <b>${stats.median ?? '—'}</b></span>
     </div>
-    ${series.length ? `<div class="detail-chart">
+    ${series.length ? `<div class="detail-chart ${series.length > 12 ? 'is-dense' : ''}">
       <span class="chart-line" style="top:${lineTop.toFixed(1)}%"></span><span class="chart-line-label" style="top:${lineTop.toFixed(1)}%">${esc(String(row.point))}</span>
       ${series.map((s) => `<div class="chart-col"><div class="chart-bar ${s.hit === 1 ? 'is-hit' : s.hit === null ? 'is-push' : 'is-miss'}" style="height:${Math.max(2, (s.value / max) * 100).toFixed(1)}%"></div><span class="chart-val ${s.hit === 1 ? 'is-hit' : s.hit === null ? '' : 'is-miss'}">${esc(String(s.value))}</span><span class="chart-opp">${esc(s.atVs ?? '')}${s.opponent ? `<img src="${esc(trendLogo(row.sportKey, s.opponent))}" alt="${esc(s.opponent)}" loading="lazy">` : ''}</span></div>`).join('')}
     </div>` : '<p class="empty">No games in this period.</p>'}
