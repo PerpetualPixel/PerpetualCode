@@ -267,3 +267,35 @@ export function sortTrends(rows, { window = 'l10', by = 'hitRate', dir = 'desc' 
 
 /** A row's price as the card prints it. */
 export const trendPrice = (row) => (Number.isFinite(row.american) ? row.american : decimalToAmerican(row.decimal));
+
+/**
+ * The Parlay Builder's score for a line, 0 to 5 stars: the hit rate over
+ * the last 5, 10 and 20 games and the season, head to head when there is
+ * any, the current streak, and the injury report. Thin samples count
+ * less. The same number on the worker and in the app.
+ */
+export function legScore(row, injury = row?.injury ?? null) {
+  const p = row?.periods ?? {};
+  const rate = (k) => (Number.isFinite(p[k]?.rate) ? p[k].rate : null);
+  const seasonKey = row?.seasons?.[0] ? `s${row.seasons[0]}` : null;
+  const parts = [[rate('l5'), 0.25], [rate('l10'), 0.3], [rate('l20'), 0.25], [seasonKey ? rate(seasonKey) : null, 0.2]].filter(([r]) => r !== null);
+  if (!parts.length) return 0;
+  const weight = parts.reduce((s, [, w]) => s + w, 0);
+  let score = (parts.reduce((s, [r, w]) => s + r * w, 0) / weight) * 5;
+  const h2h = p.h2h;
+  if (h2h?.games >= 2) score += h2h.rate === 1 ? 0.3 : h2h.rate < 0.5 ? -0.6 : 0;
+  if (Number.isFinite(row?.streak)) score += Math.min(0.3, row.streak * 0.03);
+  if ((p.l20?.games ?? 0) < 5) score *= 0.6;
+  else if ((p.l20?.games ?? 0) < 10) score *= 0.85;
+  if (injury?.level === 'out') score = 0;
+  else if (injury?.level === 'questionable') score -= 0.5;
+  return Math.max(0, Math.min(5, Math.round(score * 10) / 10));
+}
+
+/** PrizePicks Power Play multipliers by lineup size; a sportsbook parlay multiplies its legs. */
+export const PICKEM_POWER = { 2: 3, 3: 5, 4: 10, 5: 20, 6: 25 };
+export function parlayDecimal(decimals, { pickem = false } = {}) {
+  if (!decimals.length) return null;
+  if (pickem) return PICKEM_POWER[decimals.length] ?? null;
+  return decimals.reduce((d, x) => d * x, 1);
+}

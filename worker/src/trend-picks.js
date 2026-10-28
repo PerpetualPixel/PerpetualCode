@@ -375,7 +375,7 @@ Reply with JSON only: {"verdict":"post"|"pass","reason":"<one sentence>","note":
   return { verdict, flags, note: notes.length ? notes.join(' ') : null };
 }
 
-async function callModel(prompt, env) {
+export async function callModel(prompt, env) {
   if (!env?.ANTHROPIC_API_KEY) return null;
   try {
     const response = await fetch('https://api.anthropic.com/v1/messages', {

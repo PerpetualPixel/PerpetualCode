@@ -6786,3 +6786,75 @@ a.trend-price:hover { background: rgba(255, 255, 255, 0.06); }
 .injury-banner.is-out .injury-status { background: rgba(239, 68, 68, 0.25); color: #ff7b7b; }
 .injury-detail { color: var(--muted); font-size: 0.84rem; margin-top: 2px; }
 .pick-move.is-out { color: #ff7b7b; }
+
+/* ---------------------------------------------------------------- */
+/* Parlay Builder                                                    */
+/* ---------------------------------------------------------------- */
+.parlay-layout { display: grid; grid-template-columns: 320px 1fr; gap: 20px; align-items: start; margin-top: 10px; }
+.parlay-config-col { display: grid; gap: 14px; padding: 16px; border: 1px solid var(--line); border-radius: 16px; background: var(--surface); position: sticky; top: 12px; }
+.parlay-h { margin: 0 0 4px; font-size: 1.1rem; }
+.parlay-field { display: grid; gap: 6px; }
+.parlay-field > span { font-size: 0.74rem; font-weight: 700; letter-spacing: 0.06em; text-transform: uppercase; color: var(--muted); display: flex; justify-content: space-between; align-items: center; }
+.parlay-field > span strong { font-family: var(--mono); color: var(--success); font-size: 0.85rem; letter-spacing: 0; }
+.parlay-field select, .parlay-odds input { width: 100%; min-height: 42px; padding: 0 12px; border-radius: 12px; border: 1px solid var(--line); background: var(--surface-2); color: var(--text); font: inherit; }
+.parlay-field input[type="range"] { width: 100%; margin: 4px 0; accent-color: var(--success); cursor: pointer; }
+.parlay-odds { display: grid; grid-template-columns: 1fr auto 1fr; gap: 8px; align-items: center; color: var(--muted); font-size: 0.85rem; }
+.parlay-score { display: flex; align-items: center; gap: 2px; }
+.parlay-star { border: 0; background: transparent; color: rgba(255, 255, 255, 0.25); font-size: 1.6rem; line-height: 1; cursor: pointer; padding: 0 2px; }
+.parlay-star.is-on { color: #fbbf24; }
+.parlay-score small { margin-left: 8px; color: var(--muted); }
+.parlay-chips-wrap { justify-content: flex-start; }
+.parlay-chips-wrap .rate-chip { padding: 7px 11px; font-size: 0.8rem; }
+.parlay-chips-wrap .rate-chip small { color: inherit; opacity: 0.7; margin-left: 4px; font-weight: 600; }
+.parlay-actions { display: grid; gap: 8px; }
+.parlay-build { min-height: 46px; border-radius: 12px; border: 0; background: var(--success); color: #06120a; font: inherit; font-weight: 800; cursor: pointer; }
+.parlay-build:disabled { opacity: 0.4; cursor: default; }
+.parlay-reset { min-height: 40px; border-radius: 12px; border: 1px solid var(--line); background: transparent; color: var(--text); font: inherit; font-weight: 700; cursor: pointer; }
+.parlay-config { display: flex; flex-wrap: wrap; gap: 8px; margin-bottom: 12px; }
+.parlay-tag { padding: 5px 10px; border-radius: 999px; background: var(--surface-2); border: 1px solid var(--line); font-size: 0.78rem; font-weight: 700; }
+.parlay-card { border: 1px solid var(--line); border-radius: 16px; background: var(--surface); overflow: hidden; }
+.parlay-card-head { display: flex; align-items: center; gap: 12px; padding: 14px 16px; border-bottom: 1px solid var(--line); background: var(--surface-2); }
+.parlay-card-head strong { text-transform: uppercase; letter-spacing: 0.06em; font-size: 0.82rem; }
+.parlay-price { font-family: var(--mono); font-weight: 800; font-size: 1.1rem; color: var(--success); }
+.parlay-card-book { margin-left: auto; display: inline-flex; align-items: center; gap: 6px; font-weight: 700; font-size: 0.86rem; }
+.parlay-note { margin: 0; padding: 10px 16px; color: #fbbf24; font-size: 0.84rem; border-bottom: 1px solid var(--line); }
+.parlay-leg { display: grid; grid-template-columns: 6px 1fr; border-bottom: 1px solid var(--line); }
+.parlay-leg:last-child { border-bottom: 0; }
+.parlay-leg-bar { background: var(--tone, var(--success)); margin: 12px 0 12px 10px; border-radius: 4px; }
+.parlay-leg-body { padding: 12px 14px 12px 12px; }
+.parlay-leg.is-locked { background: rgba(94, 224, 122, 0.05); }
+.parlay-leg-head { display: flex; align-items: center; gap: 10px; }
+.parlay-leg-who { display: flex; align-items: center; flex-wrap: wrap; gap: 6px; min-width: 0; }
+.parlay-leg-who strong { text-transform: uppercase; letter-spacing: 0.02em; font-size: 0.92rem; }
+.parlay-leg-who small { color: var(--muted); font-weight: 700; }
+.parlay-leg-who .injury-tag { margin-top: 0; }
+.parlay-stars { color: #fbbf24; font-size: 0.8rem; letter-spacing: 1px; white-space: nowrap; }
+.parlay-stars small { color: var(--muted); margin-left: 4px; letter-spacing: 0; }
+.parlay-leg-price { margin-left: auto; font-family: var(--mono); font-weight: 800; }
+.parlay-lock { width: 36px; height: 36px; border-radius: 10px; border: 1px solid var(--line); background: var(--surface-2); cursor: pointer; font-size: 1rem; }
+.parlay-lock.is-on { border-color: var(--success); background: rgba(94, 224, 122, 0.16); }
+.parlay-leg-line { margin: 8px 0 8px; font-weight: 600; text-transform: uppercase; font-size: 0.84rem; letter-spacing: 0.02em; }
+.parlay-leg-line small { display: block; text-transform: none; letter-spacing: 0; color: var(--muted); font-weight: 600; margin-top: 2px; }
+.parlay-chips { display: flex; flex-wrap: wrap; gap: 6px; }
+.parlay-chip { padding: 4px 8px; border-radius: 8px; background: var(--surface-2); border: 1px solid var(--line); font-size: 0.74rem; font-weight: 700; font-family: var(--mono); }
+.parlay-leg-actions { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 10px; }
+.parlay-btn { border-radius: 999px; border: 1px solid var(--line); background: var(--surface-2); color: var(--text); font: inherit; font-size: 0.8rem; font-weight: 700; padding: 7px 12px; cursor: pointer; text-decoration: none; }
+.parlay-btn.is-slip { background: var(--success); color: #06120a; border-color: var(--success); }
+.parlay-breakdown { margin-top: 10px; padding: 12px; border-radius: 12px; border: 1px solid rgba(94, 224, 122, 0.4); background: rgba(94, 224, 122, 0.08); font-size: 0.88rem; line-height: 1.5; }
+.parlay-breakdown.is-risky { border-color: rgba(245, 158, 11, 0.5); background: rgba(245, 158, 11, 0.1); }
+.parlay-breakdown p { margin: 0; }
+.parlay-breakdown ul { margin: 8px 0 0; padding-left: 18px; }
+.parlay-card-foot { padding: 12px 16px; border-top: 1px solid var(--line); }
+.parlay-all { display: flex; justify-content: center; padding: 12px; border-radius: 12px; background: var(--success); color: #06120a; font-weight: 800; text-decoration: none; }
+.parlay-payout { margin-top: 16px; padding: 16px; border: 1px solid var(--line); border-radius: 16px; background: var(--surface); display: grid; grid-template-columns: 1fr auto; gap: 14px; align-items: end; }
+.parlay-payout h3 { grid-column: 1 / -1; margin: 0; font-size: 1.05rem; }
+.parlay-payout label { display: grid; gap: 6px; font-size: 0.78rem; font-weight: 700; color: var(--muted); text-transform: uppercase; letter-spacing: 0.04em; }
+.parlay-amount { display: flex; align-items: center; gap: 6px; min-height: 42px; padding: 0 12px; border-radius: 12px; border: 1px solid var(--line); background: var(--surface-2); }
+.parlay-amount input { width: 100%; border: 0; background: transparent; color: var(--text); font: inherit; font-family: var(--mono); font-weight: 700; outline: none; }
+.parlay-payout-value { text-align: right; }
+.parlay-payout-value span { display: block; color: var(--muted); font-size: 0.78rem; font-weight: 700; text-transform: uppercase; letter-spacing: 0.04em; }
+.parlay-payout-value strong { font-family: var(--mono); font-size: 1.5rem; }
+@media (max-width: 820px) {
+  .parlay-layout { grid-template-columns: 1fr; }
+  .parlay-config-col { position: static; }
+}

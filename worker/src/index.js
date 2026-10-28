@@ -59,6 +59,7 @@ import { BUILD_INFO } from '../../docs/version.js';
 import { runTrendsBuild, getTrends, buildLeagueChunk, TREND_ENABLED_SPORTS } from './trends.js';
 import { loadBundleIndex, loadInjuries, injuryFor, withInjuries } from './espn-bundle.js';
 import { getPlayerIndex, getPlayerLog, playerStats } from './player-search.js';
+import { legBreakdown } from './parlay-builder.js';
 import { runTrendPicksDaily, runTrendPicksGrading, getTrendPicks } from './trend-picks.js';
 
 /** The Trends build's own cron (must match wrangler.toml's second trigger exactly — Cloudflare hands the string back as written). */
@@ -1523,6 +1524,22 @@ export default {
       if (!log) return json({ error: 'no game log for that player' }, { status: 404, headers: cors });
       log.player.injury = injuryFor(await loadInjuries(env, sportKey), log.player.id);
       return json(log, { headers: { ...cors, 'Cache-Control': 'public, max-age=600' } });
+    }
+
+    // The Parlay Builder's breakdown of one leg (worker/src/parlay-builder.js):
+    // the model's read of a stored Trends row, cached for the day.
+    if (pathname === '/parlay/leg' && request.method === 'GET') {
+      const q = new URL(request.url).searchParams;
+      const sportKey = q.get('sport') ?? 'basketball_nba';
+      const rowId = q.get('id') ?? '';
+      if (!TREND_ENABLED_SPORTS.includes(sportKey) || !rowId) return json({ error: 'unknown sport or line' }, { status: 400, headers: cors });
+      try {
+        const out = await legBreakdown(env, sportKey, rowId, ctx);
+        if (!out) return json({ error: 'that line is no longer on the board' }, { status: 404, headers: cors });
+        return json(out, { headers: { ...cors, 'Cache-Control': 'public, max-age=600' } });
+      } catch (error) {
+        return json({ error: String(error).slice(0, 120) }, { status: 500, headers: cors });
+      }
     }
 
     // Today's Pixel's Picks and the last 30 days, with the running record
