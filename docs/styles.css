@@ -6496,8 +6496,9 @@ input[type="range"]:focus-visible {
 .trend-rate.is-hot { color: var(--success); }
 .trend-rate.is-warm { color: #eab308; }
 .trend-rate.is-cold { color: var(--danger); }
-.trend-bars { position: relative; display: flex; align-items: flex-end; justify-content: flex-end; gap: 4px; height: 44px; min-width: 0; }
-.trend-bar { flex: 0 1 34px; min-width: 6px; max-width: 34px; border-radius: 5px; background: rgba(148, 163, 184, 0.3); }
+.trend-bars { position: relative; display: flex; align-items: flex-end; justify-content: flex-end; gap: 4px; height: 44px; min-width: 0; overflow: hidden; }
+/* Bars shrink to the column: twenty of them on a phone must never run under the rate. */
+.trend-bar { flex: 1 1 34px; min-width: 0; max-width: 34px; border-radius: 5px; background: rgba(148, 163, 184, 0.3); }
 .trend-bar.is-hit { background: linear-gradient(180deg, #5ee07a, #2fb55a); }
 .trend-bar.is-miss { background: linear-gradient(180deg, #ef5a5a, #c43a3a); }
 .trend-bar.is-push { background: #eab308; }
@@ -6646,7 +6647,7 @@ input[type="range"]:focus-visible {
 .detail-summary .stats b { color: var(--text); font-family: var(--mono); }
 .detail-chart { position: relative; display: flex; align-items: flex-end; gap: 6px; height: 220px; margin: 22px 0 0; padding-bottom: 54px; }
 .detail-chart .chart-line { position: absolute; left: 0; right: 0; border-top: 1.5px solid rgba(255, 255, 255, 0.6); }
-.detail-chart .chart-line-label { position: absolute; right: 0; transform: translateY(-50%); background: rgba(255, 255, 255, 0.92); color: #141222; font-family: var(--mono); font-weight: 800; font-size: 0.85rem; border-radius: 8px 0 0 8px; padding: 3px 8px; }
+.detail-chart .chart-line-label { position: absolute; right: 0; z-index: 2; transform: translateY(-50%); background: rgba(255, 255, 255, 0.92); color: #141222; font-family: var(--mono); font-weight: 800; font-size: 0.85rem; border-radius: 8px 0 0 8px; padding: 3px 8px; box-shadow: 0 1px 6px rgba(0, 0, 0, 0.45); }
 .chart-col { flex: 1; min-width: 0; display: flex; flex-direction: column; align-items: center; justify-content: flex-end; height: 100%; position: relative; }
 .chart-col .chart-bar { width: 100%; border-radius: 8px 8px 2px 2px; min-height: 3px; }
 .chart-col .chart-bar.is-hit { background: linear-gradient(180deg, #6fe08a, #3fbf63); }
@@ -6657,6 +6658,20 @@ input[type="range"]:focus-visible {
 .chart-col .chart-val.is-miss { color: #ef6464; }
 .chart-col .chart-opp { position: absolute; bottom: -50px; display: flex; align-items: center; gap: 2px; color: var(--muted); font-size: 0.68rem; font-weight: 700; white-space: nowrap; }
 .chart-col .chart-opp img { width: 20px; height: 20px; border-radius: 50%; background: #c9ccd6; object-fit: contain; padding: 2px; }
+/* A phone: tighter columns, smaller values, and with more than twelve games every other value and crest stays off so none overlap. */
+@media (max-width: 520px) {
+  .trend-rate-row { gap: 8px; }
+  .trend-rate { font-size: 1.1rem; }
+  .trend-rate small { margin-left: 3px; font-size: 0.7rem; }
+  .trend-bars { gap: 2px; }
+  .detail-chart { gap: 3px; height: 200px; }
+  .chart-col .chart-bar { border-radius: 5px 5px 2px 2px; }
+  .chart-col .chart-val { font-size: 0.7rem; padding: 0 4px; bottom: -20px; }
+  .chart-col .chart-opp { bottom: -44px; font-size: 0.6rem; gap: 1px; }
+  .chart-col .chart-opp img { width: 16px; height: 16px; }
+  .detail-chart.is-dense .chart-col:nth-child(even) .chart-val, .detail-chart.is-dense .chart-col:nth-child(even) .chart-opp { display: none; }
+  .detail-chart .chart-line-label { font-size: 0.75rem; padding: 2px 6px; }
+}
 .detail-log { margin-top: 20px; background: var(--surface-2); border-radius: 16px; padding: 6px 14px; }
 .detail-log .log-head { display: flex; justify-content: flex-end; color: var(--muted); font-size: 0.85rem; padding: 6px 0; }
 .log-row { display: grid; grid-template-columns: 70px auto 1fr auto; gap: 10px; align-items: center; padding: 8px 0; border-top: 1px solid rgba(255, 255, 255, 0.07); font-size: 0.98rem; }
