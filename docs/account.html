@@ -352,34 +352,13 @@
       <!-- Notifications -->
       <div class="card">
         <h2>Notifications</h2>
-        <p class="card-desc">Get notified the moment Play of the Day, Pixel's Picks, and the Ladder Challenge lock in for the day.</p>
+        <p class="card-desc">An email when the day's Pixel's Picks tickets post, and a report every Monday on how the week's tickets did.</p>
         <div id="notif-message"></div>
 
         <div class="toggle-row">
-          <span class="toggle-label">Play of the Day &mdash; Email</span>
-          <label class="switch">
-            <input type="checkbox" id="notif-potd-email" data-field="potdEmail">
-            <span class="switch-track"></span>
-          </label>
-        </div>
-        <div class="toggle-row">
-          <span class="toggle-label">Pixel's Picks &mdash; Email</span>
+          <span class="toggle-label">Pixel's Picks &mdash; Email<small>The day's tickets, with every leg, the book and the price, as soon as they post</small></span>
           <label class="switch">
             <input type="checkbox" id="notif-picks-email" data-field="picksEmail">
-            <span class="switch-track"></span>
-          </label>
-        </div>
-        <div class="toggle-row">
-          <span class="toggle-label">Ladder Challenge &mdash; Email<small>The day's rung, the stake riding on it, and what it returns</small></span>
-          <label class="switch">
-            <input type="checkbox" id="notif-ladder-email" data-field="ladderEmail">
-            <span class="switch-track"></span>
-          </label>
-        </div>
-        <div class="toggle-row">
-          <span class="toggle-label">Play of the Day &mdash; SMS<span class="coming-soon-tag">Coming soon</span></span>
-          <label class="switch">
-            <input type="checkbox" id="notif-potd-sms" disabled>
             <span class="switch-track"></span>
           </label>
         </div>
@@ -391,7 +370,7 @@
           </label>
         </div>
         <div class="toggle-row">
-          <span class="toggle-label">Weekly Tracking Report &mdash; Email<small>A summary of the week's picks and performance, every Monday</small></span>
+          <span class="toggle-label">Weekly Tracking Report &mdash; Email<small>The week's tickets, the record and the net in units and dollars, every Monday</small></span>
           <label class="switch">
             <input type="checkbox" id="notif-tracking-report" data-field="trackingReportEmail">
             <span class="switch-track"></span>
@@ -411,7 +390,7 @@
       <!-- Danger zone: permanent account deletion -->
       <div class="card" style="border-color: rgba(239, 68, 68, 0.35);">
         <h2 style="color: #ff6b6b;">Delete Account</h2>
-        <p class="card-desc">Permanently deletes your account, notification preferences, saved bankroll, and any bug reports you've submitted. This cannot be undone.</p>
+        <p class="card-desc">Permanently deletes your account, notification preferences, saved sportsbooks, and any bug reports you've submitted. This cannot be undone.</p>
         <div id="delete-message"></div>
         <form id="delete-form">
           <div class="form-group">
@@ -430,6 +409,6 @@
     </div>
   </div>
 
-  <script src="account.js?v=1.228" defer></script>
+  <script src="account.js?v=1.229" defer></script>
 </body>
 </html>

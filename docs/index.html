@@ -19,7 +19,7 @@
        page first. Only checks token presence, not validity: app.html's own
        checkAuth() is the real gate and will bounce back to login.html if the
        token turns out to be stale, exactly as it does today. -->
-  <script src="signed-in-redirect.js?v=1.228"></script>
+  <script src="signed-in-redirect.js?v=1.229"></script>
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>Perpetual Picks - Your Edge, Perpetually</title>
   <meta name="description" content="Data-driven picks across every major sport, tracked in the open. See what Perpetual Picks does before you sign up.">
@@ -41,34 +41,6 @@
   <meta name="twitter:description" content="Continuous edge across every slate.">
   <meta name="twitter:image" content="https://perpetualpicks.com/assets/og-image.png">
   <style>
-/* ---------------------------------------------------------------- */
-/* Maintenance strip                                                 */
-/* ---------------------------------------------------------------- */
-/* A slim notice across the very top of the page while the site is
-   rebuilt around Trends: a thin band of hazard stripes along its top
-   edge and one quiet line of text. Removed by deleting the element. */
-.construction-tape-wrap { position: relative; z-index: 70; }
-.construction-tape {
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  gap: 8px;
-  padding: 6px 16px;
-  background: rgba(245, 196, 0, 0.08);
-  border-top: 4px solid transparent;
-  border-image: repeating-linear-gradient(-45deg, #f5c400 0 10px, #0b0b0b 10px 20px) 4;
-  border-bottom: 1px solid rgba(245, 196, 0, 0.25);
-}
-.construction-tape-text {
-  color: #f5c400;
-  font-family: 'Syne', var(--sans, system-ui, sans-serif);
-  font-weight: 700;
-  font-size: 0.78rem;
-  letter-spacing: 0.14em;
-  text-transform: uppercase;
-  line-height: 1.2;
-  white-space: nowrap;
-}
 
     * { margin: 0; padding: 0; box-sizing: border-box; }
 
@@ -251,11 +223,6 @@
   </style>
 </head>
 <body>
-<div class="construction-tape-wrap" role="status" aria-label="Site under maintenance">
-  <div class="construction-tape">
-    <span class="construction-tape-text">🚧 Site under maintenance</span>
-  </div>
-</div>
   <div class="bg-grid"></div>
   <div class="glow-orbs"><div class="orb orb-1"></div><div class="orb orb-2"></div><div class="orb orb-3"></div></div>
 
@@ -269,13 +236,14 @@
     </nav>
 
     <section class="hero">
-      <span class="hero-eyebrow">Data-driven sports picks</span>
+      <span class="hero-eyebrow">Player prop research, every line, every day</span>
       <h1 class="hero-title">Your Edge, <span class="grad">Perpetually</span></h1>
       <p class="hero-sub">
-        Perpetual Picks scans every slate across MLB, NFL, NBA, NHL, MMA,
-        tennis and more — then surfaces the plays the numbers actually
-        favor, with a transparent, publicly tracked record so you can judge
-        the results for yourself.
+        Trends shows every player prop line the books are offering on
+        today's and tomorrow's NBA and NFL games, with the player's real
+        hit rate at that number over his last 5 to 20 games, this season,
+        last season and against tonight's opponent. The lines that always
+        land come first.
       </p>
       <div class="hero-ctas">
         <a href="/login.html?form=register" class="btn btn-primary">Join Now — It's Free</a>
@@ -284,96 +252,75 @@
       <p class="hero-note">No credit card required. 21+ — for entertainment and informational purposes only.</p>
 
       <div class="demo-frame">
-        <p class="demo-label">Sample pick card — illustrative only</p>
+        <p class="demo-label">Sample Trends line, illustrative only</p>
         <div class="pick-card">
           <div class="pick-card-inner">
             <div class="pick-card-top">
-              <span class="pick-league">⚾ MLB &middot; Play of the Day</span>
-              <span class="pick-confidence">High Confidence</span>
+              <span class="pick-league">🏀 NBA &middot; POR @ LAL &middot; 10:10 PM ET</span>
+              <span class="pick-confidence">100% last 20</span>
             </div>
-            <div class="pick-matchup">Dodgers @ Braves &middot; 7:10 PM ET</div>
-            <div class="pick-selection">Dodgers <span>-1.5</span></div>
+            <div class="pick-matchup">Jrue Holiday &middot; Trail Blazers</div>
+            <div class="pick-selection">Points Over <span>7.5</span></div>
             <div class="pick-stats">
               <div>
-                <div class="pick-stat-label">Odds</div>
-                <div class="pick-stat-value">-118</div>
+                <div class="pick-stat-label">Best price</div>
+                <div class="pick-stat-value">-261 DraftKings</div>
               </div>
               <div>
-                <div class="pick-stat-label">Model Edge</div>
-                <div class="pick-stat-value up">+7.2%</div>
+                <div class="pick-stat-label">Last 20</div>
+                <div class="pick-stat-value up">20 of 20</div>
               </div>
               <div>
-                <div class="pick-stat-label">Win Rate (30d)</div>
-                <div class="pick-stat-value">63%</div>
+                <div class="pick-stat-label">vs Lakers</div>
+                <div class="pick-stat-value">3 of 3</div>
               </div>
             </div>
-            <p class="pick-why"><strong>Why:</strong> Bullpen fatigue on the road side plus a
-            starting-pitcher matchup the model has favored all season line up
-            with the market's number, creating separation from the closing line.</p>
+            <p class="pick-why"><strong>Read:</strong> Twenty straight games over the number, every
+            meeting with tonight's opponent too, and the best price on it at the books
+            you play. Tap the line for the game by game log.</p>
           </div>
         </div>
       </div>
     </section>
 
     <section class="features">
-      <h2 class="section-title">Built for people who track their own results</h2>
-      <p class="section-sub">Every pick, every sport, every outcome — logged in the open, not cherry-picked after the fact.</p>
+      <h2 class="section-title">Built for people who check the numbers before they bet</h2>
+      <p class="section-sub">Every line, every player, every game log, in the open. The record stays up, wins and losses alike.</p>
       <div class="feature-grid">
         <div class="feature-card">
-          <div class="feature-icon">🎯</div>
-          <div class="feature-title">Play of the Day</div>
-          <div class="feature-desc">One standout pick surfaced daily from the model's highest-conviction reads across the entire slate.</div>
+          <div class="feature-icon">📊</div>
+          <div class="feature-title">Trends</div>
+          <div class="feature-desc">Every player prop line on today's and tomorrow's NBA and NFL games with the player's real hit rate at that number, sorted so the lines that always land come first.</div>
         </div>
         <div class="feature-card">
-          <div class="feature-icon">📋</div>
-          <div class="feature-title">Full Slate Coverage</div>
-          <div class="feature-desc">Every game, not just the marquee matchups — see the model's read on the full board, league by league.</div>
+          <div class="feature-icon">🎚️</div>
+          <div class="feature-title">Your periods, your books</div>
+          <div class="feature-desc">Slide from the last 5 to the last 20 games, set a head to head floor, pick a season, and filter the lines to the sportsbooks you play at, with a tap straight to your slip.</div>
+        </div>
+        <div class="feature-card">
+          <div class="feature-icon">🎯</div>
+          <div class="feature-title">Pixel's Picks</div>
+          <div class="feature-desc">The lines that landed every one of the last twenty games and pass a research check become at most two tickets a day: a parlay near +100 or a straight, one unit each.</div>
         </div>
         <div class="feature-card">
           <div class="feature-icon">📈</div>
           <div class="feature-title">Transparent Tracking</div>
-          <div class="feature-desc">A public, view-only history of every pick and how it actually graded — wins and losses both, no editing after the fact.</div>
-        </div>
-        <div class="feature-card">
-          <div class="feature-icon">🌐</div>
-          <div class="feature-title">Multi-Sport Coverage</div>
-          <div class="feature-desc">MLB, NFL, NBA, WNBA, NHL, MMA, MLS, and ATP/WTA tennis, all in one place.</div>
+          <div class="feature-desc">Every ticket graded the morning after, a running total you can follow day by day, and the full history, never edited after the fact.</div>
         </div>
       </div>
 
       <div class="sport-strip">
-        <span class="sport-chip">⚾ MLB</span>
+        <span class="sport-chip">🏀 NBA</span>
         <span class="sport-chip">🏈 NFL</span>
-        <span class="sport-chip">🏀 NBA / WNBA</span>
-        <span class="sport-chip">🏒 NHL</span>
-        <span class="sport-chip">🥊 MMA</span>
-        <span class="sport-chip">⚽ MLS</span>
-        <span class="sport-chip">🎾 ATP / WTA</span>
-        <span class="sport-chip">🎓 NCAA</span>
       </div>
     </section>
 
     <section class="closing">
-      <h2>Ready to see today's board?</h2>
-      <p>Create a free account and get today's full slate in under a minute.</p>
+      <h2>Ready to see today's lines?</h2>
+      <p>Create a free account and the full board of player props is a minute away.</p>
       <a href="/login.html?form=register" class="btn btn-primary">Join Now — It's Free</a>
     </section>
 
-    <style>
-      .mma-engine-ad {
-        display: flex; align-items: center; gap: 10px; max-width: 620px;
-        margin: 26px auto 6px; padding: 10px 16px; border-radius: 10px;
-        border: 1px solid rgba(240, 136, 62, 0.35); background: rgba(240, 136, 62, 0.07);
-        color: inherit; text-decoration: none; font-size: 0.85rem; line-height: 1.45;
-      }
-      .mma-engine-ad:hover { border-color: rgba(240, 136, 62, 0.7); }
-      .mma-engine-ad-icon { font-size: 1.3rem; }
-    </style>
-<a class="mma-engine-ad" href="https://perpetualpixel.github.io/MMA_Engine/" target="_blank" rel="noopener">
-  <span class="mma-engine-ad-icon">🥊</span>
-  <span class="mma-engine-ad-text"><strong>MMA picks powered by the MMA Consensus Engine</strong> —
-  the trust-weighted consensus of the sport's most accurate cappers. See every fight's full breakdown &rarr;</span>
-</a>
 
     <footer>
       <p class="footer-links">

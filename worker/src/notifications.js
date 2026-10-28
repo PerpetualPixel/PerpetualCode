@@ -1,5 +1,6 @@
 import { formatAmerican } from '../../docs/engine.js';
 import { EMAIL_LOGO_HTML } from './auth-handlers.js';
+import { getTrendPicks } from './trend-picks.js';
 
 /**
  * Email notifications for users opted into Play of the Day / Pixel's Picks /
@@ -216,4 +217,56 @@ export async function sendPicksNotifications(env, picks, { isFinal = true } = {}
     `),
     text: `Hi ${user.username}, Pixel's Picks (${picks.length}${isFinal ? '' : ', locked early — more may follow today'}):\n${picks.map((p) => `${describeText(p)} (${formatAmerican(p.american)})`).join('\n')}\n\nOpen: https://perpetualpicks.com/app.html`,
   }));
+}
+
+/**
+ * The day's Pixel's Picks tickets (worker/src/trend-picks.js), to the
+ * users who asked for them, once: each ticket is emailed the tick it
+ * posts and never again, by its id in KV. Called from the Trends cron
+ * after the day's draw. Returns how many tickets went out.
+ */
+export async function sendTicketNotifications(env, now = Date.now(), { deps = {} } = {}) {
+  if (!env.EMAIL && !deps.send) return 0;
+  const today = (await (deps.today ? deps.today() : getTrendPicks(env, now, { days: 1 }).then((d) => d.today)));
+  const bets = (today?.bets ?? []).filter((b) => b.status === 'pending');
+  if (!bets.length) return 0;
+  const flagKey = `trendpicks:${today.date}:notified`;
+  const notified = new Set(JSON.parse((await env.POTD_KV.get(flagKey)) ?? '[]'));
+  const fresh = bets.filter((b) => !notified.has(b.id));
+  if (!fresh.length) return 0;
+  const users = await (deps.users ? deps.users() : fetchOptedInUsers(env, 'notify_picks_email'));
+  if (users.length) {
+    const day = new Intl.DateTimeFormat('en-US', { weekday: 'short', month: 'short', day: 'numeric', timeZone: 'America/New_York' }).format(Date.parse(`${today.date}T12:00:00Z`));
+    const time = (ms) => new Intl.DateTimeFormat('en-US', { hour: 'numeric', minute: '2-digit', timeZone: 'America/New_York' }).format(ms);
+    const play = (b) => (b.play ? b.play : b.type === 'parlay' ? `${b.legs.length}-leg parlay` : 'Straight');
+    const legHtml = (l) => `<li style="margin: 0 0 6px;">${l.selection} <span style="color:#00d9ff;">${formatAmerican(l.american)}</span><br><span style="color:#a0a0cc; font-size:12px;">${l.away} @ ${l.home} &middot; ${time(l.commenceMs)} ET &middot; landed ${l.periods?.l20?.hits ?? 20} of the last ${l.periods?.l20?.games ?? 20}${l.note ? `<br>${l.note}` : ''}</span></li>`;
+    const ticketHtml = (b) => `<div style="margin: 0 0 18px; padding: 14px; border: 1px solid rgba(217,70,239,0.3); border-radius: 10px;">
+      <div style="font-weight: bold; color: #e0e0ff; margin-bottom: 8px;">${play(b)} at ${b.book} <span style="color:#00d9ff;">${formatAmerican(b.american)}</span> <span style="color:#7070aa; font-weight: normal;">&middot; ${b.units} unit ($${b.stake})</span></div>
+      <ul style="margin: 0; padding-left: 18px; color: #e0e0ff; line-height: 1.5;">${b.legs.map(legHtml).join('')}</ul>
+      ${b.link || b.bookUrl ? `<p style="margin: 10px 0 0;"><a href="${b.link ?? b.bookUrl}" style="color:#d946ef;">Open ${b.book}</a></p>` : ''}
+    </div>`;
+    const ticketText = (b) => `${play(b)} at ${b.book} ${formatAmerican(b.american)} (${b.units} unit, $${b.stake})\n${b.legs.map((l) => `  ${l.selection} ${formatAmerican(l.american)}, ${l.away} @ ${l.home}${l.note ? ` (${l.note})` : ''}`).join('\n')}`;
+    const subject = `Pixel's Picks for ${day}: ${fresh.length} ticket${fresh.length === 1 ? '' : 's'}`;
+    const sendOne = deps.send ?? ((msg) => env.EMAIL.send(msg));
+    const queue = [...users];
+    const worker = async () => {
+      while (queue.length) {
+        const user = queue.shift();
+        try {
+          await sendOne({
+            to: user.email,
+            from: FROM,
+            subject,
+            html: emailShell(user.username, `Pixel's Picks for ${day}`, `<p style="color:#a0a0cc; font-size:13px; margin: 0 0 16px;">${fresh.length === 1 ? 'One ticket today' : `${fresh.length} tickets today`}, one unit each. Lines can move before tip-off; the card in the app follows the book's number.</p>${fresh.map(ticketHtml).join('')}`),
+            text: `Hi ${user.username}, Pixel's Picks for ${day}:\n\n${fresh.map(ticketText).join('\n\n')}\n\nOpen: https://perpetualpicks.com/app.html`,
+          });
+        } catch (e) {
+          console.error(`Ticket notification failed for ${user.email}:`, e);
+        }
+      }
+    };
+    await Promise.all(Array.from({ length: SEND_CONCURRENCY }, worker));
+  }
+  await env.POTD_KV.put(flagKey, JSON.stringify([...notified, ...fresh.map((b) => b.id)]), { expirationTtl: 86400 * 7 });
+  return fresh.length;
 }
