@@ -25,6 +25,8 @@
 
 export const bundleKey = (sportKey, abbr) => `espn:${sportKey}:${String(abbr ?? '').toUpperCase()}`;
 export const bundleIndexKey = (sportKey) => `espn:${sportKey}`;
+/** Every player in the league, name, team, position and headshot: what the Players tab searches. */
+export const playersIndexKey = (sportKey) => `espn:${sportKey}:players`;
 
 /** A record older than this is still used, but the trace says so. */
 export const BUNDLE_STALE_HOURS = 30;

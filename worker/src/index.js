@@ -58,6 +58,7 @@ import { runLadderDaily, runLadderGrading, getLadder, getLadderHistory } from '.
 import { BUILD_INFO } from '../../docs/version.js';
 import { runTrendsBuild, getTrends, buildLeagueChunk, TREND_ENABLED_SPORTS } from './trends.js';
 import { loadBundleIndex } from './espn-bundle.js';
+import { getPlayerIndex, getPlayerLog, playerStats } from './player-search.js';
 import { runTrendPicksDaily, runTrendPicksGrading, getTrendPicks } from './trend-picks.js';
 
 /** The Trends build's own cron (must match wrangler.toml's second trigger exactly — Cloudflare hands the string back as written). */
@@ -1504,6 +1505,25 @@ export default {
     // with the player's hit rate at that number, built by the scheduled
     // tick (worker/src/trends.js) and served from KV. ?sport= picks the
     // league; the default is the first with rows.
+    // The Players tab (worker/src/player-search.js): the league's player
+    // index for the type-ahead, and one player's game log at a stat. KV
+    // only, from the runner's ESPN bundle.
+    if (pathname === '/players' && request.method === 'GET') {
+      const sportKey = new URL(request.url).searchParams.get('sport') ?? 'basketball_nba';
+      if (!TREND_ENABLED_SPORTS.includes(sportKey)) return json({ error: 'unknown sport' }, { status: 400, headers: cors });
+      const index = await getPlayerIndex(env, sportKey);
+      return json({ ...index, stats: playerStats(sportKey) }, { headers: { ...cors, 'Cache-Control': 'public, max-age=1800' } });
+    }
+    if (pathname === '/player' && request.method === 'GET') {
+      const q = new URL(request.url).searchParams;
+      const sportKey = q.get('sport') ?? 'basketball_nba';
+      const stat = q.get('stat') ?? '';
+      if (!TREND_ENABLED_SPORTS.includes(sportKey) || !playerStats(sportKey).some((x) => x.key === stat)) return json({ error: 'unknown sport or stat' }, { status: 400, headers: cors });
+      const log = await getPlayerLog(env, sportKey, q.get('team') ?? '', q.get('id') ?? '', stat);
+      if (!log) return json({ error: 'no game log for that player' }, { status: 404, headers: cors });
+      return json(log, { headers: { ...cors, 'Cache-Control': 'public, max-age=600' } });
+    }
+
     // Today's Pixel's Picks and the last 30 days, with the running record
     // (worker/src/trend-picks.js). KV only.
     if (pathname === '/trend-picks' && request.method === 'GET') {
