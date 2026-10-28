@@ -19,6 +19,7 @@ import {
 import {
   sendPotdNotifications,
   sendPicksNotifications,
+  sendTicketNotifications,
   sendLadderNotifications,
   getNotifiedTop5PickIds,
   markTop5PickIdsNotified,
@@ -420,6 +421,13 @@ const NOTIFY_URGENCY_HOURS = 2;
 /** ET wall-clock hour for a given instant — same self-correcting-across-DST
  * approach as potd.js's own etParts, kept local since this is the only other
  * place in the worker that needs an ET hour rather than a UTC one. */
+/** The ET weekday, hour and minute of `ms`, for the Trends cron's weekly slot. */
+function etClock(ms) {
+  const fmt = new Intl.DateTimeFormat('en-US', { timeZone: 'America/New_York', weekday: 'short', hour: 'numeric', minute: 'numeric', hour12: false });
+  const parts = Object.fromEntries(fmt.formatToParts(ms).map((p) => [p.type, p.value]));
+  return { weekday: parts.weekday, hour: Number(parts.hour) % 24, minute: Number(parts.minute) };
+}
+
 function etHour(ms) {
   const fmt = new Intl.DateTimeFormat('en-US', { timeZone: 'America/New_York', hour: '2-digit', hour12: false });
   return Number(fmt.format(ms)) % 24;
@@ -482,7 +490,19 @@ export default {
         // ESPN and KV only, no odds credits.
         .then(() => runTrendPicksGrading(env, ctx, now))
         .then(() => runTrendPicksDaily(env, ctx, now))
+        // The tickets that just posted, to the users who asked for them
+        // (worker/src/notifications.js's sendTicketNotifications sends
+        // each ticket once, whatever tick posts it).
+        .then((r) => (r && !r.skipped && r.posted > 0 ? sendTicketNotifications(env, now) : 0))
         .catch((e) => console.error('Trends build failed:', e)));
+      // Monday, 9 AM ET, the first tick of the hour: the weekly report of
+      // the Pixel's Picks tickets (worker/src/weekly-report.js), to the
+      // users who asked for it. Its own waitUntil, so a send failure
+      // never touches the build.
+      const clock = etClock(now);
+      if (clock.weekday === 'Mon' && clock.hour === 9 && clock.minute < 15) {
+        ctx.waitUntil(sendWeeklyTrackingReport(env, now).catch((e) => console.error('Weekly tracking report failed:', e)));
+      }
       return;
     }
     // Trends only: the main tick does nothing (see TRENDS_ONLY).

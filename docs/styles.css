@@ -279,35 +279,6 @@ body {
 }
 
 /* ---------------------------------------------------------------- */
-/* Maintenance strip                                                 */
-/* ---------------------------------------------------------------- */
-/* A slim notice across the very top of the page while the site is
-   rebuilt around Trends: a thin band of hazard stripes along its top
-   edge and one quiet line of text. Removed by deleting the element. */
-.construction-tape-wrap { position: relative; z-index: 70; }
-.construction-tape {
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  gap: 8px;
-  padding: 6px 16px;
-  background: rgba(245, 196, 0, 0.08);
-  border-top: 4px solid transparent;
-  border-image: repeating-linear-gradient(-45deg, #f5c400 0 10px, #0b0b0b 10px 20px) 4;
-  border-bottom: 1px solid rgba(245, 196, 0, 0.25);
-}
-.construction-tape-text {
-  color: #f5c400;
-  font-family: 'Syne', var(--sans, system-ui, sans-serif);
-  font-weight: 700;
-  font-size: 0.78rem;
-  letter-spacing: 0.14em;
-  text-transform: uppercase;
-  line-height: 1.2;
-  white-space: nowrap;
-}
-
-/* ---------------------------------------------------------------- */
 /* Top bar                                                           */
 /* ---------------------------------------------------------------- */
 
