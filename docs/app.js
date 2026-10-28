@@ -15,7 +15,7 @@ import { CONFIG } from './config.js';
 import { DEMO_EVENTS } from './demo.js';
 import { teamLogoUrl, espnAbbr } from './team-logos.js';
 import { leagueIconSvg } from './league-icons.js';
-import { sortTrends, attachSeries, hitFlags, nflWeek } from './trends.js';
+import { sortTrends, attachSeries, hitFlags, nflWeek, legScore, parlayDecimal } from './trends.js';
 import { enhanceSelect } from './custom-select.js';
 import { BUILD_INFO } from './version.js';
 import { summarizePicks, gradePick } from './learning.js';
@@ -846,6 +846,27 @@ const el = {
   trendPicksHistory: document.getElementById('trendPicksHistory'),
   trendPicksFilters: document.getElementById('trendPicksFilters'),
   tabPlayers: document.getElementById('tabPlayers'),
+  tabParlay: document.getElementById('tabParlay'),
+  parlayView: document.getElementById('parlayView'),
+  parlayLeagues: document.getElementById('parlayLeagues'),
+  parlayBook: document.getElementById('parlayBook'),
+  parlayLegs: document.getElementById('parlayLegs'),
+  parlayL5: document.getElementById('parlayL5'),
+  parlayL5Label: document.getElementById('parlayL5Label'),
+  parlayL10: document.getElementById('parlayL10'),
+  parlayL10Label: document.getElementById('parlayL10Label'),
+  parlayH2H: document.getElementById('parlayH2H'),
+  parlayH2HLabel: document.getElementById('parlayH2HLabel'),
+  parlayScore: document.getElementById('parlayScore'),
+  parlayStats: document.getElementById('parlayStats'),
+  parlayOddsMin: document.getElementById('parlayOddsMin'),
+  parlayOddsMax: document.getElementById('parlayOddsMax'),
+  parlayGames: document.getElementById('parlayGames'),
+  parlaySide: document.getElementById('parlaySide'),
+  parlayTeam: document.getElementById('parlayTeam'),
+  parlayBuild: document.getElementById('parlayBuild'),
+  parlayStatus: document.getElementById('parlayStatus'),
+  parlayResult: document.getElementById('parlayResult'),
   playersView: document.getElementById('playersView'),
   playersLeagues: document.getElementById('playersLeagues'),
   playersQuery: document.getElementById('playersQuery'),
@@ -6137,8 +6158,8 @@ function renderPropPlayCard(record) {
 }
 
 function setActiveTab(tab) {
-  const views = { slate: el.slateView, board: el.boardView, potd: el.potdView, trends: el.trendsView, trendPicks: el.trendPicksView, players: el.playersView };
-  const tabs = { slate: el.tabSlate, board: el.tabBoard, potd: el.tabPotd, trends: el.tabTrends, trendPicks: el.tabTrendPicks, players: el.tabPlayers };
+  const views = { slate: el.slateView, board: el.boardView, potd: el.potdView, trends: el.trendsView, trendPicks: el.trendPicksView, players: el.playersView, parlay: el.parlayView };
+  const tabs = { slate: el.tabSlate, board: el.tabBoard, potd: el.tabPotd, trends: el.tabTrends, trendPicks: el.tabTrendPicks, players: el.tabPlayers, parlay: el.tabParlay };
 
   for (const [name, view] of Object.entries(views)) {
     const active = name === tab;
@@ -6150,7 +6171,7 @@ function setActiveTab(tab) {
   // The day toggle applies to Full Slate only — Play of the Day and
   // Pixel's Picks are both fixed daily sets locked server-side, with no
   // Today/Tomorrow of their own to choose.
-  el.dayFilterBar.hidden = tab === 'potd' || tab === 'board' || tab === 'trends' || tab === 'trendPicks' || tab === 'players';
+  el.dayFilterBar.hidden = tab === 'potd' || tab === 'board' || tab === 'trends' || tab === 'trendPicks' || tab === 'players' || tab === 'parlay';
   if (tab === 'trendPicks') loadTrendPicks();
 
   // Viewing a tab is what "seen" means — clear its pulse the moment the
@@ -6171,6 +6192,7 @@ function setActiveTab(tab) {
   if (tab === 'potd') { loadPotd(); loadLadder(); }
   if (tab === 'trends') loadTrends();
   if (tab === 'players') loadPlayers();
+  if (tab === 'parlay') loadParlay();
   // Re-render from whatever's already loaded rather than re-fetching —
   // everything loads once at boot (refreshAllLeagues), so switching tabs is
   // never itself a billed call.
@@ -6186,6 +6208,7 @@ el.tabPotd.addEventListener('click', () => setActiveTab('potd'));
 el.tabTrends?.addEventListener('click', () => setActiveTab('trends'));
 el.tabTrendPicks?.addEventListener('click', () => setActiveTab('trendPicks'));
 el.tabPlayers?.addEventListener('click', () => setActiveTab('players'));
+el.tabParlay?.addEventListener('click', () => setActiveTab('parlay'));
 
 /* ---------------------------------------------------------------- */
 /* Tracking Dashboard                                                */
@@ -9933,3 +9956,246 @@ el.playersQuery?.addEventListener('keydown', (event) => {
 });
 document.addEventListener('click', (event) => { if (el.playersList && !event.target.closest('.players-search')) el.playersList.hidden = true; });
 el.playersForm?.addEventListener('submit', (event) => { event.preventDefault(); playersState.point = el.playersPoint.value.trim(); runPlayerSearch(); });
+
+/* ================================================================ */
+/* Parlay Builder: legs from the Trends rows at one book, scored, locked and regenerated (worker/src/parlay-builder.js for the breakdowns) */
+/* ================================================================ */
+
+const parlayState = {
+  sport: 'basketball_nba', rows: {}, loading: false,
+  book: 'draftkings', legs: 4, minL5: 0, minL10: 0, minH2H: 0, minScore: 2, stats: new Set(), odds: [-800, 800], games: new Set(), side: 'both', team: '',
+  built: null, locked: new Set(), seen: new Set(), breakdowns: {}, open: null, amount: 10, note: '',
+};
+const PARLAY_BOOKS = ['draftkings', 'fanduel', 'caesars', 'fanatics', 'betmgm', 'prizepicks', 'hardrock', 'bet365', 'betrivers'];
+const parlayBookId = (bookKey) => bookIdFor(bookKey) ?? String(bookKey ?? '').toLowerCase();
+const parlayBookName = (id) => SPORTSBOOKS[id]?.name ?? (id === 'prizepicks' ? 'PrizePicks' : id);
+const parlayRows = () => parlayState.rows[parlayState.sport] ?? [];
+const parlayQuote = (row) => (row.quotes ?? []).find((q) => parlayBookId(q.bookKey) === parlayState.book) ?? null;
+
+async function loadParlay(sport = parlayState.sport) {
+  if (!el.parlayView || !CONFIG.WORKER_URL) return;
+  if (parlayState.rows[sport]) { renderParlay(); return; }
+  parlayState.loading = true;
+  el.parlayStatus.textContent = 'Loading the board…';
+  try {
+    const url = new URL('/trends', CONFIG.WORKER_URL); url.searchParams.set('sport', sport);
+    const res = await fetch(url, { headers: { Accept: 'application/json' } });
+    const body = await res.json();
+    const t = body.trends;
+    parlayState.rows[sport] = t?.sportKey === sport ? attachSeries(t.rows ?? [], t.logs) : [];
+    el.parlayStatus.textContent = parlayState.rows[sport].length ? '' : 'No lines on this board yet.';
+  } catch {
+    el.parlayStatus.textContent = "Couldn't reach the worker.";
+  }
+  parlayState.loading = false;
+  renderParlay();
+}
+
+/** The legs the configuration allows, best first: one per player, at the chosen book, inside the odds range, over the hit rate floors and the score. */
+function parlayCandidates() {
+  const now = Date.now();
+  const s = parlayState;
+  const rate = (r, k) => (Number.isFinite(r.periods?.[k]?.rate) ? r.periods[k].rate : null);
+  const best = new Map();
+  for (const r of parlayRows()) {
+    if (!(r.commenceMs > now)) continue;
+    if (r.injury?.level === 'out') continue;
+    if (s.stats.size && !s.stats.has(r.statKey)) continue;
+    if (s.games.size && !s.games.has(r.eventId)) continue;
+    if (s.side !== 'both' && r.side !== s.side) continue;
+    if (s.team && r.team !== s.team) continue;
+    const q = parlayQuote(r);
+    if (!q || q.american < s.odds[0] || q.american > s.odds[1]) continue;
+    if (s.minL5 > 0 && !((rate(r, 'l5') ?? -1) >= s.minL5 - 1e-9)) continue;
+    if (s.minL10 > 0 && !((rate(r, 'l10') ?? -1) >= s.minL10 - 1e-9)) continue;
+    if (s.minH2H > 0 && !((r.periods?.h2h?.games ?? 0) > 0 && rate(r, 'h2h') >= s.minH2H - 1e-9)) continue;
+    const score = legScore(r);
+    if (score < s.minScore - 1e-9) continue;
+    const key = foldName(r.playerName);
+    const leg = { row: r, quote: q, score, key };
+    const prev = best.get(key);
+    if (!prev || score > prev.score || (score === prev.score && q.american > prev.quote.american)) best.set(key, leg);
+  }
+  return [...best.values()].sort((a, b) => b.score - a.score || b.quote.american - a.quote.american);
+}
+
+/** Build, or regenerate around the locked legs: the locked stay, the open slots take the best legs not shown before (the pool rotates). */
+function buildParlay({ regenerate = false } = {}) {
+  const s = parlayState;
+  const locked = (s.built ?? []).filter((l) => s.locked.has(l.row.id));
+  if (!regenerate) { s.seen = new Set(); }
+  const pool = parlayCandidates().filter((c) => !locked.some((l) => l.key === c.key || l.row.id === c.row.id));
+  const want = Math.max(0, s.legs - locked.length);
+  const pickem = s.book === 'prizepicks';
+  const chosen = [];
+  const take = (list) => {
+    for (const c of list) {
+      if (chosen.length >= want) break;
+      if (chosen.some((x) => x.key === c.key)) continue;
+      if (pickem && [...locked, ...chosen].length === s.legs - 1 && new Set([...locked, ...chosen, c].map((x) => x.row.team)).size < 2) continue;
+      chosen.push(c);
+    }
+  };
+  take(pool.filter((c) => !s.seen.has(c.row.id)));
+  if (chosen.length < want) { s.seen = new Set(locked.map((l) => l.row.id)); take(pool); }
+  for (const c of chosen) s.seen.add(c.row.id);
+  s.built = [...locked, ...chosen];
+  s.open = null;
+  s.note = chosen.length < want ? `Only ${locked.length + chosen.length} line${locked.length + chosen.length === 1 ? '' : 's'} clear these filters at ${parlayBookName(s.book)}; loosen one for a ${s.legs}-leg ticket.` : '';
+  renderParlay();
+  // On a phone the ticket sits below the whole configuration column.
+  if (window.innerWidth <= 820) el.parlayResult?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+}
+
+function parlayPriceOf(legs) {
+  if (!legs.length) return null;
+  const dec = parlayDecimal(legs.map((l) => l.quote.decimal ?? americanToDecimal(l.quote.american)), { pickem: parlayState.book === 'prizepicks' });
+  return dec ? { decimal: dec, american: decimalToAmerican(dec) } : null;
+}
+
+/** One link that adds every leg to the slip, where the book's deep link takes a list (DraftKings outcomes, Caesars selectionIds). */
+function parlayAllLink(legs) {
+  const links = legs.map((l) => l.quote.link).filter(Boolean);
+  if (links.length !== legs.length || !links.length) return null;
+  try {
+    if (parlayState.book === 'draftkings') {
+      const ids = links.map((u) => new URL(u).searchParams.get('outcomes')).filter(Boolean);
+      return ids.length === links.length ? `https://sportsbook.draftkings.com/?outcomes=${ids.map(encodeURIComponent).join('+')}` : null;
+    }
+    if (parlayState.book === 'caesars') {
+      const first = new URL(links[0].replace('{state}', 'nj'));
+      const ids = links.map((u) => new URL(u.replace('{state}', 'nj')).searchParams.get('selectionIds')).filter(Boolean);
+      if (ids.length !== links.length) return null;
+      first.searchParams.set('selectionIds', ids.join(','));
+      return first.toString().replace('/us/nj/', '/us/{state}/');
+    }
+  } catch { return null; }
+  return null;
+}
+
+const stars = (score) => `<span class="parlay-stars" aria-label="${esc(String(score))} of 5">${'★'.repeat(Math.round(score))}${'☆'.repeat(5 - Math.round(score))}<small>${esc(score.toFixed(1))}</small></span>`;
+
+function renderParlayLeg(leg) {
+  const r = leg.row; const q = leg.quote;
+  const locked = parlayState.locked.has(r.id);
+  const open = parlayState.open === r.id;
+  const b = parlayState.breakdowns[r.id];
+  const p = r.periods ?? {};
+  const chip = (label, x) => `<span class="parlay-chip">${esc(label)}: ${x && Number.isFinite(x.rate) ? esc(pct(x.rate)) : 'N/A'}</span>`;
+  return `<div class="parlay-leg ${locked ? 'is-locked' : ''}" data-parlay-leg="${esc(r.id)}">
+    <div class="parlay-leg-bar" style="--tone:${r.side === 'over' ? 'var(--success)' : '#60a5fa'}"></div>
+    <div class="parlay-leg-body">
+      <div class="parlay-leg-head">
+        ${avatarHtml(r)}
+        <div class="parlay-leg-who"><strong>${esc(r.playerName)}</strong> <small>${esc(r.team ?? '')}</small> ${stars(leg.score)}${injuryTag(r.injury)}</div>
+        <span class="parlay-leg-price">${esc(formatAmerican(q.american))}</span>
+        <button type="button" class="parlay-lock ${locked ? 'is-on' : ''}" data-parlay-lock="${esc(r.id)}" aria-pressed="${locked}" title="${locked ? 'Unlock' : 'Lock this leg'}">${locked ? '🔒' : '🔓'}</button>
+      </div>
+      <p class="parlay-leg-line">${esc(r.marketLabel ?? r.statLabel)} ${sideWord(r.side)} ${esc(String(r.point))} <small>${esc(teamAbbr(r.away))} @ ${esc(teamAbbr(r.home))} · ${esc(trendTimeFmt.format(new Date(r.commenceMs)))}</small></p>
+      <div class="parlay-chips">${chip('L5', p.l5)}${chip('L10', p.l10)}${chip(`vs ${r.opponent ?? ''}`, p.h2h?.games ? p.h2h : null)}</div>
+      <div class="parlay-leg-actions">
+        <button type="button" class="parlay-btn" data-parlay-view="${esc(r.id)}">${open ? 'Hide breakdown' : 'Why this leg'}</button>
+        <button type="button" class="parlay-btn" data-parlay-stats="${esc(r.id)}">View stats</button>
+        ${q.link ? `<a class="parlay-btn is-slip" href="${esc(q.link)}" target="_blank" rel="noopener">Add to slip ↗</a>` : ''}
+      </div>
+      ${open ? `<div class="parlay-breakdown ${b?.verdict === 'risky' ? 'is-risky' : 'is-good'}">${b ? `<p><strong>${b.verdict === 'good' ? 'Good leg' : 'Risky leg'}.</strong> ${esc(b.summary)}</p><ul>${(b.reasons ?? []).map((x) => `<li>${esc(x)}</li>`).join('')}</ul>${b.model ? '' : '<p class="row-sub">The model read was unavailable; this is the record alone.</p>'}` : '<p class="row-sub">Reading the leg…</p>'}</div>` : ''}
+    </div>
+  </div>`;
+}
+
+function renderParlay() {
+  if (!el.parlayView) return;
+  const s = parlayState;
+  const rows = parlayRows();
+  const now = Date.now();
+  const live = rows.filter((r) => r.commenceMs > now);
+  el.parlayLeagues.innerHTML = PLAYER_LEAGUES.map(([key, label]) => `<button type="button" class="league-chip ${s.sport === key ? 'is-active' : ''}" data-parlay-league="${esc(key)}" aria-pressed="${s.sport === key}">${leagueIconSvg(TREND_LEAGUE_ICON[key] ?? key)}<span class="league-chip-label">${esc(label)}</span></button>`).join('');
+  const booksHere = new Set(live.flatMap((r) => (r.quotes ?? []).map((q) => parlayBookId(q.bookKey))));
+  const books = PARLAY_BOOKS.filter((b) => booksHere.has(b));
+  if (books.length && !books.includes(s.book)) s.book = books[0];
+  el.parlayBook.innerHTML = (books.length ? books : PARLAY_BOOKS).map((b) => `<option value="${esc(b)}" ${s.book === b ? 'selected' : ''}>${esc(parlayBookName(b))}</option>`).join('');
+  el.parlayLegs.value = String(s.legs);
+  el.parlayL5.value = String(Math.round(s.minL5 * 100)); el.parlayL5Label.textContent = s.minL5 ? `${Math.round(s.minL5 * 100)}%+` : 'Any';
+  el.parlayL10.value = String(Math.round(s.minL10 * 100)); el.parlayL10Label.textContent = s.minL10 ? `${Math.round(s.minL10 * 100)}%+` : 'Any';
+  el.parlayH2H.value = String(Math.round(s.minH2H * 100)); el.parlayH2HLabel.textContent = s.minH2H ? `${Math.round(s.minH2H * 100)}%+` : 'Any';
+  el.parlayScore.innerHTML = [1, 2, 3, 4, 5].map((n) => `<button type="button" class="parlay-star ${n <= s.minScore ? 'is-on' : ''}" data-parlay-score="${n}" aria-label="${n} star${n === 1 ? '' : 's'} and up" aria-pressed="${n === s.minScore}">★</button>`).join('') + `<small>${esc(String(s.minScore))}+ stars</small>`;
+  const statsHere = new Map();
+  for (const r of live) if (!statsHere.has(r.statKey)) statsHere.set(r.statKey, (r.marketLabel ?? r.statLabel).replace(/\s*\(alt\)$/i, ''));
+  el.parlayStats.innerHTML = [...statsHere.entries()].sort((a, b) => a[1].localeCompare(b[1])).map(([k, label]) => `<button type="button" class="rate-chip ${s.stats.has(k) ? 'is-active' : ''}" data-parlay-stat="${esc(k)}">${esc(label)}</button>`).join('') || '<span class="row-sub">No lines yet.</span>';
+  el.parlayOddsMin.value = String(s.odds[0]); el.parlayOddsMax.value = String(s.odds[1]);
+  const gamesHere = new Map();
+  for (const r of live) if (!gamesHere.has(r.eventId)) gamesHere.set(r.eventId, r);
+  el.parlayGames.innerHTML = [...gamesHere.values()].sort((a, b) => a.commenceMs - b.commenceMs).map((g) => `<button type="button" class="rate-chip ${s.games.has(g.eventId) ? 'is-active' : ''}" data-parlay-game="${esc(g.eventId)}">${esc(teamAbbr(g.away))} @ ${esc(teamAbbr(g.home))} <small>${esc(trendTimeFmt.format(new Date(g.commenceMs)))}</small></button>`).join('') || '<span class="row-sub">No games yet.</span>';
+  el.parlaySide.value = s.side;
+  const teams = [...new Set(live.map((r) => r.team).filter(Boolean))].sort();
+  el.parlayTeam.innerHTML = `<option value="">Any team</option>${teams.map((t) => `<option value="${esc(t)}" ${s.team === t ? 'selected' : ''}>${esc(t)}</option>`).join('')}`;
+  el.parlayBuild.disabled = !live.length;
+  el.parlayBuild.textContent = s.built ? 'Regenerate' : 'Build';
+
+  const legs = s.built ?? [];
+  const price = parlayPriceOf(legs);
+  const all = parlayAllLink(legs);
+  const summary = `<div class="parlay-config"><span class="parlay-tag">Score: ${esc(String(s.minScore))}+ stars</span><span class="parlay-tag">Legs: ${esc(String(s.legs))}</span><span class="parlay-tag">Odds: ${esc(formatAmerican(s.odds[0]))} to ${esc(formatAmerican(s.odds[1]))}</span><span class="parlay-tag">${esc(parlayBookName(s.book))}</span></div>`;
+  el.parlayResult.innerHTML = `${summary}${legs.length ? `
+    <div class="parlay-card">
+      <div class="parlay-card-head"><strong>${legs.length}-leg ${s.book === 'prizepicks' ? 'Power Play' : 'parlay'}</strong> ${price ? `<span class="parlay-price">${esc(formatAmerican(price.american))}</span>` : ''}<span class="parlay-card-book">${bookBadge(s.book, parlayBookName(s.book))}${esc(parlayBookName(s.book))}</span></div>
+      ${s.note ? `<p class="parlay-note">${esc(s.note)}</p>` : ''}
+      <div class="parlay-legs">${legs.map(renderParlayLeg).join('')}</div>
+      <div class="parlay-card-foot">${all ? `<a class="parlay-all" href="${esc(all)}" target="_blank" rel="noopener">Add all ${legs.length} legs to your ${esc(parlayBookName(s.book))} slip ↗</a>` : `<p class="row-sub">${esc(parlayBookName(s.book))} takes legs one at a time: use each leg's Add to slip.</p>`}</div>
+    </div>
+    <div class="parlay-payout">
+      <h3>Potential payout</h3>
+      <label>Enter amount <span class="parlay-amount"><span>$</span><input id="parlayAmount" type="number" min="1" step="1" inputmode="decimal" value="${esc(String(s.amount))}"></span></label>
+      <div class="parlay-payout-value"><span>Payout</span><strong>${price ? `$${(s.amount * price.decimal).toFixed(2)}` : '—'}</strong></div>
+    </div>` : `<p class="empty">${s.note || (live.length ? 'Set the filters and hit Build.' : 'No lines on this board yet.')}</p>`}`;
+}
+
+async function loadParlayBreakdown(rowId) {
+  if (parlayState.breakdowns[rowId]) return;
+  try {
+    const url = new URL('/parlay/leg', CONFIG.WORKER_URL); url.searchParams.set('sport', parlayState.sport); url.searchParams.set('id', rowId);
+    const res = await fetch(url, { headers: { Accept: 'application/json' } });
+    const body = await res.json();
+    if (res.ok && body.verdict) parlayState.breakdowns[rowId] = body;
+    else parlayState.breakdowns[rowId] = { verdict: 'risky', summary: body.error ? `No read: ${body.error}.` : 'No read available.', reasons: [], model: false };
+  } catch {
+    parlayState.breakdowns[rowId] = { verdict: 'risky', summary: "Couldn't reach the worker.", reasons: [], model: false };
+  }
+  if (parlayState.open === rowId) renderParlay();
+}
+
+el.parlayView?.addEventListener('click', (event) => {
+  const s = parlayState;
+  const t = event.target;
+  const league = t.closest('[data-parlay-league]');
+  if (league) { s.sport = league.dataset.parlayLeague; s.built = null; s.locked.clear(); s.seen.clear(); s.stats.clear(); s.games.clear(); s.team = ''; loadParlay(s.sport); return; }
+  const star = t.closest('[data-parlay-score]');
+  if (star) { s.minScore = Number(star.dataset.parlayScore); renderParlay(); return; }
+  const stat = t.closest('[data-parlay-stat]');
+  if (stat) { const k = stat.dataset.parlayStat; if (s.stats.has(k)) s.stats.delete(k); else s.stats.add(k); renderParlay(); return; }
+  const game = t.closest('[data-parlay-game]');
+  if (game) { const k = game.dataset.parlayGame; if (s.games.has(k)) s.games.delete(k); else s.games.add(k); renderParlay(); return; }
+  if (t.closest('[data-parlay-build]')) { buildParlay({ regenerate: Boolean(s.built) }); return; }
+  if (t.closest('[data-parlay-reset]')) { Object.assign(s, { legs: 4, minL5: 0, minL10: 0, minH2H: 0, minScore: 2, stats: new Set(), odds: [-800, 800], games: new Set(), side: 'both', team: '', built: null, locked: new Set(), seen: new Set(), open: null, note: '' }); renderParlay(); return; }
+  const lock = t.closest('[data-parlay-lock]');
+  if (lock) { const id = lock.dataset.parlayLock; if (s.locked.has(id)) s.locked.delete(id); else s.locked.add(id); renderParlay(); return; }
+  const view = t.closest('[data-parlay-view]');
+  if (view) { const id = view.dataset.parlayView; s.open = s.open === id ? null : id; renderParlay(); if (s.open) loadParlayBreakdown(id); return; }
+  const statsBtn = t.closest('[data-parlay-stats]');
+  if (statsBtn) { const leg = (s.built ?? []).find((l) => l.row.id === statsBtn.dataset.parlayStats); if (leg) { trendsState.detailPeriod = null; trendsState.betMore = false; openTrendsSheet('detail', { rowId: leg.row.id, row: { ...leg.row, american: leg.quote.american, decimal: leg.quote.decimal, book: leg.quote.book, bookKey: leg.quote.bookKey, link: leg.quote.link ?? null } }); } }
+});
+el.parlayView?.addEventListener('input', (event) => {
+  const s = parlayState; const t = event.target;
+  if (t === el.parlayL5) { s.minL5 = Math.round(Number(t.value) / 10) / 10; el.parlayL5Label.textContent = s.minL5 ? `${Math.round(s.minL5 * 100)}%+` : 'Any'; }
+  else if (t === el.parlayL10) { s.minL10 = Math.round(Number(t.value) / 10) / 10; el.parlayL10Label.textContent = s.minL10 ? `${Math.round(s.minL10 * 100)}%+` : 'Any'; }
+  else if (t === el.parlayH2H) { s.minH2H = Math.round(Number(t.value) / 10) / 10; el.parlayH2HLabel.textContent = s.minH2H ? `${Math.round(s.minH2H * 100)}%+` : 'Any'; }
+  else if (t.id === 'parlayAmount') { s.amount = Math.max(0, Number(t.value) || 0); const strong = el.parlayResult.querySelector('.parlay-payout-value strong'); const price = parlayPriceOf(s.built ?? []); if (strong) strong.textContent = price ? `$${(s.amount * price.decimal).toFixed(2)}` : '—'; }
+});
+el.parlayView?.addEventListener('change', (event) => {
+  const s = parlayState; const t = event.target;
+  if (t === el.parlayBook) { s.book = t.value; s.built = null; s.locked.clear(); s.seen.clear(); renderParlay(); }
+  else if (t === el.parlayLegs) { s.legs = Math.min(6, Math.max(2, Number(t.value) || 4)); renderParlay(); }
+  else if (t === el.parlayOddsMin || t === el.parlayOddsMax) { const lo = Number(el.parlayOddsMin.value); const hi = Number(el.parlayOddsMax.value); s.odds = [Number.isFinite(lo) ? lo : -800, Number.isFinite(hi) ? hi : 800]; }
+  else if (t === el.parlaySide) { s.side = t.value; }
+  else if (t === el.parlayTeam) { s.team = t.value; }
+});
