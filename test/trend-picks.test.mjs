@@ -8,7 +8,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import {
-  qualifyingRows, researchPick, runTrendPicksDaily, runTrendPicksGrading, getTrendPicks, settle, settleBet, parseVerdict, buildBets, pickQuotes,
+  qualifyingRows, researchPick, runTrendPicksDaily, runTrendPicksGrading, getTrendPicks, settle, settleBet, parseVerdict, buildBets, pickQuotes, refreshLegs,
   PICK_MIN_GAMES, PICK_MAX_BETS, PICK_BOOKS, UNIT_DOLLARS,
 } from '../worker/src/trend-picks.js';
 
@@ -293,4 +293,42 @@ test('bets are graded leg by leg off the game log once the games are over, a no-
   assert.deepEqual(all.bySport.basketball_nba, all.record);
   assert.deepEqual(all.bySport.americanfootball_nfl, { wins: 0, losses: 0, pushes: 0, voids: 0, units: 0, dollars: 0 });
   assert.equal(all.unitDollars, UNIT_DOLLARS);
+});
+
+test('a pending ticket follows its book\'s number until tip-off: a moved projection replaces the leg and is written down, a price move reprices a sportsbook ticket, a number that no longer lands every game carries a warning', async () => {
+  const { env, store } = makeKvStore();
+  const deps = { minutes: async () => Array(20).fill(32), context: async () => null, model: async () => '{"verdict":"post","reason":"ok","note":"none"}' };
+  const brown = (point, extra = {}) => row(`jb-${point}`, { player: 'Jaylen Brown', american: -137, point, books: { prizepicks: -137 }, team: 'PHI', eventId: 'e-phi', ...extra });
+  const murray = (american) => row('dm', { player: 'Dejounte Murray', american, point: 0.5, statKey: 'steals', books: { prizepicks: american }, team: 'NO', eventId: 'e-no' });
+  await runTrendPicksDaily(env, ctx, NOW, { deps: { ...deps, rowsFor: async () => [brown(13.5), murray(-137)] }, enabled: ['basketball_nba'] });
+  let rec = JSON.parse(store.get('trendpicks:2026-10-27'));
+  assert.deepEqual(rec.bets.map((b) => [b.shape, b.legs.map((l) => l.point)]), [['power2', [13.5, 0.5]]]);
+  // The projection moves to 14.5 and the 14.5 still landed every game: the leg follows, says so, no warning; the lineup still pays 3x.
+  const later = await runTrendPicksDaily(env, ctx, NOW + 60e3, { deps: { ...deps, rowsFor: async () => [brown(14.5), murray(-137)] }, enabled: ['basketball_nba'] });
+  assert.deepEqual(later, { skipped: true, reason: 'posted', dateKey: '2026-10-27', refreshed: 1 });
+  rec = JSON.parse(store.get('trendpicks:2026-10-27'));
+  const leg = rec.bets[0].legs[0];
+  assert.equal(leg.point, 14.5);
+  assert.equal(leg.selection, 'Jaylen Brown Over 14.5 Pts');
+  assert.deepEqual(leg.moves, [{ at: NOW + 60e3, from: 13.5, to: 14.5 }]);
+  assert.equal(leg.warning, null);
+  assert.equal(rec.bets[0].american, 200);
+  assert.equal(rec.refreshedAt, NOW + 60e3);
+  // Nothing moved: nothing written.
+  assert.equal((await runTrendPicksDaily(env, ctx, NOW + 120e3, { deps: { ...deps, rowsFor: async () => [brown(14.5), murray(-137)] }, enabled: ['basketball_nba'] })).refreshed, 0);
+  // It moves again to a number that has missed: the warning names the record and the number the ticket was drawn on.
+  await runTrendPicksDaily(env, ctx, NOW + 180e3, { deps: { ...deps, rowsFor: async () => [brown(16.5, { rate: 0.9 }), murray(-137)] }, enabled: ['basketball_nba'] });
+  rec = JSON.parse(store.get('trendpicks:2026-10-27'));
+  assert.equal(rec.bets[0].legs[0].point, 16.5);
+  assert.match(rec.bets[0].legs[0].warning, /landed 18 of the last 20.*drawn on the 13\.5/);
+  // A sportsbook ticket reprices from its legs when a price moves, and the game underway leaves the ticket alone.
+  const sb = { bets: [{ id: 'x', status: 'pending', commenceMs: NOW + 3.6e6, shape: null, units: 1, legs: [
+    { playerName: 'Collin Sexton', eventId: 'e-a', statKey: 'points', side: 'over', point: 9.5, bookId: 'draftkings', american: -250, decimal: 1.4, commenceMs: NOW + 3.6e6 },
+    { playerName: 'LaMelo Ball', eventId: 'e-b', statKey: 'points', side: 'over', point: 9.5, bookId: 'draftkings', american: -250, decimal: 1.4, commenceMs: NOW + 3.6e6 },
+  ] }] };
+  const sbRows = [row('a', { american: -200, books: { draftkings: -200 }, eventId: 'e-a' }), row('b', { player: 'LaMelo Ball', american: -250, books: { draftkings: -250 }, eventId: 'e-b' })];
+  assert.equal(refreshLegs(sb, sbRows, NOW), 1);
+  assert.equal(sb.bets[0].legs[0].american, -200);
+  assert.equal(sb.bets[0].american, 110, '1.5 x 1.4 = 2.1');
+  assert.equal(refreshLegs(sb, [row('a', { american: -150, books: { draftkings: -150 }, eventId: 'e-a' })], NOW + 4 * 3.6e6), 0, 'tipped off: untouched');
 });

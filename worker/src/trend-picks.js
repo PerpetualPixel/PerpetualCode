@@ -470,6 +470,64 @@ function betRecord(bet, index, dateKey, research, now) {
 }
 
 /**
+ * Keep a pending ticket on the book's current number until tip-off:
+ * each leg follows its book's line for the same player, stat and side.
+ * The price updates; a moved number (a pick'em projection, mostly)
+ * replaces the leg's number, record and chart, is written down in
+ * `moves`, and carries a warning when the new number has not landed
+ * every game. A sportsbook ticket's price is recomputed from its legs;
+ * a PrizePicks lineup pays its fixed multiplier regardless. Returns how
+ * many tickets changed.
+ */
+export function refreshLegs(record, rows, now = Date.now()) {
+  let changed = 0;
+  for (const bet of record?.bets ?? []) {
+    if (bet.status !== 'pending' || bet.commenceMs <= now) continue;
+    let betChanged = false;
+    for (const leg of bet.legs) {
+      if (leg.commenceMs <= now) continue;
+      const atBook = (rows ?? [])
+        .filter((r) => r.eventId === leg.eventId && r.statKey === leg.statKey && r.side === leg.side && fold(r.playerName) === fold(leg.playerName))
+        .map((r) => ({ r, q: pickQuotes(r).find((x) => x.bookId === leg.bookId) }))
+        .filter((x) => x.q);
+      if (!atBook.length) continue; // the book pulled the line; the ticket stands as posted
+      const pick = atBook.find((x) => x.r.point === leg.point) ?? atBook.sort((a, b) => Math.abs(a.r.point - leg.point) - Math.abs(b.r.point - leg.point))[0];
+      const { r, q } = pick;
+      const lineMoved = r.point !== leg.point;
+      const priceMoved = q.american !== leg.american;
+      if (!lineMoved && !priceMoved) continue;
+      if (lineMoved) {
+        (leg.moves ??= []).push({ at: now, from: leg.point, to: r.point });
+        leg.point = r.point;
+        leg.selection = r.selection;
+        leg.marketLabel = r.marketLabel ?? leg.marketLabel;
+        leg.id = r.id;
+        leg.rates = r.rates;
+        leg.periods = { l5: r.periods.l5, l10: r.periods.l10, l20: r.periods.l20, h2h: r.periods.h2h };
+        leg.series = (r.series ?? []).slice(0, 20);
+        leg.quotes = (r.quotes ?? []).slice(0, 8);
+        const l20 = r.periods?.l20; const h2h = r.periods?.h2h;
+        const still = l20?.rate === 1 && (!h2h?.games || h2h.rate === 1);
+        leg.warning = still ? null : `The ${r.point} has landed ${l20?.hits ?? 0} of the last ${l20?.games ?? 0}${h2h?.games && h2h.rate !== 1 ? ` and ${h2h.hits} of ${h2h.games} against them` : ''}; the ticket was drawn on the ${leg.moves[0].from}.`;
+      }
+      leg.american = q.american;
+      leg.decimal = q.decimal ?? americanToDecimal(q.american);
+      leg.link = q.link ?? leg.link;
+      betChanged = true;
+    }
+    if (!betChanged) continue;
+    if (!bet.shape) {
+      const decimal = bet.legs.reduce((d, l) => d * l.decimal, 1);
+      bet.decimal = Math.round(decimal * 10000) / 10000;
+      bet.american = toAmerican(decimal);
+    }
+    bet.updatedAt = now;
+    changed++;
+  }
+  return changed;
+}
+
+/**
  * Draw today's bets from the Trends rows. The groups that qualify are
  * researched in rank order (up to PICK_MAX_RESEARCHED), the ones that
  * pass become the day's bets (buildBets), and the day is final once any
@@ -482,14 +540,26 @@ export async function runTrendPicksDaily(env, ctx, now = Date.now(), { deps = {}
   const raw = await env.POTD_KV.get(key(dateKey));
   const stored = raw ? JSON.parse(raw) : null;
   const existing = stored?.version === RECORD_VERSION ? stored : null;
-  if (existing?.final) return { skipped: true, reason: 'posted', dateKey };
+  const loadRows = async () => {
+    const rows = [];
+    for (const sportKey of enabled) {
+      const stored = deps.rowsFor ? await deps.rowsFor(sportKey) : await getTrends(env, sportKey).then((t) => attachSeries(t?.rows, t?.logs));
+      rows.push(...(stored ?? []));
+    }
+    return rows;
+  };
+  if (existing?.final) {
+    // Posted: the tickets stand, but each leg follows its book's number until tip-off.
+    if ((existing.bets ?? []).some((b) => b.status === 'pending' && b.commenceMs > now)) {
+      const refreshed = refreshLegs(existing, await loadRows(), now);
+      if (refreshed) await env.POTD_KV.put(key(dateKey), JSON.stringify({ ...existing, refreshedAt: now }), { expirationTtl: KV_TTL_SECONDS });
+      return { skipped: true, reason: 'posted', dateKey, refreshed };
+    }
+    return { skipped: true, reason: 'posted', dateKey };
+  }
   if (existing && now - (existing.checkedAt ?? 0) < RETRY_MINUTES * 60e3) return { skipped: true, reason: 'checked recently', dateKey };
 
-  const rows = [];
-  for (const sportKey of enabled) {
-    const stored = deps.rowsFor ? await deps.rowsFor(sportKey) : await getTrends(env, sportKey).then((t) => attachSeries(t?.rows, t?.logs));
-    rows.push(...(stored ?? []));
-  }
+  const rows = await loadRows();
   const groups = qualifyingRows(rows, dateKey, now);
   // Only a line some listed book prices inside LEG_RANGE can sit on a
   // ticket, so a line priced -1100 everywhere is not worth a research
