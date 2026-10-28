@@ -6727,7 +6727,9 @@ input[type="range"]:focus-visible {
 .pick-bet-stake { color: var(--muted); font-weight: 600; }
 .pick-bet-head .pick-result { margin-left: auto; }
 .pick-legs { display: grid; }
-.pick-leg { padding: 14px 16px; border-top: 1px solid var(--line); }
+.pick-leg { padding: 14px 16px; border-top: 1px solid var(--line); cursor: pointer; outline: none; }
+.pick-leg:hover, .pick-leg:focus-visible { background: rgba(255, 255, 255, 0.03); }
+.pick-move { margin: 8px 0 0; color: #eab308; font-size: 0.82rem; font-weight: 600; line-height: 1.4; }
 .pick-leg:first-child { border-top: 0; }
 .pick-leg-price { font-family: var(--mono); font-weight: 800; color: var(--muted); align-self: center; }
 .pick-leg-result { margin-left: auto; font-size: 0.72rem; font-weight: 800; letter-spacing: 0.04em; text-transform: uppercase; color: var(--muted); white-space: nowrap; }

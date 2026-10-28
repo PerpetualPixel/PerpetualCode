@@ -9224,7 +9224,10 @@ function renderTrendsSheet() {
       <div class="sheet-seg"><button type="button" class="${dir === 'asc' ? 'is-active' : ''}" data-sort-dir="asc">Ascending</button><button type="button" class="${dir === 'desc' ? 'is-active' : ''}" data-sort-dir="desc">Descending</button></div>
       <div class="sheet-tiles">${[['hitRate', 'Hit Rate', 'period'], ['odds', 'Odds', 'odds'], ['date', 'Event Date', 'games']].map(([k, label, icon]) => `<button type="button" class="sheet-tile ${by === k ? 'is-on' : ''}" data-sort-by="${k}"><span class="tile-icon">${SHEET_ICON[icon]}</span><span class="tile-label">${label}</span><span class="tile-radio"></span></button>`).join('')}</div>${sheetClose()}`;
   } else if (sheet.type === 'detail') {
-    const row = rows.find((r) => r.id === sheet.rowId);
+    // A Trends row by id, or the row the opener handed over (a Pixel's
+    // Picks leg carries its own copy, since the Trends rows may be
+    // another league's or not loaded yet).
+    const row = rows.find((r) => r.id === sheet.rowId) ?? sheet.row ?? null;
     if (!row) return closeTrendsSheet();
     full = true;
     html = renderTrendDetail(row);
@@ -9504,7 +9507,8 @@ function renderPickLeg(leg, bet) {
   const legResult = leg.result
     ? `<span class="pick-leg-result is-${esc(leg.result)}">${esc(RESULT_LABEL[leg.result] ?? leg.result)}${Number.isFinite(leg.actual) ? ` · ${esc(String(leg.actual))} ${esc(leg.statLabel)}` : ''}</span>`
     : '';
-  return `<div class="pick-leg">
+  const moved = (leg.moves ?? []).at(-1);
+  return `<div class="pick-leg" data-pick-leg="${esc(bet.id)}|${esc(String(bet.legs.indexOf(leg)))}" tabindex="0" role="button" aria-label="${esc(leg.selection)}, see the player's numbers">
     <div class="trend-head">
       ${avatarHtml(row)}
       <span class="trend-game"><strong>${esc(teamAbbr(leg.away))} @ ${esc(teamAbbr(leg.home))}</strong><span class="trend-dot"></span>${esc(trendTimeFmt.format(new Date(leg.commenceMs)))}</span>
@@ -9522,8 +9526,24 @@ function renderPickLeg(leg, bet) {
       ${renderTrendBars(row, 'l20')}
       <span class="pick-h2h">${h2h?.games ? `${esc(String(h2h.hits))} of ${esc(String(h2h.games))} vs ${esc(leg.opponent ?? '')}` : 'no games vs ' + esc(leg.opponent ?? 'them')}</span>
     </div>
+    ${moved ? `<p class="pick-move">Line moved from ${esc(String(moved.from))} to ${esc(String(moved.to))} at ${esc(trendTimeFmt.format(new Date(moved.at)))}${leg.warning ? `. ${esc(leg.warning)}` : ', still landed every game'}</p>` : ''}
     ${leg.note ? `<p class="pick-note">${esc(leg.note)}</p>` : ''}
   </div>`;
+}
+
+/** A leg as a Trends row, for the Detail sheet. */
+function legAsRow(leg, bet) {
+  return { ...leg, seasons: leg.seasons ?? [], rates: leg.rates ?? {}, periods: leg.periods ?? {}, series: leg.series ?? [], quotes: leg.quotes ?? [], bookKey: leg.bookId, book: bet.book, link: leg.link ?? null };
+}
+
+function openPickLeg(target) {
+  const [betId, index] = String(target.dataset.pickLeg).split('|');
+  const bet = [...(trendPicksState.data?.today?.bets ?? []), ...(trendPicksState.data?.history ?? []).flatMap((d) => d.bets ?? [])].find((b) => b.id === betId);
+  const leg = bet?.legs?.[Number(index)];
+  if (!leg) return;
+  trendsState.detailPeriod = null;
+  trendsState.betMore = false;
+  openTrendsSheet('detail', { rowId: leg.id, row: legAsRow(leg, bet) });
 }
 
 function renderBetCard(bet) {
@@ -9640,6 +9660,9 @@ function renderTrendPicks() {
 }
 
 el.trendPicksView?.addEventListener('click', (event) => {
+  if (event.target.closest('[data-price-link], .pick-bet-link')) return; // the book's link, not the card
+  const leg = event.target.closest('[data-pick-leg]');
+  if (leg) return openPickLeg(leg);
   const chip = event.target.closest('[data-pick-filter]');
   if (chip) { trendPicksState.filter = chip.dataset.pickFilter; trendPicksState.hover = null; renderTrendPicks(); return; }
   const dot = event.target.closest('[data-pick-day]');
@@ -9652,6 +9675,8 @@ el.trendPicksView?.addEventListener('pointerover', (event) => {
   if (trendPicksState.hover !== i) { trendPicksState.hover = i; renderPickGraph(); }
 });
 el.trendPicksView?.addEventListener('keydown', (event) => {
+  const leg = event.target.closest('[data-pick-leg]');
+  if (leg && (event.key === 'Enter' || event.key === ' ')) { event.preventDefault(); return openPickLeg(leg); }
   const dot = event.target.closest('[data-pick-day]');
   if (dot && (event.key === 'Enter' || event.key === ' ')) { event.preventDefault(); const i = Number(dot.dataset.pickDay); trendPicksState.hover = trendPicksState.hover === i ? null : i; renderPickGraph(); }
 });

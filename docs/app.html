@@ -36,7 +36,7 @@
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Syne:wght@600;700;800&family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
-<link rel="stylesheet" href="styles.css?v=1.227">
+<link rel="stylesheet" href="styles.css?v=1.228">
 </head>
 <body>
 
@@ -381,13 +381,16 @@
     </button>
   </div>
 
-  <!-- One sheet element, re-rendered per sheet type (Filters, Markets,
-       Games, Odds, Sportsbooks, Period Hit Rate, Period, Sort, Detail). -->
-  <div id="trendsScrim" class="trends-scrim" hidden></div>
-  <div id="trendsSheet" class="trends-sheet" role="dialog" aria-modal="true" aria-labelledby="trendsSheetTitle" hidden></div>
 </section>
 </section>
 </main>
+
+<!-- One sheet element, re-rendered per sheet type (Filters, Markets,
+     Games, Odds, Sportsbooks, Period Hit Rate, Period, Sort, Detail).
+     Outside the tab panels: a Pixel's Picks leg opens the Detail sheet
+     too, and a panel that is hidden would hide the sheet with it. -->
+<div id="trendsScrim" class="trends-scrim" hidden></div>
+<div id="trendsSheet" class="trends-sheet" role="dialog" aria-modal="true" aria-labelledby="trendsSheetTitle" hidden></div>
 
 <div id="scrim" class="scrim" hidden></div>
 
@@ -947,6 +950,6 @@
   </div>
 </aside>
 
-<script type="module" src="app.js?v=1.227"></script>
+<script type="module" src="app.js?v=1.228"></script>
 </body>
 </html>
