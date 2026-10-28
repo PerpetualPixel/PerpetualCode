@@ -6774,3 +6774,15 @@ a.trend-price:hover { background: rgba(255, 255, 255, 0.06); }
   .players-form { grid-template-columns: 1fr 1fr; }
   .players-form .players-submit { grid-column: 1 / -1; }
 }
+
+/* The injury report on a player: a tag on the card, a banner on the detail sheet. Orange is questionable or day to day, red is out or doubtful. */
+.injury-tag { display: inline-flex; align-items: center; gap: 4px; margin-top: 6px; padding: 3px 8px; border-radius: 999px; font-size: 0.72rem; font-weight: 800; letter-spacing: 0.04em; text-transform: uppercase; background: rgba(245, 158, 11, 0.16); color: #fbbf24; border: 1px solid rgba(245, 158, 11, 0.45); }
+.injury-tag.is-out { background: rgba(239, 68, 68, 0.16); color: #ff7b7b; border-color: rgba(239, 68, 68, 0.5); }
+.injury-banner { display: flex; align-items: flex-start; gap: 10px; margin: 14px 0 0; padding: 12px 14px; border-radius: 12px; background: rgba(245, 158, 11, 0.14); border: 1px solid rgba(245, 158, 11, 0.5); color: var(--text); font-size: 0.9rem; line-height: 1.4; }
+.injury-banner.is-out { background: rgba(239, 68, 68, 0.14); border-color: rgba(239, 68, 68, 0.5); }
+.injury-banner-icon { font-size: 1.1rem; line-height: 1.2; color: #fbbf24; }
+.injury-banner.is-out .injury-banner-icon { color: #ff7b7b; }
+.injury-status { margin-left: 6px; padding: 2px 8px; border-radius: 999px; background: rgba(245, 158, 11, 0.25); color: #fbbf24; font-size: 0.74rem; font-weight: 800; text-transform: uppercase; letter-spacing: 0.04em; }
+.injury-banner.is-out .injury-status { background: rgba(239, 68, 68, 0.25); color: #ff7b7b; }
+.injury-detail { color: var(--muted); font-size: 0.84rem; margin-top: 2px; }
+.pick-move.is-out { color: #ff7b7b; }

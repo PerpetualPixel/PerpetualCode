@@ -22,7 +22,7 @@ import { etParts, etDatePlusDays } from './potd.js';
 import { fetchContext, hasContext } from './context.js';
 import { fetchBasketballGamelog, basketballStatRows } from './basketball-props.js';
 import { fetchNflGamelog, gamelogStatIndex } from './football-props.js';
-import { bundlePlayer, loadBundleTeams } from './espn-bundle.js';
+import { bundlePlayer, loadBundleTeams, loadInjuries, injuryFor } from './espn-bundle.js';
 import { seasonColumnRows } from '../../docs/prop-legs.js';
 import { overNeed, underNeed, attachSeries } from '../../docs/trends.js';
 import { bookIdFor, SPORTSBOOKS, americanToDecimal } from '../../docs/engine.js';
@@ -248,11 +248,16 @@ async function minutesFor(row, env, ctx) {
  * ESPN summary gives (context.js), for when the summary is out of reach.
  */
 async function bundledInjuries(env, row) {
+  // The half-hourly report first; the team records (three times a day) when it has not run.
+  const report = await loadInjuries(env, row.sportKey).catch(() => ({ players: {} }));
+  const listed = Object.values(report.players ?? {});
   const sides = [];
   for (const abbr of [row.team, row.opponent]) {
     if (!abbr) continue;
+    const team = String(abbr).toUpperCase();
+    if (listed.length) { sides.push({ name: abbr, injuries: listed.filter((p) => p.team === team).map((p) => ({ name: p.name, status: p.status ?? '', detail: p.detail ?? '' })) }); continue; }
     const teams = await loadBundleTeams(env, row.sportKey, [abbr]).catch(() => new Map());
-    const record = teams.get(String(abbr).toUpperCase());
+    const record = teams.get(team);
     if (!record) continue;
     sides.push({
       name: abbr,
@@ -479,13 +484,22 @@ function betRecord(bet, index, dateKey, research, now) {
  * a PrizePicks lineup pays its fixed multiplier regardless. Returns how
  * many tickets changed.
  */
-export function refreshLegs(record, rows, now = Date.now()) {
+export function refreshLegs(record, rows, now = Date.now(), reports = {}) {
   let changed = 0;
   for (const bet of record?.bets ?? []) {
     if (bet.status !== 'pending' || bet.commenceMs <= now) continue;
     let betChanged = false;
     for (const leg of bet.legs) {
       if (leg.commenceMs <= now) continue;
+      // The injury report as of the last half hour: a leg whose player is
+      // now listed out or doubtful says so on the card.
+      const injury = injuryFor(reports[leg.sportKey], leg.athleteId);
+      const before = leg.injury?.status ?? null;
+      if ((injury?.status ?? null) !== before) {
+        leg.injury = injury;
+        leg.injuryWarning = injury?.level === 'out' ? `Listed ${injury.status.toLowerCase()}${injury.detail ? ` (${injury.detail})` : ''} on the injury report since the ticket posted.` : null;
+        betChanged = true;
+      }
       const atBook = (rows ?? [])
         .filter((r) => r.eventId === leg.eventId && r.statKey === leg.statKey && r.side === leg.side && fold(r.playerName) === fold(leg.playerName))
         .map((r) => ({ r, q: pickQuotes(r).find((x) => x.bookId === leg.bookId) }))
@@ -551,7 +565,8 @@ export async function runTrendPicksDaily(env, ctx, now = Date.now(), { deps = {}
   if (existing?.final) {
     // Posted: the tickets stand, but each leg follows its book's number until tip-off.
     if ((existing.bets ?? []).some((b) => b.status === 'pending' && b.commenceMs > now)) {
-      const refreshed = refreshLegs(existing, await loadRows(), now);
+      const reports = Object.fromEntries(await Promise.all(enabled.map(async (k) => [k, deps.injuriesReport ? await deps.injuriesReport(k) : await loadInjuries(env, k).catch(() => ({ players: {} }))])));
+      const refreshed = refreshLegs(existing, await loadRows(), now, reports);
       if (refreshed) await env.POTD_KV.put(key(dateKey), JSON.stringify({ ...existing, refreshedAt: now }), { expirationTtl: KV_TTL_SECONDS });
       return { skipped: true, reason: 'posted', dateKey, refreshed };
     }

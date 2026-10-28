@@ -9029,6 +9029,17 @@ function renderTrendBars(row, period, { height = 44, cls = 'trend-bars' } = {}) 
   </div>`;
 }
 
+/** A small tag when the player is on the injury report: orange for questionable or day to day, red for out or doubtful. */
+function injuryTag(injury) {
+  if (!injury?.level) return '';
+  return `<span class="injury-tag is-${esc(injury.level)}" title="${esc(injury.detail ? `${injury.status}: ${injury.detail}` : injury.status)}">${esc(injury.status)}${injury.detail ? ` · ${esc(injury.detail)}` : ''}</span>`;
+}
+/** The detail sheet's banner for the same: the player, his status and the detail. */
+function injuryBanner(name, injury) {
+  if (!injury?.level) return '';
+  return `<div class="injury-banner is-${esc(injury.level)}"><span class="injury-banner-icon" aria-hidden="true">⚠</span><div><strong>${esc(name)}</strong> <span class="injury-status">${esc(injury.status)}</span>${injury.detail ? `<div class="injury-detail">${esc(injury.detail)}</div>` : ''}</div></div>`;
+}
+
 function renderTrendCard(row) {
   const rate = row.rates[trendsState.period];
   return `<article class="trend-card" data-trend-id="${esc(row.id)}" tabindex="0" role="button" aria-label="${esc(row.selection)}, ${pct(rate)} in ${esc(periodLong(trendsState.period))}">
@@ -9040,6 +9051,7 @@ function renderTrendCard(row) {
       <div>
         <p class="trend-player">${esc(row.playerName)}${row.team ? `<small>${esc(row.team)}</small>` : ''}</p>
         <p class="trend-line">${esc(row.marketLabel ?? row.statLabel)} ${sideWord(row.side)} ${esc(String(row.point))}</p>
+        ${injuryTag(row.injury)}
       </div>
       ${pricePill(row.bookKey, row.book, row.american, row.link)}
     </div>
@@ -9285,6 +9297,7 @@ function renderTrendDetail(row) {
       </div>
       ${avatarHtml(row, 'detail-avatar')}
     </div>
+    ${injuryBanner(row.playerName, row.injury)}
     <div class="detail-periods">${keys.map((k) => { const p = withPeriod(row, k).periods[k]; const has = p && p.games > 0; return `<button type="button" class="period-tab ${k === period ? 'is-active' : ''}" data-detail-period="${k}" ${has ? '' : 'disabled'}>${k !== period && has ? `<span class="tab-pct">${pct(p.rate)}</span>` : ''}${esc(periodLabel(k))}</button>`; }).join('')}</div>
     <div class="detail-split"><span class="is-hit" style="flex:${hitShare || 0.001}"></span><span class="is-miss" style="flex:${1 - hitShare || 0.001}"></span></div>
     <div class="detail-summary">
@@ -9541,6 +9554,7 @@ function renderPickLeg(leg, bet) {
       <div>
         <p class="trend-player">${esc(leg.playerName)}${leg.team ? `<small>${esc(leg.team)}</small>` : ''}</p>
         <p class="trend-line">${esc(leg.marketLabel ?? leg.statLabel)} ${sideWord(leg.side)} ${esc(String(leg.point))}</p>
+        ${injuryTag(leg.injury)}
       </div>
       ${bet.type === 'parlay' ? `<span class="pick-leg-price">${esc(formatAmerican(leg.american))}</span>` : pricePill(bet.bookId, bet.book, leg.american, leg.link)}
     </div>
@@ -9550,6 +9564,7 @@ function renderPickLeg(leg, bet) {
       <span class="pick-h2h">${h2h?.games ? `${esc(String(h2h.hits))} of ${esc(String(h2h.games))} vs ${esc(leg.opponent ?? '')}` : 'no games vs ' + esc(leg.opponent ?? 'them')}</span>
     </div>
     ${moved ? `<p class="pick-move">Line moved from ${esc(String(moved.from))} to ${esc(String(moved.to))} at ${esc(trendTimeFmt.format(new Date(moved.at)))}${leg.warning ? `. ${esc(leg.warning)}` : ', still landed every game'}</p>` : ''}
+    ${leg.injuryWarning ? `<p class="pick-move is-out">${esc(leg.injuryWarning)}</p>` : ''}
     ${leg.note ? `<p class="pick-note">${esc(leg.note)}</p>` : ''}
   </div>`;
 }
@@ -9773,7 +9788,8 @@ function renderPlayers() {
   el.playersSide.value = playersState.side;
   if (document.activeElement !== el.playersPoint) el.playersPoint.value = playersState.point;
   const p = playersState.player;
-  el.playersPicked.innerHTML = p ? `<div class="players-card">${avatarHtml({ playerName: p.name, team: p.team, sportKey: playersState.sport, headshot: p.headshot }, 'trend-avatar')}<div><p class="trend-player">${esc(p.name)}<small>${esc(p.team)}</small></p><p class="trend-line">${esc(p.position ?? '')}</p></div><button type="button" class="players-clear" data-players-clear aria-label="Clear player">✕</button></div>` : '';
+  const injury = playersState.log?.player?.injury ?? null;
+  el.playersPicked.innerHTML = p ? `<div class="players-card">${avatarHtml({ playerName: p.name, team: p.team, sportKey: playersState.sport, headshot: p.headshot }, 'trend-avatar')}<div><p class="trend-player">${esc(p.name)}<small>${esc(p.team)}</small></p><p class="trend-line">${esc(p.position ?? '')}</p>${injuryTag(injury)}</div><button type="button" class="players-clear" data-players-clear aria-label="Clear player">✕</button></div>` : '';
   el.playersSearchBtn.disabled = !(p && playersState.stat && Number.isFinite(Number(playersState.point)) && playersState.point !== '');
   renderPlayerResult();
 }
@@ -9859,7 +9875,7 @@ async function runPlayerSearch() {
     el.playersStatus.textContent = "Couldn't reach the worker.";
   }
   playersState.loading = false;
-  renderPlayerResult();
+  renderPlayers();
 }
 
 /** From a Trends or Pixel's Picks detail sheet: the same player, stat and number on the Players tab. */

@@ -27,6 +27,32 @@ export const bundleKey = (sportKey, abbr) => `espn:${sportKey}:${String(abbr ?? 
 export const bundleIndexKey = (sportKey) => `espn:${sportKey}`;
 /** Every player in the league, name, team, position and headshot: what the Players tab searches. */
 export const playersIndexKey = (sportKey) => `espn:${sportKey}:players`;
+/** The league's injury report, by athlete id, written every half hour (the ESPN injuries workflow). */
+export const injuriesKey = (sportKey) => `espn:${sportKey}:injuries`;
+
+/** The injury report as the runner wrote it: { builtAt, players: { id: { name, team, status, detail, date } } }, or empty. */
+export async function loadInjuries(env, sportKey) {
+  const raw = await env?.POTD_KV?.get?.(injuriesKey(sportKey)).catch(() => null);
+  if (!raw) return { builtAt: null, players: {} };
+  try { const v = JSON.parse(raw); return { builtAt: v.builtAt ?? null, players: v.players ?? {} }; } catch { return { builtAt: null, players: {} }; }
+}
+
+const OUT_WORDS = /\b(out|doubtful|injured reserve|ir|suspend\w*|inactive)\b/i;
+const QUESTIONABLE_WORDS = /\b(questionable|day[- ]to[- ]day|probable|gtd|game[- ]time)\b/i;
+
+/** The tag for one player: { status, detail, level: 'out' | 'questionable' }, or null when he is not listed or the listing says he plays. */
+export function injuryFor(report, athleteId) {
+  const entry = report?.players?.[String(athleteId ?? '')];
+  if (!entry?.status) return null;
+  const level = OUT_WORDS.test(entry.status) ? 'out' : QUESTIONABLE_WORDS.test(entry.status) ? 'questionable' : null;
+  if (!level) return null;
+  return { status: entry.status, detail: entry.detail ?? '', level, date: entry.date ?? null };
+}
+
+/** Rows (or legs, or players) with `injury` set from the report by athleteId; the report wins over whatever the row carried. */
+export function withInjuries(rows, report) {
+  return (rows ?? []).map((r) => ({ ...r, injury: injuryFor(report, r.athleteId ?? r.id) }));
+}
 
 /** A record older than this is still used, but the trace says so. */
 export const BUNDLE_STALE_HOURS = 30;

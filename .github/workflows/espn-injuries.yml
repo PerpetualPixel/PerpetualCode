@@ -1,0 +1,33 @@
+# The injury report, every half hour: rosters only (sixty-odd requests,
+# a few seconds), written to the worker's KV so the Trends cards, the
+# Pixel's Picks legs and the Players tab tag a player who is questionable
+# or out on every read (worker/src/espn-bundle.js's loadInjuries). The
+# full ESPN bundle writes the same key three times a day.
+name: ESPN injuries
+
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: '3,33 * * * *'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: espn-injuries
+  cancel-in-progress: false
+
+jobs:
+  injuries:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Pull the injury report and write KV
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+        run: node scripts/espn-bundle.mjs --injuries

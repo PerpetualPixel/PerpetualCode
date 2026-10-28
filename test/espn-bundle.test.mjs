@@ -57,3 +57,23 @@ test('the build\'s readers answer from the bundle: a bundled team is authoritati
   const roster = await deps.roster('BOS', null);
   assert.deepEqual(roster.athletes[0].items.map((a) => a.displayName), ['Derrick White', 'Jaylen Brown']);
 });
+
+test('the injury report: a listed player is tagged out or questionable by his status, an unlisted or playing one is not, and the tag rides on rows by athlete id', async () => {
+  const { loadInjuries, injuryFor, withInjuries, injuriesKey } = await import('../worker/src/espn-bundle.js');
+  const report = { builtAt: 5, players: {
+    1: { name: 'A', team: 'BOS', status: 'Out', detail: 'Knee' }, 2: { name: 'B', team: 'BOS', status: 'Day-To-Day', detail: 'Ankle' }, 3: { name: 'C', team: 'BOS', status: 'Questionable', detail: '' },
+    4: { name: 'D', team: 'BOS', status: 'Doubtful', detail: 'Back' }, 5: { name: 'E', team: 'BOS', status: 'Injured Reserve', detail: 'Hamstring' }, 6: { name: 'F', team: 'BOS', status: 'Active', detail: '' },
+  } };
+  assert.deepEqual(injuryFor(report, 1), { status: 'Out', detail: 'Knee', level: 'out', date: null });
+  assert.equal(injuryFor(report, '2').level, 'questionable');
+  assert.equal(injuryFor(report, 3).level, 'questionable');
+  assert.equal(injuryFor(report, 4).level, 'out');
+  assert.equal(injuryFor(report, 5).level, 'out');
+  assert.equal(injuryFor(report, 6), null, 'a status that says he plays is no tag');
+  assert.equal(injuryFor(report, 99), null);
+  assert.deepEqual(withInjuries([{ athleteId: '1', x: 1 }, { athleteId: '9' }], report).map((r) => r.injury?.level ?? null), ['out', null]);
+  const store = new Map([[injuriesKey('basketball_nba'), JSON.stringify(report)]]);
+  const env = { POTD_KV: { async get(k) { return store.get(k) ?? null; } } };
+  assert.equal((await loadInjuries(env, 'basketball_nba')).builtAt, 5);
+  assert.deepEqual(await loadInjuries(env, 'americanfootball_nfl'), { builtAt: null, players: {} });
+});
