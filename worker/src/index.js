@@ -57,7 +57,7 @@ import { runPotdDaily, runPotdClvSnapshot, runPotdGrading, backfillPotdAnalysis,
 import { runLadderDaily, runLadderGrading, getLadder, getLadderHistory } from './ladder.js';
 import { BUILD_INFO } from '../../docs/version.js';
 import { runTrendsBuild, getTrends, buildLeagueChunk, TREND_ENABLED_SPORTS } from './trends.js';
-import { loadBundleIndex } from './espn-bundle.js';
+import { loadBundleIndex, loadInjuries, injuryFor, withInjuries } from './espn-bundle.js';
 import { getPlayerIndex, getPlayerLog, playerStats } from './player-search.js';
 import { runTrendPicksDaily, runTrendPicksGrading, getTrendPicks } from './trend-picks.js';
 
@@ -1521,6 +1521,7 @@ export default {
       if (!TREND_ENABLED_SPORTS.includes(sportKey) || !playerStats(sportKey).some((x) => x.key === stat)) return json({ error: 'unknown sport or stat' }, { status: 400, headers: cors });
       const log = await getPlayerLog(env, sportKey, q.get('team') ?? '', q.get('id') ?? '', stat);
       if (!log) return json({ error: 'no game log for that player' }, { status: 404, headers: cors });
+      log.player.injury = injuryFor(await loadInjuries(env, sportKey), log.player.id);
       return json(log, { headers: { ...cors, 'Cache-Control': 'public, max-age=600' } });
     }
 
@@ -1528,7 +1529,13 @@ export default {
     // (worker/src/trend-picks.js). KV only.
     if (pathname === '/trend-picks' && request.method === 'GET') {
       try {
-        return json(await getTrendPicks(env, Date.now()), { headers: { ...cors, 'Cache-Control': 'public, max-age=120' } });
+        const data = await getTrendPicks(env, Date.now());
+        // Today's legs carry the injury report as of the last half hour.
+        if (data.today?.bets?.length) {
+          const reports = Object.fromEntries(await Promise.all(TREND_ENABLED_SPORTS.map(async (k) => [k, await loadInjuries(env, k)])));
+          data.today = { ...data.today, bets: data.today.bets.map((b) => ({ ...b, legs: b.legs.map((l) => ({ ...l, injury: injuryFor(reports[l.sportKey], l.athleteId) })) })) };
+        }
+        return json(data, { headers: { ...cors, 'Cache-Control': 'public, max-age=120' } });
       } catch (error) {
         return json({ today: null, history: [], record: null, error: String(error).slice(0, 120) }, { status: 500, headers: cors });
       }
@@ -1539,7 +1546,12 @@ export default {
         const wanted = new URL(request.url).searchParams.get('sport');
         const keys = wanted && TREND_ENABLED_SPORTS.includes(wanted) ? [wanted] : TREND_ENABLED_SPORTS;
         const all = await Promise.all(keys.map((k) => getTrends(env, k)));
-        const trends = all.find((t) => t.rows.length) ?? all[0];
+        const found = all.find((t) => t.rows.length) ?? all[0];
+        // The injury report as of the last half hour, on every row: a
+        // player questionable or out is tagged on the card the moment the
+        // report says so, whatever the stored rows carried when built.
+        const report = await loadInjuries(env, found.sportKey);
+        const trends = { ...found, rows: withInjuries(found.rows, report), injuriesAt: report.builtAt };
         // `feed` is the last Odds API call's outcome (odds.js's
         // recordOddsDiag): a tab with no rows can say the feed refused the
         // call rather than look like a build that never ran.

@@ -331,4 +331,13 @@ test('a pending ticket follows its book\'s number until tip-off: a moved project
   assert.equal(sb.bets[0].legs[0].american, -200);
   assert.equal(sb.bets[0].american, 110, '1.5 x 1.4 = 2.1');
   assert.equal(refreshLegs(sb, [row('a', { american: -150, books: { draftkings: -150 }, eventId: 'e-a' })], NOW + 4 * 3.6e6), 0, 'tipped off: untouched');
+  // The injury report: a leg whose player is listed out since the ticket posted says so; a listing that says he plays clears it.
+  const inj = { bets: [{ id: 'y', status: 'pending', commenceMs: NOW + 3.6e6, shape: 'power2', american: 200, decimal: 3, units: 1, legs: [{ playerName: 'Collin Sexton', athleteId: '4', sportKey: 'basketball_nba', eventId: 'e-a', statKey: 'points', side: 'over', point: 9.5, bookId: 'prizepicks', american: -137, decimal: 1.73, commenceMs: NOW + 3.6e6 }] }] };
+  assert.equal(refreshLegs(inj, [], NOW, { basketball_nba: { players: { 4: { name: 'Collin Sexton', team: 'CHA', status: 'Out', detail: 'Knee' } } } }), 1);
+  assert.equal(inj.bets[0].legs[0].injury.level, 'out');
+  assert.match(inj.bets[0].legs[0].injuryWarning, /Listed out \(Knee\)/);
+  assert.equal(inj.bets[0].american, 200, 'a PrizePicks lineup keeps its multiplier');
+  assert.equal(refreshLegs(inj, [], NOW + 60e3, { basketball_nba: { players: { 4: { name: 'Collin Sexton', team: 'CHA', status: 'Out', detail: 'Knee' } } } }), 0, 'unchanged: nothing written');
+  assert.equal(refreshLegs(inj, [], NOW + 120e3, { basketball_nba: { players: {} } }), 1);
+  assert.equal(inj.bets[0].legs[0].injury, null);
 });

@@ -17,13 +17,15 @@
 import { readFileSync } from 'node:fs';
 import { espnAbbr } from '../docs/team-logos.js';
 import { priorSeasonKey } from '../docs/prop-legs.js';
-import { bundleKey, bundleIndexKey, playersIndexKey } from '../worker/src/espn-bundle.js';
+import { bundleKey, bundleIndexKey, playersIndexKey, injuriesKey } from '../worker/src/espn-bundle.js';
 import { basketballHeadshotUrl } from '../worker/src/basketball-props.js';
 import { nflHeadshotUrl } from '../worker/src/football-props.js';
 
 const args = process.argv.slice(2);
 const DRY = args.includes('--dry-run');
 const ONLY = args.includes('--league') ? args[args.indexOf('--league') + 1] : null;
+/** Rosters only, for the injury report: every half hour, a few seconds, no game logs. */
+const INJURIES_ONLY = args.includes('--injuries');
 const CONCURRENCY = 6;
 const TTL_SECONDS = 3 * 86400;
 
@@ -113,11 +115,27 @@ async function leagueTeams(league) {
   return [...teams.values()];
 }
 
-async function buildTeam(league, team, now) {
+/** The roster's athletes, every position. */
+async function rosterOf(league, team) {
   const roster = await getJson(`${league.site}/teams/${team.abbr}/roster`);
   const groups = Array.isArray(roster?.athletes) ? roster.athletes : [];
-  const items = groups.flatMap((g) => (Array.isArray(g?.items) ? g.items : Array.isArray(g) ? g : [g]));
-  const athletes = items.filter((a) => a?.id && a?.displayName && league.keep(a?.position?.abbreviation));
+  return groups.flatMap((g) => (Array.isArray(g?.items) ? g.items : Array.isArray(g) ? g : [g])).filter((a) => a?.id && a?.displayName);
+}
+
+/** The injury report ESPN files on the roster: one entry per listed player, with the status, the detail and when it was filed. */
+function injuryEntries(league, team, items) {
+  const out = {};
+  for (const a of items) {
+    const inj = (a?.injuries ?? [])[0];
+    if (!inj?.status) continue;
+    out[String(a.id)] = { name: a.displayName, team: team.abbr.toUpperCase(), position: a?.position?.abbreviation ?? null, status: inj.status, detail: inj?.details?.detail ?? inj?.details?.type ?? '', date: inj?.date ?? null };
+  }
+  return out;
+}
+
+async function buildTeam(league, team, now) {
+  const items = await rosterOf(league, team);
+  const athletes = items.filter((a) => league.keep(a?.position?.abbreviation));
   const players = await pool(athletes, async (a) => {
     const current = await getJson(`${league.gamelog}/${a.id}/gamelog`);
     const priorKey = current ? league.prior(current) : null;
@@ -135,7 +153,7 @@ async function buildTeam(league, team, now) {
   const kept = players.filter(Boolean);
   const games = kept.reduce((n, p) => n + Object.keys(p.log.events).length, 0);
   say(`  ${team.abbr.toUpperCase()} ${team.name}: ${athletes.length} on roster, ${kept.length} logs, ${games} logged games`);
-  return { sportKey: league.sportKey, team: team.abbr.toUpperCase(), builtAt: now, players: kept };
+  return { sportKey: league.sportKey, team: team.abbr.toUpperCase(), builtAt: now, players: kept, injuries: injuryEntries(league, team, items) };
 }
 
 function kvConfig() {
@@ -168,9 +186,18 @@ for (const [name, league] of Object.entries(LEAGUES)) {
   const teams = await leagueTeams(league);
   say(`teams: [${teams.map((t) => t.abbr.toUpperCase()).join(',')}]`);
   if (!teams.length) { failed = true; say('  ! no teams: the league list did not load'); continue; }
+  if (INJURIES_ONLY) {
+    const players = {};
+    await pool(teams, async (team) => Object.assign(players, injuryEntries(league, team, await rosterOf(league, team))));
+    say(`${Object.keys(players).length} players on the injury report`);
+    if (DRY) continue;
+    try { await writeKv([{ key: injuriesKey(league.sportKey), value: { sportKey: league.sportKey, builtAt: now, players } }]); } catch (e) { failed = true; say(`  ! ${e.message}`); }
+    continue;
+  }
   const records = [];
   for (const team of teams) records.push(await buildTeam(league, team, now));
-  const entries = records.map((r) => ({ key: bundleKey(league.sportKey, r.team), value: r }));
+  const entries = records.map(({ injuries, ...r }) => ({ key: bundleKey(league.sportKey, r.team), value: r }));
+  entries.push({ key: injuriesKey(league.sportKey), value: { sportKey: league.sportKey, builtAt: now, players: Object.assign({}, ...records.map((r) => r.injuries)) } });
   entries.push({ key: bundleIndexKey(league.sportKey), value: { sportKey: league.sportKey, builtAt: now, teams: records.map((r) => r.team), players: records.reduce((n, r) => n + r.players.length, 0) } });
   // Every player in the league, light enough for the Players tab to search as the user types (worker/src/player-search.js).
   const headshot = league.sportKey === 'americanfootball_nfl' ? nflHeadshotUrl : (id) => basketballHeadshotUrl(league.sportKey, id);
