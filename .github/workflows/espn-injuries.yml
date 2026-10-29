@@ -2,7 +2,9 @@
 # a few seconds), written to the worker's KV so the Trends cards, the
 # Pixel's Picks legs and the Players tab tag a player who is questionable
 # or out on every read (worker/src/espn-bundle.js's loadInjuries). The
-# full ESPN bundle writes the same key three times a day.
+# full ESPN bundle writes the same key three times a day. The same run
+# refreshes the game logs behind any open Pixel's Picks ticket, so the
+# worker grades it on its next tick instead of after the morning bundle.
 name: ESPN injuries
 
 on:

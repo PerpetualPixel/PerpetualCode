@@ -24,7 +24,7 @@ import { nflHeadshotUrl } from '../worker/src/football-props.js';
 const args = process.argv.slice(2);
 const DRY = args.includes('--dry-run');
 const ONLY = args.includes('--league') ? args[args.indexOf('--league') + 1] : null;
-/** Rosters only, for the injury report: every half hour, a few seconds, no game logs. */
+/** Rosters only, for the injury report, plus the game logs behind any open ticket so it grades within the hour: every half hour, a few seconds. */
 const INJURIES_ONLY = args.includes('--injuries');
 const CONCURRENCY = 6;
 const TTL_SECONDS = 3 * 86400;
@@ -156,6 +156,63 @@ async function buildTeam(league, team, now) {
   return { sportKey: league.sportKey, team: team.abbr.toUpperCase(), builtAt: now, players: kept, injuries: injuryEntries(league, team, items) };
 }
 
+/** One KV value by key, parsed, or null when it is not there. */
+async function readKv(key) {
+  const { namespace, token, account } = kvConfig();
+  const res = await fetch(`https://api.cloudflare.com/client/v4/accounts/${account}/storage/kv/namespaces/${namespace}/values/${encodeURIComponent(key)}`, { headers: { Authorization: `Bearer ${token}` } });
+  if (res.status === 404) return null;
+  if (!res.ok) throw new Error(`KV read failed: HTTP ${res.status}`);
+  return res.json();
+}
+
+const etDate = (ms) => new Intl.DateTimeFormat('en-CA', { timeZone: 'America/New_York', year: 'numeric', month: '2-digit', day: '2-digit' }).format(ms);
+
+/**
+ * The game logs behind the open Pixel's Picks tickets, refreshed so the
+ * worker grades them on its next tick rather than after the morning
+ * bundle: the pending legs from today's and yesterday's records
+ * (worker/src/trend-picks.js keys them trendpicks:<date>), their
+ * players' logs pulled fresh and written back into the team records.
+ */
+async function refreshTicketLogs(league, now) {
+  const wanted = new Map();
+  for (const date of [etDate(now), etDate(now - 864e5)]) {
+    const record = await readKv(`trendpicks:${date}`).catch((e) => { say(`  ! ${e.message}`); return null; });
+    for (const bet of record?.bets ?? []) {
+      if (bet.status !== 'pending') continue;
+      for (const leg of bet.legs ?? []) {
+        if (leg.result != null || leg.sportKey !== league.sportKey || !leg.athleteId || !leg.team) continue;
+        const team = String(leg.team).toUpperCase();
+        if (!wanted.has(team)) wanted.set(team, new Set());
+        wanted.get(team).add(String(leg.athleteId));
+      }
+    }
+  }
+  if (!wanted.size) { say('no open tickets to refresh'); return; }
+  const entries = [];
+  for (const [team, ids] of wanted) {
+    const record = await readKv(bundleKey(league.sportKey, team)).catch(() => null);
+    if (!Array.isArray(record?.players)) { say(`  ! ${team}: no team record to refresh`); continue; }
+    let refreshed = 0;
+    for (const id of ids) {
+      const player = record.players.find((p) => String(p.id) === id);
+      if (!player) continue;
+      const current = await getJson(`${league.gamelog}/${id}/gamelog`);
+      const priorKey = current ? league.prior(current) : null;
+      const prior = priorKey ? await getJson(`${league.gamelog}/${id}/gamelog?season=${priorKey}`) : null;
+      const log = mergeLogs(trimLog(current), trimLog(prior));
+      if (!log) continue;
+      player.log = log;
+      refreshed++;
+    }
+    say(`  ${team}: ${refreshed} of ${ids.size} open-ticket logs refreshed`);
+    if (refreshed) entries.push({ key: bundleKey(league.sportKey, team), value: { ...record, refreshedAt: now } });
+  }
+  if (!entries.length) return;
+  if (DRY) { say(`  (dry run) would write ${entries.length} team records`); return; }
+  await writeKv(entries);
+}
+
 function kvConfig() {
   const toml = readFileSync(new URL('../worker/wrangler.toml', import.meta.url), 'utf8');
   const block = /\[\[kv_namespaces\]\][\s\S]*?binding\s*=\s*"POTD_KV"[\s\S]*?id\s*=\s*"([0-9a-f]+)"/.exec(toml);
@@ -190,8 +247,8 @@ for (const [name, league] of Object.entries(LEAGUES)) {
     const players = {};
     await pool(teams, async (team) => Object.assign(players, injuryEntries(league, team, await rosterOf(league, team))));
     say(`${Object.keys(players).length} players on the injury report`);
-    if (DRY) continue;
-    try { await writeKv([{ key: injuriesKey(league.sportKey), value: { sportKey: league.sportKey, builtAt: now, players } }]); } catch (e) { failed = true; say(`  ! ${e.message}`); }
+    if (!DRY) { try { await writeKv([{ key: injuriesKey(league.sportKey), value: { sportKey: league.sportKey, builtAt: now, players } }]); } catch (e) { failed = true; say(`  ! ${e.message}`); } }
+    try { await refreshTicketLogs(league, now); } catch (e) { say(`  ! ticket logs: ${e.message}`); }
     continue;
   }
   const records = [];

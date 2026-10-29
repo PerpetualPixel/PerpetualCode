@@ -53,13 +53,13 @@ test('the weekly report tallies the week\'s settled tickets overall and per leag
   await runTrendPicksGrading(env, ctx, later, { deps: { actual: async () => 12 } });
   const { sections, lines, settled } = await weeklyTicketSummary(env, later);
   assert.equal(settled, 1);
-  assert.deepEqual(sections, [['All tickets', { wins: 1, losses: 0, pushes: 0, voids: 0, units: 0.96, dollars: 4.8 }], ['NBA', { wins: 1, losses: 0, pushes: 0, voids: 0, units: 0.96, dollars: 4.8 }]]);
+  assert.deepEqual(sections, [['All tickets', { wins: 1, losses: 0, pushes: 0, voids: 0, units: 0.96, risked: 1, roi: 0.96 }], ['NBA', { wins: 1, losses: 0, pushes: 0, voids: 0, units: 0.96, risked: 1, roi: 0.96 }]]);
   assert.equal(lines[0].legs, 'Collin Sexton Over 9.5 Pts + LaMelo Ball Over 9.5 Pts');
   assert.equal(await sendWeeklyTrackingReport(env, later, { deps: { users } }), 2);
   assert.match(sent[0].html, /All tickets/);
   assert.match(sent[0].html, /1-0/);
-  assert.match(sent[0].html, /\+0\.96 u &middot; \+\$4\.80/);
-  assert.match(sent[0].text, /Won \+\$4\.80/);
+  assert.match(sent[0].html, /\+0\.96 u &middot; ROI \+96\.0%/);
+  assert.match(sent[0].text, /Won \+0\.96u/);
   const empty = makeEnv();
   await sendWeeklyTrackingReport(empty.env, later, { deps: { users } });
   assert.match(empty.sent[0].text, /No ticket settled this week/);

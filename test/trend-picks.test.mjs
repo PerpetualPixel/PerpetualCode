@@ -9,7 +9,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import {
   qualifyingRows, researchPick, runTrendPicksDaily, runTrendPicksGrading, getTrendPicks, settle, settleBet, parseVerdict, buildBets, pickQuotes, refreshLegs,
-  PICK_MIN_GAMES, PICK_MAX_BETS, PICK_BOOKS, UNIT_DOLLARS,
+  PICK_MIN_GAMES, PICK_MAX_BETS, PICK_BOOKS, TICKET_UNITS,
 } from '../worker/src/trend-picks.js';
 
 const NOW = Date.parse('2026-10-27T15:00:00Z'); // 11am ET Oct 27
@@ -196,7 +196,7 @@ test('the day researches the ranked groups, builds the tickets from the ones tha
   assert.equal(rec.usable, 4, 'a line priced -1100 everywhere can sit on no ticket');
   assert.ok(!researched.includes('Luka Doncic'), 'and is not worth a research call');
   // Every pair prices past +150, so the top two ride straight: Miller then Ball; Bridges passes on minutes; Sexton is left over.
-  assert.deepEqual(rec.bets.map((b) => [b.type, b.legs[0].playerName, b.american, b.book, b.units, b.stake]), [['straight', 'Brandon Miller', -102, 'DraftKings', 1, UNIT_DOLLARS], ['straight', 'LaMelo Ball', -110, 'DraftKings', 1, UNIT_DOLLARS]]);
+  assert.deepEqual(rec.bets.map((b) => [b.type, b.legs[0].playerName, b.american, b.book, b.units]), [['straight', 'Brandon Miller', -102, 'DraftKings', TICKET_UNITS], ['straight', 'LaMelo Ball', -110, 'DraftKings', TICKET_UNITS]]);
   assert.equal(rec.bets[0].link, 'https://draftkings.example/d', 'a straight carries the line\'s deep link');
   assert.deepEqual(rec.passed.map((p) => p.selection), ['Miles Bridges Over 9.5 Pts']);
   assert.match(rec.passed[0].reasons[0], /minutes are down/);
@@ -289,10 +289,10 @@ test('bets are graded leg by leg off the game log once the games are over, a no-
   assert.deepEqual(bet.legs.map((l) => [l.playerName, l.result, l.actual]), [['Collin Sexton', 'win', 12], ['LaMelo Ball', 'void', null]]);
   assert.equal(bet.result, 'win');
   assert.equal(bet.net, 0.4);
-  assert.deepEqual(all.record, { wins: 1, losses: 0, pushes: 0, voids: 0, units: 0.4, dollars: 2 });
+  assert.deepEqual(all.record, { wins: 1, losses: 0, pushes: 0, voids: 0, units: 0.4, risked: 1, roi: 0.4 });
   assert.deepEqual(all.bySport.basketball_nba, all.record);
-  assert.deepEqual(all.bySport.americanfootball_nfl, { wins: 0, losses: 0, pushes: 0, voids: 0, units: 0, dollars: 0 });
-  assert.equal(all.unitDollars, UNIT_DOLLARS);
+  assert.deepEqual(all.bySport.americanfootball_nfl, { wins: 0, losses: 0, pushes: 0, voids: 0, units: 0, risked: 0, roi: null });
+  assert.equal('unitDollars' in all, false);
 });
 
 test('a pending ticket follows its book\'s number until tip-off: a moved projection replaces the leg and is written down, a price move reprices a sportsbook ticket, a number that no longer lands every game carries a warning', async () => {
