@@ -64,12 +64,13 @@ function populateForm(data) {
   document.getElementById('email-current').value = data.email;
   renderPendingEmailBanner(data.pendingEmail);
 
-  document.getElementById('notif-potd-email').checked = !!data.notifications.potdEmail;
-  document.getElementById('notif-picks-email').checked = !!data.notifications.picksEmail;
-  document.getElementById('notif-ladder-email').checked = !!data.notifications.ladderEmail;
-  document.getElementById('notif-potd-sms').checked = !!data.notifications.potdSms;
-  document.getElementById('notif-picks-sms').checked = !!data.notifications.picksSms;
-  document.getElementById('notif-tracking-report').checked = !!data.notifications.trackingReportEmail;
+  // Only the toggles the page still has (Pixel's Picks email, the weekly
+  // report); each names its setting in data-field, so a toggle removed
+  // from the markup is simply not filled.
+  const notifications = data.notifications || {};
+  document.querySelectorAll('#settings-body input[data-field]').forEach((input) => {
+    input.checked = !!notifications[input.dataset.field];
+  });
 }
 
 async function init() {
