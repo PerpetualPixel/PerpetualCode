@@ -24,7 +24,7 @@ import { fetchBasketballGamelog, basketballStatRows } from './basketball-props.j
 import { fetchNflGamelog, gamelogStatIndex } from './football-props.js';
 import { bundlePlayer, loadBundleTeams, loadInjuries, injuryFor } from './espn-bundle.js';
 import { seasonColumnRows } from '../../docs/prop-legs.js';
-import { overNeed, underNeed, attachSeries, legScore } from '../../docs/trends.js';
+import { overNeed, underNeed, attachSeries, legScore, hitFlags } from '../../docs/trends.js';
 import { bookIdFor, SPORTSBOOKS, americanToDecimal } from '../../docs/engine.js';
 import { espnAbbr } from '../../docs/team-logos.js';
 
@@ -510,15 +510,48 @@ function betRecord(bet, index, dateKey, research, now) {
   };
 }
 
+/** The hit-rate periods for a number, from the leg's own series: the last 5, 10 and 20 and the games against the opponent in them. */
+export function periodsFromSeries(series, point, side, opponent) {
+  const flags = hitFlags(series ?? [], point, side);
+  const tally = (idx) => { const f = idx.map((i) => flags[i]).filter((x) => x !== null); const hits = f.filter(Boolean).length; return { hits, games: f.length, rate: f.length ? hits / f.length : null }; };
+  const first = (n) => flags.slice(0, n).map((_, i) => i);
+  return { l5: tally(first(5)), l10: tally(first(10)), l20: tally(first(20)), h2h: tally(flags.map((_, i) => i).filter((i) => series[i].opponent === opponent)) };
+}
+
 /**
- * Keep a pending ticket on the book's current number until tip-off:
- * each leg follows its book's line for the same player, stat and side.
- * The price updates; a moved number (a pick'em projection, mostly)
- * replaces the leg's number, record and chart, is written down in
- * `moves`, and carries a warning when the new number has not landed
- * every game. A sportsbook ticket's price is recomputed from its legs;
- * a PrizePicks lineup pays its fixed multiplier regardless. Returns how
- * many tickets changed.
+ * A leg the earlier refresh moved onto the book's new number (it
+ * replaced the point, the record and the chart) is put back on the
+ * number it was drawn on, from the board's row at that number if a book
+ * still posts it, else from the leg's own series.
+ */
+function restoreDrawnLine(leg, rows) {
+  const drawn = leg.moves[0].from;
+  const original = (rows ?? []).find((r) => r.eventId === leg.eventId && r.statKey === leg.statKey && r.side === leg.side && r.point === drawn && fold(r.playerName) === fold(leg.playerName));
+  if (original) {
+    Object.assign(leg, { id: original.id, selection: original.selection, rates: original.rates, periods: { l5: original.periods.l5, l10: original.periods.l10, l20: original.periods.l20, h2h: original.periods.h2h }, series: (original.series ?? []).slice(0, 20) });
+  } else {
+    const flags = hitFlags(leg.series ?? [], drawn, leg.side);
+    leg.series = (leg.series ?? []).map((g, i) => ({ ...g, hit: flags[i] }));
+    leg.periods = periodsFromSeries(leg.series, drawn, leg.side, leg.opponent);
+    leg.selection = String(leg.selection ?? '').replace(String(leg.point), String(drawn));
+  }
+  leg.point = drawn;
+  leg.current = null;
+  leg.warning = null;
+}
+
+/**
+ * Keep a pending ticket current until tip-off without ever moving what
+ * is tracked: a leg is graded on the number it was drawn on, whatever
+ * the book does after. While the book posts that number, the leg
+ * follows its price. When the book moves the number, the leg keeps its
+ * point, record, chart and posted price; the new number goes in
+ * `current` with its own record, `moves` writes the move down, and the
+ * card's warning says the ticket tracks the drawn number and, when the
+ * new one has not landed every game, that it is not to be added unless
+ * the drawn number was had. A sportsbook ticket's price is recomputed
+ * from its legs; a PrizePicks lineup pays its fixed multiplier
+ * regardless. Returns how many tickets changed.
  */
 export function refreshLegs(record, rows, now = Date.now(), reports = {}) {
   let changed = 0;
@@ -527,6 +560,8 @@ export function refreshLegs(record, rows, now = Date.now(), reports = {}) {
     let betChanged = false;
     for (const leg of bet.legs) {
       if (leg.commenceMs <= now) continue;
+      // Written before the tracked number was pinned: the leg followed the book's number; put it back.
+      if (leg.moves?.length && leg.current === undefined) { restoreDrawnLine(leg, rows); betChanged = true; }
       // The injury report as of the last half hour: a leg whose player is
       // now listed out or doubtful says so on the card.
       const injury = injuryFor(reports[leg.sportKey], leg.athleteId);
@@ -543,23 +578,32 @@ export function refreshLegs(record, rows, now = Date.now(), reports = {}) {
       if (!atBook.length) continue; // the book pulled the line; the ticket stands as posted
       const pick = atBook.find((x) => x.r.point === leg.point) ?? atBook.sort((a, b) => Math.abs(a.r.point - leg.point) - Math.abs(b.r.point - leg.point))[0];
       const { r, q } = pick;
-      const lineMoved = r.point !== leg.point;
-      const priceMoved = q.american !== leg.american;
-      if (!lineMoved && !priceMoved) continue;
-      if (lineMoved) {
-        (leg.moves ??= []).push({ at: now, from: leg.point, to: r.point });
-        leg.point = r.point;
-        leg.selection = r.selection;
-        leg.marketLabel = r.marketLabel ?? leg.marketLabel;
-        leg.id = r.id;
-        leg.rates = r.rates;
-        leg.periods = { l5: r.periods.l5, l10: r.periods.l10, l20: r.periods.l20, h2h: r.periods.h2h };
-        leg.series = (r.series ?? []).slice(0, 20);
-        leg.quotes = (r.quotes ?? []).slice(0, 8);
+      if (r.point !== leg.point) {
+        // The book moved the number: the drawn number, record, chart and posted price stand; the new number is noted, not tracked.
         const l20 = r.periods?.l20; const h2h = r.periods?.h2h;
         const still = l20?.rate === 1 && (!h2h?.games || h2h.rate === 1);
-        leg.warning = still ? null : `The ${r.point} has landed ${l20?.hits ?? 0} of the last ${l20?.games ?? 0}${h2h?.games && h2h.rate !== 1 ? ` and ${h2h.hits} of ${h2h.games} against them` : ''}; the ticket was drawn on the ${leg.moves[0].from}.`;
+        const shown = leg.current?.point ?? leg.point;
+        if (r.point !== shown) (leg.moves ??= []).push({ at: now, from: shown, to: r.point });
+        const current = { point: r.point, selection: r.selection, american: q.american, decimal: q.decimal ?? americanToDecimal(q.american), link: q.link ?? null, l20: { hits: l20?.hits ?? 0, games: l20?.games ?? 0 }, h2h: h2h?.games ? { hits: h2h.hits, games: h2h.games } : null, still, at: leg.current?.point === r.point ? leg.current.at : now };
+        const same = (a, b) => JSON.stringify({ ...a, at: 0 }) === JSON.stringify({ ...b, at: 0 });
+        if (leg.current && same(leg.current, current)) continue;
+        leg.current = current;
+        const book = pickBookName(leg.bookId);
+        leg.warning = still
+          ? `${book} moved the line to ${r.point}, which has landed every game too. The ticket tracks the ${leg.point} it was drawn on.`
+          : `${book} moved the line to ${r.point}, which has landed ${current.l20.hits} of the last ${current.l20.games}${current.h2h && h2h.rate !== 1 ? ` and ${current.h2h.hits} of ${current.h2h.games} against them` : ''}. Not used for tracking: the ticket stays on the ${leg.point}. Do not add the ${r.point} to your slip unless you got the ${leg.point}.`;
+        betChanged = true;
+        continue;
       }
+      if (leg.current) {
+        // The book posts the drawn number again: back to following its price, the note cleared.
+        (leg.moves ??= []).push({ at: now, from: leg.current.point, to: r.point });
+        leg.current = null;
+        leg.warning = null;
+        betChanged = true;
+      }
+      const priceMoved = q.american !== leg.american;
+      if (!priceMoved && !betChanged) continue;
       leg.american = q.american;
       leg.decimal = q.decimal ?? americanToDecimal(q.american);
       leg.link = q.link ?? leg.link;

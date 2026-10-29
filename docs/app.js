@@ -9587,7 +9587,7 @@ function renderPickLeg(leg, bet) {
       ${renderTrendBars(row, 'l20')}
       <span class="pick-h2h">${h2h?.games ? `${esc(String(h2h.hits))} of ${esc(String(h2h.games))} vs ${esc(leg.opponent ?? '')}` : 'no games vs ' + esc(leg.opponent ?? 'them')}</span>
     </div>
-    ${moved ? `<p class="pick-move">Line moved from ${esc(String(moved.from))} to ${esc(String(moved.to))} at ${esc(trendTimeFmt.format(new Date(moved.at)))}${leg.warning ? `. ${esc(leg.warning)}` : ', still landed every game'}</p>` : ''}
+    ${leg.current ? `<p class="pick-move ${leg.current.still ? '' : 'is-out'}"><span class="pick-move-tag">${leg.current.still ? 'Line moved' : 'Line moved · not tracked'}</span> ${esc(leg.warning ?? '')}</p>` : moved ? `<p class="pick-move">Line moved from ${esc(String(moved.from))} to ${esc(String(moved.to))} at ${esc(trendTimeFmt.format(new Date(moved.at)))}${leg.warning ? `. ${esc(leg.warning)}` : ''}</p>` : ''}
     ${leg.injuryWarning ? `<p class="pick-move is-out">${esc(leg.injuryWarning)}</p>` : ''}
     ${leg.note ? `<p class="pick-note">${esc(leg.note)}</p>` : ''}
   </div>`;

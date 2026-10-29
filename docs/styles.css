@@ -6868,3 +6868,5 @@ a.trend-price:hover { background: rgba(255, 255, 255, 0.06); }
 .pick-emblem-note { padding: 12px 16px; border-bottom: 1px solid var(--line); background: rgba(251, 191, 36, 0.06); font-size: 0.86rem; line-height: 1.5; }
 .pick-emblem-note p { margin: 0 0 8px; }
 .pick-emblem-note p:last-child { margin-bottom: 0; }
+
+.pick-move-tag { display: inline-block; margin-right: 6px; padding: 2px 8px; border-radius: 999px; border: 1px solid currentColor; font-size: 0.72rem; font-weight: 800; letter-spacing: 0.04em; text-transform: uppercase; vertical-align: 1px; }
