@@ -10110,10 +10110,11 @@ function renderParlay() {
   const now = Date.now();
   const live = rows.filter((r) => r.commenceMs > now);
   el.parlayLeagues.innerHTML = PLAYER_LEAGUES.map(([key, label]) => `<button type="button" class="league-chip ${s.sport === key ? 'is-active' : ''}" data-parlay-league="${esc(key)}" aria-pressed="${s.sport === key}">${leagueIconSvg(TREND_LEAGUE_ICON[key] ?? key)}<span class="league-chip-label">${esc(label)}</span></button>`).join('');
-  const booksHere = new Set(live.flatMap((r) => (r.quotes ?? []).map((q) => parlayBookId(q.bookKey))));
-  const books = PARLAY_BOOKS.filter((b) => booksHere.has(b));
-  if (books.length && !books.includes(s.book)) s.book = books[0];
-  el.parlayBook.innerHTML = (books.length ? books : PARLAY_BOOKS).map((b) => `<option value="${esc(b)}" ${s.book === b ? 'selected' : ''}>${esc(parlayBookName(b))}</option>`).join('');
+  // Every book, always, with how many of the upcoming lines it has posted: early in the day only a book or two has tomorrow's props up.
+  const linesAt = new Map(PARLAY_BOOKS.map((b) => [b, 0]));
+  for (const r of live) for (const q of r.quotes ?? []) { const b = parlayBookId(q.bookKey); if (linesAt.has(b)) linesAt.set(b, linesAt.get(b) + 1); }
+  if (!PARLAY_BOOKS.includes(s.book)) s.book = PARLAY_BOOKS[0];
+  el.parlayBook.innerHTML = PARLAY_BOOKS.map((b) => `<option value="${esc(b)}" ${s.book === b ? 'selected' : ''}>${esc(parlayBookName(b))} (${linesAt.get(b) ? `${linesAt.get(b)} lines` : 'no lines yet'})</option>`).join('');
   el.parlayLegs.value = String(s.legs);
   el.parlayL5.value = String(Math.round(s.minL5 * 100)); el.parlayL5Label.textContent = s.minL5 ? `${Math.round(s.minL5 * 100)}%+` : 'Any';
   el.parlayL10.value = String(Math.round(s.minL10 * 100)); el.parlayL10Label.textContent = s.minL10 ? `${Math.round(s.minL10 * 100)}%+` : 'Any';
@@ -10136,6 +10137,7 @@ function renderParlay() {
   const price = parlayPriceOf(legs);
   const all = parlayAllLink(legs);
   const summary = `<div class="parlay-config"><span class="parlay-tag">Score: ${esc(String(s.minScore))}+ stars</span><span class="parlay-tag">Legs: ${esc(String(s.legs))}</span><span class="parlay-tag">Odds: ${esc(formatAmerican(s.odds[0]))} to ${esc(formatAmerican(s.odds[1]))}</span><span class="parlay-tag">${esc(parlayBookName(s.book))}</span></div>`;
+  const bookLines = linesAt.get(s.book) ?? 0;
   el.parlayResult.innerHTML = `${summary}${legs.length ? `
     <div class="parlay-card">
       <div class="parlay-card-head"><strong>${legs.length}-leg ${s.book === 'prizepicks' ? 'Power Play' : 'parlay'}</strong> ${price ? `<span class="parlay-price">${esc(formatAmerican(price.american))}</span>` : ''}<span class="parlay-card-book">${bookBadge(s.book, parlayBookName(s.book))}${esc(parlayBookName(s.book))}</span></div>
@@ -10147,7 +10149,7 @@ function renderParlay() {
       <h3>Potential payout</h3>
       <label>Enter amount <span class="parlay-amount"><span>$</span><input id="parlayAmount" type="number" min="1" step="1" inputmode="decimal" value="${esc(String(s.amount))}"></span></label>
       <div class="parlay-payout-value"><span>Payout</span><strong>${price ? `$${(s.amount * price.decimal).toFixed(2)}` : '—'}</strong></div>
-    </div>` : `<p class="empty">${s.note || (live.length ? 'Set the filters and hit Build.' : 'No lines on this board yet.')}</p>`}`;
+    </div>` : `<p class="empty">${s.note || (!live.length ? 'No lines on this board yet.' : !bookLines ? `${esc(parlayBookName(s.book))} has not posted lines for the upcoming games yet; pick a book with lines, or check back after it posts.` : 'Set the filters and hit Build.')}</p>`}`;
 }
 
 async function loadParlayBreakdown(rowId) {
