@@ -54,7 +54,8 @@ const fold = (s) => String(s ?? '').normalize('NFD').replace(/[̀-ͯ]/g, '').toL
 export const PICK_BOOKS = ['fanduel', 'draftkings', 'caesars', 'hardrock', 'prizepicks', 'bet365', 'fanatics', 'betmgm', 'sleeper', 'underdog'];
 const PICK_BOOK_NAMES = { prizepicks: 'PrizePicks', sleeper: 'Sleeper', underdog: 'Underdog' };
 /** One unit, in dollars, for the card and the running total. */
-export const UNIT_DOLLARS = 5;
+/** Every ticket is one unit; the record is kept in units and the return on them, never a dollar figure. */
+export const TICKET_UNITS = 1;
 /** Bets a day, at most. */
 export const PICK_MAX_BETS = 2;
 /**
@@ -463,8 +464,7 @@ function betRecord(bet, index, dateKey, research, now) {
     link: bet.type === 'straight' ? legs[0].link : null,
     american: bet.american,
     decimal: Math.round(bet.decimal * 10000) / 10000,
-    units: 1,
-    stake: UNIT_DOLLARS,
+    units: TICKET_UNITS,
     commenceMs: Math.min(...legs.map((l) => l.commenceMs)),
     legs,
     status: 'pending',
@@ -709,12 +709,14 @@ export async function runTrendPicksGrading(env, ctx, now = Date.now(), { deps = 
   return { graded };
 }
 
-/** Wins, losses, pushes, voids and net units and dollars over a list of bets. */
+/** Wins, losses, pushes, voids, net units, the units risked (every settled ticket that was not voided) and the return on them, over a list of bets. */
 export function betRecordOf(bets) {
   const done = (bets ?? []).filter((b) => b.status === 'graded' || b.status === 'void');
   const count = (result) => done.filter((b) => b.result === result).length;
   const units = Math.round(done.reduce((u, b) => u + (b.net ?? 0), 0) * 100) / 100;
-  return { wins: count('win'), losses: count('loss'), pushes: count('push'), voids: count('void'), units, dollars: Math.round(units * UNIT_DOLLARS * 100) / 100 };
+  const risked = done.filter((b) => b.result !== 'void').reduce((u, b) => u + (b.units ?? 1), 0);
+  const roi = risked ? Math.round((units / risked) * 10000) / 10000 : null;
+  return { wins: count('win'), losses: count('loss'), pushes: count('push'), voids: count('void'), units, risked, roi };
 }
 
 /** Today's record and the last `days` days of bets, newest first, with the running record overall and per league. */
@@ -736,7 +738,6 @@ export async function getTrendPicks(env, now = Date.now(), { days = 60 } = {}) {
     history,
     record: betRecordOf(bets),
     bySport,
-    unitDollars: UNIT_DOLLARS,
     books: PICK_BOOKS,
   };
 }

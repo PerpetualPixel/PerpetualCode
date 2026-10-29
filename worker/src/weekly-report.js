@@ -1,4 +1,4 @@
-import { getTrendPicks, UNIT_DOLLARS } from './trend-picks.js';
+import { getTrendPicks, betRecordOf } from './trend-picks.js';
 import { EMAIL_LOGO_HTML } from './auth-handlers.js';
 
 /**
@@ -22,7 +22,7 @@ async function fetchOptedInUsers(env) {
   return results ?? [];
 }
 
-const money = (d) => `${d < 0 ? '-' : '+'}$${Math.abs(d).toFixed(2)}`;
+const roi = (r) => (r == null ? 'ROI n/a' : `ROI ${r < 0 ? '' : '+'}${(r * 100).toFixed(1)}%`);
 const units = (u) => `${u < 0 ? '' : '+'}${u.toFixed(2)}`;
 const recordOf = (r) => `${r.wins}-${r.losses}${r.pushes ? `-${r.pushes}` : ''}${r.voids ? ` (${r.voids} void)` : ''}`;
 
@@ -31,20 +31,16 @@ function summaryRowHtml(label, r) {
   return `<tr>
     <td style="padding:8px 12px; border-bottom:1px solid rgba(217,70,239,0.15);">${label}</td>
     <td style="padding:8px 12px; border-bottom:1px solid rgba(217,70,239,0.15);">${recordOf(r)}</td>
-    <td style="padding:8px 12px; border-bottom:1px solid rgba(217,70,239,0.15); color:${color};">${units(r.units)} u &middot; ${money(r.dollars)}</td>
+    <td style="padding:8px 12px; border-bottom:1px solid rgba(217,70,239,0.15); color:${color};">${units(r.units)} u &middot; ${roi(r.roi)}</td>
   </tr>`;
 }
-const summaryRowText = (label, r) => `${label}: ${recordOf(r)}, ${units(r.units)} units, ${money(r.dollars)}`;
+const summaryRowText = (label, r) => `${label}: ${recordOf(r)}, ${units(r.units)} units, ${roi(r.roi)}`;
 
 /** The report's numbers for the last REPORT_WINDOW_DAYS days, from the tickets. */
 export async function weeklyTicketSummary(env, now = Date.now()) {
   const data = await getTrendPicks(env, now, { days: REPORT_WINDOW_DAYS });
   const bets = data.history.flatMap((d) => d.bets ?? []).filter((b) => b.status === 'graded' || b.status === 'void');
-  const tally = (list) => {
-    const n = (result) => list.filter((b) => b.result === result).length;
-    const u = Math.round(list.reduce((s, b) => s + (b.net ?? 0), 0) * 100) / 100;
-    return { wins: n('win'), losses: n('loss'), pushes: n('push'), voids: n('void'), units: u, dollars: Math.round(u * UNIT_DOLLARS * 100) / 100 };
-  };
+  const tally = (list) => betRecordOf(list);
   const sections = [['All tickets', tally(bets)]];
   for (const [key, label] of Object.entries(LEAGUE_LABEL)) {
     const mine = bets.filter((b) => b.sportKey === key);
@@ -64,15 +60,15 @@ export async function sendWeeklyTrackingReport(env, now = Date.now(), { deps = {
   const rowsHtml = sections.map(([label, r]) => summaryRowHtml(label, r)).join('');
   const rowsText = sections.map(([label, r]) => summaryRowText(label, r)).join('\n');
   const result = { win: 'Won', loss: 'Lost', push: 'Push', void: 'No action' };
-  const linesHtml = lines.map((l) => `<li style="margin: 0 0 6px;"><span style="color:#7070aa;">${day(l.date)}</span> ${l.play} at ${l.book} ${fmt(l.american)}: ${l.legs} <span style="color:${l.net >= 0 ? '#4ade80' : '#ff6b6b'};">${result[l.result] ?? l.result}${l.result === 'void' ? '' : ` ${money(l.net * UNIT_DOLLARS)}`}</span></li>`).join('');
-  const linesText = lines.map((l) => `${day(l.date)}: ${l.play} at ${l.book} ${fmt(l.american)}, ${l.legs}: ${result[l.result] ?? l.result}${l.result === 'void' ? '' : ` ${money(l.net * UNIT_DOLLARS)}`}`).join('\n');
+  const linesHtml = lines.map((l) => `<li style="margin: 0 0 6px;"><span style="color:#7070aa;">${day(l.date)}</span> ${l.play} at ${l.book} ${fmt(l.american)}: ${l.legs} <span style="color:${l.net >= 0 ? '#4ade80' : '#ff6b6b'};">${result[l.result] ?? l.result}${l.result === 'void' ? '' : ` ${units(l.net)}u`}</span></li>`).join('');
+  const linesText = lines.map((l) => `${day(l.date)}: ${l.play} at ${l.book} ${fmt(l.american)}, ${l.legs}: ${result[l.result] ?? l.result}${l.result === 'void' ? '' : ` ${units(l.net)}u`}`).join('\n');
 
   const buildHtml = (username) => `
     <div style="font-family: Arial, sans-serif; background: #05050A; color: #e0e0ff; padding: 20px;">
       <div style="max-width: 600px; margin: 0 auto; border: 1px solid #9d4edd; border-radius: 8px; padding: 30px; background: #0a0515;">
         ${EMAIL_LOGO_HTML}
         <h2 style="color: #d946ef; margin-bottom: 8px;">Your Weekly Tracking Report</h2>
-        <p style="color: #7070aa; font-size: 13px; margin-bottom: 24px;">Hi ${username}, the last ${REPORT_WINDOW_DAYS} days of Pixel's Picks tickets, one unit ($${UNIT_DOLLARS}) each.</p>
+        <p style="color: #7070aa; font-size: 13px; margin-bottom: 24px;">Hi ${username}, the last ${REPORT_WINDOW_DAYS} days of Pixel's Picks tickets, one unit each.</p>
         ${settled ? `<table style="width: 100%; border-collapse: collapse; font-size: 14px;">
           <thead>
             <tr>
@@ -94,7 +90,7 @@ export async function sendWeeklyTrackingReport(env, now = Date.now(), { deps = {
     </div>`;
 
   const buildText = (username) =>
-    `Hi ${username}, your Weekly Tracking Report: the last ${REPORT_WINDOW_DAYS} days of Pixel's Picks tickets, one unit ($${UNIT_DOLLARS}) each\n\n` +
+    `Hi ${username}, your Weekly Tracking Report: the last ${REPORT_WINDOW_DAYS} days of Pixel's Picks tickets, one unit each\n\n` +
     (settled ? `${rowsText}\n\n${linesText}` : 'No ticket settled this week.') +
     `\n\nOpen: https://perpetualpicks.com/app.html`;
 

@@ -241,11 +241,11 @@ export async function sendTicketNotifications(env, now = Date.now(), { deps = {}
     const play = (b) => (b.play ? b.play : b.type === 'parlay' ? `${b.legs.length}-leg parlay` : 'Straight');
     const legHtml = (l) => `<li style="margin: 0 0 6px;">${l.selection} <span style="color:#00d9ff;">${formatAmerican(l.american)}</span><br><span style="color:#a0a0cc; font-size:12px;">${l.away} @ ${l.home} &middot; ${time(l.commenceMs)} ET &middot; landed ${l.periods?.l20?.hits ?? 20} of the last ${l.periods?.l20?.games ?? 20}${l.note ? `<br>${l.note}` : ''}</span></li>`;
     const ticketHtml = (b) => `<div style="margin: 0 0 18px; padding: 14px; border: 1px solid rgba(217,70,239,0.3); border-radius: 10px;">
-      <div style="font-weight: bold; color: #e0e0ff; margin-bottom: 8px;">${play(b)} at ${b.book} <span style="color:#00d9ff;">${formatAmerican(b.american)}</span> <span style="color:#7070aa; font-weight: normal;">&middot; ${b.units} unit ($${b.stake})</span></div>
+      <div style="font-weight: bold; color: #e0e0ff; margin-bottom: 8px;">${play(b)} at ${b.book} <span style="color:#00d9ff;">${formatAmerican(b.american)}</span> <span style="color:#7070aa; font-weight: normal;">&middot; ${b.units} unit</span></div>
       <ul style="margin: 0; padding-left: 18px; color: #e0e0ff; line-height: 1.5;">${b.legs.map(legHtml).join('')}</ul>
       ${b.link || b.bookUrl ? `<p style="margin: 10px 0 0;"><a href="${b.link ?? b.bookUrl}" style="color:#d946ef;">Open ${b.book}</a></p>` : ''}
     </div>`;
-    const ticketText = (b) => `${play(b)} at ${b.book} ${formatAmerican(b.american)} (${b.units} unit, $${b.stake})\n${b.legs.map((l) => `  ${l.selection} ${formatAmerican(l.american)}, ${l.away} @ ${l.home}${l.note ? ` (${l.note})` : ''}`).join('\n')}`;
+    const ticketText = (b) => `${play(b)} at ${b.book} ${formatAmerican(b.american)} (${b.units} unit)\n${b.legs.map((l) => `  ${l.selection} ${formatAmerican(l.american)}, ${l.away} @ ${l.home}${l.note ? ` (${l.note})` : ''}`).join('\n')}`;
     const subject = `Pixel's Picks for ${day}: ${fresh.length} ticket${fresh.length === 1 ? '' : 's'}`;
     const sendOne = deps.send ?? ((msg) => env.EMAIL.send(msg));
     const queue = [...users];
