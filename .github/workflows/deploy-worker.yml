@@ -54,9 +54,14 @@ jobs:
           workingDirectory: worker
           command: deploy
       - name: Confirm the live version
+        # The edge can serve the previous version for a minute after the
+        # upload, so the check retries rather than failing on the first read.
         run: |
-          sleep 10
-          live=$(curl -fsSL https://pixel-pick-odds.mgbouldering.workers.dev/version)
-          echo "live: $live"
           want=$(node -e "import('./docs/version.js').then((m) => console.log((m.BUILD_INFO ?? m.default).version))")
-          echo "$live" | grep -q "\"version\":\"$want\"" || { echo "::error::live version is not $want"; exit 1; }
+          for i in 1 2 3 4 5 6 7 8; do
+            sleep 10
+            live=$(curl -fsSL https://pixel-pick-odds.mgbouldering.workers.dev/version || true)
+            echo "try $i: $live"
+            echo "$live" | grep -q "\"version\":\"$want\"" && exit 0
+          done
+          echo "::error::live version is not $want after 80 seconds"; exit 1
