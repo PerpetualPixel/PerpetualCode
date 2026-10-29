@@ -583,7 +583,8 @@ export function refreshLegs(record, rows, now = Date.now(), reports = {}) {
         const l20 = r.periods?.l20; const h2h = r.periods?.h2h;
         const still = l20?.rate === 1 && (!h2h?.games || h2h.rate === 1);
         const shown = leg.current?.point ?? leg.point;
-        if (r.point !== shown) (leg.moves ??= []).push({ at: now, from: shown, to: r.point });
+        const last = leg.moves?.at(-1);
+        if (r.point !== shown && !(last && last.from === shown && last.to === r.point)) (leg.moves ??= []).push({ at: now, from: shown, to: r.point });
         const current = { point: r.point, selection: r.selection, american: q.american, decimal: q.decimal ?? americanToDecimal(q.american), link: q.link ?? null, l20: { hits: l20?.hits ?? 0, games: l20?.games ?? 0 }, h2h: h2h?.games ? { hits: h2h.hits, games: h2h.games } : null, still, at: leg.current?.point === r.point ? leg.current.at : now };
         const same = (a, b) => JSON.stringify({ ...a, at: 0 }) === JSON.stringify({ ...b, at: 0 });
         if (leg.current && same(leg.current, current)) continue;
