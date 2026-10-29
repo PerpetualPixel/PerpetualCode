@@ -24,7 +24,7 @@ import { fetchBasketballGamelog, basketballStatRows } from './basketball-props.j
 import { fetchNflGamelog, gamelogStatIndex } from './football-props.js';
 import { bundlePlayer, loadBundleTeams, loadInjuries, injuryFor } from './espn-bundle.js';
 import { seasonColumnRows } from '../../docs/prop-legs.js';
-import { overNeed, underNeed, attachSeries } from '../../docs/trends.js';
+import { overNeed, underNeed, attachSeries, legScore } from '../../docs/trends.js';
 import { bookIdFor, SPORTSBOOKS, americanToDecimal } from '../../docs/engine.js';
 import { espnAbbr } from '../../docs/team-logos.js';
 
@@ -446,6 +446,42 @@ function legRecord(leg, research, now) {
   };
 }
 
+/**
+ * The best line on each league's board, ticket or not, so the tab always
+ * shows one prop: the highest Pixel score among the lines a listed book
+ * prices in range on a game not yet started, with why it is short of a
+ * ticket. Shown under an emblem and never tracked.
+ */
+export function bestOnBoard(rows, now, enabled = TREND_ENABLED_SPORTS) {
+  const out = {};
+  for (const sportKey of enabled) {
+    let best = null;
+    for (const row of rows ?? []) {
+      if (row.sportKey !== sportKey || !(row.commenceMs > now) || row.injury?.level === 'out') continue;
+      const quote = pickQuotes(row).find((q) => inRange(q.american, LEG_RANGE));
+      if (!quote) continue;
+      const score = legScore(row);
+      if (!best || score > best.score || (score === best.score && quote.american > best.quote.american)) best = { row, quote, score };
+    }
+    if (!best) continue;
+    const { row, quote, score } = best;
+    const leg = legRecord({ line: row, american: quote.american, decimal: quote.decimal ?? americanToDecimal(quote.american), bookId: quote.bookId, link: quote.link ?? null }, { note: '', flags: [] }, now);
+    out[sportKey] = { ...leg, score, shortOf: showcaseShortOf(row) };
+  }
+  return out;
+}
+
+/** Why the board's best line is not a ticket: which part of the fixed test it misses, in plain words. */
+function showcaseShortOf(row) {
+  const p = row.periods ?? {};
+  const out = [];
+  if ((p.l20?.games ?? 0) < PICK_MIN_GAMES) out.push(`only ${p.l20?.games ?? 0} games in the log; the test needs ${PICK_MIN_GAMES}`);
+  else if (p.l20?.rate !== 1) out.push(`landed ${p.l20?.hits ?? 0} of the last ${p.l20?.games ?? 20}; the test is every one`);
+  if (p.h2h?.games > 0 && p.h2h.rate !== 1) out.push(`${p.h2h.hits} of ${p.h2h.games} against ${row.opponent ?? 'this opponent'}; the test is every one`);
+  if (!out.length) out.push('it qualified, but the research or the price kept it off a ticket');
+  return out;
+}
+
 /** The stored bet: one ticket, one unit, graded as a whole. */
 function betRecord(bet, index, dateKey, research, now) {
   const legs = bet.legs.map((leg) => legRecord(leg, research.get(leg.group.key), now));
@@ -619,6 +655,7 @@ export async function runTrendPicksDaily(env, ctx, now = Date.now(), { deps = {}
     bets,
     passed,
     unused,
+    showcase: bestOnBoard(rows, now, enabled),
   };
   await env.POTD_KV.put(key(dateKey), JSON.stringify(record), { expirationTtl: KV_TTL_SECONDS });
   return { skipped: false, dateKey, posted: bets.length, considered: groups.length, passed: passed.length };

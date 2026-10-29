@@ -9,7 +9,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import {
   qualifyingRows, researchPick, runTrendPicksDaily, runTrendPicksGrading, getTrendPicks, settle, settleBet, parseVerdict, buildBets, pickQuotes, refreshLegs,
-  PICK_MIN_GAMES, PICK_MAX_BETS, PICK_BOOKS, TICKET_UNITS,
+  PICK_MIN_GAMES, PICK_MAX_BETS, PICK_BOOKS, TICKET_UNITS, bestOnBoard,
 } from '../worker/src/trend-picks.js';
 
 const NOW = Date.parse('2026-10-27T15:00:00Z'); // 11am ET Oct 27
@@ -340,4 +340,24 @@ test('a pending ticket follows its book\'s number until tip-off: a moved project
   assert.equal(refreshLegs(inj, [], NOW + 60e3, { basketball_nba: { players: { 4: { name: 'Collin Sexton', team: 'CHA', status: 'Out', detail: 'Knee' } } } }), 0, 'unchanged: nothing written');
   assert.equal(refreshLegs(inj, [], NOW + 120e3, { basketball_nba: { players: {} } }), 1);
   assert.equal(inj.bets[0].legs[0].injury, null);
+});
+
+test('bestOnBoard: the highest-scoring line a listed book prices in range per league, ticket or not, with why it is short of one', () => {
+  const rows = [
+    row('a', { rate: 0.8, player: 'Collin Sexton', books: { draftkings: -130 } }),
+    row('b', { rate: 0.95, player: 'LaMelo Ball', books: { fanduel: -115 } }),
+    row('c', { player: 'Grant Williams', books: { betrivers: -105 } }),
+    row('d', { player: 'Miles Bridges', books: { draftkings: -600 } }),
+    row('e', { commenceMs: NOW - 60e3, player: 'Brandon Miller' }),
+  ];
+  const best = bestOnBoard(rows, NOW, ['basketball_nba', 'americanfootball_nfl']);
+  assert.deepEqual(Object.keys(best), ['basketball_nba'], 'a league with no rows has no showcase');
+  const s = best.basketball_nba;
+  assert.equal(s.playerName, 'LaMelo Ball', 'the 19 of 20 line outscores the 16 of 20 one; a BetRivers-only line, a -600 line and a started game are out');
+  assert.equal(s.bookId, 'fanduel');
+  assert.equal(s.american, -115);
+  assert.ok(s.score > 3);
+  assert.deepEqual(s.shortOf, ['landed 19 of the last 20; the test is every one']);
+  assert.deepEqual(bestOnBoard([row('y', { rate: 0.9, h2h: period(0.5, 2) })], NOW).basketball_nba.shortOf, ['landed 18 of the last 20; the test is every one', '1 of 2 against ORL; the test is every one']);
+  assert.equal(bestOnBoard([row('z', { rate: 1 })], NOW).basketball_nba.shortOf[0], 'it qualified, but the research or the price kept it off a ticket');
 });
