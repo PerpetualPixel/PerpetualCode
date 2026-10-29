@@ -4,9 +4,12 @@
 # reads them). ESPN refuses the worker itself, so without this the
 # Trends tab has games and no player lines.
 #
-# Three times a day: after the West Coast games are final (06:15 ET), at
-# midday for roster and injury changes, and before the evening slate.
-# Needs the same two secrets as the deploy workflow; the token's
+# After the West Coast games are final (06:15 ET), again at 07:50 ET as
+# a backup (GitHub drops a scheduled run now and then, and the 29th's
+# morning run was one, which left the board without the night's games
+# until the afternoon), at midday for roster and injury changes, and
+# before the evening slate. The run is idempotent and takes under a
+# minute. Needs the same two secrets as the deploy workflow; the token's
 # "Edit Cloudflare Workers" template carries KV write.
 name: ESPN bundle
 
@@ -14,6 +17,7 @@ on:
   workflow_dispatch:
   schedule:
     - cron: '15 10,16,21 * * *'
+    - cron: '50 11 * * *'
 
 permissions:
   contents: read
