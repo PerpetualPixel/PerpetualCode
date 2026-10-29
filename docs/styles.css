@@ -6858,3 +6858,13 @@ a.trend-price:hover { background: rgba(255, 255, 255, 0.06); }
   .parlay-layout { grid-template-columns: 1fr; }
   .parlay-config-col { position: static; }
 }
+
+/* Pixel's Picks: the board's best line when no ticket posted, under an emblem that explains itself on a tap. */
+.pick-bet-card.is-showcase { border-color: rgba(251, 191, 36, 0.45); }
+.pick-emblem { display: inline-flex; align-items: center; gap: 6px; padding: 6px 12px; border-radius: 999px; border: 1px solid rgba(251, 191, 36, 0.6); background: rgba(251, 191, 36, 0.12); color: #fbbf24; font: inherit; font-size: 0.8rem; font-weight: 800; letter-spacing: 0.02em; cursor: pointer; }
+.pick-emblem small { font-weight: 700; color: var(--muted); text-transform: uppercase; letter-spacing: 0.06em; font-size: 0.68rem; }
+.pick-emblem[aria-expanded="true"] { background: rgba(251, 191, 36, 0.24); }
+.pick-emblem-star { font-size: 0.95rem; line-height: 1; }
+.pick-emblem-note { padding: 12px 16px; border-bottom: 1px solid var(--line); background: rgba(251, 191, 36, 0.06); font-size: 0.86rem; line-height: 1.5; }
+.pick-emblem-note p { margin: 0 0 8px; }
+.pick-emblem-note p:last-child { margin-bottom: 0; }

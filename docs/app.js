@@ -9527,7 +9527,7 @@ el.trendsSheet?.addEventListener('input', (event) => {
 /* Pixel's Picks: the day's tickets from the Trends rows (worker/src/trend-picks.js) */
 /* ================================================================ */
 
-const trendPicksState = { data: null, loaded: false, filter: 'all', hover: null };
+const trendPicksState = { data: null, loaded: false, filter: 'all', hover: null, emblemOpen: null };
 const pickDayFmt = new Intl.DateTimeFormat(undefined, { weekday: 'short', month: 'short', day: 'numeric' });
 const pickShortFmt = new Intl.DateTimeFormat(undefined, { month: 'numeric', day: 'numeric' });
 const PICK_FILTERS = [['all', 'All'], ['basketball_nba', 'NBA'], ['americanfootball_nfl', 'NFL']];
@@ -9598,9 +9598,32 @@ function legAsRow(leg, bet) {
   return { ...leg, seasons: leg.seasons ?? [], rates: leg.rates ?? {}, periods: leg.periods ?? {}, series: leg.series ?? [], quotes: leg.quotes ?? [], bookKey: leg.bookId, book: bet.book, link: leg.link ?? null };
 }
 
+/** The board's best line as a one-leg pseudo ticket, so the leg renders and opens like any other. */
+const showcaseBet = (leg) => ({ id: `showcase:${leg.sportKey}`, type: 'straight', bookId: leg.bookId, book: leg.book, legs: [leg] });
+const SPORT_SHORT = { basketball_nba: 'NBA', americanfootball_nfl: 'NFL' };
+
+function renderShowcaseCard(leg) {
+  const open = trendPicksState.emblemOpen === leg.sportKey;
+  const league = SPORT_SHORT[leg.sportKey] ?? leg.sportTitle ?? '';
+  return `<article class="trend-card pick-bet-card is-showcase" aria-label="Best on the ${esc(league)} board, not tracked">
+    <div class="pick-bet-head">
+      <button type="button" class="pick-emblem" data-pick-emblem="${esc(leg.sportKey)}" aria-expanded="${open ? 'true' : 'false'}" title="What this card is"><span class="pick-emblem-star">★</span> Best on the ${esc(league)} board <small>not tracked</small></button>
+      <span class="pick-bet-book">${bookBadge(leg.bookId, leg.book)}${esc(leg.book)}</span>
+      <span class="pick-bet-price">${esc(formatAmerican(leg.american))}</span>
+    </div>
+    ${open ? `<div class="pick-emblem-note" role="note">
+      <p><strong>This is the best overall line on today's ${esc(league)} board</strong> by Pixel's score (${esc(String(leg.score ?? ''))} of 5), shown so the tab never goes empty.</p>
+      <p>It is not a Pixel's Pick: ${esc((leg.shortOf ?? []).join('; '))}. It is not on a ticket and does not count toward the record, the units or the ROI.</p>
+      <p>Tap the player for the full numbers, or the price to open it at ${esc(leg.book)}.</p>
+    </div>` : ''}
+    <div class="pick-legs">${renderPickLeg(leg, showcaseBet(leg))}</div>
+  </article>`;
+}
+
 function openPickLeg(target) {
   const [betId, index] = String(target.dataset.pickLeg).split('|');
-  const bet = [...(trendPicksState.data?.today?.bets ?? []), ...(trendPicksState.data?.history ?? []).flatMap((d) => d.bets ?? [])].find((b) => b.id === betId);
+  const showcase = betId.startsWith('showcase:') ? trendPicksState.data?.today?.showcase?.[betId.slice('showcase:'.length)] : null;
+  const bet = showcase ? showcaseBet(showcase) : [...(trendPicksState.data?.today?.bets ?? []), ...(trendPicksState.data?.history ?? []).flatMap((d) => d.bets ?? [])].find((b) => b.id === betId);
   const leg = bet?.legs?.[Number(index)];
   if (!leg) return;
   trendsState.detailPeriod = null;
@@ -9701,7 +9724,9 @@ function renderTrendPicks() {
           : `No ticket today: nothing is at 100% over the last 20 games yet.${checked}`)
       : 'No tickets drawn yet today. The draw runs after each Trends build.';
     const notes = [...(today?.passed ?? []).map((x) => `<li><strong>${esc(x.selection)}</strong>: ${esc((x.reasons ?? []).join('; ') || 'the research came back against it')}</li>`), ...(today?.unused ?? []).map((x) => `<li><strong>${esc(x.selection)}</strong>: passed research, ${esc(x.reason)}</li>`)];
-    el.trendPicksBody.innerHTML = notes.length ? `<div class="pick-passed"><p class="row-sub">Qualified today:</p><ul>${notes.join('')}</ul></div>` : '';
+    // Never an empty tab: the board's best line in the filtered leagues, under its emblem.
+    const showcase = Object.values(today?.showcase ?? {}).filter(betMatches).filter((leg) => leg.commenceMs > Date.now());
+    el.trendPicksBody.innerHTML = showcase.map(renderShowcaseCard).join('') + (notes.length ? `<div class="pick-passed"><p class="row-sub">Qualified today:</p><ul>${notes.join('')}</ul></div>` : '');
   }
   const rec = trendPicksState.filter === 'all' ? d?.record : d?.bySport?.[trendPicksState.filter];
   if (el.trendPicksRecord) {
@@ -9725,6 +9750,8 @@ el.trendPicksView?.addEventListener('click', (event) => {
   if (event.target.closest('[data-price-link], .pick-bet-link')) return; // the book's link, not the card
   const leg = event.target.closest('[data-pick-leg]');
   if (leg) return openPickLeg(leg);
+  const emblem = event.target.closest('[data-pick-emblem]');
+  if (emblem) { const k = emblem.dataset.pickEmblem; trendPicksState.emblemOpen = trendPicksState.emblemOpen === k ? null : k; renderTrendPicks(); return; }
   const chip = event.target.closest('[data-pick-filter]');
   if (chip) { trendPicksState.filter = chip.dataset.pickFilter; trendPicksState.hover = null; renderTrendPicks(); return; }
   const dot = event.target.closest('[data-pick-day]');
