@@ -10017,7 +10017,8 @@ el.playersForm?.addEventListener('submit', (event) => { event.preventDefault(); 
 /* ================================================================ */
 
 const parlayState = {
-  sport: 'basketball_nba', rows: {}, loading: false,
+  // The leagues toggled on; a ticket can mix legs from all of them.
+  sports: new Set(['basketball_nba']), rows: {}, loading: false,
   book: 'draftkings', legs: 4, minL5: 0, minL10: 0, minH2H: 0, minScore: 2, stats: new Set(), odds: [-800, 800], games: new Set(), side: 'both', team: '',
   built: null, locked: new Set(), seen: new Set(), breakdowns: {}, open: null, amount: 10, note: '',
 };
@@ -10027,12 +10028,13 @@ const PARLAY_MAX_LEGS = { draftkings: 20, fanduel: 25, caesars: 20, fanatics: 20
 const parlayMaxLegs = (book) => PARLAY_MAX_LEGS[book] ?? 20;
 const parlayBookId = (bookKey) => bookIdFor(bookKey) ?? String(bookKey ?? '').toLowerCase();
 const parlayBookName = (id) => SPORTSBOOKS[id]?.name ?? (id === 'prizepicks' ? 'PrizePicks' : id);
-const parlayRows = () => parlayState.rows[parlayState.sport] ?? [];
+const parlayRows = () => [...parlayState.sports].flatMap((k) => parlayState.rows[k] ?? []);
 // No PrizePicks leg on an alternate number: a goblin or demon pays its own multiplier, not the Power Play table.
 const parlayQuote = (row) => (parlayState.book === 'prizepicks' && isAltLine(row) ? null : (row.quotes ?? []).find((q) => parlayBookId(q.bookKey) === parlayState.book) ?? null);
 
 const UFC_SPORT_KEY = 'mma_mixed_martial_arts';
-const isUfcParlay = () => parlayState.sport === UFC_SPORT_KEY;
+/** Only UFC toggled on: the hit-rate, prop and side fields have nothing to apply to. */
+const isUfcParlay = () => parlayState.sports.size > 0 && [...parlayState.sports].every((k) => k === UFC_SPORT_KEY);
 /** The next card's moneylines as builder rows, one per side of each bout with odds: the score is the breakdown's confidence on its lean, the rest on the other side. */
 function ufcParlayRows(picks) {
   const rec = picks?.current; if (!rec) return [];
@@ -10050,25 +10052,31 @@ function ufcParlayRows(picks) {
   return rows;
 }
 
-async function loadParlay(sport = parlayState.sport) {
+/** One league's rows into the pool: the Trends board, or the UFC card's moneylines. */
+async function loadParlaySport(sport) {
+  if (sport === UFC_SPORT_KEY) {
+    const res = await fetch(new URL('/ufc/picks', CONFIG.WORKER_URL), { headers: { Accept: 'application/json' } });
+    const body = await res.json();
+    parlayState.rows[sport] = res.ok ? ufcParlayRows(body) : [];
+    return;
+  }
+  const url = new URL('/trends', CONFIG.WORKER_URL); url.searchParams.set('sport', sport);
+  const res = await fetch(url, { headers: { Accept: 'application/json' } });
+  const body = await res.json();
+  const t = body.trends;
+  parlayState.rows[sport] = t?.sportKey === sport ? attachSeries(t.rows ?? [], t.logs) : [];
+}
+
+/** Every toggled league's rows, loaded once each. */
+async function loadParlay() {
   if (!el.parlayView || !CONFIG.WORKER_URL) return;
-  if (parlayState.rows[sport]) { renderParlay(); return; }
+  const missing = [...parlayState.sports].filter((k) => !parlayState.rows[k]);
+  if (!missing.length) { renderParlay(); return; }
   parlayState.loading = true;
   el.parlayStatus.textContent = 'Loading the board…';
   try {
-    if (sport === UFC_SPORT_KEY) {
-      const res = await fetch(new URL('/ufc/picks', CONFIG.WORKER_URL), { headers: { Accept: 'application/json' } });
-      const body = await res.json();
-      parlayState.rows[sport] = res.ok ? ufcParlayRows(body) : [];
-      el.parlayStatus.textContent = parlayState.rows[sport].length ? '' : 'No odds on the next card yet.';
-      parlayState.loading = false; renderParlay(); return;
-    }
-    const url = new URL('/trends', CONFIG.WORKER_URL); url.searchParams.set('sport', sport);
-    const res = await fetch(url, { headers: { Accept: 'application/json' } });
-    const body = await res.json();
-    const t = body.trends;
-    parlayState.rows[sport] = t?.sportKey === sport ? attachSeries(t.rows ?? [], t.logs) : [];
-    el.parlayStatus.textContent = parlayState.rows[sport].length ? '' : 'No lines on this board yet.';
+    await Promise.all(missing.map(loadParlaySport));
+    el.parlayStatus.textContent = parlayRows().length ? '' : (isUfcParlay() ? 'No odds on the next card yet.' : 'No lines on this board yet.');
   } catch {
     el.parlayStatus.textContent = "Couldn't reach the worker.";
   }
@@ -10223,7 +10231,7 @@ function renderParlay() {
   const rows = parlayRows();
   const now = Date.now();
   const live = rows.filter((r) => r.commenceMs > now);
-  el.parlayLeagues.innerHTML = [...PLAYER_LEAGUES, [UFC_SPORT_KEY, 'UFC']].map(([key, label]) => `<button type="button" class="league-chip ${s.sport === key ? 'is-active' : ''}" data-parlay-league="${esc(key)}" aria-pressed="${s.sport === key}">${leagueIconSvg(TREND_LEAGUE_ICON[key] ?? key)}<span class="league-chip-label">${esc(label)}</span></button>`).join('');
+  el.parlayLeagues.innerHTML = [...PLAYER_LEAGUES, [UFC_SPORT_KEY, 'UFC']].map(([key, label]) => `<button type="button" class="league-chip ${s.sports.has(key) ? 'is-active' : ''}" data-parlay-league="${esc(key)}" aria-pressed="${s.sports.has(key)}" title="Toggle; a ticket can mix leagues">${leagueIconSvg(TREND_LEAGUE_ICON[key] ?? key)}<span class="league-chip-label">${esc(label)}</span></button>`).join('');
   // Every book, always, with how many of the upcoming lines it has posted: early in the day only a book or two has tomorrow's props up.
   const linesAt = new Map(PARLAY_BOOKS.map((b) => [b, 0]));
   for (const r of live) for (const q of r.quotes ?? []) { const b = parlayBookId(q.bookKey); if (linesAt.has(b)) linesAt.set(b, linesAt.get(b) + 1); }
@@ -10243,7 +10251,7 @@ function renderParlay() {
   el.parlayOddsMin.value = String(s.odds[0]); el.parlayOddsMax.value = String(s.odds[1]);
   const gamesHere = new Map();
   for (const r of live) if (!gamesHere.has(r.eventId)) gamesHere.set(r.eventId, r);
-  el.parlayGames.innerHTML = [...gamesHere.values()].sort((a, b) => a.commenceMs - b.commenceMs).map((g) => `<button type="button" class="rate-chip ${s.games.has(g.eventId) ? 'is-active' : ''}" data-parlay-game="${esc(g.eventId)}">${esc(teamAbbr(g.away))} @ ${esc(teamAbbr(g.home))} <small>${esc(trendTimeFmt.format(new Date(g.commenceMs)))}</small></button>`).join('') || '<span class="row-sub">No games yet.</span>';
+  el.parlayGames.innerHTML = [...gamesHere.values()].sort((a, b) => a.commenceMs - b.commenceMs).map((g) => `<button type="button" class="rate-chip ${s.games.has(g.eventId) ? 'is-active' : ''}" data-parlay-game="${esc(g.eventId)}">${g.ufc ? `${esc(g.away)} vs ${esc(g.home)}` : `${esc(teamAbbr(g.away))} @ ${esc(teamAbbr(g.home))}`} <small>${esc(trendTimeFmt.format(new Date(g.commenceMs)))}</small></button>`).join('') || '<span class="row-sub">No games yet.</span>';
   el.parlaySide.value = s.side;
   const teams = [...new Set(live.map((r) => r.team).filter(Boolean))].sort();
   el.parlayTeam.innerHTML = `<option value="">Any team</option>${teams.map((t) => `<option value="${esc(t)}" ${s.team === t ? 'selected' : ''}>${esc(t)}</option>`).join('')}`;
@@ -10275,7 +10283,8 @@ function renderParlay() {
 async function loadParlayBreakdown(rowId) {
   if (parlayState.breakdowns[rowId]) return;
   try {
-    const url = new URL('/parlay/leg', CONFIG.WORKER_URL); url.searchParams.set('sport', parlayState.sport); url.searchParams.set('id', rowId);
+    const sport = parlayRows().find((r) => r.id === rowId)?.sportKey ?? 'basketball_nba';
+    const url = new URL('/parlay/leg', CONFIG.WORKER_URL); url.searchParams.set('sport', sport); url.searchParams.set('id', rowId);
     const res = await fetch(url, { headers: { Accept: 'application/json' } });
     const body = await res.json();
     if (res.ok && body.verdict) parlayState.breakdowns[rowId] = body;
@@ -10290,7 +10299,13 @@ el.parlayView?.addEventListener('click', (event) => {
   const s = parlayState;
   const t = event.target;
   const league = t.closest('[data-parlay-league]');
-  if (league) { s.sport = league.dataset.parlayLeague; s.built = null; s.locked.clear(); s.seen.clear(); s.stats.clear(); s.games.clear(); s.team = ''; loadParlay(s.sport); return; }
+  if (league) {
+    // A toggle, never down to none: the last league on stays on.
+    const k = league.dataset.parlayLeague;
+    if (s.sports.has(k)) { if (s.sports.size > 1) s.sports.delete(k); } else s.sports.add(k);
+    s.built = null; s.locked.clear(); s.seen.clear(); s.stats.clear(); s.games.clear(); s.team = '';
+    loadParlay(); return;
+  }
   const star = t.closest('[data-parlay-score]');
   if (star) { s.minScore = Number(star.dataset.parlayScore); renderParlay(); return; }
   const stat = t.closest('[data-parlay-stat]');
@@ -10302,9 +10317,9 @@ el.parlayView?.addEventListener('click', (event) => {
   const lock = t.closest('[data-parlay-lock]');
   if (lock) { const id = lock.dataset.parlayLock; if (s.locked.has(id)) s.locked.delete(id); else s.locked.add(id); renderParlay(); return; }
   const view = t.closest('[data-parlay-view]');
-  if (view) { const id = view.dataset.parlayView; s.open = s.open === id ? null : id; renderParlay(); if (s.open && !isUfcParlay()) loadParlayBreakdown(id); return; }
+  if (view) { const id = view.dataset.parlayView; s.open = s.open === id ? null : id; renderParlay(); if (s.open && !parlayRows().find((r) => r.id === id)?.ufc) loadParlayBreakdown(id); return; }
   const statsBtn = t.closest('[data-parlay-stats]');
-  if (statsBtn && isUfcParlay()) { const leg = (s.built ?? []).find((l) => l.row.id === statsBtn.dataset.parlayStats); if (leg?.row.athleteId) openUfcFighter(leg.row.athleteId, leg.row.playerName); return; }
+  if (statsBtn && (s.built ?? []).find((l) => l.row.id === statsBtn.dataset.parlayStats)?.row.ufc) { const leg = (s.built ?? []).find((l) => l.row.id === statsBtn.dataset.parlayStats); if (leg?.row.athleteId) openUfcFighter(leg.row.athleteId, leg.row.playerName); return; }
   if (statsBtn) { const leg = (s.built ?? []).find((l) => l.row.id === statsBtn.dataset.parlayStats); if (leg) { trendsState.detailPeriod = null; trendsState.betMore = false; openTrendsSheet('detail', { rowId: leg.row.id, row: { ...leg.row, american: leg.quote.american, decimal: leg.quote.decimal, book: leg.quote.book, bookKey: leg.quote.bookKey, link: leg.quote.link ?? null } }); } }
 });
 el.parlayView?.addEventListener('input', (event) => {
