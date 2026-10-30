@@ -185,7 +185,7 @@ let indexIds = new Map(ids);
 if (INDEX) {
   for (let back = 365; back > 0; back -= 60) {
     const chunk = await getJson(`${SITE}/scoreboard?dates=${ymd(now - back * 864e5)}-${ymd(now - Math.max(0, back - 60) * 864e5)}`);
-    for (const e of chunk?.events ?? []) for (const c of e.competitions ?? []) for (const p of c.competitors ?? []) if (p.athlete?.id) indexIds.set(String(p.athlete.id), p.athlete.displayName);
+    for (const e of chunk?.events ?? []) for (const c of e.competitions ?? []) for (const p of c.competitors ?? []) if (p.id) indexIds.set(String(p.id), p.athlete?.displayName ?? '');
   }
   say(`${indexIds.size} fighters on UFC cards in the last year`);
 }
