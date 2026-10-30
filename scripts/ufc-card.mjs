@@ -126,16 +126,26 @@ function parseFighter(data) {
   const history = Object.values(data.eventsMap ?? {}).filter((e) => e.gameResult || e.status?.type?.completed).map((e) => {
     const method = e.status?.result?.displayName ?? e.status?.result?.name ?? null;
     const res = String(e.gameResult ?? '').toUpperCase();
-    return { date: e.gameDate ? Date.parse(e.gameDate) : null, event: e.name ?? e.shortName ?? null, eventId: e.id ? String(e.id) : null, opponent: { id: e.opponent?.id ? String(e.opponent.id) : null, name: e.opponent?.displayName ?? null, record: e.opponent?.record ?? null }, result: res.startsWith('W') ? 'win' : res.startsWith('L') ? 'loss' : res.startsWith('D') ? 'draw' : 'nc', method, category: methodCategory(method), round: Number(e.status?.period) > 0 ? Number(e.status.period) : null, time: e.status?.displayClock ?? null };
+    return { date: e.gameDate ? Date.parse(e.gameDate) : null, event: e.name ?? e.shortName ?? null, eventId: e.id ? String(e.id) : null, title: Boolean(e.titleFight), opponent: { id: e.opponent?.id ? String(e.opponent.id) : null, name: e.opponent?.displayName ?? null, record: null }, result: res.startsWith('W') ? 'win' : res.startsWith('L') ? 'loss' : res.startsWith('D') ? 'draw' : 'nc', method, category: methodCategory(method), round: Number(e.status?.period) > 0 ? Number(e.status.period) : null, time: e.status?.displayClock ?? null };
   }).sort((x, y) => (y.date ?? 0) - (x.date ?? 0));
+  // ESPN's stats summary carries the record ("21-7-1") and the (T)KO and
+  // submission counts as "wins-losses"; decisions are the rest. The
+  // history tally is the fallback when the summary is missing.
+  const stat = (type) => (a.statsSummary?.statistics ?? []).find((x) => x.type === type)?.displayValue ?? null;
+  const pair = (text) => { const m = String(text ?? '').match(/^(\d+)-(\d+)$/); return m ? [+m[1], +m[2]] : null; };
   const tally = (result) => history.filter((h) => h.result === result).reduce((m, h) => { m[h.category ?? 'other'] = (m[h.category ?? 'other'] ?? 0) + 1; return m; }, { ko: 0, sub: 0, dec: 0, other: 0 });
+  const record = recordOf(stat('wins-losses-draws')) ?? { wins: history.filter((h) => h.result === 'win').length, losses: history.filter((h) => h.result === 'loss').length, draws: history.filter((h) => h.result === 'draw').length, nc: history.filter((h) => h.result === 'nc').length };
+  const ko = pair(stat('tkos-tkolosses')); const sub = pair(stat('submissions-submissionlosses'));
+  const methods = ko && sub
+    ? { wins: { ko: ko[0], sub: sub[0], dec: Math.max(0, record.wins - ko[0] - sub[0]), other: 0 }, losses: { ko: ko[1], sub: sub[1], dec: Math.max(0, record.losses - ko[1] - sub[1]), other: 0 } }
+    : { wins: tally('win'), losses: tally('loss') };
   return {
     id: String(a.id), name: a.displayName ?? a.fullName, nickname: a.nickname ?? null,
-    record: recordOf(a.statsSummary ?? a.record) ?? { wins: history.filter((h) => h.result === 'win').length, losses: history.filter((h) => h.result === 'loss').length, draws: history.filter((h) => h.result === 'draw').length, nc: history.filter((h) => h.result === 'nc').length },
-    bio: { age: a.age ?? null, height: a.displayHeight ?? null, weight: a.displayWeight ?? null, reach: a.displayReach ?? null, stance: a.stance?.text ?? null, weightClass: a.weightClass?.text ?? null, team: a.association?.name ?? null, country: a.citizenship ?? null },
+    record,
+    bio: { age: a.age ?? null, height: a.displayHeight ?? null, weight: a.displayWeight ?? null, reach: a.displayReach ?? null, stance: a.stance?.text ?? null, style: a.displayFightingStyle ?? null, weightClass: a.weightClass?.text ?? null, team: a.association?.name ?? null, country: a.citizenship ?? null },
     headshot: a.headshot?.href ?? null, flag: a.flag?.href ?? null,
     lastFive: history.slice(0, 5).map((h) => h.result),
-    methods: { wins: tally('win'), losses: tally('loss') },
+    methods,
     history, builtAt: now,
   };
 }

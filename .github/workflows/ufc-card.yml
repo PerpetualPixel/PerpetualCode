@@ -13,7 +13,8 @@ on:
         description: 'Extra arguments (--dry-run, --dump, --index)'
         required: false
         default: ''
-  # The schedule is switched on once the parser writes KV (phase 1).
+  schedule:
+    - cron: '*/15 * * * *'
 
 permissions:
   contents: read
