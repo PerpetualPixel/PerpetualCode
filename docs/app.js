@@ -10149,6 +10149,13 @@ function parlayAllLink(legs) {
       const ids = links.map((u) => new URL(u).searchParams.get('outcomes')).filter(Boolean);
       return ids.length === links.length ? `https://sportsbook.draftkings.com/?outcomes=${ids.map(encodeURIComponent).join('+')}` : null;
     }
+    if (parlayState.book === 'fanduel') {
+      // FanDuel's addToBetslip takes indexed pairs: marketId[0]/selectionId[0], marketId[1]/selectionId[1], …
+      const pairs = links.map((u) => { const q = new URL(u).searchParams; return [q.get('marketId'), q.get('selectionId')]; });
+      if (!pairs.every(([m, sel]) => m && sel)) return null;
+      // Literal brackets, the way FanDuel reads them (URLSearchParams would percent-encode them).
+      return `https://sportsbook.fanduel.com/addToBetslip?${pairs.map(([m, sel], i) => `marketId[${i}]=${encodeURIComponent(m)}&selectionId[${i}]=${encodeURIComponent(sel)}`).join('&')}`;
+    }
     if (parlayState.book === 'caesars') {
       const first = new URL(links[0].replace('{state}', 'nj'));
       const ids = links.map((u) => new URL(u.replace('{state}', 'nj')).searchParams.get('selectionIds')).filter(Boolean);
@@ -10254,6 +10261,7 @@ function renderParlay() {
     <div class="parlay-card">
       <div class="parlay-card-head"><strong>${legs.length}-leg ${s.book === 'prizepicks' ? 'Power Play' : 'parlay'}</strong> ${price ? `<span class="parlay-price">${esc(formatAmerican(price.american))}</span>` : ''}<span class="parlay-card-book">${bookBadge(s.book, parlayBookName(s.book))}${esc(parlayBookName(s.book))}</span></div>
       ${s.note ? `<p class="parlay-note">${esc(s.note)}</p>` : ''}
+      <div class="parlay-card-top">${all ? `<a class="parlay-all" href="${esc(all)}" target="_blank" rel="noopener">Add all ${legs.length} legs to your ${esc(parlayBookName(s.book))} slip ↗</a>` : `<p class="row-sub">${esc(parlayBookName(s.book))} takes legs one at a time: use each leg's Add to slip.</p>`}</div>
       <div class="parlay-legs">${legs.map(renderParlayLeg).join('')}</div>
       <div class="parlay-card-foot">${all ? `<a class="parlay-all" href="${esc(all)}" target="_blank" rel="noopener">Add all ${legs.length} legs to your ${esc(parlayBookName(s.book))} slip ↗</a>` : `<p class="row-sub">${esc(parlayBookName(s.book))} takes legs one at a time: use each leg's Add to slip.</p>`}</div>
     </div>
