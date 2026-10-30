@@ -24,7 +24,7 @@ import { fetchBasketballGamelog, basketballStatRows } from './basketball-props.j
 import { fetchNflGamelog, gamelogStatIndex } from './football-props.js';
 import { bundlePlayer, loadBundleTeams, loadInjuries, injuryFor } from './espn-bundle.js';
 import { seasonColumnRows } from '../../docs/prop-legs.js';
-import { overNeed, underNeed, attachSeries, legScore, hitFlags } from '../../docs/trends.js';
+import { overNeed, underNeed, attachSeries, legScore, hitFlags, isAltLine } from '../../docs/trends.js';
 import { bookIdFor, SPORTSBOOKS, americanToDecimal } from '../../docs/engine.js';
 import { espnAbbr } from '../../docs/team-logos.js';
 
@@ -96,11 +96,20 @@ export function pickBookId(bookKey) {
 const pickBookName = (bookId) => SPORTSBOOKS[bookId]?.name ?? PICK_BOOK_NAMES[bookId] ?? bookId;
 const pickBookUrl = (bookId) => SPORTSBOOKS[bookId]?.url ?? null;
 
-/** A row's quotes at the listed books, best price first, each with its registry id. */
+/**
+ * The rules a day's record was drawn under; a posted record drawn under
+ * older rules is drawn again while none of its games has started.
+ *   2: no PrizePicks ticket on an alternate number (a goblin or demon
+ *      pays its own multiplier, not the Power Play table).
+ */
+export const PICK_RULES = 2;
+
+/** A row's quotes at the listed books, best price first, each with its registry id. A PrizePicks quote on an alternate number is not one (see docs/trends.js's extractTrendLines). */
 export function pickQuotes(row) {
+  const alt = isAltLine(row);
   return (row?.quotes ?? [])
     .map((q) => ({ ...q, bookId: pickBookId(q.bookKey) }))
-    .filter((q) => q.bookId && Number.isFinite(q.american))
+    .filter((q) => q.bookId && Number.isFinite(q.american) && !(alt && q.bookId === 'prizepicks'))
     .sort((a, b) => b.american - a.american);
 }
 
@@ -634,7 +643,11 @@ export async function runTrendPicksDaily(env, ctx, now = Date.now(), { deps = {}
   const dateKey = etParts(now).date;
   const raw = await env.POTD_KV.get(key(dateKey));
   const stored = raw ? JSON.parse(raw) : null;
-  const existing = stored?.version === RECORD_VERSION ? stored : null;
+  let existing = stored?.version === RECORD_VERSION ? stored : null;
+  // Drawn under older rules and nothing has tipped off: drawn again, as if not posted.
+  if (existing?.final && (existing.rules ?? 1) < PICK_RULES && (existing.bets ?? []).every((b) => b.status === 'pending' && b.commenceMs > now)) {
+    existing = { ...existing, final: false, bets: [], checkedAt: 0, redrawnFrom: existing.rules ?? 1 };
+  }
   const loadRows = async () => {
     const rows = [];
     for (const sportKey of enabled) {
@@ -691,6 +704,8 @@ export async function runTrendPicksDaily(env, ctx, now = Date.now(), { deps = {}
   }
   const record = {
     version: RECORD_VERSION,
+    rules: PICK_RULES,
+    ...(existing?.redrawnFrom ? { redrawnFrom: existing.redrawnFrom } : {}),
     date: dateKey,
     generatedAt: existing?.generatedAt ?? now,
     checkedAt: now,

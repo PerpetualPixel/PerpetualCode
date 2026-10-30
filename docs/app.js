@@ -15,7 +15,7 @@ import { CONFIG } from './config.js';
 import { DEMO_EVENTS } from './demo.js';
 import { teamLogoUrl, espnAbbr } from './team-logos.js';
 import { leagueIconSvg } from './league-icons.js';
-import { sortTrends, attachSeries, hitFlags, nflWeek, legScore, parlayDecimal } from './trends.js';
+import { sortTrends, attachSeries, hitFlags, nflWeek, legScore, parlayDecimal, isAltLine } from './trends.js';
 import { enhanceSelect } from './custom-select.js';
 import { BUILD_INFO } from './version.js';
 import { summarizePicks, gradePick } from './learning.js';
@@ -9998,7 +9998,8 @@ const PARLAY_BOOKS = ['draftkings', 'fanduel', 'caesars', 'fanatics', 'betmgm', 
 const parlayBookId = (bookKey) => bookIdFor(bookKey) ?? String(bookKey ?? '').toLowerCase();
 const parlayBookName = (id) => SPORTSBOOKS[id]?.name ?? (id === 'prizepicks' ? 'PrizePicks' : id);
 const parlayRows = () => parlayState.rows[parlayState.sport] ?? [];
-const parlayQuote = (row) => (row.quotes ?? []).find((q) => parlayBookId(q.bookKey) === parlayState.book) ?? null;
+// No PrizePicks leg on an alternate number: a goblin or demon pays its own multiplier, not the Power Play table.
+const parlayQuote = (row) => (parlayState.book === 'prizepicks' && isAltLine(row) ? null : (row.quotes ?? []).find((q) => parlayBookId(q.bookKey) === parlayState.book) ?? null);
 
 async function loadParlay(sport = parlayState.sport) {
   if (!el.parlayView || !CONFIG.WORKER_URL) return;
