@@ -61,7 +61,7 @@ import { loadBundleIndex, loadInjuries, injuryFor, withInjuries } from './espn-b
 import { getPlayerIndex, getPlayerLog, playerStats } from './player-search.js';
 import { getUfcEvents, getUfcEvent, nextUfcEvent, getUfcFighter, getUfcFighters } from './ufc-card.js';
 import { runUfcTick, getUfcPicks } from './ufc-picks.js';
-import { sendUfcTicketNotifications } from './notifications.js';
+import { sendUfcTicketNotifications, sendUfcChangeNotifications } from './notifications.js';
 import { legBreakdown } from './parlay-builder.js';
 import { runTrendPicksDaily, runTrendPicksGrading, getTrendPicks } from './trend-picks.js';
 
@@ -503,6 +503,7 @@ export default {
       // The UFC card's odds, breakdowns, picks and grading (worker/src/ufc-picks.js):
       // KV and the model, plus an odds read on its own cadence.
       ctx.waitUntil(runUfcTick(env, ctx, now)
+        .then(async (r) => { if (r?.voided?.length) await sendUfcChangeNotifications(env, r, now); return r; })
         .then((r) => (r && !r.skipped && r.posted > 0 ? sendUfcTicketNotifications(env, now) : 0))
         .catch((e) => console.error('UFC tick failed:', e)));
       // Monday, 9 AM ET, the first tick of the hour: the weekly report of

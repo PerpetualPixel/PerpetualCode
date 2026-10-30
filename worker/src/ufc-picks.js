@@ -247,7 +247,7 @@ export async function runUfcTick(env, ctx, now = Date.now(), { deps = {} } = {})
   const raw = await env.POTD_KV.get(ufcPicksKey(event.id)).catch(() => null);
   const record = raw ? JSON.parse(raw) : { version: UFC_RECORD_VERSION, eventId: event.id, eventName: event.name, eventDate: event.date, generatedAt: now, lockMs: lock, bets: [], passed: [], breakdowns: {}, oddsAt: null };
   const locked = now >= lock;
-  let posted = 0; let graded = 0;
+  let posted = 0; let graded = 0; const voided = [];
   if (!locked) {
     const odds = await fetchUfcOdds(env, ctx, lock, now, { deps });
     record.oddsAt = odds.at ?? record.oddsAt;
@@ -258,7 +258,7 @@ export async function runUfcTick(env, ctx, now = Date.now(), { deps = {} } = {})
       if (!bo || (!bo.a.length && !bo.b.length)) continue;
       const bd = await ufcBreakdown(env, event, bout, bo, now, { deps });
       byBout.set(bout.id, { bout, odds: bo, breakdown: bd });
-      record.breakdowns[bout.id] = { lean: bd.lean, leanName: bd.leanName ?? null, confidence: bd.confidence, straight: bd.straight, parlayPiece: bd.parlayPiece, summary: bd.summary, reasons: bd.reasons, model: bd.model, bestA: bo.a[0] ?? null, bestB: bo.b[0] ?? null, totals: bo.totals.map((t) => ({ point: t.point, over: t.over[0] ?? null, under: t.under[0] ?? null })) };
+      record.breakdowns[bout.id] = { lean: bd.lean, leanName: bd.leanName ?? null, confidence: bd.confidence, straight: bd.straight, parlayPiece: bd.parlayPiece, summary: bd.summary, reasons: bd.reasons, model: bd.model, bestA: bo.a[0] ?? null, bestB: bo.b[0] ?? null, quotesA: bo.a.slice(0, 8), quotesB: bo.b.slice(0, 8), totals: bo.totals.map((t) => ({ point: t.point, over: t.over[0] ?? null, under: t.under[0] ?? null })) };
     }
     // Existing picks: voided when the bout is gone or a fighter changed; otherwise the price follows while the same selection posts.
     for (const pick of record.bets) {
@@ -266,9 +266,20 @@ export async function runUfcTick(env, ctx, now = Date.now(), { deps = {} } = {})
       const bout = event.bouts.find((b) => b.id === pick.boutId);
       const leg = pick.legs[0];
       const changed = !bout || bout.status === 'cancelled' || (leg.market === 'h2h' && bout.a?.id !== leg.fighterId && bout.b?.id !== leg.fighterId) || (bout.a?.name !== leg.a || bout.b?.name !== leg.b);
-      if (changed) { pick.status = 'void'; pick.result = 'void'; pick.net = 0; pick.settledAt = now; pick.voidReason = !bout || bout.status === 'cancelled' ? 'the bout came off the card' : 'a fighter was replaced'; continue; }
-      const q = byBout.get(bout.id) ? straightQuote(bout, { straight: { market: leg.market, fighter: leg.fighterId === bout.b?.id ? 'b' : 'a', side: leg.side, point: leg.point } }, byBout.get(bout.id).odds) : null;
-      if (q && q.bookId === pick.bookId && q.american !== pick.american) { pick.american = q.american; pick.decimal = Math.round(q.decimal * 10000) / 10000; leg.american = q.american; pick.link = q.link ?? pick.link; pick.updatedAt = now; }
+      if (changed) { pick.status = 'void'; pick.result = 'void'; pick.net = 0; pick.settledAt = now; pick.voidReason = !bout || bout.status === 'cancelled' ? 'the bout came off the card' : 'a fighter was replaced'; voided.push(pick); continue; }
+      // The pick tracks what it was drawn on: the price follows only while the same book posts the same selection at the same number.
+      const bo = byBout.get(bout.id)?.odds;
+      const same = !bo ? null : leg.market === 'h2h'
+        ? (leg.fighterId === bout.b?.id ? bo.b : bo.a).find((x) => x.bookId === pick.bookId) ?? null
+        : bo.totals.find((t) => t.point === leg.point)?.[leg.side]?.find((x) => x.bookId === pick.bookId) ?? null;
+      if (same) {
+        if (same.american !== pick.american) { pick.american = same.american; pick.decimal = Math.round(same.decimal * 10000) / 10000; leg.american = same.american; pick.link = same.link ?? pick.link; pick.updatedAt = now; }
+        if (pick.warning) { pick.warning = null; pick.updatedAt = now; }
+      } else if (bo && leg.market === 'totals') {
+        const posted = bo.totals.map((t) => t.point).filter((p) => p !== leg.point);
+        const warning = posted.length ? `${pick.book} now posts ${posted.join(' and ')} rounds; the pick stays on the ${leg.point} it was drawn at and is not to be taken at the new number.` : `${pick.book} has pulled the rounds total; the pick stays on the ${leg.point} it was drawn at.`;
+        if (pick.warning !== warning) { pick.warning = warning; pick.updatedAt = now; }
+      }
     }
     // New picks: the strongest reads with a usable price, up to the cap, one per bout.
     const taken = new Set(record.bets.filter((b) => b.status === 'pending').map((b) => b.boutId));
@@ -299,7 +310,7 @@ export async function runUfcTick(env, ctx, now = Date.now(), { deps = {} } = {})
     idx.cards = [{ id: event.id, name: event.name, date: event.date }, ...idx.cards].slice(0, 40);
     await env.POTD_KV.put(ufcPicksIndexKey, JSON.stringify(idx), { expirationTtl: KV_TTL }).catch(() => {});
   }
-  return { skipped: false, eventId: event.id, posted, graded, locked, picks: record.bets.length };
+  return { skipped: false, eventId: event.id, eventName: event.name, posted, graded, locked, picks: record.bets.length, voided };
 }
 
 /** The card's picks and the ledger across the last cards, for the tab. */
