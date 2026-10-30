@@ -1,0 +1,38 @@
+# The UFC side's data from a runner ESPN answers: the next two months of
+# cards with their bouts, each fighter's profile and history, results as
+# bouts finish, and the fighter index for the search (scripts/ufc-card.mjs;
+# worker/src/ufc-card.js reads it). Every fifteen minutes, so a card
+# change shows within the quarter hour and a finished bout grades on the
+# worker's next tick.
+name: UFC card
+
+on:
+  workflow_dispatch:
+    inputs:
+      args:
+        description: 'Extra arguments (--dry-run, --dump, --index)'
+        required: false
+        default: ''
+  # The schedule is switched on once the parser writes KV (phase 1).
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ufc-card
+  cancel-in-progress: false
+
+jobs:
+  card:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Pull the UFC cards and write KV
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+        run: node scripts/ufc-card.mjs ${{ inputs.args }}
