@@ -9291,6 +9291,9 @@ function renderTrendsSheet() {
     html = `${sheetHead('sort', 'Sorting')}
       <div class="sheet-seg"><button type="button" class="${dir === 'asc' ? 'is-active' : ''}" data-sort-dir="asc">Ascending</button><button type="button" class="${dir === 'desc' ? 'is-active' : ''}" data-sort-dir="desc">Descending</button></div>
       <div class="sheet-tiles">${[['hitRate', 'Hit Rate', 'period'], ['odds', 'Odds', 'odds'], ['date', 'Event Date', 'games']].map(([k, label, icon]) => `<button type="button" class="sheet-tile ${by === k ? 'is-on' : ''}" data-sort-by="${k}"><span class="tile-icon">${SHEET_ICON[icon]}</span><span class="tile-label">${label}</span><span class="tile-radio"></span></button>`).join('')}</div>${sheetClose()}`;
+  } else if (sheet.type === 'ufcBout') {
+    full = true;
+    html = renderUfcBoutSheet(sheet);
   } else if (sheet.type === 'ufcFighter') {
     full = true;
     html = renderUfcFighterSheet(sheet);
@@ -10449,39 +10452,85 @@ const untilText = (ms) => {
 const resultWord = { win: 'W', loss: 'L', draw: 'D', nc: 'NC' };
 
 function renderUfcBout(b, ev) {
-  const side = (f, who) => (f ? `<div class="ufc-side ufc-side-${who} ${b.result?.winnerId && b.result.winnerId === f.id ? 'is-winner' : b.result && b.result.winnerId && b.result.winnerId !== f.id ? 'is-loser' : ''}">
-      ${ufcAvatar(f)}
-      <div class="ufc-side-text">
-        <button type="button" class="ufc-name" data-ufc-fighter="${esc(f.id)}" data-ufc-name="${esc(f.name)}">${esc(f.name)}</button>
-        <span class="ufc-record">${esc(recordText(f.record))}${f.country ? ` · ${esc(f.country)}` : ''}</span>
-        <button type="button" class="ufc-more" data-ufc-fighter="${esc(f.id)}" data-ufc-name="${esc(f.name)}">More info</button>
-      </div>
-    </div>` : '<div class="ufc-side"><span class="row-sub">TBA</span></div>');
-  const tags = (ev.changes ?? []).filter((c) => c.boutId === b.id).slice(-2).map((c) => `<span class="ufc-tag is-${esc(c.type)}">${esc(c.detail)}</span>`).join('');
-  const status = b.status === 'final' && b.result
-    ? `<span class="ufc-result">${b.result.draw ? 'Draw' : `${esc((b.result.winnerId === b.a?.id ? b.a : b.b)?.name ?? '')} wins`}${b.result.method ? ` · ${esc(b.result.method)}` : ''}${b.result.round ? ` · R${esc(String(b.result.round))}${b.result.time ? ` ${esc(b.result.time)}` : ''}` : ''}</span>`
-    : b.status === 'live' ? '<span class="ufc-result is-live">Live</span>' : b.status === 'cancelled' ? '<span class="ufc-result is-off">Off the card</span>' : '';
   const rec = ufcRecordFor(ev.id);
   const bd = rec?.breakdowns?.[b.id] ?? null;
-  const pick = (rec?.bets ?? []).find((p) => p.boutId === b.id && p.status !== 'void') ?? null;
-  const price = (q) => (q ? `<span class="ufc-price">${bookBadge(q.bookId, q.book)}${esc(formatAmerican(q.american))}</span>` : '');
-  const open = ufcState.why === b.id;
-  const why = bd ? `<div class="ufc-why-row">
-      ${pick ? `<span class="ufc-pick-tag">Pixel's Pick · ${esc(pick.legs[0].selection)} ${esc(formatAmerican(pick.american))}</span>` : bd.confidence ? `<span class="ufc-lean">Lean: ${esc(bd.leanName ?? '')} ${confStars(bd.confidence)}</span>` : ''}
-      <button type="button" class="parlay-btn" data-ufc-why="${esc(b.id)}" aria-expanded="${open}">${open ? 'Hide breakdown' : 'Why this fight'}</button>
-    </div>
-    ${open ? `<div class="parlay-breakdown ${bd.confidence >= 4 ? 'is-good' : 'is-risky'}">
-      <p><strong>${bd.leanName ? `${esc(bd.leanName)} at ${esc(String(bd.confidence))} of 5.` : 'No read yet.'}</strong> ${esc(bd.summary ?? '')}</p>
-      ${(bd.reasons ?? []).length ? `<ul>${bd.reasons.map((x) => `<li>${esc(x)}</li>`).join('')}</ul>` : ''}
-      <p class="row-sub">${bd.straight ? `Straight: ${bd.straight.market === 'totals' ? `${bd.straight.side === 'under' ? 'Under' : 'Over'} ${esc(String(bd.straight.point ?? ''))} rounds` : `${esc((bd.straight.fighter === 'b' ? b.b : b.a)?.name ?? '')} to win`}. ` : ''}${bd.parlayPiece ? 'A sound parlay piece. ' : ''}${bd.totals?.length ? `Rounds total ${bd.totals.map((t) => `${t.point} (o ${t.over ? formatAmerican(t.over.american) : 'n/a'}, u ${t.under ? formatAmerican(t.under.american) : 'n/a'})`).join('; ')}.` : ''}${bd.model ? '' : ' The model read was unavailable.'}</p>
-    </div>` : ''}` : '';
-  return `<article class="ufc-bout ${b.status === 'cancelled' ? 'is-cancelled' : ''} ${pick ? 'is-picked' : ''}" data-bout="${esc(b.id)}">
-    <div class="ufc-bout-head"><span class="ufc-weight">${esc(b.weightClass ?? '')}${b.title ? ' · <b>Title fight</b>' : ''}${b.rounds ? ` · ${esc(String(b.rounds))} rounds` : ''}</span>${status}</div>
+  const pick = (rec?.bets ?? []).find((p) => (p.boutIds ?? [p.boutId]).includes(b.id) && p.status !== 'void') ?? null;
+  const side = (f, who) => (f ? `<div class="ufc-side ufc-side-${who} ${b.result?.winnerId && b.result.winnerId === f.id ? 'is-winner' : b.result && b.result.winnerId && b.result.winnerId !== f.id ? 'is-loser' : ''}">
+      ${ufcAvatar(f, 48)}
+      <div class="ufc-side-text"><span class="ufc-name">${esc(f.name)}</span><span class="ufc-record">${esc(recordText(f.record))}${f.country ? ` · ${esc(f.country)}` : ''}</span></div>
+    </div>` : '<div class="ufc-side"><span class="row-sub">TBA</span></div>');
+  const tags = (ev.changes ?? []).filter((c) => c.boutId === b.id).slice(-1).map((c) => `<span class="ufc-tag is-${esc(c.type)}">${esc(c.detail)}</span>`).join('');
+  const status = b.status === 'final' && b.result
+    ? `<span class="ufc-result">${b.result.draw ? 'Draw' : `${esc((b.result.winnerId === b.a?.id ? b.a : b.b)?.name ?? '')} wins`}${b.result.method ? ` · ${esc(b.result.method)}` : ''}${b.result.round ? ` · R${esc(String(b.result.round))}` : ''}</span>`
+    : b.status === 'live' ? '<span class="ufc-result is-live">Live</span>' : b.status === 'cancelled' ? '<span class="ufc-result is-off">Off the card</span>' : '';
+  const price = (q) => (q ? `<span class="ufc-price">${bookBadge(q.bookId, q.book)}${esc(formatAmerican(q.american))}</span>` : '<span class="ufc-price is-none">no line</span>');
+  const foot = bd ? `<div class="ufc-bout-foot">${price(bd.bestA)}<span class="ufc-foot-mid">${pick ? `<span class="ufc-pick-tag">Pixel's Pick</span>` : bd.confidence ? `<span class="ufc-lean">Lean ${esc((bd.leanName ?? '').split(' ').at(-1))} ${confStars(bd.confidence)}</span>` : ''}</span>${price(bd.bestB)}</div>` : '';
+  return `<article class="ufc-bout ${b.status === 'cancelled' ? 'is-cancelled' : ''} ${pick ? 'is-picked' : ''}" data-bout="${esc(b.id)}" data-ufc-bout="${esc(b.id)}" tabindex="0" role="button" aria-label="${esc(b.a?.name ?? 'TBA')} vs ${esc(b.b?.name ?? 'TBA')}, open the matchup">
+    <div class="ufc-bout-head"><span class="ufc-weight">${esc(b.weightClass ?? '')}${b.title ? ' · <b>Title fight</b>' : ''}${b.rounds ? ` · ${esc(String(b.rounds))} rounds` : ''}</span>${status || '<span class="ufc-open">Matchup ›</span>'}</div>
     <div class="ufc-bout-body">${side(b.a, 'a')}<span class="ufc-vs">vs</span>${side(b.b, 'b')}</div>
-    ${bd && (bd.bestA || bd.bestB) ? `<div class="ufc-prices"><span>${price(bd.bestA)}</span><span class="ufc-prices-mid">best price</span><span>${price(bd.bestB)}</span></div>` : ''}
-    ${why}
+    ${foot}
     ${tags ? `<div class="ufc-tags">${tags}</div>` : ''}
   </article>`;
+}
+
+/** The head-to-head sheet for one bout: both fighters side by side, the odds at every listed book, the breakdown and the pick, and a way into each fighter. */
+function openUfcBout(boutId) {
+  const b = ufcState.event?.bouts.find((x) => x.id === boutId);
+  if (!b) return;
+  trendsState.sheet = { type: 'ufcBout', boutId };
+  renderTrendsSheet();
+  Promise.all([b.a?.id ? ufcFighter(b.a.id) : null, b.b?.id ? ufcFighter(b.b.id) : null]).then(() => { if (trendsState.sheet?.type === 'ufcBout' && trendsState.sheet.boutId === boutId) renderTrendsSheet(); });
+}
+
+function renderUfcBoutSheet(sheet) {
+  const ev = ufcState.event;
+  const b = ev?.bouts.find((x) => x.id === sheet.boutId);
+  if (!b) return `${sheetHead('ufc', 'Matchup')}<p class="row-sub ufc-sheet-wait">That bout is no longer on the card.</p>${sheetClose()}`;
+  const rec = ufcRecordFor(ev.id);
+  const bd = rec?.breakdowns?.[b.id] ?? null;
+  const pick = (rec?.bets ?? []).find((p) => (p.boutIds ?? [p.boutId]).includes(b.id) && p.status !== 'void') ?? null;
+  const fa = b.a?.id ? ufcState.fightersById[b.a.id] : null; const fb = b.b?.id ? ufcState.fightersById[b.b.id] : null;
+  const col = (f, prof, who) => {
+    const bio = prof?.bio ?? {};
+    const m = prof?.methods?.wins ?? {}; const wins = (m.ko ?? 0) + (m.sub ?? 0) + (m.dec ?? 0);
+    const finish = wins ? Math.round((((m.ko ?? 0) + (m.sub ?? 0)) / wins) * 100) : null;
+    return `<div class="ufc-h2h-col ufc-h2h-${who} ${b.result?.winnerId === f?.id ? 'is-winner' : ''}">
+      ${ufcAvatar(prof?.headshot ? prof : f, 72)}
+      <strong class="ufc-h2h-name">${esc(f?.name ?? 'TBA')}</strong>
+      ${prof?.nickname ? `<small class="ufc-h2h-nick">"${esc(prof.nickname)}"</small>` : ''}
+      <span class="ufc-record">${esc(recordText(prof?.record ?? f?.record))}</span>
+      <div class="ufc-five-row is-small">${(prof?.lastFive ?? []).map((r) => `<span class="ufc-five is-${esc(r)}">${resultWord[r] ?? r}</span>`).join('') || '<span class="row-sub">—</span>'}</div>
+      <dl class="ufc-h2h-stats">
+        <div><dt>Age</dt><dd>${esc(String(bio.age ?? '—'))}</dd></div>
+        <div><dt>Height</dt><dd>${esc(bio.height ?? '—')}</dd></div>
+        <div><dt>Reach</dt><dd>${esc(bio.reach ?? '—')}</dd></div>
+        <div><dt>Stance</dt><dd>${esc(bio.stance ?? '—')}</dd></div>
+        <div><dt>Finish rate</dt><dd>${finish == null ? '—' : `${finish}%`}</dd></div>
+        <div><dt>Country</dt><dd>${esc(bio.country ?? f?.country ?? '—')}</dd></div>
+      </dl>
+      ${f?.id ? `<button type="button" class="parlay-btn ufc-h2h-more" data-ufc-fighter="${esc(f.id)}" data-ufc-name="${esc(f.name)}">More on ${esc((f.name ?? '').split(' ').at(-1))} ›</button>` : ''}
+    </div>`;
+  };
+  const books = new Map();
+  for (const q of bd?.quotesA ?? []) books.set(q.bookId, { ...books.get(q.bookId), a: q });
+  for (const q of bd?.quotesB ?? []) books.set(q.bookId, { ...books.get(q.bookId), b: q });
+  const oddsRows = [...books.entries()].map(([id, x]) => `<tr><td>${bookBadge(id, x.a?.book ?? x.b?.book ?? id)}${esc(x.a?.book ?? x.b?.book ?? id)}</td><td>${x.a ? `<a href="${esc(x.a.link ?? '')}" ${x.a.link ? 'target="_blank" rel="noopener"' : ''}>${esc(formatAmerican(x.a.american))}</a>` : '—'}</td><td>${x.b ? `<a href="${esc(x.b.link ?? '')}" ${x.b.link ? 'target="_blank" rel="noopener"' : ''}>${esc(formatAmerican(x.b.american))}</a>` : '—'}</td></tr>`).join('');
+  const totals = (bd?.totals ?? []).map((t) => `<li>Over ${esc(String(t.point))} ${t.over ? esc(formatAmerican(t.over.american)) : '—'} · Under ${esc(String(t.point))} ${t.under ? esc(formatAmerican(t.under.american)) : '—'}</li>`).join('');
+  const changes = (ev.changes ?? []).filter((c) => c.boutId === b.id).map((c) => `<li><span class="ufc-tag is-${esc(c.type)}">${esc(c.type)}</span> ${esc(c.detail)} <small>${esc(ufcDateFmt.format(new Date(c.at)))}</small></li>`).join('');
+  return `${sheetHead('ufc', `${b.a?.name ?? 'TBA'} vs ${b.b?.name ?? 'TBA'}`)}
+    <p class="ufc-h2h-meta">${esc(b.weightClass ?? '')}${b.title ? ' · <b>Title fight</b>' : ''}${b.rounds ? ` · ${esc(String(b.rounds))} rounds` : ''} · ${esc(UFC_SEGMENT_LABEL[b.segment] ?? '')}${b.date ? ` · ${esc(ufcDateFmt.format(new Date(b.date)))} ET` : ''}</p>
+    ${b.status === 'final' && b.result ? `<p class="ufc-result">${b.result.draw ? 'Draw' : `${esc((b.result.winnerId === b.a?.id ? b.a : b.b)?.name ?? '')} wins`}${b.result.method ? ` · ${esc(b.result.method)}` : ''}${b.result.round ? ` · R${esc(String(b.result.round))}${b.result.time ? ` ${esc(b.result.time)}` : ''}` : ''}</p>` : b.status === 'cancelled' ? '<p class="ufc-result is-off">Off the card</p>' : ''}
+    <div class="ufc-h2h">${col(b.a, fa, 'a')}<span class="ufc-h2h-vs">vs</span>${col(b.b, fb, 'b')}</div>
+    ${pick ? `<div class="ufc-h2h-pick"><span class="ufc-pick-tag">Pixel's Pick</span> <strong>${esc(pick.type === 'parlay' ? pick.legs.map((l) => l.selection).join(' + ') : pick.legs[0].selection)}</strong> at ${esc(pick.book)} ${esc(formatAmerican(pick.american))}${pick.type === 'parlay' ? ' (parlay)' : ''} ${ufcPickBadge(pick)}${pick.warning ? `<p class="pick-move is-out"><span class="pick-move-tag">Line moved · not tracked</span> ${esc(pick.warning)}</p>` : ''}${pick.link || pick.bookUrl ? `<a class="pick-bet-link" href="${esc(pick.link ?? pick.bookUrl)}" target="_blank" rel="noopener">Open ${esc(pick.book)}</a>` : ''}</div>` : ''}
+    ${bd ? `<h4 class="ufc-h4">Pixel's read</h4><div class="parlay-breakdown ${bd.confidence >= 4 ? 'is-good' : 'is-risky'}">
+      <p><strong>${bd.leanName ? `${esc(bd.leanName)} ${confStars(bd.confidence)}` : 'No read yet.'}</strong> ${esc(bd.summary ?? '')}</p>
+      ${(bd.reasons ?? []).length ? `<ul>${bd.reasons.map((x) => `<li>${esc(x)}</li>`).join('')}</ul>` : ''}
+      <p class="row-sub">${bd.straight ? `Straight it likes: ${bd.straight.market === 'totals' ? `${bd.straight.side === 'under' ? 'Under' : 'Over'} ${esc(String(bd.straight.point ?? ''))} rounds` : `${esc((bd.straight.fighter === 'b' ? b.b : b.a)?.name ?? '')} to win`}. ` : ''}${bd.parlayPiece ? 'A sound parlay piece.' : ''}${bd.model ? '' : ' The model read was unavailable.'}</p>
+    </div>` : '<p class="row-sub">No odds posted for this bout yet; the read comes with them.</p>'}
+    ${oddsRows ? `<h4 class="ufc-h4">Moneyline by book</h4><table class="ufc-odds"><thead><tr><th>Book</th><th>${esc((b.a?.name ?? '').split(' ').at(-1))}</th><th>${esc((b.b?.name ?? '').split(' ').at(-1))}</th></tr></thead><tbody>${oddsRows}</tbody></table>` : ''}
+    ${totals ? `<h4 class="ufc-h4">Rounds total</h4><ul class="ufc-totals">${totals}</ul>` : ''}
+    ${changes ? `<h4 class="ufc-h4">Card changes</h4><ul class="ufc-changes-list">${changes}</ul>` : ''}
+    ${sheetClose()}`;
 }
 
 function renderUfc() {
@@ -10559,8 +10608,14 @@ el.ufcView?.addEventListener('click', (event) => {
   if (why) { ufcState.why = ufcState.why === why.dataset.ufcWhy ? null : why.dataset.ufcWhy; renderUfc(); return; }
   const f = t.closest('[data-ufc-fighter]');
   if (f) { openUfcFighter(f.dataset.ufcFighter, f.dataset.ufcName); if (el.ufcList) el.ufcList.hidden = true; return; }
+  const row = t.closest('[data-ufc-bout]');
+  if (row && !t.closest('a')) { openUfcBout(row.dataset.ufcBout); return; }
   const jump = t.closest('[data-bout-link]');
-  if (jump && !t.closest('a')) { document.querySelector(`.ufc-bout[data-bout="${jump.dataset.boutLink}"]`)?.scrollIntoView({ behavior: 'smooth', block: 'center' }); }
+  if (jump && !t.closest('a')) { openUfcBout(jump.dataset.boutLink); }
+});
+el.ufcView?.addEventListener('keydown', (event) => {
+  const row = event.target.closest('[data-ufc-bout]');
+  if (row && (event.key === 'Enter' || event.key === ' ')) { event.preventDefault(); openUfcBout(row.dataset.ufcBout); }
 });
 el.ufcQuery?.addEventListener('input', () => { ufcState.query = el.ufcQuery.value; ufcState.focus = 0; renderUfc(); });
 el.ufcQuery?.addEventListener('keydown', (event) => {
