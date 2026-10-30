@@ -26,7 +26,7 @@
  */
 import { getUfcEvents, getUfcEvent, nextUfcEvent, getUfcFighter } from './ufc-card.js';
 import { normalizeName, namesLikelyMatch } from './ufc-events.js';
-import { callModel, STRAIGHT_RANGE, betRecordOf, TICKET_UNITS } from './trend-picks.js';
+import { callModel, STRAIGHT_RANGE, PARLAY_RANGE, PARLAY_TARGET, betRecordOf, TICKET_UNITS } from './trend-picks.js';
 import { bookIdFor, SPORTSBOOKS, americanToDecimal } from '../../docs/engine.js';
 
 export const UFC_SPORT = 'mma_mixed_martial_arts';
@@ -34,6 +34,8 @@ export const UFC_SPORT = 'mma_mixed_martial_arts';
 export const UFC_BOOKS = ['fanduel', 'draftkings', 'caesars', 'hardrock', 'bet365', 'fanatics', 'betmgm'];
 const UFC_FEED_BOOKS = 'fanduel,draftkings,williamhill_us,hardrockbet,bet365,fanatics,betmgm';
 export const UFC_MAX_PICKS = 6;
+/** A parlay piece: a bout the breakdown calls a sound piece at confidence 4 or better; two or three ride together at one book nearest +100. */
+export const UFC_PARLAY_LEGS = [2, 3];
 export const UFC_MIN_CONFIDENCE = 4;
 export const UFC_RECORD_VERSION = 1;
 const ROUND_MS = 5 * 60e3;
@@ -89,6 +91,24 @@ export function feedEventFor(bout, events) {
 }
 
 /**
+ * Which fighter an outcome names: the exact name first, then the looser
+ * match, and nothing when both sides fit (two fighters sharing a surname,
+ * Yana Santos against Luana Santos, would otherwise both land on one side).
+ */
+export function matchSide(n, a, b) {
+  if (!n) return null;
+  if (n === a && n !== b) return 'a';
+  if (n === b && n !== a) return 'b';
+  const la = namesLikelyMatch(n, a); const lb = namesLikelyMatch(n, b);
+  if (la && !lb) return 'a';
+  if (lb && !la) return 'b';
+  if (!la && !lb) return null;
+  const overlap = (x) => n.split(' ').filter((t) => x.split(' ').includes(t)).length;
+  const oa = overlap(a); const ob = overlap(b);
+  return oa > ob ? 'a' : ob > oa ? 'b' : null;
+}
+
+/**
  * A bout's quotes at the listed books: each fighter's moneyline, best
  * price first, and the rounds totals by number. Each quote carries the
  * book's deep link when the feed has one.
@@ -106,8 +126,8 @@ export function boutOdds(bout, events) {
         if (!Number.isFinite(o.price)) continue;
         const q = { bookId, book: bookName(bookId), american: o.price, decimal: americanToDecimal(o.price), link: o.link ?? m.link ?? bk.link ?? null };
         if (m.key === 'h2h') {
-          const n = normalizeName(o.name);
-          if (namesLikelyMatch(n, a)) ml.a.push(q); else if (namesLikelyMatch(n, b)) ml.b.push(q);
+          const side = matchSide(normalizeName(o.name), a, b);
+          if (side === 'a') ml.a.push(q); else if (side === 'b') ml.b.push(q);
         } else if (m.key === 'totals' && Number.isFinite(o.point)) {
           const side = String(o.name).toLowerCase();
           if (side !== 'over' && side !== 'under') continue;
@@ -197,6 +217,50 @@ export function straightQuote(bout, breakdown, odds) {
 }
 
 const pickId = (eventId, bout, q) => `${eventId}:${bout.id}:${q.market}:${q.side ?? q.fighterId}`;
+const toAmerican = (decimal) => (decimal >= 2 ? Math.round((decimal - 1) * 100) : Math.round(-100 / (decimal - 1)));
+
+/**
+ * The parlay pieces into tickets: the bouts the breakdown calls a sound
+ * piece at confidence 4 or better, each at its lean's moneyline, combined
+ * two or three at a time at one book where every piece is priced, the
+ * ticket nearest +100 inside PARLAY_RANGE first, no bout on two tickets,
+ * up to `open` tickets. A piece already on a straight is skipped.
+ */
+export function buildUfcParlays(pieces, { open = UFC_MAX_PICKS } = {}) {
+  const legsOf = (p) => (p.breakdown.lean === 'b' ? p.odds.b : p.odds.a).map((q) => ({ ...q, bout: p.bout, breakdown: p.breakdown, fighterId: p.breakdown.lean === 'b' ? p.bout.b?.id : p.bout.a?.id, name: p.breakdown.lean === 'b' ? p.bout.b?.name : p.bout.a?.name }));
+  const byBook = new Map();
+  for (const p of pieces) for (const q of legsOf(p)) { if (!byBook.has(q.bookId)) byBook.set(q.bookId, new Map()); const m = byBook.get(q.bookId); if (!m.has(p.bout.id)) m.set(p.bout.id, q); }
+  const combos = [];
+  for (const [bookId, legs] of byBook) {
+    const list = [...legs.values()];
+    for (const n of UFC_PARLAY_LEGS) {
+      const pick = (start, chosen) => {
+        if (chosen.length === n) { const dec = chosen.reduce((d, l) => d * l.decimal, 1); const am = toAmerican(dec); if (inRange(am, PARLAY_RANGE)) combos.push({ bookId, legs: chosen, decimal: dec, american: am, gap: Math.abs(am - PARLAY_TARGET) }); return; }
+        for (let i = start; i < list.length; i++) pick(i + 1, [...chosen, list[i]]);
+      };
+      pick(0, []);
+    }
+  }
+  combos.sort((x, y) => x.gap - y.gap || y.legs.length - x.legs.length);
+  const used = new Set(); const out = [];
+  for (const c of combos) {
+    if (out.length >= open) break;
+    if (c.legs.some((l) => used.has(l.bout.id))) continue;
+    c.legs.forEach((l) => used.add(l.bout.id));
+    out.push(c);
+  }
+  return out;
+}
+
+function parlayRecord(event, combo, now) {
+  const legs = combo.legs.map((l) => ({ id: `${l.bout.id}:h2h`, boutId: l.bout.id, selection: `${l.name} to win`, market: 'h2h', fighterId: l.fighterId, point: null, side: null, american: l.american, decimal: Math.round(l.decimal * 10000) / 10000, link: l.link ?? null, a: l.bout.a?.name, b: l.bout.b?.name, weightClass: l.bout.weightClass, rounds: l.bout.rounds ?? 3, confidence: l.breakdown.confidence, note: l.breakdown.summary, result: null, actual: null }));
+  return {
+    id: `${event.id}:parlay:${legs.map((l) => l.boutId).join('+')}`, type: 'parlay', sportKey: UFC_SPORT, sportTitle: 'UFC', eventId: event.id, eventName: event.name, boutId: legs[0].boutId, boutIds: legs.map((l) => l.boutId),
+    bookId: combo.bookId, book: bookName(combo.bookId), bookUrl: bookUrl(combo.bookId), link: null,
+    american: combo.american, decimal: Math.round(combo.decimal * 10000) / 10000, units: TICKET_UNITS, commenceMs: Math.min(...combo.legs.map((l) => l.bout.date ?? event.date)), postedAt: now,
+    legs, status: 'pending', result: null, net: null, settledAt: null,
+  };
+}
 
 function pickRecord(event, bout, breakdown, q, now) {
   return {
@@ -208,25 +272,48 @@ function pickRecord(event, bout, breakdown, q, now) {
   };
 }
 
-/** Settle one pick from its bout's result: the moneyline on the winner, the rounds total on the finish time. */
-export function settleUfcPick(pick, bout) {
-  const leg = pick.legs[0]; const r = bout?.result;
-  if (bout?.status === 'cancelled') return { result: 'void', net: 0, actual: 'off the card' };
+/** Settle one leg from its bout's result: the moneyline on the winner, the rounds total on the finish time; null while the bout is not in. */
+export function settleUfcLeg(leg, bout) {
+  const r = bout?.result;
+  if (bout?.status === 'cancelled') return { result: 'void', actual: 'off the card' };
   if (bout?.status !== 'final' || !r) return null;
   if (leg.market === 'h2h') {
-    if (r.draw || !r.winnerId) return { result: 'void', net: 0, actual: 'draw or no contest' };
-    const won = r.winnerId === leg.fighterId;
-    return { result: won ? 'win' : 'loss', net: won ? Math.round((pick.decimal - 1) * pick.units * 100) / 100 : -pick.units, actual: `${r.winnerId === bout.a?.id ? bout.a?.name : bout.b?.name} by ${r.method ?? '?'}${r.round ? ` R${r.round}` : ''}` };
+    if (r.draw || !r.winnerId) return { result: 'void', actual: 'draw or no contest' };
+    return { result: r.winnerId === leg.fighterId ? 'win' : 'loss', actual: `${r.winnerId === bout.a?.id ? bout.a?.name : bout.b?.name} by ${r.method ?? '?'}${r.round ? ` R${r.round}` : ''}` };
   }
   // The rounds total: a finish's elapsed time against the number; a decision is the distance.
   const rounds = leg.rounds ?? bout.rounds ?? 3;
   const isDecision = /dec/i.test(r.method ?? '') || !r.round;
   const elapsedMs = isDecision ? rounds * ROUND_MS : (r.round - 1) * ROUND_MS + (() => { const m = String(r.time ?? '').match(/^(\d+):(\d+)$/); return m ? (Number(m[1]) * 60 + Number(m[2])) * 1000 : 0; })();
   const lineMs = leg.point * ROUND_MS;
-  if (elapsedMs === lineMs) return { result: 'push', net: 0, actual: `${(elapsedMs / ROUND_MS).toFixed(2)} rounds` };
+  if (elapsedMs === lineMs) return { result: 'push', actual: `${(elapsedMs / ROUND_MS).toFixed(2)} rounds` };
   const over = elapsedMs > lineMs;
   const won = leg.side === 'over' ? over : !over;
-  return { result: won ? 'win' : 'loss', net: won ? Math.round((pick.decimal - 1) * pick.units * 100) / 100 : -pick.units, actual: isDecision ? `went the distance (${rounds} rounds)` : `ended R${r.round} ${r.time ?? ''} (${(elapsedMs / ROUND_MS).toFixed(2)} rounds)` };
+  return { result: won ? 'win' : 'loss', actual: isDecision ? `went the distance (${rounds} rounds)` : `ended R${r.round} ${r.time ?? ''} (${(elapsedMs / ROUND_MS).toFixed(2)} rounds)` };
+}
+
+/**
+ * Settle a ticket from its legs, the way a book does: a lost leg loses
+ * it, a pushed or voided leg drops out and it pays at the legs left, no
+ * legs left is a void. Null while any leg is unsettled.
+ */
+export function settleUfcTicket(pick) {
+  const legs = pick.legs ?? [];
+  if (legs.some((l) => l.result == null)) return null;
+  const units = pick.units ?? 1;
+  if (legs.some((l) => l.result === 'loss')) return { result: 'loss', net: -units };
+  const live = legs.filter((l) => l.result === 'win');
+  if (!live.length) return { result: legs.every((l) => l.result === 'void') ? 'void' : 'push', net: 0 };
+  const decimal = live.reduce((d, l) => d * (l.decimal ?? americanToDecimal(l.american)), 1);
+  return { result: 'win', net: Math.round((decimal - 1) * units * 100) / 100 };
+}
+
+/** A straight, settled from its one leg (kept for the tests and the grading path). */
+export function settleUfcPick(pick, bout) {
+  const leg = settleUfcLeg(pick.legs[0], bout);
+  if (!leg) return null;
+  const t = settleUfcTicket({ ...pick, legs: [{ ...pick.legs[0], result: leg.result, decimal: pick.decimal }] });
+  return { ...t, actual: leg.actual };
 }
 
 /** The lock: the first scheduled bout's start, else the event's. */
@@ -258,28 +345,44 @@ export async function runUfcTick(env, ctx, now = Date.now(), { deps = {} } = {})
       if (!bo || (!bo.a.length && !bo.b.length)) continue;
       const bd = await ufcBreakdown(env, event, bout, bo, now, { deps });
       byBout.set(bout.id, { bout, odds: bo, breakdown: bd });
-      record.breakdowns[bout.id] = { lean: bd.lean, leanName: bd.leanName ?? null, confidence: bd.confidence, straight: bd.straight, parlayPiece: bd.parlayPiece, summary: bd.summary, reasons: bd.reasons, model: bd.model, bestA: bo.a[0] ?? null, bestB: bo.b[0] ?? null, quotesA: bo.a.slice(0, 8), quotesB: bo.b.slice(0, 8), totals: bo.totals.map((t) => ({ point: t.point, over: t.over[0] ?? null, under: t.under[0] ?? null })) };
+      record.breakdowns[bout.id] = { boutDate: bout.date ?? event.date, a: bout.a?.name ?? null, b: bout.b?.name ?? null, aId: bout.a?.id ?? null, bId: bout.b?.id ?? null, weightClass: bout.weightClass ?? null, segment: bout.segment, lean: bd.lean, leanName: bd.leanName ?? null, confidence: bd.confidence, straight: bd.straight, parlayPiece: bd.parlayPiece, summary: bd.summary, reasons: bd.reasons, model: bd.model, bestA: bo.a[0] ?? null, bestB: bo.b[0] ?? null, quotesA: bo.a.slice(0, 8), quotesB: bo.b.slice(0, 8), totals: bo.totals.map((t) => ({ point: t.point, over: t.over[0] ?? null, under: t.under[0] ?? null })) };
     }
     // Existing picks: voided when the bout is gone or a fighter changed; otherwise the price follows while the same selection posts.
     for (const pick of record.bets) {
       if (pick.status !== 'pending') continue;
-      const bout = event.bouts.find((b) => b.id === pick.boutId);
-      const leg = pick.legs[0];
-      const changed = !bout || bout.status === 'cancelled' || (leg.market === 'h2h' && bout.a?.id !== leg.fighterId && bout.b?.id !== leg.fighterId) || (bout.a?.name !== leg.a || bout.b?.name !== leg.b);
-      if (changed) { pick.status = 'void'; pick.result = 'void'; pick.net = 0; pick.settledAt = now; pick.voidReason = !bout || bout.status === 'cancelled' ? 'the bout came off the card' : 'a fighter was replaced'; voided.push(pick); continue; }
-      // The pick tracks what it was drawn on: the price follows only while the same book posts the same selection at the same number.
-      const bo = byBout.get(bout.id)?.odds;
-      const same = !bo ? null : leg.market === 'h2h'
-        ? (leg.fighterId === bout.b?.id ? bo.b : bo.a).find((x) => x.bookId === pick.bookId) ?? null
-        : bo.totals.find((t) => t.point === leg.point)?.[leg.side]?.find((x) => x.bookId === pick.bookId) ?? null;
-      if (same) {
-        if (same.american !== pick.american) { pick.american = same.american; pick.decimal = Math.round(same.decimal * 10000) / 10000; leg.american = same.american; pick.link = same.link ?? pick.link; pick.updatedAt = now; }
-        if (pick.warning) { pick.warning = null; pick.updatedAt = now; }
-      } else if (bo && leg.market === 'totals') {
-        const posted = bo.totals.map((t) => t.point).filter((p) => p !== leg.point);
-        const warning = posted.length ? `${pick.book} now posts ${posted.join(' and ')} rounds; the pick stays on the ${leg.point} it was drawn at and is not to be taken at the new number.` : `${pick.book} has pulled the rounds total; the pick stays on the ${leg.point} it was drawn at.`;
-        if (pick.warning !== warning) { pick.warning = warning; pick.updatedAt = now; }
+      let touched = false;
+      for (const leg of pick.legs) {
+        if (leg.result != null) continue;
+        const bout = event.bouts.find((b) => b.id === leg.boutId);
+        const changed = !bout || bout.status === 'cancelled' || (leg.market === 'h2h' && bout.a?.id !== leg.fighterId && bout.b?.id !== leg.fighterId) || (bout.a?.name !== leg.a || bout.b?.name !== leg.b);
+        if (changed) {
+          // A straight voids; a parlay leg drops out and the ticket pays at the legs left.
+          leg.result = 'void'; leg.actual = !bout || bout.status === 'cancelled' ? 'the bout came off the card' : 'a fighter was replaced'; touched = true;
+          continue;
+        }
+        // The pick tracks what it was drawn on: the price follows only while the same book posts the same selection at the same number.
+        const bo = byBout.get(bout.id)?.odds;
+        const same = !bo ? null : leg.market === 'h2h'
+          ? (leg.fighterId === bout.b?.id ? bo.b : bo.a).find((x) => x.bookId === pick.bookId) ?? null
+          : bo.totals.find((t) => t.point === leg.point)?.[leg.side]?.find((x) => x.bookId === pick.bookId) ?? null;
+        if (same) {
+          if (same.american !== leg.american) { leg.american = same.american; leg.decimal = Math.round(same.decimal * 10000) / 10000; leg.link = same.link ?? leg.link; touched = true; }
+          if (leg.warning) { leg.warning = null; touched = true; }
+        } else if (bo && leg.market === 'totals') {
+          const posted = bo.totals.map((t) => t.point).filter((p) => p !== leg.point);
+          const warning = posted.length ? `${pick.book} now posts ${posted.join(' and ')} rounds; the pick stays on the ${leg.point} it was drawn at and is not to be taken at the new number.` : `${pick.book} has pulled the rounds total; the pick stays on the ${leg.point} it was drawn at.`;
+          if (leg.warning !== warning) { leg.warning = warning; touched = true; }
+        }
       }
+      if (!touched) continue;
+      pick.updatedAt = now;
+      const live = pick.legs.filter((l) => l.result == null);
+      if (!live.length) { pick.status = 'void'; pick.result = 'void'; pick.net = 0; pick.settledAt = now; pick.voidReason = pick.legs[0].actual; voided.push(pick); continue; }
+      if (pick.type === 'parlay' && live.length < pick.legs.length) voided.push({ ...pick, voidReason: `${pick.legs.filter((l) => l.result === 'void').map((l) => l.selection).join(', ')}: ${pick.legs.find((l) => l.result === 'void')?.actual}; the ticket rides on ${live.map((l) => l.selection).join(' + ')}` });
+      const decimal = live.reduce((d, l) => d * (l.decimal ?? americanToDecimal(l.american)), 1);
+      pick.decimal = Math.round(decimal * 10000) / 10000; pick.american = toAmerican(decimal);
+      pick.warning = pick.legs.map((l) => l.warning).filter(Boolean).join(' ') || null;
+      if (pick.type === 'straight') pick.link = pick.legs[0].link ?? pick.link;
     }
     // New picks: the strongest reads with a usable price, up to the cap, one per bout.
     const taken = new Set(record.bets.filter((b) => b.status === 'pending').map((b) => b.boutId));
@@ -289,15 +392,23 @@ export async function runUfcTick(env, ctx, now = Date.now(), { deps = {} } = {})
       .sort((x, y) => y.breakdown.confidence - x.breakdown.confidence || y.q.american - x.q.american);
     record.passed = [...byBout.values()].filter(({ bout, breakdown }) => !taken.has(bout.id) && !candidates.some((c) => c.bout.id === bout.id)).map(({ bout, breakdown }) => ({ boutId: bout.id, selection: `${bout.a?.name} vs ${bout.b?.name}`, reason: breakdown.confidence < UFC_MIN_CONFIDENCE ? `confidence ${breakdown.confidence} of 5` : 'no usable price at your books' }));
     for (const c of candidates.slice(0, Math.max(0, open))) { record.bets.push(pickRecord(event, c.bout, c.breakdown, c.q, now)); posted++; }
+    // Then the parlay pieces, at whatever room is left under the cap.
+    const onTicket = new Set(record.bets.filter((b) => b.status === 'pending').flatMap((b) => b.boutIds ?? [b.boutId]));
+    const pieces = [...byBout.values()].filter(({ bout, breakdown }) => !onTicket.has(bout.id) && breakdown.parlayPiece && breakdown.confidence >= UFC_MIN_CONFIDENCE && breakdown.lean);
+    const room = UFC_MAX_PICKS - record.bets.filter((b) => b.status === 'pending').length;
+    for (const combo of buildUfcParlays(pieces, { open: Math.max(0, room) })) { record.bets.push(parlayRecord(event, combo, now)); posted++; }
     record.lockMs = lock;
   }
   // Grading: every pending pick whose bout is in.
   for (const pick of record.bets) {
     if (pick.status !== 'pending') continue;
-    const bout = event.bouts.find((b) => b.id === pick.boutId);
-    const settled = settleUfcPick(pick, bout);
+    for (const leg of pick.legs) {
+      if (leg.result != null) continue;
+      const s = settleUfcLeg(leg, event.bouts.find((b) => b.id === leg.boutId));
+      if (s) { leg.result = s.result; leg.actual = s.actual; }
+    }
+    const settled = settleUfcTicket({ ...pick, legs: pick.legs.map((l) => ({ ...l, decimal: l.decimal ?? (pick.type === 'straight' ? pick.decimal : americanToDecimal(l.american)) })) });
     if (!settled) continue;
-    pick.legs[0].result = settled.result; pick.legs[0].actual = settled.actual;
     pick.result = settled.result; pick.net = settled.net; pick.status = settled.result === 'void' ? 'void' : 'graded'; pick.settledAt = now; graded++;
   }
   record.checkedAt = now;
