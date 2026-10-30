@@ -36,7 +36,7 @@
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Syne:wght@600;700;800&family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
-<link rel="stylesheet" href="styles.css?v=1.240">
+<link rel="stylesheet" href="styles.css?v=1.241">
 </head>
 <body>
 
@@ -347,6 +347,8 @@
   <section id="trendPicksGraph" class="pick-graph" aria-live="polite"></section>
   <h2 class="trend-picks-heading">History</h2>
   <section id="trendPicksHistory" class="trend-picks-history"></section>
+  <!-- The UFC ledger, kept apart from the NBA and NFL record (docs/app.js's renderUfcLedger). -->
+  <section id="trendPicksUfc" class="pick-ufc" aria-live="polite"></section>
 </section>
 
 <!-- UFC: the next card (fight night or numbered event) with every bout in
@@ -1033,6 +1035,6 @@
   </div>
 </aside>
 
-<script type="module" src="app.js?v=1.240"></script>
+<script type="module" src="app.js?v=1.241"></script>
 </body>
 </html>

@@ -60,6 +60,8 @@ import { runTrendsBuild, getTrends, buildLeagueChunk, TREND_ENABLED_SPORTS } fro
 import { loadBundleIndex, loadInjuries, injuryFor, withInjuries } from './espn-bundle.js';
 import { getPlayerIndex, getPlayerLog, playerStats } from './player-search.js';
 import { getUfcEvents, getUfcEvent, nextUfcEvent, getUfcFighter, getUfcFighters } from './ufc-card.js';
+import { runUfcTick, getUfcPicks } from './ufc-picks.js';
+import { sendUfcTicketNotifications } from './notifications.js';
 import { legBreakdown } from './parlay-builder.js';
 import { runTrendPicksDaily, runTrendPicksGrading, getTrendPicks } from './trend-picks.js';
 
@@ -498,6 +500,11 @@ export default {
         // each ticket once, whatever tick posts it).
         .then((r) => (r && !r.skipped && r.posted > 0 ? sendTicketNotifications(env, now) : 0))
         .catch((e) => console.error('Trends build failed:', e)));
+      // The UFC card's odds, breakdowns, picks and grading (worker/src/ufc-picks.js):
+      // KV and the model, plus an odds read on its own cadence.
+      ctx.waitUntil(runUfcTick(env, ctx, now)
+        .then((r) => (r && !r.skipped && r.posted > 0 ? sendUfcTicketNotifications(env, now) : 0))
+        .catch((e) => console.error('UFC tick failed:', e)));
       // Monday, 9 AM ET, the first tick of the hour: the weekly report of
       // the Pixel's Picks tickets (worker/src/weekly-report.js), to the
       // users who asked for it. Its own waitUntil, so a send failure
@@ -1541,6 +1548,9 @@ export default {
       const event = await getUfcEvent(env, id);
       if (!event) return json({ error: 'no card yet' }, { status: 404, headers: cors });
       return json({ event, events: index.events, builtAt: index.builtAt }, { headers: { ...cors, 'Cache-Control': 'public, max-age=120' } });
+    }
+    if (pathname === '/ufc/picks' && request.method === 'GET') {
+      return json(await getUfcPicks(env), { headers: { ...cors, 'Cache-Control': 'public, max-age=120' } });
     }
     if (pathname === '/ufc/fighters' && request.method === 'GET') {
       return json(await getUfcFighters(env), { headers: { ...cors, 'Cache-Control': 'public, max-age=1800' } });
