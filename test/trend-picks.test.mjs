@@ -401,7 +401,7 @@ test('no PrizePicks ticket on an alternate number: the quote is dropped, and a p
   assert.equal(rec.rules, PICK_RULES);
   assert.equal(rec.redrawnFrom, 1);
   assert.equal(rec.generatedAt, NOW - 3.6e6, 'the day keeps its first draw time');
-  assert.deepEqual(rec.bets.map((b) => [b.bookId, b.legs.map((l) => l.playerName)]), [['draftkings', ['Collin Sexton', 'LaMelo Ball']]]);
+  assert.deepEqual(rec.bets.map((b) => [b.bookId, b.legs.map((l) => l.playerName)]).sort(), [['draftkings', ['Collin Sexton']], ['draftkings', ['LaMelo Ball']]], 'two straights: the pair would parlay past +150');
   // Drawn under the current rules: posted stands.
   assert.equal((await runTrendPicksDaily(env, ctx, NOW + 60e3, { deps: { ...deps, rowsFor: async () => rows }, enabled: ['basketball_nba'] })).reason, 'posted');
 });
