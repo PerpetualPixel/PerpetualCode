@@ -68,6 +68,9 @@ jobs:
           fetch trends-nba "$WORKER/trends?sport=basketball_nba"
           fetch trends-nhl "$WORKER/trends?sport=icehockey_nhl"
           fetch trend-picks "$WORKER/trend-picks"
+          # The UFC card the tab shows and its picks, breakdowns and ledger (worker/src/ufc-card.js, ufc-picks.js).
+          fetch ufc-event "$WORKER/ufc/event"
+          fetch ufc-picks "$WORKER/ufc/picks"
           fetch gridiron-tracking-nfl "$GRIDIRON/tracking-nfl.json"
           fetch gridiron-tracking-ncaa "$GRIDIRON/tracking-ncaa.json"
           fetch gridiron-picks "$GRIDIRON/picks.json"
