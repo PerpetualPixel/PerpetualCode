@@ -43,7 +43,7 @@ export const ufcOddsKey = 'ufc:odds';
 export const ufcPicksKey = (eventId) => `ufc:picks:${eventId}`;
 /** Every card with a picks record, newest first, so the ledger outlives the runner's two-month card window. */
 export const ufcPicksIndexKey = 'ufc:picks:index';
-export const ufcBreakdownKey = (bout) => `ufc:breakdown:${bout.id}:${bout.a?.id ?? '-'}-${bout.b?.id ?? '-'}`;
+export const ufcBreakdownKey = (bout) => `ufc:breakdown:v2:${bout.id}:${bout.a?.id ?? '-'}-${bout.b?.id ?? '-'}`;
 const bookName = (id) => SPORTSBOOKS[id]?.name ?? id;
 const bookUrl = (id) => SPORTSBOOKS[id]?.url ?? null;
 const inRange = (american, [lo, hi]) => american >= lo && american <= hi;
@@ -142,14 +142,16 @@ export function parseUfcBreakdown(text, bout) {
   if (!m) return null;
   try {
     const o = JSON.parse(m[0]);
-    const lean = o.lean === 'a' || o.lean === 'b' ? o.lean : null;
+    // The model writes A and B as asked; the record keeps them lower case.
+    const sideOf = (v) => { const t = String(v ?? '').trim().toLowerCase(); return t === 'a' || t === 'b' ? t : null; };
+    const lean = sideOf(o.lean);
     const confidence = Math.max(1, Math.min(5, Math.round(Number(o.confidence))));
     if (!lean || !Number.isFinite(confidence)) return null;
     const s = o.straight ?? {};
     const market = s.market === 'totals' ? 'totals' : 'h2h';
     const straight = market === 'totals'
       ? { market, side: String(s.side).toLowerCase() === 'under' ? 'under' : 'over', point: Number.isFinite(Number(s.point)) ? Number(s.point) : null }
-      : { market, fighter: s.fighter === 'a' || s.fighter === 'b' ? s.fighter : lean };
+      : { market, fighter: sideOf(s.fighter) ?? lean };
     return { lean, confidence, straight, parlayPiece: Boolean(o.parlayPiece), summary: typeof o.summary === 'string' ? o.summary.trim().slice(0, 320) : '', reasons: Array.isArray(o.reasons) ? o.reasons.filter((r) => typeof r === 'string').map((r) => r.trim().slice(0, 160)).slice(0, 4) : [], leanName: lean === 'a' ? bout.a?.name : bout.b?.name };
   } catch { return null; }
 }
@@ -172,8 +174,8 @@ export async function ufcBreakdown(env, event, bout, odds, now = Date.now(), { d
 ${facts}
 
 Pick the side you lean to (A or B), a confidence from 1 to 5 (5 only when the record, the matchup and the price all agree), the one straight bet you like most (the moneyline on A or B, or the rounds total over or under the posted number), and whether the moneyline is a sound parlay piece (a heavy favourite with little finish risk against). Reply with JSON only, no dashes in the text: {"lean":"A"|"B","confidence":1-5,"straight":{"market":"h2h","fighter":"A"|"B"} or {"market":"totals","side":"over"|"under","point":2.5},"parlayPiece":true|false,"summary":"<one sentence>","reasons":["<short point>","<short point>","<short point>"]}`;
-  const text = deps.model ? await deps.model(prompt) : await callModel(prompt, env);
-  const parsed = parseUfcBreakdown(String(text ?? '').replace(/"lean":"A"/g, '"lean":"a"').replace(/"lean":"B"/g, '"lean":"b"').replace(/"fighter":"A"/g, '"fighter":"a"').replace(/"fighter":"B"/g, '"fighter":"b"'), bout);
+  const text = deps.model ? await deps.model(prompt) : await callModel(prompt, env, { maxTokens: 500 });
+  const parsed = parseUfcBreakdown(text, bout);
   const result = parsed ? { ...parsed, boutId: bout.id, at: now, model: true } : { boutId: bout.id, at: now, lean: null, confidence: 0, straight: null, parlayPiece: false, summary: 'The read was not available.', reasons: [], model: false };
   await env.POTD_KV.put(key, JSON.stringify(result), { expirationTtl: 3 * 86400 }).catch(() => {});
   return result;

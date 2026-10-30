@@ -385,13 +385,13 @@ Reply with JSON only: {"verdict":"post"|"pass","reason":"<one sentence>","note":
   return { verdict, flags, note: notes.length ? notes.join(' ') : null };
 }
 
-export async function callModel(prompt, env) {
+export async function callModel(prompt, env, { maxTokens = 300 } = {}) {
   if (!env?.ANTHROPIC_API_KEY) return null;
   try {
     const response = await fetch('https://api.anthropic.com/v1/messages', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json', 'x-api-key': env.ANTHROPIC_API_KEY, 'anthropic-version': '2023-06-01' },
-      body: JSON.stringify({ model: MODEL, max_tokens: 300, messages: [{ role: 'user', content: prompt }] }),
+      body: JSON.stringify({ model: MODEL, max_tokens: maxTokens, messages: [{ role: 'user', content: prompt }] }),
     });
     if (!response.ok) return null;
     const data = await response.json();
