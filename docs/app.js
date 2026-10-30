@@ -10022,6 +10022,9 @@ const parlayState = {
   built: null, locked: new Set(), seen: new Set(), breakdowns: {}, open: null, amount: 10, note: '',
 };
 const PARLAY_BOOKS = ['draftkings', 'fanduel', 'caesars', 'fanatics', 'betmgm', 'prizepicks', 'hardrock', 'bet365', 'betrivers'];
+/** The most legs each book takes on one ticket; the legs list runs up to it. PrizePicks lineups stop at six. */
+const PARLAY_MAX_LEGS = { draftkings: 20, fanduel: 25, caesars: 20, fanatics: 20, betmgm: 20, prizepicks: 6, hardrock: 20, bet365: 20, betrivers: 20 };
+const parlayMaxLegs = (book) => PARLAY_MAX_LEGS[book] ?? 20;
 const parlayBookId = (bookKey) => bookIdFor(bookKey) ?? String(bookKey ?? '').toLowerCase();
 const parlayBookName = (id) => SPORTSBOOKS[id]?.name ?? (id === 'prizepicks' ? 'PrizePicks' : id);
 const parlayRows = () => parlayState.rows[parlayState.sport] ?? [];
@@ -10219,6 +10222,9 @@ function renderParlay() {
   for (const r of live) for (const q of r.quotes ?? []) { const b = parlayBookId(q.bookKey); if (linesAt.has(b)) linesAt.set(b, linesAt.get(b) + 1); }
   if (!PARLAY_BOOKS.includes(s.book)) s.book = PARLAY_BOOKS[0];
   el.parlayBook.innerHTML = PARLAY_BOOKS.map((b) => `<option value="${esc(b)}" ${s.book === b ? 'selected' : ''}>${esc(parlayBookName(b))} (${linesAt.get(b) ? `${linesAt.get(b)} lines` : 'no lines yet'})</option>`).join('');
+  const maxLegs = parlayMaxLegs(s.book);
+  if (s.legs > maxLegs) s.legs = maxLegs;
+  el.parlayLegs.innerHTML = Array.from({ length: maxLegs - 1 }, (_, i) => i + 2).map((n) => `<option value="${n}" ${s.legs === n ? 'selected' : ''}>${n}${n === maxLegs ? ` (${esc(parlayBookName(s.book))} max)` : ''}</option>`).join('');
   el.parlayLegs.value = String(s.legs);
   el.parlayL5.value = String(Math.round(s.minL5 * 100)); el.parlayL5Label.textContent = s.minL5 ? `${Math.round(s.minL5 * 100)}%+` : 'Any';
   el.parlayL10.value = String(Math.round(s.minL10 * 100)); el.parlayL10Label.textContent = s.minL10 ? `${Math.round(s.minL10 * 100)}%+` : 'Any';
@@ -10303,7 +10309,7 @@ el.parlayView?.addEventListener('input', (event) => {
 el.parlayView?.addEventListener('change', (event) => {
   const s = parlayState; const t = event.target;
   if (t === el.parlayBook) { s.book = t.value; s.built = null; s.locked.clear(); s.seen.clear(); renderParlay(); }
-  else if (t === el.parlayLegs) { s.legs = Math.min(6, Math.max(2, Number(t.value) || 4)); renderParlay(); }
+  else if (t === el.parlayLegs) { s.legs = Math.min(parlayMaxLegs(s.book), Math.max(2, Number(t.value) || 4)); renderParlay(); }
   else if (t === el.parlayOddsMin || t === el.parlayOddsMax) { const lo = Number(el.parlayOddsMin.value); const hi = Number(el.parlayOddsMax.value); s.odds = [Number.isFinite(lo) ? lo : -800, Number.isFinite(hi) ? hi : 800]; }
   else if (t === el.parlaySide) { s.side = t.value; }
   else if (t === el.parlayTeam) { s.team = t.value; }
