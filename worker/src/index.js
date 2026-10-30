@@ -59,6 +59,7 @@ import { BUILD_INFO } from '../../docs/version.js';
 import { runTrendsBuild, getTrends, buildLeagueChunk, TREND_ENABLED_SPORTS } from './trends.js';
 import { loadBundleIndex, loadInjuries, injuryFor, withInjuries } from './espn-bundle.js';
 import { getPlayerIndex, getPlayerLog, playerStats } from './player-search.js';
+import { getUfcEvents, getUfcEvent, nextUfcEvent, getUfcFighter, getUfcFighters } from './ufc-card.js';
 import { legBreakdown } from './parlay-builder.js';
 import { runTrendPicksDaily, runTrendPicksGrading, getTrendPicks } from './trend-picks.js';
 
@@ -1524,6 +1525,30 @@ export default {
       if (!log) return json({ error: 'no game log for that player' }, { status: 404, headers: cors });
       log.player.injury = injuryFor(await loadInjuries(env, sportKey), log.player.id);
       return json(log, { headers: { ...cors, 'Cache-Control': 'public, max-age=600' } });
+    }
+
+    // The UFC side (worker/src/ufc-card.js): the cards the runner wrote, one
+    // event with its bouts (the next one by default), the fighter index and
+    // one fighter's profile and history.
+    if (pathname === '/ufc/events' && request.method === 'GET') {
+      const index = await getUfcEvents(env);
+      return json({ ...index, next: nextUfcEvent(index.events)?.id ?? null }, { headers: { ...cors, 'Cache-Control': 'public, max-age=120' } });
+    }
+    if (pathname === '/ufc/event' && request.method === 'GET') {
+      const want = new URL(request.url).searchParams.get('id');
+      const index = await getUfcEvents(env);
+      const id = want || nextUfcEvent(index.events)?.id;
+      const event = await getUfcEvent(env, id);
+      if (!event) return json({ error: 'no card yet' }, { status: 404, headers: cors });
+      return json({ event, events: index.events, builtAt: index.builtAt }, { headers: { ...cors, 'Cache-Control': 'public, max-age=120' } });
+    }
+    if (pathname === '/ufc/fighters' && request.method === 'GET') {
+      return json(await getUfcFighters(env), { headers: { ...cors, 'Cache-Control': 'public, max-age=1800' } });
+    }
+    if (pathname === '/ufc/fighter' && request.method === 'GET') {
+      const fighter = await getUfcFighter(env, new URL(request.url).searchParams.get('id') ?? '');
+      if (!fighter) return json({ error: 'no profile for that fighter yet' }, { status: 404, headers: cors });
+      return json(fighter, { headers: { ...cors, 'Cache-Control': 'public, max-age=600' } });
     }
 
     // The Parlay Builder's breakdown of one leg (worker/src/parlay-builder.js):

@@ -36,7 +36,7 @@
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Syne:wght@600;700;800&family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
-<link rel="stylesheet" href="styles.css?v=1.238">
+<link rel="stylesheet" href="styles.css?v=1.239">
 </head>
 <body>
 
@@ -112,6 +112,9 @@
   </button>
   <button id="tabParlay" class="top-tab" role="tab" aria-selected="false" aria-controls="parlayView">
     Parlay
+  </button>
+  <button id="tabUfc" class="top-tab" role="tab" aria-selected="false" aria-controls="ufcView">
+    UFC
   </button>
 </nav>
 
@@ -344,6 +347,32 @@
   <section id="trendPicksGraph" class="pick-graph" aria-live="polite"></section>
   <h2 class="trend-picks-heading">History</h2>
   <section id="trendPicksHistory" class="trend-picks-history"></section>
+</section>
+
+<!-- UFC: the next card (fight night or numbered event) with every bout in
+     order, each fighter's record and a More info sheet (bio, the last
+     five, wins and losses by method as bars, the whole fight history with
+     each opponent tappable), card changes as they happen, and a Fighters
+     search of everyone on a UFC card this year. The runner writes it
+     every fifteen minutes (scripts/ufc-card.mjs); docs/app.js's renderUfc. -->
+<section id="ufcView" role="tabpanel" aria-labelledby="tabUfc" hidden>
+  <div id="ufcSub" class="ufc-sub" role="group" aria-label="UFC section"></div>
+  <div id="ufcCardView">
+    <div id="ufcEvents" class="rate-chips ufc-events" role="group" aria-label="Upcoming cards"></div>
+    <div id="ufcStatus" class="status trends-status" role="status" aria-live="polite"></div>
+    <div id="ufcHeader"></div>
+    <div id="ufcCard" class="ufc-card"></div>
+  </div>
+  <div id="ufcFightersView" hidden>
+    <div class="players-search">
+      <label class="trends-search players-field">
+        <svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="11" cy="11" r="7" fill="none" stroke="currentColor" stroke-width="2"/><path d="M20 20l-3.5-3.5" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>
+        <input id="ufcQuery" type="search" placeholder="Search a fighter" autocomplete="off" aria-autocomplete="list" aria-controls="ufcList">
+      </label>
+      <ul id="ufcList" class="players-list" role="listbox" hidden></ul>
+    </div>
+    <div id="ufcFightersStatus" class="status trends-status" role="status" aria-live="polite"></div>
+  </div>
 </section>
 
 <!-- Parlay Builder: a league, a book, how many legs, floors on the last 5,
@@ -1004,6 +1033,6 @@
   </div>
 </aside>
 
-<script type="module" src="app.js?v=1.238"></script>
+<script type="module" src="app.js?v=1.239"></script>
 </body>
 </html>
