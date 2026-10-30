@@ -9151,7 +9151,7 @@ const SHEET_ICON = {
   sort: '<svg viewBox="0 0 24 24"><path d="M4 7h16M7 12h10M10 17h4" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>',
   side: '<svg viewBox="0 0 24 24"><path d="M12 4v16M6 9l6-5 6 5M6 15l6 5 6-5" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>',
 };
-const sheetHead = (type, title) => `<div class="sheet-grip"></div><h2 class="sheet-title" id="trendsSheetTitle">${SHEET_ICON[type] ?? ''}${esc(title)}</h2>`;
+const sheetHead = (type, title) => `<div class="sheet-grip"></div><div class="sheet-bar">${(trendsState.sheetStack ?? []).length ? '<button type="button" class="sheet-back" data-sheet-back aria-label="Back">‹ Back</button>' : '<span></span>'}<button type="button" class="sheet-x" data-sheet-close aria-label="Close">×</button></div><h2 class="sheet-title" id="trendsSheetTitle">${SHEET_ICON[type] ?? ''}${esc(title)}</h2>`;
 const sheetClose = () => `<button type="button" class="sheet-close" data-sheet-close>Close</button>`;
 const checkRow = (name, value, checked, main, right = '') => `<label class="sheet-row"><input type="checkbox" name="${name}" value="${esc(value)}" ${checked ? 'checked' : ''}><span class="row-main">${main}</span>${right ? `<span class="row-right">${right}</span>` : ''}</label>`;
 
@@ -9161,6 +9161,7 @@ function openTrendsSheet(type, extra = {}) {
 }
 function closeTrendsSheet() {
   trendsState.sheet = null;
+  trendsState.sheetStack = [];
   el.trendsSheet.hidden = true;
   el.trendsScrim.hidden = true;
   el.trendsSheet.classList.remove('is-full');
@@ -9428,6 +9429,7 @@ el.trendsSheet?.addEventListener('click', (event) => {
   const hit = (sel) => t.closest(sel);
   let node;
   if (hit('[data-sheet-close]')) return closeTrendsSheet();
+  if (hit('[data-sheet-back]')) { const prev = (trendsState.sheetStack ?? []).pop(); if (prev) { trendsState.sheet = prev; renderTrendsSheet(); } else closeTrendsSheet(); return; }
   if (hit('[data-view-stats]')) {
     const sheet = trendsState.sheet;
     const row = (trendsState.data?.rows ?? []).find((r) => r.id === sheet?.rowId) ?? sheet?.row;
@@ -10438,7 +10440,14 @@ async function ufcFighter(id) {
   return ufcState.fightersById[id];
 }
 
+/** A sheet opened from another sheet remembers it, so Back returns there. */
+function pushSheet() {
+  if (trendsState.sheet) (trendsState.sheetStack ??= []).push(trendsState.sheet);
+}
+
 function openUfcFighter(id, name = '') {
+  if (trendsState.sheet?.type === 'ufcFighter' && trendsState.sheet.fighterId === id) return;
+  pushSheet();
   trendsState.sheet = { type: 'ufcFighter', fighterId: id, name };
   renderTrendsSheet();
   ufcFighter(id).then(() => { if (trendsState.sheet?.type === 'ufcFighter' && trendsState.sheet.fighterId === id) renderTrendsSheet(); });
@@ -10477,6 +10486,7 @@ function renderUfcBout(b, ev) {
 function openUfcBout(boutId) {
   const b = ufcState.event?.bouts.find((x) => x.id === boutId);
   if (!b) return;
+  pushSheet();
   trendsState.sheet = { type: 'ufcBout', boutId };
   renderTrendsSheet();
   Promise.all([b.a?.id ? ufcFighter(b.a.id) : null, b.b?.id ? ufcFighter(b.b.id) : null]).then(() => { if (trendsState.sheet?.type === 'ufcBout' && trendsState.sheet.boutId === boutId) renderTrendsSheet(); });
