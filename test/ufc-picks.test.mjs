@@ -6,7 +6,7 @@
  */
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { oddsTtlMs, boutOdds, parseUfcBreakdown, straightQuote, settleUfcPick, runUfcTick, getUfcPicks, UFC_MAX_PICKS } from '../worker/src/ufc-picks.js';
+import { oddsTtlMs, boutOdds, matchSide, parseUfcBreakdown, straightQuote, settleUfcPick, settleUfcTicket, buildUfcParlays, runUfcTick, getUfcPicks, UFC_MAX_PICKS } from '../worker/src/ufc-picks.js';
 
 const NOW = Date.UTC(2026, 9, 30, 18);
 const ctx = { waitUntil: (p) => p };
@@ -146,4 +146,68 @@ test('a rounds-total pick stays on its number: the price follows at the same num
   rec = JSON.parse(store.get('ufc:picks:ev2'));
   assert.equal(rec.bets[0].warning, null);
   assert.equal(rec.bets[0].american, 100);
+});
+
+test('settleUfcTicket: a lost leg loses, a voided leg drops out and the ticket pays at the legs left, all void is void', () => {
+  const leg = (result, american) => ({ result, american, decimal: american > 0 ? 1 + american / 100 : 1 + 100 / -american });
+  assert.deepEqual(settleUfcTicket({ units: 1, legs: [leg('win', -300), leg('win', -250)] }), { result: 'win', net: 0.87 });
+  assert.deepEqual(settleUfcTicket({ units: 1, legs: [leg('win', -300), leg('loss', -250)] }), { result: 'loss', net: -1 });
+  assert.deepEqual(settleUfcTicket({ units: 1, legs: [leg('win', -300), leg('void', -250)] }), { result: 'win', net: 0.33 });
+  assert.deepEqual(settleUfcTicket({ units: 1, legs: [leg('void', -300), leg('void', -250)] }), { result: 'void', net: 0 });
+  assert.equal(settleUfcTicket({ units: 1, legs: [leg('win', -300), leg(null, -250)] }), null);
+});
+
+test('buildUfcParlays: the pieces pair up at one book nearest +100, two or three legs, no bout on two tickets, under the cap', () => {
+  const piece = (id, name, other, prices) => ({ bout: bout(id, f(`${id}a`, name), f(`${id}b`, other)), breakdown: { lean: 'a', confidence: 5, parlayPiece: true, summary: 's' }, odds: boutOdds(bout(id, f(`${id}a`, name), f(`${id}b`, other)), [feed(name, other, { h2h: prices, total: null }), { ...feed(name, other, { h2h: [prices[0] - 10, prices[1]], total: null, book: 'fanduel' }), id: 'fd' }]) });
+  const pieces = [piece('1', 'Heavy One', 'Dog One', [-300, 240]), piece('2', 'Heavy Two', 'Dog Two', [-250, 200]), piece('3', 'Heavy Three', 'Dog Three', [-280, 220]), piece('4', 'Heavy Four', 'Dog Four', [-110, -110])];
+  const out = buildUfcParlays(pieces, { open: 6 });
+  assert.ok(out.length >= 1);
+  const first = out[0];
+  assert.ok(first.american >= -150 && first.american <= 150, String(first.american));
+  const bouts = out.flatMap((c) => c.legs.map((l) => l.bout.id));
+  assert.equal(new Set(bouts).size, bouts.length, 'no bout twice');
+  assert.ok(out.every((c) => c.legs.every((l) => l.bookId === c.bookId)), 'one book per ticket');
+  assert.deepEqual(buildUfcParlays(pieces.slice(0, 1)), [], 'one piece makes no parlay');
+  assert.equal(buildUfcParlays(pieces, { open: 1 }).length, 1);
+});
+
+test('runUfcTick: two heavy favourites the straights cannot take ride as one parlay under the cap, and a replaced leg drops out of it', async () => {
+  const { env, store } = kv();
+  const fighters = { a1: fighter('a1', 'Heavy One'), b1: fighter('b1', 'Dog One'), a2: fighter('a2', 'Heavy Two'), b2: fighter('b2', 'Dog Two') };
+  const event = { id: 'ev3', name: 'UFC Parlay', date: NOW + 30 * 3600e3, status: 'upcoming', changes: [], bouts: [bout('1', f('a1', 'Heavy One'), f('b1', 'Dog One')), bout('2', f('a2', 'Heavy Two'), f('b2', 'Dog Two'))] };
+  const odds = [feed('Heavy One', 'Dog One', { h2h: [-300, 240], total: null }), feed('Heavy Two', 'Dog Two', { h2h: [-250, 200], total: null })];
+  const deps = { events: async () => ({ events: [{ id: 'ev3', date: event.date, status: 'upcoming' }] }), event: async () => event, odds: async () => odds, fighter: async (id) => fighters[id], model: async () => '{"lean":"a","confidence":5,"straight":{"market":"h2h","fighter":"a"},"parlayPiece":true,"summary":"Heavy.","reasons":[]}' };
+  const r = await runUfcTick(env, ctx, NOW, { deps });
+  assert.equal(r.posted, 1);
+  let rec = JSON.parse(store.get('ufc:picks:ev3'));
+  assert.equal(rec.bets[0].type, 'parlay');
+  assert.deepEqual(rec.bets[0].legs.map((l) => l.selection), ['Heavy One to win', 'Heavy Two to win']);
+  assert.equal(rec.bets[0].american, -115, '1.333 x 1.4 = 1.867, which is -115');
+  // Dog Two is replaced: that leg drops out and the ticket rides on Heavy One alone at -300.
+  event.bouts[1] = bout('2', f('a2', 'Heavy Two'), f('b9', 'New Dog'));
+  fighters.b9 = fighter('b9', 'New Dog');
+  odds[1] = feed('Heavy Two', 'New Dog', { h2h: [-200, 170], total: null });
+  store.delete('ufc:odds');
+  const r2 = await runUfcTick(env, ctx, NOW + 60e3, { deps });
+  rec = JSON.parse(store.get('ufc:picks:ev3'));
+  assert.equal(rec.bets[0].status, 'pending');
+  assert.equal(rec.bets[0].legs[1].result, 'void');
+  assert.equal(rec.bets[0].american, -300);
+  assert.equal(r2.voided.length, 1, 'the change email names the dropped leg');
+  // Both in: the surviving leg wins, the ticket pays at -300.
+  event.bouts[0] = { ...event.bouts[0], status: 'final', result: { winnerId: 'a1', method: 'Decision', round: 3, time: '5:00' } };
+  event.bouts[1] = { ...event.bouts[1], status: 'final', result: { winnerId: 'b9', method: 'KO/TKO', round: 1, time: '1:00' } };
+  await runUfcTick(env, ctx, event.date + 3600e3, { deps });
+  rec = JSON.parse(store.get('ufc:picks:ev3'));
+  assert.deepEqual([rec.bets[0].result, rec.bets[0].net], ['win', 0.33]);
+});
+
+test('matchSide: two fighters sharing a surname each get their own outcome; a name fitting both sides equally is left out', () => {
+  assert.equal(matchSide('yana santos', 'yana santos', 'luana santos'), 'a');
+  assert.equal(matchSide('luana santos', 'yana santos', 'luana santos'), 'b');
+  assert.equal(matchSide('l santos', 'yana santos', 'luana santos'), null);
+  assert.equal(matchSide('tom nolan', 'renato moicano', 'tom nolan'), 'b');
+  assert.equal(matchSide('josh silveira', 'joshua silveira', 'mick jones'), 'a');
+  const o = boutOdds(bout('s', f('a', 'Yana Santos'), f('b', 'Luana Santos')), [feed('Yana Santos', 'Luana Santos', { h2h: [260, -320], total: null })]);
+  assert.deepEqual([o.a[0].american, o.b[0].american], [260, -320]);
 });
