@@ -6980,3 +6980,41 @@ a.trend-price:hover { background: rgba(255, 255, 255, 0.06); }
 .pick-h2 small { color: var(--muted); font-weight: 600; text-transform: none; letter-spacing: 0; margin-left: 8px; }
 .pick-hist-row { display: flex; justify-content: space-between; align-items: center; gap: 10px; padding: 8px 0; border-bottom: 1px solid var(--line); font-size: 0.9rem; }
 .pick-hist-row small { color: var(--muted); }
+
+/* UFC: the card row is light and tappable; the matchup sheet carries the rest */
+.ufc-bout[data-ufc-bout] { cursor: pointer; }
+.ufc-bout[data-ufc-bout]:hover, .ufc-bout[data-ufc-bout]:focus-visible { border-color: rgba(167, 139, 250, 0.6); outline: none; }
+.ufc-open { color: var(--muted); text-transform: none; letter-spacing: 0; font-size: 0.8rem; }
+.ufc-bout .ufc-headshot { width: 48px; height: 48px; }
+.ufc-bout-foot { display: grid; grid-template-columns: 1fr auto 1fr; align-items: center; gap: 8px; margin-top: 10px; }
+.ufc-bout-foot > :last-child { text-align: right; }
+.ufc-foot-mid { text-align: center; }
+.ufc-price.is-none { color: var(--muted); font-weight: 600; font-family: inherit; font-size: 0.78rem; }
+.ufc-h2h-meta { margin: 0 0 10px; color: var(--muted); font-size: 0.84rem; }
+.ufc-h2h-meta b { color: #fbbf24; }
+.ufc-h2h { display: grid; grid-template-columns: 1fr auto 1fr; gap: 10px; align-items: start; margin: 8px 0 14px; }
+.ufc-h2h-col { display: grid; justify-items: center; text-align: center; gap: 6px; padding: 12px 8px; border: 1px solid var(--line); border-radius: 14px; background: var(--surface); }
+.ufc-h2h-col.is-winner { border-color: rgba(94, 224, 122, 0.5); }
+.ufc-h2h-name { font-size: 1rem; line-height: 1.2; }
+.ufc-h2h-nick { color: var(--muted); }
+.ufc-h2h-vs { align-self: center; color: var(--muted); font-weight: 800; }
+.ufc-five-row.is-small .ufc-five { width: 26px; height: 26px; font-size: 0.74rem; border-radius: 7px; }
+.ufc-h2h-stats { margin: 4px 0 0; display: grid; gap: 4px; width: 100%; }
+.ufc-h2h-stats div { display: flex; justify-content: space-between; gap: 8px; font-size: 0.8rem; border-bottom: 1px dashed var(--line); padding: 3px 0; }
+.ufc-h2h-stats dt { color: var(--muted); }
+.ufc-h2h-stats dd { margin: 0; font-weight: 700; font-family: var(--mono); }
+.ufc-h2h-more { margin-top: 6px; }
+.ufc-h2h-pick { padding: 12px 14px; border: 1px solid rgba(94, 224, 122, 0.5); border-radius: 14px; margin-bottom: 6px; font-size: 0.9rem; }
+.ufc-h2h-pick .pick-bet-link { display: inline-block; margin-top: 8px; }
+.ufc-odds { width: 100%; border-collapse: collapse; font-size: 0.88rem; }
+.ufc-odds th { text-align: left; font-size: 0.68rem; text-transform: uppercase; letter-spacing: 0.06em; color: var(--muted); padding: 6px 8px; border-bottom: 1px solid var(--line); }
+.ufc-odds td { padding: 8px; border-bottom: 1px solid var(--line); font-family: var(--mono); font-weight: 700; }
+.ufc-odds td:first-child { font-family: inherit; display: flex; align-items: center; gap: 6px; }
+.ufc-odds a { color: var(--text); text-decoration: none; }
+.ufc-totals, .ufc-changes-list { margin: 0; padding-left: 18px; font-size: 0.88rem; line-height: 1.6; }
+.ufc-changes-list { list-style: none; padding-left: 0; }
+.ufc-changes-list small { color: var(--muted); margin-left: 6px; }
+@media (max-width: 640px) {
+  .ufc-h2h { grid-template-columns: 1fr 1fr; }
+  .ufc-h2h-vs { display: none; }
+}
