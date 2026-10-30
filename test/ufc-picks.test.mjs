@@ -40,7 +40,9 @@ test('parseUfcBreakdown: the lean, the confidence and the straight, with a and b
   const b = bout('1', f('a1', 'A One'), f('b1', 'B Two'));
   const o = parseUfcBreakdown('{"lean":"b","confidence":4,"straight":{"market":"h2h","fighter":"b"},"parlayPiece":true,"summary":" B is live. ","reasons":["x"]}', b);
   assert.equal(o.lean, 'b'); assert.equal(o.leanName, 'B Two'); assert.equal(o.confidence, 4); assert.deepEqual(o.straight, { market: 'h2h', fighter: 'b' }); assert.equal(o.parlayPiece, true); assert.equal(o.summary, 'B is live.');
-  const t = parseUfcBreakdown('{"lean":"a","confidence":7,"straight":{"market":"totals","side":"Under","point":"2.5"}}', b);
+  const t = parseUfcBreakdown('{"lean": "A", "confidence": 7, "straight": {"market": "totals", "side": "Under", "point": "2.5"}}', b);
+  assert.equal(t.lean, 'a', 'upper case with spaces, as the model writes it');
+  assert.equal(parseUfcBreakdown('{"lean": "B", "confidence": 4, "straight": {"market": "h2h", "fighter": "B"}}', b).straight.fighter, 'b');
   assert.equal(t.confidence, 5); assert.deepEqual(t.straight, { market: 'totals', side: 'under', point: 2.5 });
   assert.equal(parseUfcBreakdown('no idea', b), null);
   assert.equal(parseUfcBreakdown('{"lean":"c","confidence":3}', b), null);
