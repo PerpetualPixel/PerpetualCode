@@ -7021,6 +7021,6 @@ a.trend-price:hover { background: rgba(255, 255, 255, 0.06); }
 
 /* The sheet's top bar: Back on the left when there is somewhere to go back to, X on the right always */
 .sheet-bar { position: sticky; top: -1px; z-index: 2; display: flex; justify-content: space-between; align-items: center; margin: -4px -4px 6px; padding: 4px; background: inherit; }
-.sheet-x, .sheet-back { border: 1px solid var(--line); background: var(--surface-2); color: var(--text); font: inherit; font-weight: 800; cursor: pointer; border-radius: 999px; min-height: 36px; }
-.sheet-x { width: 36px; font-size: 1.3rem; line-height: 1; }
-.sheet-back { padding: 0 14px; font-size: 0.9rem; }
+.sheet-x, .sheet-back { display: inline-flex; align-items: center; justify-content: center; white-space: nowrap; flex: none; border: 1px solid var(--line); background: var(--surface-2); color: var(--text); font: inherit; font-weight: 800; cursor: pointer; border-radius: 999px; height: 36px; }
+.sheet-x { width: 36px; font-size: 1.3rem; line-height: 1; padding: 0; }
+.sheet-back { padding: 0 14px 0 10px; font-size: 0.9rem; gap: 4px; }
