@@ -7,7 +7,7 @@
  */
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { extractTrendLines, hitFlags, hitRate, trendRowsFor, sortTrends, overNeed, underNeed } from '../docs/trends.js';
+import { extractTrendLines, hitFlags, hitRate, trendRowsFor, sortTrends, overNeed, underNeed, isAltLine } from '../docs/trends.js';
 import { buildTrends, buildLeagueChunk, runTrendsBuild, getTrends, STAMPS_VERSION, TRENDS_TTL_MINUTES, TREND_ENABLED_SPORTS, TREND_SPORTS, GAME_HOURS, trendDayKeys, MAX_GAMES_PER_TICK, trendGamesFor } from '../worker/src/trends.js';
 import { gamelogStatIndex, NFL_TREND_MARKETS } from '../worker/src/football-props.js';
 import { espnAbbr } from '../docs/team-logos.js';
@@ -340,4 +340,21 @@ test('football posts the whole week: a Sunday game on a Wednesday is in the wind
   const game = (id, iso) => ({ id, sport_key: 'americanfootball_nfl', commence_time: iso, home_team: 'Detroit Lions', away_team: 'Minnesota Vikings' });
   const games = await trendGamesFor('americanfootball_nfl', [game('thu', '2026-10-30T00:15:00Z'), game('sun', '2026-11-01T18:00:00Z'), game('mon', '2026-11-03T01:15:00Z'), game('nextThu', '2026-11-06T01:15:00Z'), game('done', '2026-10-27T00:15:00Z')], env, ctx, wed);
   assert.deepEqual(games.map((g) => g.id), ['thu', 'sun', 'mon'], 'Thursday, Sunday and Monday night (which is Tuesday 01:15 UTC, still Monday in the East); not next week, not Monday\'s finished game');
+});
+
+test('extractTrendLines: PrizePicks is not quoted on an alternate market (a goblin or demon pays its own multiplier), only on a standard one', () => {
+  const mk = { player_points: { stat: 'points', label: 'Pts', marketLabel: 'Points' }, player_points_alternate: { stat: 'points', label: 'Pts', marketLabel: 'Points (alt)' } };
+  const o = { bookmakers: [
+    { key: 'prizepicks', title: 'PrizePicks', markets: [
+      { key: 'player_points', outcomes: [{ name: 'Over', description: 'Tre Jones', point: 9.5, price: -137 }] },
+      { key: 'player_points_alternate', outcomes: [{ name: 'Over', description: 'Tre Jones', point: 5.5, price: -137 }] },
+    ] },
+    { key: 'draftkings', title: 'DraftKings', markets: [{ key: 'player_points_alternate', outcomes: [{ name: 'Over', description: 'Tre Jones', point: 5.5, price: -600 }] }] },
+  ] };
+  const lines = extractTrendLines(o, game, mk);
+  const at = (point) => lines.find((l) => l.point === point);
+  assert.deepEqual(at(9.5).over.map((q) => q.bookKey), ['prizepicks']);
+  assert.deepEqual(at(5.5).over.map((q) => q.bookKey), ['draftkings']);
+  assert.equal(isAltLine(at(5.5)), true);
+  assert.equal(isAltLine(at(9.5)), false);
 });

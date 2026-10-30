@@ -31,6 +31,9 @@ export const underNeed = (point) => (Number.isInteger(point) ? point - 1 : Math.
  * Over and for Under, best first, and how many books price the line.
  * `markets` is { [marketKey]: { stat, label, marketLabel } }.
  */
+/** A row from an alternate market (the label ends in "(alt)"). */
+export const isAltLine = (row) => /\(alt\)\s*$/i.test(row?.marketLabel ?? '');
+
 export function extractTrendLines(eventOdds, game, markets, { isRegistryBook = () => true, normalizeName = (n) => String(n ?? '').toLowerCase().trim() } = {}) {
   const pool = new Map();
   for (const book of eventOdds?.bookmakers ?? []) {
@@ -38,6 +41,12 @@ export function extractTrendLines(eventOdds, game, markets, { isRegistryBook = (
     for (const market of book.markets ?? []) {
       const spec = markets[market.key];
       if (!spec) continue;
+      // The feed prices every PrizePicks projection at the same flat
+      // number, which is right for a standard projection (the Power Play
+      // table pays it) and wrong for an alternate one: on PrizePicks an
+      // alternate number is a goblin or demon with its own multiplier
+      // the feed does not carry, so those are not quoted at all.
+      if (book.key === 'prizepicks' && /_alternate$/.test(market.key)) continue;
       for (const outcome of market.outcomes ?? []) {
         const side = String(outcome.name ?? '').toLowerCase();
         if (side !== 'over' && side !== 'under') continue;

@@ -9,7 +9,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import {
   qualifyingRows, researchPick, runTrendPicksDaily, runTrendPicksGrading, getTrendPicks, settle, settleBet, parseVerdict, buildBets, pickQuotes, refreshLegs,
-  PICK_MIN_GAMES, PICK_MAX_BETS, PICK_BOOKS, TICKET_UNITS, bestOnBoard,
+  PICK_MIN_GAMES, PICK_MAX_BETS, PICK_BOOKS, TICKET_UNITS, bestOnBoard, PICK_RULES,
 } from '../worker/src/trend-picks.js';
 
 const NOW = Date.parse('2026-10-27T15:00:00Z'); // 11am ET Oct 27
@@ -384,4 +384,24 @@ test('bestOnBoard: the highest-scoring line a listed book prices in range per le
   assert.deepEqual(s.shortOf, ['landed 19 of the last 20; the test is every one']);
   assert.deepEqual(bestOnBoard([row('y', { rate: 0.9, h2h: period(0.5, 2) })], NOW).basketball_nba.shortOf, ['landed 18 of the last 20; the test is every one', '1 of 2 against ORL; the test is every one']);
   assert.equal(bestOnBoard([row('z', { rate: 1 })], NOW).basketball_nba.shortOf[0], 'it qualified, but the research or the price kept it off a ticket');
+});
+
+test('no PrizePicks ticket on an alternate number: the quote is dropped, and a posted day drawn under the old rule is drawn again while nothing has tipped off', async () => {
+  assert.deepEqual(pickQuotes({ marketLabel: 'Points (alt)', quotes: [{ bookKey: 'prizepicks', american: -137 }, { bookKey: 'draftkings', american: -500 }] }).map((q) => q.bookId), ['draftkings']);
+  assert.deepEqual(pickQuotes({ marketLabel: 'Points', quotes: [{ bookKey: 'prizepicks', american: -137 }] }).map((q) => q.bookId), ['prizepicks']);
+  const { env, store } = makeKvStore();
+  const deps = { minutes: async () => Array(20).fill(32), context: async () => null, model: async () => '{"verdict":"post","reason":"ok","note":"none"}' };
+  // Yesterday's code posted a PrizePicks lineup on alternate numbers; the record has no rules field.
+  const oldLeg = (name, team) => ({ playerName: name, team, eventId: 'e-x', statKey: 'points', side: 'over', point: 5.5, selection: `${name} Over 5.5 Pts`, bookId: 'prizepicks', american: -137, decimal: 1.73, commenceMs: NOW + 8 * 3.6e6, marketLabel: 'Points (alt)' });
+  store.set('trendpicks:2026-10-27', JSON.stringify({ version: 6, date: '2026-10-27', generatedAt: NOW - 3.6e6, checkedAt: NOW - 3.6e6, final: true, considered: 2, usable: 2, bets: [{ id: 'old', status: 'pending', commenceMs: NOW + 8 * 3.6e6, shape: 'power2', units: 1, legs: [oldLeg('Tre Jones', 'CHI'), oldLeg('VJ Edgecombe', 'PHI')] }], passed: [], unused: [] }));
+  const rows = [row('a', { player: 'Collin Sexton', american: -140, books: { draftkings: -140 } }), row('b', { player: 'LaMelo Ball', american: -130, books: { draftkings: -130 }, eventId: 'e-2' })];
+  const r = await runTrendPicksDaily(env, ctx, NOW, { deps: { ...deps, rowsFor: async () => rows }, enabled: ['basketball_nba'] });
+  assert.equal(r.skipped, false, 'drawn again, not "posted"');
+  const rec = JSON.parse(store.get('trendpicks:2026-10-27'));
+  assert.equal(rec.rules, PICK_RULES);
+  assert.equal(rec.redrawnFrom, 1);
+  assert.equal(rec.generatedAt, NOW - 3.6e6, 'the day keeps its first draw time');
+  assert.deepEqual(rec.bets.map((b) => [b.bookId, b.legs.map((l) => l.playerName)]).sort(), [['draftkings', ['Collin Sexton']], ['draftkings', ['LaMelo Ball']]], 'two straights: the pair would parlay past +150');
+  // Drawn under the current rules: posted stands.
+  assert.equal((await runTrendPicksDaily(env, ctx, NOW + 60e3, { deps: { ...deps, rowsFor: async () => rows }, enabled: ['basketball_nba'] })).reason, 'posted');
 });
