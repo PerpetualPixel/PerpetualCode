@@ -1,4 +1,5 @@
 import { formatAmerican } from '../../docs/engine.js';
+import { getUfcPicks } from './ufc-picks.js';
 import { EMAIL_LOGO_HTML } from './auth-handlers.js';
 import { getTrendPicks } from './trend-picks.js';
 
@@ -269,4 +270,46 @@ export async function sendTicketNotifications(env, now = Date.now(), { deps = {}
   }
   await env.POTD_KV.put(flagKey, JSON.stringify([...notified, ...fresh.map((b) => b.id)]), { expirationTtl: 86400 * 7 });
   return fresh.length;
+}
+
+
+/**
+ * The UFC card's picks, once each to the users who asked for ticket
+ * emails, the way sendTicketNotifications does for the day's tickets:
+ * a flag per card lists the picks already sent, so a pick added on a
+ * later read goes out on its own.
+ */
+export async function sendUfcTicketNotifications(env, now = Date.now(), { deps = {} } = {}) {
+  if (!env.EMAIL && !deps.send) return 0;
+  const current = await (deps.current ? deps.current() : getUfcPicks(env, now).then((d) => d.current));
+  const bets = (current?.bets ?? []).filter((b) => b.status === 'pending');
+  if (!bets.length) return 0;
+  const flagKey = `ufc:picks:${current.eventId}:notified`;
+  const notified = new Set(JSON.parse((await env.POTD_KV.get(flagKey)) ?? '[]'));
+  const fresh = bets.filter((b) => !notified.has(b.id));
+  if (!fresh.length) return 0;
+  const users = await (deps.users ? deps.users() : fetchOptedInUsers(env, 'notify_picks_email'));
+  if (users.length) {
+    const when = new Intl.DateTimeFormat('en-US', { weekday: 'short', month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit', timeZone: 'America/New_York' }).format(current.eventDate ?? now);
+    const pickHtml = (b) => `<div style="margin: 0 0 14px; padding: 14px; border: 1px solid rgba(217,70,239,0.3); border-radius: 10px;">
+      <div style="font-weight: bold; color: #e0e0ff;">${b.legs[0].selection} <span style="color:#00d9ff;">${formatAmerican(b.american)}</span> <span style="color:#7070aa; font-weight: normal;">&middot; ${b.book} &middot; ${b.units} unit</span></div>
+      <div style="color:#a0a0cc; font-size:12px; margin-top:4px;">${b.legs[0].a} vs ${b.legs[0].b} &middot; ${b.legs[0].weightClass ?? ''} &middot; confidence ${b.legs[0].confidence} of 5</div>
+      ${b.legs[0].note ? `<div style="color:#e0e0ff; font-size:13px; margin-top:8px;">${b.legs[0].note}</div>` : ''}
+      ${b.link || b.bookUrl ? `<p style="margin: 10px 0 0;"><a href="${b.link ?? b.bookUrl}" style="color:#d946ef;">Open ${b.book}</a></p>` : ''}
+    </div>`;
+    const pickText = (b) => `${b.legs[0].selection} ${formatAmerican(b.american)} at ${b.book} (${b.units} unit) - ${b.legs[0].a} vs ${b.legs[0].b}, confidence ${b.legs[0].confidence} of 5${b.legs[0].note ? `\n  ${b.legs[0].note}` : ''}`;
+    const subject = `Pixel's Picks for ${current.eventName}: ${fresh.length} pick${fresh.length === 1 ? '' : 's'}`;
+    const sendOne = deps.send ?? ((msg) => env.EMAIL.send(msg));
+    await Promise.all(users.map((user) => sendOne({
+      to: user.email, subject,
+      html: `<div style="font-family: Arial, sans-serif; background: #05050A; color: #e0e0ff; padding: 20px;"><div style="max-width: 600px; margin: 0 auto; border: 1px solid #9d4edd; border-radius: 8px; padding: 30px; background: #0a0515;">${EMAIL_LOGO_HTML}
+        <h2 style="color: #d946ef; margin-bottom: 4px;">${current.eventName}</h2><p style="color: #7070aa; font-size: 13px; margin: 0 0 20px;">Hi ${user.username}, ${when} ET. One unit each; picks lock at the first bout.</p>
+        ${fresh.map(pickHtml).join('')}
+        <div style="text-align: center; margin: 24px 0 0;"><a href="https://perpetualpicks.com/app.html" style="display: inline-block; background: linear-gradient(135deg, #d946ef 0%, #9d4edd 100%); color: #05050A; padding: 12px 28px; border-radius: 8px; text-decoration: none; font-weight: bold;">Open the card</a></div>
+        <p style="margin-top: 24px; color: #7070aa; font-size: 11px; text-align: center;">Turn this off any time at <a href="https://perpetualpicks.com/account.html" style="color: #7070aa;">perpetualpicks.com/account.html</a></p></div></div>`,
+      text: `Hi ${user.username}, Pixel's Picks for ${current.eventName} (${when} ET), one unit each, locked at the first bout:\n\n${fresh.map(pickText).join('\n\n')}\n\nOpen: https://perpetualpicks.com/app.html`,
+    }).catch(() => null)));
+  }
+  await env.POTD_KV.put(flagKey, JSON.stringify([...notified, ...fresh.map((b) => b.id)]), { expirationTtl: 30 * 86400 });
+  return users.length ? fresh.length : 0;
 }

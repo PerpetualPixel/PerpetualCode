@@ -124,7 +124,7 @@ function lastToken(normalized) {
  * card sharing a surname) is bounded by this only ever affecting which
  * event NAME a fight displays under, never any other data.
  */
-function namesLikelyMatch(a, b) {
+export function namesLikelyMatch(a, b) {
   if (!a || !b) return false;
   if (a === b) return true;
   if (lastToken(a) && lastToken(a) === lastToken(b)) return true;
