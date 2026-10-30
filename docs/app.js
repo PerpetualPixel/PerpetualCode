@@ -9775,7 +9775,9 @@ el.trendPicksView?.addEventListener('click', (event) => {
   const chip = event.target.closest('[data-pick-filter]');
   if (chip) { trendPicksState.filter = chip.dataset.pickFilter; trendPicksState.hover = null; renderTrendPicks(); return; }
   const dot = event.target.closest('[data-pick-day]');
-  if (dot) { const i = Number(dot.dataset.pickDay); trendPicksState.hover = trendPicksState.hover === i ? null : i; renderPickGraph(); }
+  if (dot) { const i = Number(dot.dataset.pickDay); trendPicksState.hover = trendPicksState.hover === i ? null : i; renderPickGraph(); return; }
+  const ufcDot = event.target.closest('[data-ufc-dot]');
+  if (ufcDot) { const i = Number(ufcDot.dataset.ufcDot); ufcState.graphHover = ufcState.graphHover === i ? null : i; renderUfcLedger(); }
 });
 el.trendPicksView?.addEventListener('pointerover', (event) => {
   const dot = event.target.closest('[data-pick-day]');
@@ -10255,7 +10257,7 @@ el.parlayView?.addEventListener('change', (event) => {
 /* UFC: the next card and every fighter on it, from the runner's KV records (worker/src/ufc-card.js) */
 /* ================================================================ */
 
-const ufcState = { sub: 'card', events: [], eventId: null, event: null, builtAt: null, loading: false, fighters: null, fightersById: {}, query: '', focus: 0, picks: null, why: null };
+const ufcState = { sub: 'card', events: [], eventId: null, event: null, builtAt: null, loading: false, fighters: null, fightersById: {}, query: '', focus: 0, picks: null, why: null, graphHover: null };
 const UFC_SEGMENT_LABEL = { main: 'Main card', prelims: 'Prelims', early: 'Early prelims' };
 const ufcDateFmt = new Intl.DateTimeFormat('en-US', { weekday: 'short', month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit', timeZone: 'America/New_York' });
 const ufcDayFmt = new Intl.DateTimeFormat('en-US', { month: 'short', day: 'numeric', year: 'numeric', timeZone: 'America/New_York' });
@@ -10310,11 +10312,41 @@ function renderUfcPickCard(pick) {
     <div class="ufc-pick-body">
       <p class="ufc-pick-sel"><strong>${esc(leg.selection)}</strong> <small>${esc(leg.a)} vs ${esc(leg.b)} · ${esc(leg.weightClass ?? '')}</small></p>
       <p class="ufc-pick-conf">${confStars(leg.confidence)} <small>confidence ${esc(String(leg.confidence))} of 5</small></p>
+      ${pick.warning ? `<p class="pick-move is-out"><span class="pick-move-tag">Line moved · not tracked</span> ${esc(pick.warning)}</p>` : ''}
       ${leg.note ? `<p class="pick-note">${esc(leg.note)}</p>` : ''}
       ${leg.actual ? `<p class="row-sub">Result: ${esc(leg.actual)}</p>` : ''}
     </div>
     ${href ? `<div class="pick-bet-foot"><a class="pick-bet-link" href="${esc(href)}" target="_blank" rel="noopener">${pick.link ? `Open on your ${esc(pick.book)} slip` : `Open ${esc(pick.book)}`}</a></div>` : ''}
   </article>`;
+}
+
+/** The UFC growth graph: one dot per card with settled picks, the running total in units; a tap on a dot shows the card's picks. */
+function renderUfcGraph(cards) {
+  const points = [];
+  let running = 0;
+  for (const r of [...cards].sort((a, b) => (a.eventDate ?? 0) - (b.eventDate ?? 0))) {
+    const done = (r.bets ?? []).filter((b) => b.status === 'graded' || b.status === 'void');
+    if (!done.length) continue;
+    const net = done.reduce((s, b) => s + (b.net ?? 0), 0);
+    running += net;
+    points.push({ r, net, cumulative: running, bets: done });
+  }
+  if (!points.length) return '<p class="empty">The graph starts once the first card settles.</p>';
+  const W = 920; const H = 220; const PAD_L = 54; const PAD_R = 20; const PAD_T = 24; const PAD_B = 34;
+  const values = points.map((p) => p.cumulative);
+  const minV = Math.min(0, ...values); const maxV = Math.max(0, ...values); const range = maxV - minV || 1;
+  const xAt = (i) => PAD_L + (points.length === 1 ? (W - PAD_L - PAD_R) / 2 : (i / (points.length - 1)) * (W - PAD_L - PAD_R));
+  const yAt = (v) => PAD_T + (1 - (v - minV) / range) * (H - PAD_T - PAD_B);
+  const last = points[points.length - 1].cumulative;
+  const color = last >= 0 ? '#4ade80' : '#ef4444';
+  const line = points.map((p, i) => `${xAt(i).toFixed(1)},${yAt(p.cumulative).toFixed(1)}`).join(' ');
+  const ticks = [minV, 0, maxV].filter((v, i, a) => a.indexOf(v) === i).sort((a, b) => a - b);
+  const grid = ticks.map((v) => `<line x1="${PAD_L}" y1="${yAt(v).toFixed(1)}" x2="${W - PAD_R}" y2="${yAt(v).toFixed(1)}" stroke="var(--line)" stroke-width="${v === 0 ? 1.5 : 0.6}" ${v === 0 ? '' : 'stroke-dasharray="3,3"'}/><text x="${PAD_L - 8}" y="${(yAt(v) + 3).toFixed(1)}" font-size="10" fill="var(--muted)" text-anchor="end">${esc(unitsText(v))}</text>`).join('');
+  const labels = points.map((p, i) => `<text x="${xAt(i).toFixed(1)}" y="${H - 10}" font-size="10" fill="var(--muted)" text-anchor="middle">${esc((p.r.eventName ?? '').replace(/^UFC Fight Night: /, 'FN: ').slice(0, 18))}</text>`).join('');
+  const dots = points.map((p, i) => `<g class="pick-dot ${ufcState.graphHover === i ? 'is-on' : ''}" data-ufc-dot="${i}" tabindex="0" role="button" aria-label="${esc(p.r.eventName)}: ${esc(unitsText(p.net))}"><circle cx="${xAt(i).toFixed(1)}" cy="${yAt(p.cumulative).toFixed(1)}" r="16" fill="transparent"/><circle cx="${xAt(i).toFixed(1)}" cy="${yAt(p.cumulative).toFixed(1)}" r="5" fill="${p.net >= 0 ? '#4ade80' : '#ef4444'}" stroke="#0b0b14" stroke-width="2"/></g>`).join('');
+  const hover = ufcState.graphHover != null ? points[ufcState.graphHover] : null;
+  const tip = hover ? `<div class="pick-tip" style="left:${(xAt(ufcState.graphHover) / W * 100).toFixed(2)}%"><p class="pick-tip-head"><strong>${esc(hover.r.eventName)}</strong> <span class="${hover.net >= 0 ? 'is-win' : 'is-loss'}">${esc(unitsText(hover.net))}</span> <small>${esc(unitsText(hover.cumulative))} to date</small></p>${hover.bets.map((b) => `<p class="pick-tip-bet"><span class="pick-result is-${esc(b.result)}">${esc(RESULT_LABEL[b.result] ?? b.result)}</span> ${esc(b.legs[0].selection)} at ${esc(b.book)} ${esc(formatAmerican(b.american))}</p>`).join('')}</div>` : '';
+  return `<div class="pick-graph-wrap"><svg class="pick-graph-svg" viewBox="0 0 ${W} ${H}" role="img" aria-label="UFC running total in units by card">${grid}<polyline points="${line}" fill="none" stroke="${color}" stroke-width="2.5" stroke-linejoin="round" stroke-linecap="round"/>${dots}${labels}</svg>${tip}</div><p class="pick-graph-foot">Each dot is a card; tap it for the card's picks. ${esc(unitsText(last))} over ${points.length} card${points.length === 1 ? '' : 's'}, one unit a pick.</p>`;
 }
 
 /** The Pixel's Picks tab's UFC section: its own record, apart from NBA and NFL, and the picks by card. */
@@ -10326,6 +10358,7 @@ function renderUfcLedger() {
   const cards = (d.history ?? []).filter((r) => (r.bets ?? []).length);
   el.trendPicksUfc.innerHTML = `<h2 class="pick-h2">UFC <small>tracked apart from NBA and NFL</small></h2>
     <p class="pick-record">${rec.wins}-${rec.losses}${rec.pushes ? `-${rec.pushes}` : ''} <small>${esc(signedUnits(rec.units))} units · ${esc(roiText(rec.roi))} on ${rec.risked ?? 0} risked, one unit a pick</small></p>
+    <div class="pick-graph">${renderUfcGraph(cards)}</div>
     ${cards.length ? cards.map((r) => `<div class="pick-day"><h3>${esc(r.eventName)} <small>${esc(ufcDayFmt.format(new Date(r.eventDate ?? 0)))}</small></h3>${r.bets.map((b) => `<div class="pick-hist-row"><span><strong>${esc(b.legs[0].selection)}</strong> at ${esc(b.book)} ${esc(formatAmerican(b.american))}<br><small>${esc(b.legs[0].a)} vs ${esc(b.legs[0].b)}</small></span>${ufcPickBadge(b)}</div>`).join('')}</div>`).join('') : '<p class="empty">No UFC picks yet. They post once the next card has odds and a read.</p>'}`;
 }
 

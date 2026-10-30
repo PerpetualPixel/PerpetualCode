@@ -108,6 +108,7 @@ test('runUfcTick: picks post at confidence 4 or better inside the price range, a
   const r2 = await runUfcTick(env, ctx, NOW + 120e3, { deps });
   rec = JSON.parse(store.get('ufc:picks:ev'));
   assert.equal(rec.bets[0].status, 'void'); assert.equal(rec.bets[0].voidReason, 'a fighter was replaced');
+  assert.equal(r2.voided.length, 1, 'the tick names the voided pick for the change email');
   assert.equal(r2.posted, 1, 'the new pairing posts on its fresh read');
   assert.equal(rec.bets[1].american, -130);
   // After the lock nothing new posts; a finished bout grades.
@@ -119,4 +120,30 @@ test('runUfcTick: picks post at confidence 4 or better inside the price range, a
   const all = await getUfcPicks(env, event.date + 3600e3);
   assert.equal(all.record.wins, 1); assert.equal(all.record.voids, 1); assert.equal(all.history.length, 1);
   assert.ok(UFC_MAX_PICKS === 6);
+});
+
+test('a rounds-total pick stays on its number: the price follows at the same number, a moved number only warns, and the warning clears when the number is back', async () => {
+  const { env, store } = kv();
+  const fighters = { a1: fighter('a1', 'A One'), b1: fighter('b1', 'B Two') };
+  const event = { id: 'ev2', name: 'UFC Totals', date: NOW + 30 * 3600e3, status: 'upcoming', changes: [], bouts: [bout('1', f('a1', 'A One'), f('b1', 'B Two'))] };
+  const odds = [feed('A One', 'B Two', { h2h: [-150, 130], total: { point: 2.5, over: -120, under: 100 } })];
+  const deps = { events: async () => ({ events: [{ id: 'ev2', date: event.date, status: 'upcoming' }] }), event: async () => event, odds: async () => odds, fighter: async (id) => fighters[id], model: async () => '{"lean":"a","confidence":4,"straight":{"market":"totals","side":"under","point":2.5},"parlayPiece":false,"summary":"Short night.","reasons":[]}' };
+  await runUfcTick(env, ctx, NOW, { deps });
+  let rec = JSON.parse(store.get('ufc:picks:ev2'));
+  assert.deepEqual([rec.bets[0].legs[0].selection, rec.bets[0].american], ['Under 2.5 rounds', 100]);
+  odds[0] = feed('A One', 'B Two', { total: { point: 2.5, over: -130, under: 110 } }); store.delete('ufc:odds');
+  await runUfcTick(env, ctx, NOW + 60e3, { deps });
+  rec = JSON.parse(store.get('ufc:picks:ev2'));
+  assert.equal(rec.bets[0].american, 110, 'same number: the price follows');
+  odds[0] = feed('A One', 'B Two', { total: { point: 1.5, over: -110, under: -110 } }); store.delete('ufc:odds');
+  await runUfcTick(env, ctx, NOW + 120e3, { deps });
+  rec = JSON.parse(store.get('ufc:picks:ev2'));
+  assert.equal(rec.bets[0].american, 110, 'a moved number never moves the pick');
+  assert.equal(rec.bets[0].legs[0].point, 2.5);
+  assert.match(rec.bets[0].warning, /now posts 1\.5 rounds; the pick stays on the 2\.5/);
+  odds[0] = feed('A One', 'B Two', { total: { point: 2.5, over: -120, under: 100 } }); store.delete('ufc:odds');
+  await runUfcTick(env, ctx, NOW + 180e3, { deps });
+  rec = JSON.parse(store.get('ufc:picks:ev2'));
+  assert.equal(rec.bets[0].warning, null);
+  assert.equal(rec.bets[0].american, 100);
 });

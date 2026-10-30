@@ -273,6 +273,26 @@ export async function sendTicketNotifications(env, now = Date.now(), { deps = {}
 }
 
 
+/** A card change that voided a pick, to the same users: one email per tick naming the picks and why. */
+export async function sendUfcChangeNotifications(env, tick, now = Date.now(), { deps = {} } = {}) {
+  const voided = tick?.voided ?? [];
+  if (!voided.length || (!env.EMAIL && !deps.send)) return 0;
+  const users = await (deps.users ? deps.users() : fetchOptedInUsers(env, 'notify_picks_email'));
+  if (!users.length) return 0;
+  const sendOne = deps.send ?? ((msg) => env.EMAIL.send(msg));
+  const lines = voided.map((b) => `${b.legs[0].selection} (${b.legs[0].a} vs ${b.legs[0].b}): ${b.voidReason}`);
+  await Promise.all(users.map((user) => sendOne({
+    to: user.email,
+    subject: `Card change on ${tick.eventName}: ${voided.length} pick${voided.length === 1 ? '' : 's'} voided`,
+    html: `<div style="font-family: Arial, sans-serif; background: #05050A; color: #e0e0ff; padding: 20px;"><div style="max-width: 600px; margin: 0 auto; border: 1px solid #9d4edd; border-radius: 8px; padding: 30px; background: #0a0515;">${EMAIL_LOGO_HTML}
+      <h2 style="color: #d946ef; margin-bottom: 8px;">${tick.eventName}</h2><p style="color: #a0a0cc; font-size: 13px;">Hi ${user.username}, the card changed and these picks are off the record. Do not place them. The bout reads again if it is still on.</p>
+      <ul style="line-height: 1.6;">${lines.map((l) => `<li>${l}</li>`).join('')}</ul>
+      <p style="margin: 20px 0 0;"><a href="https://perpetualpicks.com/app.html" style="color:#d946ef;">Open the card</a></p></div></div>`,
+    text: `Hi ${user.username}, the card changed on ${tick.eventName} and these picks are off the record. Do not place them.\n\n${lines.join('\n')}\n\nOpen: https://perpetualpicks.com/app.html`,
+  }).catch(() => null)));
+  return voided.length;
+}
+
 /**
  * The UFC card's picks, once each to the users who asked for ticket
  * emails, the way sendTicketNotifications does for the day's tickets:
