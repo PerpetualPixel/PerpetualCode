@@ -847,6 +847,18 @@ const el = {
   trendPicksFilters: document.getElementById('trendPicksFilters'),
   tabPlayers: document.getElementById('tabPlayers'),
   tabParlay: document.getElementById('tabParlay'),
+  tabUfc: document.getElementById('tabUfc'),
+  ufcView: document.getElementById('ufcView'),
+  ufcSub: document.getElementById('ufcSub'),
+  ufcEvents: document.getElementById('ufcEvents'),
+  ufcHeader: document.getElementById('ufcHeader'),
+  ufcStatus: document.getElementById('ufcStatus'),
+  ufcCard: document.getElementById('ufcCard'),
+  ufcCardView: document.getElementById('ufcCardView'),
+  ufcFightersView: document.getElementById('ufcFightersView'),
+  ufcQuery: document.getElementById('ufcQuery'),
+  ufcList: document.getElementById('ufcList'),
+  ufcFightersStatus: document.getElementById('ufcFightersStatus'),
   parlayView: document.getElementById('parlayView'),
   parlayLeagues: document.getElementById('parlayLeagues'),
   parlayBook: document.getElementById('parlayBook'),
@@ -6158,8 +6170,8 @@ function renderPropPlayCard(record) {
 }
 
 function setActiveTab(tab) {
-  const views = { slate: el.slateView, board: el.boardView, potd: el.potdView, trends: el.trendsView, trendPicks: el.trendPicksView, players: el.playersView, parlay: el.parlayView };
-  const tabs = { slate: el.tabSlate, board: el.tabBoard, potd: el.tabPotd, trends: el.tabTrends, trendPicks: el.tabTrendPicks, players: el.tabPlayers, parlay: el.tabParlay };
+  const views = { slate: el.slateView, board: el.boardView, potd: el.potdView, trends: el.trendsView, trendPicks: el.trendPicksView, players: el.playersView, parlay: el.parlayView, ufc: el.ufcView };
+  const tabs = { slate: el.tabSlate, board: el.tabBoard, potd: el.tabPotd, trends: el.tabTrends, trendPicks: el.tabTrendPicks, players: el.tabPlayers, parlay: el.tabParlay, ufc: el.tabUfc };
 
   for (const [name, view] of Object.entries(views)) {
     const active = name === tab;
@@ -6171,7 +6183,7 @@ function setActiveTab(tab) {
   // The day toggle applies to Full Slate only — Play of the Day and
   // Pixel's Picks are both fixed daily sets locked server-side, with no
   // Today/Tomorrow of their own to choose.
-  el.dayFilterBar.hidden = tab === 'potd' || tab === 'board' || tab === 'trends' || tab === 'trendPicks' || tab === 'players' || tab === 'parlay';
+  el.dayFilterBar.hidden = tab === 'potd' || tab === 'board' || tab === 'trends' || tab === 'trendPicks' || tab === 'players' || tab === 'parlay' || tab === 'ufc';
   if (tab === 'trendPicks') loadTrendPicks();
 
   // Viewing a tab is what "seen" means — clear its pulse the moment the
@@ -6193,6 +6205,7 @@ function setActiveTab(tab) {
   if (tab === 'trends') loadTrends();
   if (tab === 'players') loadPlayers();
   if (tab === 'parlay') loadParlay();
+  if (tab === 'ufc') { if (ufcState.event) renderUfc(); else loadUfc(); }
   // Re-render from whatever's already loaded rather than re-fetching —
   // everything loads once at boot (refreshAllLeagues), so switching tabs is
   // never itself a billed call.
@@ -6209,6 +6222,7 @@ el.tabTrends?.addEventListener('click', () => setActiveTab('trends'));
 el.tabTrendPicks?.addEventListener('click', () => setActiveTab('trendPicks'));
 el.tabPlayers?.addEventListener('click', () => setActiveTab('players'));
 el.tabParlay?.addEventListener('click', () => setActiveTab('parlay'));
+el.tabUfc?.addEventListener('click', () => setActiveTab('ufc'));
 
 /* ---------------------------------------------------------------- */
 /* Tracking Dashboard                                                */
@@ -9124,6 +9138,7 @@ function renderTrends() {
 /* ---- Sheets ---------------------------------------------------- */
 
 const SHEET_ICON = {
+  ufc: '',
   filters: '<svg viewBox="0 0 24 24"><path d="M4 8h10M18 8h2M4 16h2M10 16h10" stroke="currentColor" stroke-width="2" stroke-linecap="round"/><circle cx="16" cy="8" r="2.5" fill="none" stroke="currentColor" stroke-width="2"/><circle cx="8" cy="16" r="2.5" fill="none" stroke="currentColor" stroke-width="2"/></svg>',
   markets: '<svg viewBox="0 0 24 24"><path d="M4 9l1.5-4h13L20 9M4 9v10h16V9M4 9h16M9 19v-5h6v5" fill="none" stroke="currentColor" stroke-width="2" stroke-linejoin="round"/></svg>',
   games: '<svg viewBox="0 0 24 24"><rect x="3" y="5" width="18" height="15" rx="2" fill="none" stroke="currentColor" stroke-width="2"/><path d="M3 10h18M8 3v4M16 3v4" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>',
@@ -9274,6 +9289,9 @@ function renderTrendsSheet() {
     html = `${sheetHead('sort', 'Sorting')}
       <div class="sheet-seg"><button type="button" class="${dir === 'asc' ? 'is-active' : ''}" data-sort-dir="asc">Ascending</button><button type="button" class="${dir === 'desc' ? 'is-active' : ''}" data-sort-dir="desc">Descending</button></div>
       <div class="sheet-tiles">${[['hitRate', 'Hit Rate', 'period'], ['odds', 'Odds', 'odds'], ['date', 'Event Date', 'games']].map(([k, label, icon]) => `<button type="button" class="sheet-tile ${by === k ? 'is-on' : ''}" data-sort-by="${k}"><span class="tile-icon">${SHEET_ICON[icon]}</span><span class="tile-label">${label}</span><span class="tile-radio"></span></button>`).join('')}</div>${sheetClose()}`;
+  } else if (sheet.type === 'ufcFighter') {
+    full = true;
+    html = renderUfcFighterSheet(sheet);
   } else if (sheet.type === 'detail') {
     // A Trends row by id, or the row the opener handed over (a Pixel's
     // Picks leg carries its own copy, since the Trends rows may be
@@ -10229,4 +10247,165 @@ el.parlayView?.addEventListener('change', (event) => {
   else if (t === el.parlayOddsMin || t === el.parlayOddsMax) { const lo = Number(el.parlayOddsMin.value); const hi = Number(el.parlayOddsMax.value); s.odds = [Number.isFinite(lo) ? lo : -800, Number.isFinite(hi) ? hi : 800]; }
   else if (t === el.parlaySide) { s.side = t.value; }
   else if (t === el.parlayTeam) { s.team = t.value; }
+});
+
+/* ================================================================ */
+/* UFC: the next card and every fighter on it, from the runner's KV records (worker/src/ufc-card.js) */
+/* ================================================================ */
+
+const ufcState = { sub: 'card', events: [], eventId: null, event: null, builtAt: null, loading: false, fighters: null, fightersById: {}, query: '', focus: 0 };
+const UFC_SEGMENT_LABEL = { main: 'Main card', prelims: 'Prelims', early: 'Early prelims' };
+const ufcDateFmt = new Intl.DateTimeFormat('en-US', { weekday: 'short', month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit', timeZone: 'America/New_York' });
+const ufcDayFmt = new Intl.DateTimeFormat('en-US', { month: 'short', day: 'numeric', year: 'numeric', timeZone: 'America/New_York' });
+const recordText = (r) => (!r ? '' : typeof r === 'string' ? r : `${r.wins}-${r.losses}${r.draws ? `-${r.draws}` : ''}${r.nc ? ` (${r.nc} NC)` : ''}`);
+const ufcAvatar = (f, size = 56) => (f?.headshot ? `<img class="ufc-headshot" src="${esc(f.headshot)}" alt="" width="${size}" height="${size}" loading="lazy">` : `<span class="ufc-headshot is-blank" style="width:${size}px;height:${size}px"></span>`);
+
+async function loadUfc(eventId = ufcState.eventId) {
+  if (!el.ufcView || !CONFIG.WORKER_URL || ufcState.loading) return;
+  ufcState.loading = true;
+  el.ufcStatus.textContent = 'Loading the card…';
+  try {
+    const url = new URL('/ufc/event', CONFIG.WORKER_URL); if (eventId) url.searchParams.set('id', eventId);
+    const res = await fetch(url, { headers: { Accept: 'application/json' } });
+    const body = await res.json();
+    if (!res.ok) { ufcState.event = null; el.ufcStatus.textContent = body.error === 'no card yet' ? 'No card on the board yet; the runner fills it within the quarter hour.' : `Couldn't load the card: ${body.error ?? res.status}.`; }
+    else { ufcState.event = body.event; ufcState.eventId = body.event.id; ufcState.events = body.events ?? []; ufcState.builtAt = body.builtAt ?? null; el.ufcStatus.textContent = ''; }
+  } catch { el.ufcStatus.textContent = "Couldn't reach the worker."; }
+  ufcState.loading = false;
+  renderUfc();
+}
+
+async function loadUfcFighters() {
+  if (ufcState.fighters || !CONFIG.WORKER_URL) return;
+  try {
+    const res = await fetch(new URL('/ufc/fighters', CONFIG.WORKER_URL), { headers: { Accept: 'application/json' } });
+    const body = await res.json();
+    ufcState.fighters = body.fighters ?? [];
+  } catch { ufcState.fighters = []; }
+  renderUfc();
+}
+
+/** One fighter's full record, fetched once and kept; the sheet re-renders when it lands. */
+async function ufcFighter(id) {
+  if (ufcState.fightersById[id]) return ufcState.fightersById[id];
+  try {
+    const url = new URL('/ufc/fighter', CONFIG.WORKER_URL); url.searchParams.set('id', id);
+    const res = await fetch(url, { headers: { Accept: 'application/json' } });
+    const body = await res.json();
+    ufcState.fightersById[id] = res.ok ? body : { id, missing: true, error: body.error };
+  } catch { ufcState.fightersById[id] = { id, missing: true, error: "Couldn't reach the worker." }; }
+  return ufcState.fightersById[id];
+}
+
+function openUfcFighter(id, name = '') {
+  trendsState.sheet = { type: 'ufcFighter', fighterId: id, name };
+  renderTrendsSheet();
+  ufcFighter(id).then(() => { if (trendsState.sheet?.type === 'ufcFighter' && trendsState.sheet.fighterId === id) renderTrendsSheet(); });
+}
+
+const untilText = (ms) => {
+  const d = ms - Date.now(); if (d <= 0) return null;
+  const days = Math.floor(d / 864e5); const hours = Math.floor((d % 864e5) / 36e5);
+  return days ? `in ${days} day${days === 1 ? '' : 's'}${hours ? ` ${hours} h` : ''}` : hours ? `in ${hours} h ${Math.floor((d % 36e5) / 6e4)} min` : `in ${Math.max(1, Math.floor(d / 6e4))} min`;
+};
+const resultWord = { win: 'W', loss: 'L', draw: 'D', nc: 'NC' };
+
+function renderUfcBout(b, ev) {
+  const side = (f, who) => (f ? `<div class="ufc-side ufc-side-${who} ${b.result?.winnerId && b.result.winnerId === f.id ? 'is-winner' : b.result && b.result.winnerId && b.result.winnerId !== f.id ? 'is-loser' : ''}">
+      ${ufcAvatar(f)}
+      <div class="ufc-side-text">
+        <button type="button" class="ufc-name" data-ufc-fighter="${esc(f.id)}" data-ufc-name="${esc(f.name)}">${esc(f.name)}</button>
+        <span class="ufc-record">${esc(recordText(f.record))}${f.country ? ` · ${esc(f.country)}` : ''}</span>
+        <button type="button" class="ufc-more" data-ufc-fighter="${esc(f.id)}" data-ufc-name="${esc(f.name)}">More info</button>
+      </div>
+    </div>` : '<div class="ufc-side"><span class="row-sub">TBA</span></div>');
+  const tags = (ev.changes ?? []).filter((c) => c.boutId === b.id).slice(-2).map((c) => `<span class="ufc-tag is-${esc(c.type)}">${esc(c.detail)}</span>`).join('');
+  const status = b.status === 'final' && b.result
+    ? `<span class="ufc-result">${b.result.draw ? 'Draw' : `${esc((b.result.winnerId === b.a?.id ? b.a : b.b)?.name ?? '')} wins`}${b.result.method ? ` · ${esc(b.result.method)}` : ''}${b.result.round ? ` · R${esc(String(b.result.round))}${b.result.time ? ` ${esc(b.result.time)}` : ''}` : ''}</span>`
+    : b.status === 'live' ? '<span class="ufc-result is-live">Live</span>' : b.status === 'cancelled' ? '<span class="ufc-result is-off">Off the card</span>' : '';
+  return `<article class="ufc-bout ${b.status === 'cancelled' ? 'is-cancelled' : ''}" data-bout="${esc(b.id)}">
+    <div class="ufc-bout-head"><span class="ufc-weight">${esc(b.weightClass ?? '')}${b.title ? ' · <b>Title fight</b>' : ''}${b.rounds ? ` · ${esc(String(b.rounds))} rounds` : ''}</span>${status}</div>
+    <div class="ufc-bout-body">${side(b.a, 'a')}<span class="ufc-vs">vs</span>${side(b.b, 'b')}</div>
+    ${tags ? `<div class="ufc-tags">${tags}</div>` : ''}
+  </article>`;
+}
+
+function renderUfc() {
+  if (!el.ufcView) return;
+  el.ufcSub.innerHTML = [['card', 'Card'], ['fighters', 'Fighters']].map(([k, label]) => `<button type="button" class="ufc-sub-btn ${ufcState.sub === k ? 'is-active' : ''}" data-ufc-sub="${k}" aria-pressed="${ufcState.sub === k}">${label}</button>`).join('');
+  el.ufcCardView.hidden = ufcState.sub !== 'card';
+  el.ufcFightersView.hidden = ufcState.sub !== 'fighters';
+  if (ufcState.sub === 'card') {
+    const ev = ufcState.event;
+    const upcoming = [...ufcState.events].sort((a, b) => (a.date ?? 0) - (b.date ?? 0)).filter((e) => e.status !== 'final' || e.id === ev?.id);
+    el.ufcEvents.innerHTML = upcoming.map((e) => `<button type="button" class="rate-chip ${e.id === ev?.id ? 'is-active' : ''}" data-ufc-event="${esc(e.id)}">${esc(e.shortName ?? e.name)} <small>${esc(ufcDayFmt.format(new Date(e.date ?? 0)))}</small></button>`).join('');
+    if (!ev) { el.ufcHeader.innerHTML = ''; el.ufcCard.innerHTML = ''; return; }
+    const until = untilText(ev.date);
+    el.ufcHeader.innerHTML = `<div class="ufc-event-head">
+      <div><h2 class="ufc-event-name">${esc(ev.name)}</h2>
+      <p class="ufc-event-meta">${esc(ufcDateFmt.format(new Date(ev.date ?? 0)))} ET${ev.venue ? ` · ${esc(ev.venue)}` : ''}${ev.city ? `, ${esc(ev.city)}` : ''}</p></div>
+      <span class="ufc-event-status is-${esc(ev.status)}">${ev.status === 'final' ? 'Final' : ev.status === 'live' ? 'Live' : until ?? 'Today'}</span>
+    </div>
+    ${(ev.changes ?? []).length ? `<div class="ufc-changes"><p class="row-sub">Card changes</p><ul>${ev.changes.slice(-5).reverse().map((c) => `<li><span class="ufc-tag is-${esc(c.type)}">${esc(c.type)}</span> ${esc(c.detail)} <small>${esc(ufcDateFmt.format(new Date(c.at)))}</small></li>`).join('')}</ul></div>` : ''}`;
+    const groups = ['main', 'prelims', 'early'].map((seg) => [seg, ev.bouts.filter((b) => b.segment === seg)]).filter(([, list]) => list.length);
+    el.ufcCard.innerHTML = groups.map(([seg, list]) => `<section class="ufc-segment"><h3>${UFC_SEGMENT_LABEL[seg]} <small>${list.length} bout${list.length === 1 ? '' : 's'}</small></h3>${list.map((b) => renderUfcBout(b, ev)).join('')}</section>`).join('') || '<p class="empty">No bouts listed yet.</p>';
+    el.ufcStatus.textContent = ufcState.builtAt ? `Card as of ${trendTimeFmt.format(new Date(ufcState.builtAt))}; checked every 15 minutes.` : el.ufcStatus.textContent;
+  } else {
+    const q = foldName(ufcState.query);
+    const list = ufcState.fighters;
+    el.ufcFightersStatus.textContent = list ? (list.length ? `${list.length} fighters on UFC cards this year. Type a name.` : 'No fighter index yet; the runner builds it on its first pass.') : 'Loading fighters…';
+    const matches = !q || !list ? [] : list.filter((f) => foldName(f.name).includes(q) || (f.nickname && foldName(f.nickname).includes(q))).slice(0, 12);
+    el.ufcList.hidden = !matches.length;
+    el.ufcList.innerHTML = matches.map((f, i) => `<li role="option" class="${i === ufcState.focus ? 'is-focus' : ''}" data-ufc-fighter="${esc(f.id)}" data-ufc-name="${esc(f.name)}">${ufcAvatar(f, 34)}<span class="players-name">${esc(f.name)}${f.nickname ? ` <small>"${esc(f.nickname)}"</small>` : ''}</span><span class="players-meta">${esc(f.weightClass ?? '')}${f.record ? ` · ${esc(recordText(f.record))}` : ''}</span></li>`).join('');
+  }
+}
+
+/** The fighter sheet: bio, the last five, the method-of-victory bars, every fight. */
+function renderUfcFighterSheet(sheet) {
+  const f = ufcState.fightersById[sheet.fighterId];
+  const head = `${sheetHead('ufc', f?.name ?? sheet.name ?? 'Fighter')}`;
+  if (!f) return `${head}<p class="row-sub ufc-sheet-wait">Loading the record…</p>${sheetClose()}`;
+  if (f.missing) return `${head}<p class="row-sub ufc-sheet-wait">${esc(f.error ?? 'No profile for that fighter yet.')}</p>${sheetClose()}`;
+  const bio = f.bio ?? {};
+  const bioRow = [['Age', bio.age], ['Height', bio.height], ['Weight', bio.weight], ['Reach', bio.reach], ['Stance', bio.stance], ['Division', bio.weightClass], ['Team', bio.team], ['Country', bio.country]].filter(([, v]) => v != null && v !== '').map(([k, v]) => `<div class="ufc-bio-cell"><span>${k}</span><strong>${esc(String(v))}</strong></div>`).join('');
+  const five = (f.lastFive ?? []).map((r) => `<span class="ufc-five is-${esc(r)}">${resultWord[r] ?? r}</span>`).join('') || '<span class="row-sub">No fights on record</span>';
+  const bars = (label, m) => { const total = Object.values(m ?? {}).reduce((s, n) => s + n, 0); const rows = [['KO/TKO', m?.ko ?? 0], ['Submission', m?.sub ?? 0], ['Decision', m?.dec ?? 0], ['Other', m?.other ?? 0]].filter(([, n], i) => n || i < 3); return `<div class="ufc-methods"><h4>${label} <small>${total}</small></h4>${rows.map(([k, n]) => `<div class="ufc-method-row"><span class="ufc-method-label">${k}</span><span class="ufc-method-bar"><i style="width:${total ? Math.round((n / total) * 100) : 0}%"></i></span><span class="ufc-method-num">${n}<small>${total ? Math.round((n / total) * 100) : 0}%</small></span></div>`).join('')}</div>`; };
+  const history = (f.history ?? []).map((h) => `<tr class="is-${esc(h.result)}">
+      <td>${h.date ? esc(ufcDayFmt.format(new Date(h.date))) : ''}</td>
+      <td><b class="ufc-res is-${esc(h.result)}">${resultWord[h.result] ?? h.result}</b></td>
+      <td>${h.opponent?.id ? `<button type="button" class="ufc-opp" data-ufc-fighter="${esc(h.opponent.id)}" data-ufc-name="${esc(h.opponent.name ?? '')}">${esc(h.opponent.name ?? '')}</button>` : esc(h.opponent?.name ?? '')}${h.opponent?.record ? `<small>${esc(recordText(h.opponent.record))}</small>` : ''}</td>
+      <td>${esc(h.method ?? '')}${h.round ? `<small>R${esc(String(h.round))}${h.time ? ` ${esc(h.time)}` : ''}</small>` : ''}</td>
+      <td class="ufc-hist-event">${esc(h.event ?? '')}</td>
+    </tr>`).join('');
+  return `${head}
+    <div class="ufc-sheet-head">${ufcAvatar(f, 72)}<div><p class="ufc-sheet-name">${esc(f.name)}${f.nickname ? ` <small>"${esc(f.nickname)}"</small>` : ''}</p><p class="ufc-sheet-record">${esc(recordText(f.record))}</p></div></div>
+    ${bioRow ? `<div class="ufc-bio">${bioRow}</div>` : ''}
+    <h4 class="ufc-h4">Last five</h4><div class="ufc-five-row">${five}</div>
+    <div class="ufc-methods-wrap">${bars('Wins by method', f.methods?.wins)}${bars('Losses by method', f.methods?.losses)}</div>
+    <h4 class="ufc-h4">Fight history <small>${(f.history ?? []).length}</small></h4>
+    <div class="ufc-hist-wrap"><table class="ufc-hist"><thead><tr><th>Date</th><th></th><th>Opponent</th><th>Method</th><th>Event</th></tr></thead><tbody>${history || '<tr><td colspan="5" class="row-sub">No fights on record.</td></tr>'}</tbody></table></div>
+    ${sheetClose()}`;
+}
+
+el.ufcView?.addEventListener('click', (event) => {
+  const t = event.target;
+  const sub = t.closest('[data-ufc-sub]');
+  if (sub) { ufcState.sub = sub.dataset.ufcSub; renderUfc(); if (ufcState.sub === 'fighters') { loadUfcFighters(); el.ufcQuery?.focus(); } return; }
+  const ev = t.closest('[data-ufc-event]');
+  if (ev) { loadUfc(ev.dataset.ufcEvent); return; }
+  const f = t.closest('[data-ufc-fighter]');
+  if (f) { openUfcFighter(f.dataset.ufcFighter, f.dataset.ufcName); if (el.ufcList) el.ufcList.hidden = true; }
+});
+el.ufcQuery?.addEventListener('input', () => { ufcState.query = el.ufcQuery.value; ufcState.focus = 0; renderUfc(); });
+el.ufcQuery?.addEventListener('keydown', (event) => {
+  const items = [...(el.ufcList?.querySelectorAll('li') ?? [])];
+  if (!items.length) return;
+  if (event.key === 'ArrowDown') { event.preventDefault(); ufcState.focus = Math.min(items.length - 1, ufcState.focus + 1); renderUfc(); }
+  else if (event.key === 'ArrowUp') { event.preventDefault(); ufcState.focus = Math.max(0, ufcState.focus - 1); renderUfc(); }
+  else if (event.key === 'Enter') { event.preventDefault(); const li = items[ufcState.focus]; if (li) { openUfcFighter(li.dataset.ufcFighter, li.dataset.ufcName); el.ufcList.hidden = true; } }
+});
+// A fighter's name inside the sheet (an opponent in the history) opens that fighter.
+el.trendsSheet?.addEventListener('click', (event) => {
+  const f = event.target.closest('[data-ufc-fighter]');
+  if (f) openUfcFighter(f.dataset.ufcFighter, f.dataset.ufcName);
 });
