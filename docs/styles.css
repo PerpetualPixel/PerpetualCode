@@ -7049,3 +7049,6 @@ a.trend-price:hover { background: rgba(255, 255, 255, 0.06); }
 .ufc-h2h-engine p { margin: 0; }
 .ufc-h2h-engine ul { margin: 6px 0 0; padding-left: 18px; }
 .ufc-h2h-quotes { color: var(--muted); font-style: italic; }
+.ufc-pick-leg + .ufc-pick-leg { margin-top: 12px; padding-top: 12px; border-top: 1px solid var(--line); }
+.ufc-pick-sel .trend-price, .ufc-pick-sel .pick-leg-price { float: right; margin-left: 8px; }
+.pick-bet-foot .row-sub { margin: 0 0 8px; }
