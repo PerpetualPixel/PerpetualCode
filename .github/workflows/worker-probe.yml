@@ -1,0 +1,87 @@
+# Read a public worker route from a runner, for when the place you are
+# working from can reach GitHub but not workers.dev (the cloud sessions
+# cannot). Dispatch it with a route, or push a change to this file and it
+# reads the routes in PROBES below on the branch that carries the change.
+#
+# Read-only: every route is a public GET the app itself calls, so it
+# spends no odds credits and needs no secret. The body is printed to the
+# job log, trimmed, with the game-log routes summarised to their dates
+# (the player route's rows are what the Pixel's Picks grader reads).
+name: Worker probe
+
+on:
+  workflow_dispatch:
+    inputs:
+      path:
+        description: 'Route to read, e.g. /player?sport=basketball_nba&team=PHI&id=3917376&stat=points'
+        required: true
+        type: string
+      athletes:
+        description: 'For a scoreboard route: ESPN athlete ids whose box lines to print, comma separated'
+        required: false
+        type: string
+  push:
+    paths:
+      - .github/workflows/worker-probe.yml
+
+permissions:
+  contents: read
+
+jobs:
+  probe:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Read the route
+        env:
+          WORKER: https://pixel-pick-odds.mgbouldering.workers.dev
+          ROUTE: ${{ inputs.path }}
+          ATHLETES: ${{ inputs.athletes }}
+          # The routes a push to this file reads: the open tickets' players, by team and ESPN id.
+          PROBES: |
+            https://site.api.espn.com/apis/site/v2/sports/basketball/nba/scoreboard?dates=20261030
+            https://site.api.espn.com/apis/site/v2/sports/basketball/nba/scoreboard?dates=20261029
+        run: |
+          set -uo pipefail
+          ATHLETES="${ATHLETES:-3917376,4433137,4066211,3995,4066648}"
+          read_route() {
+            echo "=== $1"
+            case "$1" in http*) url="$1";; *) url="$WORKER$1";; esac
+            body=$(curl -sS --max-time 60 -H 'Accept: application/json' "$url")
+            echo "$body" | node -e '
+              let raw = ""; process.stdin.on("data", (c) => { raw += c; }).on("end", () => {
+                let d; try { d = JSON.parse(raw); } catch { console.log(raw.slice(0, 4000)); return; }
+                if (d && d.rows && d.player) {
+                  console.log("player", d.player.name, d.player.team, "stat", d.stat, "rows", d.rows.length, "undated", d.rows.filter((r) => !r.date).length);
+                  for (const r of d.rows.slice(0, 8)) console.log(" ", new Date(r.date || 0).toISOString(), r.atVs, r.opponent, "value", r.value, r.seasonType);
+                } else if (d && Array.isArray(d.seasonTypes)) {
+                  // The ESPN game log itself: each season block, its event ids against the dates in the events map.
+                  const ev = d.events || {};
+                  for (const s of d.seasonTypes) for (const c of s.categories || []) {
+                    const ids = (c.events || []).map((e) => e.eventId);
+                    console.log(s.displayName, "|", c.displayName, ids.length, "events:", ids.slice(0, 6).map((id) => `${id}=${ev[id] ? ev[id].gameDate : "NO META"}`).join("  "));
+                  }
+                  console.log("events map", Object.keys(ev).length, "latest", Object.values(ev).map((m) => m.gameDate).sort().slice(-3).join(" "));
+                } else if (d && Array.isArray(d.events) && d.leagues) {
+                  // A scoreboard: each game, its state, and the box lines of the athletes named in ATHLETES.
+                  const want = new Set(String(process.env.ATHLETES || "").split(",").filter(Boolean));
+                  (async () => {
+                    for (const e of d.events) {
+                      const comp = e.competitions && e.competitions[0];
+                      console.log(e.id, e.name, "|", e.date, "|", e.status && e.status.type && e.status.type.description);
+                      if (!want.size || !comp) continue;
+                      const sum = await fetch(`https://site.api.espn.com/apis/site/v2/sports/basketball/nba/summary?event=${e.id}`).then((r) => r.json()).catch(() => null);
+                      for (const team of (sum && sum.boxscore && sum.boxscore.players) || []) for (const st of team.statistics || []) for (const a of st.athletes || []) {
+                        if (!want.has(String(a.athlete && a.athlete.id))) continue;
+                        const line = (st.keys || st.names || []).map((k, i) => `${k}=${(a.stats || [])[i]}`).join(" ");
+                        console.log("   ", team.team && team.team.abbreviation, a.athlete.displayName, "dnp", a.didNotPlay, a.reason || "", "|", line);
+                      }
+                    }
+                  })();
+                } else console.log(JSON.stringify(d).slice(0, 4000));
+              });
+            '
+          }
+          if [ -n "${ROUTE:-}" ]; then read_route "$ROUTE"; else
+            while IFS= read -r line; do [ -n "$line" ] && read_route "$line"; done <<< "$PROBES" || true
+          fi

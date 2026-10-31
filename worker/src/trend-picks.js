@@ -23,6 +23,7 @@ import { fetchContext, hasContext } from './context.js';
 import { fetchBasketballGamelog, basketballStatRows } from './basketball-props.js';
 import { fetchNflGamelog, gamelogStatIndex } from './football-props.js';
 import { bundlePlayer, loadBundleTeams, loadInjuries, injuryFor } from './espn-bundle.js';
+import { boxKey, boxLegKey } from './box-grading.js';
 import { seasonColumnRows } from '../../docs/prop-legs.js';
 import { overNeed, underNeed, attachSeries, legScore, hitFlags, isAltLine } from '../../docs/trends.js';
 import { bookIdFor, SPORTSBOOKS, americanToDecimal } from '../../docs/engine.js';
@@ -722,9 +723,25 @@ export async function runTrendPicksDaily(env, ctx, now = Date.now(), { deps = {}
 }
 
 /** The player's value for the leg's stat on the leg's game date, from the game log, or null when the log has no such game yet. */
+/** The runner's box-score line for a leg (worker/src/boxscore.js): a number, 'dnp' for a no-show, or null when it has not written one. */
+async function boxActualFor(pick, env) {
+  if (!pick.gameDate || !pick.athleteId || !pick.statKey) return null;
+  const raw = await env.POTD_KV.get(boxKey(pick.sportKey, pick.gameDate)).catch(() => null);
+  if (!raw) return null;
+  try {
+    const entry = JSON.parse(raw)?.legs?.[boxLegKey(pick.athleteId, pick.statKey)];
+    if (!entry) return null;
+    if (entry.dnp) return 'dnp';
+    return Number.isFinite(entry.value) ? entry.value : null;
+  } catch { return null; }
+}
+
+/** The leg's actual: the box score first, then the game log (which leaves out the games a player sat); 'dnp' for a no-show the box confirms. */
 async function actualFor(pick, env, ctx, deps = {}) {
   if (deps.actual) return deps.actual(pick);
   if (!pick.athleteId) return null;
+  const box = await boxActualFor(pick, env);
+  if (box != null) return box;
   let rows = [];
   const log = await gamelogFor(env, pick.sportKey, pick.team, pick.athleteId, ctx);
   if (pick.sportKey === 'basketball_nba') rows = basketballStatRows(log, pick.statKey, { allSeasons: false });
@@ -784,8 +801,9 @@ export async function runTrendPicksGrading(env, ctx, now = Date.now(), { deps = 
       for (const leg of bet.legs) {
         if (leg.result != null || now < leg.commenceMs + 3 * 3600e3) continue;
         const actual = await actualFor(leg, env, ctx, deps);
+        if (actual === 'dnp') { leg.result = 'void'; leg.voidReason = 'did not play'; changed = true; continue; }
         if (actual === null) {
-          if (now > leg.commenceMs + 36 * 3600e3) { leg.result = 'void'; changed = true; }
+          if (now > leg.commenceMs + 36 * 3600e3) { leg.result = 'void'; leg.voidReason = 'no box score in 36 hours'; changed = true; }
           continue;
         }
         leg.actual = actual;
