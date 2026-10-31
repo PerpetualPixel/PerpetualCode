@@ -98,6 +98,32 @@ function cleanBooks(value) {
   return [...new Set(keys)].slice(0, 30);
 }
 
+/** The books a personal ticket may be drawn at: the Parlay Builder's list (docs/app.js's PARLAY_BOOKS). */
+export const PICK_PREF_BOOKS = ['draftkings', 'fanduel', 'caesars', 'fanatics', 'betmgm', 'prizepicks', 'hardrock', 'bet365', 'betrivers'];
+export const PICK_PREF_DEFAULTS = { book: 'draftkings', minScore: 4, legs: 2 };
+
+/**
+ * The user's own Pixel's Picks settings (2026-10-31 direction: "let a
+ * user set their own confidence floor or book for a personal ticket
+ * draw, saved per user"): the book the ticket is priced at, the Pixel
+ * score a leg must reach (2 to 5 stars, by halves) and the legs on the
+ * ticket (1 is a straight; PrizePicks lineups are 2 to 6). Null until
+ * the user has saved them once; a field left out keeps what is stored.
+ */
+export function cleanPicks(value, existing = null) {
+  if (!value || typeof value !== 'object') return existing ?? null;
+  const base = existing ?? PICK_PREF_DEFAULTS;
+  const book = String(value.book ?? base.book).toLowerCase();
+  const score = Number(value.minScore ?? base.minScore);
+  const legs = Number(value.legs ?? base.legs);
+  return {
+    book: PICK_PREF_BOOKS.includes(book) ? book : base.book,
+    minScore: Number.isFinite(score) ? Math.min(5, Math.max(2, Math.round(score * 2) / 2)) : base.minScore,
+    legs: Number.isFinite(legs) ? Math.min(6, Math.max(1, Math.round(legs))) : base.legs,
+    updatedAt: Date.now(),
+  };
+}
+
 /**
  * Normalize whatever the client sent into exactly the shape we store.
  * Whitelisted field by field rather than spread, so a client can't grow the
@@ -116,6 +142,7 @@ function normalize(input, existing = null) {
       confirmed: bankroll.confirmed === true,
     },
     trendBooks: cleanBooks(input?.trendBooks) ?? cleanBooks(existing?.trendBooks) ?? [],
+    picks: cleanPicks(input?.picks, existing?.picks ?? null),
     updatedAt: Date.now(),
   };
 }

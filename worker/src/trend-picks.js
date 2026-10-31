@@ -44,7 +44,7 @@ const KV_TTL_SECONDS = 86400 * 90;
 const MODEL = 'claude-haiku-4-5-20251001';
 
 const key = (dateKey) => `trendpicks:${dateKey}`;
-const fold = (s) => String(s ?? '').normalize('NFD').replace(/[̀-ͯ]/g, '').toLowerCase().replace(/[^a-z0-9]+/g, ' ').trim();
+export const fold = (s) => String(s ?? '').normalize('NFD').replace(/[̀-ͯ]/g, '').toLowerCase().replace(/[^a-z0-9]+/g, ' ').trim();
 
 /**
  * The books a Pixel's Pick may be priced at (2026-10-27 direction: the
@@ -94,8 +94,8 @@ export function pickBookId(bookKey) {
   const id = bookIdFor(bookKey) ?? String(bookKey ?? '').toLowerCase();
   return PICK_BOOKS.includes(id) ? id : null;
 }
-const pickBookName = (bookId) => SPORTSBOOKS[bookId]?.name ?? PICK_BOOK_NAMES[bookId] ?? bookId;
-const pickBookUrl = (bookId) => SPORTSBOOKS[bookId]?.url ?? null;
+export const pickBookName = (bookId) => SPORTSBOOKS[bookId]?.name ?? PICK_BOOK_NAMES[bookId] ?? bookId;
+export const pickBookUrl = (bookId) => SPORTSBOOKS[bookId]?.url ?? null;
 
 /**
  * The rules a day's record was drawn under; a posted record drawn under
@@ -114,8 +114,8 @@ export function pickQuotes(row) {
     .sort((a, b) => b.american - a.american);
 }
 
-const toAmerican = (decimal) => (decimal >= 2 ? Math.round((decimal - 1) * 100) : Math.round(-100 / (decimal - 1)));
-const inRange = (american, [lo, hi]) => american >= lo && american <= hi;
+export const toAmerican = (decimal) => (decimal >= 2 ? Math.round((decimal - 1) * 100) : Math.round(-100 / (decimal - 1)));
+export const inRange = (american, [lo, hi]) => american >= lo && american <= hi;
 
 /**
  * The Trends lines that qualify today, grouped per player, stat and side:
@@ -417,7 +417,7 @@ export function parseVerdict(text) {
 }
 
 /** The stored leg: what the card shows and what the grader needs. */
-function legRecord(leg, research, now) {
+export function legRecord(leg, research, now) {
   const row = leg.line;
   return {
     id: row.id,
@@ -795,33 +795,47 @@ export async function runTrendPicksGrading(env, ctx, now = Date.now(), { deps = 
     if (!raw) continue;
     const record = JSON.parse(raw);
     if (record.version !== RECORD_VERSION) continue;
-    let changed = false;
-    for (const bet of record.bets ?? []) {
-      if (bet.status !== 'pending') continue;
-      for (const leg of bet.legs) {
-        if (leg.result != null || now < leg.commenceMs + 3 * 3600e3) continue;
-        const actual = await actualFor(leg, env, ctx, deps);
-        if (actual === 'dnp') { leg.result = 'void'; leg.voidReason = 'did not play'; changed = true; continue; }
-        if (actual === null) {
-          if (now > leg.commenceMs + 36 * 3600e3) { leg.result = 'void'; leg.voidReason = 'no box score in 36 hours'; changed = true; }
-          continue;
-        }
-        leg.actual = actual;
-        leg.result = settle(leg, actual);
-        changed = true;
-      }
-      const settled = settleBet(bet);
-      if (!settled) continue;
-      bet.result = settled.result;
-      bet.net = settled.net;
-      bet.status = settled.result === 'void' ? 'void' : 'graded';
-      bet.settledAt = now;
-      changed = true;
-      graded++;
-    }
+    const { changed, graded: n } = await gradeBets(record.bets ?? [], env, ctx, now, deps);
+    graded += n;
     if (changed) await env.POTD_KV.put(key(dateKey), JSON.stringify(record), { expirationTtl: KV_TTL_SECONDS });
   }
   return { graded };
+}
+
+/**
+ * Grade a list of pending bets in place, leg by leg: three hours after
+ * tip-off a leg is read off the box score (the runner's record) or the
+ * game log, a confirmed no-show voids at once, a leg with no line a day
+ * and a half on voids too. The ticket settles once every leg has.
+ * Returns how many tickets settled and whether anything changed.
+ */
+export async function gradeBets(bets, env, ctx, now, deps = {}) {
+  let changed = false;
+  let graded = 0;
+  for (const bet of bets ?? []) {
+    if (bet.status !== 'pending') continue;
+    for (const leg of bet.legs) {
+      if (leg.result != null || now < leg.commenceMs + 3 * 3600e3) continue;
+      const actual = await actualFor(leg, env, ctx, deps);
+      if (actual === 'dnp') { leg.result = 'void'; leg.voidReason = 'did not play'; changed = true; continue; }
+      if (actual === null) {
+        if (now > leg.commenceMs + 36 * 3600e3) { leg.result = 'void'; leg.voidReason = 'no box score in 36 hours'; changed = true; }
+        continue;
+      }
+      leg.actual = actual;
+      leg.result = settle(leg, actual);
+      changed = true;
+    }
+    const settled = settleBet(bet);
+    if (!settled) continue;
+    bet.result = settled.result;
+    bet.net = settled.net;
+    bet.status = settled.result === 'void' ? 'void' : 'graded';
+    bet.settledAt = now;
+    changed = true;
+    graded++;
+  }
+  return { changed, graded };
 }
 
 /** Wins, losses, pushes, voids, net units, the units risked (every settled ticket that was not voided) and the return on them, over a list of bets. */

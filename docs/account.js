@@ -107,12 +107,53 @@ async function init() {
     const data = await loadAccount();
     if (!data) return;
     populateForm(data);
+    await loadPickSettings();
     document.getElementById('loading-state').classList.add('hidden');
     document.getElementById('settings-body').classList.remove('hidden');
   } catch (err) {
     document.getElementById('loading-state').textContent = 'Failed to load account: ' + err.message;
   }
 }
+
+/** The account's pick settings (worker/src/settings.js's picks), filled from /settings; unset accounts keep the form's defaults. */
+async function loadPickSettings() {
+  try {
+    const res = await fetch(`${window.API_BASE}/settings`, { headers: authHeaders() });
+    if (!res.ok) return;
+    const { settings } = await res.json();
+    const picks = settings?.picks;
+    if (!picks) return;
+    document.getElementById('picks-book').value = picks.book;
+    document.getElementById('picks-floor').value = String(picks.minScore);
+    document.getElementById('picks-legs').value = String(picks.legs);
+  } catch { /* the form keeps its defaults; a save still works */ }
+}
+
+document.getElementById('picks-form').addEventListener('submit', async (e) => {
+  e.preventDefault();
+  const btn = e.target.querySelector('button');
+  const original = btn.textContent;
+  const picks = {
+    book: document.getElementById('picks-book').value,
+    minScore: Number(document.getElementById('picks-floor').value),
+    legs: Number(document.getElementById('picks-legs').value),
+  };
+  try {
+    btn.disabled = true;
+    btn.innerHTML = '<span class="spinner"></span> Saving...';
+    const res = await fetch(`${window.API_BASE}/settings`, { method: 'PUT', headers: authHeaders(), body: JSON.stringify({ picks }) });
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.error || 'Save failed');
+    // Today's ticket follows the new settings while none of its games has started.
+    const redraw = await fetch(`${window.API_BASE}/trend-picks/mine`, { method: 'POST', headers: authHeaders() }).then((r) => r.json()).catch(() => null);
+    showMessage('picks-message', redraw?.today ? `Saved. Today's ticket: ${redraw.today.legs.map((l) => l.selection).join(' + ')} at ${redraw.today.book}.` : `Saved.${redraw?.reason ? ` ${redraw.reason}` : ''}`, false);
+  } catch (err) {
+    showMessage('picks-message', err.message, true);
+  } finally {
+    btn.disabled = false;
+    btn.textContent = original;
+  }
+});
 
 document.getElementById('username-form').addEventListener('submit', async (e) => {
   e.preventDefault();
