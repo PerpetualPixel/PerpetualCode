@@ -19,7 +19,7 @@
        page first. Only checks token presence, not validity: app.html's own
        checkAuth() is the real gate and will bounce back to login.html if the
        token turns out to be stale, exactly as it does today. -->
-  <script src="signed-in-redirect.js?v=1.254"></script>
+  <script src="signed-in-redirect.js?v=1.255"></script>
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>Perpetual Picks - Your Edge, Perpetually</title>
   <meta name="description" content="Data-driven picks across every major sport, tracked in the open. See what Perpetual Picks does before you sign up.">
@@ -178,7 +178,7 @@
     }
     .section-sub { text-align: center; color: #8a86ac; font-size: 15px; max-width: 480px; margin: 0 auto 48px; }
     .feature-grid {
-      display: grid; grid-template-columns: repeat(auto-fit, minmax(230px, 1fr)); gap: 18px;
+      display: grid; grid-template-columns: repeat(auto-fit, minmax(260px, 1fr)); gap: 18px;
     }
     .feature-card {
       background: rgba(255, 255, 255, 0.03); border: 1px solid rgba(217, 70, 239, 0.15);
@@ -236,14 +236,15 @@
     </nav>
 
     <section class="hero">
-      <span class="hero-eyebrow">Player prop research, every line, every day</span>
+      <span class="hero-eyebrow">NBA, NFL and UFC research, every line, every day</span>
       <h1 class="hero-title">Your Edge, <span class="grad">Perpetually</span></h1>
       <p class="hero-sub">
-        Trends shows every player prop line the books are offering on
-        today's and tomorrow's NBA and NFL games, with the player's real
-        hit rate at that number over his last 5 to 20 games, this season,
-        last season and against tonight's opponent. The lines that always
-        land come first.
+        Every player prop line the books hang on today's and tomorrow's
+        NBA and NFL games, with the player's real hit rate at that number
+        over his last 5 to 20 games and against tonight's opponent. Every
+        UFC card broken down fight by fight. A parlay builder that works
+        from the same numbers, and Pixel's own picks, graded the hour the
+        game ends.
       </p>
       <div class="hero-ctas">
         <a href="/login.html?form=register" class="btn btn-primary">Join Now — It's Free</a>
@@ -290,12 +291,7 @@
         <div class="feature-card">
           <div class="feature-icon">📊</div>
           <div class="feature-title">Trends</div>
-          <div class="feature-desc">Every player prop line on today's and tomorrow's NBA and NFL games with the player's real hit rate at that number, sorted so the lines that always land come first.</div>
-        </div>
-        <div class="feature-card">
-          <div class="feature-icon">🎚️</div>
-          <div class="feature-title">Your periods, your books</div>
-          <div class="feature-desc">Slide from the last 5 to the last 20 games, set a head to head floor, pick a season, and filter the lines to the sportsbooks you play at, with a tap straight to your slip.</div>
+          <div class="feature-desc">Every player prop line on today's and tomorrow's NBA and NFL games with the player's real hit rate at that number, from the last 5 to the last 20 games, filtered to the books you play at, with a tap straight to your slip.</div>
         </div>
         <div class="feature-card">
           <div class="feature-icon">🎯</div>
@@ -303,21 +299,37 @@
           <div class="feature-desc">The lines that landed every one of the last twenty games and pass a research check become at most two tickets a day: a parlay near +100 or a straight, one unit each.</div>
         </div>
         <div class="feature-card">
+          <div class="feature-icon">🧩</div>
+          <div class="feature-title">Parlay Builder</div>
+          <div class="feature-desc">Pick your book, your legs and your hit-rate floors, mix leagues, lock the legs you like and regenerate the rest, then add the whole ticket to your slip in one tap.</div>
+        </div>
+        <div class="feature-card">
+          <div class="feature-icon">🥊</div>
+          <div class="feature-title">UFC, every card</div>
+          <div class="feature-desc">The next card, fight by fight: records, methods of victory, full fight history and a read on each bout, with straights and parlay pieces once the odds post.</div>
+        </div>
+        <div class="feature-card">
+          <div class="feature-icon">🔎</div>
+          <div class="feature-title">Players and fighters</div>
+          <div class="feature-desc">Search any NBA or NFL player for his game log at any stat, or any UFC fighter for his record, and open the same card the picks are drawn from.</div>
+        </div>
+        <div class="feature-card">
           <div class="feature-icon">📈</div>
           <div class="feature-title">Transparent Tracking</div>
-          <div class="feature-desc">Every ticket graded the morning after, a running total you can follow day by day, and the full history, never edited after the fact.</div>
+          <div class="feature-desc">Every ticket graded off the box score the hour the game ends, a running record in units with its ROI, and the full history, never edited after the fact.</div>
         </div>
       </div>
 
       <div class="sport-strip">
         <span class="sport-chip">🏀 NBA</span>
         <span class="sport-chip">🏈 NFL</span>
+        <span class="sport-chip">🥊 UFC</span>
       </div>
     </section>
 
     <section class="closing">
       <h2>Ready to see today's lines?</h2>
-      <p>Create a free account and the full board of player props is a minute away.</p>
+      <p>Create a free account and the full board, the next UFC card and Pixel's Picks are a minute away.</p>
       <a href="/login.html?form=register" class="btn btn-primary">Join Now — It's Free</a>
     </section>
 
