@@ -9605,7 +9605,7 @@ function renderPickLeg(leg, bet) {
         <p class="trend-line">${esc(leg.marketLabel ?? leg.statLabel)} ${sideWord(leg.side)} ${esc(String(leg.point))}</p>
         ${injuryTag(leg.injury)}
       </div>
-      ${bet.type === 'parlay' ? `<span class="pick-leg-price">${esc(formatAmerican(leg.american))}</span>` : pricePill(bet.bookId, bet.book, leg.american, leg.link)}
+      ${bet.type === 'parlay' && !leg.link ? `<span class="pick-leg-price">${esc(formatAmerican(leg.american))}</span>` : pricePill(bet.bookId, bet.book, leg.american, leg.link)}
     </div>
     <div class="trend-rate-row">
       <span class="trend-rate is-hot">100%<small>L20</small></span>
@@ -9657,8 +9657,6 @@ function openPickLeg(target) {
 }
 
 function renderBetCard(bet) {
-  const href = bet.link ?? bet.bookUrl;
-  const slip = href ? `<a class="pick-bet-link" href="${esc(href)}" target="_blank" rel="noopener">${bet.link ? `Open on your ${esc(bet.book)} slip` : `Open ${esc(bet.book)}`}</a>` : '';
   return `<article class="trend-card pick-bet-card" aria-label="${esc(betTypeLabel(bet))} at ${esc(bet.book)}">
     <div class="pick-bet-head">
       <span class="pick-bet-type">${esc(betTypeLabel(bet))}</span>
@@ -9669,7 +9667,7 @@ function renderBetCard(bet) {
     </div>
     <div class="pick-legs">${bet.legs.map((leg) => renderPickLeg(leg, bet)).join('')}</div>
     ${bet.legs.every((l) => !l.note) ? '<p class="pick-note">Nothing worth flagging: minutes steady, no injury listing, no blowout projected.</p>' : ''}
-    ${slip ? `<div class="pick-bet-foot">${slip}</div>` : ''}
+    ${ticketSlipFoot(bet)}
   </article>`;
 }
 
@@ -10148,23 +10146,23 @@ function parlayPriceOf(legs) {
   return dec ? { decimal: dec, american: decimalToAmerican(dec) } : null;
 }
 
-/** One link that adds every leg to the slip, where the book's deep link takes a list (DraftKings outcomes, Caesars selectionIds). */
-function parlayAllLink(legs) {
-  const links = legs.map((l) => l.quote.link).filter(Boolean);
-  if (links.length !== legs.length || !links.length) return null;
+/** One link that adds every leg to the slip, where the book's deep link takes a list (DraftKings outcomes, FanDuel indexed pairs, Caesars selectionIds); null for other books or when a leg has no link. */
+function combinedSlipLink(bookId, legLinks) {
+  const links = (legLinks ?? []).filter(Boolean);
+  if (!links.length || links.length !== (legLinks ?? []).length) return null;
   try {
-    if (parlayState.book === 'draftkings') {
+    if (bookId === 'draftkings') {
       const ids = links.map((u) => new URL(u).searchParams.get('outcomes')).filter(Boolean);
       return ids.length === links.length ? `https://sportsbook.draftkings.com/?outcomes=${ids.map(encodeURIComponent).join('+')}` : null;
     }
-    if (parlayState.book === 'fanduel') {
+    if (bookId === 'fanduel') {
       // FanDuel's addToBetslip takes indexed pairs: marketId[0]/selectionId[0], marketId[1]/selectionId[1], …
       const pairs = links.map((u) => { const q = new URL(u).searchParams; return [q.get('marketId'), q.get('selectionId')]; });
       if (!pairs.every(([m, sel]) => m && sel)) return null;
       // Literal brackets, the way FanDuel reads them (URLSearchParams would percent-encode them).
       return `https://sportsbook.fanduel.com/addToBetslip?${pairs.map(([m, sel], i) => `marketId[${i}]=${encodeURIComponent(m)}&selectionId[${i}]=${encodeURIComponent(sel)}`).join('&')}`;
     }
-    if (parlayState.book === 'caesars') {
+    if (bookId === 'caesars') {
       const first = new URL(links[0].replace('{state}', 'nj'));
       const ids = links.map((u) => new URL(u.replace('{state}', 'nj')).searchParams.get('selectionIds')).filter(Boolean);
       if (ids.length !== links.length) return null;
@@ -10173,6 +10171,17 @@ function parlayAllLink(legs) {
     }
   } catch { return null; }
   return null;
+}
+const parlayAllLink = (legs) => combinedSlipLink(parlayState.book, legs.map((l) => l.quote.link));
+
+/** The footer of a posted ticket: one link that fills the whole slip where the book takes a list, else the single line's link, else the book. */
+function ticketSlipFoot(bet) {
+  const all = bet.type === 'parlay' && bet.legs.length > 1 ? combinedSlipLink(bet.bookId, bet.legs.map((l) => l.link)) : null;
+  const href = all ?? bet.link ?? bet.bookUrl ?? (bookIdFor(bet.bookId) ? SPORTSBOOKS[bookIdFor(bet.bookId)]?.url : null);
+  if (!href) return '';
+  const label = all ? `Add all ${bet.legs.length} legs to your ${esc(bet.book)} slip ↗` : bet.link ? `Open on your ${esc(bet.book)} slip ↗` : `Open ${esc(bet.book)}`;
+  const perLeg = !all && bet.type === 'parlay' && bet.legs.some((l) => l.link) ? `<p class="row-sub">${esc(bet.book)} takes legs one at a time: tap each leg's price to add it.</p>` : '';
+  return `<div class="pick-bet-foot">${perLeg}<a class="pick-bet-link" href="${esc(href)}" target="_blank" rel="noopener">${label}</a></div>`;
 }
 
 const stars = (score) => `<span class="parlay-stars" aria-label="${esc(String(score))} of 5">${'★'.repeat(Math.round(score))}${'☆'.repeat(5 - Math.round(score))}<small>${esc(score.toFixed(1))}</small></span>`;
@@ -10384,24 +10393,28 @@ const ufcPickBadge = (pick) => {
 };
 
 function renderUfcPickCard(pick) {
-  const leg = pick.legs[0];
-  const href = pick.link ?? pick.bookUrl;
+  const parlay = pick.type === 'parlay' && pick.legs.length > 1;
+  const first = pick.legs[0];
+  const legHtml = (leg) => `<div class="ufc-pick-leg">
+      <p class="ufc-pick-sel"><strong>${esc(leg.selection)}</strong> ${parlay && leg.link ? pricePill(pick.bookId, pick.book, leg.american, leg.link) : parlay ? `<span class="pick-leg-price">${esc(formatAmerican(leg.american))}</span>` : ''}<small>${esc(leg.a)} vs ${esc(leg.b)} · ${esc(leg.weightClass ?? '')}</small></p>
+      <p class="ufc-pick-conf">${confStars(leg.confidence)} <small>confidence ${esc(String(leg.confidence))} of 5</small></p>
+      ${leg.warning ? `<p class="pick-move is-out"><span class="pick-move-tag">Line moved · not tracked</span> ${esc(leg.warning)}</p>` : ''}
+      ${leg.note ? `<p class="pick-note">${esc(leg.note)}</p>` : ''}
+      ${leg.actual ? `<p class="row-sub">Result: ${esc(leg.actual)}</p>` : ''}
+    </div>`;
   return `<article class="trend-card pick-bet-card ufc-pick" data-bout-link="${esc(pick.boutId)}">
     <div class="pick-bet-head">
-      <span class="pick-bet-type">${leg.market === 'totals' ? 'Rounds total' : 'Moneyline'}</span>
+      <span class="pick-bet-type">${parlay ? `${pick.legs.length}-leg parlay` : first.market === 'totals' ? 'Rounds total' : 'Moneyline'}</span>
       <span class="pick-bet-book">${bookBadge(pick.bookId, pick.book)}${esc(pick.book)}</span>
       <span class="pick-bet-price">${esc(formatAmerican(pick.american))}</span>
       <span class="pick-bet-stake">${esc(String(pick.units))} unit</span>
       ${ufcPickBadge(pick)}
     </div>
     <div class="ufc-pick-body">
-      <p class="ufc-pick-sel"><strong>${esc(leg.selection)}</strong> <small>${esc(leg.a)} vs ${esc(leg.b)} · ${esc(leg.weightClass ?? '')}</small></p>
-      <p class="ufc-pick-conf">${confStars(leg.confidence)} <small>confidence ${esc(String(leg.confidence))} of 5</small></p>
-      ${pick.warning ? `<p class="pick-move is-out"><span class="pick-move-tag">Line moved · not tracked</span> ${esc(pick.warning)}</p>` : ''}
-      ${leg.note ? `<p class="pick-note">${esc(leg.note)}</p>` : ''}
-      ${leg.actual ? `<p class="row-sub">Result: ${esc(leg.actual)}</p>` : ''}
+      ${pick.warning && !pick.legs.some((l) => l.warning) ? `<p class="pick-move is-out"><span class="pick-move-tag">Line moved · not tracked</span> ${esc(pick.warning)}</p>` : ''}
+      ${pick.legs.map(legHtml).join('')}
     </div>
-    ${href ? `<div class="pick-bet-foot"><a class="pick-bet-link" href="${esc(href)}" target="_blank" rel="noopener">${pick.link ? `Open on your ${esc(pick.book)} slip` : `Open ${esc(pick.book)}`}</a></div>` : ''}
+    ${ticketSlipFoot(pick)}
   </article>`;
 }
 
