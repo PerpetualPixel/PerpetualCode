@@ -16,6 +16,10 @@ on:
         description: 'Route to read, e.g. /player?sport=basketball_nba&team=PHI&id=3917376&stat=points'
         required: true
         type: string
+      athletes:
+        description: 'For a scoreboard route: ESPN athlete ids whose box lines to print, comma separated'
+        required: false
+        type: string
   push:
     paths:
       - .github/workflows/worker-probe.yml
@@ -32,17 +36,14 @@ jobs:
         env:
           WORKER: https://pixel-pick-odds.mgbouldering.workers.dev
           ROUTE: ${{ inputs.path }}
+          ATHLETES: ${{ inputs.athletes }}
           # The routes a push to this file reads: the open tickets' players, by team and ESPN id.
           PROBES: |
-            /version
-            /player?sport=basketball_nba&team=PHI&id=3917376&stat=pa
-            /player?sport=basketball_nba&team=LAL&id=4433137&stat=steals
-            /player?sport=basketball_nba&team=POR&id=4066211&stat=rebounds
-            https://site.web.api.espn.com/apis/common/v3/sports/basketball/nba/athletes/3917376/gamelog
-            https://site.web.api.espn.com/apis/common/v3/sports/basketball/nba/athletes/4433137/gamelog
             https://site.api.espn.com/apis/site/v2/sports/basketball/nba/scoreboard?dates=20261030
+            https://site.api.espn.com/apis/site/v2/sports/basketball/nba/scoreboard?dates=20261029
         run: |
           set -uo pipefail
+          ATHLETES="${ATHLETES:-3917376,4433137,4066211,3995,4066648}"
           read_route() {
             echo "=== $1"
             case "$1" in http*) url="$1";; *) url="$WORKER$1";; esac
@@ -61,6 +62,22 @@ jobs:
                     console.log(s.displayName, "|", c.displayName, ids.length, "events:", ids.slice(0, 6).map((id) => `${id}=${ev[id] ? ev[id].gameDate : "NO META"}`).join("  "));
                   }
                   console.log("events map", Object.keys(ev).length, "latest", Object.values(ev).map((m) => m.gameDate).sort().slice(-3).join(" "));
+                } else if (d && Array.isArray(d.events) && d.leagues) {
+                  // A scoreboard: each game, its state, and the box lines of the athletes named in ATHLETES.
+                  const want = new Set(String(process.env.ATHLETES || "").split(",").filter(Boolean));
+                  (async () => {
+                    for (const e of d.events) {
+                      const comp = e.competitions && e.competitions[0];
+                      console.log(e.id, e.name, "|", e.date, "|", e.status && e.status.type && e.status.type.description);
+                      if (!want.size || !comp) continue;
+                      const sum = await fetch(`https://site.api.espn.com/apis/site/v2/sports/basketball/nba/summary?event=${e.id}`).then((r) => r.json()).catch(() => null);
+                      for (const team of (sum && sum.boxscore && sum.boxscore.players) || []) for (const st of team.statistics || []) for (const a of st.athletes || []) {
+                        if (!want.has(String(a.athlete && a.athlete.id))) continue;
+                        const line = (st.keys || st.names || []).map((k, i) => `${k}=${(a.stats || [])[i]}`).join(" ");
+                        console.log("   ", team.team && team.team.abbreviation, a.athlete.displayName, "dnp", a.didNotPlay, a.reason || "", "|", line);
+                      }
+                    }
+                  })();
                 } else console.log(JSON.stringify(d).slice(0, 4000));
               });
             '
