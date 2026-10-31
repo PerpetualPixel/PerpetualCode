@@ -45,7 +45,11 @@ export const ufcOddsKey = 'ufc:odds';
 export const ufcPicksKey = (eventId) => `ufc:picks:${eventId}`;
 /** Every card with a picks record, newest first, so the ledger outlives the runner's two-month card window. */
 export const ufcPicksIndexKey = 'ufc:picks:index';
-export const ufcBreakdownKey = (bout) => `ufc:breakdown:v2:${bout.id}:${bout.a?.id ?? '-'}-${bout.b?.id ?? '-'}`;
+/** Per pairing and per engine run: a new consensus re-reads the bout. */
+export const ufcBreakdownKey = (bout, engineStamp = '') => `ufc:breakdown:v3:${bout.id}:${bout.a?.id ?? '-'}-${bout.b?.id ?? '-'}:${engineStamp}`;
+export const ufcEngineKey = 'ufc:engine';
+export const MMA_ENGINE_URL = 'https://perpetualpixel.github.io/MMA_Engine/picks.json';
+export const MMA_ENGINE_PAGE = 'https://perpetualpixel.github.io/MMA_Engine/';
 const bookName = (id) => SPORTSBOOKS[id]?.name ?? id;
 const bookUrl = (id) => SPORTSBOOKS[id]?.url ?? null;
 const inRange = (american, [lo, hi]) => american >= lo && american <= hi;
@@ -141,6 +145,52 @@ export function boutOdds(bout, events) {
   return { feedId: e.id, a: best(ml.a), b: best(ml.b), totals: [...totals.values()].map((t) => ({ point: t.point, over: best(t.over), under: best(t.under) })).sort((x, y) => x.point - y.point) };
 }
 
+/* ---------------- the MMA engine ---------------- */
+
+/**
+ * The MMA Engine's picks feed (the trust-weighted consensus of tracked
+ * cappers, rebuilt by its weekly run): read from KV while the last read
+ * is under half an hour old, else fetched cache-busted and written.
+ */
+export async function fetchMmaEngine(env, now = Date.now(), { deps = {} } = {}) {
+  const raw = await env.POTD_KV.get(ufcEngineKey).catch(() => null);
+  const stored = raw ? JSON.parse(raw) : null;
+  if (stored && now - (stored.at ?? 0) < 30 * 60e3) return stored;
+  let feed = null;
+  try {
+    feed = deps.engine ? await deps.engine() : await fetch(`${MMA_ENGINE_URL}?t=${now}`, { headers: { accept: 'application/json' } }).then((r) => (r.ok ? r.json() : null));
+  } catch { feed = null; }
+  if (!Array.isArray(feed?.picks)) return stored ?? { at: null, generatedAt: null, event: null, picks: [] };
+  const record = { at: now, generatedAt: feed.generated_at ?? null, event: feed.event?.name ?? null, totals: feed.totals ?? null, picks: feed.picks.map((p) => ({ fightId: p.fight_id, fight: p.fight, market: p.market, marketLabel: p.market_label, selection: p.selection, consensusPct: p.consensus_pct, strength: p.strength, tier: p.tier, pickCount: p.pick_count, avgConfidence: p.avg_confidence, suggestedUnits: p.suggested_units, cardStatus: p.card_status ?? null, quotedOdds: p.quoted_odds ?? null, value: p.value ?? null, comments: (p.comments ?? []).slice(0, 6) })) };
+  await env.POTD_KV.put(ufcEngineKey, JSON.stringify(record), { expirationTtl: 7 * 86400 }).catch(() => {});
+  return record;
+}
+
+const surname = (n) => normalizeName(n).split(' ').filter(Boolean).at(-1) ?? '';
+const surnamesAlike = (x, y) => Boolean(x && y) && (x === y || (Math.min(x.length, y.length) >= 4 && (x.startsWith(y) || y.startsWith(x))));
+
+/**
+ * The engine's read of one bout: the moneyline consensus and the method
+ * calls, each with which side it names. A feed fight matches a bout when
+ * its two surnames are the bout's two, either way round; the side comes
+ * from the whole name, so two fighters sharing a surname each get theirs.
+ */
+export function engineForBout(bout, feed) {
+  const a = normalizeName(bout.a?.name); const b = normalizeName(bout.b?.name);
+  const sa = surname(bout.a?.name); const sb = surname(bout.b?.name);
+  if (!sa || !sb) return null;
+  const mine = (feed?.picks ?? []).filter((p) => {
+    const sides = String(p.fight ?? '').split(/\s+vs\.?\s+/i).map(surname);
+    if (sides.length !== 2) return false;
+    return (surnamesAlike(sides[0], sa) && surnamesAlike(sides[1], sb)) || (surnamesAlike(sides[0], sb) && surnamesAlike(sides[1], sa));
+  });
+  if (!mine.length) return null;
+  const sideOf = (selection) => { const n = normalizeName(String(selection ?? '').replace(/\s+by\s+.*$/i, '')); const exact = matchSide(n, a, b); if (exact) return exact; const sn = surname(n); return surnamesAlike(sn, sa) && !surnamesAlike(sn, sb) ? 'a' : surnamesAlike(sn, sb) && !surnamesAlike(sn, sa) ? 'b' : null; };
+  const shape = (p) => ({ selection: p.selection, side: sideOf(p.selection), consensusPct: p.consensusPct, strength: p.strength, tier: p.tier, pickCount: p.pickCount, suggestedUnits: p.suggestedUnits, comments: p.comments ?? [] });
+  const ml = mine.find((p) => p.market === 'moneyline');
+  return { moneyline: ml ? shape(ml) : null, methods: mine.filter((p) => p.market === 'method_of_victory').map(shape), cancelled: mine.some((p) => p.cardStatus === 'cancelled') };
+}
+
 /* ---------------- breakdowns ---------------- */
 
 const fmtAm = (n) => (n > 0 ? `+${n}` : String(n));
@@ -177,8 +227,8 @@ export function parseUfcBreakdown(text, bout) {
 }
 
 /** One bout's breakdown, cached per pairing. */
-export async function ufcBreakdown(env, event, bout, odds, now = Date.now(), { deps = {} } = {}) {
-  const key = ufcBreakdownKey(bout);
+export async function ufcBreakdown(env, event, bout, odds, now = Date.now(), { deps = {}, engine = null, engineStamp = '' } = {}) {
+  const key = ufcBreakdownKey(bout, engineStamp);
   const cached = await env.POTD_KV.get(key).catch(() => null);
   if (cached) return JSON.parse(cached);
   const [fa, fb] = await Promise.all([deps.fighter ? deps.fighter(bout.a?.id) : getUfcFighter(env, bout.a?.id), deps.fighter ? deps.fighter(bout.b?.id) : getUfcFighter(env, bout.b?.id)]);
@@ -188,8 +238,9 @@ export async function ufcBreakdown(env, event, bout, odds, now = Date.now(), { d
     `${event.name}: ${bout.weightClass ?? ''}${bout.title ? ' title fight' : ''}, ${bout.rounds ?? 3} rounds, ${bout.segment === 'main' ? 'main card' : bout.segment}.`,
     fighterFacts(fa, 'A', now), fighterFacts(fb, 'B', now),
     notice ? `Card change: ${notice}.` : null, line,
+    engine?.moneyline ? `Capper consensus (the MMA Engine, ${engine.moneyline.pickCount} picks): ${engine.moneyline.consensusPct}% back ${engine.moneyline.selection}, strength ${engine.moneyline.strength} of 10, ${engine.moneyline.tier}.${engine.methods.length ? ` Method calls: ${engine.methods.map((m) => `${m.selection} (${m.consensusPct}%, ${m.tier})`).join('; ')}.` : ''}` : 'No capper consensus on this bout.',
   ].filter(Boolean).join('\n');
-  const prompt = `You break down one UFC fight for a bettor. Use only the facts below and what you know of these fighters' styles in general; do not invent news.
+  const prompt = `You break down one UFC fight for a bettor. Use only the facts below and what you know of these fighters' styles in general; do not invent news. The capper consensus is one input, not the answer: agree with it when the record and the price back it, say so when they do not.
 
 ${facts}
 
@@ -338,14 +389,18 @@ export async function runUfcTick(env, ctx, now = Date.now(), { deps = {} } = {})
   if (!locked) {
     const odds = await fetchUfcOdds(env, ctx, lock, now, { deps });
     record.oddsAt = odds.at ?? record.oddsAt;
+    const engineFeed = await fetchMmaEngine(env, now, { deps });
+    const engineStamp = engineFeed.generatedAt ? String(engineFeed.generatedAt).replace(/[^0-9]/g, '').slice(0, 12) : '';
+    record.engine = { generatedAt: engineFeed.generatedAt, event: engineFeed.event, totals: engineFeed.totals ?? null, page: MMA_ENGINE_PAGE, picks: engineFeed.picks.filter((p) => p.tier !== 'pass').map((p) => ({ fight: p.fight, market: p.market, selection: p.selection, consensusPct: p.consensusPct, strength: p.strength, tier: p.tier, pickCount: p.pickCount, suggestedUnits: p.suggestedUnits })) };
     const live = event.bouts.filter((b) => b.status === 'scheduled' && b.a?.id && b.b?.id);
     const byBout = new Map();
     for (const bout of live) {
       const bo = boutOdds(bout, odds.events);
       if (!bo || (!bo.a.length && !bo.b.length)) continue;
-      const bd = await ufcBreakdown(env, event, bout, bo, now, { deps });
+      const engine = engineForBout(bout, engineFeed);
+      const bd = await ufcBreakdown(env, event, bout, bo, now, { deps, engine, engineStamp });
       byBout.set(bout.id, { bout, odds: bo, breakdown: bd });
-      record.breakdowns[bout.id] = { boutDate: bout.date ?? event.date, a: bout.a?.name ?? null, b: bout.b?.name ?? null, aId: bout.a?.id ?? null, bId: bout.b?.id ?? null, weightClass: bout.weightClass ?? null, segment: bout.segment, lean: bd.lean, leanName: bd.leanName ?? null, confidence: bd.confidence, straight: bd.straight, parlayPiece: bd.parlayPiece, summary: bd.summary, reasons: bd.reasons, model: bd.model, bestA: bo.a[0] ?? null, bestB: bo.b[0] ?? null, quotesA: bo.a.slice(0, 8), quotesB: bo.b.slice(0, 8), totals: bo.totals.map((t) => ({ point: t.point, over: t.over[0] ?? null, under: t.under[0] ?? null })) };
+      record.breakdowns[bout.id] = { engine, boutDate: bout.date ?? event.date, a: bout.a?.name ?? null, b: bout.b?.name ?? null, aId: bout.a?.id ?? null, bId: bout.b?.id ?? null, weightClass: bout.weightClass ?? null, segment: bout.segment, lean: bd.lean, leanName: bd.leanName ?? null, confidence: bd.confidence, straight: bd.straight, parlayPiece: bd.parlayPiece, summary: bd.summary, reasons: bd.reasons, model: bd.model, bestA: bo.a[0] ?? null, bestB: bo.b[0] ?? null, quotesA: bo.a.slice(0, 8), quotesB: bo.b.slice(0, 8), totals: bo.totals.map((t) => ({ point: t.point, over: t.over[0] ?? null, under: t.under[0] ?? null })) };
     }
     // Existing picks: voided when the bout is gone or a fighter changed; otherwise the price follows while the same selection posts.
     for (const pick of record.bets) {

@@ -10502,7 +10502,8 @@ function renderUfcBout(b, ev) {
     ? `<span class="ufc-result">${b.result.draw ? 'Draw' : `${esc((b.result.winnerId === b.a?.id ? b.a : b.b)?.name ?? '')} wins`}${b.result.method ? ` · ${esc(b.result.method)}` : ''}${b.result.round ? ` · R${esc(String(b.result.round))}` : ''}</span>`
     : b.status === 'live' ? '<span class="ufc-result is-live">Live</span>' : b.status === 'cancelled' ? '<span class="ufc-result is-off">Off the card</span>' : '';
   const price = (q) => (q ? `<span class="ufc-price">${bookBadge(q.bookId, q.book)}${esc(formatAmerican(q.american))}</span>` : '<span class="ufc-price is-none">no line</span>');
-  const foot = bd ? `<div class="ufc-bout-foot">${price(bd.bestA)}<span class="ufc-foot-mid">${pick ? `<span class="ufc-pick-tag">Pixel's Pick</span>` : bd.confidence ? `<span class="ufc-lean">Lean ${esc((bd.leanName ?? '').split(' ').at(-1))} ${confStars(bd.confidence)}</span>` : ''}</span>${price(bd.bestB)}</div>` : '';
+  const cap = bd?.engine?.moneyline && bd.engine.moneyline.tier !== 'pass' ? `<span class="ufc-cap">Cappers ${esc(String(Math.round(bd.engine.moneyline.consensusPct)))}% ${esc((bd.engine.moneyline.selection ?? '').split(' ').at(-1))}</span>` : '';
+  const foot = bd ? `<div class="ufc-bout-foot">${price(bd.bestA)}<span class="ufc-foot-mid">${pick ? `<span class="ufc-pick-tag">Pixel's Pick</span>` : bd.confidence ? `<span class="ufc-lean">Lean ${esc((bd.leanName ?? '').split(' ').at(-1))} ${confStars(bd.confidence)}</span>` : ''}${cap}</span>${price(bd.bestB)}</div>` : '';
   return `<article class="ufc-bout ${b.status === 'cancelled' ? 'is-cancelled' : ''} ${pick ? 'is-picked' : ''}" data-bout="${esc(b.id)}" data-ufc-bout="${esc(b.id)}" tabindex="0" role="button" aria-label="${esc(b.a?.name ?? 'TBA')} vs ${esc(b.b?.name ?? 'TBA')}, open the matchup">
     <div class="ufc-bout-head"><span class="ufc-weight">${esc(b.weightClass ?? '')}${b.title ? ' · <b>Title fight</b>' : ''}${b.rounds ? ` · ${esc(String(b.rounds))} rounds` : ''}</span>${status || '<span class="ufc-open">Matchup ›</span>'}</div>
     <div class="ufc-bout-body">${side(b.a, 'a')}<span class="ufc-vs">vs</span>${side(b.b, 'b')}</div>
@@ -10566,6 +10567,11 @@ function renderUfcBoutSheet(sheet) {
       ${(bd.reasons ?? []).length ? `<ul>${bd.reasons.map((x) => `<li>${esc(x)}</li>`).join('')}</ul>` : ''}
       <p class="row-sub">${bd.straight ? `Straight it likes: ${bd.straight.market === 'totals' ? `${bd.straight.side === 'under' ? 'Under' : 'Over'} ${esc(String(bd.straight.point ?? ''))} rounds` : `${esc((bd.straight.fighter === 'b' ? b.b : b.a)?.name ?? '')} to win`}. ` : ''}${bd.parlayPiece ? 'A sound parlay piece.' : ''}${bd.model ? '' : ' The model read was unavailable.'}</p>
     </div>` : '<p class="row-sub">No odds posted for this bout yet; the read comes with them.</p>'}
+    ${bd?.engine ? `<h4 class="ufc-h4">Capper consensus <small>the MMA Engine</small></h4><div class="ufc-h2h-engine">
+      ${bd.engine.moneyline ? `<p><strong>${esc(bd.engine.moneyline.selection)}</strong> · ${esc(String(Math.round(bd.engine.moneyline.consensusPct)))}% of ${esc(String(bd.engine.moneyline.pickCount))} picks · strength ${esc(String(bd.engine.moneyline.strength))} of 10 · <span class="ufc-fav-tier is-${esc(bd.engine.moneyline.tier)}">${esc(bd.engine.moneyline.tier)}</span>${bd.engine.moneyline.suggestedUnits ? ` · ${esc(String(bd.engine.moneyline.suggestedUnits))}u` : ''}</p>` : '<p class="row-sub">No moneyline consensus on this bout.</p>'}
+      ${bd.engine.methods?.length ? `<ul>${bd.engine.methods.map((m) => `<li>${esc(m.selection)} · ${esc(String(Math.round(m.consensusPct)))}% · ${esc(m.tier)}</li>`).join('')}</ul>` : ''}
+      ${(bd.engine.moneyline?.comments ?? []).length ? `<ul class="ufc-h2h-quotes">${bd.engine.moneyline.comments.slice(0, 3).map((c) => `<li>${esc(typeof c === 'string' ? c : c.text ?? c.comment ?? '')}</li>`).join('')}</ul>` : ''}
+    </div>` : ''}
     ${oddsRows ? `<h4 class="ufc-h4">Moneyline by book</h4><table class="ufc-odds"><thead><tr><th>Book</th><th>${esc((b.a?.name ?? '').split(' ').at(-1))}</th><th>${esc((b.b?.name ?? '').split(' ').at(-1))}</th></tr></thead><tbody>${oddsRows}</tbody></table>` : ''}
     ${totals ? `<h4 class="ufc-h4">Rounds total</h4><ul class="ufc-totals">${totals}</ul>` : ''}
     ${changes ? `<h4 class="ufc-h4">Card changes</h4><ul class="ufc-changes-list">${changes}</ul>` : ''}
@@ -10592,7 +10598,17 @@ function renderUfc() {
     const rec = ufcRecordFor(ev.id);
     const picks = (rec?.bets ?? []).filter((p) => p.status !== 'void');
     const lockText = rec?.lockMs ? (rec.locked || rec.lockMs <= Date.now() ? 'Picks locked at the first bout.' : `Picks lock at the first bout, ${esc(ufcDateFmt.format(new Date(rec.lockMs)))} ET.`) : '';
-    const picksHtml = `<section class="ufc-picks"><h3>Pixel's Picks for this card <small>${picks.length ? `${picks.length} of up to 6` : ''}</small></h3>
+    const eng = rec?.engine;
+    const favs = (eng?.picks ?? []).filter((p) => p.market === 'moneyline').sort((x, y) => y.strength - x.strength);
+    const methods = (eng?.picks ?? []).filter((p) => p.market === 'method_of_victory').sort((x, y) => y.strength - x.strength);
+    const boutFor = (fight) => ev.bouts.find((b) => { const sides = String(fight).split(/\s+vs\.?\s+/i).map((n) => foldName(n).split(' ').at(-1)); const sa = foldName(b.a?.name ?? '').split(' ').at(-1); const sb = foldName(b.b?.name ?? '').split(' ').at(-1); return sides.length === 2 && ((sides[0] === sa && sides[1] === sb) || (sides[0] === sb && sides[1] === sa)); });
+    const favRow = (p) => { const b = boutFor(p.fight); return `<div class="ufc-fav ${b ? 'is-link' : ''}" ${b ? `data-bout-link="${esc(b.id)}"` : ''}><span class="ufc-fav-tier is-${esc(p.tier)}">${esc(p.tier)}</span><span class="ufc-fav-main"><strong>${esc(p.selection)}</strong><small>${esc(p.fight)}</small></span><span class="ufc-fav-num">${esc(String(Math.round(p.consensusPct)))}%<small>${esc(String(p.pickCount))} picks · ${esc(String(p.strength))}/10${p.suggestedUnits ? ` · ${esc(String(p.suggestedUnits))}u` : ''}</small></span></div>`; };
+    const engineHtml = eng ? `<section class="ufc-engine"><h3>Capper consensus <small>the MMA Engine${eng.generatedAt ? `, run ${esc(ufcDayFmt.format(new Date(eng.generatedAt)))}` : ''}</small></h3>
+      ${favs.length ? `<p class="row-sub">The favourites the tracked cappers back, strongest first. A tap opens the matchup.</p>${favs.map(favRow).join('')}` : '<p class="empty">No consensus on this card yet; the engine runs before the week\'s card.</p>'}
+      ${methods.length ? `<details class="ufc-engine-more"><summary>Method calls (${methods.length})</summary>${methods.map(favRow).join('')}</details>` : ''}
+      <p class="row-sub"><a href="${esc(eng.page ?? 'https://perpetualpixel.github.io/MMA_Engine/')}" target="_blank" rel="noopener">Open the MMA Engine ↗</a></p>
+    </section>` : '';
+    const picksHtml = `${engineHtml}<section class="ufc-picks"><h3>Pixel's Picks for this card <small>${picks.length ? `${picks.length} of up to 6` : ''}</small></h3>
       ${picks.length ? picks.map(renderUfcPickCard).join('') : `<p class="empty">${rec ? (rec.oddsAt ? 'No pick yet: nothing on this card clears confidence 4 at a usable price. It reads again as odds move.' : 'No odds posted yet; the picks come once the books price the card.') : 'No read of this card yet.'}</p>`}
       ${rec?.passed?.length && !picks.length ? `<div class="pick-passed"><p class="row-sub">Read but not picked:</p><ul>${rec.passed.slice(0, 6).map((x) => `<li><strong>${esc(x.selection)}</strong>: ${esc(x.reason)}</li>`).join('')}</ul></div>` : ''}
       ${lockText ? `<p class="row-sub">${lockText}</p>` : ''}
