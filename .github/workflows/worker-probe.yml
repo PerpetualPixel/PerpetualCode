@@ -38,21 +38,33 @@ jobs:
             /player?sport=basketball_nba&team=PHI&id=3917376&stat=pa
             /player?sport=basketball_nba&team=LAL&id=4433137&stat=steals
             /player?sport=basketball_nba&team=POR&id=4066211&stat=rebounds
+            https://site.web.api.espn.com/apis/common/v3/sports/basketball/nba/athletes/3917376/gamelog
+            https://site.web.api.espn.com/apis/common/v3/sports/basketball/nba/athletes/4433137/gamelog
+            https://site.api.espn.com/apis/site/v2/sports/basketball/nba/scoreboard?dates=20261030
         run: |
           set -uo pipefail
           read_route() {
             echo "=== $1"
-            body=$(curl -sS --max-time 60 -H 'Accept: application/json' "$WORKER$1")
+            case "$1" in http*) url="$1";; *) url="$WORKER$1";; esac
+            body=$(curl -sS --max-time 60 -H 'Accept: application/json' "$url")
             echo "$body" | node -e '
               let raw = ""; process.stdin.on("data", (c) => { raw += c; }).on("end", () => {
                 let d; try { d = JSON.parse(raw); } catch { console.log(raw.slice(0, 4000)); return; }
                 if (d && d.rows && d.player) {
-                  console.log("player", d.player.name, d.player.team, "stat", d.stat, "rows", d.rows.length);
+                  console.log("player", d.player.name, d.player.team, "stat", d.stat, "rows", d.rows.length, "undated", d.rows.filter((r) => !r.date).length);
                   for (const r of d.rows.slice(0, 8)) console.log(" ", new Date(r.date || 0).toISOString(), r.atVs, r.opponent, "value", r.value, r.seasonType);
+                } else if (d && Array.isArray(d.seasonTypes)) {
+                  // ESPN's own game log: each season block's event ids against the events map's dates.
+                  const ev = d.events || {};
+                  for (const s of d.seasonTypes) for (const c of s.categories || []) {
+                    const ids = (c.events || []).map((e) => e.eventId);
+                    console.log(s.displayName, "|", c.displayName, ids.length, "events:", ids.slice(0, 6).map((id) => `${id}=${ev[id] ? ev[id].gameDate : "NO META"}`).join("  "));
+                  }
+                  console.log("events map", Object.keys(ev).length, "latest", Object.values(ev).map((m) => m.gameDate).sort().slice(-3).join(" "));
                 } else console.log(JSON.stringify(d).slice(0, 4000));
               });
             '
           }
           if [ -n "${ROUTE:-}" ]; then read_route "$ROUTE"; else
-            while IFS= read -r line; do [ -n "$line" ] && read_route "$line"; done <<< "$PROBES"
+            while IFS= read -r line; do [ -n "$line" ] && read_route "$line"; done <<< "$PROBES" || true
           fi
