@@ -43,21 +43,15 @@ jobs:
           read_route() {
             echo "=== $1"
             body=$(curl -sS --max-time 60 -H 'Accept: application/json' "$WORKER$1")
-            echo "$body" | python3 -c '
-import json, sys, datetime
-raw = sys.stdin.read()
-try:
-    d = json.loads(raw)
-except Exception:
-    print(raw[:4000]); sys.exit(0)
-if isinstance(d, dict) and "rows" in d and "player" in d:
-    print("player", d["player"].get("name"), d["player"].get("team"), "stat", d.get("stat"), "rows", len(d["rows"]))
-    for r in d["rows"][:8]:
-        when = datetime.datetime.fromtimestamp((r.get("date") or 0) / 1000, datetime.timezone.utc).isoformat()
-        print(" ", when, r.get("atVs"), r.get("opponent"), "value", r.get("value"), r.get("seasonType"))
-else:
-    print(json.dumps(d)[:4000])
-'
+            echo "$body" | node -e '
+              let raw = ""; process.stdin.on("data", (c) => { raw += c; }).on("end", () => {
+                let d; try { d = JSON.parse(raw); } catch { console.log(raw.slice(0, 4000)); return; }
+                if (d && d.rows && d.player) {
+                  console.log("player", d.player.name, d.player.team, "stat", d.stat, "rows", d.rows.length);
+                  for (const r of d.rows.slice(0, 8)) console.log(" ", new Date(r.date || 0).toISOString(), r.atVs, r.opponent, "value", r.value, r.seasonType);
+                } else console.log(JSON.stringify(d).slice(0, 4000));
+              });
+            '
           }
           if [ -n "${ROUTE:-}" ]; then read_route "$ROUTE"; else
             while IFS= read -r line; do [ -n "$line" ] && read_route "$line"; done <<< "$PROBES"
