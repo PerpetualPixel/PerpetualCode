@@ -211,3 +211,26 @@ test('matchSide: two fighters sharing a surname each get their own outcome; a na
   const o = boutOdds(bout('s', f('a', 'Yana Santos'), f('b', 'Luana Santos')), [feed('Yana Santos', 'Luana Santos', { h2h: [260, -320], total: null })]);
   assert.deepEqual([o.a[0].american, o.b[0].american], [260, -320]);
 });
+
+test('engineForBout: the MMA Engine feed matched to a bout by surnames either way round, the side from the whole name, a shared surname resolved', async () => {
+  const { engineForBout, fetchMmaEngine } = await import('../worker/src/ufc-picks.js');
+  const feed = { picks: [
+    { fightId: 'lisboa|szabova', fight: 'Lucia Szabova vs Tainara Lisboa', market: 'moneyline', selection: 'Lucia Szabova', consensusPct: 100, strength: 10, tier: 'strong', pickCount: 68, suggestedUnits: 2, comments: [] },
+    { fightId: 'lisboa|szabova', fight: 'Lucia Szabova vs Tainara Lisboa', market: 'method_of_victory', selection: 'Lucia Szabova by KO/TKO', consensusPct: 53.3, strength: 5.3, tier: 'lean', pickCount: 24, suggestedUnits: 1, comments: [] },
+    { fightId: 'santos|santos', fight: 'Yana Santos vs Luana Santos', market: 'moneyline', selection: 'Luana Santos', consensusPct: 80, strength: 8, tier: 'strong', pickCount: 30, suggestedUnits: 2, comments: [] },
+  ] };
+  const e = engineForBout(bout('1', f('a', 'Tainara Lisboa'), f('b', 'Lucia Szabová')), feed);
+  assert.equal(e.moneyline.side, 'b'); assert.equal(e.moneyline.consensusPct, 100); assert.equal(e.methods[0].side, 'b');
+  const s = engineForBout(bout('2', f('a', 'Yana Santos'), f('b', 'Luana Santos')), feed);
+  assert.equal(s.moneyline.side, 'b', 'the shared surname resolves on the first name');
+  assert.equal(engineForBout(bout('3', f('a', 'Nobody Here'), f('b', 'Else Where')), feed), null);
+  // The feed is read once per half hour and reshaped.
+  const { env, store } = kv();
+  const raw = { generated_at: '2026-10-31T07:38:28+00:00', event: { name: 'UFC Fight Night: Moicano vs. Nolan' }, totals: { picks: 1 }, picks: [{ fight_id: 'a|b', fight: 'A One vs B Two', market: 'moneyline', market_label: 'Moneyline', selection: 'A One', consensus_pct: 90, strength: 9, tier: 'strong', pick_count: 10, avg_confidence: 5, suggested_units: 2, comments: [] }] };
+  let calls = 0;
+  const first = await fetchMmaEngine(env, NOW, { deps: { engine: async () => { calls++; return raw; } } });
+  assert.equal(first.picks[0].consensusPct, 90); assert.equal(first.event, 'UFC Fight Night: Moicano vs. Nolan');
+  await fetchMmaEngine(env, NOW + 60e3, { deps: { engine: async () => { calls++; return raw; } } });
+  assert.equal(calls, 1, 'within the half hour: from KV');
+  assert.ok(store.has('ufc:engine'));
+});

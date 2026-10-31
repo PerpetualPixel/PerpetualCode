@@ -7026,3 +7026,26 @@ a.trend-price:hover { background: rgba(255, 255, 255, 0.06); }
 .sheet-back { padding: 0 14px 0 10px; font-size: 0.9rem; gap: 4px; }
 
 .parlay-card-top { padding: 12px 16px; border-bottom: 1px solid var(--line); }
+
+/* The MMA Engine's consensus on the card, the row and the matchup */
+.ufc-engine { margin: 4px 0 18px; padding: 12px 14px; border: 1px solid rgba(167, 139, 250, 0.45); border-radius: 16px; background: var(--surface); }
+.ufc-engine h3 { margin: 0 0 6px; font-size: 0.82rem; text-transform: uppercase; letter-spacing: 0.08em; color: var(--muted); }
+.ufc-engine h3 small { margin-left: 6px; text-transform: none; letter-spacing: 0; font-weight: 600; }
+.ufc-fav { display: grid; grid-template-columns: auto 1fr auto; align-items: center; gap: 10px; padding: 8px 0; border-top: 1px solid var(--line); }
+.ufc-fav.is-link { cursor: pointer; }
+.ufc-fav-tier { padding: 2px 8px; border-radius: 999px; font-size: 0.68rem; font-weight: 800; text-transform: uppercase; letter-spacing: 0.06em; border: 1px solid currentColor; }
+.ufc-fav-tier.is-strong { color: var(--success); }
+.ufc-fav-tier.is-lean { color: #fbbf24; }
+.ufc-fav-tier.is-pass { color: var(--muted); }
+.ufc-fav-main { display: grid; min-width: 0; }
+.ufc-fav-main small { color: var(--muted); }
+.ufc-fav-num { text-align: right; font-family: var(--mono); font-weight: 800; display: grid; }
+.ufc-fav-num small { color: var(--muted); font-family: inherit; font-weight: 600; font-size: 0.72rem; }
+.ufc-engine-more { margin-top: 6px; }
+.ufc-engine-more summary { cursor: pointer; color: var(--muted); font-size: 0.84rem; font-weight: 700; }
+.ufc-cap { display: inline-block; margin-top: 4px; padding: 2px 8px; border-radius: 999px; background: rgba(167, 139, 250, 0.16); border: 1px solid rgba(167, 139, 250, 0.5); color: #c4b5fd; font-size: 0.74rem; font-weight: 800; }
+.ufc-foot-mid { display: grid; justify-items: center; gap: 2px; }
+.ufc-h2h-engine { padding: 12px 14px; border: 1px solid rgba(167, 139, 250, 0.45); border-radius: 12px; font-size: 0.88rem; line-height: 1.5; }
+.ufc-h2h-engine p { margin: 0; }
+.ufc-h2h-engine ul { margin: 6px 0 0; padding-left: 18px; }
+.ufc-h2h-quotes { color: var(--muted); font-style: italic; }
