@@ -36,7 +36,7 @@
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Syne:wght@600;700;800&family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
-<link rel="stylesheet" href="styles.css?v=1.254">
+<link rel="stylesheet" href="styles.css?v=1.255">
 </head>
 <body>
 
@@ -101,11 +101,14 @@
   <button id="tabPotd" class="top-tab" role="tab" aria-selected="false" aria-controls="potdView" hidden>
     Play of the Day
   </button>
+  <!-- Pixel's Picks leads, set apart from the research tabs: it is the
+       product's own record, the rest is the research it is drawn from. -->
+  <button id="tabTrendPicks" class="top-tab is-featured" role="tab" aria-selected="false" aria-controls="trendPicksView">
+    <img src="assets/logo-icon-64.png" alt="" class="top-tab-logo" width="16" height="16">Pixel's Picks
+  </button>
+  <span class="top-tabs-gap" aria-hidden="true"></span>
   <button id="tabTrends" class="top-tab is-active" role="tab" aria-selected="true" aria-controls="trendsView">
     Trends
-  </button>
-  <button id="tabTrendPicks" class="top-tab" role="tab" aria-selected="false" aria-controls="trendPicksView">
-    Pixel's Picks
   </button>
   <button id="tabPlayers" class="top-tab" role="tab" aria-selected="false" aria-controls="playersView">
     Players
@@ -114,7 +117,7 @@
     Parlay
   </button>
   <button id="tabUfc" class="top-tab" role="tab" aria-selected="false" aria-controls="ufcView">
-    UFC
+    <svg class="top-tab-icon" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="M8 2.5A3.5 3.5 0 0 0 4.5 6v6.3c0 1.9 1 3.6 2.5 4.6V19a2.5 2.5 0 0 0 2.5 2.5h6A2.5 2.5 0 0 0 18 19v-2.1c1.5-1 2.5-2.7 2.5-4.6V8A3.5 3.5 0 0 0 17 4.5h-.6A3.5 3.5 0 0 0 13 2.5H8zm0 2h5c.8 0 1.5.7 1.5 1.5V7H9.5a1 1 0 0 0 0 2H17c.8 0 1.5.7 1.5 1.5v1.8c0 1.4-.8 2.6-2 3.2l-1 .5V19c0 .3-.2.5-.5.5h-6a.5.5 0 0 1-.5-.5v-3l-1-.5a3.5 3.5 0 0 1-2-3.2V6c0-.8.7-1.5 1.5-1.5z"/></svg> UFC
   </button>
 </nav>
 
@@ -340,7 +343,7 @@
        history, all filtered by league. Built in docs/app.js's
        renderTrendPicks from the worker's /trend-picks. -->
   <div id="trendPicksFilters" class="trend-leagues pick-filters" role="group" aria-label="League"></div>
-  <div id="trendPicksStatus" class="status trends-status" role="status" aria-live="polite">Loading picks…</div>
+  <div id="trendPicksStatus" class="status trends-status" role="status" aria-live="polite"><span class="pp-loading"><img class="pp-loading-logo" src="assets/logo-icon-64.png" alt="" width="28" height="28"><span>Loading picks…</span></span></div>
   <section id="trendPicksBody" class="trends-body" aria-live="polite"></section>
   <h2 class="trend-picks-heading">Record</h2>
   <section id="trendPicksRecord" class="trend-picks-record"></section>
@@ -447,7 +450,7 @@
       <input id="trendsSearch" type="search" placeholder="Search" autocomplete="off">
     </label>
   </div>
-  <div id="trendsStatus" class="status trends-status" role="status" aria-live="polite">Loading trends…</div>
+  <div id="trendsStatus" class="status trends-status" role="status" aria-live="polite"><span class="pp-loading"><img class="pp-loading-logo" src="assets/logo-icon-64.png" alt="" width="28" height="28"><span>Loading trends…</span></span></div>
   <section id="trendsBody" class="trends-body" aria-live="polite"></section>
 
   <!-- The floating controls, fixed to the bottom while this tab is open. -->
@@ -1035,6 +1038,6 @@
   </div>
 </aside>
 
-<script type="module" src="app.js?v=1.254"></script>
+<script type="module" src="app.js?v=1.255"></script>
 </body>
 </html>

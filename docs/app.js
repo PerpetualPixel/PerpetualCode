@@ -6170,6 +6170,10 @@ function renderPropPlayCard(record) {
   </div>`;
 }
 
+/** The loading line with the logo turning beside it (styles.css .pp-loading); plain text again once the status is set. */
+const loadingHtml = (text) => `<span class="pp-loading"><img class="pp-loading-logo" src="assets/logo-icon-64.png" alt="" width="28" height="28"><span>${esc(text)}</span></span>`;
+const showLoading = (node, text) => { if (node) node.innerHTML = loadingHtml(text); };
+
 function setActiveTab(tab) {
   const views = { slate: el.slateView, board: el.boardView, potd: el.potdView, trends: el.trendsView, trendPicks: el.trendPicksView, players: el.playersView, parlay: el.parlayView, ufc: el.ufcView };
   const tabs = { slate: el.tabSlate, board: el.tabBoard, potd: el.tabPotd, trends: el.tabTrends, trendPicks: el.tabTrendPicks, players: el.tabPlayers, parlay: el.tabParlay, ufc: el.tabUfc };
@@ -6185,6 +6189,12 @@ function setActiveTab(tab) {
   // Pixel's Picks are both fixed daily sets locked server-side, with no
   // Today/Tomorrow of their own to choose.
   el.dayFilterBar.hidden = tab === 'potd' || tab === 'board' || tab === 'trends' || tab === 'trendPicks' || tab === 'players' || tab === 'parlay' || tab === 'ufc';
+  // The highlight paints on this frame; the board's render (hundreds of
+  // cards on Trends) runs on the next, so a tap answers at once.
+  requestAnimationFrame(() => loadTabContent(tab));
+}
+
+function loadTabContent(tab) {
   if (tab === 'trendPicks') loadTrendPicks();
 
   // Viewing a tab is what "seen" means — clear its pulse the moment the
@@ -7780,7 +7790,7 @@ const TRENDS_ONLY = true;
     refreshStakeDisplays();
   });
 
-  el.slateStatus.textContent = 'Loading all leagues…';
+  showLoading(el.slateStatus, 'Loading all leagues…');
   // Catalogue first — ATP/WTA can't resolve their tournament keys without it.
   await loadCatalogue();
   await refreshAllLeagues();
@@ -8937,7 +8947,7 @@ function bookBadge(bookKey, bookName, cls = 'book-badge') {
 async function loadTrends({ force = false } = {}) {
   if (!el.trendsBody || !CONFIG.WORKER_URL) return;
   if (trendsState.data && !force && trendsState.data.sportKey === trendsState.sport) { renderTrends(); return; }
-  el.trendsStatus.textContent = 'Loading trends…';
+  showLoading(el.trendsStatus, 'Loading trends…');
   try {
     const url = new URL('/trends', CONFIG.WORKER_URL);
     if (trendsState.sport) url.searchParams.set('sport', trendsState.sport);
@@ -9560,7 +9570,7 @@ const PICK_FILTERS = [['all', 'All'], ['basketball_nba', 'NBA'], ['americanfootb
 async function loadTrendPicks({ force = false } = {}) {
   if (!el.trendPicksBody || !CONFIG.WORKER_URL) return;
   if (trendPicksState.loaded && !force) { renderTrendPicks(); return; }
-  el.trendPicksStatus.textContent = 'Loading picks…';
+  showLoading(el.trendPicksStatus, 'Loading picks…');
   try {
     const res = await fetch(new URL('/trend-picks', CONFIG.WORKER_URL), { headers: { Accept: 'application/json' } });
     trendPicksState.data = await res.json();
@@ -9809,7 +9819,7 @@ const foldName = (s) => String(s ?? '').normalize('NFD').replace(/[̀-ͯ]/g, '')
 async function loadPlayers(sport = playersState.sport) {
   if (!el.playersView || !CONFIG.WORKER_URL) return;
   if (playersState.index[sport]) { renderPlayers(); return; }
-  el.playersStatus.textContent = 'Loading players…';
+  showLoading(el.playersStatus, 'Loading players…');
   try {
     const url = new URL('/players', CONFIG.WORKER_URL); url.searchParams.set('sport', sport);
     const res = await fetch(url, { headers: { Accept: 'application/json' } });
@@ -10071,7 +10081,7 @@ async function loadParlay() {
   const missing = [...parlayState.sports].filter((k) => !parlayState.rows[k]);
   if (!missing.length) { renderParlay(); return; }
   parlayState.loading = true;
-  el.parlayStatus.textContent = 'Loading the board…';
+  showLoading(el.parlayStatus, 'Loading the board…');
   try {
     await Promise.all(missing.map(loadParlaySport));
     el.parlayStatus.textContent = parlayRows().length ? '' : (isUfcParlay() ? 'No odds on the next card yet.' : 'No lines on this board yet.');
@@ -10361,7 +10371,7 @@ const ufcAvatar = (f, size = 56) => (f?.headshot ? `<img class="ufc-headshot" sr
 async function loadUfc(eventId = ufcState.eventId) {
   if (!el.ufcView || !CONFIG.WORKER_URL || ufcState.loading) return;
   ufcState.loading = true;
-  el.ufcStatus.textContent = 'Loading the card…';
+  showLoading(el.ufcStatus, 'Loading the card…');
   try {
     const url = new URL('/ufc/event', CONFIG.WORKER_URL); if (eventId) url.searchParams.set('id', eventId);
     const res = await fetch(url, { headers: { Accept: 'application/json' } });
