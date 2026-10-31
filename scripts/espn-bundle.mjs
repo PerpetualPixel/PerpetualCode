@@ -18,6 +18,7 @@ import { readFileSync } from 'node:fs';
 import { espnAbbr } from '../docs/team-logos.js';
 import { priorSeasonKey } from '../docs/prop-legs.js';
 import { bundleKey, bundleIndexKey, playersIndexKey, injuriesKey } from '../worker/src/espn-bundle.js';
+import { boxKey, boxLegKey, findBoxEvent, eventFinal, boxLine, boxActual } from '../worker/src/box-grading.js';
 import { basketballHeadshotUrl } from '../worker/src/basketball-props.js';
 import { nflHeadshotUrl } from '../worker/src/football-props.js';
 
@@ -213,6 +214,60 @@ async function refreshTicketLogs(league, now) {
   await writeKv(entries);
 }
 
+/**
+ * The open tickets' legs, graded off the box score (worker/src/boxscore.js):
+ * each leg's game from the day's scoreboard once it is final, the
+ * player's line from its summary, written under boxKey for the worker's
+ * grader. A player missing from a final box, or listed did-not-play, is
+ * written as a no-show so the leg voids now rather than 36 hours on.
+ */
+async function gradeTicketBoxes(league, now) {
+  const legs = [];
+  for (let i = 0; i < 3; i++) {
+    const date = etDate(now - i * 864e5);
+    const record = await readKv(`trendpicks:${date}`).catch((e) => { say(`  ! ${e.message}`); return null; });
+    for (const bet of record?.bets ?? []) {
+      if (bet.status !== 'pending') continue;
+      for (const leg of bet.legs ?? []) {
+        if (leg.result != null || leg.sportKey !== league.sportKey || !leg.athleteId || !leg.team || !leg.gameDate || !leg.statKey) continue;
+        if (now < (leg.commenceMs ?? 0) + 2 * 3.6e6) continue;
+        legs.push(leg);
+      }
+    }
+  }
+  if (!legs.length) { say('no open legs past tip-off to grade off the box'); return; }
+  const byDate = new Map();
+  for (const leg of legs) { if (!byDate.has(leg.gameDate)) byDate.set(leg.gameDate, []); byDate.get(leg.gameDate).push(leg); }
+  const entries = [];
+  for (const [gameDate, dayLegs] of byDate) {
+    const scoreboard = await getJson(`${league.site}/scoreboard?dates=${gameDate.replaceAll('-', '')}`);
+    if (!scoreboard) { say(`  ! ${gameDate}: no scoreboard`); continue; }
+    const existing = (await readKv(boxKey(league.sportKey, gameDate)).catch(() => null)) ?? { sportKey: league.sportKey, gameDate, legs: {} };
+    const summaries = new Map();
+    let wrote = 0;
+    for (const leg of dayLegs) {
+      const k = boxLegKey(leg.athleteId, leg.statKey);
+      if (existing.legs[k]) continue;
+      const event = findBoxEvent(scoreboard, leg.team);
+      if (!event) { say(`  ${leg.playerName}: ${leg.team} not on the ${gameDate} scoreboard`); continue; }
+      if (!eventFinal(event)) { say(`  ${leg.playerName}: ${event.name ?? event.id} not final`); continue; }
+      if (!summaries.has(event.id)) summaries.set(event.id, await getJson(`${league.site}/summary?event=${event.id}`));
+      const summary = summaries.get(event.id);
+      if (!summary?.boxscore) { say(`  ! ${event.id}: no box score`); continue; }
+      const line = boxLine(summary, leg.athleteId);
+      const value = boxActual(line, league.sportKey, leg.statKey);
+      if (!line.dnp && value == null) { say(`  ${leg.playerName}: box has no ${leg.statKey}`); continue; }
+      existing.legs[k] = { value: line.dnp ? null : value, dnp: line.dnp, reason: line.reason ?? null, eventId: String(event.id), at: now };
+      wrote++;
+      say(`  ${leg.playerName} ${leg.statKey}: ${line.dnp ? `no show (${line.reason})` : value}`);
+    }
+    if (wrote) entries.push({ key: boxKey(league.sportKey, gameDate), value: { ...existing, at: now } });
+  }
+  if (!entries.length) return;
+  if (DRY) { say(`  (dry run) would write ${entries.length} box records`); return; }
+  await writeKv(entries);
+}
+
 function kvConfig() {
   const toml = readFileSync(new URL('../worker/wrangler.toml', import.meta.url), 'utf8');
   const block = /\[\[kv_namespaces\]\][\s\S]*?binding\s*=\s*"POTD_KV"[\s\S]*?id\s*=\s*"([0-9a-f]+)"/.exec(toml);
@@ -249,6 +304,7 @@ for (const [name, league] of Object.entries(LEAGUES)) {
     say(`${Object.keys(players).length} players on the injury report`);
     if (!DRY) { try { await writeKv([{ key: injuriesKey(league.sportKey), value: { sportKey: league.sportKey, builtAt: now, players } }]); } catch (e) { failed = true; say(`  ! ${e.message}`); } }
     try { await refreshTicketLogs(league, now); } catch (e) { say(`  ! ticket logs: ${e.message}`); }
+    try { await gradeTicketBoxes(league, now); } catch (e) { say(`  ! box scores: ${e.message}`); }
     continue;
   }
   const records = [];

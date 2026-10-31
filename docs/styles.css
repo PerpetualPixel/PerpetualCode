@@ -7052,3 +7052,5 @@ a.trend-price:hover { background: rgba(255, 255, 255, 0.06); }
 .ufc-pick-leg + .ufc-pick-leg { margin-top: 12px; padding-top: 12px; border-top: 1px solid var(--line); }
 .ufc-pick-sel .trend-price, .ufc-pick-sel .pick-leg-price { float: right; margin-left: 8px; }
 .pick-bet-foot .row-sub { margin: 0 0 8px; }
+.parlay-regen { margin-left: auto; min-height: 36px; padding: 0 18px; border-radius: 10px; border: 0; background: var(--success); color: #06120a; font: inherit; font-weight: 800; cursor: pointer; }
+.parlay-regen:hover { filter: brightness(1.08); }

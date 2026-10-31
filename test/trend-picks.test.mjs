@@ -405,3 +405,22 @@ test('no PrizePicks ticket on an alternate number: the quote is dropped, and a p
   // Drawn under the current rules: posted stands.
   assert.equal((await runTrendPicksDaily(env, ctx, NOW + 60e3, { deps: { ...deps, rowsFor: async () => rows }, enabled: ['basketball_nba'] })).reason, 'posted');
 });
+
+test('the box score grades a leg as soon as the runner writes it, and a no-show the box confirms voids on the spot instead of a day and a half on', async () => {
+  const { env, store } = makeKvStore();
+  const rows = [row('a', { american: -250, books: { draftkings: -250 } }), { ...row('b', { player: 'LaMelo Ball', american: -250, point: 5, side: 'under', statKey: 'assists', books: { draftkings: -250 }, eventId: 'e-2' }), athleteId: '5' }];
+  const deps = { rowsFor: async () => rows, minutes: async () => Array(20).fill(32), context: async () => null, model: async () => '{"verdict":"post","reason":"ok","note":"none"}' };
+  await runTrendPicksDaily(env, ctx, NOW, { deps, enabled: ['basketball_nba'] });
+  const posted = JSON.parse(store.get(`trendpicks:2026-10-27`));
+  assert.equal(posted.bets[0].legs[0].gameDate, '2026-10-27');
+  // The runner's record for the game date: Sexton's line, and Ball not in a final box.
+  store.set('trendpicks:box:basketball_nba:2026-10-27', JSON.stringify({ sportKey: 'basketball_nba', gameDate: '2026-10-27', at: NOW + 11 * 3.6e6, legs: {
+    '4:points': { value: 12, dnp: false, reason: null, eventId: '401', at: NOW + 11 * 3.6e6 },
+    '5:assists': { value: null, dnp: true, reason: 'not in the box score', eventId: '401', at: NOW + 11 * 3.6e6 },
+  } }));
+  const graded = await runTrendPicksGrading(env, ctx, NOW + 11.5 * 3.6e6);
+  assert.equal(graded.graded, 1, 'settled three and a half hours after tip-off, not thirty-six');
+  const bet = (await getTrendPicks(env, NOW + 12 * 3.6e6)).history[0].bets[0];
+  assert.deepEqual(bet.legs.map((l) => [l.playerName, l.result, l.actual, l.voidReason ?? null]), [['Collin Sexton', 'win', 12, null], ['LaMelo Ball', 'void', null, 'did not play']]);
+  assert.equal(bet.result, 'win');
+});

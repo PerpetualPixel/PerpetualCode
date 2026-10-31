@@ -9590,7 +9590,7 @@ function renderPickLeg(leg, bet) {
   const row = { ...leg, rates: leg.rates ?? {}, periods: leg.periods ?? {}, series: leg.series ?? [] };
   const h2h = leg.periods?.h2h;
   const legResult = leg.result
-    ? `<span class="pick-leg-result is-${esc(leg.result)}">${esc(RESULT_LABEL[leg.result] ?? leg.result)}${Number.isFinite(leg.actual) ? ` · ${esc(String(leg.actual))} ${esc(leg.statLabel)}` : ''}</span>`
+    ? `<span class="pick-leg-result is-${esc(leg.result)}">${esc(RESULT_LABEL[leg.result] ?? leg.result)}${Number.isFinite(leg.actual) ? ` · ${esc(String(leg.actual))} ${esc(leg.statLabel)}` : leg.result === 'void' && leg.voidReason ? ` · ${esc(leg.voidReason)}` : ''}</span>`
     : '';
   const moved = (leg.moves ?? []).at(-1);
   return `<div class="pick-leg" data-pick-leg="${esc(bet.id)}|${esc(String(bet.legs.indexOf(leg)))}" tabindex="0" role="button" aria-label="${esc(leg.selection)}, see the player's numbers">
@@ -10272,7 +10272,7 @@ function renderParlay() {
   const legs = s.built ?? [];
   const price = parlayPriceOf(legs);
   const all = parlayAllLink(legs);
-  const summary = `<div class="parlay-config"><span class="parlay-tag">Score: ${esc(String(s.minScore))}+ stars</span><span class="parlay-tag">Legs: ${esc(String(s.legs))}</span><span class="parlay-tag">Odds: ${esc(formatAmerican(s.odds[0]))} to ${esc(formatAmerican(s.odds[1]))}</span><span class="parlay-tag">${esc(parlayBookName(s.book))}</span></div>`;
+  const summary = `<div class="parlay-config"><span class="parlay-tag">Score: ${esc(String(s.minScore))}+ stars</span><span class="parlay-tag">Legs: ${esc(String(s.legs))}</span><span class="parlay-tag">Odds: ${esc(formatAmerican(s.odds[0]))} to ${esc(formatAmerican(s.odds[1]))}</span><span class="parlay-tag">${esc(parlayBookName(s.book))}</span>${s.built ? '<button type="button" class="parlay-regen" data-parlay-build>Regenerate</button>' : ''}</div>`;
   const bookLines = linesAt.get(s.book) ?? 0;
   el.parlayResult.innerHTML = `${summary}${legs.length ? `
     <div class="parlay-card">
