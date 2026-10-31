@@ -346,9 +346,35 @@ body {
   background-clip: text;
   -webkit-text-fill-color: transparent;
   filter: drop-shadow(0 0 10px rgba(255, 0, 122, 0.45));
-  animation: logoPulse 3s ease-in-out infinite;
   display: inline-block;
 }
+/* PICKS re-pixelates every few seconds instead of pulsing: each letter's
+   fill breaks into a checkerboard of magenta and violet blocks, coarse
+   then fine, and resolves back into the gradient, rippling P to S. The
+   blocks are clipped to the letterform, so the word stays readable. Every
+   step is a hard cut (steps(1)), the way pixels change. */
+.wordmark-pix i {
+  font-style: normal;
+  display: inline-block;
+  background-image: linear-gradient(90deg, var(--accent), var(--magenta));
+  background-size: 100% 100%;
+  -webkit-background-clip: text;
+  background-clip: text;
+  -webkit-text-fill-color: transparent;
+  animation: pixelFill 5.2s steps(1, end) infinite;
+  animation-delay: calc(var(--i, 0) * 0.11s);
+}
+@keyframes pixelFill {
+  0%, 100% { background-image: linear-gradient(90deg, var(--accent), var(--magenta)); background-size: 100% 100%; transform: none; }
+  3% { background-image: repeating-conic-gradient(var(--magenta) 0 25%, var(--accent) 0 50%); background-size: 6px 6px; transform: translate(1px, 0); }
+  5% { background-image: linear-gradient(90deg, var(--accent), var(--magenta)); background-size: 100% 100%; transform: none; }
+  6% { background-image: repeating-conic-gradient(var(--magenta) 0 25%, var(--accent) 0 50%); background-size: 6px 6px; transform: translate(-1px, 0); }
+  8% { background-image: repeating-conic-gradient(var(--magenta) 0 25%, var(--accent) 0 50%); background-size: 4px 4px; transform: none; }
+  10% { background-image: linear-gradient(90deg, var(--accent), var(--magenta)); background-size: 100% 100%; }
+  11% { background-image: repeating-conic-gradient(var(--magenta) 0 25%, var(--accent) 0 50%); background-size: 3px 3px; }
+  12.5% { background-image: linear-gradient(90deg, var(--accent), var(--magenta)); background-size: 100% 100%; }
+}
+@media (prefers-reduced-motion: reduce) { .wordmark-pix i { animation: none; } }
 
 /* Three weights, not five identical pills: reference material (Guide/About)
    sits quiet, the two mid-session tools (Bankroll/Tracking) carry the
