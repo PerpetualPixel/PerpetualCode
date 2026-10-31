@@ -10583,8 +10583,11 @@ function renderUfcBout(b, ev) {
     ? `<span class="ufc-result">${b.result.draw ? 'Draw' : `${esc((b.result.winnerId === b.a?.id ? b.a : b.b)?.name ?? '')} wins`}${b.result.method ? ` · ${esc(b.result.method)}` : ''}${b.result.round ? ` · R${esc(String(b.result.round))}` : ''}</span>`
     : b.status === 'live' ? '<span class="ufc-result is-live">Live</span>' : b.status === 'cancelled' ? '<span class="ufc-result is-off">Off the card</span>' : '';
   const price = (q) => (q ? `<span class="ufc-price">${bookBadge(q.bookId, q.book)}${esc(formatAmerican(q.american))}</span>` : '<span class="ufc-price is-none">no line</span>');
-  const cap = bd?.engine?.moneyline && bd.engine.moneyline.tier !== 'pass' ? `<span class="ufc-cap">Cappers ${esc(String(Math.round(bd.engine.moneyline.consensusPct)))}% ${esc((bd.engine.moneyline.selection ?? '').split(' ').at(-1))}</span>` : '';
-  const foot = bd ? `<div class="ufc-bout-foot">${price(bd.bestA)}<span class="ufc-foot-mid">${pick ? `<span class="ufc-pick-tag">Pixel's Pick</span>` : bd.confidence ? `<span class="ufc-lean">Lean ${esc((bd.leanName ?? '').split(' ').at(-1))} ${confStars(bd.confidence)}</span>` : ''}${cap}</span>${price(bd.bestB)}</div>` : '';
+  // The surname alone, unless both fighters share it (Santos vs Santos): then the whole name.
+  const sameSurname = b.a?.name && b.b?.name && b.a.name.split(' ').at(-1).toLowerCase() === b.b.name.split(' ').at(-1).toLowerCase();
+  const short = (name) => (sameSurname ? String(name ?? '') : String(name ?? '').split(' ').at(-1));
+  const cap = bd?.engine?.moneyline && bd.engine.moneyline.tier !== 'pass' ? `<span class="ufc-cap">Cappers ${esc(String(Math.round(bd.engine.moneyline.consensusPct)))}% ${esc(short(bd.engine.moneyline.selection))}</span>` : '';
+  const foot = bd ? `<div class="ufc-bout-foot">${price(bd.bestA)}<span class="ufc-foot-mid">${pick ? `<span class="ufc-pick-tag">Pixel's Pick</span>` : bd.confidence ? `<span class="ufc-lean">Lean ${esc(short(bd.leanName))} ${confStars(bd.confidence)}</span>` : ''}${cap}</span>${price(bd.bestB)}</div>` : '';
   return `<article class="ufc-bout ${b.status === 'cancelled' ? 'is-cancelled' : ''} ${pick ? 'is-picked' : ''}" data-bout="${esc(b.id)}" data-ufc-bout="${esc(b.id)}" tabindex="0" role="button" aria-label="${esc(b.a?.name ?? 'TBA')} vs ${esc(b.b?.name ?? 'TBA')}, open the matchup">
     <div class="ufc-bout-head"><span class="ufc-weight">${esc(b.weightClass ?? '')}${b.title ? ' · <b>Title fight</b>' : ''}${b.rounds ? ` · ${esc(String(b.rounds))} rounds` : ''}</span>${status || '<span class="ufc-open">Matchup ›</span>'}</div>
     <div class="ufc-bout-body">${side(b.a, 'a')}<span class="ufc-vs">vs</span>${side(b.b, 'b')}</div>
