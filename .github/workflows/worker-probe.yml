@@ -54,7 +54,7 @@ jobs:
                   console.log("player", d.player.name, d.player.team, "stat", d.stat, "rows", d.rows.length, "undated", d.rows.filter((r) => !r.date).length);
                   for (const r of d.rows.slice(0, 8)) console.log(" ", new Date(r.date || 0).toISOString(), r.atVs, r.opponent, "value", r.value, r.seasonType);
                 } else if (d && Array.isArray(d.seasonTypes)) {
-                  // ESPN's own game log: each season block's event ids against the events map's dates.
+                  // The ESPN game log itself: each season block, its event ids against the dates in the events map.
                   const ev = d.events || {};
                   for (const s of d.seasonTypes) for (const c of s.categories || []) {
                     const ids = (c.events || []).map((e) => e.eventId);
