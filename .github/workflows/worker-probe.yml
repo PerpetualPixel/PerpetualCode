@@ -1,0 +1,64 @@
+# Read a public worker route from a runner, for when the place you are
+# working from can reach GitHub but not workers.dev (the cloud sessions
+# cannot). Dispatch it with a route, or push a change to this file and it
+# reads the routes in PROBES below on the branch that carries the change.
+#
+# Read-only: every route is a public GET the app itself calls, so it
+# spends no odds credits and needs no secret. The body is printed to the
+# job log, trimmed, with the game-log routes summarised to their dates
+# (the player route's rows are what the Pixel's Picks grader reads).
+name: Worker probe
+
+on:
+  workflow_dispatch:
+    inputs:
+      path:
+        description: 'Route to read, e.g. /player?sport=basketball_nba&team=PHI&id=3917376&stat=points'
+        required: true
+        type: string
+  push:
+    paths:
+      - .github/workflows/worker-probe.yml
+
+permissions:
+  contents: read
+
+jobs:
+  probe:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Read the route
+        env:
+          WORKER: https://pixel-pick-odds.mgbouldering.workers.dev
+          ROUTE: ${{ inputs.path }}
+          # The routes a push to this file reads: the open tickets' players, by team and ESPN id.
+          PROBES: |
+            /version
+            /player?sport=basketball_nba&team=PHI&id=3917376&stat=pa
+            /player?sport=basketball_nba&team=LAL&id=4433137&stat=steals
+            /player?sport=basketball_nba&team=POR&id=4066211&stat=rebounds
+        run: |
+          set -uo pipefail
+          read_route() {
+            echo "=== $1"
+            body=$(curl -sS --max-time 60 -H 'Accept: application/json' "$WORKER$1")
+            echo "$body" | python3 -c '
+import json, sys, datetime
+raw = sys.stdin.read()
+try:
+    d = json.loads(raw)
+except Exception:
+    print(raw[:4000]); sys.exit(0)
+if isinstance(d, dict) and "rows" in d and "player" in d:
+    print("player", d["player"].get("name"), d["player"].get("team"), "stat", d.get("stat"), "rows", len(d["rows"]))
+    for r in d["rows"][:8]:
+        when = datetime.datetime.fromtimestamp((r.get("date") or 0) / 1000, datetime.timezone.utc).isoformat()
+        print(" ", when, r.get("atVs"), r.get("opponent"), "value", r.get("value"), r.get("seasonType"))
+else:
+    print(json.dumps(d)[:4000])
+'
+          }
+          if [ -n "${ROUTE:-}" ]; then read_route "$ROUTE"; else
+            while IFS= read -r line; do [ -n "$line" ] && read_route "$line"; done <<< "$PROBES"
+          fi
