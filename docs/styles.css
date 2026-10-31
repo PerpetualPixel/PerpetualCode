@@ -7090,3 +7090,14 @@ a.trend-price:hover { background: rgba(255, 255, 255, 0.06); }
 .pp-loading-logo { width: 36px; height: 36px; display: block; animation: ppSpin 1.1s linear infinite; filter: drop-shadow(0 0 6px rgba(255, 0, 122, 0.55)); }
 @keyframes ppSpin { to { transform: rotate(360deg); } }
 @media (prefers-reduced-motion: reduce) { .pp-loading-logo { animation: none; } }
+
+/* The user's own ticket on Pixel's Picks (renderMyPicks). */
+.my-picks { margin-top: 22px; }
+.my-picks-head { display: flex; flex-wrap: wrap; align-items: center; gap: 10px; margin-bottom: 10px; }
+.my-picks-head .trend-picks-heading { margin: 0; }
+.my-picks-prefs { color: var(--muted); font-size: 0.82rem; font-weight: 600; }
+.my-picks-actions { margin-left: auto; display: inline-flex; gap: 8px; }
+.my-picks-settings { text-decoration: none; }
+.my-picks-note { margin: 0; padding: 14px 16px; border: 1px dashed var(--line); border-radius: 14px; color: var(--muted); line-height: 1.5; }
+.my-picks-record { font-family: var(--mono); font-size: 1.1rem; font-weight: 800; margin: 10px 0 0; }
+.my-picks-record small { font-family: var(--sans); font-size: 0.78rem; color: var(--muted); margin-left: 8px; font-weight: 600; }

@@ -36,7 +36,7 @@
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Syne:wght@600;700;800&family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
-<link rel="stylesheet" href="styles.css?v=1.255">
+<link rel="stylesheet" href="styles.css?v=1.256">
 </head>
 <body>
 
@@ -345,6 +345,9 @@
   <div id="trendPicksFilters" class="trend-leagues pick-filters" role="group" aria-label="League"></div>
   <div id="trendPicksStatus" class="status trends-status" role="status" aria-live="polite"><span class="pp-loading"><img class="pp-loading-logo" src="assets/logo-icon-64.png" alt="" width="28" height="28"><span>Loading picks…</span></span></div>
   <section id="trendPicksBody" class="trends-body" aria-live="polite"></section>
+  <!-- The signed-in user's own ticket, drawn to the account's pick settings
+       (worker/src/my-picks.js; docs/app.js's renderMyPicks). -->
+  <section id="myPicks" class="my-picks" aria-live="polite"></section>
   <h2 class="trend-picks-heading">Record</h2>
   <section id="trendPicksRecord" class="trend-picks-record"></section>
   <section id="trendPicksGraph" class="pick-graph" aria-live="polite"></section>
@@ -1038,6 +1041,6 @@
   </div>
 </aside>
 
-<script type="module" src="app.js?v=1.255"></script>
+<script type="module" src="app.js?v=1.256"></script>
 </body>
 </html>

@@ -843,6 +843,7 @@ const el = {
   trendPicksView: document.getElementById('trendPicksView'),
   trendPicksStatus: document.getElementById('trendPicksStatus'),
   trendPicksBody: document.getElementById('trendPicksBody'),
+  myPicks: document.getElementById('myPicks'),
   trendPicksHistory: document.getElementById('trendPicksHistory'),
   trendPicksFilters: document.getElementById('trendPicksFilters'),
   tabPlayers: document.getElementById('tabPlayers'),
@@ -9562,13 +9563,68 @@ el.trendsSheet?.addEventListener('input', (event) => {
 /* Pixel's Picks: the day's tickets from the Trends rows (worker/src/trend-picks.js) */
 /* ================================================================ */
 
-const trendPicksState = { data: null, loaded: false, filter: 'all', hover: null, emblemOpen: null };
+const trendPicksState = { data: null, loaded: false, filter: 'all', hover: null, emblemOpen: null, mine: null, mineLoading: false, mineError: null };
 const pickDayFmt = new Intl.DateTimeFormat(undefined, { weekday: 'short', month: 'short', day: 'numeric' });
 const pickShortFmt = new Intl.DateTimeFormat(undefined, { month: 'numeric', day: 'numeric' });
 const PICK_FILTERS = [['all', 'All'], ['basketball_nba', 'NBA'], ['americanfootball_nfl', 'NFL']];
 
+/**
+ * The user's own ticket (worker/src/my-picks.js): read once per visit,
+ * drawn to the account's pick settings the first read of the day; a
+ * redraw asks for a new one while no leg has started.
+ */
+async function loadMyPicks({ redraw = false, force = false } = {}) {
+  if (!el.myPicks || !CONFIG.WORKER_URL) return;
+  const headers = settingsHeaders();
+  if (!headers) { trendPicksState.mine = null; renderMyPicks(); return; }
+  if (trendPicksState.mine && !force && !redraw) { renderMyPicks(); return; }
+  trendPicksState.mineLoading = true; trendPicksState.mineError = null;
+  renderMyPicks();
+  try {
+    const res = await fetch(new URL('/trend-picks/mine', CONFIG.WORKER_URL), { method: redraw ? 'POST' : 'GET', headers: { ...headers, Accept: 'application/json' } });
+    const body = await res.json();
+    if (!res.ok) throw new Error(body.error ?? `HTTP ${res.status}`);
+    trendPicksState.mine = body;
+  } catch (e) {
+    trendPicksState.mineError = res401(e) ? 'Sign in to draw your own ticket.' : "Couldn't reach the worker for your ticket.";
+  }
+  trendPicksState.mineLoading = false;
+  renderMyPicks();
+}
+const res401 = (e) => /unauthorized|401/.test(String(e?.message ?? ''));
+const starsText = (n) => `${Number(n) % 1 ? Number(n).toFixed(1) : Number(n)}+ stars`;
+
+/** The "Your ticket" block under the house tickets: the settings it was drawn to, the card, a redraw while it can, and the user's own record. */
+function renderMyPicks() {
+  if (!el.myPicks) return;
+  const m = trendPicksState.mine;
+  const signedIn = Boolean(settingsHeaders());
+  if (!signedIn) { el.myPicks.innerHTML = ''; return; }
+  if (trendPicksState.mineLoading && !m) { el.myPicks.innerHTML = `<div class="my-picks-head"><h2 class="trend-picks-heading">Your ticket</h2></div>${loadingHtml('Drawing your ticket…')}`; return; }
+  if (trendPicksState.mineError && !m) { el.myPicks.innerHTML = `<div class="my-picks-head"><h2 class="trend-picks-heading">Your ticket</h2></div><p class="empty">${esc(trendPicksState.mineError)}</p>`; return; }
+  if (!m) { el.myPicks.innerHTML = ''; return; }
+  const prefs = m.prefs;
+  const settingsLink = `<a class="parlay-btn my-picks-settings" href="account.html#picks">${prefs ? 'Settings' : 'Set it up'}</a>`;
+  if (!prefs) {
+    el.myPicks.innerHTML = `<div class="my-picks-head"><h2 class="trend-picks-heading">Your ticket</h2>${settingsLink}</div>
+      <p class="my-picks-note">Pick your book, your Pixel-score floor and how many legs in Account settings, and Pixel draws a ticket to them for you every day, graded like the house tickets and kept to your account.</p>`;
+    return;
+  }
+  const t = m.today;
+  const rec = m.record;
+  const canRedraw = t ? (t.status === 'pending' && t.commenceMs > Date.now()) : true;
+  const redraw = canRedraw ? `<button type="button" class="parlay-btn is-slip" data-my-redraw ${trendPicksState.mineLoading ? 'disabled' : ''}>${t ? 'Redraw' : 'Draw again'}</button>` : '';
+  const settingsLine = `<span class="my-picks-prefs">${esc(parlayBookName(prefs.book))} · ${esc(starsText(prefs.minScore))} · ${prefs.legs === 1 ? 'straight' : `${prefs.legs} legs`}</span>`;
+  const recordLine = `<p class="my-picks-record">${rec.wins}-${rec.losses}${rec.pushes ? `-${rec.pushes}` : ''} <small>${esc(signedUnits(rec.units ?? 0))} units · ${esc(roiText(rec.roi))} on ${rec.risked ?? 0} risked, your tickets only</small></p>`;
+  el.myPicks.innerHTML = `<div class="my-picks-head"><h2 class="trend-picks-heading">Your ticket</h2>${settingsLine}<span class="my-picks-actions">${redraw}${settingsLink}</span></div>
+    ${trendPicksState.mineError ? `<p class="row-sub">${esc(trendPicksState.mineError)}</p>` : ''}
+    ${t ? `${t.short ? `<p class="row-sub">${esc(t.short)}</p>` : ''}${renderBetCard(t)}` : `<p class="empty">${esc(m.reason ?? 'No ticket drawn yet today.')}</p>`}
+    ${recordLine}`;
+}
+
 async function loadTrendPicks({ force = false } = {}) {
   if (!el.trendPicksBody || !CONFIG.WORKER_URL) return;
+  loadMyPicks({ force });
   if (trendPicksState.loaded && !force) { renderTrendPicks(); return; }
   showLoading(el.trendPicksStatus, 'Loading picks…');
   try {
@@ -9658,7 +9714,8 @@ function renderShowcaseCard(leg) {
 function openPickLeg(target) {
   const [betId, index] = String(target.dataset.pickLeg).split('|');
   const showcase = betId.startsWith('showcase:') ? trendPicksState.data?.today?.showcase?.[betId.slice('showcase:'.length)] : null;
-  const bet = showcase ? showcaseBet(showcase) : [...(trendPicksState.data?.today?.bets ?? []), ...(trendPicksState.data?.history ?? []).flatMap((d) => d.bets ?? [])].find((b) => b.id === betId);
+  const mine = trendPicksState.mine;
+  const bet = showcase ? showcaseBet(showcase) : [...(trendPicksState.data?.today?.bets ?? []), ...(trendPicksState.data?.history ?? []).flatMap((d) => d.bets ?? []), ...(mine?.today ? [mine.today] : []), ...(mine?.history ?? []).flatMap((d) => d.bets ?? [])].find((b) => b.id === betId);
   const leg = bet?.legs?.[Number(index)];
   if (!leg) return;
   trendsState.detailPeriod = null;
@@ -9676,7 +9733,7 @@ function renderBetCard(bet) {
       ${betResultBadge(bet)}
     </div>
     <div class="pick-legs">${bet.legs.map((leg) => renderPickLeg(leg, bet)).join('')}</div>
-    ${bet.legs.every((l) => !l.note) ? '<p class="pick-note">Nothing worth flagging: minutes steady, no injury listing, no blowout projected.</p>' : ''}
+    ${!bet.mine && bet.legs.every((l) => !l.note) ? '<p class="pick-note">Nothing worth flagging: minutes steady, no injury listing, no blowout projected.</p>' : ''}
     ${ticketSlipFoot(bet)}
   </article>`;
 }
@@ -9787,6 +9844,7 @@ el.trendPicksView?.addEventListener('click', (event) => {
   if (emblem) { const k = emblem.dataset.pickEmblem; trendPicksState.emblemOpen = trendPicksState.emblemOpen === k ? null : k; renderTrendPicks(); return; }
   const chip = event.target.closest('[data-pick-filter]');
   if (chip) { trendPicksState.filter = chip.dataset.pickFilter; trendPicksState.hover = null; renderTrendPicks(); return; }
+  if (event.target.closest('[data-my-redraw]')) { loadMyPicks({ redraw: true }); return; }
   const dot = event.target.closest('[data-pick-day]');
   if (dot) { const i = Number(dot.dataset.pickDay); trendPicksState.hover = trendPicksState.hover === i ? null : i; renderPickGraph(); return; }
   const ufcDot = event.target.closest('[data-ufc-dot]');

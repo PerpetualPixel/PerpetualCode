@@ -140,6 +140,20 @@
 
     input::placeholder { color: #5050aa; }
 
+    .picks-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap: 14px; margin-bottom: 16px; }
+    .picks-grid label { display: flex; flex-direction: column; gap: 6px; font-size: 12px; font-weight: 700; letter-spacing: 0.5px; text-transform: uppercase; color: #9d9dd0; }
+    .picks-grid label small { font-weight: 500; text-transform: none; letter-spacing: 0; color: #7070aa; }
+    .picks-grid select {
+      width: 100%;
+      padding: 11px 14px;
+      background: rgba(255, 255, 255, 0.05);
+      border: 1px solid rgba(217, 70, 239, 0.2);
+      border-radius: 8px;
+      color: #e0e0ff;
+      font-size: 14px;
+    }
+    .picks-grid select:focus { outline: none; border-color: rgba(217, 70, 239, 0.5); box-shadow: 0 0 20px rgba(217, 70, 239, 0.2); }
+
     input:disabled {
       opacity: 0.5;
       cursor: not-allowed;
@@ -349,6 +363,55 @@
         </form>
       </div>
 
+      <!-- The user's own Pixel's Pick: the book, the score floor and the legs
+           the daily personal draw uses (worker/src/my-picks.js). Saved on the
+           account's settings record (worker/src/settings.js's picks). -->
+      <div class="card" id="picks">
+        <h2>Your Pixel's Pick</h2>
+        <p class="card-desc">Pixel draws one ticket a day for you to these settings, from the same board as the house tickets, and grades it the same way. It shows on the Pixel's Picks tab under the day's tickets, with its own record.</p>
+        <div id="picks-message"></div>
+        <form id="picks-form">
+          <div class="picks-grid">
+            <label>Sportsbook
+              <select id="picks-book">
+                <option value="draftkings">DraftKings</option>
+                <option value="fanduel">FanDuel</option>
+                <option value="caesars">Caesars</option>
+                <option value="betmgm">BetMGM</option>
+                <option value="fanatics">Fanatics</option>
+                <option value="hardrock">Hard Rock Bet</option>
+                <option value="bet365">bet365</option>
+                <option value="betrivers">BetRivers</option>
+                <option value="prizepicks">PrizePicks</option>
+              </select>
+            </label>
+            <label>Score floor<small>Pixel's score out of 5: hit rates, head to head and health</small>
+              <select id="picks-floor">
+                <option value="5">5 stars only</option>
+                <option value="4.5">4.5+ stars</option>
+                <option value="4" selected>4+ stars</option>
+                <option value="3.5">3.5+ stars</option>
+                <option value="3">3+ stars</option>
+                <option value="2.5">2.5+ stars</option>
+                <option value="2">2+ stars</option>
+              </select>
+            </label>
+            <label>Legs<small>One is a straight; PrizePicks lineups are two to six</small>
+              <select id="picks-legs">
+                <option value="1">1 (straight)</option>
+                <option value="2" selected>2</option>
+                <option value="3">3</option>
+                <option value="4">4</option>
+                <option value="5">5</option>
+                <option value="6">6</option>
+              </select>
+            </label>
+          </div>
+          <button type="submit" class="button">Save</button>
+          <p class="card-desc" style="margin: 12px 0 0;">A change redraws today's ticket when none of its games has started.</p>
+        </form>
+      </div>
+
       <!-- Notifications -->
       <div class="card">
         <h2>Notifications</h2>
@@ -409,6 +472,6 @@
     </div>
   </div>
 
-  <script src="account.js?v=1.255" defer></script>
+  <script src="account.js?v=1.256" defer></script>
 </body>
 </html>
