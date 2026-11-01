@@ -2,11 +2,11 @@
  * Pixel's Picks for the UFC (worker/src/ufc-picks.js): the odds cadence,
  * matching the feed to a bout, the breakdown parser, the straight's quote,
  * the pick draw with its cap and lock, voids on card changes, and the
- * grading of moneylines and rounds totals.
+ * grading of moneylines, methods of victory and double chances.
  */
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { oddsTtlMs, boutOdds, matchSide, parseUfcBreakdown, straightQuote, settleUfcPick, settleUfcTicket, buildUfcParlays, runUfcTick, getUfcPicks, UFC_MAX_PICKS } from '../worker/src/ufc-picks.js';
+import { oddsTtlMs, boutOdds, matchSide, parseUfcBreakdown, straightQuote, settleUfcPick, settleUfcTicket, buildUfcParlays, runUfcTick, getUfcPicks, methodClass, UFC_MAX_PICKS } from '../worker/src/ufc-picks.js';
 
 const NOW = Date.UTC(2026, 9, 30, 18);
 const ctx = { waitUntil: (p) => p };
@@ -40,21 +40,31 @@ test('parseUfcBreakdown: the lean, the confidence and the straight, with a and b
   const b = bout('1', f('a1', 'A One'), f('b1', 'B Two'));
   const o = parseUfcBreakdown('{"lean":"b","confidence":4,"straight":{"market":"h2h","fighter":"b"},"parlayPiece":true,"summary":" B is live. ","reasons":["x"]}', b);
   assert.equal(o.lean, 'b'); assert.equal(o.leanName, 'B Two'); assert.equal(o.confidence, 4); assert.deepEqual(o.straight, { market: 'h2h', fighter: 'b' }); assert.equal(o.parlayPiece, true); assert.equal(o.summary, 'B is live.');
-  const t = parseUfcBreakdown('{"lean": "A", "confidence": 7, "straight": {"market": "totals", "side": "Under", "point": "2.5"}}', b);
+  const t = parseUfcBreakdown('{"lean": "A", "confidence": 7, "straight": {"market": "method", "fighter": "A", "method": "KO/TKO"}}', b);
   assert.equal(t.lean, 'a', 'upper case with spaces, as the model writes it');
   assert.equal(parseUfcBreakdown('{"lean": "B", "confidence": 4, "straight": {"market": "h2h", "fighter": "B"}}', b).straight.fighter, 'b');
-  assert.equal(t.confidence, 5); assert.deepEqual(t.straight, { market: 'totals', side: 'under', point: 2.5 });
+  assert.equal(t.confidence, 5); assert.deepEqual(t.straight, { market: 'method', fighter: 'a', methods: ['ko'] });
+  const d = parseUfcBreakdown('{"lean":"b","confidence":4,"straight":{"market":"double","fighter":"b","methods":["Submission","ko"]}}', b);
+  assert.deepEqual(d.straight, { market: 'double', fighter: 'b', methods: ['ko', 'sub'] });
+  assert.deepEqual(parseUfcBreakdown('{"lean":"b","confidence":4,"straight":{"market":"double","fighter":"b","methods":["ko","ko"]}}', b).straight, { market: 'h2h', fighter: 'b' }, 'one method twice is no double chance: the moneyline');
+  assert.deepEqual(parseUfcBreakdown('{"lean":"a","confidence":4,"straight":{"market":"totals","side":"under","point":2.5}}', b).straight, { market: 'h2h', fighter: 'a' }, 'a rounds total is no longer a pick: the moneyline');
+  assert.deepEqual(['KO/TKO', 'Submission (rear naked choke)', 'Decision - Unanimous', 'Technical Decision', 'DQ', null].map(methodClass), ['ko', 'sub', 'dec', 'dec', null, null]);
   assert.equal(parseUfcBreakdown('no idea', b), null);
   assert.equal(parseUfcBreakdown('{"lean":"c","confidence":3}', b), null);
 });
 
-test('straightQuote: the moneyline on the chosen side, or the total at the posted number', () => {
+test('straightQuote: the moneyline on the chosen side; a method or double chance on the fighter, priced off the engine quote when a capper gave one, else unpriced', () => {
   const b = bout('1', f('a1', 'A One'), f('b1', 'B Two'));
   const o = boutOdds(b, [feed('A One', 'B Two', { h2h: [-180, 150] })]);
   assert.deepEqual([straightQuote(b, { straight: { market: 'h2h', fighter: 'a' } }, o).american, straightQuote(b, { straight: { market: 'h2h', fighter: 'a' } }, o).selection], [-180, 'A One to win']);
-  const u = straightQuote(b, { straight: { market: 'totals', side: 'under', point: 2.5 } }, o);
-  assert.equal(u.selection, 'Under 2.5 rounds'); assert.equal(u.point, 2.5);
-  assert.equal(straightQuote(b, { straight: { market: 'totals', side: 'over', point: 1.5 } }, o).point, 2.5, 'a number the books do not post falls to the posted one');
+  const m = straightQuote(b, { straight: { market: 'method', fighter: 'a', methods: ['ko'] } }, o);
+  assert.deepEqual([m.market, m.selection, m.fighterId, m.methods, m.american, m.bookId], ['method', 'A One by KO/TKO', 'a1', ['ko'], null, null]);
+  const engine = { methods: [{ side: 'a', method: 'ko', quotedOdds: 165 }] };
+  assert.deepEqual([straightQuote(b, { straight: { market: 'method', fighter: 'a', methods: ['ko'] } }, o, engine).american, straightQuote(b, { straight: { market: 'method', fighter: 'a', methods: ['ko'] } }, o, engine).book], [165, 'engine quote']);
+  assert.equal(straightQuote(b, { straight: { market: 'method', fighter: 'a', methods: ['sub'] } }, o, engine).american, null, 'another method: no quote');
+  const d = straightQuote(b, { straight: { market: 'double', fighter: 'b', methods: ['ko', 'sub'] } }, o);
+  assert.deepEqual([d.market, d.selection, d.fighterId, d.american], ['double', 'B Two by KO/TKO or Submission', 'b1', null]);
+  assert.equal(straightQuote(b, { straight: { market: 'method', fighter: 'a', methods: ['ko'] } }, boutOdds(b, [])), null, 'no moneyline yet: no quote, the bout has no odds');
 });
 
 test('settleUfcPick: the moneyline on the winner, void on a draw or a scrapped bout; the total on the finish time, a decision being the distance', () => {
@@ -71,6 +81,17 @@ test('settleUfcPick: the moneyline on the winner, void on a draw or a scrapped b
   assert.equal(settleUfcPick(over, bout('1', a, b, { status: 'final', result: { winnerId: 'a1', method: 'KO/TKO', round: 3, time: '2:30' } })).result, 'push');
   assert.equal(settleUfcPick(over, bout('1', a, b, { status: 'final', result: { winnerId: 'b1', method: 'Decision (unanimous)', round: 3, time: '5:00' } })).result, 'win', 'the distance');
   assert.equal(settleUfcPick({ ...over, legs: [{ ...over.legs[0], side: 'under' }] }, bout('1', a, b, { status: 'final', result: { winnerId: 'a1', method: 'KO/TKO', round: 1, time: '0:45' } })).result, 'win');
+  // A method of victory: the fighter and the way; a double chance: either of its two ways. Unpriced, the result carries no units.
+  const ko = { decimal: null, american: null, units: 1, legs: [{ market: 'method', fighterId: 'a1', methods: ['ko'], rounds: 3 }] };
+  assert.deepEqual(settleUfcPick(ko, bout('1', a, b, { status: 'final', result: { winnerId: 'a1', method: 'KO/TKO', round: 2, time: '1:10' } })), { result: 'win', net: null, actual: 'A One by KO/TKO R2' });
+  assert.deepEqual(settleUfcPick(ko, bout('1', a, b, { status: 'final', result: { winnerId: 'a1', method: 'Submission', round: 2, time: '1:10' } })).result, 'loss', 'right fighter, wrong way');
+  assert.equal(settleUfcPick(ko, bout('1', a, b, { status: 'final', result: { winnerId: 'b1', method: 'KO/TKO', round: 1, time: '1:10' } })).result, 'loss');
+  assert.equal(settleUfcPick(ko, bout('1', a, b, { status: 'final', result: { winnerId: 'a1', method: 'DQ', round: 1, time: '1:10' } })).result, 'void', 'a DQ is not a method the market settles');
+  const dbl = { decimal: null, american: null, units: 1, legs: [{ market: 'double', fighterId: 'a1', methods: ['ko', 'sub'], rounds: 3 }] };
+  assert.equal(settleUfcPick(dbl, bout('1', a, b, { status: 'final', result: { winnerId: 'a1', method: 'Submission', round: 2, time: '1:10' } })).result, 'win');
+  assert.equal(settleUfcPick(dbl, bout('1', a, b, { status: 'final', result: { winnerId: 'a1', method: 'Decision (unanimous)', round: 3, time: '5:00' } })).result, 'loss');
+  const priced = { decimal: 2.65, american: 165, units: 1, legs: [{ market: 'method', fighterId: 'a1', methods: ['ko'], american: 165, rounds: 3 }] };
+  assert.deepEqual(settleUfcPick(priced, bout('1', a, b, { status: 'final', result: { winnerId: 'a1', method: 'KO/TKO', round: 2, time: '1:10' } })).net, 1.65, 'a quoted method pays its quote');
 });
 
 test('runUfcTick: picks post at confidence 4 or better inside the price range, at most six, one per bout, follow the price, void on a replacement, grade on the result, and lock at the first bout', async () => {
@@ -82,7 +103,7 @@ test('runUfcTick: picks post at confidence 4 or better inside the price range, a
     bout('3', f('a3', 'E Five'), f('b3', 'F Six')),
   ] };
   const odds = [feed('A One', 'B Two', { h2h: [-150, 130] }), feed('C Three', 'D Four', { h2h: [-400, 300] }), feed('E Five', 'F Six', { h2h: [-120, 100] })];
-  const reads = { 1: '{"lean":"a","confidence":5,"straight":{"market":"h2h","fighter":"a"},"parlayPiece":true,"summary":"A.","reasons":[]}', 2: '{"lean":"a","confidence":5,"straight":{"market":"h2h","fighter":"a"},"parlayPiece":true,"summary":"C.","reasons":[]}', 3: '{"lean":"b","confidence":3,"straight":{"market":"totals","side":"over","point":2.5},"parlayPiece":false,"summary":"E.","reasons":[]}' };
+  const reads = { 1: '{"lean":"a","confidence":5,"straight":{"market":"h2h","fighter":"a"},"parlayPiece":true,"summary":"A.","reasons":[]}', 2: '{"lean":"a","confidence":5,"straight":{"market":"h2h","fighter":"a"},"parlayPiece":true,"summary":"C.","reasons":[]}', 3: '{"lean":"b","confidence":3,"straight":{"market":"method","fighter":"b","method":"sub"},"parlayPiece":false,"summary":"E.","reasons":[]}' };
   let which = 0;
   const deps = { events: async () => ({ events: [{ id: 'ev', date: event.date, status: event.status }] }), event: async () => event, odds: async () => odds, fighter: async (id) => fighters[id], model: async (prompt) => reads[/UFC Test: Lightweight/.test(prompt) ? (++which) : 1] };
   const r = await runUfcTick(env, ctx, NOW, { deps });
@@ -122,30 +143,28 @@ test('runUfcTick: picks post at confidence 4 or better inside the price range, a
   assert.ok(UFC_MAX_PICKS === 6);
 });
 
-test('a rounds-total pick stays on its number: the price follows at the same number, a moved number only warns, and the warning clears when the number is back', async () => {
+test('a method of victory posts unpriced when the feed has no quote, is left alone as the moneyline moves, voids on a replacement, and grades on the way the fight ended without touching the units', async () => {
   const { env, store } = kv();
   const fighters = { a1: fighter('a1', 'A One'), b1: fighter('b1', 'B Two') };
-  const event = { id: 'ev2', name: 'UFC Totals', date: NOW + 30 * 3600e3, status: 'upcoming', changes: [], bouts: [bout('1', f('a1', 'A One'), f('b1', 'B Two'))] };
-  const odds = [feed('A One', 'B Two', { h2h: [-150, 130], total: { point: 2.5, over: -120, under: 100 } })];
-  const deps = { events: async () => ({ events: [{ id: 'ev2', date: event.date, status: 'upcoming' }] }), event: async () => event, odds: async () => odds, fighter: async (id) => fighters[id], model: async () => '{"lean":"a","confidence":4,"straight":{"market":"totals","side":"under","point":2.5},"parlayPiece":false,"summary":"Short night.","reasons":[]}' };
-  await runUfcTick(env, ctx, NOW, { deps });
+  const event = { id: 'ev2', name: 'UFC Methods', date: NOW + 30 * 3600e3, status: 'upcoming', changes: [], bouts: [bout('1', f('a1', 'A One'), f('b1', 'B Two'))] };
+  const odds = [feed('A One', 'B Two', { h2h: [-150, 130], total: null })];
+  const deps = { events: async () => ({ events: [{ id: 'ev2', date: event.date, status: 'upcoming' }] }), event: async () => event, odds: async () => odds, fighter: async (id) => fighters[id], model: async () => '{"lean":"a","confidence":4,"straight":{"market":"double","fighter":"a","methods":["ko","sub"]},"parlayPiece":false,"summary":"Finishes early.","reasons":[]}' };
+  const r = await runUfcTick(env, ctx, NOW, { deps });
+  assert.equal(r.posted, 1);
   let rec = JSON.parse(store.get('ufc:picks:ev2'));
-  assert.deepEqual([rec.bets[0].legs[0].selection, rec.bets[0].american], ['Under 2.5 rounds', 100]);
-  odds[0] = feed('A One', 'B Two', { total: { point: 2.5, over: -130, under: 110 } }); store.delete('ufc:odds');
+  assert.deepEqual([rec.bets[0].legs[0].selection, rec.bets[0].legs[0].market, rec.bets[0].american, rec.bets[0].bookId, rec.bets[0].book, rec.bets[0].priced], ['A One by KO/TKO or Submission', 'double', null, null, 'any book', false]);
+  odds[0] = feed('A One', 'B Two', { h2h: [-170, 145], total: null }); store.delete('ufc:odds');
   await runUfcTick(env, ctx, NOW + 60e3, { deps });
   rec = JSON.parse(store.get('ufc:picks:ev2'));
-  assert.equal(rec.bets[0].american, 110, 'same number: the price follows');
-  odds[0] = feed('A One', 'B Two', { total: { point: 1.5, over: -110, under: -110 } }); store.delete('ufc:odds');
-  await runUfcTick(env, ctx, NOW + 120e3, { deps });
-  rec = JSON.parse(store.get('ufc:picks:ev2'));
-  assert.equal(rec.bets[0].american, 110, 'a moved number never moves the pick');
-  assert.equal(rec.bets[0].legs[0].point, 2.5);
-  assert.match(rec.bets[0].warning, /now posts 1\.5 rounds; the pick stays on the 2\.5/);
-  odds[0] = feed('A One', 'B Two', { total: { point: 2.5, over: -120, under: 100 } }); store.delete('ufc:odds');
-  await runUfcTick(env, ctx, NOW + 180e3, { deps });
-  rec = JSON.parse(store.get('ufc:picks:ev2'));
+  assert.equal(rec.bets[0].american, null, 'the moneyline moving is nothing to a method pick');
   assert.equal(rec.bets[0].warning, null);
-  assert.equal(rec.bets[0].american, 100);
+  event.bouts[0] = { ...event.bouts[0], status: 'final', result: { winnerId: 'a1', method: 'Submission', round: 2, time: '3:12' } };
+  const r2 = await runUfcTick(env, ctx, event.date + 3600e3, { deps });
+  assert.equal(r2.graded, 1);
+  rec = JSON.parse(store.get('ufc:picks:ev2'));
+  assert.deepEqual([rec.bets[0].status, rec.bets[0].result, rec.bets[0].net, rec.bets[0].legs[0].actual], ['graded', 'win', null, 'A One by Submission R2']);
+  const all = await getUfcPicks(env, event.date + 3600e3);
+  assert.deepEqual([all.record.wins, all.record.losses, all.record.risked, all.record.units, all.record.roi], [1, 0, 0, 0, null], 'a win in the record, no units either way');
 });
 
 test('settleUfcTicket: a lost leg loses, a voided leg drops out and the ticket pays at the legs left, all void is void', () => {

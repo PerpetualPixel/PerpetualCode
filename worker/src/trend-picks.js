@@ -843,7 +843,8 @@ export function betRecordOf(bets) {
   const done = (bets ?? []).filter((b) => b.status === 'graded' || b.status === 'void');
   const count = (result) => done.filter((b) => b.result === result).length;
   const units = Math.round(done.reduce((u, b) => u + (b.net ?? 0), 0) * 100) / 100;
-  const risked = done.filter((b) => b.result !== 'void').reduce((u, b) => u + (b.units ?? 1), 0);
+  // An unpriced ticket (a UFC method the feed does not quote) counts in the wins and losses, not in the units.
+  const risked = done.filter((b) => b.result !== 'void' && Number.isFinite(b.net)).reduce((u, b) => u + (b.units ?? 1), 0);
   const roi = risked ? Math.round((units / risked) * 10000) / 10000 : null;
   return { wins: count('win'), losses: count('loss'), pushes: count('push'), voids: count('void'), units, risked, roi };
 }

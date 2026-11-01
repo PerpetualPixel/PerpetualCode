@@ -1,0 +1,36 @@
+# Take one UFC card's picks out of the record, from a runner that holds the
+# KV secrets (scripts/ufc-wipe.mjs): the picks record goes and the card
+# leaves the ledger's index. Dispatch by hand with the card's ESPN event id
+# (the id in the UFC tab's card list and in the /ufc/picks payload).
+name: UFC wipe
+
+on:
+  workflow_dispatch:
+    inputs:
+      event_id:
+        description: 'ESPN event id of the card whose picks to wipe'
+        required: true
+        type: string
+      dry_run:
+        description: 'Only read and report; write nothing'
+        required: false
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+
+jobs:
+  wipe:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Wipe the card's picks
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+        run: node scripts/ufc-wipe.mjs --event "${{ inputs.event_id }}" ${{ inputs.dry_run && '--dry-run' || '' }}

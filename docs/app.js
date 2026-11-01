@@ -10460,6 +10460,7 @@ const ufcPickBadge = (pick) => {
   return pick.commenceMs <= Date.now() ? '<span class="pick-result is-live">In play</span>' : '<span class="pick-result">Pending</span>';
 };
 
+const UFC_MARKET_LABEL = { h2h: 'Moneyline', totals: 'Rounds total', method: 'Method of victory', double: 'Double chance' };
 function renderUfcPickCard(pick) {
   const parlay = pick.type === 'parlay' && pick.legs.length > 1;
   const first = pick.legs[0];
@@ -10472,9 +10473,9 @@ function renderUfcPickCard(pick) {
     </div>`;
   return `<article class="trend-card pick-bet-card ufc-pick" data-bout-link="${esc(pick.boutId)}">
     <div class="pick-bet-head">
-      <span class="pick-bet-type">${parlay ? `${pick.legs.length}-leg parlay` : first.market === 'totals' ? 'Rounds total' : 'Moneyline'}</span>
-      <span class="pick-bet-book">${bookBadge(pick.bookId, pick.book)}${esc(pick.book)}</span>
-      <span class="pick-bet-price">${esc(formatAmerican(pick.american))}</span>
+      <span class="pick-bet-type">${parlay ? `${pick.legs.length}-leg parlay` : UFC_MARKET_LABEL[first.market] ?? 'Moneyline'}</span>
+      <span class="pick-bet-book">${pick.bookId ? `${bookBadge(pick.bookId, pick.book)}${esc(pick.book)}` : 'Any book'}</span>
+      <span class="pick-bet-price">${Number.isFinite(pick.american) ? esc(formatAmerican(pick.american)) : '<small>price at your book</small>'}</span>
       <span class="pick-bet-stake">${esc(String(pick.units))} unit</span>
       ${ufcPickBadge(pick)}
     </div>
@@ -10525,7 +10526,7 @@ function renderUfcLedger() {
   el.trendPicksUfc.innerHTML = `<h2 class="pick-h2">UFC <small>tracked apart from NBA and NFL</small></h2>
     <p class="pick-record">${rec.wins}-${rec.losses}${rec.pushes ? `-${rec.pushes}` : ''} <small>${esc(signedUnits(rec.units))} units · ${esc(roiText(rec.roi))} on ${rec.risked ?? 0} risked, one unit a pick</small></p>
     <div class="pick-graph">${renderUfcGraph(cards)}</div>
-    ${cards.length ? cards.map((r) => `<div class="pick-day"><h3>${esc(r.eventName)} <small>${esc(ufcDayFmt.format(new Date(r.eventDate ?? 0)))}</small></h3>${r.bets.map((b) => `<div class="pick-hist-row"><span><strong>${esc(b.legs[0].selection)}</strong> at ${esc(b.book)} ${esc(formatAmerican(b.american))}<br><small>${esc(b.legs[0].a)} vs ${esc(b.legs[0].b)}</small></span>${ufcPickBadge(b)}</div>`).join('')}</div>`).join('') : '<p class="empty">No UFC picks yet. They post once the next card has odds and a read.</p>'}`;
+    ${cards.length ? cards.map((r) => `<div class="pick-day"><h3>${esc(r.eventName)} <small>${esc(ufcDayFmt.format(new Date(r.eventDate ?? 0)))}</small></h3>${r.bets.map((b) => `<div class="pick-hist-row"><span><strong>${esc(b.legs[0].selection)}</strong>${Number.isFinite(b.american) ? ` at ${esc(b.book)} ${esc(formatAmerican(b.american))}` : ` · ${esc(UFC_MARKET_LABEL[b.legs[0].market] ?? b.legs[0].market)}`}<br><small>${esc(b.legs[0].a)} vs ${esc(b.legs[0].b)}</small></span>${ufcPickBadge(b)}</div>`).join('')}</div>`).join('') : '<p class="empty">No UFC picks yet. They post once the next card has odds and a read.</p>'}`;
 }
 
 async function loadUfcFighters() {
@@ -10645,7 +10646,7 @@ function renderUfcBoutSheet(sheet) {
     <p class="ufc-h2h-meta">${esc(b.weightClass ?? '')}${b.title ? ' · <b>Title fight</b>' : ''}${b.rounds ? ` · ${esc(String(b.rounds))} rounds` : ''} · ${esc(UFC_SEGMENT_LABEL[b.segment] ?? '')}${b.date ? ` · ${esc(ufcDateFmt.format(new Date(b.date)))} ET` : ''}</p>
     ${b.status === 'final' && b.result ? `<p class="ufc-result">${b.result.draw ? 'Draw' : `${esc((b.result.winnerId === b.a?.id ? b.a : b.b)?.name ?? '')} wins`}${b.result.method ? ` · ${esc(b.result.method)}` : ''}${b.result.round ? ` · R${esc(String(b.result.round))}${b.result.time ? ` ${esc(b.result.time)}` : ''}` : ''}</p>` : b.status === 'cancelled' ? '<p class="ufc-result is-off">Off the card</p>' : ''}
     <div class="ufc-h2h">${col(b.a, fa, 'a')}<span class="ufc-h2h-vs">vs</span>${col(b.b, fb, 'b')}</div>
-    ${pick ? `<div class="ufc-h2h-pick"><span class="ufc-pick-tag">Pixel's Pick</span> <strong>${esc(pick.type === 'parlay' ? pick.legs.map((l) => l.selection).join(' + ') : pick.legs[0].selection)}</strong> at ${esc(pick.book)} ${esc(formatAmerican(pick.american))}${pick.type === 'parlay' ? ' (parlay)' : ''} ${ufcPickBadge(pick)}${pick.warning ? `<p class="pick-move is-out"><span class="pick-move-tag">Line moved · not tracked</span> ${esc(pick.warning)}</p>` : ''}${pick.link || pick.bookUrl ? `<a class="pick-bet-link" href="${esc(pick.link ?? pick.bookUrl)}" target="_blank" rel="noopener">Open ${esc(pick.book)}</a>` : ''}</div>` : ''}
+    ${pick ? `<div class="ufc-h2h-pick"><span class="ufc-pick-tag">Pixel's Pick</span> <strong>${esc(pick.type === 'parlay' ? pick.legs.map((l) => l.selection).join(' + ') : pick.legs[0].selection)}</strong>${Number.isFinite(pick.american) ? ` at ${esc(pick.book)} ${esc(formatAmerican(pick.american))}` : ' at your book'}${pick.type === 'parlay' ? ' (parlay)' : ''} ${ufcPickBadge(pick)}${pick.warning ? `<p class="pick-move is-out"><span class="pick-move-tag">Line moved · not tracked</span> ${esc(pick.warning)}</p>` : ''}${pick.link || pick.bookUrl ? `<a class="pick-bet-link" href="${esc(pick.link ?? pick.bookUrl)}" target="_blank" rel="noopener">Open ${esc(pick.book)}</a>` : ''}</div>` : ''}
     ${bd ? `<h4 class="ufc-h4">Pixel's read</h4><div class="parlay-breakdown ${bd.confidence >= 4 ? 'is-good' : 'is-risky'}">
       <p><strong>${bd.leanName ? `${esc(bd.leanName)} ${confStars(bd.confidence)}` : 'No read yet.'}</strong> ${esc(bd.summary ?? '')}</p>
       ${(bd.reasons ?? []).length ? `<ul>${bd.reasons.map((x) => `<li>${esc(x)}</li>`).join('')}</ul>` : ''}
