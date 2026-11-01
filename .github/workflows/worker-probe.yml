@@ -20,6 +20,10 @@ on:
         description: 'For a scoreboard route: ESPN athlete ids whose box lines to print, comma separated'
         required: false
         type: string
+      grep:
+        description: 'For a page that is not JSON: print only the lines matching this regular expression'
+        required: false
+        type: string
   push:
     paths:
       - .github/workflows/worker-probe.yml
@@ -38,19 +42,27 @@ jobs:
           ROUTE: ${{ inputs.path }}
           ATHLETES: ${{ inputs.athletes }}
           # The routes a push to this file reads: the open tickets' players, by team and ESPN id.
+          GREP: ${{ inputs.grep }}
           PROBES: |
-            https://site.api.espn.com/apis/site/v2/sports/basketball/nba/scoreboard?dates=20261030
-            https://site.api.espn.com/apis/site/v2/sports/basketball/nba/scoreboard?dates=20261029
+            https://the-odds-api.com/sports-odds-data/betting-markets.html
         run: |
           set -uo pipefail
           ATHLETES="${ATHLETES:-3917376,4433137,4066211,3995,4066648}"
+          GREP="${GREP:-mma|martial|method|double|distance|round|victory|h2h|totals|spreads|featured|additional}"
           read_route() {
             echo "=== $1"
             case "$1" in http*) url="$1";; *) url="$WORKER$1";; esac
             body=$(curl -sS --max-time 60 -H 'Accept: application/json' "$url")
             echo "$body" | node -e '
               let raw = ""; process.stdin.on("data", (c) => { raw += c; }).on("end", () => {
-                let d; try { d = JSON.parse(raw); } catch { console.log(raw.slice(0, 4000)); return; }
+                let d; try { d = JSON.parse(raw); } catch {
+                  // Not JSON (a docs page): the lines that mention the words in GREP, or the head of it.
+                  const re = process.env.GREP ? new RegExp(process.env.GREP, "i") : null;
+                  const text = raw.replace(/<script[\s\S]*?<\/script>|<style[\s\S]*?<\/style>/g, "").replace(/<[^>]+>/g, " ").replace(/&nbsp;|&#160;/g, " ").replace(/[ \t]+/g, " ");
+                  const lines = text.split(/\n+/).map((l) => l.trim()).filter(Boolean);
+                  console.log((re ? lines.filter((l) => re.test(l)) : lines).slice(0, 120).join("\n").slice(0, 12000));
+                  return;
+                }
                 if (d && d.rows && d.player) {
                   console.log("player", d.player.name, d.player.team, "stat", d.stat, "rows", d.rows.length, "undated", d.rows.filter((r) => !r.date).length);
                   for (const r of d.rows.slice(0, 8)) console.log(" ", new Date(r.date || 0).toISOString(), r.atVs, r.opponent, "value", r.value, r.seasonType);

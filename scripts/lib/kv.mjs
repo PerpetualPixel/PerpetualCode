@@ -38,3 +38,12 @@ export async function writeKv(entries, { ttlSeconds = 3 * 86400, say = () => {} 
     say(`  wrote ${batch.length} keys (${(batch.reduce((n, b) => n + b.value.length, 0) / 1e6).toFixed(2)} MB)`);
   }
 }
+
+/** Remove one key; a key that is not there is not an error. */
+export async function deleteKv(key) {
+  const { token } = kvConfig();
+  const res = await fetch(`${base()}/values/${encodeURIComponent(key)}`, { method: 'DELETE', headers: { Authorization: `Bearer ${token}` } });
+  if (res.status === 404) return false;
+  if (!res.ok) throw new Error(`KV delete failed: HTTP ${res.status}`);
+  return true;
+}
