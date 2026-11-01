@@ -165,6 +165,11 @@ test('a method of victory posts unpriced when the feed has no quote, is left alo
   assert.deepEqual([rec.bets[0].status, rec.bets[0].result, rec.bets[0].net, rec.bets[0].legs[0].actual], ['graded', 'win', null, 'A One by Submission R2']);
   const all = await getUfcPicks(env, event.date + 3600e3);
   assert.deepEqual([all.record.wins, all.record.losses, all.record.risked, all.record.units, all.record.roi], [1, 0, 0, 0, null], 'a win in the record, no units either way');
+  // Wiped after the lock: the tick leaves the card alone rather than putting an empty record back.
+  store.delete('ufc:picks:ev2');
+  const r3 = await runUfcTick(env, ctx, event.date + 7200e3, { deps });
+  assert.deepEqual([r3.skipped, r3.reason], [true, 'locked, no record']);
+  assert.equal(store.has('ufc:picks:ev2'), false);
 });
 
 test('settleUfcTicket: a lost leg loses, a voided leg drops out and the ticket pays at the legs left, all void is void', () => {
