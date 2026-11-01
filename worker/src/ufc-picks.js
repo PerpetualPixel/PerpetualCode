@@ -419,8 +419,12 @@ export async function runUfcTick(env, ctx, now = Date.now(), { deps = {} } = {})
   if (!event) return { skipped: true, reason: 'no card record' };
   const lock = ufcLockMs(event);
   const raw = await env.POTD_KV.get(ufcPicksKey(event.id)).catch(() => null);
-  const record = raw ? JSON.parse(raw) : { version: UFC_RECORD_VERSION, eventId: event.id, eventName: event.name, eventDate: event.date, generatedAt: now, lockMs: lock, bets: [], passed: [], breakdowns: {}, oddsAt: null };
   const locked = now >= lock;
+  // Past the lock with no record there is nothing to post and nothing to
+  // grade; starting one now would only put a card with no picks back in
+  // the ledger (which is what a wipe took out).
+  if (locked && !raw) return { skipped: true, reason: 'locked, no record', eventId: event.id };
+  const record = raw ? JSON.parse(raw) : { version: UFC_RECORD_VERSION, eventId: event.id, eventName: event.name, eventDate: event.date, generatedAt: now, lockMs: lock, bets: [], passed: [], breakdowns: {}, oddsAt: null };
   let posted = 0; let graded = 0; const voided = [];
   if (!locked) {
     const odds = await fetchUfcOdds(env, ctx, lock, now, { deps });
