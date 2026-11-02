@@ -64,6 +64,7 @@ import { runUfcTick, getUfcPicks } from './ufc-picks.js';
 import { sendUfcTicketNotifications, sendUfcChangeNotifications } from './notifications.js';
 import { legBreakdown } from './parlay-builder.js';
 import { runTrendPicksDaily, runTrendPicksGrading, getTrendPicks } from './trend-picks.js';
+import { runLiveProbe, getLiveProbe } from './live-probe.js';
 import { getMyPicks } from './my-picks.js';
 
 /** The Trends build's own cron (must match wrangler.toml's second trigger exactly — Cloudflare hands the string back as written). */
@@ -480,6 +481,10 @@ export default {
    */
   async scheduled(event, env, ctx) {
     const now = event.scheduledTime ?? Date.now();
+
+    // The live-props probe (worker/src/live-probe.js): one game, one
+    // window, one props call a tick on either schedule.
+    ctx.waitUntil(runLiveProbe(env, ctx, now).catch((e) => console.error('Live probe failed:', e)));
 
     // The Trends build has its own schedule (wrangler.toml's second cron)
     // and so its own invocation and subrequest budget: a chunk of games is
@@ -1539,6 +1544,12 @@ export default {
     // The UFC side (worker/src/ufc-card.js): the cards the runner wrote, one
     // event with its bouts (the next one by default), the fighter index and
     // one fighter's profile and history.
+    // The live-props probe's logs (worker/src/live-probe.js): read-only.
+    if (pathname === '/live/probe' && request.method === 'GET') {
+      const q = new URL(request.url).searchParams;
+      return json(await getLiveProbe(env, { eventId: q.get('event'), espnEventId: q.get('espn') }), { headers: { ...cors, 'Cache-Control': 'no-store' } });
+    }
+
     if (pathname === '/ufc/events' && request.method === 'GET') {
       const index = await getUfcEvents(env);
       return json({ ...index, next: nextUfcEvent(index.events)?.id ?? null }, { headers: { ...cors, 'Cache-Control': 'public, max-age=120' } });

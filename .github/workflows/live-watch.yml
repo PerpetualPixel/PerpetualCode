@@ -1,0 +1,47 @@
+# Watch one game live from a runner: the clock, the score and every skill
+# player's box line, every minute, into the worker's KV beside the worker's
+# in-play props snapshots (scripts/live-watch.mjs; worker/src/live-probe.js).
+# ESPN only, so no odds credits. Dispatch it before kick-off with the
+# league and the team's ESPN abbreviation; it runs until the game is final.
+name: Live watch
+
+on:
+  workflow_dispatch:
+    inputs:
+      league:
+        description: 'nfl or nba'
+        required: true
+        type: string
+        default: nfl
+      team:
+        description: "A team in the game, ESPN abbreviation (PHI, WSH, LAL, …)"
+        required: true
+        type: string
+      hours:
+        description: 'How long to watch at most'
+        required: false
+        type: string
+        default: '5'
+      every:
+        description: 'Seconds between reads'
+        required: false
+        type: string
+        default: '60'
+
+permissions:
+  contents: read
+
+jobs:
+  watch:
+    runs-on: ubuntu-latest
+    timeout-minutes: 345
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Watch the game
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+        run: node scripts/live-watch.mjs --league "${{ inputs.league }}" --team "${{ inputs.team }}" --hours "${{ inputs.hours }}" --every "${{ inputs.every }}"
