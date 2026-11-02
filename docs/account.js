@@ -32,7 +32,7 @@ async function loadAccount() {
     // and immediately bounces straight back to app.html.
     localStorage.removeItem(window.AUTH_TOKEN_KEY);
     localStorage.removeItem(window.AUTH_USER_KEY);
-    window.location.href = '/login.html';
+    window.location.href = 'login.html';
     return null;
   }
   if (!res.ok) throw new Error('Failed to load account');
@@ -75,7 +75,7 @@ function populateForm(data) {
 
 async function init() {
   if (!getToken()) {
-    window.location.href = '/login.html';
+    window.location.href = 'login.html';
     return;
   }
 
@@ -100,7 +100,7 @@ async function init() {
     } catch (err) {
       showMessage('email-message', 'Confirmation failed: ' + err.message, true);
     }
-    window.history.replaceState({}, document.title, '/account.html');
+    window.history.replaceState({}, document.title, 'account.html');
   }
 
   try {
@@ -280,7 +280,7 @@ document.getElementById('delete-form').addEventListener('submit', async (e) => {
     localStorage.removeItem(window.AUTH_TOKEN_KEY);
     localStorage.removeItem(window.AUTH_USER_KEY);
     alert('Your account has been deleted.');
-    window.location.href = '/login.html';
+    window.location.href = 'login.html';
   } catch (err) {
     showMessage('delete-message', 'Connection failed: ' + err.message, true);
   } finally {
@@ -307,14 +307,14 @@ document.getElementById('signout-all-btn').addEventListener('click', async () =>
   }
   localStorage.removeItem(window.AUTH_TOKEN_KEY);
   localStorage.removeItem(window.AUTH_USER_KEY);
-  window.location.href = '/login.html';
+  window.location.href = 'login.html';
 });
 
 document.getElementById('signout-btn').addEventListener('click', () => {
   if (!confirm('Are you sure you want to sign out?')) return;
   localStorage.removeItem(window.AUTH_TOKEN_KEY);
   localStorage.removeItem(window.AUTH_USER_KEY);
-  window.location.href = 'https://perpetualpicks.com/login.html';
+  window.location.href = 'login.html';
 });
 
 init();

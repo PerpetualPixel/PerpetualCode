@@ -1,0 +1,47 @@
+# Tell the PixelPicks repo that docs/ changed, so its Pages mirror at
+# https://perpetualpixel.github.io/PixelPicks/ (PixelPicks:
+# .github/workflows/mirror.yml) redeploys within a minute of the merge
+# instead of at its next half-hourly check.
+#
+# Optional. Without the secret the mirror still follows main on its own
+# schedule; this only shortens the lag. A GITHUB_TOKEN cannot dispatch to
+# another repository, so it needs a fine-grained personal access token
+# with "Contents: Read and write" on PixelPicks, stored here as
+# MIRROR_DISPATCH_TOKEN (Settings → Secrets and variables → Actions).
+#
+# Read-only against everything that costs money: no worker route, no odds
+# credit, no KV write — it is one POST to the GitHub API.
+name: Mirror dispatch
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - docs/**
+      - .github/workflows/mirror-dispatch.yml
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  dispatch:
+    runs-on: ubuntu-latest
+    timeout-minutes: 2
+    steps:
+      - name: Poke the mirror
+        env:
+          TOKEN: ${{ secrets.MIRROR_DISPATCH_TOKEN }}
+          SHA: ${{ github.sha }}
+        run: |
+          if [ -z "$TOKEN" ]; then
+            echo "::notice::MIRROR_DISPATCH_TOKEN is not set — the PixelPicks mirror will pick this up on its next scheduled check instead."
+            exit 0
+          fi
+          code=$(curl -sS -o /tmp/resp -w '%{http_code}' -X POST \
+            -H "Authorization: Bearer $TOKEN" \
+            -H "Accept: application/vnd.github+json" \
+            https://api.github.com/repos/PerpetualPixel/PixelPicks/dispatches \
+            -d "{\"event_type\":\"mirror\",\"client_payload\":{\"sha\":\"$SHA\"}}")
+          echo "dispatch -> $code"
+          if [ "$code" != "204" ]; then cat /tmp/resp; echo "::error::dispatch failed with HTTP $code"; exit 1; fi
