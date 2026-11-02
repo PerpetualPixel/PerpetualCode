@@ -9652,7 +9652,35 @@ async function loadTrendPicks({ force = false } = {}) {
   }
 }
 
-const RESULT_LABEL = { win: 'Won', loss: 'Lost', push: 'Push', void: 'No action' };
+const RESULT_LABEL = { win: 'Won', loss: 'Lost', push: 'Push', void: 'Void' };
+/** A leg's result in words: a void says why, a push says the number it landed on. */
+function legResultText(leg) {
+  if (!leg.result) return '';
+  if (leg.result === 'void') return `Void · ${leg.voidReason ?? 'did not play'}`;
+  if (leg.result === 'push') return `Push · landed on ${leg.point}`;
+  return `${RESULT_LABEL[leg.result]}${Number.isFinite(leg.actual) ? ` ${leg.actual}` : ''}`;
+}
+/** A void reason as a verb phrase after the player's name. */
+const voidPhrase = (reason) => ({ 'did not play': 'did not play', 'no box score in 36 hours': 'had no box score a day and a half on' }[reason] ?? (reason ? `voided (${reason})` : 'did not play'));
+/** Why a settled ticket returned its stake, in a sentence: every leg voided (and why), or a push (a leg on the number, or the voids left too little to pay). Empty for a win or a loss. */
+function betOutcomeWhy(bet) {
+  if (bet.result !== 'void' && bet.result !== 'push') return '';
+  const voids = bet.legs.filter((l) => l.result === 'void');
+  const pushes = bet.legs.filter((l) => l.result === 'push');
+  const reasons = [...new Set(voids.map((l) => l.voidReason ?? 'did not play'))];
+  const who = (legs) => legs.map((l) => l.playerName ?? l.selection).join(' and ');
+  if (bet.result === 'void') return `Stake returned: ${reasons.length === 1 ? `${who(voids)} ${voidPhrase(reasons[0])}` : voids.map((l) => `${l.playerName ?? l.selection} ${voidPhrase(l.voidReason)}`).join(', ')}.`;
+  const parts = [];
+  if (pushes.length) parts.push(`${who(pushes)} landed on the number`);
+  if (voids.length) parts.push(`${who(voids)} ${reasons.length === 1 ? voidPhrase(reasons[0]) : 'voided'}`);
+  const won = bet.legs.filter((l) => l.result === 'win').length;
+  return `Stake returned: ${parts.join('; ')}${won ? `, so the ${won === 1 ? 'one leg' : `${won} legs`} that won ${won === 1 ? 'does' : 'do'} not pay on ${won === 1 ? 'its' : 'their'} own` : ''}.`;
+}
+/** The pill's text for a settled ticket: the result, the units it moved, and for a void the one reason when every leg shares it. */
+function betResultText(bet) {
+  const reasons = [...new Set(bet.legs.filter((l) => l.result === 'void').map((l) => l.voidReason ?? 'did not play'))];
+  return `${RESULT_LABEL[bet.result] ?? bet.result}${Number.isFinite(bet.net) && bet.result !== 'void' && bet.result !== 'push' ? ` · ${unitsText(bet.net)}` : bet.result === 'void' && reasons.length === 1 ? ` · ${reasons[0]}` : ''}`;
+}
 /** Every ticket is one unit; the record is units and the return on the units risked, never dollars. */
 const unitsText = (u) => `${u < 0 ? '-' : '+'}${Math.abs(u).toFixed(2)}u`;
 const roiText = (roi) => (roi == null ? 'ROI n/a' : `ROI ${roi < 0 ? '' : '+'}${(roi * 100).toFixed(1)}%`);
@@ -9662,7 +9690,7 @@ const betTypeLabel = (bet) => (bet.play ? bet.play.replace(/^PrizePicks /, '') :
 
 function betResultBadge(bet) {
   if (bet.status === 'graded' || bet.status === 'void') {
-    return `<span class="pick-result is-${esc(bet.result)}">${esc(RESULT_LABEL[bet.result] ?? bet.result)}${Number.isFinite(bet.net) && bet.result !== 'void' ? ` · ${esc(unitsText(bet.net))}` : ''}</span>`;
+    return `<span class="pick-result is-${esc(bet.result)}">${esc(betResultText(bet))}</span>`;
   }
   return bet.commenceMs <= Date.now() ? '<span class="pick-result is-live">In play</span>' : '<span class="pick-result">Pending</span>';
 }
@@ -9671,7 +9699,7 @@ function renderPickLeg(leg, bet) {
   const row = { ...leg, rates: leg.rates ?? {}, periods: leg.periods ?? {}, series: leg.series ?? [] };
   const h2h = leg.periods?.h2h;
   const legResult = leg.result
-    ? `<span class="pick-leg-result is-${esc(leg.result)}">${esc(RESULT_LABEL[leg.result] ?? leg.result)}${Number.isFinite(leg.actual) ? ` · ${esc(String(leg.actual))} ${esc(leg.statLabel)}` : leg.result === 'void' && leg.voidReason ? ` · ${esc(leg.voidReason)}` : ''}</span>`
+    ? `<span class="pick-leg-result is-${esc(leg.result)}">${esc(leg.result === 'void' ? legResultText(leg) : `${RESULT_LABEL[leg.result] ?? leg.result}${Number.isFinite(leg.actual) ? ` · ${leg.actual} ${leg.statLabel}` : ''}`)}</span>`
     : '';
   const moved = (leg.moves ?? []).at(-1);
   return `<div class="pick-leg" data-pick-leg="${esc(bet.id)}|${esc(String(bet.legs.indexOf(leg)))}" tabindex="0" role="button" aria-label="${esc(leg.selection)}, see the player's numbers">
@@ -9748,6 +9776,7 @@ function renderBetCard(bet) {
       ${betResultBadge(bet)}
     </div>
     <div class="pick-legs">${bet.legs.map((leg) => renderPickLeg(leg, bet)).join('')}</div>
+    ${betOutcomeWhy(bet) ? `<p class="pick-note pick-why">${esc(betOutcomeWhy(bet))}</p>` : ''}
     ${!bet.mine && bet.legs.every((l) => !l.note) ? '<p class="pick-note">Nothing worth flagging: minutes steady, no injury listing, no blowout projected.</p>' : ''}
     ${ticketSlipFoot(bet)}
   </article>`;
@@ -9845,8 +9874,8 @@ function renderTrendPicks() {
       <div class="pick-day">
         <h3>${esc(pickDayFmt.format(new Date(`${day.date}T12:00:00`)))}</h3>
         ${day.bets.map((b) => `<div class="pick-row">
-          <span class="pick-row-sel"><b>${esc(betTypeLabel(b))}</b> at ${esc(b.book)} <small>${esc(formatAmerican(b.american))}</small><br><span class="pick-row-legs">${esc(b.legs.map((l) => `${l.selection}${l.result ? ` (${RESULT_LABEL[l.result] ?? l.result}${Number.isFinite(l.actual) ? ` ${l.actual}` : ''})` : ''}`).join(' + '))}</span></span>
-          <span class="pick-result is-${esc(b.result ?? 'pending')}">${esc(b.status === 'pending' ? (b.commenceMs <= Date.now() ? 'In play' : 'Pending') : (RESULT_LABEL[b.result] ?? b.result))}${Number.isFinite(b.net) && b.status !== 'pending' && b.result !== 'void' ? ` · ${esc(unitsText(b.net))}` : ''}</span>
+          <span class="pick-row-sel"><b>${esc(betTypeLabel(b))}</b> at ${esc(b.book)} <small>${esc(formatAmerican(b.american))}</small><br><span class="pick-row-legs">${esc(b.legs.map((l) => `${l.selection}${l.result ? ` (${legResultText(l)})` : ''}`).join(' + '))}</span>${betOutcomeWhy(b) ? `<br><span class="pick-row-why">${esc(betOutcomeWhy(b))}</span>` : ''}</span>
+          <span class="pick-result is-${esc(b.result ?? 'pending')}">${esc(b.status === 'pending' ? (b.commenceMs <= Date.now() ? 'In play' : 'Pending') : betResultText(b))}</span>
         </div>`).join('')}
       </div>`).join('') : '<p class="empty">No tickets in the last 60 days yet.</p>';
 }
