@@ -6766,7 +6766,9 @@ button, [role="tab"], .league-chip, .parlay-btn, .trend-price { touch-action: ma
 .pick-move { margin: 8px 0 0; color: #eab308; font-size: 0.82rem; font-weight: 600; line-height: 1.4; }
 .pick-leg:first-child { border-top: 0; }
 .pick-leg-price { font-family: var(--mono); font-weight: 800; color: var(--muted); align-self: center; }
-.pick-leg-result { margin-left: auto; font-size: 0.72rem; font-weight: 800; letter-spacing: 0.04em; text-transform: uppercase; color: var(--muted); white-space: nowrap; }
+.pick-leg-result { margin-left: auto; font-size: 0.72rem; font-weight: 800; letter-spacing: 0.04em; text-transform: uppercase; color: var(--muted); white-space: normal; text-align: right; flex: 0 1 auto; min-width: 0; line-height: 1.25; }
+.pick-leg .trend-head { flex-wrap: wrap; }
+.pick-leg .trend-head .trend-game { flex: 1 1 auto; }
 .pick-leg-result.is-win { color: var(--success); }
 .pick-leg-result.is-loss { color: var(--danger, #ff5c7a); }
 .pick-bet-card > .pick-note { margin: 0 16px 14px; }
