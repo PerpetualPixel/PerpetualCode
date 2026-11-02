@@ -65,6 +65,7 @@ import { sendUfcTicketNotifications, sendUfcChangeNotifications } from './notifi
 import { legBreakdown } from './parlay-builder.js';
 import { runTrendPicksDaily, runTrendPicksGrading, getTrendPicks } from './trend-picks.js';
 import { runLiveProbe, getLiveProbe } from './live-probe.js';
+import { getLiveBoard } from './live-board.js';
 import { getMyPicks } from './my-picks.js';
 
 /** The Trends build's own cron (must match wrangler.toml's second trigger exactly — Cloudflare hands the string back as written). */
@@ -1544,6 +1545,10 @@ export default {
     // The UFC side (worker/src/ufc-card.js): the cards the runner wrote, one
     // event with its bouts (the next one by default), the fighter index and
     // one fighter's profile and history.
+    // The Live tab's board (worker/src/live-board.js): the watched games, their last reads, the lines and the play.
+    if (pathname === '/live' && request.method === 'GET') {
+      return json(await getLiveBoard(env, Date.now()), { headers: { ...cors, 'Cache-Control': 'no-store' } });
+    }
     // The live-props probe's logs (worker/src/live-probe.js): read-only.
     if (pathname === '/live/probe' && request.method === 'GET') {
       const q = new URL(request.url).searchParams;

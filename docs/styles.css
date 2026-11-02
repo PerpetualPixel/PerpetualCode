@@ -7130,3 +7130,38 @@ a.trend-price:hover { background: rgba(255, 255, 255, 0.06); }
 .my-picks-note { margin: 0; padding: 14px 16px; border: 1px dashed var(--line); border-radius: 14px; color: var(--muted); line-height: 1.5; }
 .my-picks-record { font-family: var(--mono); font-size: 1.1rem; font-weight: 800; margin: 10px 0 0; }
 .my-picks-record small { font-family: var(--sans); font-size: 0.78rem; color: var(--muted); margin-left: 8px; font-weight: 600; }
+
+/* The Live tab (renderLive): the watched games, their reads and the play. */
+.live-dot { display: inline-block; width: 8px; height: 8px; border-radius: 50%; background: var(--muted); margin-right: 2px; opacity: 0.5; }
+.live-dot.is-on, .live-state.is-on .live-dot { background: #ff3b5c; opacity: 1; box-shadow: 0 0 8px rgba(255, 59, 92, 0.8); animation: livePulse 1.4s ease-in-out infinite; }
+@keyframes livePulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.35; } }
+.live-game { padding: 14px 16px; }
+.live-game.is-live { border-color: rgba(255, 59, 92, 0.45); }
+.live-head { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; }
+.live-head small { color: var(--muted); font-weight: 600; }
+.live-state { display: inline-flex; align-items: center; gap: 6px; padding: 4px 10px; border-radius: 999px; border: 1px solid var(--line); font-size: 0.78rem; font-weight: 800; text-transform: uppercase; letter-spacing: 0.05em; color: var(--muted); }
+.live-state.is-on { color: #fff; border-color: rgba(255, 59, 92, 0.6); }
+.live-score { margin-left: auto; font-family: var(--mono); font-weight: 800; }
+.live-reads { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 10px; }
+.live-read { font-size: 0.76rem; color: var(--muted); padding: 3px 9px; border-radius: 999px; border: 1px dashed var(--line); }
+.live-read.is-fresh { color: var(--success); border-style: solid; border-color: rgba(94, 224, 122, 0.5); }
+.live-books { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 10px; }
+.live-book { display: inline-flex; align-items: center; gap: 6px; font-size: 0.78rem; font-weight: 700; padding: 4px 9px; border-radius: 10px; background: var(--surface-2); border: 1px solid var(--line); }
+.live-book small { color: var(--muted); font-weight: 600; }
+.live-sub { margin: 14px 0 6px; font-weight: 800; }
+.live-sub small { color: var(--muted); font-weight: 600; margin-left: 6px; }
+.live-play { margin-top: 14px; border: 1px solid rgba(94, 224, 122, 0.5); border-radius: 14px; overflow: hidden; }
+.live-legs { padding: 4px 16px 8px; }
+.live-leg { padding: 12px 0; border-bottom: 1px solid var(--line); }
+.live-leg:last-child { border-bottom: 0; }
+.live-leg-head { display: flex; align-items: baseline; gap: 8px; flex-wrap: wrap; }
+.live-leg-head small { color: var(--muted); }
+.live-leg-line { color: var(--muted); font-weight: 700; text-transform: uppercase; font-size: 0.78rem; letter-spacing: 0.04em; }
+.live-leg-price { margin-left: auto; font-family: var(--mono); font-weight: 800; display: inline-flex; align-items: center; gap: 6px; }
+.live-bar { position: relative; height: 34px; margin: 10px 0 2px; }
+.live-bar-track { position: absolute; left: 0; right: 0; top: 14px; height: 6px; border-radius: 3px; background: var(--surface-2); border: 1px solid var(--line); }
+.live-bar-green { position: absolute; right: 0; top: 14px; height: 6px; border-radius: 3px; background: var(--success); }
+.live-bar-line { position: absolute; top: 24px; transform: translateX(-50%); font-family: var(--mono); font-size: 0.78rem; color: var(--text); }
+.live-bar-now { position: absolute; top: 4px; transform: translateX(-50%); min-width: 34px; padding: 2px 8px; border-radius: 999px; background: var(--surface); border: 2px solid var(--muted); font-family: var(--mono); font-weight: 800; font-size: 0.82rem; text-align: center; }
+.live-forming .live-leg { padding: 10px 0; }
+.live-updated { margin: 0 0 10px; }

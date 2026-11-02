@@ -36,7 +36,7 @@
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Syne:wght@600;700;800&family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
-<link rel="stylesheet" href="styles.css?v=1.261">
+<link rel="stylesheet" href="styles.css?v=1.262">
 </head>
 <body>
 
@@ -115,6 +115,9 @@
   </button>
   <button id="tabParlay" class="top-tab" role="tab" aria-selected="false" aria-controls="parlayView">
     Parlay
+  </button>
+  <button id="tabLive" class="top-tab" role="tab" aria-selected="false" aria-controls="liveView">
+    <span class="live-dot" id="liveDot" aria-hidden="true"></span>Live
   </button>
   <button id="tabUfc" class="top-tab" role="tab" aria-selected="false" aria-controls="ufcView">
     <svg class="top-tab-icon" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="M8 2.5A3.5 3.5 0 0 0 4.5 6v6.3c0 1.9 1 3.6 2.5 4.6V19a2.5 2.5 0 0 0 2.5 2.5h6A2.5 2.5 0 0 0 18 19v-2.1c1.5-1 2.5-2.7 2.5-4.6V8A3.5 3.5 0 0 0 17 4.5h-.6A3.5 3.5 0 0 0 13 2.5H8zm0 2h5c.8 0 1.5.7 1.5 1.5V7H9.5a1 1 0 0 0 0 2H17c.8 0 1.5.7 1.5 1.5v1.8c0 1.4-.8 2.6-2 3.2l-1 .5V19c0 .3-.2.5-.5.5h-6a.5.5 0 0 1-.5-.5v-3l-1-.5a3.5 3.5 0 0 1-2-3.2V6c0-.8.7-1.5 1.5-1.5z"/></svg> UFC
@@ -363,6 +366,15 @@
      each opponent tappable), card changes as they happen, and a Fighters
      search of everyone on a UFC card this year. The runner writes it
      every fifteen minutes (scripts/ufc-card.mjs); docs/app.js's renderUfc. -->
+<!-- Live: the games the runner is watching and the worker is probing, their
+     last reads, the lines on the board now, and the halftime play with where
+     each player sits against his number (worker/src/live-board.js; docs/app.js's
+     renderLive). -->
+<section id="liveView" role="tabpanel" aria-labelledby="tabLive" hidden>
+  <div id="liveStatus" class="status trends-status" role="status" aria-live="polite"></div>
+  <section id="liveBody" class="trends-body" aria-live="polite"></section>
+</section>
+
 <section id="ufcView" role="tabpanel" aria-labelledby="tabUfc" hidden>
   <div id="ufcSub" class="ufc-sub" role="group" aria-label="UFC section"></div>
   <div id="ufcCardView">
@@ -1041,6 +1053,6 @@
   </div>
 </aside>
 
-<script type="module" src="app.js?v=1.261"></script>
+<script type="module" src="app.js?v=1.262"></script>
 </body>
 </html>
