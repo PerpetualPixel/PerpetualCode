@@ -44,7 +44,7 @@ jobs:
           # The routes a push to this file reads: the open tickets' players, by team and ESPN id.
           GREP: ${{ inputs.grep }}
           PROBES: |
-            https://the-odds-api.com/sports-odds-data/betting-markets.html
+            /live/probe
         run: |
           set -uo pipefail
           ATHLETES="${ATHLETES:-3917376,4433137,4066211,3995,4066648}"
@@ -63,7 +63,22 @@ jobs:
                   console.log((re ? lines.filter((l) => re.test(l)) : lines).slice(0, 120).join("\n").slice(0, 12000));
                   return;
                 }
-                if (d && d.rows && d.player) {
+                if (d && d.probe !== undefined && d.watch !== undefined) {
+                  // The live logs (worker/src/live-probe.js): each odds snapshot with what every book posted, then the game clock a minute at a time.
+                  const pr = d.probe;
+                  if (pr) {
+                    console.log("PROBE", pr.home, "v", pr.away, "snapshots", pr.snapshots.length);
+                    for (const s of pr.snapshots) console.log(" ", new Date(s.at).toISOString().slice(11, 19), "books", s.booksPosting, s.status || "", "|", s.books.filter((b) => b.markets.length).map((b) => `${b.key}: ${b.markets.map((m) => `${m.key.replace("player_", "").replace("_alternate", "*")}=${m.players}p/${m.outcomes}`).join(" ")}`).join(" || "));
+                  } else console.log("PROBE none");
+                  const w = d.watch;
+                  if (w) {
+                    console.log("WATCH", w.name, "ticks", w.ticks.length);
+                    let last = "";
+                    for (const t of w.ticks) { const line = `${t.state} P${t.period} ${t.clock} ${t.detail} ${JSON.stringify(t.score)}`; if (line !== last) console.log(" ", new Date(t.at).toISOString().slice(11, 19), line, "box", t.box.length); last = line; }
+                    const fin = w.ticks[w.ticks.length - 1];
+                    for (const p of (fin && fin.box) || []) console.log("   ", p.team, p.name, JSON.stringify(p.stats));
+                  } else console.log("WATCH none");
+                } else if (d && d.rows && d.player) {
                   console.log("player", d.player.name, d.player.team, "stat", d.stat, "rows", d.rows.length, "undated", d.rows.filter((r) => !r.date).length);
                   for (const r of d.rows.slice(0, 8)) console.log(" ", new Date(r.date || 0).toISOString(), r.atVs, r.opponent, "value", r.value, r.seasonType);
                 } else if (d && Array.isArray(d.seasonTypes)) {
