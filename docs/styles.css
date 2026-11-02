@@ -7171,3 +7171,35 @@ a.trend-price:hover { background: rgba(255, 255, 255, 0.06); }
 .live-bar-now { position: absolute; top: 4px; transform: translateX(-50%); min-width: 34px; padding: 2px 8px; border-radius: 999px; background: var(--surface); border: 2px solid var(--muted); font-family: var(--mono); font-weight: 800; font-size: 0.82rem; text-align: center; }
 .live-forming .live-leg { padding: 10px 0; }
 .live-updated { margin: 0 0 10px; }
+
+/* The Live tab glows while a game is in play. */
+.top-tab.is-glowing { color: #fff; border-color: rgba(255, 59, 92, 0.7); box-shadow: 0 0 14px rgba(255, 59, 92, 0.45); animation: liveGlow 1.6s ease-in-out infinite; }
+@keyframes liveGlow { 0%, 100% { box-shadow: 0 0 10px rgba(255, 59, 92, 0.35); } 50% { box-shadow: 0 0 22px rgba(255, 59, 92, 0.85); } }
+@media (prefers-reduced-motion: reduce) { .top-tab.is-glowing, .live-dot.is-on { animation: none; } }
+.live-tag { font-size: 0.76rem; color: var(--muted); padding: 3px 9px; border-radius: 999px; border: 1px solid var(--line); background: var(--surface-2); }
+.live-tag.is-rough { color: #fbbf24; border-color: rgba(251, 191, 36, 0.5); }
+.live-table { width: 100%; border-collapse: collapse; font-size: 0.86rem; margin-top: 4px; }
+.live-table th { text-align: left; font-size: 0.7rem; text-transform: uppercase; letter-spacing: 0.06em; color: var(--muted); padding: 6px 6px; border-bottom: 1px solid var(--line); }
+.live-table td { padding: 7px 6px; border-bottom: 1px solid var(--line); font-family: var(--mono); font-weight: 700; white-space: nowrap; }
+.live-table td:first-child { font-family: var(--sans); white-space: normal; }
+.live-table td small { color: var(--muted); font-weight: 600; font-family: var(--sans); }
+.live-table td.is-empty { color: var(--muted); font-weight: 500; }
+.live-more { margin-top: 8px; }
+.live-watch-list { display: grid; gap: 8px; }
+.live-watch { padding: 10px 12px; border: 1px solid var(--line); border-radius: 12px; background: var(--surface-2); }
+.live-watch-head { display: flex; align-items: baseline; gap: 8px; }
+.live-watch-head small { color: var(--muted); }
+.live-watch-stat { margin-left: auto; font-size: 0.74rem; text-transform: uppercase; letter-spacing: 0.05em; color: var(--muted); font-weight: 700; }
+.live-watch-nums { display: flex; align-items: center; gap: 12px; margin-top: 6px; flex-wrap: wrap; }
+.live-watch-nums > span { display: inline-flex; flex-direction: column; }
+.live-watch-nums small { font-size: 0.68rem; text-transform: uppercase; letter-spacing: 0.05em; color: var(--muted); }
+.live-watch-nums b { font-family: var(--mono); font-size: 1.1rem; }
+.live-arrow { color: var(--muted); }
+.live-watch-line { margin-left: auto; display: inline-flex; flex-direction: row !important; align-items: center; gap: 6px; font-family: var(--mono); font-weight: 800; font-size: 0.9rem; }
+.live-watch-line.is-none { color: var(--muted); font-family: var(--sans); font-weight: 600; font-size: 0.78rem; }
+.live-play.is-best { border-color: var(--success); box-shadow: 0 0 14px rgba(94, 224, 122, 0.18); }
+.live-play + .live-play { margin-top: 10px; }
+.live-leg.is-cleared .live-leg-head strong { color: var(--success); }
+.live-bar.is-cleared .live-bar-now { border-color: var(--success); }
+.live-books-wrap { margin-top: 12px; }
+.live-books-wrap summary { cursor: pointer; color: var(--muted); font-size: 0.82rem; font-weight: 700; }

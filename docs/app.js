@@ -10780,12 +10780,14 @@ el.trendsSheet?.addEventListener('click', (event) => {
 
 
 /* ================================================================ */
-/* Live: the watched games, their reads, the lines and the play (worker/src/live-board.js) */
+/* Live: the watched games, their reads, the players, who to watch and the slips (worker/src/live-board.js) */
 /* ================================================================ */
 
-const liveState = { data: null, loading: false, timer: null };
+const liveState = { data: null, loading: false, timer: null, open: {} };
 const liveTimeFmt = new Intl.DateTimeFormat(undefined, { hour: 'numeric', minute: '2-digit', second: '2-digit' });
+const liveKickFmt = new Intl.DateTimeFormat(undefined, { weekday: 'short', hour: 'numeric', minute: '2-digit' });
 const ago = (ms) => { const s = Math.max(0, Math.round((Date.now() - ms) / 1000)); return s < 60 ? `${s}s ago` : s < 3600 ? `${Math.floor(s / 60)} min ago` : `${Math.floor(s / 3600)} h ago`; };
+const league = (k) => ({ nfl: 'NFL', nba: 'NBA' }[k] ?? String(k ?? '').toUpperCase());
 
 async function loadLive({ force = false } = {}) {
   if (!el.liveBody || !CONFIG.WORKER_URL) return;
@@ -10806,11 +10808,25 @@ async function loadLive({ force = false } = {}) {
   if (!el.liveView.hidden) liveState.timer = setTimeout(() => loadLive(), 60e3);
 }
 
+/** The tab glows while any watched game is in play; the board is re-read every two minutes to keep the glow honest. */
+async function pollLiveGlow() {
+  if (!CONFIG.WORKER_URL || !el.tabLive) return;
+  try {
+    const res = await fetch(new URL('/live', CONFIG.WORKER_URL), { headers: { Accept: 'application/json' } });
+    const d = await res.json();
+    if (el.liveView.hidden) liveState.data = d;
+    setLiveGlow((d.games ?? []).some((g) => g.tick?.state === 'in'));
+  } catch { /* the glow stays as it was */ }
+  setTimeout(pollLiveGlow, 120e3);
+}
+function setLiveGlow(on) { el.tabLive?.classList.toggle('is-glowing', on); el.liveDot?.classList.toggle('is-on', on); }
+setTimeout(pollLiveGlow, 1500);
+
 /** The DraftKings-style track: where the player is now, the number he needs, the green past it. */
 function liveBar(current, point) {
   const max = Math.max(point * 1.35, current * 1.1, 1);
   const cur = Math.min(100, (current / max) * 100); const line = Math.min(100, (point / max) * 100);
-  return `<div class="live-bar" aria-label="${esc(String(current))} now, needs ${esc(String(point))}">
+  return `<div class="live-bar ${current >= point ? 'is-cleared' : ''}" aria-label="${esc(String(current))} now, needs ${esc(String(point))}">
     <span class="live-bar-track"></span>
     <span class="live-bar-green" style="left:${line.toFixed(1)}%"></span>
     <span class="live-bar-line" style="left:${line.toFixed(1)}%"><b>${esc(String(point))}</b></span>
@@ -10819,22 +10835,53 @@ function liveBar(current, point) {
 }
 
 function liveLeg(l, { showBook = false } = {}) {
-  return `<div class="live-leg">
+  return `<div class="live-leg ${l.cleared ? 'is-cleared' : ''}">
     <div class="live-leg-head"><strong>${esc(l.player)}</strong> <small>${esc(l.team ?? '')}</small><span class="live-leg-line">${esc(String(l.point))}+ ${esc(l.label)}</span><span class="live-leg-price">${showBook ? `${bookBadge(l.bookId, l.book)} ` : ''}${esc(formatAmerican(l.price))}</span></div>
     ${liveBar(l.current, l.point)}
-    <p class="row-sub">${esc(String(l.current))} now · on pace for ${esc(String(l.pace))} · clears by ${esc(String(Math.round(l.cushion * 100)))}%</p>
+    <p class="row-sub">${l.cleared ? 'Cleared' : `${esc(String(l.current))} now · projected ${esc(String(l.pace))} · clears by ${esc(String(Math.round(l.cushion * 100)))}%`}${l.link ? ` · <a href="${esc(l.link)}" target="_blank" rel="noopener">add this leg ↗</a>` : ''}</p>
+  </div>`;
+}
+
+const statCell = (v) => (v == null ? '<td class="is-empty">–</td>' : `<td>${esc(String(v))}</td>`);
+function livePlayersTable(g) {
+  const rows = (g.players ?? []).slice(0, liveState.open[`players:${g.espnEventId}`] ? 40 : 10);
+  if (!rows.length) return '';
+  const nfl = g.league === 'nfl';
+  return `<table class="live-table"><thead><tr><th>Player</th>${nfl ? '<th>Pass</th><th>Rush</th><th>Rec</th><th>Rec Yds</th>' : '<th>Pts</th><th>Reb</th><th>Ast</th>'}</tr></thead><tbody>
+    ${rows.map((p) => `<tr><td><strong>${esc(p.name)}</strong> <small>${esc(p.team ?? '')}</small></td>${nfl
+      ? `${statCell(p.passingYards != null ? `${p.passingYards}${p.passing ? ` <small>${esc(p.passing)}</small>` : ''}` : null).replace(/&lt;small&gt;|&lt;\/small&gt;/g, (m) => m === '&lt;small&gt;' ? '<small>' : '</small>')}${statCell(p.rushingYards != null ? `${p.rushingYards}${p.carries != null ? ` <small>${p.carries} car</small>` : ''}` : null).replace(/&lt;small&gt;|&lt;\/small&gt;/g, (m) => m === '&lt;small&gt;' ? '<small>' : '</small>')}${statCell(p.receptions != null ? `${p.receptions}${p.targets != null ? ` <small>of ${p.targets}</small>` : ''}` : null).replace(/&lt;small&gt;|&lt;\/small&gt;/g, (m) => m === '&lt;small&gt;' ? '<small>' : '</small>')}${statCell(p.receivingYards)}`
+      : `${statCell(p.points)}${statCell(p.rebounds)}${statCell(p.assists)}`}</tr>`).join('')}
+  </tbody></table>${(g.players ?? []).length > 10 ? `<button type="button" class="parlay-btn live-more" data-live-more="players:${esc(g.espnEventId)}">${liveState.open[`players:${g.espnEventId}`] ? 'Fewer players' : `All ${g.players.length} players`}</button>` : ''}`;
+}
+
+function liveWatchRow(w) {
+  return `<div class="live-watch">
+    <div class="live-watch-head"><strong>${esc(w.player)}</strong> <small>${esc(w.team ?? '')}</small><span class="live-watch-stat">${esc(w.label)}</span></div>
+    <div class="live-watch-nums"><span><small>now</small><b>${esc(String(w.current))}</b></span><span class="live-arrow">→</span><span><small>projected</small><b>${esc(String(w.projected))}</b></span>${w.line ? `<span class="live-watch-line">${bookBadge(w.line.bookId, w.line.book)} ${esc(String(w.line.point))}+ ${esc(formatAmerican(w.line.price))}${w.line.link ? ` <a href="${esc(w.line.link)}" target="_blank" rel="noopener">add ↗</a>` : ''}</span>` : '<span class="live-watch-line is-none">no line clears yet</span>'}</div>
+    ${w.why ? `<p class="row-sub">${esc(w.why)}</p>` : ''}
+  </div>`;
+}
+
+function liveSlip(s, i) {
+  const all = combinedSlipLink(s.bookId, s.legs.map((l) => l.link));
+  const bookUrl = SPORTSBOOKS[s.bookId]?.url ?? null;
+  const done = s.legs.filter((l) => l.cleared).length;
+  return `<div class="live-play ${i === 0 ? 'is-best' : ''}">
+    <div class="pick-bet-head"><span class="pick-bet-type">${i === 0 ? 'Best slip' : 'Slip'} · ${s.legs.length} legs</span><span class="pick-bet-book">${bookBadge(s.bookId, s.book)}${esc(s.book)}</span><span class="pick-bet-price">${esc(formatAmerican(s.american))}</span>${done ? `<span class="pick-result is-win">${done} of ${s.legs.length} cleared</span>` : ''}</div>
+    <div class="live-legs">${s.legs.map((l) => liveLeg(l)).join('')}</div>
+    <div class="pick-bet-foot">${all ? `<a class="pick-bet-link" href="${esc(all)}" target="_blank" rel="noopener">Add all ${s.legs.length} legs to your ${esc(s.book)} slip ↗</a>` : bookUrl ? `<a class="pick-bet-link" href="${esc(bookUrl)}" target="_blank" rel="noopener">Open ${esc(s.book)} (legs one at a time above)</a>` : ''}</div>
   </div>`;
 }
 
 function renderLiveGame(g) {
   const t = g.tick;
-  const state = !t ? 'No read yet' : t.state === 'pre' ? 'Pre-game' : t.state === 'post' ? 'Final' : g.halftime ? 'Halftime' : `Q${esc(String(t.period ?? ''))} ${esc(t.clock ?? '')}`;
   const live = t?.state === 'in';
+  const state = !t ? 'No read yet' : t.state === 'pre' ? `Kicks off ${esc(liveKickFmt.format(new Date(g.date)))}` : t.state === 'post' ? 'Final' : g.halftime ? 'Halftime' : `Q${esc(String(t.period ?? ''))} ${esc(t.clock ?? '')}`;
   const score = t?.score ? Object.entries(t.score).map(([k, v]) => `${esc(k)} ${esc(String(v))}`).join(' · ') : '';
   const books = g.probe?.books?.filter((b) => b.markets.length) ?? [];
-  const play = g.play;
-  const all = play ? combinedSlipLink(play.bookId, play.legs.map((l) => l.link)) : null;
-  const bookUrl = play ? (SPORTSBOOKS[play.bookId]?.url ?? null) : null;
+  const script = g.script?.leader ? `<span class="live-tag">${esc(g.script.leader)} up ${esc(String(g.script.margin))}: run game favoured, passing faded</span>` : '';
+  const weather = g.weather ? `<span class="live-tag ${g.weather.rough ? 'is-rough' : ''}">${esc(g.weather.rough ? 'Rough weather: passing faded' : 'Weather fine')}${g.weather.windSpeed ? ` · wind ${esc(String(g.weather.windSpeed))}` : ''}${g.weather.precipChance != null ? ` · rain ${esc(String(g.weather.precipChance))}%` : ''}</span>` : '';
+  const slips = g.slips?.list ?? [];
   return `<article class="trend-card live-game ${live ? 'is-live' : ''}">
     <div class="live-head">
       <div><strong>${esc(g.name)}</strong><br><small>${esc(league(g.league))}</small></div>
@@ -10842,27 +10889,28 @@ function renderLiveGame(g) {
       <span class="live-score">${score}</span>
     </div>
     <div class="live-reads">
-      <span class="live-read ${t && Date.now() - t.at < 3 * 60e3 ? 'is-fresh' : ''}">Box score ${t ? `read ${esc(ago(t.at))}` : 'not read yet'}</span>
-      <span class="live-read ${g.probe && Date.now() - g.probe.at < 10 * 60e3 ? 'is-fresh' : ''}">Odds ${g.probe ? `read ${esc(ago(g.probe.at))} · ${esc(String(g.probe.snapshots))} snapshot${g.probe.snapshots === 1 ? '' : 's'}` : 'not read yet (the probe reads on every tick in its window)'}</span>
+      <span class="live-read ${t && Date.now() - t.at < 3 * 60e3 ? 'is-fresh' : ''}">Box score ${t ? `${esc(ago(t.at))}` : 'not read yet'}</span>
+      <span class="live-read ${g.probe && Date.now() - g.probe.at < 10 * 60e3 ? 'is-fresh' : ''}">Odds ${g.probe ? `${esc(ago(g.probe.at))} · ${books.length} book${books.length === 1 ? '' : 's'} posting` : 'not read yet'}</span>
+      ${script}${weather}
     </div>
-    ${books.length ? `<div class="live-books">${books.map((b) => `<span class="live-book">${bookBadge(b.bookId, b.key)}${esc(SPORTSBOOKS[b.bookId]?.name ?? b.key)} <small>${b.markets.map((m) => `${esc(m.key.replace('player_', '').replace('_alternate', ' alt').replace(/_/g, ' '))} ${esc(String(m.players))}p`).join(' · ')}</small></span>`).join('')}</div>` : g.probe ? '<p class="row-sub">No book is posting player props right now.</p>' : ''}
-    ${play ? `<div class="live-play">
-      <div class="pick-bet-head"><span class="pick-bet-type">Play ready · ${play.legs.length} legs</span><span class="pick-bet-book">${bookBadge(play.bookId, play.book)}${esc(play.book)}</span><span class="pick-bet-price">${esc(formatAmerican(play.american))}</span><span class="pick-result is-live">Halftime</span></div>
-      <div class="live-legs">${play.legs.map((l) => liveLeg(l)).join('')}</div>
-      <div class="pick-bet-foot">${all ? `<a class="pick-bet-link" href="${esc(all)}" target="_blank" rel="noopener">Add all ${play.legs.length} legs to your ${esc(play.book)} slip ↗</a>` : bookUrl ? `<a class="pick-bet-link" href="${esc(bookUrl)}" target="_blank" rel="noopener">Open ${esc(play.book)}</a>` : ''}</div>
-      <p class="row-sub">Shown, not tracked: a first cut that works the ladders against the box score and the pace; the model's read and the ledger come next.</p>
-    </div>` : g.candidates?.length ? `<div class="live-forming"><p class="live-sub">Lines forming <small>the play is built at the half from these</small></p>${g.candidates.slice(0, 6).map((l) => liveLeg(l, { showBook: true })).join('')}</div>`
-      : live ? '<p class="row-sub">Nothing on the board clears the pace yet. The play is built at the half.</p>' : ''}
+    ${g.players?.length ? `<p class="live-sub">Box score <small>as of ${t ? esc(liveTimeFmt.format(new Date(t.at))) : ''}</small></p>${livePlayersTable(g)}` : live ? '<p class="row-sub">No box lines yet.</p>' : ''}
+    ${g.watch?.length ? `<p class="live-sub">Who to watch <small>projected to the whistle from pace, the score and the weather</small></p><div class="live-watch-list">${g.watch.map(liveWatchRow).join('')}</div>` : ''}
+    ${slips.length ? `<p class="live-sub">Slips <small>built at the half${g.slips.builtAt ? `, ${esc(liveTimeFmt.format(new Date(g.slips.builtAt)))}` : ''}; the lines stand, the numbers move</small></p>${slips.map(liveSlip).join('')}<p class="row-sub">Shown, not tracked: a first cut that works the ladders against the box score and the pace; the model's read and the ledger come next.</p>`
+      : live && !g.halftime ? '<p class="row-sub">The slips are built at the half, one at every book that prices one.</p>' : g.halftime ? '<p class="row-sub">Halftime: nothing on the board clears the pace with margin at a usable price.</p>' : ''}
+    ${books.length ? `<details class="live-books-wrap"><summary>Books posting player props now</summary><div class="live-books">${books.map((b) => `<span class="live-book">${bookBadge(b.bookId, b.key)}${esc(SPORTSBOOKS[b.bookId]?.name ?? b.key)} <small>${b.markets.map((m) => `${esc(m.key.replace('player_', '').replace('_alternate', ' alt').replace(/_/g, ' '))} ${esc(String(m.players))}p`).join(' · ')}</small></span>`).join('')}</div></details>` : ''}
   </article>`;
 }
-const league = (k) => ({ nfl: 'NFL', nba: 'NBA' }[k] ?? String(k ?? '').toUpperCase());
 
 function renderLive() {
   if (!el.liveBody) return;
   const d = liveState.data;
   const games = d?.games ?? [];
-  const anyLive = games.some((g) => g.tick?.state === 'in');
-  if (el.liveDot) el.liveDot.classList.toggle('is-on', anyLive);
-  if (!games.length) { el.liveBody.innerHTML = '<p class="empty">No game is being watched right now. The watcher starts before each slate it is set for; tonight it was Eagles at Commanders.</p>'; return; }
+  setLiveGlow(games.some((g) => g.tick?.state === 'in'));
+  if (!games.length) { el.liveBody.innerHTML = '<p class="empty">No game is being watched right now. The watcher starts before each game it is set for.</p>'; return; }
   el.liveBody.innerHTML = `<p class="row-sub live-updated">Board read ${esc(liveTimeFmt.format(new Date(d.at)))} · re-reads every minute while open</p>${games.map(renderLiveGame).join('')}`;
 }
+
+el.liveView?.addEventListener('click', (event) => {
+  const more = event.target.closest('[data-live-more]');
+  if (more) { const k = more.dataset.liveMore; liveState.open[k] = !liveState.open[k]; renderLive(); }
+});
