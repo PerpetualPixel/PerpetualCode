@@ -46,7 +46,7 @@ export async function weeklyTicketSummary(env, now = Date.now()) {
     const mine = bets.filter((b) => b.sportKey === key);
     if (mine.length) sections.push([label, tally(mine)]);
   }
-  const lines = data.history.flatMap((d) => (d.bets ?? []).filter((b) => b.status === 'graded' || b.status === 'void').map((b) => ({ date: d.date, play: b.play ? b.play : b.type === 'parlay' ? `${b.legs.length}-leg parlay` : 'Straight', book: b.book, american: b.american, result: b.result, net: b.net ?? 0, legs: b.legs.map((l) => l.selection).join(' + ') })));
+  const lines = data.history.flatMap((d) => (d.bets ?? []).filter((b) => b.status === 'graded' || b.status === 'void').map((b) => ({ date: d.date, play: b.play ? b.play : b.type === 'parlay' ? `${b.legs.length}-leg parlay` : 'Straight', book: b.book, american: b.american, result: b.result, net: b.net ?? 0, legs: b.legs.map((l) => `${l.selection}${l.result === 'void' ? ` (void: ${l.voidReason ?? 'did not play'})` : l.result === 'push' ? ' (push)' : ''}`).join(' + ') })));
   return { sections, lines, settled: bets.length };
 }
 
@@ -59,9 +59,9 @@ export async function sendWeeklyTrackingReport(env, now = Date.now(), { deps = {
   const day = (d) => new Intl.DateTimeFormat('en-US', { weekday: 'short', month: 'short', day: 'numeric', timeZone: 'America/New_York' }).format(Date.parse(`${d}T12:00:00Z`));
   const rowsHtml = sections.map(([label, r]) => summaryRowHtml(label, r)).join('');
   const rowsText = sections.map(([label, r]) => summaryRowText(label, r)).join('\n');
-  const result = { win: 'Won', loss: 'Lost', push: 'Push', void: 'No action' };
-  const linesHtml = lines.map((l) => `<li style="margin: 0 0 6px;"><span style="color:#7070aa;">${day(l.date)}</span> ${l.play} at ${l.book} ${fmt(l.american)}: ${l.legs} <span style="color:${l.net >= 0 ? '#4ade80' : '#ff6b6b'};">${result[l.result] ?? l.result}${l.result === 'void' ? '' : ` ${units(l.net)}u`}</span></li>`).join('');
-  const linesText = lines.map((l) => `${day(l.date)}: ${l.play} at ${l.book} ${fmt(l.american)}, ${l.legs}: ${result[l.result] ?? l.result}${l.result === 'void' ? '' : ` ${units(l.net)}u`}`).join('\n');
+  const result = { win: 'Won', loss: 'Lost', push: 'Push, stake returned', void: 'Void, stake returned' };
+  const linesHtml = lines.map((l) => `<li style="margin: 0 0 6px;"><span style="color:#7070aa;">${day(l.date)}</span> ${l.play} at ${l.book} ${fmt(l.american)}: ${l.legs} <span style="color:${l.net >= 0 ? '#4ade80' : '#ff6b6b'};">${result[l.result] ?? l.result}${l.result === 'void' || l.result === 'push' ? '' : ` ${units(l.net)}u`}</span></li>`).join('');
+  const linesText = lines.map((l) => `${day(l.date)}: ${l.play} at ${l.book} ${fmt(l.american)}, ${l.legs}: ${result[l.result] ?? l.result}${l.result === 'void' || l.result === 'push' ? '' : ` ${units(l.net)}u`}`).join('\n');
 
   const buildHtml = (username) => `
     <div style="font-family: Arial, sans-serif; background: #05050A; color: #e0e0ff; padding: 20px;">

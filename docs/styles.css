@@ -6775,6 +6775,8 @@ button, [role="tab"], .league-chip, .parlay-btn, .trend-price { touch-action: ma
 .pick-bet-link:hover { filter: brightness(1.08); }
 .pick-result.is-push, .pick-result.is-void { color: var(--muted); }
 .pick-row-legs { color: var(--muted); font-size: 0.82rem; }
+.pick-row-why { color: var(--text); font-size: 0.8rem; opacity: 0.85; }
+.pick-bet-card > .pick-why { color: var(--text); }
 .trend-picks-record { margin-bottom: 8px; }
 /* The running total by day: an SVG line with a dot per day and a tooltip for the day under the pointer. */
 .pick-graph { margin-bottom: 20px; }
