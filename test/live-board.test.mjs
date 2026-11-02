@@ -78,3 +78,31 @@ test('the projection follows pace, script and weather; who to watch lists the bi
   const again = await ensureLivePlays(env, { id: 'g', name: 'A at B' }, { bookmakers: [] }, t, { now: 10 });
   assert.equal(again.builtAt, 9, 'the first slip stands');
 });
+
+test('later slips are built without the best slip\'s players when the ladders allow, and a player on more than one slip is counted on his legs', async () => {
+  const { buildLiveSlips } = await import('../worker/src/live-board.js');
+  const t = tick({ score: { PHI: 14, WSH: 10 } });
+  // FanDuel prices the same three players as DraftKings plus two of its own: its slip should leave the shared ones alone.
+  const fd = (player, pts, prices) => ladder(player, pts, prices);
+  const extra = [...fd('Deebo Samuel', [49.5, 59.5], [-220, -130]), ...fd('Zach Ertz', [34.5, 44.5], [-260, -120]), ...fd('Dallas Goedert', [39.5, 49.5], [-270, -125])];
+  const dk = payload.bookmakers.find((b) => b.key === 'draftkings');
+  const wide = { bookmakers: [{ ...dk, markets: dk.markets.map((m) => (m.key === 'player_reception_yds_alternate' ? { ...m, outcomes: [...m.outcomes, ...extra] } : m)) }, { key: 'fanduel', markets: [
+    { key: 'player_rush_yds_alternate', outcomes: [...fd('Saquon Barkley', [79.5, 89.5], [-230, -125]), ...fd('Jacory Croskey-Merritt', [49.5, 59.5], [-200, -110])] },
+    { key: 'player_reception_yds_alternate', outcomes: [...fd('Terry McLaurin', [69.5, 79.5], [-280, -150]), ...extra] },
+    { key: 'player_pass_yds_alternate', outcomes: fd('Jalen Hurts', [199.5, 224.5], [-250, -130]) },
+  ] }] };
+  const box = [...t.box, { id: '5', name: 'Deebo Samuel', team: 'WSH', stats: { receptions: '3', receivingYards: '48' } }, { id: '6', name: 'Zach Ertz', team: 'WSH', stats: { receptions: '3', receivingYards: '26' } }, { id: '7', name: 'Dallas Goedert', team: 'PHI', stats: { receptions: '4', receivingYards: '31' } }];
+  const c = liveCandidates(wide, { ...t, box });
+  const slips = buildLiveSlips(c);
+  assert.equal(slips.length, 2);
+  const core = new Set(slips[0].legs.map((l) => l.player));
+  const second = slips[1];
+  assert.equal(second.legs.some((l) => core.has(l.player)), false, 'no player on both slips, rebuilt away from the first when they clashed');
+  assert.ok(slips.every((s) => s.legs.every((l) => l.onSlips === 1)) && slips.every((s) => s.shared.length === 0));
+  // With no other players to turn to, the second slip keeps its legs and the shared players are counted.
+  const narrow = buildLiveSlips(liveCandidates(payload, t));
+  assert.equal(narrow.length, 1, 'FanDuel prices one player here: no slip');
+  const dup = buildLiveSlips([...liveCandidates(payload, t), ...liveCandidates(payload, t).filter((x) => x.bookId === 'draftkings').map((x) => ({ ...x, bookId: 'betmgm', book: 'BetMGM' }))]);
+  assert.equal(dup.length, 2);
+  assert.ok(dup[1].legs.some((l) => l.onSlips === 2) && dup[1].shared.length > 0, 'the same ladders at two books: the players are shared and say so');
+});

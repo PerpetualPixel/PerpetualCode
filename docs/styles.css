@@ -7205,3 +7205,34 @@ a.trend-price:hover { background: rgba(255, 255, 255, 0.06); }
 .live-bar.is-cleared .live-bar-now { border-color: var(--success); }
 .live-books-wrap { margin-top: 12px; }
 .live-books-wrap summary { cursor: pointer; color: var(--muted); font-size: 0.82rem; font-weight: 700; }
+
+/* Condensed Live cards: tighter rows, no dead space. */
+.live-game { padding: 10px 12px; }
+.live-head { gap: 8px; }
+.live-reads { gap: 6px; margin-top: 6px; }
+.live-read, .live-tag { padding: 2px 8px; font-size: 0.72rem; }
+.live-sub { margin: 10px 0 4px; font-size: 0.92rem; }
+.live-table th { padding: 4px 5px; }
+.live-table td { padding: 5px 5px; font-size: 0.84rem; }
+.live-watch-list { gap: 6px; }
+.live-watch { padding: 7px 10px; }
+.live-watch-nums { margin-top: 3px; gap: 10px; }
+.live-watch-nums b { font-size: 1rem; }
+.live-watch .row-sub { margin: 2px 0 0; font-size: 0.76rem; }
+.live-play .pick-bet-head { padding: 8px 12px; gap: 6px 10px; font-size: 0.82rem; }
+.live-legs { padding: 0 12px 2px; }
+.live-leg { padding: 8px 0; }
+.live-leg-head { gap: 6px; }
+.live-bar { height: 28px; margin: 6px 0 0; }
+.live-bar-track, .live-bar-green { top: 11px; height: 5px; }
+.live-bar-line { top: 18px; font-size: 0.74rem; }
+.live-bar-now { top: 1px; font-size: 0.78rem; padding: 1px 7px; min-width: 30px; }
+.live-leg-sub { margin: 2px 0 0; font-size: 0.76rem; color: var(--muted); }
+.live-play .pick-bet-foot { padding: 6px 12px 10px; }
+.live-play .pick-bet-link { padding: 9px 12px; }
+.live-shared { font-size: 0.7rem; font-weight: 800; padding: 2px 7px; border-radius: 999px; background: rgba(251, 191, 36, 0.14); border: 1px solid rgba(251, 191, 36, 0.5); color: #fbbf24; }
+.live-top { display: flex; align-items: center; justify-content: space-between; gap: 10px; flex-wrap: wrap; margin-bottom: 8px; }
+.live-top .row-sub { margin: 0; }
+.live-count { font-weight: 800; padding: 5px 12px; border-radius: 999px; border: 1px solid var(--line); background: var(--surface-2); color: var(--muted); }
+.live-count.is-on { color: #06120a; background: var(--success); border-color: var(--success); }
+.live-books-wrap { margin-top: 8px; }

@@ -10836,9 +10836,9 @@ function liveBar(current, point) {
 
 function liveLeg(l, { showBook = false } = {}) {
   return `<div class="live-leg ${l.cleared ? 'is-cleared' : ''}">
-    <div class="live-leg-head"><strong>${esc(l.player)}</strong> <small>${esc(l.team ?? '')}</small><span class="live-leg-line">${esc(String(l.point))}+ ${esc(l.label)}</span><span class="live-leg-price">${showBook ? `${bookBadge(l.bookId, l.book)} ` : ''}${esc(formatAmerican(l.price))}</span></div>
+    <div class="live-leg-head"><strong>${esc(l.player)}</strong> <small>${esc(l.team ?? '')}</small>${l.onSlips > 1 ? `<span class="live-shared" title="This player rides on more than one slip">on ${esc(String(l.onSlips))} slips</span>` : ''}<span class="live-leg-line">${esc(String(l.point))}+ ${esc(l.label)}</span><span class="live-leg-price">${showBook ? `${bookBadge(l.bookId, l.book)} ` : ''}${esc(formatAmerican(l.price))}</span></div>
     ${liveBar(l.current, l.point)}
-    <p class="row-sub">${l.cleared ? 'Cleared' : `${esc(String(l.current))} now · projected ${esc(String(l.pace))} · clears by ${esc(String(Math.round(l.cushion * 100)))}%`}${l.link ? ` · <a href="${esc(l.link)}" target="_blank" rel="noopener">add this leg ↗</a>` : ''}</p>
+    <p class="live-leg-sub">${l.cleared ? 'Cleared' : `${esc(String(l.current))} now · proj ${esc(String(l.pace))} · +${esc(String(Math.round(l.cushion * 100)))}%`}${l.link ? ` · <a href="${esc(l.link)}" target="_blank" rel="noopener">add ↗</a>` : ''}</p>
   </div>`;
 }
 
@@ -10866,8 +10866,9 @@ function liveSlip(s, i) {
   const all = combinedSlipLink(s.bookId, s.legs.map((l) => l.link));
   const bookUrl = SPORTSBOOKS[s.bookId]?.url ?? null;
   const done = s.legs.filter((l) => l.cleared).length;
+  const shared = (s.shared ?? []).length;
   return `<div class="live-play ${i === 0 ? 'is-best' : ''}">
-    <div class="pick-bet-head"><span class="pick-bet-type">${i === 0 ? 'Best slip' : 'Slip'} · ${s.legs.length} legs</span><span class="pick-bet-book">${bookBadge(s.bookId, s.book)}${esc(s.book)}</span><span class="pick-bet-price">${esc(formatAmerican(s.american))}</span>${done ? `<span class="pick-result is-win">${done} of ${s.legs.length} cleared</span>` : ''}</div>
+    <div class="pick-bet-head"><span class="pick-bet-type">${i === 0 ? 'Best slip' : s.diversified ? 'Slip · different players' : 'Slip'} · ${s.legs.length} legs</span><span class="pick-bet-book">${bookBadge(s.bookId, s.book)}${esc(s.book)}</span><span class="pick-bet-price">${esc(formatAmerican(s.american))}</span>${done ? `<span class="pick-result is-win">${done} of ${s.legs.length} cleared</span>` : ''}${shared ? `<span class="live-shared" title="${esc(s.shared.join(', '))}">${shared === s.legs.length ? 'same players as another slip' : `${shared} shared with another slip`}</span>` : ''}</div>
     <div class="live-legs">${s.legs.map((l) => liveLeg(l)).join('')}</div>
     <div class="pick-bet-foot">${all ? `<a class="pick-bet-link" href="${esc(all)}" target="_blank" rel="noopener">Add all ${s.legs.length} legs to your ${esc(s.book)} slip ↗</a>` : bookUrl ? `<a class="pick-bet-link" href="${esc(bookUrl)}" target="_blank" rel="noopener">Open ${esc(s.book)} (legs one at a time above)</a>` : ''}</div>
   </div>`;
@@ -10907,7 +10908,9 @@ function renderLive() {
   const games = d?.games ?? [];
   setLiveGlow(games.some((g) => g.tick?.state === 'in'));
   if (!games.length) { el.liveBody.innerHTML = '<p class="empty">No game is being watched right now. The watcher starts before each game it is set for.</p>'; return; }
-  el.liveBody.innerHTML = `<p class="row-sub live-updated">Board read ${esc(liveTimeFmt.format(new Date(d.at)))} · re-reads every minute while open</p>${games.map(renderLiveGame).join('')}`;
+  const slips = games.reduce((n, g) => n + (g.slips?.list?.length ?? 0), 0);
+  const inPlay = games.filter((g) => g.tick?.state === 'in').length;
+  el.liveBody.innerHTML = `<div class="live-top"><span class="live-count ${slips ? 'is-on' : ''}">${slips ? `${slips} live slip${slips === 1 ? '' : 's'} ready` : inPlay ? 'No live slip yet: built at the half' : 'No live slip'}</span><span class="row-sub">Board read ${esc(liveTimeFmt.format(new Date(d.at)))} · re-reads every minute while open</span></div>${games.map(renderLiveGame).join('')}`;
 }
 
 el.liveView?.addEventListener('click', (event) => {

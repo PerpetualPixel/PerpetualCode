@@ -197,10 +197,27 @@ export function buildLivePlay(candidates, { legs = [3, 4, 5], books = null } = {
   return best;
 }
 
-/** A play at every book that can make one, best first. */
+/**
+ * A play at every book that can make one, best first, with no single
+ * point of failure: each later slip is built again without the best
+ * slip's players when the book's ladders allow it, so one player's bad
+ * half does not sink every slip. A player still on more than one slip
+ * is counted on each leg (onSlips) so the card can say so.
+ */
 export function buildLiveSlips(candidates) {
   const books = [...new Set(candidates.map((c) => c.bookId))];
-  return books.map((b) => buildLivePlay(candidates, { books: [b] })).filter(Boolean).sort((x, y) => x.score - y.score);
+  const slips = books.map((b) => buildLivePlay(candidates, { books: [b] })).filter(Boolean).sort((x, y) => x.score - y.score);
+  if (!slips.length) return [];
+  const core = new Set(slips[0].legs.map((l) => l.player));
+  const out = [slips[0]];
+  for (const s of slips.slice(1)) {
+    const shares = s.legs.some((l) => core.has(l.player));
+    const alt = shares ? buildLivePlay(candidates.filter((c) => !core.has(c.player)), { books: [s.bookId] }) : null;
+    out.push(alt ? { ...alt, diversified: true } : s);
+  }
+  const counts = new Map();
+  for (const s of out) for (const l of s.legs) counts.set(l.player, (counts.get(l.player) ?? 0) + 1);
+  return out.map((s) => ({ ...s, legs: s.legs.map((l) => ({ ...l, onSlips: counts.get(l.player) ?? 1 })), shared: s.legs.filter((l) => (counts.get(l.player) ?? 1) > 1).map((l) => l.player) }));
 }
 
 /** The stored plays' legs with the players' current numbers brought up to the tick. */
