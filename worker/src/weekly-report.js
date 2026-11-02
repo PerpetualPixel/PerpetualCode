@@ -27,7 +27,7 @@ const units = (u) => `${u < 0 ? '' : '+'}${u.toFixed(2)}`;
 const recordOf = (r) => `${r.wins}-${r.losses}${r.pushes ? `-${r.pushes}` : ''}${r.voids ? ` (${r.voids} void)` : ''}`;
 
 function summaryRowHtml(label, r) {
-  const color = r.dollars >= 0 ? '#4ade80' : '#ff6b6b';
+  const color = (r.units ?? 0) >= 0 ? '#4ade80' : '#ff6b6b';
   return `<tr>
     <td style="padding:8px 12px; border-bottom:1px solid rgba(217,70,239,0.15);">${label}</td>
     <td style="padding:8px 12px; border-bottom:1px solid rgba(217,70,239,0.15);">${recordOf(r)}</td>

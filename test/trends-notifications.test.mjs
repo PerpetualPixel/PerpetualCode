@@ -59,6 +59,7 @@ test('the weekly report tallies the week\'s settled tickets overall and per leag
   assert.match(sent[0].html, /All tickets/);
   assert.match(sent[0].html, /1-0/);
   assert.match(sent[0].html, /\+0\.96 u &middot; ROI \+96\.0%/);
+  assert.match(sent[0].html, /color:#4ade80;">\+0\.96 u/, 'a week in the black reads green');
   assert.match(sent[0].text, /Won \+0\.96u/);
   const empty = makeEnv();
   await sendWeeklyTrackingReport(empty.env, later, { deps: { users } });
