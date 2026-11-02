@@ -605,10 +605,12 @@ body {
   .top-tabs-gap { margin: 6px 2px; }
 }
 /* From tablet up the tabs hug their labels and sit together at the left,
-   rather than each taking a third of a 1280px shell. */
+   rather than each taking a third of a 1280px shell; Player search and its
+   divider go to the far right on their own. */
 @media (min-width: 620px) {
   .top-tabs { gap: 4px; }
   .top-tab { flex: none; padding: 12px 22px; }
+  .top-tabs-gap:last-of-type { margin-left: auto; }
 }
 
 /* A new day's Play of the Day / Pixel's Picks the user hasn't opened that
