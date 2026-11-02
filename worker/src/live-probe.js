@@ -1,39 +1,44 @@
 /**
- * The live-props probe (2026-11-01 direction: "let's try this out on the
- * Eagles / Commanders game tonight"). Before a halftime parlay can be
- * built, the gating question is which books post which player-prop
- * ladders in play, and when they come back after the half. So, for one
- * game inside one window, every cron tick takes a snapshot of the feed's
- * in-play player props for that game and keeps it under KV, and the
- * runner's live-watch job (scripts/live-watch.mjs) logs the clock, the
- * score and the box score every minute beside it. /live/probe reads both.
+ * The live-props probe. For every game the runner is watching
+ * (scripts/live-watch.mjs writes live:watch:index), inside that game's
+ * window (forty minutes before kick-off to five hours after), every cron
+ * tick takes one snapshot of the feed's in-play player props for the game
+ * and keeps it under KV, whole for the Live board's ladders and summarised
+ * for the record of who posted what and when. At the half the tick also
+ * builds the game's plays (worker/src/live-board.js's ensureLivePlays), so
+ * a slip is ready whether or not anyone has the tab open.
  *
- * Credits: one call per tick with LIVE_MARKETS markets (one credit a
- * market), about eight ticks an hour across the two crons: on the order
- * of 300 credits for a game, out of a monthly budget near 100,000.
+ * Credits: one call per game per tick with LIVE_MARKETS markets (one
+ * credit a market), about eight ticks an hour across the two crons: on
+ * the order of 300 credits for a game, out of a monthly budget near
+ * 100,000.
  */
 import { UPSTREAM, TREND_BOOKMAKERS } from './odds.js';
 import { listLeagueGames } from './prop-legs.js';
+import { ensureLivePlays } from './live-board.js';
 
-/** The one game and window the probe watches. Teams as the feed names them. */
-export const LIVE_PROBE = {
-  sportKey: 'americanfootball_nfl',
-  teams: ['Philadelphia Eagles', 'Washington Commanders'],
-  from: Date.UTC(2026, 10, 2, 0, 45),   // 7:45 PM ET, Nov 1: the pre-game board
-  until: Date.UTC(2026, 10, 2, 5, 30),  // past the final whistle
+/** The alt ladders the halftime parlay would use, and the main lines beside them, per league. */
+export const LIVE_MARKETS = {
+  nfl: 'player_pass_yds_alternate,player_rush_yds_alternate,player_reception_yds_alternate,player_receptions_alternate,player_pass_yds,player_rush_yds,player_reception_yds,player_receptions',
+  nba: 'player_points_alternate,player_rebounds_alternate,player_assists_alternate,player_points,player_rebounds,player_assists',
 };
-/** The alt ladders the halftime parlay would use, and the main lines beside them. */
-export const LIVE_MARKETS = 'player_pass_yds_alternate,player_rush_yds_alternate,player_reception_yds_alternate,player_receptions_alternate,player_pass_yds,player_rush_yds,player_reception_yds,player_receptions';
+export const LIVE_SPORT = { nfl: 'americanfootball_nfl', nba: 'basketball_nba' };
 export const liveProbeKey = (eventId) => `live:probe:${eventId}`;
 /** The latest raw props payload for the game, whole, for the Live board's ladders (worker/src/live-board.js). */
 export const liveLatestKey = (eventId) => `live:probe:${eventId}:latest`;
 export const liveWatchKey = (espnEventId) => `live:watch:${espnEventId}`;
 export const LIVE_WATCH_INDEX = 'live:watch:index';
 const MAX_SNAPSHOTS = 80;
+const BEFORE_MS = 40 * 60e3;
+const AFTER_MS = 5 * 3600e3;
 
-/** The feed event for the probe's teams, either way round, or null. */
-export function pickLiveEvent(events, teams = LIVE_PROBE.teams) {
-  const want = teams.map((t) => String(t).toLowerCase());
+/** The two teams in a watched game's name ("Chicago Bears at Seattle Seahawks"): away first, home second. */
+export const liveGameTeams = (name) => String(name ?? '').split(/\s+at\s+|\s+vs\.?\s+/i).map((s) => s.trim()).filter(Boolean).slice(0, 2);
+
+/** The feed event for the teams, either way round, or null. */
+export function pickLiveEvent(events, teams) {
+  const want = (teams ?? []).map((t) => String(t).toLowerCase());
+  if (want.length !== 2) return null;
   return (events ?? []).find((e) => {
     const names = [e.home_team, e.away_team].map((t) => String(t ?? '').toLowerCase());
     return want.every((w) => names.some((n) => n.includes(w) || w.includes(n)));
@@ -61,34 +66,52 @@ export function summariseProps(payload, at) {
   return { at, booksPosting: books.filter((b) => b.markets.length).length, books };
 }
 
-/** One tick: inside the window, one props call for the game, appended to the log. Returns what it did. */
-export async function runLiveProbe(env, ctx, now = Date.now(), { deps = {} } = {}) {
-  const cfg = deps.config ?? LIVE_PROBE;
-  if (now < cfg.from || now > cfg.until) return { skipped: true, reason: 'outside the window' };
-  const events = deps.events ? await deps.events() : await listLeagueGames(cfg.sportKey, env, ctx).catch(() => []);
-  const event = pickLiveEvent(events, cfg.teams);
-  if (!event) return { skipped: true, reason: 'game not on the feed' };
-  const payload = deps.props ? await deps.props(event.id) : await fetchLiveProps(cfg.sportKey, event.id, env);
-  const snap = summariseProps(payload, now);
-  snap.commence = event.commence_time ?? null;
-  snap.status = payload?.error ?? null;
-  const key = liveProbeKey(event.id);
-  const raw = await env.POTD_KV.get(key).catch(() => null);
-  const log = raw ? JSON.parse(raw) : { eventId: event.id, sportKey: cfg.sportKey, home: event.home_team, away: event.away_team, commence: event.commence_time ?? null, snapshots: [] };
-  log.snapshots = [...log.snapshots, snap].slice(-MAX_SNAPSHOTS);
-  log.updatedAt = now;
-  await env.POTD_KV.put(key, JSON.stringify(log), { expirationTtl: 14 * 86400 });
-  await env.POTD_KV.put('live:probe:latest', event.id, { expirationTtl: 14 * 86400 }).catch(() => {});
-  if (payload?.bookmakers?.length) await env.POTD_KV.put(liveLatestKey(event.id), JSON.stringify({ at: now, bookmakers: payload.bookmakers }), { expirationTtl: 2 * 86400 }).catch(() => {});
-  return { skipped: false, eventId: event.id, booksPosting: snap.booksPosting, markets: snap.books.reduce((n, b) => n + b.markets.length, 0) };
+/** The watched games inside their windows now. */
+export function liveGamesNow(index, now) {
+  return (index?.games ?? []).filter((g) => { const t = Date.parse(g.date); return Number.isFinite(t) && now >= t - BEFORE_MS && now <= t + AFTER_MS; });
 }
 
-async function fetchLiveProps(sportKey, eventId, env) {
+/** One tick: for each watched game in its window, one props call, appended to its log; at the half, the plays. Returns what it did. */
+export async function runLiveProbe(env, ctx, now = Date.now(), { deps = {} } = {}) {
+  const idxRaw = await env.POTD_KV.get(LIVE_WATCH_INDEX).catch(() => null);
+  const index = deps.index ?? (idxRaw ? JSON.parse(idxRaw) : { games: [] });
+  const games = liveGamesNow(index, now);
+  if (!games.length) return { skipped: true, reason: 'no watched game in its window' };
+  const done = [];
+  for (const g of games.slice(0, 4)) {
+    const league = g.league ?? 'nfl';
+    const sportKey = LIVE_SPORT[league]; if (!sportKey) continue;
+    const events = deps.events ? await deps.events(sportKey) : await listLeagueGames(sportKey, env, ctx).catch(() => []);
+    const event = pickLiveEvent(events, liveGameTeams(g.name));
+    if (!event) { done.push({ game: g.id, skipped: true, reason: 'game not on the feed' }); continue; }
+    const payload = deps.props ? await deps.props(event.id) : await fetchLiveProps(sportKey, event.id, env, LIVE_MARKETS[league]);
+    const snap = summariseProps(payload, now);
+    snap.commence = event.commence_time ?? null;
+    snap.status = payload?.error ?? null;
+    const key = liveProbeKey(event.id);
+    const raw = await env.POTD_KV.get(key).catch(() => null);
+    const log = raw ? JSON.parse(raw) : { eventId: event.id, espnEventId: g.id, sportKey, home: event.home_team, away: event.away_team, commence: event.commence_time ?? null, snapshots: [] };
+    log.snapshots = [...log.snapshots, snap].slice(-MAX_SNAPSHOTS);
+    log.updatedAt = now;
+    await env.POTD_KV.put(key, JSON.stringify(log), { expirationTtl: 14 * 86400 });
+    await env.POTD_KV.put(`live:probe:for:${g.id}`, event.id, { expirationTtl: 14 * 86400 }).catch(() => {});
+    await env.POTD_KV.put('live:probe:latest', event.id, { expirationTtl: 14 * 86400 }).catch(() => {});
+    if (payload?.bookmakers?.length) await env.POTD_KV.put(liveLatestKey(event.id), JSON.stringify({ at: now, bookmakers: payload.bookmakers }), { expirationTtl: 2 * 86400 }).catch(() => {});
+    // At the half the slip is built here too, so it is ready before anyone opens the tab.
+    const watchRaw = await env.POTD_KV.get(liveWatchKey(g.id)).catch(() => null);
+    const tick = watchRaw ? JSON.parse(watchRaw)?.ticks?.at(-1) ?? null : null;
+    const plays = tick ? await ensureLivePlays(env, g, payload?.bookmakers?.length ? payload : null, tick, { league, now }).catch(() => null) : null;
+    done.push({ game: g.id, eventId: event.id, booksPosting: snap.booksPosting, markets: snap.books.reduce((n, b) => n + b.markets.length, 0), plays: plays ? plays.slips.length : 0 });
+  }
+  return { skipped: false, games: done };
+}
+
+async function fetchLiveProps(sportKey, eventId, env, markets) {
   const url = new URL(`${UPSTREAM}/sports/${sportKey}/events/${eventId}/odds`);
   url.searchParams.set('apiKey', (env.ODDS_API_KEY ?? '').trim());
   url.searchParams.set('regions', 'us');
   url.searchParams.set('bookmakers', TREND_BOOKMAKERS);
-  url.searchParams.set('markets', LIVE_MARKETS);
+  url.searchParams.set('markets', markets);
   url.searchParams.set('oddsFormat', 'american');
   const res = await fetch(url.toString(), { headers: { Accept: 'application/json' } });
   if (!res.ok) return { error: `HTTP ${res.status} ${(await res.text().catch(() => '')).slice(0, 160)}`, bookmakers: [] };

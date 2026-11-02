@@ -1547,7 +1547,7 @@ export default {
     // one fighter's profile and history.
     // The Live tab's board (worker/src/live-board.js): the watched games, their last reads, the lines and the play.
     if (pathname === '/live' && request.method === 'GET') {
-      return json(await getLiveBoard(env, Date.now()), { headers: { ...cors, 'Cache-Control': 'no-store' } });
+      return json(await getLiveBoard(env, Date.now(), { ctx }), { headers: { ...cors, 'Cache-Control': 'no-store' } });
     }
     // The live-props probe's logs (worker/src/live-probe.js): read-only.
     if (pathname === '/live/probe' && request.method === 'GET') {
