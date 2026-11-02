@@ -5,6 +5,6 @@
    before the landing page paints. */
 try {
   if (localStorage.getItem('pp_auth_token')) {
-    window.location.href = '/app.html';
+    window.location.href = 'app.html';
   }
 } catch (e) {}

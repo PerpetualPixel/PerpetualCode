@@ -14,6 +14,11 @@ surface records, and who's ruled out — so the numbers on the card are the whol
 argument rather than a starting point.
 
 - App: [`docs/`](docs/) — static site, deploys via GitHub Pages
+- Mirror: the same site at [perpetualpixel.github.io/PixelPicks/](https://perpetualpixel.github.io/PixelPicks/),
+  copied from `docs/` on `main` by the [PixelPicks](https://github.com/PerpetualPixel/PixelPicks)
+  repo's Pages workflow. It reads the same worker, so the edge cache is
+  shared and it spends no extra odds credits. Keep every page link in
+  `docs/` relative — the mirror lives under a sub-path.
 - Odds proxy: [`worker/`](worker/) — Cloudflare Worker holding the API key
 - Setup and how the picks are chosen: [`docs/README.md`](docs/README.md)
 

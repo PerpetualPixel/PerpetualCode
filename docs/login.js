@@ -86,7 +86,7 @@ async function handleRegister(e) {
 
     // Redirect to login after 2 seconds
     setTimeout(() => {
-      window.location.href = '/app.html';
+      window.location.href = 'app.html';
     }, 2000);
   } catch (err) {
     showMessage('register-message', 'Connection failed: ' + err.message, true);
@@ -135,7 +135,7 @@ async function handleLogin(e) {
     showMessage('login-message', 'Logged in! Redirecting...', false);
 
     setTimeout(() => {
-      window.location.href = '/app.html';
+      window.location.href = 'app.html';
     }, 1000);
   } catch (err) {
     showMessage('login-message', 'Connection failed: ' + err.message, true);
@@ -270,7 +270,7 @@ window.addEventListener('load', async () => {
   if (resetToken) {
     pendingResetToken = resetToken;
     toggleForms('reset');
-    window.history.replaceState({}, document.title, '/login.html');
+    window.history.replaceState({}, document.title, 'login.html');
   }
 
   if (token) {
@@ -287,7 +287,7 @@ window.addEventListener('load', async () => {
         setTimeout(() => {
           toggleForms('login');
           // Clear the token from URL
-          window.history.replaceState({}, document.title, '/login.html');
+          window.history.replaceState({}, document.title, 'login.html');
         }, 2000);
       } else {
         const data = await res.json();
@@ -307,7 +307,7 @@ window.addEventListener('load', async () => {
   // link opened on a device that's still logged in from before).
   const storedToken = localStorage.getItem(AUTH_TOKEN_KEY);
   if (storedToken && !token && !resetToken) {
-    window.location.href = '/app.html';
+    window.location.href = 'app.html';
     return;
   }
 
@@ -324,7 +324,7 @@ window.logout = function() {
   if (confirm('Are you sure you want to sign out?')) {
     localStorage.removeItem(window.AUTH_TOKEN_KEY);
     localStorage.removeItem(window.AUTH_USER_KEY);
-    window.location.href = 'https://perpetualpicks.com/login.html';
+    window.location.href = 'login.html';
   }
 };
 

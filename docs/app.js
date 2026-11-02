@@ -6,9 +6,17 @@
  * in engine.js so it can be tested without a browser.
  */
 
-// Enforce custom domain — redirect old GitHub URL to perpetualpicks.com
-if (!window.location.hostname.includes('perpetualpicks.com')) {
-  window.location.href = 'https://perpetualpicks.com' + window.location.pathname + window.location.search;
+// Redirect the OLD GitHub Pages URL of this repo (perpetualpixel.github.io/
+// PerpetualCode/) to perpetualpicks.com. Only that one path: the same site is
+// also served as a read-only mirror at perpetualpixel.github.io/PixelPicks/
+// (the PixelPicks repo's Pages workflow copies docs/ there), and localhost
+// development must not bounce either. Every page link in docs/ is relative
+// for the same reason — the site has to work from a sub-path as well as from
+// the root of its own domain.
+if (window.location.hostname === 'perpetualpixel.github.io'
+    && window.location.pathname.startsWith('/PerpetualCode/')) {
+  window.location.href = 'https://perpetualpicks.com'
+    + window.location.pathname.slice('/PerpetualCode'.length) + window.location.search;
 }
 
 import { CONFIG } from './config.js';
@@ -1154,7 +1162,7 @@ function signOut() {
   if (!confirm('Are you sure you want to sign out?')) return;
   localStorage.removeItem('pp_auth_token');
   localStorage.removeItem('pp_auth_user');
-  window.location.href = 'https://perpetualpicks.com/login.html';
+  window.location.href = 'login.html';
 }
 
 /** Returns false when the page is being redirected to sign-in. Page access
@@ -1162,7 +1170,7 @@ function signOut() {
  * gates the /odds worker endpoint, a separate concern). */
 function checkAuth() {
   if (getToken()) return true;
-  window.location.href = 'https://perpetualpicks.com/login.html';
+  window.location.href = 'login.html';
   return false;
 }
 
