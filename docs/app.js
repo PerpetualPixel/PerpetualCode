@@ -849,6 +849,11 @@ const el = {
   tabPlayers: document.getElementById('tabPlayers'),
   tabParlay: document.getElementById('tabParlay'),
   tabUfc: document.getElementById('tabUfc'),
+  tabLive: document.getElementById('tabLive'),
+  liveView: document.getElementById('liveView'),
+  liveStatus: document.getElementById('liveStatus'),
+  liveBody: document.getElementById('liveBody'),
+  liveDot: document.getElementById('liveDot'),
   ufcView: document.getElementById('ufcView'),
   ufcSub: document.getElementById('ufcSub'),
   ufcEvents: document.getElementById('ufcEvents'),
@@ -6176,8 +6181,8 @@ const loadingHtml = (text) => `<span class="pp-loading"><img class="pp-loading-l
 const showLoading = (node, text) => { if (node) node.innerHTML = loadingHtml(text); };
 
 function setActiveTab(tab) {
-  const views = { slate: el.slateView, board: el.boardView, potd: el.potdView, trends: el.trendsView, trendPicks: el.trendPicksView, players: el.playersView, parlay: el.parlayView, ufc: el.ufcView };
-  const tabs = { slate: el.tabSlate, board: el.tabBoard, potd: el.tabPotd, trends: el.tabTrends, trendPicks: el.tabTrendPicks, players: el.tabPlayers, parlay: el.tabParlay, ufc: el.tabUfc };
+  const views = { slate: el.slateView, board: el.boardView, potd: el.potdView, trends: el.trendsView, trendPicks: el.trendPicksView, players: el.playersView, parlay: el.parlayView, ufc: el.ufcView, live: el.liveView };
+  const tabs = { slate: el.tabSlate, board: el.tabBoard, potd: el.tabPotd, trends: el.tabTrends, trendPicks: el.tabTrendPicks, players: el.tabPlayers, parlay: el.tabParlay, ufc: el.tabUfc, live: el.tabLive };
 
   for (const [name, view] of Object.entries(views)) {
     const active = name === tab;
@@ -6189,7 +6194,7 @@ function setActiveTab(tab) {
   // The day toggle applies to Full Slate only — Play of the Day and
   // Pixel's Picks are both fixed daily sets locked server-side, with no
   // Today/Tomorrow of their own to choose.
-  el.dayFilterBar.hidden = tab === 'potd' || tab === 'board' || tab === 'trends' || tab === 'trendPicks' || tab === 'players' || tab === 'parlay' || tab === 'ufc';
+  el.dayFilterBar.hidden = tab === 'potd' || tab === 'board' || tab === 'trends' || tab === 'trendPicks' || tab === 'players' || tab === 'parlay' || tab === 'ufc' || tab === 'live';
   // The highlight paints on this frame; the board's render (hundreds of
   // cards on Trends) runs on the next, so a tap answers at once.
   requestAnimationFrame(() => loadTabContent(tab));
@@ -6218,6 +6223,7 @@ function loadTabContent(tab) {
   if (tab === 'players') loadPlayers();
   if (tab === 'parlay') loadParlay();
   if (tab === 'ufc') { if (ufcState.event) renderUfc(); else loadUfc(); }
+  if (tab === 'live') loadLive({ force: true });
   if (tab === 'trendPicks' && !ufcState.picks) loadUfcPicks();
   // Re-render from whatever's already loaded rather than re-fetching —
   // everything loads once at boot (refreshAllLeagues), so switching tabs is
@@ -6236,6 +6242,7 @@ el.tabTrendPicks?.addEventListener('click', () => setActiveTab('trendPicks'));
 el.tabPlayers?.addEventListener('click', () => setActiveTab('players'));
 el.tabParlay?.addEventListener('click', () => setActiveTab('parlay'));
 el.tabUfc?.addEventListener('click', () => setActiveTab('ufc'));
+el.tabLive?.addEventListener('click', () => setActiveTab('live'));
 
 /* ---------------------------------------------------------------- */
 /* Tracking Dashboard                                                */
@@ -10770,3 +10777,92 @@ el.trendsSheet?.addEventListener('click', (event) => {
   const f = event.target.closest('[data-ufc-fighter]');
   if (f) openUfcFighter(f.dataset.ufcFighter, f.dataset.ufcName);
 });
+
+
+/* ================================================================ */
+/* Live: the watched games, their reads, the lines and the play (worker/src/live-board.js) */
+/* ================================================================ */
+
+const liveState = { data: null, loading: false, timer: null };
+const liveTimeFmt = new Intl.DateTimeFormat(undefined, { hour: 'numeric', minute: '2-digit', second: '2-digit' });
+const ago = (ms) => { const s = Math.max(0, Math.round((Date.now() - ms) / 1000)); return s < 60 ? `${s}s ago` : s < 3600 ? `${Math.floor(s / 60)} min ago` : `${Math.floor(s / 3600)} h ago`; };
+
+async function loadLive({ force = false } = {}) {
+  if (!el.liveBody || !CONFIG.WORKER_URL) return;
+  if (liveState.loading && !force) return;
+  liveState.loading = true;
+  if (!liveState.data) showLoading(el.liveStatus, 'Reading the live board…');
+  try {
+    const res = await fetch(new URL('/live', CONFIG.WORKER_URL), { headers: { Accept: 'application/json' } });
+    liveState.data = await res.json();
+    el.liveStatus.textContent = '';
+  } catch {
+    el.liveStatus.textContent = "Couldn't reach the worker.";
+  }
+  liveState.loading = false;
+  renderLive();
+  // While the tab is open the board re-reads itself every minute, in step with the runner.
+  clearTimeout(liveState.timer);
+  if (!el.liveView.hidden) liveState.timer = setTimeout(() => loadLive(), 60e3);
+}
+
+/** The DraftKings-style track: where the player is now, the number he needs, the green past it. */
+function liveBar(current, point) {
+  const max = Math.max(point * 1.35, current * 1.1, 1);
+  const cur = Math.min(100, (current / max) * 100); const line = Math.min(100, (point / max) * 100);
+  return `<div class="live-bar" aria-label="${esc(String(current))} now, needs ${esc(String(point))}">
+    <span class="live-bar-track"></span>
+    <span class="live-bar-green" style="left:${line.toFixed(1)}%"></span>
+    <span class="live-bar-line" style="left:${line.toFixed(1)}%"><b>${esc(String(point))}</b></span>
+    <span class="live-bar-now" style="left:${cur.toFixed(1)}%">${esc(String(current))}</span>
+  </div>`;
+}
+
+function liveLeg(l, { showBook = false } = {}) {
+  return `<div class="live-leg">
+    <div class="live-leg-head"><strong>${esc(l.player)}</strong> <small>${esc(l.team ?? '')}</small><span class="live-leg-line">${esc(String(l.point))}+ ${esc(l.label)}</span><span class="live-leg-price">${showBook ? `${bookBadge(l.bookId, l.book)} ` : ''}${esc(formatAmerican(l.price))}</span></div>
+    ${liveBar(l.current, l.point)}
+    <p class="row-sub">${esc(String(l.current))} now · on pace for ${esc(String(l.pace))} · clears by ${esc(String(Math.round(l.cushion * 100)))}%</p>
+  </div>`;
+}
+
+function renderLiveGame(g) {
+  const t = g.tick;
+  const state = !t ? 'No read yet' : t.state === 'pre' ? 'Pre-game' : t.state === 'post' ? 'Final' : g.halftime ? 'Halftime' : `Q${esc(String(t.period ?? ''))} ${esc(t.clock ?? '')}`;
+  const live = t?.state === 'in';
+  const score = t?.score ? Object.entries(t.score).map(([k, v]) => `${esc(k)} ${esc(String(v))}`).join(' · ') : '';
+  const books = g.probe?.books?.filter((b) => b.markets.length) ?? [];
+  const play = g.play;
+  const all = play ? combinedSlipLink(play.bookId, play.legs.map((l) => l.link)) : null;
+  const bookUrl = play ? (SPORTSBOOKS[play.bookId]?.url ?? null) : null;
+  return `<article class="trend-card live-game ${live ? 'is-live' : ''}">
+    <div class="live-head">
+      <div><strong>${esc(g.name)}</strong><br><small>${esc(league(g.league))}</small></div>
+      <span class="live-state ${live ? 'is-on' : ''}">${live ? '<i class="live-dot"></i>' : ''}${state}</span>
+      <span class="live-score">${score}</span>
+    </div>
+    <div class="live-reads">
+      <span class="live-read ${t && Date.now() - t.at < 3 * 60e3 ? 'is-fresh' : ''}">Box score ${t ? `read ${esc(ago(t.at))}` : 'not read yet'}</span>
+      <span class="live-read ${g.probe && Date.now() - g.probe.at < 10 * 60e3 ? 'is-fresh' : ''}">Odds ${g.probe ? `read ${esc(ago(g.probe.at))} · ${esc(String(g.probe.snapshots))} snapshot${g.probe.snapshots === 1 ? '' : 's'}` : 'not read yet (the probe reads on every tick in its window)'}</span>
+    </div>
+    ${books.length ? `<div class="live-books">${books.map((b) => `<span class="live-book">${bookBadge(b.bookId, b.key)}${esc(SPORTSBOOKS[b.bookId]?.name ?? b.key)} <small>${b.markets.map((m) => `${esc(m.key.replace('player_', '').replace('_alternate', ' alt').replace(/_/g, ' '))} ${esc(String(m.players))}p`).join(' · ')}</small></span>`).join('')}</div>` : g.probe ? '<p class="row-sub">No book is posting player props right now.</p>' : ''}
+    ${play ? `<div class="live-play">
+      <div class="pick-bet-head"><span class="pick-bet-type">Play ready · ${play.legs.length} legs</span><span class="pick-bet-book">${bookBadge(play.bookId, play.book)}${esc(play.book)}</span><span class="pick-bet-price">${esc(formatAmerican(play.american))}</span><span class="pick-result is-live">Halftime</span></div>
+      <div class="live-legs">${play.legs.map((l) => liveLeg(l)).join('')}</div>
+      <div class="pick-bet-foot">${all ? `<a class="pick-bet-link" href="${esc(all)}" target="_blank" rel="noopener">Add all ${play.legs.length} legs to your ${esc(play.book)} slip ↗</a>` : bookUrl ? `<a class="pick-bet-link" href="${esc(bookUrl)}" target="_blank" rel="noopener">Open ${esc(play.book)}</a>` : ''}</div>
+      <p class="row-sub">Shown, not tracked: a first cut that works the ladders against the box score and the pace; the model's read and the ledger come next.</p>
+    </div>` : g.candidates?.length ? `<div class="live-forming"><p class="live-sub">Lines forming <small>the play is built at the half from these</small></p>${g.candidates.slice(0, 6).map((l) => liveLeg(l, { showBook: true })).join('')}</div>`
+      : live ? '<p class="row-sub">Nothing on the board clears the pace yet. The play is built at the half.</p>' : ''}
+  </article>`;
+}
+const league = (k) => ({ nfl: 'NFL', nba: 'NBA' }[k] ?? String(k ?? '').toUpperCase());
+
+function renderLive() {
+  if (!el.liveBody) return;
+  const d = liveState.data;
+  const games = d?.games ?? [];
+  const anyLive = games.some((g) => g.tick?.state === 'in');
+  if (el.liveDot) el.liveDot.classList.toggle('is-on', anyLive);
+  if (!games.length) { el.liveBody.innerHTML = '<p class="empty">No game is being watched right now. The watcher starts before each slate it is set for; tonight it was Eagles at Commanders.</p>'; return; }
+  el.liveBody.innerHTML = `<p class="row-sub live-updated">Board read ${esc(liveTimeFmt.format(new Date(d.at)))} · re-reads every minute while open</p>${games.map(renderLiveGame).join('')}`;
+}

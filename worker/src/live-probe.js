@@ -25,6 +25,8 @@ export const LIVE_PROBE = {
 /** The alt ladders the halftime parlay would use, and the main lines beside them. */
 export const LIVE_MARKETS = 'player_pass_yds_alternate,player_rush_yds_alternate,player_reception_yds_alternate,player_receptions_alternate,player_pass_yds,player_rush_yds,player_reception_yds,player_receptions';
 export const liveProbeKey = (eventId) => `live:probe:${eventId}`;
+/** The latest raw props payload for the game, whole, for the Live board's ladders (worker/src/live-board.js). */
+export const liveLatestKey = (eventId) => `live:probe:${eventId}:latest`;
 export const liveWatchKey = (espnEventId) => `live:watch:${espnEventId}`;
 export const LIVE_WATCH_INDEX = 'live:watch:index';
 const MAX_SNAPSHOTS = 80;
@@ -77,6 +79,7 @@ export async function runLiveProbe(env, ctx, now = Date.now(), { deps = {} } = {
   log.updatedAt = now;
   await env.POTD_KV.put(key, JSON.stringify(log), { expirationTtl: 14 * 86400 });
   await env.POTD_KV.put('live:probe:latest', event.id, { expirationTtl: 14 * 86400 }).catch(() => {});
+  if (payload?.bookmakers?.length) await env.POTD_KV.put(liveLatestKey(event.id), JSON.stringify({ at: now, bookmakers: payload.bookmakers }), { expirationTtl: 2 * 86400 }).catch(() => {});
   return { skipped: false, eventId: event.id, booksPosting: snap.booksPosting, markets: snap.books.reduce((n, b) => n + b.markets.length, 0) };
 }
 
