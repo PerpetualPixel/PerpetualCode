@@ -6711,7 +6711,13 @@ button, [role="tab"], .league-chip, .parlay-btn, .trend-price { touch-action: ma
 .log-row .log-val { font-family: var(--mono); font-weight: 800; }
 .log-row.is-hit .log-val { color: #6fe08a; }
 .log-row.is-miss .log-val { color: #ef6464; }
-.detail-bet { position: sticky; bottom: 0; margin: 16px -16px -16px; padding: 12px 16px calc(14px + env(safe-area-inset-bottom, 0px)); background: rgba(20, 18, 34, 0.96); border-top: 1px solid var(--line); backdrop-filter: blur(10px); }
+/* The slip bar sits on the bottom edge of the screen, whatever the sheet
+   scrolls to: fixed, not sticky (sticky left it short of the edge by the
+   sheet's safe-area padding on a phone). The sheet pads its end so the
+   last rows and the Close button scroll clear of it. */
+.detail-bet { position: fixed; left: 0; right: 0; bottom: 0; z-index: 3; margin: 0; padding: 12px max(16px, env(safe-area-inset-right, 0px)) calc(12px + env(safe-area-inset-bottom, 0px)) max(16px, env(safe-area-inset-left, 0px)); background: rgba(20, 18, 34, 0.97); border-top: 1px solid var(--line); backdrop-filter: blur(10px); }
+.trends-sheet:has(.detail-bet) { padding-bottom: calc(92px + env(safe-area-inset-bottom, 0px)); }
+@media (min-width: 720px) { .detail-bet { border-radius: 0; } }
 .bet-row { display: flex; align-items: center; gap: 12px; }
 .bet-row .bet-book { display: inline-flex; align-items: center; gap: 8px; font-family: var(--mono); font-weight: 800; font-size: 1.1rem; }
 .bet-row .bet-book .row-dot { width: 26px; height: 26px; border-radius: 8px; box-shadow: none; display: grid; place-items: center; color: #fff; font-size: 0.7rem; font-family: var(--sans); }
