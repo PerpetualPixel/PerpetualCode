@@ -1,6 +1,6 @@
 /**
  * Player search (2026-10-28 direction, the way breakingballssports.io
- * does it): any NBA, NFL or NHL player by name as the user types, then a stat
+ * does it): any NBA, NFL, NHL or soccer player by name as the user types, then a stat
  * and a number, and his game log at that number. Reads the runner's
  * ESPN bundle (worker/src/espn-bundle.js): the league's player index for
  * the type-ahead, the player's team record for the log. No odds credits.
@@ -8,12 +8,13 @@
 import { NBA_TREND_MARKETS, basketballStatRows } from './basketball-props.js';
 import { NFL_TREND_MARKETS, gamelogStatIndex } from './football-props.js';
 import { NHL_PROP_MARKETS, NHL_ALT_MARKETS, nhlStatIndex } from './hockey-props.js';
+import { SOCCER_TREND_MARKETS, soccerStatIndex, isSoccerKey } from './soccer-props.js';
 import { seasonColumnRows } from '../../docs/prop-legs.js';
 import { bundlePlayer, playersIndexKey } from './espn-bundle.js';
 
 /** The stats a player can be searched on, per league: each Trends stat once, by its plain market name. */
 export function playerStats(sportKey) {
-  const markets = sportKey === 'basketball_nba' ? NBA_TREND_MARKETS : sportKey === 'americanfootball_nfl' ? NFL_TREND_MARKETS : sportKey === 'icehockey_nhl' ? { ...NHL_PROP_MARKETS, ...NHL_ALT_MARKETS } : null;
+  const markets = sportKey === 'basketball_nba' ? NBA_TREND_MARKETS : sportKey === 'americanfootball_nfl' ? NFL_TREND_MARKETS : sportKey === 'icehockey_nhl' ? { ...NHL_PROP_MARKETS, ...NHL_ALT_MARKETS } : isSoccerKey(sportKey) ? SOCCER_TREND_MARKETS : null;
   if (!markets) return [];
   const seen = new Map();
   for (const m of Object.values(markets)) {
@@ -43,7 +44,9 @@ export async function getPlayerLog(env, sportKey, team, athleteId, stat) {
     ? basketballStatRows(player.log, stat, { allSeasons: true })
     : sportKey === 'icehockey_nhl'
       ? seasonColumnRows(player.log, nhlStatIndex(player.log, stat), { allSeasons: true })
-      : seasonColumnRows(player.log, gamelogStatIndex(player.log, stat), { allSeasons: true });
+      : isSoccerKey(sportKey)
+        ? seasonColumnRows(player.log, soccerStatIndex(player.log, stat), { allSeasons: true })
+        : seasonColumnRows(player.log, gamelogStatIndex(player.log, stat), { allSeasons: true });
   return {
     player: { id: player.id, name: player.name, team: String(team).toUpperCase(), position: player.position ?? null, injuries: player.injuries ?? [] },
     stat,

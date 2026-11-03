@@ -185,3 +185,20 @@ test('hockey: the clock runs three periods, points are goals + assists, shots an
   const w = whoToWatch(t, c, 'nhl');
   assert.ok(w.some((r) => r.player === 'Joey Daccord' && r.stat === 'saves' && /up two/.test(r.why)));
 });
+
+test('soccer: the clock counts up to ninety with stoppage capped, half-time reads the half, and shots make candidates off the roster box', async () => {
+  const { elapsedFraction, isHalftime, liveCandidates, playerLines, isSoccer } = await import('../worker/src/live-board.js');
+  assert.ok(isSoccer('ucl') && isSoccer('epl') && !isSoccer('nhl'));
+  assert.ok(Math.abs(elapsedFraction({ state: 'in', period: 2, clock: "67'" }, 'epl') - 67 / 90) < 1e-9);
+  assert.equal(elapsedFraction({ state: 'in', period: 1, clock: "45'+3'" }, 'epl'), 0.5, 'first-half stoppage caps at the half');
+  assert.equal(elapsedFraction({ state: 'in', period: 1, clock: '', detail: 'HT' }, 'ucl'), 0.5);
+  assert.equal(isHalftime({ state: 'in', detail: 'HT' }, 'ucl'), true);
+  const t = { at: 1, state: 'in', detail: "60'", period: 2, clock: "60'", score: { ARS: 1, SLP: 0 }, home: 'SLP', away: 'ARS', box: [
+    { id: '1', name: 'Bukayo Saka', team: 'ARS', stats: { totalShots: '3', shotsOnTarget: '2', totalGoals: '1', goalAssists: '0' } },
+  ] };
+  const payload = { bookmakers: [{ key: 'draftkings', markets: [{ key: 'player_shots_on_target', outcomes: [{ name: 'Over', description: 'Bukayo Saka', point: 2.5, price: -130 }] }, { key: 'player_shots', outcomes: [{ name: 'Over', description: 'Bukayo Saka', point: 3.5, price: -110 }] }] }] };
+  const c = liveCandidates(payload, t, 'ucl');
+  assert.ok(c.some((x) => x.stat === 'totalShots' && x.pace === 5 && x.point === 3.5), 'three shots at the hour project to five (4.5 rounded), clearing 3.5 with margin');
+  assert.ok(!c.some((x) => x.stat === 'shotsOnTarget'), 'two on target project to three, short of 2.5 with margin');
+  assert.equal(playerLines(t, 'ucl')[0].totalGoals, 1);
+});

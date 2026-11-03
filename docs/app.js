@@ -21,7 +21,7 @@ if (window.location.hostname === 'perpetualpixel.github.io'
 
 import { CONFIG } from './config.js';
 import { DEMO_EVENTS } from './demo.js';
-import { teamLogoUrl, espnAbbr } from './team-logos.js';
+import { teamLogoUrl, espnAbbr, soccerTeamId } from './team-logos.js';
 import { leagueIconSvg } from './league-icons.js';
 import { sortTrends, attachSeries, hitFlags, nflWeek, legScore, parlayDecimal, isAltLine } from './trends.js';
 import { enhanceSelect } from './custom-select.js';
@@ -8863,7 +8863,8 @@ const trendsState = {
   detailPeriod: null,
   betMore: false,
 };
-const TREND_LEAGUE_ICON = { americanfootball_nfl: 'nfl', basketball_nba: 'nba', icehockey_nhl: 'nhl' };
+const TREND_LEAGUE_ICON = { americanfootball_nfl: 'nfl', basketball_nba: 'nba', icehockey_nhl: 'nhl', soccer_epl: 'soccer', soccer_spain_la_liga: 'soccer', soccer_italy_serie_a: 'soccer', soccer_germany_bundesliga: 'soccer', soccer_france_ligue_one: 'soccer', soccer_uefa_champs_league: 'soccer' };
+const SOCCER_TREND_KEYS = ['soccer_epl', 'soccer_spain_la_liga', 'soccer_italy_serie_a', 'soccer_germany_bundesliga', 'soccer_france_ligue_one'];
 const TREND_LOGO_PATH = { americanfootball_nfl: 'nfl', basketball_nba: 'nba', icehockey_nhl: 'nhl' };
 const trendTimeFmt = new Intl.DateTimeFormat(undefined, { weekday: 'short', hour: 'numeric', minute: '2-digit' });
 const trendDateFmt = new Intl.DateTimeFormat(undefined, { month: 'short', day: 'numeric' });
@@ -8925,7 +8926,12 @@ function withPeriod(row, period) {
   };
   return { ...row, periods: { ...(row.periods ?? {}), [period]: stats }, rates: { ...(row.rates ?? {}), [period]: rate } };
 }
-const trendLogo = (sportKey, abbr) => (abbr ? `https://a.espncdn.com/i/teamlogos/${TREND_LOGO_PATH[sportKey] ?? 'nfl'}/500/${String(abbr).toLowerCase()}.png` : null);
+const trendLogo = (sportKey, abbr) => {
+  if (!abbr) return null;
+  // Soccer logos sit under the club id (docs/team-logos.js's SOCCER_IDS), not the abbreviation.
+  if (String(sportKey).startsWith('soccer_')) { const id = soccerTeamId(sportKey, abbr); return id ? `https://a.espncdn.com/i/teamlogos/soccer/500/${id}.png` : null; }
+  return `https://a.espncdn.com/i/teamlogos/${TREND_LOGO_PATH[sportKey] ?? 'nfl'}/500/${String(abbr).toLowerCase()}.png`;
+};
 const rateTone = (v) => (v >= 0.7 ? 'is-hot' : v >= 0.5 ? 'is-warm' : 'is-cold');
 const pct = (v) => `${Math.round(v * 100)}%`;
 const teamAbbr = (name) => { const a = espnAbbr(trendsState.sport, name); return a ? a.toUpperCase() : String(name ?? '').split(' ').pop(); };
@@ -9587,7 +9593,7 @@ el.trendsSheet?.addEventListener('input', (event) => {
 const trendPicksState = { data: null, loaded: false, filter: 'all', hover: null, emblemOpen: null, mine: null, mineLoading: false, mineError: null };
 const pickDayFmt = new Intl.DateTimeFormat(undefined, { weekday: 'short', month: 'short', day: 'numeric' });
 const pickShortFmt = new Intl.DateTimeFormat(undefined, { month: 'numeric', day: 'numeric' });
-const PICK_FILTERS = [['all', 'All'], ['basketball_nba', 'NBA'], ['americanfootball_nfl', 'NFL'], ['icehockey_nhl', 'NHL']];
+const PICK_FILTERS = [['all', 'All'], ['basketball_nba', 'NBA'], ['americanfootball_nfl', 'NFL'], ['icehockey_nhl', 'NHL'], ['soccer', 'Soccer']];
 
 /**
  * The user's own ticket (worker/src/my-picks.js): read once per visit,
@@ -9691,7 +9697,7 @@ function betResultText(bet) {
 const unitsText = (u) => `${u < 0 ? '-' : '+'}${Math.abs(u).toFixed(2)}u`;
 const roiText = (roi) => (roi == null ? 'ROI n/a' : `ROI ${roi < 0 ? '' : '+'}${(roi * 100).toFixed(1)}%`);
 const signedUnits = (units) => `${units < 0 ? '' : '+'}${units.toFixed(2)}`;
-const betMatches = (bet) => trendPicksState.filter === 'all' || bet.sportKey === trendPicksState.filter;
+const betMatches = (bet) => trendPicksState.filter === 'all' || bet.sportKey === trendPicksState.filter || (trendPicksState.filter === 'soccer' && String(bet.sportKey).startsWith('soccer_'));
 const betTypeLabel = (bet) => (bet.play ? bet.play.replace(/^PrizePicks /, '') : bet.type === 'parlay' ? `${bet.legs.length}-leg parlay` : 'Straight');
 
 function betResultBadge(bet) {
@@ -9740,7 +9746,7 @@ function legAsRow(leg, bet) {
 
 /** The board's best line as a one-leg pseudo ticket, so the leg renders and opens like any other. */
 const showcaseBet = (leg) => ({ id: `showcase:${leg.sportKey}`, type: 'straight', bookId: leg.bookId, book: leg.book, legs: [leg] });
-const SPORT_SHORT = { basketball_nba: 'NBA', americanfootball_nfl: 'NFL', icehockey_nhl: 'NHL' };
+const SPORT_SHORT = { basketball_nba: 'NBA', americanfootball_nfl: 'NFL', icehockey_nhl: 'NHL', soccer_epl: 'EPL', soccer_spain_la_liga: 'La Liga', soccer_italy_serie_a: 'Serie A', soccer_germany_bundesliga: 'Bundesliga', soccer_france_ligue_one: 'Ligue 1' };
 
 function renderShowcaseCard(leg) {
   const open = trendPicksState.emblemOpen === leg.sportKey;
@@ -9921,7 +9927,7 @@ const playersState = {
   sport: 'basketball_nba', index: {}, stats: {}, player: null, stat: '', side: 'over', point: '',
   log: null, loading: false, window: 'all', filters: { opponent: '', venue: 'both', seasons: null, playoffs: 'include' }, focus: -1,
 };
-const PLAYER_LEAGUES = [['basketball_nba', 'NBA'], ['americanfootball_nfl', 'NFL'], ['icehockey_nhl', 'NHL']];
+const PLAYER_LEAGUES = [['basketball_nba', 'NBA'], ['americanfootball_nfl', 'NFL'], ['icehockey_nhl', 'NHL'], ['soccer_epl', 'EPL'], ['soccer_spain_la_liga', 'La Liga'], ['soccer_italy_serie_a', 'Serie A'], ['soccer_germany_bundesliga', 'Bundesliga'], ['soccer_france_ligue_one', 'Ligue 1']];
 const foldName = (s) => String(s ?? '').normalize('NFD').replace(/[̀-ͯ]/g, '').toLowerCase().replace(/[^a-z0-9]+/g, ' ').trim();
 
 async function loadPlayers(sport = playersState.sport) {
@@ -10852,7 +10858,8 @@ function liveBooksPicker() {
 const liveTimeFmt = new Intl.DateTimeFormat(undefined, { hour: 'numeric', minute: '2-digit', second: '2-digit' });
 const liveKickFmt = new Intl.DateTimeFormat(undefined, { weekday: 'short', hour: 'numeric', minute: '2-digit' });
 const ago = (ms) => { const s = Math.max(0, Math.round((Date.now() - ms) / 1000)); return s < 60 ? `${s}s ago` : s < 3600 ? `${Math.floor(s / 60)} min ago` : `${Math.floor(s / 3600)} h ago`; };
-const league = (k) => ({ nfl: 'NFL', nba: 'NBA', nhl: 'NHL' }[k] ?? String(k ?? '').toUpperCase());
+const league = (k) => ({ nfl: 'NFL', nba: 'NBA', nhl: 'NHL', ucl: 'Champions League', epl: 'Premier League', laliga: 'La Liga', seriea: 'Serie A', bundesliga: 'Bundesliga', ligue1: 'Ligue 1' }[k] ?? String(k ?? '').toUpperCase());
+const LIVE_SOCCER = new Set(['ucl', 'epl', 'laliga', 'seriea', 'bundesliga', 'ligue1']);
 
 async function loadLive({ force = false } = {}) {
   if (!el.liveBody || !CONFIG.WORKER_URL) return;
@@ -10912,9 +10919,9 @@ const statCell = (v) => (v == null ? '<td class="is-empty">–</td>' : `<td>${es
 function livePlayersTable(g) {
   const rows = (g.players ?? []).slice(0, liveState.open[`players:${g.espnEventId}`] ? 40 : 10);
   if (!rows.length) return '';
-  const nfl = g.league === 'nfl'; const nhl = g.league === 'nhl';
-  return `<table class="live-table"><thead><tr><th>Player</th>${nfl ? '<th>Pass</th><th>Rush</th><th>Rec</th><th>Rec Yds</th>' : nhl ? '<th>SOG</th><th>G</th><th>A</th><th>Saves</th>' : '<th>Pts</th><th>Reb</th><th>Ast</th>'}</tr></thead><tbody>
-    ${rows.map((p) => `<tr><td><strong>${esc(p.name)}</strong> <small>${esc(p.team ?? '')}</small></td>${nhl ? `${statCell(p.shotsTotal)}${statCell(p.goals)}${statCell(p.assists)}${statCell(p.saves)}` : nfl
+  const nfl = g.league === 'nfl'; const nhl = g.league === 'nhl'; const soccer = LIVE_SOCCER.has(g.league);
+  return `<table class="live-table"><thead><tr><th>Player</th>${nfl ? '<th>Pass</th><th>Rush</th><th>Rec</th><th>Rec Yds</th>' : nhl ? '<th>SOG</th><th>G</th><th>A</th><th>Saves</th>' : soccer ? '<th>Shots</th><th>SOT</th><th>G</th><th>A</th>' : '<th>Pts</th><th>Reb</th><th>Ast</th>'}</tr></thead><tbody>
+    ${rows.map((p) => `<tr><td><strong>${esc(p.name)}</strong> <small>${esc(p.team ?? '')}</small></td>${soccer ? `${statCell(p.totalShots)}${statCell(p.shotsOnTarget)}${statCell(p.totalGoals)}${statCell(p.goalAssists)}` : nhl ? `${statCell(p.shotsTotal)}${statCell(p.goals)}${statCell(p.assists)}${statCell(p.saves)}` : nfl
       ? `${statCell(p.passingYards != null ? `${p.passingYards}${p.passing ? ` <small>${esc(p.passing)}</small>` : ''}` : null).replace(/&lt;small&gt;|&lt;\/small&gt;/g, (m) => m === '&lt;small&gt;' ? '<small>' : '</small>')}${statCell(p.rushingYards != null ? `${p.rushingYards}${p.carries != null ? ` <small>${p.carries} car</small>` : ''}` : null).replace(/&lt;small&gt;|&lt;\/small&gt;/g, (m) => m === '&lt;small&gt;' ? '<small>' : '</small>')}${statCell(p.receptions != null ? `${p.receptions}${p.targets != null ? ` <small>of ${p.targets}</small>` : ''}` : null).replace(/&lt;small&gt;|&lt;\/small&gt;/g, (m) => m === '&lt;small&gt;' ? '<small>' : '</small>')}${statCell(p.receivingYards)}`
       : `${statCell(p.points)}${statCell(p.rebounds)}${statCell(p.assists)}`}</tr>`).join('')}
   </tbody></table>${(g.players ?? []).length > 10 ? `<button type="button" class="parlay-btn live-more" data-live-more="players:${esc(g.espnEventId)}">${liveState.open[`players:${g.espnEventId}`] ? 'Fewer players' : `All ${g.players.length} players`}</button>` : ''}`;
@@ -10970,11 +10977,11 @@ function liveSlip(s, i) {
 function renderLiveGame(g) {
   const t = g.tick;
   const live = t?.state === 'in';
-  const nhl = g.league === 'nhl';
-  const state = !t ? 'No read yet' : t.state === 'pre' ? `${nhl ? 'Drops' : 'Kicks off'} ${esc(liveKickFmt.format(new Date(g.date)))}` : t.state === 'post' ? 'Final' : g.intermission ? `${g.intermission === 1 ? '1st' : '2nd'} intermission` : g.halftime ? 'Halftime' : `${nhl ? (Number(t.period) > 3 ? 'OT' : `P${esc(String(t.period ?? ''))}`) : `Q${esc(String(t.period ?? ''))}`} ${esc(t.clock ?? '')}`;
+  const nhl = g.league === 'nhl'; const soccer = LIVE_SOCCER.has(g.league);
+  const state = !t ? 'No read yet' : t.state === 'pre' ? `${nhl ? 'Drops' : 'Kicks off'} ${esc(liveKickFmt.format(new Date(g.date)))}` : t.state === 'post' ? (soccer ? 'Full time' : 'Final') : g.intermission ? `${g.intermission === 1 ? '1st' : '2nd'} intermission` : g.halftime ? (soccer ? 'Half-time' : 'Halftime') : soccer ? esc(t.clock || t.detail || 'In play') : `${nhl ? (Number(t.period) > 3 ? 'OT' : `P${esc(String(t.period ?? ''))}`) : `Q${esc(String(t.period ?? ''))}`} ${esc(t.clock ?? '')}`;
   const score = t?.score ? Object.entries(t.score).map(([k, v]) => `${esc(k)} ${esc(String(v))}`).join(' · ') : '';
   const books = g.probe?.books?.filter((b) => b.markets.length) ?? [];
-  const script = g.script?.leader ? `<span class="live-tag">${esc(g.script.leader)} up ${esc(String(g.script.margin))}: ${nhl ? 'the side behind shoots more' : 'run game favoured, passing faded'}</span>` : '';
+  const script = g.script?.leader ? `<span class="live-tag">${esc(g.script.leader)} up ${esc(String(g.script.margin))}: ${nhl || soccer ? 'the side behind shoots more' : 'run game favoured, passing faded'}</span>` : '';
   const weather = g.weather ? `<span class="live-tag ${g.weather.rough ? 'is-rough' : ''}">${esc(g.weather.rough ? 'Rough weather: passing faded' : 'Weather fine')}${g.weather.windSpeed ? ` · wind ${esc(String(g.weather.windSpeed))}` : ''}${g.weather.precipChance != null ? ` · rain ${esc(String(g.weather.precipChance))}%` : ''}</span>` : '';
   const slips = liveSlipsFor(g);
   const hidden = (g.slips?.list?.length ?? 0) - slips.length;

@@ -6,7 +6,7 @@
  * in-play props snapshots (worker/src/live-probe.js). Free of odds
  * credits: ESPN only.
  *
- *   node scripts/live-watch.mjs --league nfl|nba|nhl --team PHI [--hours 5] [--every 60] [--dry-run]
+ *   node scripts/live-watch.mjs --league nfl|nba|nhl|ucl|epl|laliga|seriea|bundesliga|ligue1 --team PHI [--hours 5] [--every 60] [--dry-run]
  *
  * Finds today's game for the team on the league scoreboard, then loops
  * until the game is final (plus a few minutes) or the hours run out.
@@ -22,7 +22,8 @@ const hours = Number(opt('--hours', 5));
 const every = Math.max(30, Number(opt('--every', 60)));
 if (!team) { console.error('usage: node scripts/live-watch.mjs --league nfl --team PHI [--hours 5] [--every 60]'); process.exit(2); }
 
-const SITE = { nfl: 'https://site.api.espn.com/apis/site/v2/sports/football/nfl', nba: 'https://site.api.espn.com/apis/site/v2/sports/basketball/nba', nhl: 'https://site.api.espn.com/apis/site/v2/sports/hockey/nhl' }[league];
+const SOCCER = { ucl: 'uefa.champions', epl: 'eng.1', laliga: 'esp.1', seriea: 'ita.1', bundesliga: 'ger.1', ligue1: 'fra.1' };
+const SITE = { nfl: 'https://site.api.espn.com/apis/site/v2/sports/football/nfl', nba: 'https://site.api.espn.com/apis/site/v2/sports/basketball/nba', nhl: 'https://site.api.espn.com/apis/site/v2/sports/hockey/nhl', ...Object.fromEntries(Object.entries(SOCCER).map(([k, slug]) => [k, `https://site.api.espn.com/apis/site/v2/sports/soccer/${slug}`])) }[league];
 if (!SITE) { console.error(`unknown league ${league}`); process.exit(2); }
 const say = (...a) => console.log(new Date().toISOString().slice(11, 19), ...a);
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
@@ -43,6 +44,16 @@ async function findEvent() {
 /** The summary's skill-player box lines, compact: one row per athlete with the stats of every block he is in. */
 function boxLines(summary) {
   const rows = new Map();
+  // Soccer: each side's roster with stats as { name, value } pairs; only players who took the pitch.
+  if (Array.isArray(summary?.rosters) && !summary?.boxscore?.players?.length) {
+    for (const side of summary.rosters) for (const p of side?.roster ?? []) {
+      const id = String(p?.athlete?.id ?? ''); if (!id) continue;
+      const stats = {}; for (const s of p.stats ?? []) if (s?.name && s.value != null) stats[s.name] = String(s.value);
+      if (!(p.starter || p.subbedIn || Number(stats.appearances ?? 0) > 0)) continue;
+      rows.set(id, { id, name: p.athlete?.displayName ?? null, team: side.team?.abbreviation ?? null, stats });
+    }
+    return [...rows.values()];
+  }
   for (const side of summary?.boxscore?.players ?? []) {
     for (const block of side?.statistics ?? []) {
       const keys = block?.keys?.length ? block.keys : (block?.names ?? []);

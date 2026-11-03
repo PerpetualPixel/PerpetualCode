@@ -114,7 +114,9 @@ test('sorting: by hit rate in the chosen period, ties to the better price; by od
 });
 
 test('NBA and NFL only, every NBA prop market; the NFL keeps its week-ahead spec, rebuilt twice a day', async () => {
-  assert.deepEqual(TREND_ENABLED_SPORTS, ['basketball_nba', 'americanfootball_nfl', 'icehockey_nhl']);
+  assert.deepEqual(TREND_ENABLED_SPORTS, ['basketball_nba', 'americanfootball_nfl', 'icehockey_nhl', 'soccer_epl', 'soccer_spain_la_liga', 'soccer_italy_serie_a', 'soccer_germany_bundesliga', 'soccer_france_ligue_one']);
+  assert.equal(TREND_SPORTS.soccer_epl.title, 'Premier League');
+  assert.ok(['player_shots', 'player_shots_on_target', 'player_assists', 'player_goals', 'player_shots_on_target_alternate'].every((k) => TREND_SPORTS.soccer_epl.markets[k]), 'shots, shots on target, assists and goals');
   assert.equal(TREND_SPORTS.icehockey_nhl.ttlMinutes, 480);
   assert.ok(['player_shots_on_goal', 'player_points', 'player_assists', 'player_goals', 'player_total_saves', 'player_total_saves_alternate', 'player_goals_alternate'].every((k) => TREND_SPORTS.icehockey_nhl.markets[k]), 'shots, points, assists, goals and saves, main and alternate');
   assert.equal(TREND_SPORTS.americanfootball_nfl.ttlMinutes, 720);

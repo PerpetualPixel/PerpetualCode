@@ -38,6 +38,19 @@ export const eventFinal = (event) => Boolean(event?.status?.type?.completed || e
  */
 export function boxLine(summary, athleteId) {
   const id = String(athleteId ?? '');
+  // A soccer summary lists each side's roster with stats as { name, value } pairs; a player with no appearance did not play.
+  if (Array.isArray(summary?.rosters) && !summary?.boxscore?.players?.length) {
+    for (const side of summary.rosters) {
+      for (const p of side?.roster ?? []) {
+        if (String(p?.athlete?.id ?? '') !== id) continue;
+        const stats = {};
+        for (const s of p.stats ?? []) if (s?.name && s.value != null) stats[s.name] = String(s.value);
+        const played = p.starter === true || p.subbedIn === true || Number(stats.appearances ?? 0) > 0;
+        return { found: true, dnp: !played, reason: played ? null : 'did not play', stats };
+      }
+    }
+    return { found: false, dnp: true, reason: 'not in the box score', stats: {} };
+  }
   const stats = {};
   let found = false;
   let played = false;
@@ -98,6 +111,14 @@ const NHL_BOX = {
   saves: (s) => col(s, 'saves'),
 };
 
+// Soccer: a played line carries every column, so a missing one reads zero (a sub who never shot).
+const SOCCER_BOX = {
+  shots: (s) => num(s.totalShots) ?? 0,
+  shotsOnTarget: (s) => num(s.shotsOnTarget) ?? 0,
+  assists: (s) => num(s.goalAssists) ?? 0,
+  goals: (s) => num(s.totalGoals) ?? 0,
+};
+
 /** The stat a leg settles on, from a played line's stats, or null when the box does not carry it. */
 export function boxActual(line, sportKey, statKey) {
   if (!line || line.dnp) return null;
@@ -109,5 +130,6 @@ export function boxActual(line, sportKey, statKey) {
   }
   if (sportKey === 'americanfootball_nfl') return NFL_BOX[statKey] ? NFL_BOX[statKey](s) : null;
   if (sportKey === 'icehockey_nhl') return NHL_BOX[statKey] ? NHL_BOX[statKey](s) : null;
+  if (String(sportKey).startsWith('soccer_')) return SOCCER_BOX[statKey] ? SOCCER_BOX[statKey](s) : null;
   return null;
 }

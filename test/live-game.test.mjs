@@ -55,3 +55,30 @@ test('the book price is de-vigged against its other side, and only lines the mod
   assert.deepEqual(gameReads(payload, { ...game, elapsed: 0.05 }), [], 'too early to read');
   assert.deepEqual(gameReads(payload, { ...game, elapsed: 0.97 }), [], 'too late to read');
 });
+
+test('soccer: the draw is its own side, nothing goes to overtime, and both teams to score and draw no bet read off the same outcomes', () => {
+  const o = hockeyOutcomes({ homeGoals: 1, awayGoals: 0, elapsed: 0.72, sport: 'soccer' });
+  const opts = { overtime: false };
+  const home = chance(o, 'h2h', 'home', null, opts); const draw = chance(o, 'h2h', 'draw', null, opts); const away = chance(o, 'h2h', 'away', null, opts);
+  assert.ok(Math.abs(home + draw + away - 1) < 1e-6, 'three ways sum to one');
+  assert.ok(home > 0.65 && home < 0.9, `a goal up with twenty-five minutes left: ${home}`);
+  assert.ok(draw > 0.1 && draw < 0.3, `the equaliser is live: ${draw}`);
+  assert.ok(Math.abs(chance(o, 'totals', 'over', 1.5, opts) + chance(o, 'totals', 'under', 1.5, opts) - 1) < 1e-6);
+  assert.ok(chance(o, 'totals', 'over', 1.5, opts) > 0.4 && chance(o, 'totals', 'over', 1.5, opts) < 0.7);
+  assert.ok(Math.abs(chance(o, 'btts', 'yes', null, opts) + chance(o, 'btts', 'no', null, opts) - 1) < 1e-6);
+  assert.ok(chance(o, 'btts', 'yes', null, opts) < 0.5, 'the side behind has to score for both to');
+  const dnb = chance(o, 'draw_no_bet', 'home', null, opts);
+  assert.ok(Math.abs(dnb - home / (home + away)) < 1e-9, 'draw no bet is the win chance with the draw taken out');
+  const game = { home: 'Arsenal', away: 'Slavia Prague', homeAbbr: 'ARS', awayAbbr: 'SLP', score: { ARS: 1, SLP: 0 }, elapsed: 0.72, sport: 'soccer', minutes: 90 };
+  const payload = { bookmakers: [{ key: 'fanduel', markets: [
+    { key: 'h2h', outcomes: [{ name: 'Arsenal', price: -170 }, { name: 'Draw', price: 320 }, { name: 'Slavia Prague', price: 900 }] },
+    { key: 'totals', outcomes: [{ name: 'Over', point: 1.5, price: -120 }, { name: 'Under', point: 1.5, price: -110 }] },
+    { key: 'btts', outcomes: [{ name: 'Yes', price: 180 }, { name: 'No', price: -240 }] },
+    { key: 'draw_no_bet', outcomes: [{ name: 'Arsenal', price: -280 }, { name: 'Slavia Prague', price: 210 }] },
+  ] }] };
+  const reads = gameReads(payload, game);
+  assert.ok(reads.every((r) => r.best.ev > 0 && r.best.edge >= MIN_EDGE));
+  const ml = reads.find((r) => r.market === 'h2h' && r.side === 'home');
+  assert.ok(ml && /ARS up 1, 25 min left/.test(ml.why) && ml.selection === 'Arsenal to win', ml && ml.why);
+  assert.ok(!reads.some((r) => r.market === 'spreads'), 'no puck line in soccer');
+});
