@@ -151,9 +151,12 @@ export function whoToWatch(tick, candidates, league = 'nfl', { weather = null, l
       const cur = num(p.stats?.[stat]); if (cur == null || cur <= 0) continue;
       const proj = projectStat(cur, elapsed, stat, { team: p.team, script, weather });
       const lines = candidates.filter((c) => c.player === p.name && c.stat === stat);
-      const best = lines.length ? lines.reduce((a, c) => (c.point > a.point || (c.point === a.point && c.price > a.price) ? c : a)) : null;
+      const pick = (a, c) => (c.point > a.point || (c.point === a.point && c.price > a.price) ? c : a);
+      const best = lines.length ? lines.reduce(pick) : null;
+      // The best clearing line at each book, so a user who plays at one book sees that book's line and link.
+      const perBook = [...new Set(lines.map((c) => c.bookId))].map((b) => lines.filter((c) => c.bookId === b).reduce(pick)).sort((a, c) => c.point - a.point || c.price - a.price).map((c) => ({ bookId: c.bookId, book: c.book, point: c.point, price: c.price, link: c.link }));
       const why = script.leader === p.team ? (stat === 'rushingYards' ? 'up big: the run game carries the second half' : 'up big: the passing game sits') : script.trailer === p.team ? (stat === 'rushingYards' ? 'down big: the run game goes away' : 'down big: throwing to catch up') : null;
-      rows.push({ player: p.name, team: p.team, athleteId: p.id ?? null, stat, label: LIVE_LABEL[stat] ?? stat, current: cur, projected: proj, why, line: best ? { bookId: best.bookId, book: best.book, point: best.point, price: best.price, link: best.link } : null });
+      rows.push({ player: p.name, team: p.team, athleteId: p.id ?? null, stat, label: LIVE_LABEL[stat] ?? stat, current: cur, projected: proj, why, line: best ? { bookId: best.bookId, book: best.book, point: best.point, price: best.price, link: best.link } : null, lines: perBook });
     }
   }
   // Yards first by projection; receptions and the like ride along with their player.

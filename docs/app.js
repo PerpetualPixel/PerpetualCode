@@ -10919,10 +10919,17 @@ function livePlayersTable(g) {
   </tbody></table>${(g.players ?? []).length > 10 ? `<button type="button" class="parlay-btn live-more" data-live-more="players:${esc(g.espnEventId)}">${liveState.open[`players:${g.espnEventId}`] ? 'Fewer players' : `All ${g.players.length} players`}</button>` : ''}`;
 }
 
+/** The line a watch row shows: at the user's books when chosen (the best of them), else the best anywhere. */
+function liveWatchLine(w) {
+  if (!liveState.books.size || liveState.showAll) return { line: w.line, mine: false, none: !w.line };
+  const at = (w.lines ?? []).filter((l) => liveState.books.has(l.bookId)).sort((a, b) => b.point - a.point || b.price - a.price);
+  return { line: at[0] ?? null, mine: true, none: !at.length };
+}
 function liveWatchRow(w) {
+  const { line, mine, none } = liveWatchLine(w);
   return `<div class="live-watch">
     <div class="live-watch-head"><strong>${esc(w.player)}</strong> <small>${esc(w.team ?? '')}</small><span class="live-watch-stat">${esc(w.label)}</span></div>
-    <div class="live-watch-nums"><span><small>now</small><b>${esc(String(w.current))}</b></span><span class="live-arrow">→</span><span><small>projected</small><b>${esc(String(w.projected))}</b></span>${w.line ? `<span class="live-watch-line">${bookBadge(w.line.bookId, w.line.book)} ${esc(String(w.line.point))}+ ${esc(formatAmerican(w.line.price))}${w.line.link ? ` <a href="${esc(w.line.link)}" target="_blank" rel="noopener">add ↗</a>` : ''}</span>` : '<span class="live-watch-line is-none">no line clears yet</span>'}</div>
+    <div class="live-watch-nums"><span><small>now</small><b>${esc(String(w.current))}</b></span><span class="live-arrow">→</span><span><small>projected</small><b>${esc(String(w.projected))}</b></span>${line ? `<span class="live-watch-line">${bookBadge(line.bookId, line.book)} ${esc(String(line.point))}+ ${esc(formatAmerican(line.price))}${line.link ? ` <a href="${esc(line.link)}" target="_blank" rel="noopener">add ↗</a>` : ''}</span>` : `<span class="live-watch-line is-none">${none && mine ? 'no line clears at your books yet' : 'no line clears yet'}</span>`}</div>
     ${w.why ? `<p class="row-sub">${esc(w.why)}</p>` : ''}
   </div>`;
 }
