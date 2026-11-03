@@ -10353,7 +10353,7 @@ function renderParlayLeg(leg) {
         <button type="button" class="parlay-btn" data-parlay-stats="${esc(r.id)}">View stats</button>
         ${q.link ? `<a class="parlay-btn is-slip" href="${esc(q.link)}" target="_blank" rel="noopener">Add to slip ↗</a>` : ''}
       </div>
-      ${open ? `<div class="parlay-breakdown ${b?.verdict === 'risky' ? 'is-risky' : 'is-good'}">${b ? `<p><strong>${b.verdict === 'good' ? 'Good leg' : 'Risky leg'}.</strong> ${esc(b.summary)}</p><ul>${(b.reasons ?? []).map((x) => `<li>${esc(x)}</li>`).join('')}</ul>${b.model ? '' : '<p class="row-sub">The model read was unavailable; this is the record alone.</p>'}` : '<p class="row-sub">Reading the leg…</p>'}</div>` : ''}
+      ${open ? `<div class="parlay-breakdown ${b?.verdict === 'risky' ? 'is-risky' : 'is-good'}">${b ? `<p><strong>${b.verdict === 'good' ? 'Good leg' : 'Risky leg'}.</strong> ${esc(b.summary)}</p><ul>${(b.reasons ?? []).map((x) => `<li>${esc(x)}</li>`).join('')}</ul>${b.model ? '' : b.capped ? '<p class="row-sub">Today\'s model reads are used up (a free service keeps a daily budget); this is the record alone. The reads come back tomorrow.</p>' : '<p class="row-sub">The model read was unavailable; this is the record alone.</p>'}` : '<p class="row-sub">Reading the leg…</p>'}</div>` : ''}
     </div>
   </div>`;
 }

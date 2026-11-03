@@ -1587,9 +1587,11 @@ export default {
       const rowId = q.get('id') ?? '';
       if (!TREND_ENABLED_SPORTS.includes(sportKey) || !rowId) return json({ error: 'unknown sport or line' }, { status: 400, headers: cors });
       try {
-        const out = await legBreakdown(env, sportKey, rowId, ctx);
+        // The visitor, for the day's per-person model budget (worker/src/parlay-builder.js's DAILY_MODEL_READS_PER_PERSON).
+        const who = request.headers.get('cf-connecting-ip') ?? null;
+        const out = await legBreakdown(env, sportKey, rowId, ctx, { who });
         if (!out) return json({ error: 'that line is no longer on the board' }, { status: 404, headers: cors });
-        return json(out, { headers: { ...cors, 'Cache-Control': 'public, max-age=600' } });
+        return json(out, { headers: { ...cors, 'Cache-Control': out.capped ? 'no-store' : 'public, max-age=600' } });
       } catch (error) {
         return json({ error: String(error).slice(0, 120) }, { status: 500, headers: cors });
       }
