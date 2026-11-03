@@ -9,7 +9,7 @@ on:
   workflow_dispatch:
     inputs:
       league:
-        description: 'nfl or nba'
+        description: 'nfl, nba or nhl'
         required: true
         type: string
         default: nfl

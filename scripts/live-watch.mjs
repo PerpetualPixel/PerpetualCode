@@ -6,7 +6,7 @@
  * in-play props snapshots (worker/src/live-probe.js). Free of odds
  * credits: ESPN only.
  *
- *   node scripts/live-watch.mjs --league nfl --team PHI [--hours 5] [--every 60] [--dry-run]
+ *   node scripts/live-watch.mjs --league nfl|nba|nhl --team PHI [--hours 5] [--every 60] [--dry-run]
  *
  * Finds today's game for the team on the league scoreboard, then loops
  * until the game is final (plus a few minutes) or the hours run out.
@@ -22,7 +22,7 @@ const hours = Number(opt('--hours', 5));
 const every = Math.max(30, Number(opt('--every', 60)));
 if (!team) { console.error('usage: node scripts/live-watch.mjs --league nfl --team PHI [--hours 5] [--every 60]'); process.exit(2); }
 
-const SITE = { nfl: 'https://site.api.espn.com/apis/site/v2/sports/football/nfl', nba: 'https://site.api.espn.com/apis/site/v2/sports/basketball/nba' }[league];
+const SITE = { nfl: 'https://site.api.espn.com/apis/site/v2/sports/football/nfl', nba: 'https://site.api.espn.com/apis/site/v2/sports/basketball/nba', nhl: 'https://site.api.espn.com/apis/site/v2/sports/hockey/nhl' }[league];
 if (!SITE) { console.error(`unknown league ${league}`); process.exit(2); }
 const say = (...a) => console.log(new Date().toISOString().slice(11, 19), ...a);
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
@@ -78,6 +78,9 @@ while (Date.now() < deadline) {
     at: Date.now(),
     state: st.type?.state ?? null, detail: st.type?.detail ?? st.type?.description ?? null, period: st.period ?? null, clock: st.displayClock ?? null,
     score: Object.fromEntries(competitors.map((c) => [c.team?.abbreviation ?? c.homeAway, Number(c.score ?? 0)])),
+    // Which abbreviation is the home side, for the game read (the odds feed names teams in full).
+    home: competitors.find((c) => c.homeAway === 'home')?.team?.abbreviation ?? null,
+    away: competitors.find((c) => c.homeAway === 'away')?.team?.abbreviation ?? null,
     box: boxLines(summary),
   };
   log.ticks = [...log.ticks, tick].slice(-400);

@@ -155,3 +155,33 @@ test('a book priced near even still gets a slip: three legs at FanDuel land past
   assert.ok(play, 'built');
   assert.ok(play.american > 200 && play.american <= 300, `past +200, in range: ${play.american}`);
 });
+
+test('hockey: the clock runs three periods, points are goals + assists, shots and saves make candidates, and the two-goal script moves the pace', async () => {
+  const { elapsedFraction, liveCandidates, whoToWatch, playerLines, gameScript, intermissionOf, boxValue } = await import('../worker/src/live-board.js');
+  assert.equal(elapsedFraction({ state: 'in', period: 2, clock: '10:00' }, 'nhl'), 0.5, 'halfway through the second');
+  assert.equal(elapsedFraction({ state: 'in', period: 1, clock: '0:00', detail: 'End of 1st Period' }, 'nhl'), 1 / 3);
+  assert.equal(intermissionOf({ state: 'in', detail: 'End of 2nd Period' }, 'nhl'), 2);
+  assert.equal(intermissionOf({ state: 'in', detail: '5:00 - 2nd Period' }, 'nhl'), null);
+  const t = { at: 1, state: 'in', detail: '10:00 - 2nd Period', period: 2, clock: '10:00', score: { SEA: 3, CHI: 1 }, home: 'SEA', away: 'CHI', box: [
+    { id: '1', name: 'Jaden Schwartz', team: 'SEA', stats: { goals: '1', assists: '1', shotsTotal: '3', shootoutGoals: '0' } },
+    { id: '2', name: 'Connor Bedard', team: 'CHI', stats: { goals: '0', assists: '0', shotsTotal: '2', shootoutGoals: '0' } },
+    { id: '3', name: 'Joey Daccord', team: 'SEA', stats: { saves: '14', goalsAgainst: '1' } },
+  ] };
+  assert.equal(boxValue(t.box[0], 'points'), 2, 'points from goals + assists');
+  assert.deepEqual(gameScript(t, 'nhl'), { leader: 'SEA', trailer: 'CHI', margin: 2 }, 'a two-goal lead is the hockey script');
+  const payload = { bookmakers: [{ key: 'draftkings', markets: [
+    { key: 'player_shots_on_goal_alternate', outcomes: [{ name: 'Over', description: 'Connor Bedard', point: 2.5, price: -150 }, { name: 'Over', description: 'Jaden Schwartz', point: 4.5, price: -120 }] },
+    { key: 'player_total_saves', outcomes: [{ name: 'Over', description: 'Joey Daccord', point: 24.5, price: -115 }] },
+    { key: 'player_points', outcomes: [{ name: 'Over', description: 'Jaden Schwartz', point: 2.5, price: 160 }] },
+  ] }] };
+  const c = liveCandidates(payload, t, 'nhl');
+  const bedard = c.find((x) => x.player === 'Connor Bedard');
+  assert.ok(bedard && bedard.pace === 4 && bedard.point === 2.5, 'behind by two he shoots more: 2 at the half projects to 4 (4.4 rounded), clearing 2.5 with margin');
+  const daccord = c.find((x) => x.player === 'Joey Daccord');
+  assert.ok(daccord && daccord.pace === 31, 'the goalie ahead sees more: 14 saves at the half project to 31');
+  assert.ok(!c.some((x) => x.player === 'Jaden Schwartz' && x.stat === 'shotsTotal'), 'ahead by two he shoots less: 3 projects to 5, short of 4.5 with margin');
+  const lines = playerLines(t, 'nhl');
+  assert.equal(lines[0].name, 'Jaden Schwartz'); assert.equal(lines[0].points, 2); assert.equal(lines.find((l) => l.name === 'Joey Daccord').saves, 14);
+  const w = whoToWatch(t, c, 'nhl');
+  assert.ok(w.some((r) => r.player === 'Joey Daccord' && r.stat === 'saves' && /up two/.test(r.why)));
+});
