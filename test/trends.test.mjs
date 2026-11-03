@@ -8,7 +8,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { extractTrendLines, hitFlags, hitRate, trendRowsFor, sortTrends, overNeed, underNeed, isAltLine } from '../docs/trends.js';
-import { buildTrends, buildLeagueChunk, runTrendsBuild, getTrends, STAMPS_VERSION, TRENDS_TTL_MINUTES, TREND_ENABLED_SPORTS, TREND_SPORTS, GAME_HOURS, trendDayKeys, MAX_GAMES_PER_TICK, trendGamesFor } from '../worker/src/trends.js';
+import { buildTrends, buildLeagueChunk, runTrendsBuild, getTrends, STAMPS_VERSION, TRENDS_TTL_MINUTES, TREND_ENABLED_SPORTS, TREND_SPORTS, GAME_HOURS, trendDayKeys, MAX_GAMES_PER_TICK, trendGamesFor, TREND_TABS, isTrendKey, trendKeysOf, getTrendsGroup } from '../worker/src/trends.js';
 import { gamelogStatIndex, NFL_TREND_MARKETS } from '../worker/src/football-props.js';
 import { espnAbbr } from '../docs/team-logos.js';
 
@@ -361,4 +361,22 @@ test('extractTrendLines: PrizePicks is not quoted on an alternate market (a gobl
   assert.deepEqual(at(5.5).over.map((q) => q.bookKey), ['draftkings']);
   assert.equal(isAltLine(at(5.5)), true);
   assert.equal(isAltLine(at(9.5)), false);
+});
+
+test('the soccer leagues read as one Soccer tab: rows side by side with their own league, best rates first, the logs merged', async () => {
+  assert.deepEqual(TREND_TABS, ['basketball_nba', 'americanfootball_nfl', 'icehockey_nhl', 'soccer']);
+  assert.ok(isTrendKey('soccer') && isTrendKey('soccer_epl') && !isTrendKey('soccer_mls'));
+  assert.deepEqual(trendKeysOf('soccer').length, 5); assert.deepEqual(trendKeysOf('basketball_nba'), ['basketball_nba']);
+  const store = new Map();
+  const env = { POTD_KV: { get: async (k) => store.get(k) ?? null, put: async (k, v) => { store.set(k, v); } } };
+  const row = (sportKey, id, l20) => ({ id, sportKey, sportTitle: sportKey, playerName: id, athleteId: id, statKey: 'shots', point: 1.5, side: 'over', rates: { l20 }, periods: { l20: { rate: l20, hits: Math.round(l20 * 20), games: 20 } }, logKey: `${id}:shots` });
+  store.set('trends:soccer_epl', JSON.stringify({ sportKey: 'soccer_epl', title: 'Premier League', builtAt: 10, checkedAt: 11, games: 2, pending: 1, rows: [row('soccer_epl', 'saka', 0.8)], logs: { 'saka:shots': [{ value: 3, date: 1 }] }, stamps: {} }));
+  store.set('trends:soccer_spain_la_liga', JSON.stringify({ sportKey: 'soccer_spain_la_liga', title: 'La Liga', builtAt: 20, checkedAt: 21, games: 3, pending: 0, rows: [row('soccer_spain_la_liga', 'yamal', 0.95)], logs: { 'yamal:shots': [{ value: 4, date: 1 }] }, stamps: {} }));
+  const g = await getTrendsGroup(env, 'soccer');
+  assert.equal(g.sportKey, 'soccer'); assert.equal(g.title, 'Soccer');
+  assert.deepEqual([g.builtAt, g.checkedAt, g.games, g.pending], [20, 21, 5, 1]);
+  assert.deepEqual(g.rows.map((r) => [r.id, r.sportKey]), [['yamal', 'soccer_spain_la_liga'], ['saka', 'soccer_epl']], 'the better rate first, each row with its league');
+  assert.ok(g.logs['saka:shots'] && g.logs['yamal:shots'], 'both logs ride along');
+  assert.deepEqual(g.leagues.map((l) => [l.sportKey, l.rows]).filter((l) => l[1]), [['soccer_epl', 1], ['soccer_spain_la_liga', 1]]);
+  assert.equal(await getTrendsGroup(env, 'nope'), null);
 });

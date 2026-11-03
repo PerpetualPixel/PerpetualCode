@@ -37,7 +37,7 @@ test('the index is the runner\'s, and a player\'s log at a stat carries every se
   assert.equal((await getPlayerIndex(env, 'basketball_nba')).players[0].name, 'Jrue Holiday');
   assert.deepEqual((await getPlayerIndex(env, 'americanfootball_nfl')).players, []);
   const out = await getPlayerLog(env, 'basketball_nba', 'por', '3995', 'points');
-  assert.deepEqual(out.player, { id: '3995', name: 'Jrue Holiday', team: 'POR', position: 'G', injuries: [{ status: 'Day-To-Day', detail: 'Knee' }] });
+  assert.deepEqual(out.player, { id: '3995', name: 'Jrue Holiday', team: 'POR', position: 'G', injuries: [{ status: 'Day-To-Day', detail: 'Knee' }], sportKey: 'basketball_nba' });
   assert.deepEqual(out.rows.map((r) => [r.value, r.season, r.seasonType, r.opponent, r.atVs]), [[22, 2026, '2026-27 Regular Season', 'LAL', 'vs'], [18, 2026, '2026-27 Regular Season', 'DEN', '@'], [31, 2025, '2025-26 Postseason', 'LAL', '@']]);
   assert.equal(await getPlayerLog(env, 'basketball_nba', 'POR', '1', 'points'), null);
 });

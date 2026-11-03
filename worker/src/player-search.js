@@ -48,7 +48,7 @@ export async function getPlayerLog(env, sportKey, team, athleteId, stat) {
         ? seasonColumnRows(player.log, soccerStatIndex(player.log, stat), { allSeasons: true })
         : seasonColumnRows(player.log, gamelogStatIndex(player.log, stat), { allSeasons: true });
   return {
-    player: { id: player.id, name: player.name, team: String(team).toUpperCase(), position: player.position ?? null, injuries: player.injuries ?? [] },
+    player: { id: player.id, name: player.name, team: String(team).toUpperCase(), position: player.position ?? null, injuries: player.injuries ?? [], sportKey },
     stat,
     rows: rows.map((r) => ({ value: r.value, date: r.date, season: r.season, seasonType: r.seasonType ?? null, opponent: r.opponent ?? null, atVs: r.atVs ?? null, result: r.result ?? null, score: r.score ?? null })),
   };

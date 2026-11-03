@@ -56,7 +56,7 @@ import { runNhlPropsScan, runNhlPropsGrading, getAllNhlPropsTracked } from './nh
 import { runPotdDaily, runPotdClvSnapshot, runPotdGrading, backfillPotdAnalysis, getPotd, getPotdNext, getPotdHold, getPotdLeaning, getPotdHistory, retractPotd, regradePotdTennisVoids, etParts } from './potd.js';
 import { runLadderDaily, runLadderGrading, getLadder, getLadderHistory } from './ladder.js';
 import { BUILD_INFO } from '../../docs/version.js';
-import { runTrendsBuild, getTrends, buildLeagueChunk, TREND_ENABLED_SPORTS } from './trends.js';
+import { runTrendsBuild, getTrends, buildLeagueChunk, TREND_ENABLED_SPORTS, TREND_TABS, isTrendKey, trendKeysOf, getTrendsFor } from './trends.js';
 import { loadBundleIndex, loadInjuries, injuryFor, withInjuries } from './espn-bundle.js';
 import { getPlayerIndex, getPlayerLog, playerStats } from './player-search.js';
 import { getUfcEvents, getUfcEvent, nextUfcEvent, getUfcFighter, getUfcFighters } from './ufc-card.js';
@@ -1527,9 +1527,12 @@ export default {
     // only, from the runner's ESPN bundle.
     if (pathname === '/players' && request.method === 'GET') {
       const sportKey = new URL(request.url).searchParams.get('sport') ?? 'basketball_nba';
-      if (!TREND_ENABLED_SPORTS.includes(sportKey)) return json({ error: 'unknown sport' }, { status: 400, headers: cors });
-      const index = await getPlayerIndex(env, sportKey);
-      return json({ ...index, stats: playerStats(sportKey) }, { headers: { ...cors, 'Cache-Control': 'public, max-age=1800' } });
+      if (!isTrendKey(sportKey)) return json({ error: 'unknown sport' }, { status: 400, headers: cors });
+      // A group's index is its leagues' players side by side, each carrying the league its log lives under.
+      const keys = trendKeysOf(sportKey);
+      const parts = await Promise.all(keys.map((k) => getPlayerIndex(env, k)));
+      const index = keys.length === 1 ? parts[0] : { sportKey, builtAt: parts.reduce((m, p) => (p.builtAt && (!m || p.builtAt > m) ? p.builtAt : m), null), players: parts.flatMap((p) => (p.players ?? []).map((x) => ({ ...x, sportKey: p.sportKey }))) };
+      return json({ ...index, stats: playerStats(keys[0]) }, { headers: { ...cors, 'Cache-Control': 'public, max-age=1800' } });
     }
     if (pathname === '/player' && request.method === 'GET') {
       const q = new URL(request.url).searchParams;
@@ -1631,14 +1634,17 @@ export default {
     if (pathname === '/trends' && request.method === 'GET') {
       try {
         const wanted = new URL(request.url).searchParams.get('sport');
-        const keys = wanted && TREND_ENABLED_SPORTS.includes(wanted) ? [wanted] : TREND_ENABLED_SPORTS;
-        const all = await Promise.all(keys.map((k) => getTrends(env, k)));
+        const keys = wanted && isTrendKey(wanted) ? [wanted] : TREND_TABS;
+        const all = await Promise.all(keys.map((k) => getTrendsFor(env, k)));
         const found = all.find((t) => t.rows.length) ?? all[0];
         // The injury report as of the last half hour, on every row: a
         // player questionable or out is tagged on the card the moment the
-        // report says so, whatever the stored rows carried when built.
-        const report = await loadInjuries(env, found.sportKey);
-        const trends = { ...found, rows: withInjuries(found.rows, report), injuriesAt: report.builtAt };
+        // report says so, whatever the stored rows carried when built. A
+        // group's rows each read their own league's report.
+        const reports = Object.fromEntries(await Promise.all(trendKeysOf(found.sportKey).map(async (k) => [k, await loadInjuries(env, k)])));
+        const reportOf = (r) => reports[r.sportKey] ?? reports[trendKeysOf(found.sportKey)[0]];
+        const injuriesAt = Object.values(reports).reduce((m, r) => (r?.builtAt && (!m || r.builtAt > m) ? r.builtAt : m), null);
+        const trends = { ...found, rows: (found.rows ?? []).map((r) => withInjuries([r], reportOf(r))[0]), injuriesAt };
         // `feed` is the last Odds API call's outcome (odds.js's
         // recordOddsDiag): a tab with no rows can say the feed refused the
         // call rather than look like a build that never ran.
@@ -1646,8 +1652,8 @@ export default {
         return json({
           trends,
           feed: feedRaw ? JSON.parse(feedRaw) : null,
-          leagues: TREND_ENABLED_SPORTS,
-          available: await Promise.all(TREND_ENABLED_SPORTS.map(async (k) => { const t = await getTrends(env, k); return { sportKey: k, title: t.title, rows: t.rows.length, builtAt: t.builtAt }; })),
+          leagues: TREND_TABS,
+          available: await Promise.all(TREND_TABS.map(async (k) => { const t = await getTrendsFor(env, k); return { sportKey: k, title: t.title, rows: t.rows.length, builtAt: t.builtAt }; })),
         }, { headers: { ...cors, 'Cache-Control': 'public, max-age=300' } });
       } catch (error) {
         return json({ error: String(error).slice(0, 120) }, { status: 500, headers: cors });
