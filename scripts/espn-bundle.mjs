@@ -21,6 +21,7 @@ import { bundleKey, bundleIndexKey, playersIndexKey, injuriesKey } from '../work
 import { boxKey, boxLegKey, findBoxEvent, eventFinal, boxLine, boxActual } from '../worker/src/box-grading.js';
 import { basketballHeadshotUrl } from '../worker/src/basketball-props.js';
 import { nflHeadshotUrl } from '../worker/src/football-props.js';
+import { nhlHeadshotUrl } from '../worker/src/hockey-props.js';
 
 const args = process.argv.slice(2);
 const DRY = args.includes('--dry-run');
@@ -45,6 +46,15 @@ const LEAGUES = {
     // The prop markets are passing, rushing, receiving and kicking.
     keep: (pos) => ['QB', 'RB', 'FB', 'WR', 'TE', 'K'].includes(String(pos ?? '').toUpperCase()),
     prior: () => new Date().getUTCFullYear() - 1,
+  },
+  nhl: {
+    sportKey: 'icehockey_nhl',
+    site: 'https://site.api.espn.com/apis/site/v2/sports/hockey/nhl',
+    gamelog: 'https://site.web.api.espn.com/apis/common/v3/sports/hockey/nhl/athletes',
+    // Skaters for shots, points, assists and goals; goalies for saves.
+    keep: () => true,
+    // ESPN keys a hockey season by the year it ends, as it does basketball.
+    prior: (log) => priorSeasonKey(log),
   },
 };
 
@@ -313,7 +323,7 @@ for (const [name, league] of Object.entries(LEAGUES)) {
   entries.push({ key: injuriesKey(league.sportKey), value: { sportKey: league.sportKey, builtAt: now, players: Object.assign({}, ...records.map((r) => r.injuries)) } });
   entries.push({ key: bundleIndexKey(league.sportKey), value: { sportKey: league.sportKey, builtAt: now, teams: records.map((r) => r.team), players: records.reduce((n, r) => n + r.players.length, 0) } });
   // Every player in the league, light enough for the Players tab to search as the user types (worker/src/player-search.js).
-  const headshot = league.sportKey === 'americanfootball_nfl' ? nflHeadshotUrl : (id) => basketballHeadshotUrl(league.sportKey, id);
+  const headshot = league.sportKey === 'americanfootball_nfl' ? nflHeadshotUrl : league.sportKey === 'icehockey_nhl' ? nhlHeadshotUrl : (id) => basketballHeadshotUrl(league.sportKey, id);
   entries.push({ key: playersIndexKey(league.sportKey), value: { sportKey: league.sportKey, builtAt: now, players: records.flatMap((r) => r.players.map((p) => ({ id: p.id, name: p.name, team: r.team, position: p.position ?? null, headshot: headshot(p.id) }))) } });
   const size = entries.reduce((n, e) => n + JSON.stringify(e.value).length, 0);
   say(`${records.length} team records, ${(size / 1e6).toFixed(2)} MB`);

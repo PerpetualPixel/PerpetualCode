@@ -86,6 +86,18 @@ const NFL_BOX = {
   targets: (s) => num(s.receivingTargets ?? s.targets) ?? 0,
 };
 
+// Skaters sit in the forwards and defenses blocks (shotsTotal is shots on goal; the "SOG"-labelled column is shootout goals),
+// goalies in their own block with saves. Points are goals + assists: the box has no points column.
+// A column the block does not carry (a goalie has no shots, a skater no saves) reads null, never zero.
+const col = (s, k) => (s[k] == null ? null : num(s[k]));
+const NHL_BOX = {
+  shots: (s) => col(s, 'shotsTotal'),
+  goals: (s) => col(s, 'goals'),
+  assists: (s) => col(s, 'assists'),
+  points: (s) => { const g = col(s, 'goals'); const a = col(s, 'assists'); return g != null && a != null ? g + a : null; },
+  saves: (s) => col(s, 'saves'),
+};
+
 /** The stat a leg settles on, from a played line's stats, or null when the box does not carry it. */
 export function boxActual(line, sportKey, statKey) {
   if (!line || line.dnp) return null;
@@ -96,5 +108,6 @@ export function boxActual(line, sportKey, statKey) {
     return NBA_BOX[statKey] ? NBA_BOX[statKey](s) : null;
   }
   if (sportKey === 'americanfootball_nfl') return NFL_BOX[statKey] ? NFL_BOX[statKey](s) : null;
+  if (sportKey === 'icehockey_nhl') return NHL_BOX[statKey] ? NHL_BOX[statKey](s) : null;
   return null;
 }

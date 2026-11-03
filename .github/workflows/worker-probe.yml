@@ -60,6 +60,9 @@ jobs:
                   const re = process.env.GREP ? new RegExp(process.env.GREP, "i") : null;
                   const text = raw.replace(/<script[\s\S]*?<\/script>|<style[\s\S]*?<\/style>/g, "").replace(/<[^>]+>/g, " ").replace(/&nbsp;|&#160;/g, " ").replace(/[ \t]+/g, " ");
                   const lines = text.split(/\n+/).map((l) => l.trim()).filter(Boolean);
+                  // A page that collapses to one huge line prints a window around each match instead of its first 12000 characters.
+                  const big = (re ? lines.filter((l) => re.test(l)) : []).find((l) => l.length > 4000);
+                  if (big) { const g = new RegExp(re.source, "gi"); let m; let n = 0; while ((m = g.exec(big)) && n++ < 60) console.log("...", big.slice(Math.max(0, m.index - 80), m.index + 160), "..."); return; }
                   console.log((re ? lines.filter((l) => re.test(l)) : lines).slice(0, 120).join("\n").slice(0, 12000));
                   return;
                 }
@@ -97,6 +100,7 @@ jobs:
                 } else if (d && Array.isArray(d.seasonTypes)) {
                   // The ESPN game log itself: each season block, its event ids against the dates in the events map.
                   const ev = d.events || {};
+                console.log("names", JSON.stringify(d.names), "labels", JSON.stringify(d.labels), "displayNames", JSON.stringify(d.displayNames));
                   for (const s of d.seasonTypes) for (const c of s.categories || []) {
                     const ids = (c.events || []).map((e) => e.eventId);
                     console.log(s.displayName, "|", c.displayName, ids.length, "events:", ids.slice(0, 6).map((id) => `${id}=${ev[id] ? ev[id].gameDate : "NO META"}`).join("  "));
@@ -110,7 +114,11 @@ jobs:
                       const comp = e.competitions && e.competitions[0];
                       console.log(e.id, e.name, "|", e.date, "|", e.status && e.status.type && e.status.type.description);
                       if (!want.size || !comp) continue;
-                      const sum = await fetch(`https://site.api.espn.com/apis/site/v2/sports/basketball/nba/summary?event=${e.id}`).then((r) => r.json()).catch(() => null);
+                      const slug = (d.leagues && d.leagues[0] && d.leagues[0].slug) || "nba";
+            const sportPath = { nba: "basketball/nba", nfl: "football/nfl", nhl: "hockey/nhl" }[slug] || "basketball/nba";
+            const sum = await fetch(`https://site.api.espn.com/apis/site/v2/sports/${sportPath}/summary?event=${e.id}`).then((r) => r.json()).catch(() => null);
+            // ATHLETES=keys: the box score blocks and their column keys, with one sample row each, for a new league stat map.
+            if (want.has("keys")) { for (const team of (sum && sum.boxscore && sum.boxscore.players) || []) for (const st of team.statistics || []) { const a = (st.athletes || [])[0]; console.log("   BLOCK", team.team && team.team.abbreviation, st.name, "keys", JSON.stringify(st.keys || st.names), "labels", JSON.stringify(st.labels), "sample", a ? `${a.athlete && a.athlete.displayName} dnp=${a.didNotPlay} ${JSON.stringify(a.stats)}` : "none"); } return; }
                       for (const team of (sum && sum.boxscore && sum.boxscore.players) || []) for (const st of team.statistics || []) for (const a of st.athletes || []) {
                         if (!want.has(String(a.athlete && a.athlete.id))) continue;
                         const line = (st.keys || st.names || []).map((k, i) => `${k}=${(a.stats || [])[i]}`).join(" ");
@@ -118,6 +126,9 @@ jobs:
                       }
                     }
                   })();
+                } else if (d && Array.isArray(d.athletes) && d.team) {
+                  // A roster: each position group with a few names and ids.
+                  for (const g of d.athletes) { const items = Array.isArray(g.items) ? g.items : []; console.log("GROUP", g.position || g.displayName || "?", items.length, items.slice(0, 4).map((a) => `${a.id}=${a.displayName}`).join("  ")); }
                 } else console.log(JSON.stringify(d).slice(0, 4000));
               });
             '
