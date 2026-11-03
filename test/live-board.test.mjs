@@ -48,7 +48,7 @@ test('the play is three to five legs at one book nearest +100, each player on hi
   assert.equal(play.bookId, 'draftkings');
   assert.ok(play.legs.length >= 3 && play.legs.length <= 5);
   assert.equal(new Set(play.legs.map((l) => l.player)).size, play.legs.length, 'one line per player');
-  assert.ok(play.american >= -160 && play.american <= 200);
+  assert.ok(play.american >= -160 && play.american <= 300);
   assert.equal(buildLivePlay(c.filter((x) => x.player === 'Saquon Barkley')), null, 'one player cannot make three legs');
 });
 
@@ -138,6 +138,20 @@ test('a deep ladder is read from its cheap end too: the three-leg at +100 comes 
   const { buildLivePlay: build } = await import('../worker/src/live-board.js');
   const play = build(liveCandidates(deep, t));
   assert.ok(play, 'a play is built');
-  assert.ok(play.american >= -160 && play.american <= 200, `in range: ${play.american}`);
+  assert.ok(play.american >= -160 && play.american <= 300, `in range: ${play.american}`);
   assert.ok(play.legs.every((l) => l.price <= -110), 'built from the cheap rungs');
+});
+
+test('a book priced near even still gets a slip: three legs at FanDuel land past +200 and stay in range', async () => {
+  const { buildLivePlay, liveCandidates, PLAY_PRICE } = await import('../worker/src/live-board.js');
+  assert.equal(PLAY_PRICE[1], 300);
+  const t = tick({ detail: '1:08 - 2nd Quarter', period: 2, clock: '1:08', score: { PHI: 13, WSH: 3 } });
+  const fd = (player, pts, prices) => pts.map((point, i) => ({ name: 'Over', description: player, point, price: prices[i] }));
+  const tight = { bookmakers: [{ key: 'fanduel', markets: [
+    { key: 'player_rush_yds_alternate', outcomes: [...fd('Saquon Barkley', [79.5, 89.5], [-198, -125]), ...fd('Jacory Croskey-Merritt', [49.5], [-162])] },
+    { key: 'player_reception_yds_alternate', outcomes: fd('Terry McLaurin', [69.5, 79.5], [-215, -114]) },
+  ] }] };
+  const play = buildLivePlay(liveCandidates(tight, t));
+  assert.ok(play, 'built');
+  assert.ok(play.american > 200 && play.american <= 300, `past +200, in range: ${play.american}`);
 });
