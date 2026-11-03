@@ -106,3 +106,17 @@ test('later slips are built without the best slip\'s players when the ladders al
   assert.equal(dup.length, 2);
   assert.ok(dup[1].legs.some((l) => l.onSlips === 2) && dup[1].shared.length > 0, 'the same ladders at two books: the players are shared and say so');
 });
+
+test('the board drops a game once it is final, and a stale watch six hours past kick-off with no tick; what is on or about to be stays', async () => {
+  const { getLiveBoard, liveGameOver } = await import('../worker/src/live-board.js');
+  const kick = Date.UTC(2026, 10, 3, 1, 15);
+  assert.equal(liveGameOver({ date: '2026-11-03T01:15Z' }, { state: 'post' }, kick + 3 * 3600e3), true, 'final: gone');
+  assert.equal(liveGameOver({ date: '2026-11-03T01:15Z' }, { state: 'in' }, kick + 3 * 3600e3), false);
+  assert.equal(liveGameOver({ date: '2026-11-03T01:15Z' }, null, kick - 30 * 60e3), false, 'before kick-off with no tick yet: shown');
+  assert.equal(liveGameOver({ date: '2026-11-03T01:15Z' }, null, kick + 7 * 3600e3), true, 'no tick and long over: gone');
+  const m = new Map(); const env = { POTD_KV: { get: async (k) => m.get(k) ?? null, put: async (k, v) => { m.set(k, v); } } };
+  m.set('live:watch:index', JSON.stringify({ games: [{ id: 'tonight', name: 'Chicago Bears at Seattle Seahawks', date: '2026-11-03T01:15Z', league: 'nfl' }, { id: 'last', name: 'Philadelphia Eagles at Washington Commanders', date: '2026-11-02T01:20Z', league: 'nfl' }] }));
+  m.set('live:watch:last', JSON.stringify({ ticks: [{ at: 1, state: 'post', detail: 'Final', score: { WSH: 27, PHI: 10 }, box: [] }] }));
+  const board = await getLiveBoard(env, kick - 30 * 60e3);
+  assert.deepEqual(board.games.map((g) => g.espnEventId), ['tonight']);
+});

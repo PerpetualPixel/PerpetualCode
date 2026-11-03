@@ -246,6 +246,9 @@ export async function ensureLivePlays(env, game, payload, tick, { league = 'nfl'
 }
 
 /** The board: every watched game with its last reads, the books posting, the players, who to watch, and the slips. */
+/** A watched game the board no longer shows: its last tick says final, or kick-off is six hours gone with nothing to say otherwise. */
+export const liveGameOver = (g, tick, now) => tick ? tick.state === 'post' : now > Date.parse(g.date) + 6 * 3600e3;
+
 export async function getLiveBoard(env, now = Date.now(), { ctx = null } = {}) {
   const idxRaw = await env.POTD_KV.get(LIVE_WATCH_INDEX).catch(() => null);
   const games = (idxRaw ? JSON.parse(idxRaw).games : []) ?? [];
@@ -253,6 +256,7 @@ export async function getLiveBoard(env, now = Date.now(), { ctx = null } = {}) {
   for (const g of games.slice(0, 4)) {
     const watch = JSON.parse((await env.POTD_KV.get(liveWatchKey(g.id)).catch(() => null)) ?? 'null');
     const tick = watch?.ticks?.at(-1) ?? null;
+    if (liveGameOver(g, tick, now)) continue; // the tab is for what is on or about to be, not last night
     const league = g.league ?? watch?.league ?? 'nfl';
     const probeId = await env.POTD_KV.get(`live:probe:for:${g.id}`).catch(() => null);
     const probe = probeId ? JSON.parse((await env.POTD_KV.get(liveProbeKey(probeId)).catch(() => null)) ?? 'null') : null;
