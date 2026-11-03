@@ -61,7 +61,8 @@ jobs:
                   const text = raw.replace(/<script[\s\S]*?<\/script>|<style[\s\S]*?<\/style>/g, "").replace(/<[^>]+>/g, " ").replace(/&nbsp;|&#160;/g, " ").replace(/[ \t]+/g, " ");
                   const lines = text.split(/\n+/).map((l) => l.trim()).filter(Boolean);
                   // A page that collapses to one huge line prints a window around each match instead of its first 12000 characters.
-                  if (re && lines.length < 5 && text.length > 12000) { const g = new RegExp(re.source, "gi"); let m; let n = 0; while ((m = g.exec(text)) && n++ < 60) console.log("...", text.slice(Math.max(0, m.index - 80), m.index + 160).replace(/\s+/g, " "), "..."); return; }
+                  const big = (re ? lines.filter((l) => re.test(l)) : []).find((l) => l.length > 4000);
+                  if (big) { const g = new RegExp(re.source, "gi"); let m; let n = 0; while ((m = g.exec(big)) && n++ < 60) console.log("...", big.slice(Math.max(0, m.index - 80), m.index + 160), "..."); return; }
                   console.log((re ? lines.filter((l) => re.test(l)) : lines).slice(0, 120).join("\n").slice(0, 12000));
                   return;
                 }

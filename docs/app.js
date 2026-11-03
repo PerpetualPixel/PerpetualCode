@@ -9587,7 +9587,7 @@ el.trendsSheet?.addEventListener('input', (event) => {
 const trendPicksState = { data: null, loaded: false, filter: 'all', hover: null, emblemOpen: null, mine: null, mineLoading: false, mineError: null };
 const pickDayFmt = new Intl.DateTimeFormat(undefined, { weekday: 'short', month: 'short', day: 'numeric' });
 const pickShortFmt = new Intl.DateTimeFormat(undefined, { month: 'numeric', day: 'numeric' });
-const PICK_FILTERS = [['all', 'All'], ['basketball_nba', 'NBA'], ['americanfootball_nfl', 'NFL']];
+const PICK_FILTERS = [['all', 'All'], ['basketball_nba', 'NBA'], ['americanfootball_nfl', 'NFL'], ['icehockey_nhl', 'NHL']];
 
 /**
  * The user's own ticket (worker/src/my-picks.js): read once per visit,
@@ -9740,7 +9740,7 @@ function legAsRow(leg, bet) {
 
 /** The board's best line as a one-leg pseudo ticket, so the leg renders and opens like any other. */
 const showcaseBet = (leg) => ({ id: `showcase:${leg.sportKey}`, type: 'straight', bookId: leg.bookId, book: leg.book, legs: [leg] });
-const SPORT_SHORT = { basketball_nba: 'NBA', americanfootball_nfl: 'NFL' };
+const SPORT_SHORT = { basketball_nba: 'NBA', americanfootball_nfl: 'NFL', icehockey_nhl: 'NHL' };
 
 function renderShowcaseCard(leg) {
   const open = trendPicksState.emblemOpen === leg.sportKey;
@@ -9921,7 +9921,7 @@ const playersState = {
   sport: 'basketball_nba', index: {}, stats: {}, player: null, stat: '', side: 'over', point: '',
   log: null, loading: false, window: 'all', filters: { opponent: '', venue: 'both', seasons: null, playoffs: 'include' }, focus: -1,
 };
-const PLAYER_LEAGUES = [['basketball_nba', 'NBA'], ['americanfootball_nfl', 'NFL']];
+const PLAYER_LEAGUES = [['basketball_nba', 'NBA'], ['americanfootball_nfl', 'NFL'], ['icehockey_nhl', 'NHL']];
 const foldName = (s) => String(s ?? '').normalize('NFD').replace(/[̀-ͯ]/g, '').toLowerCase().replace(/[^a-z0-9]+/g, ' ').trim();
 
 async function loadPlayers(sport = playersState.sport) {

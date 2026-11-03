@@ -75,3 +75,22 @@ test('the scoreboard event is found by either team abbreviation and read as fina
   assert.equal(boxKey('basketball_nba', '2026-10-30'), 'trendpicks:box:basketball_nba:2026-10-30');
   assert.equal(boxLegKey(3917376, 'pa'), '3917376:pa');
 });
+
+test('NHL actuals: shots from shotsTotal (never the SOG-labelled shootout column), points as goals + assists, saves from the goalie block', () => {
+  const SK = ['blockedShots', 'hits', 'plusMinus', 'timeOnIce', 'goals', 'assists', 'shotsTotal', 'shotsMissed', 'shootoutGoals', 'penaltyMinutes'];
+  const GK = ['goalsAgainst', 'shotsAgainst', 'shootoutSaves', 'shootoutShotsAgainst', 'saves', 'savePct', 'timeOnIce'];
+  const summary = { boxscore: { players: [
+    { team: { abbreviation: 'VGK' }, statistics: [
+      { name: 'forwards', keys: SK, athletes: [{ athlete: { id: '1', displayName: 'Ivan Barbashev' }, stats: ['2', '4', '-1', '15:16', '1', '2', '4', '1', '0', '0'] }] },
+      { name: 'defenses', keys: SK, athletes: [{ athlete: { id: '2', displayName: 'Rasmus Andersson' }, stats: ['1', '0', '0', '21:54', '0', '0', '2', '0', '0', '0'] }] },
+      { name: 'skaters', keys: SK, athletes: [] },
+      { name: 'goalies', keys: GK, athletes: [{ athlete: { id: '3', displayName: 'Carter Hart' }, stats: ['2', '27', '0', '0', '25', '.926', '65:00'] }] },
+    ] },
+  ] } };
+  const f = boxLine(summary, '1'); const d = boxLine(summary, '2'); const g = boxLine(summary, '3');
+  assert.deepEqual([boxActual(f, 'icehockey_nhl', 'shots'), boxActual(f, 'icehockey_nhl', 'goals'), boxActual(f, 'icehockey_nhl', 'assists'), boxActual(f, 'icehockey_nhl', 'points')], [4, 1, 2, 3]);
+  assert.deepEqual([boxActual(d, 'icehockey_nhl', 'shots'), boxActual(d, 'icehockey_nhl', 'points')], [2, 0], 'a defenceman reads from his own block');
+  assert.equal(boxActual(g, 'icehockey_nhl', 'saves'), 25);
+  assert.equal(boxActual(g, 'icehockey_nhl', 'shots'), null, 'a goalie has no shots column');
+  assert.equal(boxLine(summary, '9').dnp, true, 'a scratch is not in the box');
+});

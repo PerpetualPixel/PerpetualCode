@@ -44,7 +44,7 @@ test('shots, points and assists lines inside the band become candidates, main an
   assert.equal(sog.american, -300);
   assert.equal(sog.need, 2);
   assert.equal(out.find((c) => c.playerName === 'Morgan Rielly' && c.point === 1.5), undefined, 'the +150 line is lighter than the band');
-  assert.deepEqual(Object.keys(NHL_ALT_MARKETS), ['player_shots_on_goal_alternate', 'player_points_alternate', 'player_assists_alternate']);
+  assert.deepEqual(Object.keys(NHL_ALT_MARKETS), ['player_shots_on_goal_alternate', 'player_points_alternate', 'player_assists_alternate', 'player_goals_alternate', 'player_total_saves_alternate']);
 });
 
 const gamelog = {
@@ -109,4 +109,13 @@ test('boxscore rows read shots from shotsTotal, never the SOG-labelled shootout 
   assert.deepEqual(gradeNhlPropLeg({ statKey: 'shots', point: 1.5, need: 2 }, rows[0]), { won: true, actual: 5 });
   assert.deepEqual(gradeNhlPropLeg({ statKey: 'assists', point: 1.5, need: 2 }, rows[0]), { won: false, actual: 1 });
   assert.equal(gradeNhlPropLeg({ statKey: 'shots', point: 1.5, need: 2 }, null).void, true);
+});
+
+test('goals and saves read from the game log by key: a skater has goals, a goalie has saves', () => {
+  const skater = { names: ['goals', 'assists', 'points', 'plusMinus', 'penaltyMinutes', 'shotsTotal'], labels: ['G', 'A', 'PTS', '+/-', 'PIM', 'S'], seasonTypes: [{ displayName: '2026-27 Regular Season', categories: [{ events: [{ eventId: 'a', stats: ['1', '2', '3', '0', '0', '5'] }, { eventId: 'b', stats: ['0', '1', '1', '1', '2', '3'] }] }] }], events: { a: { gameDate: '2026-11-01T23:00Z' }, b: { gameDate: '2026-10-31T18:00Z' } } };
+  assert.deepEqual(parseNhlGamelogValues(skater, 'goals'), [1, 0]);
+  assert.deepEqual(parseNhlGamelogValues(skater, 'shots'), [5, 3]);
+  const goalie = { names: ['gameStarted', 'timeOnIcePerGame', 'wins', 'losses', 'goalsAgainst', 'shotsAgainst', 'saves', 'savePct'], labels: ['GS', 'TOI/G', 'WINS', 'L', 'GA', 'SA', 'SV', 'SV%'], seasonTypes: [{ displayName: '2026-27 Regular Season', categories: [{ events: [{ eventId: 'a', stats: ['1', '60:00', '1', '0', '2', '27', '25', '.926'] }] }] }], events: { a: { gameDate: '2026-11-01T23:00Z' } } };
+  assert.deepEqual(parseNhlGamelogValues(goalie, 'saves'), [25]);
+  assert.deepEqual(parseNhlGamelogValues(goalie, 'shots'), [], 'a goalie has no shots column, and shots are never read by label');
 });

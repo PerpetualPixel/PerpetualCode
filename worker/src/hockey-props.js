@@ -27,7 +27,7 @@ import {
   gradePropLeg,
   seasonColumnValues,
 } from '../../docs/prop-legs.js';
-import { UPSTREAM, REGIONS } from './odds.js';
+import { UPSTREAM, TREND_BOOKMAKERS } from './odds.js';
 
 export const NHL_SPORT_KEY = 'icehockey_nhl';
 
@@ -36,6 +36,9 @@ export const NHL_PROP_MARKETS = {
   player_shots_on_goal: { stat: 'shots', label: 'SOG', marketLabel: 'Shots on Goal' },
   player_points: { stat: 'points', label: 'Pts', marketLabel: 'Points' },
   player_assists: { stat: 'assists', label: 'Ast', marketLabel: 'Assists' },
+  player_goals: { stat: 'goals', label: 'G', marketLabel: 'Goals' },
+  // The goalie's line: the game log and the box score both key it `saves`.
+  player_total_saves: { stat: 'saves', label: 'Sv', marketLabel: 'Saves' },
 };
 /**
  * The alternate-line markets, asked for first: they carry the deep lines
@@ -47,6 +50,8 @@ export const NHL_ALT_MARKETS = {
   player_shots_on_goal_alternate: NHL_PROP_MARKETS.player_shots_on_goal,
   player_points_alternate: NHL_PROP_MARKETS.player_points,
   player_assists_alternate: NHL_PROP_MARKETS.player_assists,
+  player_goals_alternate: NHL_PROP_MARKETS.player_goals,
+  player_total_saves_alternate: NHL_PROP_MARKETS.player_total_saves,
 };
 const ALL_MARKETS = { ...NHL_PROP_MARKETS, ...NHL_ALT_MARKETS };
 const MARKET_PARAMS = [
@@ -83,8 +88,9 @@ export const propLegFrom = (candidate, values) => sharedPropLegFrom(candidate, v
 export const gradeNhlPropLeg = gradePropLeg;
 
 /** Column keys per stat; shots is never read by label (see the header). */
-const GAMELOG_NAMES = { shots: ['shotsTotal', 'shots'], points: ['points'], assists: ['assists'] };
-const GAMELOG_LABEL = { points: 'PTS', assists: 'A' };
+// A skater's log carries goals, assists, points and shotsTotal; a goalie's carries saves (with shotsAgainst and goalsAgainst beside it).
+const GAMELOG_NAMES = { shots: ['shotsTotal', 'shots'], points: ['points'], assists: ['assists'], goals: ['goals'], saves: ['saves'] };
+const GAMELOG_LABEL = { points: 'PTS', assists: 'A', goals: 'G', saves: 'SV' };
 
 /**
  * The player's per-game values for one stat, most recent first, current
@@ -176,10 +182,13 @@ export async function fetchNhlProps(oddsEventId, env, ctx) {
   for (const markets of MARKET_PARAMS) {
     const url = new URL(`${UPSTREAM}/sports/${NHL_SPORT_KEY}/events/${oddsEventId}/odds`);
     url.searchParams.set('apiKey', (env.ODDS_API_KEY ?? '').trim());
-    url.searchParams.set('regions', REGIONS);
+    // Named books in place of a region (odds.js's TREND_BOOKMAKERS): the same credits, the owner's books included.
+    url.searchParams.set('bookmakers', TREND_BOOKMAKERS);
     url.searchParams.set('markets', markets);
     url.searchParams.set('oddsFormat', 'american');
     url.searchParams.set('dateFormat', 'iso');
+    // Deep links to the book's slip for each line, where the book offers one: a request flag, not a credit.
+    url.searchParams.set('includeLinks', 'true');
     const odds = await cachedJson(url.toString(), ODDS_TTL, ctx);
     if (odds) return odds;
   }

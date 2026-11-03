@@ -61,12 +61,11 @@ export function trendDayKeys(now) {
  */
 export const MAX_GAMES_PER_TICK = 6;
 /**
- * The leagues Trends builds and shows: NBA and NFL (2026-10-27 direction:
- * "the trends to cover NFL and NBA only"). The NHL reader stays wired and
- * tested and joins this list when the direction says so. NBA first: it is
- * the league the tab opens on when both have rows.
+ * The leagues Trends builds and shows: NBA, NFL and, since 2026-11-03
+ * ("toggle NHL on too: shots on goal, saves, points"), NHL. NBA first: it
+ * is the league the tab opens on when more than one has rows.
  */
-export const TREND_ENABLED_SPORTS = ['basketball_nba', NFL_SPORT_KEY];
+export const TREND_ENABLED_SPORTS = ['basketball_nba', NFL_SPORT_KEY, NHL_SPORT_KEY];
 export const MAX_PLAYERS_PER_GAME = 40;
 /** Rows with fewer logged games than this have no rate worth sorting on. */
 const MIN_GAMES = 3;
@@ -142,6 +141,10 @@ export const TREND_SPORTS = {
   },
   [NHL_SPORT_KEY]: {
     title: 'NHL',
+    // Today's and tomorrow's games, rebuilt three times a day like the
+    // NBA: ten markets a game (shots, points, assists, goals, saves, main
+    // and alternate) is ten credits a game per build.
+    ttlMinutes: 480,
     markets: { ...NHL_PROP_MARKETS, ...NHL_ALT_MARKETS },
     normalizeName: normalizeNhlName,
     fetchOdds: (eventId, env, ctx) => fetchNhlProps(eventId, env, ctx),
