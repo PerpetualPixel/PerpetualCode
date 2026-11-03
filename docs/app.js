@@ -10893,7 +10893,8 @@ function liveBar(current, point) {
   const cur = Math.min(100, (current / max) * 100); const line = Math.min(100, (point / max) * 100);
   return `<div class="live-bar ${current >= point ? 'is-cleared' : ''}" aria-label="${esc(String(current))} now, needs ${esc(String(point))}">
     <span class="live-bar-track"></span>
-    <span class="live-bar-green" style="left:${line.toFixed(1)}%"></span>
+    <span class="live-bar-green" style="width:${cur.toFixed(1)}%"></span>
+    <span class="live-bar-tick" style="left:${line.toFixed(1)}%"></span>
     <span class="live-bar-line" style="left:${line.toFixed(1)}%"><b>${esc(String(point))}</b></span>
     <span class="live-bar-now" style="left:${cur.toFixed(1)}%">${esc(String(current))}</span>
   </div>`;
