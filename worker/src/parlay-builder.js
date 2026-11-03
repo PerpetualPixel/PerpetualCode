@@ -27,10 +27,31 @@ export async function findTrendRow(env, sportKey, rowId) {
 }
 
 /** The model's read of one leg: { verdict: 'good' | 'risky', score, summary, reasons: [] }, cached for the day. */
-export async function legBreakdown(env, sportKey, rowId, ctx, { now = Date.now(), deps = {} } = {}) {
+/**
+ * The model reads a free service can afford in a day: a line's read is
+ * cached for the day, so these count distinct lines, not taps. The site
+ * cap holds the bill; the per-person cap keeps one visitor from spending
+ * everyone's. Past either, the leg still answers from the record alone.
+ */
+export const DAILY_MODEL_READS = 400;
+export const DAILY_MODEL_READS_PER_PERSON = 30;
+const readsKey = (dateKey, who = null) => `parlay:reads:${dateKey}${who ? `:${who}` : ''}`;
+const readCount = async (env, k) => Number((await env.POTD_KV.get(k).catch(() => null)) ?? 0) || 0;
+
+/** How many model reads today has used, site-wide and for one visitor. */
+export async function modelReadsToday(env, now = Date.now(), who = null) {
+  const dateKey = etParts(now).date;
+  return { site: await readCount(env, readsKey(dateKey)), person: who ? await readCount(env, readsKey(dateKey, who)) : 0, caps: { site: DAILY_MODEL_READS, person: DAILY_MODEL_READS_PER_PERSON } };
+}
+
+export async function legBreakdown(env, sportKey, rowId, ctx, { now = Date.now(), deps = {}, who = null, caps = {} } = {}) {
   const dateKey = etParts(now).date;
   const cached = await env.POTD_KV.get(key(dateKey, rowId)).catch(() => null);
   if (cached) return JSON.parse(cached);
+  // The day's budget: past it the leg answers from the record alone, and that answer is kept only briefly so a read follows once the day turns.
+  const siteCap = caps.site ?? DAILY_MODEL_READS; const personCap = caps.person ?? DAILY_MODEL_READS_PER_PERSON;
+  const used = await modelReadsToday(env, now, who);
+  const capped = used.site >= siteCap || (who && used.person >= personCap);
   const row = deps.row ?? await findTrendRow(env, sportKey, rowId);
   if (!row) return null;
   const score = legScore(row);
@@ -51,16 +72,24 @@ export async function legBreakdown(env, sportKey, rowId, ctx, { now = Date.now()
 ${facts}
 
 Say whether it is a good leg or a risky one, in plain words, no dashes. Reply with JSON only: {"verdict":"good"|"risky","summary":"<one sentence>","reasons":["<short point>","<short point>","<short point>"]}`;
-  const text = deps.model ? await deps.model(prompt) : await callModel(prompt, env);
+  const text = capped ? null : deps.model ? await deps.model(prompt) : await callModel(prompt, env);
+  if (!capped) {
+    // One read spent, site-wide and for this visitor; a soft count (KV is not atomic), which is all a budget needs.
+    await env.POTD_KV.put(readsKey(dateKey), String(used.site + 1), { expirationTtl: 2 * 86400 }).catch(() => {});
+    if (who) await env.POTD_KV.put(readsKey(dateKey, who), String(used.person + 1), { expirationTtl: 2 * 86400 }).catch(() => {});
+  }
   const parsed = parseBreakdown(text);
   const result = {
     rowId, score, at: now,
     verdict: parsed?.verdict ?? (score >= 3.5 ? 'good' : 'risky'),
-    summary: parsed?.summary ?? (score >= 3.5 ? 'The record says the number is safe; the read was not available.' : 'The record is mixed; the read was not available.'),
+    summary: parsed?.summary ?? (capped
+      ? (score >= 3.5 ? 'The record says the number is safe.' : 'The record is mixed.')
+      : (score >= 3.5 ? 'The record says the number is safe; the read was not available.' : 'The record is mixed; the read was not available.')),
     reasons: parsed?.reasons ?? [`Last 10: ${pct(p.l10)}`, `Last 20: ${pct(p.l20)}`, p.h2h?.games ? `Head to head: ${pct(p.h2h)}` : 'No head to head yet'],
     model: Boolean(parsed),
+    capped,
   };
-  await env.POTD_KV.put(key(dateKey, rowId), JSON.stringify(result), { expirationTtl: CACHE_SECONDS }).catch(() => {});
+  await env.POTD_KV.put(key(dateKey, rowId), JSON.stringify(result), { expirationTtl: capped ? 600 : CACHE_SECONDS }).catch(() => {});
   return result;
 }
 
