@@ -13,7 +13,7 @@
  * the order of 300 credits for a game, out of a monthly budget near
  * 100,000.
  */
-import { UPSTREAM, TREND_BOOKMAKERS } from './odds.js';
+import { UPSTREAM } from './odds.js';
 import { listLeagueGames } from './prop-legs.js';
 import { ensureLivePlays } from './live-board.js';
 
@@ -23,6 +23,12 @@ export const LIVE_MARKETS = {
   nba: 'player_points_alternate,player_rebounds_alternate,player_assists_alternate,player_points,player_rebounds,player_assists',
 };
 export const LIVE_SPORT = { nfl: 'americanfootball_nfl', nba: 'basketball_nba' };
+/**
+ * Every book the site lists that posts player props (docs/engine.js's
+ * SPORTSBOOKS, less Kalshi, which has none): ten names, the most the feed
+ * prices as one region, so the live call costs what the pre-game one does.
+ */
+export const LIVE_BOOKMAKERS = 'draftkings,fanduel,williamhill_us,fanatics,betmgm,prizepicks,hardrockbet,bet365,betrivers,espnbet';
 export const liveProbeKey = (eventId) => `live:probe:${eventId}`;
 /** The latest raw props payload for the game, whole, for the Live board's ladders (worker/src/live-board.js). */
 export const liveLatestKey = (eventId) => `live:probe:${eventId}:latest`;
@@ -109,10 +115,11 @@ export async function runLiveProbe(env, ctx, now = Date.now(), { deps = {} } = {
 async function fetchLiveProps(sportKey, eventId, env, markets) {
   const url = new URL(`${UPSTREAM}/sports/${sportKey}/events/${eventId}/odds`);
   url.searchParams.set('apiKey', (env.ODDS_API_KEY ?? '').trim());
-  url.searchParams.set('regions', 'us');
-  url.searchParams.set('bookmakers', TREND_BOOKMAKERS);
+  url.searchParams.set('bookmakers', LIVE_BOOKMAKERS);
   url.searchParams.set('markets', markets);
   url.searchParams.set('oddsFormat', 'american');
+  // The book's deep link for each line, so a leg imports to the slip (a request flag, not a credit).
+  url.searchParams.set('includeLinks', 'true');
   const res = await fetch(url.toString(), { headers: { Accept: 'application/json' } });
   if (!res.ok) return { error: `HTTP ${res.status} ${(await res.text().catch(() => '')).slice(0, 160)}`, bookmakers: [] };
   return res.json();
