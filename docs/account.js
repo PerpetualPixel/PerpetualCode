@@ -121,6 +121,7 @@ async function loadPickSettings() {
     const res = await fetch(`${window.API_BASE}/settings`, { headers: authHeaders() });
     if (!res.ok) return;
     const { settings } = await res.json();
+    for (const box of document.querySelectorAll('input[name="liveBook"]')) box.checked = (settings?.liveBooks ?? []).includes(box.value);
     const picks = settings?.picks;
     if (!picks) return;
     document.getElementById('picks-book').value = picks.book;
@@ -128,6 +129,26 @@ async function loadPickSettings() {
     document.getElementById('picks-legs').value = String(picks.legs);
   } catch { /* the form keeps its defaults; a save still works */ }
 }
+
+document.getElementById('live-books-form').addEventListener('submit', async (e) => {
+  e.preventDefault();
+  const btn = e.target.querySelector('button');
+  const original = btn.textContent;
+  const liveBooks = [...document.querySelectorAll('input[name="liveBook"]:checked')].map((b) => b.value);
+  try {
+    btn.disabled = true;
+    btn.innerHTML = '<span class="spinner"></span> Saving...';
+    const res = await fetch(`${window.API_BASE}/settings`, { method: 'PUT', headers: authHeaders(), body: JSON.stringify({ liveBooks }) });
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.error || 'Save failed');
+    showMessage('live-books-message', liveBooks.length ? `Saved. Live slips show ${liveBooks.length} book${liveBooks.length === 1 ? '' : 's'} first.` : 'Saved. Live slips show every book.', false);
+  } catch (err) {
+    showMessage('live-books-message', err.message, true);
+  } finally {
+    btn.disabled = false;
+    btn.textContent = original;
+  }
+});
 
 document.getElementById('picks-form').addEventListener('submit', async (e) => {
   e.preventDefault();
