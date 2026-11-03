@@ -125,3 +125,19 @@ test('the board drops a game once it is final, and a stale watch six hours past 
   const board = await getLiveBoard(env, kick - 30 * 60e3);
   assert.deepEqual(board.games.map((g) => g.espnEventId), ['tonight']);
 });
+
+test('a deep ladder is read from its cheap end too: the three-leg at +100 comes from the low rungs, not the plus-money ones alone', async () => {
+  const { buildLivePlay, liveCandidates } = await import('../worker/src/live-board.js');
+  const t = tick({ detail: '7:00 - 2nd Quarter', period: 2, clock: '7:00', score: { PHI: 14, WSH: 10 } }); // close: no script rules anyone out
+  // Every rung clears the pace with margin; the plus-money rungs alone multiply past +200, the cheap ones make +100.
+  const deep = { bookmakers: [{ key: 'draftkings', markets: [
+    { key: 'player_rush_yds_alternate', outcomes: [...ladder('Saquon Barkley', [69.5, 74.5, 79.5, 84.5, 89.5, 94.5, 99.5], [-280, -240, -200, -165, -140, -115, 105]), ...ladder('Jacory Croskey-Merritt', [39.5, 44.5, 49.5, 54.5, 59.5], [-270, -220, -175, -140, -110])] },
+    { key: 'player_reception_yds_alternate', outcomes: ladder('Terry McLaurin', [59.5, 64.5, 69.5, 74.5, 79.5, 89.5], [-260, -210, -170, -140, -115, 120]) },
+    { key: 'player_pass_yds_alternate', outcomes: ladder('Jalen Hurts', [224.5, 249.5, 274.5], [-250, -180, -120]) },
+  ] }] };
+  const { buildLivePlay: build } = await import('../worker/src/live-board.js');
+  const play = build(liveCandidates(deep, t));
+  assert.ok(play, 'a play is built');
+  assert.ok(play.american >= -160 && play.american <= 200, `in range: ${play.american}`);
+  assert.ok(play.legs.every((l) => l.price <= -110), 'built from the cheap rungs');
+});

@@ -181,8 +181,11 @@ export function buildLivePlay(candidates, { legs = [3, 4, 5], books = null } = {
   }
   let best = null;
   for (const [bookId, players] of byBook) {
-    // The six players with the most cushion, each with his four best-priced clearing numbers.
-    const list = [...players.values()].map((opts) => opts.sort((x, y) => y.price - x.price).slice(0, 4)).sort((x, y) => Math.max(...y.map((o) => o.cushion)) - Math.max(...x.map((o) => o.cushion))).slice(0, 6);
+    // The six players with the most cushion, each with five rungs: his three lowest clearing numbers (the cheap,
+    // safe end that makes a +100 three-leg) and his two best-priced (the long end), so a deep ladder is not
+    // read from the plus-money end alone, which no three legs can bring down to the target.
+    const rungs = (opts) => { const low = [...opts].sort((x, y) => x.point - y.point).slice(0, 3); const high = [...opts].sort((x, y) => y.price - x.price).filter((o) => !low.includes(o)).slice(0, 2); return [...low, ...high]; };
+    const list = [...players.values()].map(rungs).sort((x, y) => Math.max(...y.map((o) => o.cushion)) - Math.max(...x.map((o) => o.cushion))).slice(0, 6);
     for (const n of legs) {
       if (list.length < n) continue;
       const pick = (start, chosen) => {
@@ -278,7 +281,8 @@ export async function getLiveBoard(env, now = Date.now(), { ctx = null } = {}) {
     const teams = liveGameTeams(g.name);
     const weather = league === 'nfl' && ctx ? await fetchWeather({ sportKey: 'americanfootball_nfl', homeTeam: teams[1] ?? null, commenceMs: Date.parse(g.date) }, ctx).catch(() => null) : null;
     const candidates = payload && tick ? liveCandidates(payload, tick, league, { weather }) : [];
-    const plays = tick ? await ensureLivePlays(env, g, payload, tick, { league, now, weather }) : null;
+    // A read shows the slips the last tick built (worker/src/live-probe.js rebuilds them every tick); it does not rebuild them itself.
+    const plays = tick ? await ensureLivePlays(env, g, null, tick, { league, now, weather }) : null;
     out.push({
       espnEventId: g.id, name: g.name, date: g.date, league,
       tick: tick ? { at: tick.at, state: tick.state, detail: tick.detail, period: tick.period, clock: tick.clock, score: tick.score } : null,

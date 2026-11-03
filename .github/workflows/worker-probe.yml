@@ -69,6 +69,8 @@ jobs:
                     const t = g.tick || {};
                     console.log("GAME", g.name, "|", t.state, t.detail, JSON.stringify(t.score), "| elapsed", g.elapsed && g.elapsed.toFixed(2), "| books posting", g.probe ? g.probe.booksPosting : "none", "| weather", g.weather ? `${g.weather.shortForecast} ${g.weather.temperatureF}F wind ${g.weather.windSpeed} rain ${g.weather.precipChance}% rough=${g.weather.rough}` : "none");
                     for (const w of g.watch || []) console.log("  WATCH", w.player, w.team, w.stat, "now", w.current, "proj", w.projected, "|", w.line ? `${w.line.bookId} ${w.line.point}+ ${w.line.price} link=${Boolean(w.line.link)}` : "no line", "|", (w.lines || []).map((l) => `${l.bookId}:${l.point}@${l.price}${l.link ? "L" : ""}`).join(" "), w.why ? `| ${w.why}` : "");
+                    const byBook = {}; for (const c of g.candidates || []) byBook[c.bookId] = (byBook[c.bookId] || 0) + 1;
+                    console.log("  CANDIDATES (top 12 by cushion)", JSON.stringify(byBook), (g.candidates || []).slice(0, 12).map((c) => `${c.bookId} ${c.player} ${c.point}+ ${c.stat} ${c.price} cushion=${c.cushion}`).join(" ; "));
                     const s = g.slips;
                     if (!s) { console.log("  SLIPS none"); continue; }
                     console.log("  SLIPS built", new Date(s.builtAt).toISOString().slice(11, 19), "builds", s.builds, "at", `Q${s.period} ${s.clock}`, JSON.stringify(s.score), "count", s.list.length);
