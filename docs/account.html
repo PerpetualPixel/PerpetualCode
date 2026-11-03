@@ -162,6 +162,8 @@
       cursor: not-allowed;
     }
 
+    /* Side-by-side buttons that wrap as a tidy row on a phone: a fixed gap, nothing touching. */
+    .button-row { display: flex; flex-wrap: wrap; gap: 10px; align-items: center; }
     .button {
       padding: 10px 20px;
       background: linear-gradient(135deg, #d946ef 0%, #9d4edd 100%);
@@ -471,8 +473,10 @@
       <div class="card">
         <h2>Session</h2>
         <div id="session-message"></div>
-        <button type="button" id="signout-btn" class="button" style="background: transparent; color: #ff6b6b; border: 1px solid #ff6b6b; box-shadow: none;">Sign Out</button>
-        <button type="button" id="signout-all-btn" class="button" style="background: transparent; color: #fbbf24; border: 1px solid #fbbf24; box-shadow: none; margin-left: 10px;">Sign Out Everywhere</button>
+        <div class="button-row">
+          <button type="button" id="signout-btn" class="button" style="background: transparent; color: #ff6b6b; border: 1px solid #ff6b6b; box-shadow: none;">Sign Out</button>
+          <button type="button" id="signout-all-btn" class="button" style="background: transparent; color: #fbbf24; border: 1px solid #fbbf24; box-shadow: none;">Sign Out Everywhere</button>
+        </div>
         <p class="card-desc" style="margin: 12px 0 0;">"Sign Out Everywhere" ends your session on every device at once — use it if you've signed in somewhere you no longer trust.</p>
       </div>
 
@@ -498,6 +502,6 @@
     </div>
   </div>
 
-  <script src="account.js?v=1.283" defer></script>
+  <script src="account.js?v=1.284" defer></script>
 </body>
 </html>
