@@ -10852,7 +10852,7 @@ function liveBooksPicker() {
 const liveTimeFmt = new Intl.DateTimeFormat(undefined, { hour: 'numeric', minute: '2-digit', second: '2-digit' });
 const liveKickFmt = new Intl.DateTimeFormat(undefined, { weekday: 'short', hour: 'numeric', minute: '2-digit' });
 const ago = (ms) => { const s = Math.max(0, Math.round((Date.now() - ms) / 1000)); return s < 60 ? `${s}s ago` : s < 3600 ? `${Math.floor(s / 60)} min ago` : `${Math.floor(s / 3600)} h ago`; };
-const league = (k) => ({ nfl: 'NFL', nba: 'NBA' }[k] ?? String(k ?? '').toUpperCase());
+const league = (k) => ({ nfl: 'NFL', nba: 'NBA', nhl: 'NHL' }[k] ?? String(k ?? '').toUpperCase());
 
 async function loadLive({ force = false } = {}) {
   if (!el.liveBody || !CONFIG.WORKER_URL) return;
@@ -10912,12 +10912,31 @@ const statCell = (v) => (v == null ? '<td class="is-empty">–</td>' : `<td>${es
 function livePlayersTable(g) {
   const rows = (g.players ?? []).slice(0, liveState.open[`players:${g.espnEventId}`] ? 40 : 10);
   if (!rows.length) return '';
-  const nfl = g.league === 'nfl';
-  return `<table class="live-table"><thead><tr><th>Player</th>${nfl ? '<th>Pass</th><th>Rush</th><th>Rec</th><th>Rec Yds</th>' : '<th>Pts</th><th>Reb</th><th>Ast</th>'}</tr></thead><tbody>
-    ${rows.map((p) => `<tr><td><strong>${esc(p.name)}</strong> <small>${esc(p.team ?? '')}</small></td>${nfl
+  const nfl = g.league === 'nfl'; const nhl = g.league === 'nhl';
+  return `<table class="live-table"><thead><tr><th>Player</th>${nfl ? '<th>Pass</th><th>Rush</th><th>Rec</th><th>Rec Yds</th>' : nhl ? '<th>SOG</th><th>G</th><th>A</th><th>Saves</th>' : '<th>Pts</th><th>Reb</th><th>Ast</th>'}</tr></thead><tbody>
+    ${rows.map((p) => `<tr><td><strong>${esc(p.name)}</strong> <small>${esc(p.team ?? '')}</small></td>${nhl ? `${statCell(p.shotsTotal)}${statCell(p.goals)}${statCell(p.assists)}${statCell(p.saves)}` : nfl
       ? `${statCell(p.passingYards != null ? `${p.passingYards}${p.passing ? ` <small>${esc(p.passing)}</small>` : ''}` : null).replace(/&lt;small&gt;|&lt;\/small&gt;/g, (m) => m === '&lt;small&gt;' ? '<small>' : '</small>')}${statCell(p.rushingYards != null ? `${p.rushingYards}${p.carries != null ? ` <small>${p.carries} car</small>` : ''}` : null).replace(/&lt;small&gt;|&lt;\/small&gt;/g, (m) => m === '&lt;small&gt;' ? '<small>' : '</small>')}${statCell(p.receptions != null ? `${p.receptions}${p.targets != null ? ` <small>of ${p.targets}</small>` : ''}` : null).replace(/&lt;small&gt;|&lt;\/small&gt;/g, (m) => m === '&lt;small&gt;' ? '<small>' : '</small>')}${statCell(p.receivingYards)}`
       : `${statCell(p.points)}${statCell(p.rebounds)}${statCell(p.assists)}`}</tr>`).join('')}
   </tbody></table>${(g.players ?? []).length > 10 ? `<button type="button" class="parlay-btn live-more" data-live-more="players:${esc(g.espnEventId)}">${liveState.open[`players:${g.espnEventId}`] ? 'Fewer players' : `All ${g.players.length} players`}</button>` : ''}`;
+}
+
+/** The game lines with an edge (hockey): the model's chance against the book's, at the user's books when chosen. */
+function liveGameReads(g) {
+  const reads = (g.game ?? []).map((r) => {
+    const mine = liveState.books.size && !liveState.showAll;
+    const lines = mine ? r.lines.filter((l) => liveState.books.has(l.bookId)) : r.lines;
+    return { ...r, line: lines[0] ?? null, mine, elsewhere: mine ? r.lines.length - lines.length : 0 };
+  });
+  const shown = reads.filter((r) => r.line);
+  const hidden = reads.length - shown.length;
+  if (!reads.length) return '';
+  return `<p class="live-sub">Game lines with an edge <small>the model's chance to the whistle against the book's price; only where the model is ahead</small></p>
+    <div class="live-watch-list">${shown.map((r) => `<div class="live-watch live-read">
+      <div class="live-watch-head"><strong>${esc(r.selection)}</strong><span class="live-watch-stat">${esc(r.label)}</span></div>
+      <div class="live-watch-nums"><span><small>ours</small><b>${esc(String(Math.round(r.model * 100)))}%</b></span><span class="live-arrow">vs</span><span><small>the price</small><b>${esc(String(Math.round(r.line.implied * 100)))}%</b></span><span class="live-watch-line">${bookBadge(r.line.bookId, r.line.book)} ${esc(formatAmerican(r.line.price))}<small class="live-edge">+${esc(String(Math.round(r.line.edge * 100)))}</small>${r.line.link ? ` <a href="${esc(r.line.link)}" target="_blank" rel="noopener">add ↗</a>` : ''}</span></div>
+      <p class="row-sub">${esc(r.why)}${r.elsewhere ? ` · ${r.elsewhere} more book${r.elsewhere === 1 ? '' : 's'}` : ''}</p>
+    </div>`).join('')}</div>
+    ${hidden ? `<p class="row-sub">${hidden} more at books you have not chosen. <button type="button" class="link-button" data-live-showall="1">Show all books</button></p>` : ''}`;
 }
 
 /** The line a watch row shows: at the user's books when chosen (the best of them), else the best anywhere. */
@@ -10951,10 +10970,11 @@ function liveSlip(s, i) {
 function renderLiveGame(g) {
   const t = g.tick;
   const live = t?.state === 'in';
-  const state = !t ? 'No read yet' : t.state === 'pre' ? `Kicks off ${esc(liveKickFmt.format(new Date(g.date)))}` : t.state === 'post' ? 'Final' : g.halftime ? 'Halftime' : `Q${esc(String(t.period ?? ''))} ${esc(t.clock ?? '')}`;
+  const nhl = g.league === 'nhl';
+  const state = !t ? 'No read yet' : t.state === 'pre' ? `${nhl ? 'Drops' : 'Kicks off'} ${esc(liveKickFmt.format(new Date(g.date)))}` : t.state === 'post' ? 'Final' : g.intermission ? `${g.intermission === 1 ? '1st' : '2nd'} intermission` : g.halftime ? 'Halftime' : `${nhl ? (Number(t.period) > 3 ? 'OT' : `P${esc(String(t.period ?? ''))}`) : `Q${esc(String(t.period ?? ''))}`} ${esc(t.clock ?? '')}`;
   const score = t?.score ? Object.entries(t.score).map(([k, v]) => `${esc(k)} ${esc(String(v))}`).join(' · ') : '';
   const books = g.probe?.books?.filter((b) => b.markets.length) ?? [];
-  const script = g.script?.leader ? `<span class="live-tag">${esc(g.script.leader)} up ${esc(String(g.script.margin))}: run game favoured, passing faded</span>` : '';
+  const script = g.script?.leader ? `<span class="live-tag">${esc(g.script.leader)} up ${esc(String(g.script.margin))}: ${nhl ? 'the side behind shoots more' : 'run game favoured, passing faded'}</span>` : '';
   const weather = g.weather ? `<span class="live-tag ${g.weather.rough ? 'is-rough' : ''}">${esc(g.weather.rough ? 'Rough weather: passing faded' : 'Weather fine')}${g.weather.windSpeed ? ` · wind ${esc(String(g.weather.windSpeed))}` : ''}${g.weather.precipChance != null ? ` · rain ${esc(String(g.weather.precipChance))}%` : ''}</span>` : '';
   const slips = liveSlipsFor(g);
   const hidden = (g.slips?.list?.length ?? 0) - slips.length;
@@ -10970,7 +10990,8 @@ function renderLiveGame(g) {
       ${script}${weather}
     </div>
     ${g.players?.length ? `<p class="live-sub">Box score <small>as of ${t ? esc(liveTimeFmt.format(new Date(t.at))) : ''}</small></p>${livePlayersTable(g)}` : live ? '<p class="row-sub">No box lines yet.</p>' : ''}
-    ${g.watch?.length ? `<p class="live-sub">Who to watch <small>projected to the whistle from pace, the score and the weather</small></p><div class="live-watch-list">${g.watch.map(liveWatchRow).join('')}</div>` : ''}
+    ${liveGameReads(g)}
+    ${g.watch?.length ? `<p class="live-sub">Who to watch <small>projected to the whistle from pace${nhl ? ' and the score' : ', the score and the weather'}</small></p><div class="live-watch-list">${g.watch.map(liveWatchRow).join('')}</div>` : ''}
     ${slips.length ? `<p class="live-sub">Slips <small>built ${esc(liveBuiltWhen(g.slips))}${g.slips.builtAt ? `, ${esc(liveTimeFmt.format(new Date(g.slips.builtAt)))}` : ''}; rebuilt every few minutes as the lines and the box score move</small></p>${slips.map(liveSlip).join('')}${hidden ? `<p class="row-sub">${hidden} more at books you have not chosen. <button type="button" class="link-button" data-live-showall="1">Show all books</button></p>` : ''}<p class="row-sub">Shown, not tracked: a first cut that works the ladders against the box score and the pace; the model's read and the ledger come next.</p>`
       : hidden ? `<p class="row-sub">No slip at your books right now: nothing there clears the pace with margin at a usable price. ${hidden} at other books. <button type="button" class="link-button" data-live-showall="1">Show all books</button></p>`
       : live ? `<p class="row-sub">${esc(liveNoSlipWhy(g))}</p>` : ''}
@@ -11001,7 +11022,8 @@ function renderLive() {
   const elsewhere = games.reduce((n, g) => n + (g.slips?.list?.length ?? 0), 0) - slips;
   const inPlay = games.filter((g) => g.tick?.state === 'in').length;
   const where = liveState.books.size && !liveState.showAll ? ' at your books' : '';
-  el.liveBody.innerHTML = `<div class="live-top"><span class="live-count ${slips ? 'is-on' : ''}">${slips ? `${slips} live slip${slips === 1 ? '' : 's'} ready${where}` : elsewhere ? `No live slip${where}` : inPlay ? 'No live slip yet: they build once a quarter is in' : 'No live slip'}</span><span class="row-sub">Board read ${esc(liveTimeFmt.format(new Date(d.at)))} · re-reads every minute while open</span></div>${liveBooksPicker()}${games.map(renderLiveGame).join('')}`;
+  const reads = games.reduce((n, g) => n + (g.game ?? []).filter((r) => !liveState.books.size || liveState.showAll || r.lines.some((l) => liveState.books.has(l.bookId))).length, 0);
+  el.liveBody.innerHTML = `<div class="live-top"><span class="live-count ${slips || reads ? 'is-on' : ''}">${slips ? `${slips} live slip${slips === 1 ? '' : 's'} ready${where}` : elsewhere ? `No live slip${where}` : inPlay ? 'No live slip yet: they build once a quarter is in' : 'No live slip'}${reads ? ` · ${reads} game line${reads === 1 ? '' : 's'} with an edge` : ''}</span><span class="row-sub">Board read ${esc(liveTimeFmt.format(new Date(d.at)))} · re-reads every minute while open</span></div>${liveBooksPicker()}${games.map(renderLiveGame).join('')}`;
 }
 
 el.liveView?.addEventListener('click', (event) => {

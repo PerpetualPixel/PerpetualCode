@@ -7246,6 +7246,8 @@ a.trend-price:hover { background: rgba(255, 255, 255, 0.06); }
 .live-books-pick .row-sub { margin: 0 4px 0 0; }
 .live-books-pick .league-chip { padding: 5px 10px; font-size: 0.8rem; gap: 6px; }
 .live-books-pick .league-chip .book-badge { width: 16px; height: 16px; }
+.live-edge { margin-left: 6px; font-weight: 800; color: var(--success); }
+.live-read .live-watch-head strong { font-size: 1rem; }
 .live-mine { margin-left: 6px; font-size: 0.68rem; font-weight: 800; letter-spacing: 0.04em; text-transform: uppercase; color: var(--success); }
 .link-button { background: none; border: 0; padding: 0; color: var(--accent, #c084fc); font: inherit; font-weight: 700; cursor: pointer; text-decoration: underline; }
 .live-books-wrap { margin-top: 8px; }

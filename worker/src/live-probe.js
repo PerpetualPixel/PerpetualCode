@@ -21,8 +21,10 @@ import { ensureLivePlays } from './live-board.js';
 export const LIVE_MARKETS = {
   nfl: 'player_pass_yds_alternate,player_rush_yds_alternate,player_reception_yds_alternate,player_receptions_alternate,player_pass_yds,player_rush_yds,player_reception_yds,player_receptions',
   nba: 'player_points_alternate,player_rebounds_alternate,player_assists_alternate,player_points,player_rebounds,player_assists',
+  // Hockey: shots, saves and points for the slips, and the game lines (moneyline, puck line, total, main and alternate) for the game read.
+  nhl: 'player_shots_on_goal_alternate,player_total_saves_alternate,player_points_alternate,player_shots_on_goal,player_total_saves,player_points,h2h,spreads,totals,alternate_spreads,alternate_totals',
 };
-export const LIVE_SPORT = { nfl: 'americanfootball_nfl', nba: 'basketball_nba' };
+export const LIVE_SPORT = { nfl: 'americanfootball_nfl', nba: 'basketball_nba', nhl: 'icehockey_nhl' };
 /**
  * Every book the site lists that posts player props (docs/engine.js's
  * SPORTSBOOKS, less Kalshi, which has none): ten names, the most the feed
