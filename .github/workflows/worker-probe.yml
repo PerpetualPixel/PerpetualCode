@@ -127,7 +127,14 @@ jobs:
                       }
                     }
                   })();
-                          } else if (d && Array.isArray(d.sports) && d.sports[0] && d.sports[0].leagues) {
+                          } else if (d && Array.isArray(d.rosters) && d.header) {
+                  // A soccer summary: each side with a couple of players and the stat names on them, plus the top-level keys.
+                  console.log("KEYS", Object.keys(d).join(","), "| boxscore keys", d.boxscore ? Object.keys(d.boxscore).join(",") : "none", "| status", JSON.stringify(d.header && d.header.competitions && d.header.competitions[0] && d.header.competitions[0].status));
+                  for (const r of d.rosters) { const players = r.roster || []; console.log("SIDE", r.team && r.team.abbreviation, r.team && r.team.id, r.homeAway, "players", players.length); for (const p of players.slice(0, 2)) console.log("   ", p.athlete && p.athlete.id, p.athlete && p.athlete.displayName, "starter", p.starter, "pos", p.position && p.position.abbreviation, "subbedIn", p.subbedIn, "stats", JSON.stringify((p.stats || []).map((x) => `${x.name}=${x.value}`))); }
+                } else if (d && Array.isArray(d.athletes) && d.athletes[0] && d.athletes[0].id) {
+                  // A flat roster (soccer): the first players with ids and positions.
+                  console.log("ROSTER", d.athletes.length, d.athletes.slice(0, 8).map((a) => `${a.id}=${a.displayName} ${a.position && a.position.abbreviation}`).join("  "));
+                } else if (d && Array.isArray(d.sports) && d.sports[0] && d.sports[0].leagues) {
                   // A teams list: each team with its id, abbreviation and name.
                   for (const lg of d.sports[0].leagues) for (const t of lg.teams || []) console.log("TEAM", t.team && t.team.id, t.team && t.team.abbreviation, t.team && t.team.displayName);
                 } else if (d && Array.isArray(d.athletes) && d.team) {
