@@ -220,4 +220,9 @@ test('the Trends sportsbooks save beside the bankroll: each PUT keeps the other 
   const after = await (await worker.fetch(call('/settings', { token: TOKEN }), env, ctx)).json();
   assert.deepEqual(after.settings.trendBooks, ['draftkings', 'fanduel', 'williamhill_us'], 'a bankroll-only save leaves the books alone');
   assert.equal(after.settings.bankroll.amount, 100);
+  // The Live tab's books: only books a live slip can be at, and its own field.
+  await worker.fetch(call('/settings', { method: 'PUT', token: TOKEN, body: { liveBooks: ['FanDuel', 'betmgm', 'kalshi', 'nope!'] } }), env, ctx);
+  const live = await (await worker.fetch(call('/settings', { token: TOKEN }), env, ctx)).json();
+  assert.deepEqual(live.settings.liveBooks, ['fanduel', 'betmgm'], 'cleaned to the books a live slip can be at');
+  assert.deepEqual(live.settings.trendBooks, ['draftkings', 'fanduel', 'williamhill_us'], 'the Trends books stand');
 });

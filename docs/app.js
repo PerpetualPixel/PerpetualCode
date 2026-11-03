@@ -3334,6 +3334,12 @@ async function loadSettings() {
       trendsState.books = new Set(settings.trendBooks);
       saveJSON(TREND_BOOKS_KEY, settings.trendBooks);
     }
+    // The books the Live tab shows slips for (see persistLiveBooks): the account's list wins too.
+    if (Array.isArray(settings?.liveBooks)) {
+      liveState.books = new Set(settings.liveBooks);
+      saveJSON(LIVE_BOOKS_KEY, settings.liveBooks);
+      if (liveState.data) renderLive();
+    }
     return { ok: true, hadRecord: Boolean(settings) };
   } catch {
     return { ok: false, reason: 'unavailable' };
@@ -10820,7 +10826,29 @@ el.trendsSheet?.addEventListener('click', (event) => {
 /* Live: the watched games, their reads, the players, who to watch and the slips (worker/src/live-board.js) */
 /* ================================================================ */
 
-const liveState = { data: null, loading: false, timer: null, open: {} };
+const LIVE_BOOKS_KEY = 'pixelpick.liveBooks.v1';
+/** The books a live slip can be at, in the order the picker shows them (worker/src/settings.js's LIVE_BOOKS). */
+const LIVE_BOOKS = ['draftkings', 'fanduel', 'caesars', 'betmgm', 'fanatics', 'hardrock', 'bet365', 'betrivers', 'espnbet', 'prizepicks'];
+const liveState = { data: null, loading: false, timer: null, open: {}, books: new Set(loadJSON(LIVE_BOOKS_KEY, []) ?? []), showAll: false };
+
+/** Save the user's live books: to this device at once, and to the account (one PUT, coalesced) when signed in. */
+let liveBooksPushTimer = null;
+function persistLiveBooks() {
+  const list = [...liveState.books];
+  saveJSON(LIVE_BOOKS_KEY, list);
+  const headers = settingsHeaders();
+  if (!headers || !CONFIG.WORKER_URL) return;
+  clearTimeout(liveBooksPushTimer);
+  liveBooksPushTimer = setTimeout(() => {
+    fetch(new URL('/settings', CONFIG.WORKER_URL), { method: 'PUT', headers: { ...headers, 'Content-Type': 'application/json' }, body: JSON.stringify({ liveBooks: list }) }).catch(() => {});
+  }, 600);
+}
+/** The slips the user's books leave standing (all of them with no books chosen, or while "show all" is on). */
+const liveSlipsFor = (g) => { const all = g.slips?.list ?? []; return liveState.books.size && !liveState.showAll ? all.filter((s) => liveState.books.has(s.bookId)) : all; };
+function liveBooksPicker() {
+  const none = !liveState.books.size;
+  return `<div class="live-books-pick" role="group" aria-label="Slips at your books"><span class="row-sub">Slips at</span><button type="button" class="league-chip ${none ? 'is-active' : ''}" data-live-book="all" aria-pressed="${none}"><span class="league-chip-label">All books</span></button>${LIVE_BOOKS.map((id) => `<button type="button" class="league-chip ${liveState.books.has(id) ? 'is-active' : ''}" data-live-book="${esc(id)}" aria-pressed="${liveState.books.has(id)}" title="${esc(SPORTSBOOKS[id]?.name ?? id)}">${bookBadge(id, id)}<span class="league-chip-label">${esc(SPORTSBOOKS[id]?.name ?? id)}</span></button>`).join('')}</div>`;
+}
 const liveTimeFmt = new Intl.DateTimeFormat(undefined, { hour: 'numeric', minute: '2-digit', second: '2-digit' });
 const liveKickFmt = new Intl.DateTimeFormat(undefined, { weekday: 'short', hour: 'numeric', minute: '2-digit' });
 const ago = (ms) => { const s = Math.max(0, Math.round((Date.now() - ms) / 1000)); return s < 60 ? `${s}s ago` : s < 3600 ? `${Math.floor(s / 60)} min ago` : `${Math.floor(s / 3600)} h ago`; };
@@ -10901,11 +10929,12 @@ function liveWatchRow(w) {
 
 function liveSlip(s, i) {
   const all = combinedSlipLink(s.bookId, s.legs.map((l) => l.link));
+  const mine = liveState.books.size && liveState.books.has(s.bookId);
   const bookUrl = SPORTSBOOKS[s.bookId]?.url ?? null;
   const done = s.legs.filter((l) => l.cleared).length;
   const shared = (s.shared ?? []).length;
   return `<div class="live-play ${i === 0 ? 'is-best' : ''}">
-    <div class="pick-bet-head"><span class="pick-bet-type">${i === 0 ? 'Best slip' : s.diversified ? 'Slip · different players' : 'Slip'} · ${s.legs.length} legs</span><span class="pick-bet-book">${bookBadge(s.bookId, s.book)}${esc(s.book)}</span><span class="pick-bet-price">${esc(formatAmerican(s.american))}</span>${done ? `<span class="pick-result is-win">${done} of ${s.legs.length} cleared</span>` : ''}${shared ? `<span class="live-shared" title="${esc(s.shared.join(', '))}">${shared === s.legs.length ? 'same players as another slip' : `${shared} shared with another slip`}</span>` : ''}</div>
+    <div class="pick-bet-head"><span class="pick-bet-type">${i === 0 ? 'Best slip' : s.diversified ? 'Slip · different players' : 'Slip'} · ${s.legs.length} legs</span><span class="pick-bet-book">${bookBadge(s.bookId, s.book)}${esc(s.book)}${mine ? '<small class="live-mine">your book</small>' : ''}</span><span class="pick-bet-price">${esc(formatAmerican(s.american))}</span>${done ? `<span class="pick-result is-win">${done} of ${s.legs.length} cleared</span>` : ''}${shared ? `<span class="live-shared" title="${esc(s.shared.join(', '))}">${shared === s.legs.length ? 'same players as another slip' : `${shared} shared with another slip`}</span>` : ''}</div>
     <div class="live-legs">${s.legs.map((l) => liveLeg(l)).join('')}</div>
     <div class="pick-bet-foot">${all ? `<a class="pick-bet-link" href="${esc(all)}" target="_blank" rel="noopener">Add all ${s.legs.length} legs to your ${esc(s.book)} slip ↗</a>` : bookUrl ? `<a class="pick-bet-link" href="${esc(bookUrl)}" target="_blank" rel="noopener">Open ${esc(s.book)} (legs one at a time above)</a>` : ''}</div>
   </div>`;
@@ -10919,7 +10948,8 @@ function renderLiveGame(g) {
   const books = g.probe?.books?.filter((b) => b.markets.length) ?? [];
   const script = g.script?.leader ? `<span class="live-tag">${esc(g.script.leader)} up ${esc(String(g.script.margin))}: run game favoured, passing faded</span>` : '';
   const weather = g.weather ? `<span class="live-tag ${g.weather.rough ? 'is-rough' : ''}">${esc(g.weather.rough ? 'Rough weather: passing faded' : 'Weather fine')}${g.weather.windSpeed ? ` · wind ${esc(String(g.weather.windSpeed))}` : ''}${g.weather.precipChance != null ? ` · rain ${esc(String(g.weather.precipChance))}%` : ''}</span>` : '';
-  const slips = g.slips?.list ?? [];
+  const slips = liveSlipsFor(g);
+  const hidden = (g.slips?.list?.length ?? 0) - slips.length;
   return `<article class="trend-card live-game ${live ? 'is-live' : ''}">
     <div class="live-head">
       <div><strong>${esc(g.name)}</strong><br><small>${esc(league(g.league))}</small></div>
@@ -10933,7 +10963,8 @@ function renderLiveGame(g) {
     </div>
     ${g.players?.length ? `<p class="live-sub">Box score <small>as of ${t ? esc(liveTimeFmt.format(new Date(t.at))) : ''}</small></p>${livePlayersTable(g)}` : live ? '<p class="row-sub">No box lines yet.</p>' : ''}
     ${g.watch?.length ? `<p class="live-sub">Who to watch <small>projected to the whistle from pace, the score and the weather</small></p><div class="live-watch-list">${g.watch.map(liveWatchRow).join('')}</div>` : ''}
-    ${slips.length ? `<p class="live-sub">Slips <small>built ${esc(liveBuiltWhen(g.slips))}${g.slips.builtAt ? `, ${esc(liveTimeFmt.format(new Date(g.slips.builtAt)))}` : ''}; rebuilt every few minutes as the lines and the box score move</small></p>${slips.map(liveSlip).join('')}<p class="row-sub">Shown, not tracked: a first cut that works the ladders against the box score and the pace; the model's read and the ledger come next.</p>`
+    ${slips.length ? `<p class="live-sub">Slips <small>built ${esc(liveBuiltWhen(g.slips))}${g.slips.builtAt ? `, ${esc(liveTimeFmt.format(new Date(g.slips.builtAt)))}` : ''}; rebuilt every few minutes as the lines and the box score move</small></p>${slips.map(liveSlip).join('')}${hidden ? `<p class="row-sub">${hidden} more at books you have not chosen. <button type="button" class="link-button" data-live-showall="1">Show all books</button></p>` : ''}<p class="row-sub">Shown, not tracked: a first cut that works the ladders against the box score and the pace; the model's read and the ledger come next.</p>`
+      : hidden ? `<p class="row-sub">No slip at your books right now: nothing there clears the pace with margin at a usable price. ${hidden} at other books. <button type="button" class="link-button" data-live-showall="1">Show all books</button></p>`
       : live ? `<p class="row-sub">${esc(liveNoSlipWhy(g))}</p>` : ''}
     ${books.length ? `<details class="live-books-wrap"><summary>Books posting player props now</summary><div class="live-books">${books.map((b) => `<span class="live-book">${bookBadge(b.bookId, b.key)}${esc(SPORTSBOOKS[b.bookId]?.name ?? b.key)} <small>${b.markets.map((m) => `${esc(m.key.replace('player_', '').replace('_alternate', ' alt').replace(/_/g, ' '))} ${esc(String(m.players))}p`).join(' · ')}</small></span>`).join('')}</div></details>` : ''}
   </article>`;
@@ -10958,12 +10989,22 @@ function renderLive() {
   const games = d?.games ?? [];
   setLiveGlow(games.some((g) => g.tick?.state === 'in'));
   if (!games.length) { el.liveBody.innerHTML = '<p class="empty">No game is being watched right now. The watcher starts before each game it is set for.</p>'; return; }
-  const slips = games.reduce((n, g) => n + (g.slips?.list?.length ?? 0), 0);
+  const slips = games.reduce((n, g) => n + liveSlipsFor(g).length, 0);
+  const elsewhere = games.reduce((n, g) => n + (g.slips?.list?.length ?? 0), 0) - slips;
   const inPlay = games.filter((g) => g.tick?.state === 'in').length;
-  el.liveBody.innerHTML = `<div class="live-top"><span class="live-count ${slips ? 'is-on' : ''}">${slips ? `${slips} live slip${slips === 1 ? '' : 's'} ready` : inPlay ? 'No live slip yet: they build once a quarter is in' : 'No live slip'}</span><span class="row-sub">Board read ${esc(liveTimeFmt.format(new Date(d.at)))} · re-reads every minute while open</span></div>${games.map(renderLiveGame).join('')}`;
+  const where = liveState.books.size && !liveState.showAll ? ' at your books' : '';
+  el.liveBody.innerHTML = `<div class="live-top"><span class="live-count ${slips ? 'is-on' : ''}">${slips ? `${slips} live slip${slips === 1 ? '' : 's'} ready${where}` : elsewhere ? `No live slip${where}` : inPlay ? 'No live slip yet: they build once a quarter is in' : 'No live slip'}</span><span class="row-sub">Board read ${esc(liveTimeFmt.format(new Date(d.at)))} · re-reads every minute while open</span></div>${liveBooksPicker()}${games.map(renderLiveGame).join('')}`;
 }
 
 el.liveView?.addEventListener('click', (event) => {
+  const book = event.target.closest('[data-live-book]');
+  if (book) {
+    const id = book.dataset.liveBook;
+    if (id === 'all') liveState.books.clear(); else if (liveState.books.has(id)) liveState.books.delete(id); else liveState.books.add(id);
+    liveState.showAll = false;
+    persistLiveBooks(); renderLive(); return;
+  }
+  if (event.target.closest('[data-live-showall]')) { liveState.showAll = true; renderLive(); return; }
   const more = event.target.closest('[data-live-more]');
   if (more) { const k = more.dataset.liveMore; liveState.open[k] = !liveState.open[k]; renderLive(); }
 });

@@ -98,6 +98,10 @@ function cleanBooks(value) {
   return [...new Set(keys)].slice(0, 30);
 }
 
+/** The books a live slip can be at (worker/src/live-probe.js's LIVE_BOOKMAKERS, by registry id): the user's live list is a subset, empty for all of them. */
+export const LIVE_BOOKS = ['draftkings', 'fanduel', 'caesars', 'fanatics', 'betmgm', 'prizepicks', 'hardrock', 'bet365', 'betrivers', 'espnbet'];
+const cleanLiveBooks = (value) => { const list = cleanBooks(value); return list ? list.filter((b) => LIVE_BOOKS.includes(b)) : null; };
+
 /** The books a personal ticket may be drawn at: the Parlay Builder's list (docs/app.js's PARLAY_BOOKS). */
 export const PICK_PREF_BOOKS = ['draftkings', 'fanduel', 'caesars', 'fanatics', 'betmgm', 'prizepicks', 'hardrock', 'bet365', 'betrivers'];
 export const PICK_PREF_DEFAULTS = { book: 'draftkings', minScore: 4, legs: 2 };
@@ -142,6 +146,8 @@ function normalize(input, existing = null) {
       confirmed: bankroll.confirmed === true,
     },
     trendBooks: cleanBooks(input?.trendBooks) ?? cleanBooks(existing?.trendBooks) ?? [],
+    // The books the Live tab shows slips for and imports to; empty means every book.
+    liveBooks: cleanLiveBooks(input?.liveBooks) ?? cleanLiveBooks(existing?.liveBooks) ?? [],
     picks: cleanPicks(input?.picks, existing?.picks ?? null),
     updatedAt: Date.now(),
   };
