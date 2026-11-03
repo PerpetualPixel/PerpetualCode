@@ -21,6 +21,13 @@ export const ALLOWED_SPORTS = new Set([
   'basketball_nba',
   'icehockey_nhl',
   'mma_mixed_martial_arts',
+  // Soccer: the five leagues with player props, and the Champions League for the Live tab's game lines.
+  'soccer_epl',
+  'soccer_spain_la_liga',
+  'soccer_italy_serie_a',
+  'soccer_germany_bundesliga',
+  'soccer_france_ligue_one',
+  'soccer_uefa_champs_league',
 ]);
 
 // Tennis is keyed per tournament (tennis_atp_canadian_open, and a different key

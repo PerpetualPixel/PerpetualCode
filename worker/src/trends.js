@@ -38,6 +38,7 @@ import {
   fetchDiag as nhlFetchDiag,
 } from './hockey-props.js';
 import { seasonYearOf } from '../../docs/prop-legs.js';
+import { soccerSpec, SOCCER_PROP_KEYS } from './soccer-props.js';
 import { listLeagueGames } from './prop-legs.js';
 
 /** How long a game's rows are served before the tick rebuilds them (a league may set its own). */
@@ -65,7 +66,7 @@ export const MAX_GAMES_PER_TICK = 6;
  * ("toggle NHL on too: shots on goal, saves, points"), NHL. NBA first: it
  * is the league the tab opens on when more than one has rows.
  */
-export const TREND_ENABLED_SPORTS = ['basketball_nba', NFL_SPORT_KEY, NHL_SPORT_KEY];
+export const TREND_ENABLED_SPORTS = ['basketball_nba', NFL_SPORT_KEY, NHL_SPORT_KEY, ...SOCCER_PROP_KEYS];
 export const MAX_PLAYERS_PER_GAME = 40;
 /** Rows with fewer logged games than this have no rate worth sorting on. */
 const MIN_GAMES = 3;
@@ -156,6 +157,8 @@ export const TREND_SPORTS = {
     statIndex: nhlStatIndex,
     fetchDiag: nhlFetchDiag,
   },
+  // Soccer: one league per competition the feed prices player props for (worker/src/soccer-props.js).
+  ...Object.fromEntries(SOCCER_PROP_KEYS.map((k) => [k, soccerSpec(k)])),
 };
 export const TREND_SPORT_KEYS = Object.keys(TREND_SPORTS);
 

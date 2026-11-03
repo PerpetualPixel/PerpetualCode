@@ -22,6 +22,8 @@ import { boxKey, boxLegKey, findBoxEvent, eventFinal, boxLine, boxActual } from 
 import { basketballHeadshotUrl } from '../worker/src/basketball-props.js';
 import { nflHeadshotUrl } from '../worker/src/football-props.js';
 import { nhlHeadshotUrl } from '../worker/src/hockey-props.js';
+import { soccerHeadshotUrl, soccerPriorSeason, SOCCER_LEAGUES } from '../worker/src/soccer-props.js';
+import { soccerTeamId } from '../docs/team-logos.js';
 
 const args = process.argv.slice(2);
 const DRY = args.includes('--dry-run');
@@ -56,6 +58,15 @@ const LEAGUES = {
     // ESPN keys a hockey season by the year it ends, as it does basketball.
     prior: (log) => priorSeasonKey(log),
   },
+  // Soccer: the five leagues with player props; rosters by club id (worker/src/soccer-props.js), the season keyed by its first year.
+  ...Object.fromEntries(Object.entries(SOCCER_LEAGUES).map(([sportKey, l]) => [l.short.toLowerCase().replace(/\s+/g, ''), {
+    sportKey,
+    site: `https://site.api.espn.com/apis/site/v2/sports/soccer/${l.slug}`,
+    gamelog: `https://site.web.api.espn.com/apis/common/v3/sports/soccer/${l.slug}/athletes`,
+    keep: () => true,
+    prior: (log) => soccerPriorSeason(log),
+    byId: true,
+  }])),
 };
 
 const say = (...a) => console.log(...a);
@@ -121,14 +132,15 @@ async function leagueTeams(league) {
   for (const entry of list?.sports?.[0]?.leagues?.[0]?.teams ?? []) {
     const name = entry?.team?.displayName;
     const abbr = (espnAbbr(league.sportKey, name) ?? entry?.team?.abbreviation ?? '').toLowerCase();
-    if (abbr) teams.set(abbr.toUpperCase(), { abbr, name });
+    if (abbr) teams.set(abbr.toUpperCase(), { abbr, name, id: entry?.team?.id ?? null });
   }
   return [...teams.values()];
 }
 
 /** The roster's athletes, every position. */
 async function rosterOf(league, team) {
-  const roster = await getJson(`${league.site}/teams/${team.abbr}/roster`);
+  // Soccer clubs answer by id, not abbreviation.
+  const roster = await getJson(`${league.site}/teams/${league.byId ? (soccerTeamId(league.sportKey, team.abbr) ?? team.id) : team.abbr}/roster`);
   const groups = Array.isArray(roster?.athletes) ? roster.athletes : [];
   return groups.flatMap((g) => (Array.isArray(g?.items) ? g.items : Array.isArray(g) ? g : [g])).filter((a) => a?.id && a?.displayName);
 }
@@ -323,7 +335,7 @@ for (const [name, league] of Object.entries(LEAGUES)) {
   entries.push({ key: injuriesKey(league.sportKey), value: { sportKey: league.sportKey, builtAt: now, players: Object.assign({}, ...records.map((r) => r.injuries)) } });
   entries.push({ key: bundleIndexKey(league.sportKey), value: { sportKey: league.sportKey, builtAt: now, teams: records.map((r) => r.team), players: records.reduce((n, r) => n + r.players.length, 0) } });
   // Every player in the league, light enough for the Players tab to search as the user types (worker/src/player-search.js).
-  const headshot = league.sportKey === 'americanfootball_nfl' ? nflHeadshotUrl : league.sportKey === 'icehockey_nhl' ? nhlHeadshotUrl : (id) => basketballHeadshotUrl(league.sportKey, id);
+  const headshot = league.sportKey === 'americanfootball_nfl' ? nflHeadshotUrl : league.sportKey === 'icehockey_nhl' ? nhlHeadshotUrl : league.byId ? soccerHeadshotUrl : (id) => basketballHeadshotUrl(league.sportKey, id);
   entries.push({ key: playersIndexKey(league.sportKey), value: { sportKey: league.sportKey, builtAt: now, players: records.flatMap((r) => r.players.map((p) => ({ id: p.id, name: p.name, team: r.team, position: p.position ?? null, headshot: headshot(p.id) }))) } });
   const size = entries.reduce((n, e) => n + JSON.stringify(e.value).length, 0);
   say(`${records.length} team records, ${(size / 1e6).toFixed(2)} MB`);

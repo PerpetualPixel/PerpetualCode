@@ -29,6 +29,7 @@ test('each league lists its stats once, by the plain market name', () => {
   assert.equal(nba.filter((s) => s.key === 'points').length, 1, 'the alternate market does not repeat the stat');
   assert.ok(playerStats('americanfootball_nfl').some((s) => s.key === 'recYds' && s.label === 'Receiving Yards'));
   assert.deepEqual(playerStats('icehockey_nhl').map((s) => s.key), ['shots', 'points', 'assists', 'goals', 'saves'], 'the NHL searches on shots, points, assists, goals and saves');
+  assert.deepEqual(playerStats('soccer_epl').map((s) => s.key), ['shots', 'shotsOnTarget', 'assists', 'goals']);
   assert.deepEqual(playerStats('baseball_mlb'), []);
 });
 

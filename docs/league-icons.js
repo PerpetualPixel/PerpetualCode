@@ -66,6 +66,7 @@ export const LEAGUE_ICONS = {
   ncaab: BASKETBALL,
   nhl: HOCKEY,
   mls: SOCCER,
+  soccer: SOCCER,
   mma: GLOVE,
 };
 

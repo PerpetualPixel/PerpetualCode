@@ -24,7 +24,10 @@ export const LIVE_MARKETS = {
   // Hockey: shots, saves and points for the slips, and the game lines (moneyline, puck line, total, main and alternate) for the game read.
   nhl: 'player_shots_on_goal_alternate,player_total_saves_alternate,player_points_alternate,player_shots_on_goal,player_total_saves,player_points,h2h,spreads,totals,alternate_spreads,alternate_totals',
 };
-export const LIVE_SPORT = { nfl: 'americanfootball_nfl', nba: 'basketball_nba', nhl: 'icehockey_nhl' };
+export { SOCCER_LIVE, LIVE_SPORT } from './live-leagues.js';
+import { SOCCER_LIVE, LIVE_SPORT } from './live-leagues.js';
+const SOCCER_GAME_MARKETS = 'h2h,totals,alternate_totals,btts,draw_no_bet';
+for (const id of Object.keys(SOCCER_LIVE)) LIVE_MARKETS[id] = id === 'ucl' ? SOCCER_GAME_MARKETS : `${SOCCER_GAME_MARKETS},player_shots_on_target,player_shots`;
 /**
  * Every book the site lists that posts player props (docs/engine.js's
  * SPORTSBOOKS, less Kalshi, which has none): ten names, the most the feed

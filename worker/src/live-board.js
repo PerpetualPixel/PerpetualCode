@@ -24,6 +24,7 @@ import { liveWatchKey, LIVE_WATCH_INDEX, liveProbeKey, liveLatestKey, liveGameTe
 import { bookIdFor, SPORTSBOOKS, americanToDecimal } from '../../docs/engine.js';
 import { fetchWeather } from './weather.js';
 import { gameReads } from './live-game.js';
+import { SOCCER_LIVE, LIVE_SPORT, isSoccer } from './live-leagues.js';
 import { espnAbbr } from '../../docs/team-logos.js';
 
 /** The box-score key each market settles on, per league. */
@@ -33,12 +34,19 @@ export const LIVE_STAT = {
   // Shots on goal are the box's shotsTotal (the "SOG"-labelled column is shootout goals); points are goals + assists, which the box does not carry as one column.
   nhl: { player_shots_on_goal: 'shotsTotal', player_shots_on_goal_alternate: 'shotsTotal', player_total_saves: 'saves', player_total_saves_alternate: 'saves', player_points: 'points', player_points_alternate: 'points' },
 };
-export const LIVE_LABEL = { passingYards: 'Pass Yds', rushingYards: 'Rush Yds', receivingYards: 'Rec Yds', receptions: 'Rec', points: 'Pts', rebounds: 'Reb', assists: 'Ast', shotsTotal: 'SOG', saves: 'Saves', goals: 'G' };
+/** Soccer leagues on the tab (worker/src/live-leagues.js's SOCCER_LIVE): the same clock, box and stats for each. */
+export { isSoccer };
+const SOCCER_STAT = { player_shots: 'totalShots', player_shots_alternate: 'totalShots', player_shots_on_target: 'shotsOnTarget', player_shots_on_target_alternate: 'shotsOnTarget' };
+for (const id of Object.keys(SOCCER_LIVE)) LIVE_STAT[id] = SOCCER_STAT;
+export const LIVE_LABEL = { passingYards: 'Pass Yds', rushingYards: 'Rush Yds', receivingYards: 'Rec Yds', receptions: 'Rec', points: 'Pts', rebounds: 'Reb', assists: 'Ast', shotsTotal: 'SOG', saves: 'Saves', goals: 'G', totalShots: 'Shots', shotsOnTarget: 'SOT', totalGoals: 'G', goalAssists: 'A' };
 const WATCH_STATS = { nfl: ['passingYards', 'rushingYards', 'receivingYards', 'receptions'], nba: ['points', 'rebounds', 'assists'], nhl: ['shotsTotal', 'saves', 'points', 'goals', 'assists'] };
 const GAME_MINUTES = { nfl: 60, nba: 48, nhl: 60 };
 const PERIODS = { nfl: 4, nba: 4, nhl: 3 };
-/** The lead that sets the script: a football or basketball blowout, a two-goal hockey lead (the side behind shoots more, the side ahead sits back). */
+/** The lead that sets the script: a football or basketball blowout, a two-goal hockey or soccer lead (the side behind pushes, the side ahead sits back). */
 const BLOWOUT_BY_LEAGUE = { nfl: 17, nba: 17, nhl: 2 };
+for (const id of Object.keys(SOCCER_LIVE)) { WATCH_STATS[id] = ['totalShots', 'shotsOnTarget', 'totalGoals', 'goalAssists', 'saves']; GAME_MINUTES[id] = 90; PERIODS[id] = 2; BLOWOUT_BY_LEAGUE[id] = 2; }
+/** The sports where goals come one at a time and the score sets the script the same way. */
+const goalSport = (league) => league === 'nhl' || isSoccer(league);
 
 /** A box value by stat, with hockey points as goals + assists when the box has no points column. */
 export function boxValue(p, stat) {
@@ -60,6 +68,15 @@ export const livePlayKey = (espnEventId) => `live:play:${espnEventId}`;
 export function elapsedFraction(tick, league = 'nfl') {
   if (!tick || tick.state === 'pre') return 0;
   if (tick.state === 'post') return 1;
+  if (isSoccer(league)) {
+    // The soccer clock counts up: "67'" or "45'+3'" in stoppage; half-time reads 0.5; a half with no clock reads its middle.
+    if (/^ht$|half/i.test(String(tick.detail ?? ''))) return 0.5;
+    const m = String(tick.clock ?? '').match(/(\d+)'/);
+    const p = Number(tick.period) || 1;
+    if (!m) return p >= 2 ? 0.75 : 0.25;
+    const minutes = Math.min(Number(m[1]), p >= 2 ? 90 : 45);
+    return Math.min(1, Math.max(0.02, minutes / 90));
+  }
   const periods = PERIODS[league] ?? 4;
   const perPeriod = (GAME_MINUTES[league] ?? 60) / periods;
   if (/half/i.test(String(tick.detail ?? ''))) return 0.5;
@@ -68,7 +85,7 @@ export function elapsedFraction(tick, league = 'nfl') {
   const left = m ? Number(m[1]) + Number(m[2]) / 60 : perPeriod;
   return Math.min(1, Math.max(0.02, ((p - 1) * perPeriod + (perPeriod - left)) / (GAME_MINUTES[league] ?? 60)));
 }
-export const isHalftime = (tick, league = 'nfl') => Boolean(tick) && tick.state === 'in' && (/half/i.test(String(tick.detail ?? '')) || (Number(tick.period) === (PERIODS[league] ?? 4) / 2 && /^0:00/.test(String(tick.clock ?? ''))));
+export const isHalftime = (tick, league = 'nfl') => Boolean(tick) && tick.state === 'in' && (/^ht$|half/i.test(String(tick.detail ?? '')) || (!isSoccer(league) && Number(tick.period) === (PERIODS[league] ?? 4) / 2 && /^0:00/.test(String(tick.clock ?? ''))));
 
 const num = (v) => { const n = Number(String(v ?? '').split('/')[0].replace(/,/g, '')); return Number.isFinite(n) ? n : null; };
 const toAmerican = (decimal) => (decimal >= 2 ? Math.round((decimal - 1) * 100) : Math.round(-100 / (decimal - 1)));
@@ -95,9 +112,9 @@ export const roughWeather = (w) => Boolean(w) && ((Number(String(w.windSpeed ?? 
 export function projectStat(current, elapsed, stat, { team, script, weather, league = 'nfl' } = {}) {
   if (!Number.isFinite(current) || !elapsed) return null;
   let proj = current / elapsed;
-  if (league === 'nhl') {
+  if (goalSport(league)) {
     // Score effects: the side behind by two shoots more and its goalie faces less; the side ahead sits back and its goalie faces more.
-    const shooting = /shots|points|goals|assists/.test(stat);
+    const shooting = /shots|points|goals|assists/i.test(stat);
     if (script?.trailer && team === script.trailer) proj *= shooting ? 1.1 : 0.9;
     if (script?.leader && team === script.leader) proj *= shooting ? 0.9 : 1.1;
     return Math.round(proj);
@@ -121,7 +138,9 @@ export function playerLines(tick, league = 'nfl') {
       if (p.stats?.receivingTargets != null) line.targets = num(p.stats.receivingTargets);
     }
     // The table sorts on this: in hockey a goalie's saves would drown every skater, so shots and points carry the weight.
-    line.total = league === 'nhl' ? (line.shotsTotal ?? 0) + 2 * (line.points ?? 0) + (line.saves ?? 0) / 4 : stats.reduce((n, s) => n + (line[s] ?? 0), 0);
+    line.total = league === 'nhl' ? (line.shotsTotal ?? 0) + 2 * (line.points ?? 0) + (line.saves ?? 0) / 4
+      : isSoccer(league) ? (line.totalShots ?? 0) + (line.shotsOnTarget ?? 0) + 3 * (line.totalGoals ?? 0) + 2 * (line.goalAssists ?? 0) + (line.saves ?? 0) / 3
+      : stats.reduce((n, s) => n + (line[s] ?? 0), 0);
     return line;
   }).filter((l) => stats.some((s) => l[s] != null)).sort((a, b) => b.total - a.total);
 }
@@ -179,14 +198,16 @@ export function whoToWatch(tick, candidates, league = 'nfl', { weather = null, l
       const best = lines.length ? lines.reduce(pick) : null;
       // The best clearing line at each book, so a user who plays at one book sees that book's line and link.
       const perBook = [...new Set(lines.map((c) => c.bookId))].map((b) => lines.filter((c) => c.bookId === b).reduce(pick)).sort((a, c) => c.point - a.point || c.price - a.price).map((c) => ({ bookId: c.bookId, book: c.book, point: c.point, price: c.price, link: c.link }));
-      const why = league === 'nhl'
-        ? (script.leader === p.team ? (stat === 'saves' ? 'up two: the lead sits back, the goalie sees more' : 'up two: the lead sits back') : script.trailer === p.team ? (stat === 'saves' ? 'down two: pressing, the goalie sees less' : 'down two: the side behind shoots more') : null)
+      const why = goalSport(league)
+        ? (script.leader === p.team ? (stat === 'saves' ? 'up two: the lead sits back, the keeper sees more' : 'up two: the lead sits back') : script.trailer === p.team ? (stat === 'saves' ? 'down two: pressing, the keeper sees less' : 'down two: the side behind shoots more') : null)
         : script.leader === p.team ? (stat === 'rushingYards' ? 'up big: the run game carries the second half' : 'up big: the passing game sits') : script.trailer === p.team ? (stat === 'rushingYards' ? 'down big: the run game goes away' : 'down big: throwing to catch up') : null;
       rows.push({ player: p.name, team: p.team, athleteId: p.id ?? null, stat, label: LIVE_LABEL[stat] ?? stat, current: cur, projected: proj, why, line: best ? { bookId: best.bookId, book: best.book, point: best.point, price: best.price, link: best.link } : null, lines: perBook });
     }
   }
   // Yards first by projection; receptions and the like ride along with their player.
-  const weight = (r) => (league === 'nhl' ? (r.stat === 'saves' ? r.projected : r.stat === 'shotsTotal' ? r.projected * 5 : r.projected * 8) : r.stat === 'receptions' ? r.projected * 10 : r.stat === 'assists' || r.stat === 'rebounds' ? r.projected * 2.5 : r.projected);
+  const weight = (r) => (league === 'nhl' ? (r.stat === 'saves' ? r.projected : r.stat === 'shotsTotal' ? r.projected * 5 : r.projected * 8)
+    : isSoccer(league) ? (r.stat === 'saves' ? r.projected : r.stat === 'totalShots' ? r.projected * 3 : r.stat === 'shotsOnTarget' ? r.projected * 5 : r.projected * 10)
+    : r.stat === 'receptions' ? r.projected * 10 : r.stat === 'assists' || r.stat === 'rebounds' ? r.projected * 2.5 : r.projected);
   return rows.sort((a, b) => weight(b) - weight(a)).slice(0, limit);
 }
 
@@ -309,8 +330,8 @@ export async function getLiveBoard(env, now = Date.now(), { ctx = null } = {}) {
     const candidates = payload && tick ? liveCandidates(payload, tick, league, { weather }) : [];
     // Hockey: the game lines (moneyline, puck line, total) read against the score and the clock (worker/src/live-game.js).
     const homeName = probe?.home ?? teams[1] ?? null; const awayName = probe?.away ?? teams[0] ?? null;
-    const game = league === 'nhl' && payload && tick?.state === 'in'
-      ? gameReads(payload, { home: homeName, away: awayName, homeAbbr: tick.home ?? espnAbbr('icehockey_nhl', homeName), awayAbbr: tick.away ?? espnAbbr('icehockey_nhl', awayName), score: tick.score ?? {}, elapsed: elapsedFraction(tick, league) })
+    const game = goalSport(league) && payload && tick?.state === 'in'
+      ? gameReads(payload, { home: homeName, away: awayName, homeAbbr: tick.home ?? espnAbbr(LIVE_SPORT[league], homeName), awayAbbr: tick.away ?? espnAbbr(LIVE_SPORT[league], awayName), score: tick.score ?? {}, elapsed: elapsedFraction(tick, league), sport: isSoccer(league) ? 'soccer' : 'nhl', minutes: GAME_MINUTES[league] ?? 60 })
       : [];
     // A read shows the slips the last tick built (worker/src/live-probe.js rebuilds them every tick); it does not rebuild them itself.
     const plays = tick ? await ensureLivePlays(env, g, null, tick, { league, now, weather }) : null;
