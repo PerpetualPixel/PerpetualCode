@@ -72,11 +72,15 @@ test('the projection follows pace, script and weather; who to watch lists the bi
   const slips = buildLiveSlips(c);
   assert.deepEqual(slips.map((s) => s.bookId), ['draftkings'], 'FanDuel prices only one player: no slip there');
   const m = new Map(); const env = { POTD_KV: { get: async (k) => m.get(k) ?? null, put: async (k, v) => { m.set(k, v); } } };
-  assert.equal(await ensureLivePlays(env, { id: 'g', name: 'A at B' }, payload, { ...t, detail: '7:00 - 2nd Quarter', period: 2, clock: '7:00' }), null, 'not at the half: nothing built');
+  assert.equal(await ensureLivePlays(env, { id: 'g', name: 'A at B' }, payload, { ...t, detail: '10:00 - 1st Quarter', period: 1, clock: '10:00' }), null, 'five minutes in: too little pace to build on');
+  const q2 = await ensureLivePlays(env, { id: 'g', name: 'A at B' }, payload, { ...t, detail: '7:00 - 2nd Quarter', period: 2, clock: '7:00' }, { now: 8 });
+  assert.equal(q2.slips.length, 1); assert.deepEqual([q2.builtAt, q2.firstBuiltAt, q2.builds, q2.period, q2.clock], [8, 8, 1, 2, '7:00'], 'built in the second quarter, not only at the half');
   const built = await ensureLivePlays(env, { id: 'g', name: 'A at B' }, payload, t, { now: 9 });
-  assert.equal(built.slips.length, 1); assert.equal(built.builtAt, 9);
+  assert.deepEqual([built.builtAt, built.firstBuiltAt, built.builds, built.detail], [9, 8, 2, 'Halftime'], 'rebuilt at the half from the ladders now');
   const again = await ensureLivePlays(env, { id: 'g', name: 'A at B' }, { bookmakers: [] }, t, { now: 10 });
-  assert.equal(again.builtAt, 9, 'the first slip stands');
+  assert.equal(again.builtAt, 9, 'no ladders this tick: the last build stands');
+  const late = await ensureLivePlays(env, { id: 'g', name: 'A at B' }, payload, { ...t, detail: '2:00 - 4th Quarter', period: 4, clock: '2:00' }, { now: 11 });
+  assert.equal(late.builtAt, 9, 'two minutes left: no new build, the last stands');
 });
 
 test('later slips are built without the best slip\'s players when the ladders allow, and a player on more than one slip is counted on his legs', async () => {

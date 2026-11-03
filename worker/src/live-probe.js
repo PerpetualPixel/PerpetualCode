@@ -17,7 +17,7 @@ import { UPSTREAM, TREND_BOOKMAKERS } from './odds.js';
 import { listLeagueGames } from './prop-legs.js';
 import { ensureLivePlays } from './live-board.js';
 
-/** The alt ladders the halftime parlay would use, and the main lines beside them, per league. */
+/** The alt ladders the live parlay would use, and the main lines beside them, per league. */
 export const LIVE_MARKETS = {
   nfl: 'player_pass_yds_alternate,player_rush_yds_alternate,player_reception_yds_alternate,player_receptions_alternate,player_pass_yds,player_rush_yds,player_reception_yds,player_receptions',
   nba: 'player_points_alternate,player_rebounds_alternate,player_assists_alternate,player_points,player_rebounds,player_assists',
@@ -71,7 +71,7 @@ export function liveGamesNow(index, now) {
   return (index?.games ?? []).filter((g) => { const t = Date.parse(g.date); return Number.isFinite(t) && now >= t - BEFORE_MS && now <= t + AFTER_MS; });
 }
 
-/** One tick: for each watched game in its window, one props call, appended to its log; at the half, the plays. Returns what it did. */
+/** One tick: for each watched game in its window, one props call, appended to its log; in play, the plays rebuilt from it. Returns what it did. */
 export async function runLiveProbe(env, ctx, now = Date.now(), { deps = {} } = {}) {
   const idxRaw = await env.POTD_KV.get(LIVE_WATCH_INDEX).catch(() => null);
   const index = deps.index ?? (idxRaw ? JSON.parse(idxRaw) : { games: [] });
@@ -97,7 +97,7 @@ export async function runLiveProbe(env, ctx, now = Date.now(), { deps = {} } = {
     await env.POTD_KV.put(`live:probe:for:${g.id}`, event.id, { expirationTtl: 14 * 86400 }).catch(() => {});
     await env.POTD_KV.put('live:probe:latest', event.id, { expirationTtl: 14 * 86400 }).catch(() => {});
     if (payload?.bookmakers?.length) await env.POTD_KV.put(liveLatestKey(event.id), JSON.stringify({ at: now, bookmakers: payload.bookmakers }), { expirationTtl: 2 * 86400 }).catch(() => {});
-    // At the half the slip is built here too, so it is ready before anyone opens the tab.
+    // The slips are rebuilt here on every tick in play, so the tab opens on the current ones.
     const watchRaw = await env.POTD_KV.get(liveWatchKey(g.id)).catch(() => null);
     const tick = watchRaw ? JSON.parse(watchRaw)?.ticks?.at(-1) ?? null : null;
     const plays = tick ? await ensureLivePlays(env, g, payload?.bookmakers?.length ? payload : null, tick, { league, now }).catch(() => null) : null;

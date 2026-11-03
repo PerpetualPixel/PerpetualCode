@@ -12,10 +12,11 @@
  *   players  every skill player's line as of the last read;
  *   watch    who to watch: the projected final per stat from pace, game
  *            script and weather, and the best clearing line, if any;
- *   slips    at the half, a three-to-five-leg play at every book that
- *            prices one, nearest +100, with where each player sits; the
- *            first play built is kept (live:play:<game>) so the slip does
- *            not change under the user as the lines move.
+ *   slips    from a fifth of the game in until a tenth is left, a
+ *            three-to-five-leg play at every book that prices one,
+ *            nearest +100, with where each player sits; rebuilt on every
+ *            tick that has ladders (live:play:<game>), so the slip shown
+ *            is the one the lines on the board make now.
  * A deterministic first cut: no model read yet, and the plays are
  * shown, not tracked.
  */
@@ -226,21 +227,30 @@ function refreshSlips(slips, tick) {
   return (slips ?? []).map((s) => ({ ...s, legs: s.legs.map((l) => { const p = box.get(String(l.player).toLowerCase()); const cur = p ? num(p.stats?.[l.stat]) : null; return cur == null ? l : { ...l, current: cur, cleared: cur >= l.point }; }) }));
 }
 
+/** Slips build once this much of the game is played (a quarter and a bit, enough pace to project from) and stop this far in (books pull ladders late). */
+export const BUILD_FROM = 0.2;
+export const BUILD_UNTIL = 0.9;
+
 /**
- * The plays for a game at the half: built once from the ladders at the
- * first read or tick inside the half and kept under live:play, so the
- * slip stands while the lines move. Null outside the half with nothing
- * stored.
+ * The plays for a game: rebuilt from the ladders on every tick while the
+ * game is in play between BUILD_FROM and BUILD_UNTIL, and kept under
+ * live:play. A tick with no ladders (a book pulling props at a timeout,
+ * a feed miss) leaves the last build standing, as does any tick outside
+ * the window. Null when nothing has been built.
  */
 export async function ensureLivePlays(env, game, payload, tick, { league = 'nfl', now = Date.now(), weather = null } = {}) {
   const key = livePlayKey(game.id);
   const raw = await env.POTD_KV.get(key).catch(() => null);
-  if (raw) return JSON.parse(raw);
-  if (!isHalftime(tick, league) || !payload) return null;
+  const stored = raw ? JSON.parse(raw) : null;
+  const elapsed = elapsedFraction(tick, league);
+  if (!tick || tick.state !== 'in' || elapsed < BUILD_FROM || elapsed > BUILD_UNTIL || !payload) return stored;
   const candidates = liveCandidates(payload, tick, league, { weather });
   const slips = buildLiveSlips(candidates);
-  if (!slips.length) return null;
-  const record = { espnEventId: game.id, name: game.name, builtAt: now, score: tick.score ?? null, slips };
+  if (!slips.length) return stored;
+  const record = {
+    espnEventId: game.id, name: game.name, builtAt: now, firstBuiltAt: stored?.firstBuiltAt ?? now, builds: (stored?.builds ?? 0) + 1,
+    score: tick.score ?? null, detail: tick.detail ?? null, period: tick.period ?? null, clock: tick.clock ?? null, elapsed, slips,
+  };
   await env.POTD_KV.put(key, JSON.stringify(record), { expirationTtl: 3 * 86400 }).catch(() => {});
   return record;
 }
@@ -275,7 +285,7 @@ export async function getLiveBoard(env, now = Date.now(), { ctx = null } = {}) {
       players: playerLines(tick, league),
       watch: whoToWatch(tick, candidates, league, { weather }),
       candidates: candidates.slice(0, 12),
-      slips: plays ? { builtAt: plays.builtAt, score: plays.score, list: refreshSlips(plays.slips, tick) } : null,
+      slips: plays ? { builtAt: plays.builtAt, firstBuiltAt: plays.firstBuiltAt ?? plays.builtAt, builds: plays.builds ?? 1, score: plays.score, detail: plays.detail ?? null, period: plays.period ?? null, clock: plays.clock ?? null, list: refreshSlips(plays.slips, tick) } : null,
     });
   }
   return { at: now, games: out };
