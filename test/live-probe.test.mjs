@@ -1,6 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { pickLiveEvent, summariseProps, runLiveProbe, liveProbeKey, liveGamesNow, liveGameTeams } from '../worker/src/live-probe.js';
+import { pickLiveEvent, summariseProps, runLiveProbe, liveProbeKey, liveGamesNow, liveGameTeams, LIVE_BOOKMAKERS } from '../worker/src/live-probe.js';
+import { SPORTSBOOKS, bookIdFor } from '../docs/engine.js';
 
 test('the probe follows the watched games inside their windows, finds each on the feed either way round, summarises what every book posts, and keeps one snapshot a tick', async () => {
   const kick = Date.UTC(2026, 10, 3, 1, 20);
@@ -29,4 +30,11 @@ test('the probe follows the watched games inside their windows, finds each on th
   assert.equal(log.snapshots.length, 2); assert.equal(calls, 2); assert.equal(log.home, 'Seattle Seahawks'); assert.equal(log.espnEventId, '401873100');
   assert.equal(m.get('live:probe:for:401873100'), 'e1', 'the board finds the probe by the watched game');
   assert.equal((await runLiveProbe(env, {}, kick + 6 * 3600e3, { deps })).skipped, true, 'after the window');
+});
+
+test('the live call names every book the site lists that posts props, ten at most so it prices as one region', () => {
+  const keys = LIVE_BOOKMAKERS.split(',');
+  assert.ok(keys.length <= 10, 'more than ten names and the feed charges a second region');
+  const ids = new Set(keys.map((k) => bookIdFor(k)));
+  for (const id of Object.keys(SPORTSBOOKS)) if (id !== 'kalshi') assert.ok(ids.has(id), `${id} is on the site but not in the live call`);
 });
