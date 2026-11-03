@@ -69,6 +69,7 @@ test('the projection follows pace, script and weather; who to watch lists the bi
   assert.equal(w[0].player, 'Jalen Hurts'); assert.equal(w[0].projected, 300); assert.equal(w[0].line.point, 224.5, 'his highest clearing number');
   const saquon = w.find((x) => x.player === 'Saquon Barkley' && x.stat === 'rushingYards');
   assert.deepEqual([saquon.current, saquon.projected, saquon.line.bookId, saquon.line.point], [68, 136, 'draftkings', 99.5]);
+  assert.deepEqual(saquon.lines.map((l) => [l.bookId, l.point]), [['draftkings', 99.5], ['fanduel', 89.5]], 'the best clearing line at each book, for a user who plays at one');
   const slips = buildLiveSlips(c);
   assert.deepEqual(slips.map((s) => s.bookId), ['draftkings'], 'FanDuel prices only one player: no slip there');
   const m = new Map(); const env = { POTD_KV: { get: async (k) => m.get(k) ?? null, put: async (k, v) => { m.set(k, v); } } };
