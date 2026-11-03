@@ -10933,10 +10933,23 @@ function renderLiveGame(g) {
     </div>
     ${g.players?.length ? `<p class="live-sub">Box score <small>as of ${t ? esc(liveTimeFmt.format(new Date(t.at))) : ''}</small></p>${livePlayersTable(g)}` : live ? '<p class="row-sub">No box lines yet.</p>' : ''}
     ${g.watch?.length ? `<p class="live-sub">Who to watch <small>projected to the whistle from pace, the score and the weather</small></p><div class="live-watch-list">${g.watch.map(liveWatchRow).join('')}</div>` : ''}
-    ${slips.length ? `<p class="live-sub">Slips <small>built at the half${g.slips.builtAt ? `, ${esc(liveTimeFmt.format(new Date(g.slips.builtAt)))}` : ''}; the lines stand, the numbers move</small></p>${slips.map(liveSlip).join('')}<p class="row-sub">Shown, not tracked: a first cut that works the ladders against the box score and the pace; the model's read and the ledger come next.</p>`
-      : live && !g.halftime ? '<p class="row-sub">The slips are built at the half, one at every book that prices one.</p>' : g.halftime ? '<p class="row-sub">Halftime: nothing on the board clears the pace with margin at a usable price.</p>' : ''}
+    ${slips.length ? `<p class="live-sub">Slips <small>built ${esc(liveBuiltWhen(g.slips))}${g.slips.builtAt ? `, ${esc(liveTimeFmt.format(new Date(g.slips.builtAt)))}` : ''}; rebuilt every few minutes as the lines and the box score move</small></p>${slips.map(liveSlip).join('')}<p class="row-sub">Shown, not tracked: a first cut that works the ladders against the box score and the pace; the model's read and the ledger come next.</p>`
+      : live ? `<p class="row-sub">${esc(liveNoSlipWhy(g))}</p>` : ''}
     ${books.length ? `<details class="live-books-wrap"><summary>Books posting player props now</summary><div class="live-books">${books.map((b) => `<span class="live-book">${bookBadge(b.bookId, b.key)}${esc(SPORTSBOOKS[b.bookId]?.name ?? b.key)} <small>${b.markets.map((m) => `${esc(m.key.replace('player_', '').replace('_alternate', ' alt').replace(/_/g, ' '))} ${esc(String(m.players))}p`).join(' · ')}</small></span>`).join('')}</div></details>` : ''}
   </article>`;
+}
+
+/** When the slips were last built: the game clock at the build ("Q2 7:12", "at the half"). */
+function liveBuiltWhen(slips) {
+  if (!slips) return '';
+  if (/half/i.test(String(slips.detail ?? ''))) return 'at the half';
+  return slips.period ? `Q${slips.period} ${slips.clock ?? ''}`.trim() : 'in play';
+}
+/** Why a game in play has no slip yet. */
+function liveNoSlipWhy(g) {
+  if (g.elapsed < 0.2) return 'Slips build once a quarter and a bit is in the books, one at every book that prices one, and rebuild as the game moves.';
+  if (g.elapsed > 0.9) return 'Too late in the game for a new slip: the books pull their ladders from here.';
+  return 'Nothing on the board clears the pace with margin at a usable price right now; checked again every few minutes.';
 }
 
 function renderLive() {
@@ -10947,7 +10960,7 @@ function renderLive() {
   if (!games.length) { el.liveBody.innerHTML = '<p class="empty">No game is being watched right now. The watcher starts before each game it is set for.</p>'; return; }
   const slips = games.reduce((n, g) => n + (g.slips?.list?.length ?? 0), 0);
   const inPlay = games.filter((g) => g.tick?.state === 'in').length;
-  el.liveBody.innerHTML = `<div class="live-top"><span class="live-count ${slips ? 'is-on' : ''}">${slips ? `${slips} live slip${slips === 1 ? '' : 's'} ready` : inPlay ? 'No live slip yet: built at the half' : 'No live slip'}</span><span class="row-sub">Board read ${esc(liveTimeFmt.format(new Date(d.at)))} · re-reads every minute while open</span></div>${games.map(renderLiveGame).join('')}`;
+  el.liveBody.innerHTML = `<div class="live-top"><span class="live-count ${slips ? 'is-on' : ''}">${slips ? `${slips} live slip${slips === 1 ? '' : 's'} ready` : inPlay ? 'No live slip yet: they build once a quarter is in' : 'No live slip'}</span><span class="row-sub">Board read ${esc(liveTimeFmt.format(new Date(d.at)))} · re-reads every minute while open</span></div>${games.map(renderLiveGame).join('')}`;
 }
 
 el.liveView?.addEventListener('click', (event) => {
