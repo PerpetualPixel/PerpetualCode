@@ -8863,7 +8863,7 @@ const trendsState = {
   detailPeriod: null,
   betMore: false,
 };
-const TREND_LEAGUE_ICON = { americanfootball_nfl: 'nfl', basketball_nba: 'nba', icehockey_nhl: 'nhl', soccer_epl: 'soccer', soccer_spain_la_liga: 'soccer', soccer_italy_serie_a: 'soccer', soccer_germany_bundesliga: 'soccer', soccer_france_ligue_one: 'soccer', soccer_uefa_champs_league: 'soccer' };
+const TREND_LEAGUE_ICON = { americanfootball_nfl: 'nfl', basketball_nba: 'nba', icehockey_nhl: 'nhl', soccer: 'soccer', soccer_epl: 'soccer', soccer_spain_la_liga: 'soccer', soccer_italy_serie_a: 'soccer', soccer_germany_bundesliga: 'soccer', soccer_france_ligue_one: 'soccer', soccer_uefa_champs_league: 'soccer' };
 const SOCCER_TREND_KEYS = ['soccer_epl', 'soccer_spain_la_liga', 'soccer_italy_serie_a', 'soccer_germany_bundesliga', 'soccer_france_ligue_one'];
 const TREND_LOGO_PATH = { americanfootball_nfl: 'nfl', basketball_nba: 'nba', icehockey_nhl: 'nhl' };
 const trendTimeFmt = new Intl.DateTimeFormat(undefined, { weekday: 'short', hour: 'numeric', minute: '2-digit' });
@@ -8878,7 +8878,7 @@ const SORT_LABEL = { hitRate: 'By Hit Rate', odds: 'By Odds', date: 'By Event Da
  * "season 26-27 and 25-26"): the NBA and NHL span two years and are keyed
  * by the first, so 2026 reads "2026-27"; an NFL season is one year.
  */
-const TWO_YEAR_SEASON = new Set(['basketball_nba', 'icehockey_nhl']);
+const TWO_YEAR_SEASON = new Set(['basketball_nba', 'icehockey_nhl', 'soccer', 'soccer_epl', 'soccer_spain_la_liga', 'soccer_italy_serie_a', 'soccer_germany_bundesliga', 'soccer_france_ligue_one']);
 function seasonName(year, sportKey = trendsState.sport) {
   const y = Number(year);
   return TWO_YEAR_SEASON.has(sportKey) ? `${y}-${String(y + 1).slice(-2)}` : String(y);
@@ -9126,7 +9126,7 @@ function renderTrendCard(row) {
     </div>
     <div class="trend-main">
       <div>
-        <p class="trend-player">${esc(row.playerName)}${row.team ? `<small>${esc(row.team)}</small>` : ''}</p>
+        <p class="trend-player">${esc(row.playerName)}${row.team ? `<small>${esc(row.team)}</small>` : ''}${String(row.sportKey).startsWith('soccer_') ? `<span class="trend-league">${esc(SPORT_SHORT[row.sportKey] ?? row.sportTitle ?? '')}</span>` : ''}</p>
         <p class="trend-line">${esc(row.marketLabel ?? row.statLabel)} ${sideWord(row.side)} ${esc(String(row.point))}</p>
         ${injuryTag(row.injury)}
       </div>
@@ -9746,7 +9746,7 @@ function legAsRow(leg, bet) {
 
 /** The board's best line as a one-leg pseudo ticket, so the leg renders and opens like any other. */
 const showcaseBet = (leg) => ({ id: `showcase:${leg.sportKey}`, type: 'straight', bookId: leg.bookId, book: leg.book, legs: [leg] });
-const SPORT_SHORT = { basketball_nba: 'NBA', americanfootball_nfl: 'NFL', icehockey_nhl: 'NHL', soccer_epl: 'EPL', soccer_spain_la_liga: 'La Liga', soccer_italy_serie_a: 'Serie A', soccer_germany_bundesliga: 'Bundesliga', soccer_france_ligue_one: 'Ligue 1' };
+const SPORT_SHORT = { basketball_nba: 'NBA', americanfootball_nfl: 'NFL', icehockey_nhl: 'NHL', soccer: 'Soccer', soccer_epl: 'EPL', soccer_spain_la_liga: 'La Liga', soccer_italy_serie_a: 'Serie A', soccer_germany_bundesliga: 'Bundesliga', soccer_france_ligue_one: 'Ligue 1' };
 
 function renderShowcaseCard(leg) {
   const open = trendPicksState.emblemOpen === leg.sportKey;
@@ -9927,7 +9927,11 @@ const playersState = {
   sport: 'basketball_nba', index: {}, stats: {}, player: null, stat: '', side: 'over', point: '',
   log: null, loading: false, window: 'all', filters: { opponent: '', venue: 'both', seasons: null, playoffs: 'include' }, focus: -1,
 };
-const PLAYER_LEAGUES = [['basketball_nba', 'NBA'], ['americanfootball_nfl', 'NFL'], ['icehockey_nhl', 'NHL'], ['soccer_epl', 'EPL'], ['soccer_spain_la_liga', 'La Liga'], ['soccer_italy_serie_a', 'Serie A'], ['soccer_germany_bundesliga', 'Bundesliga'], ['soccer_france_ligue_one', 'Ligue 1']];
+const PLAYER_LEAGUES = [['basketball_nba', 'NBA'], ['americanfootball_nfl', 'NFL'], ['icehockey_nhl', 'NHL'], ['soccer', 'Soccer']];
+/** The tab a league's rows sit under: the five soccer leagues share the one Soccer tab. */
+const playerTabOf = (sportKey) => (String(sportKey ?? '').startsWith('soccer_') ? 'soccer' : sportKey);
+/** The league a player's log, logos and season names live under: his own on the Soccer tab, the tab's elsewhere. */
+const playerSportOf = (p) => p?.sportKey ?? playersState.sport;
 const foldName = (s) => String(s ?? '').normalize('NFD').replace(/[̀-ͯ]/g, '').toLowerCase().replace(/[^a-z0-9]+/g, ' ').trim();
 
 async function loadPlayers(sport = playersState.sport) {
@@ -9989,7 +9993,7 @@ function renderPlayers() {
   if (document.activeElement !== el.playersPoint) el.playersPoint.value = playersState.point;
   const p = playersState.player;
   const injury = playersState.log?.player?.injury ?? null;
-  el.playersPicked.innerHTML = p ? `<div class="players-card">${avatarHtml({ playerName: p.name, team: p.team, sportKey: playersState.sport, headshot: p.headshot }, 'trend-avatar')}<div><p class="trend-player">${esc(p.name)}<small>${esc(p.team)}</small></p><p class="trend-line">${esc(p.position ?? '')}</p>${injuryTag(injury)}</div><button type="button" class="players-clear" data-players-clear aria-label="Clear player">✕</button></div>` : '';
+  el.playersPicked.innerHTML = p ? `<div class="players-card">${avatarHtml({ playerName: p.name, team: p.team, sportKey: playerSportOf(p), headshot: p.headshot }, 'trend-avatar')}<div><p class="trend-player">${esc(p.name)}<small>${esc(p.team)}</small>${p.sportKey ? `<span class="trend-league">${esc(SPORT_SHORT[p.sportKey] ?? p.sportKey)}</span>` : ''}</p><p class="trend-line">${esc(p.position ?? '')}</p>${injuryTag(injury)}</div><button type="button" class="players-clear" data-players-clear aria-label="Clear player">✕</button></div>` : '';
   el.playersSearchBtn.disabled = !(p && playersState.stat && Number.isFinite(Number(playersState.point)) && playersState.point !== '');
   renderPlayerResult();
 }
@@ -10036,7 +10040,7 @@ function renderPlayerResult() {
     <div class="players-filters">
       <label class="players-select"><span>Opponent</span><select data-players-opponent><option value="">Any</option>${opponents.map((o) => `<option value="${esc(o)}" ${f.opponent === o ? 'selected' : ''}>${esc(o)}</option>`).join('')}</select></label>
       <div class="players-filter"><span>Home or away</span>${seg('venue', [['both', 'Both'], ['home', 'Home'], ['away', 'Away']], f.venue)}</div>
-      <div class="players-filter"><span>Seasons</span><div class="rate-chips">${seasons.map((y) => `<button type="button" class="rate-chip ${!f.seasons || f.seasons.has(y) ? 'is-active' : ''}" data-players-season="${y}">${esc(seasonName(y, playersState.sport))}</button>`).join('')}</div></div>
+      <div class="players-filter"><span>Seasons</span><div class="rate-chips">${seasons.map((y) => `<button type="button" class="rate-chip ${!f.seasons || f.seasons.has(y) ? 'is-active' : ''}" data-players-season="${y}">${esc(seasonName(y, playerSportOf(playersState.player)))}</button>`).join('')}</div></div>
       <div class="players-filter"><span>Playoffs</span>${seg('playoffs', [['include', 'Include'], ['exclude', 'Exclude'], ['only', 'Only']], f.playoffs)}</div>
       <div class="players-filter"><span>Games</span><div class="rate-chips">${[['all', `All ${all.length}`], ['l5', 'Last 5'], ['l10', 'Last 10'], ['l20', 'Last 20']].map(([k, label]) => `<button type="button" class="rate-chip ${playersState.window === k ? 'is-active' : ''}" data-players-window="${k}">${esc(label)}</button>`).join('')}</div></div>
     </div>
@@ -10046,13 +10050,13 @@ function renderPlayerResult() {
     </div>
     ${chart.length ? `<div class="detail-chart ${chart.length > 12 ? 'is-dense' : ''}">
       <span class="chart-line" style="top:${lineTop.toFixed(1)}%"></span><span class="chart-line-label" style="top:${lineTop.toFixed(1)}%">${esc(String(point))}</span>
-      ${chart.map((s) => `<div class="chart-col"><div class="chart-bar ${s.hit === 1 ? 'is-hit' : s.hit === null ? 'is-push' : 'is-miss'}" style="height:${Math.max(2, (s.value / max) * 100).toFixed(1)}%"></div><span class="chart-val ${s.hit === 1 ? 'is-hit' : s.hit === null ? '' : 'is-miss'}">${esc(String(s.value))}</span><span class="chart-opp">${esc(s.atVs ?? '')}${s.opponent ? `<img src="${esc(trendLogo(playersState.sport, s.opponent))}" alt="${esc(s.opponent)}" loading="lazy">` : ''}</span></div>`).join('')}
+      ${chart.map((s) => `<div class="chart-col"><div class="chart-bar ${s.hit === 1 ? 'is-hit' : s.hit === null ? 'is-push' : 'is-miss'}" style="height:${Math.max(2, (s.value / max) * 100).toFixed(1)}%"></div><span class="chart-val ${s.hit === 1 ? 'is-hit' : s.hit === null ? '' : 'is-miss'}">${esc(String(s.value))}</span><span class="chart-opp">${esc(s.atVs ?? '')}${s.opponent ? `<img src="${esc(trendLogo(playerSportOf(log.player), s.opponent))}" alt="${esc(s.opponent)}" loading="lazy">` : ''}</span></div>`).join('')}
     </div>` : '<p class="empty">No games match those filters.</p>'}
     <div class="detail-log">
       <div class="log-head">Final</div>
       ${rows.map((g, i) => `<div class="log-row ${flags[i] === 1 ? 'is-hit' : flags[i] === null ? '' : 'is-miss'}">
         <span class="log-date">${g.date ? esc(trendDateFmt.format(new Date(g.date))) : ''}</span>
-        <span class="row-logos"><img src="${esc(trendLogo(playersState.sport, log.player.team))}" alt="" loading="lazy">${g.opponent ? `<img src="${esc(trendLogo(playersState.sport, g.opponent))}" alt="" loading="lazy">` : ''}</span>
+        <span class="row-logos"><img src="${esc(trendLogo(playerSportOf(log.player), log.player.team))}" alt="" loading="lazy">${g.opponent ? `<img src="${esc(trendLogo(playerSportOf(log.player), g.opponent))}" alt="" loading="lazy">` : ''}</span>
         <span class="log-opp"><small>${esc((g.atVs ?? 'vs').toUpperCase())}</small>${esc(g.opponent ?? '')}</span>
         <span class="log-score">${g.score ? esc(String(g.score).replace(/^[WLT]\s*/, '')) : ''} <span class="log-val">${esc(String(g.value))}</span></span>
       </div>`).join('')}
@@ -10066,7 +10070,8 @@ async function runPlayerSearch() {
   el.playersStatus.textContent = `Loading ${p.name}'s game log…`;
   try {
     const url = new URL('/player', CONFIG.WORKER_URL);
-    url.searchParams.set('sport', playersState.sport); url.searchParams.set('team', p.team); url.searchParams.set('id', p.id); url.searchParams.set('stat', playersState.stat);
+    // A soccer player's log lives under his own league, which the Soccer index carries on him.
+    url.searchParams.set('sport', p.sportKey ?? playersState.sport); url.searchParams.set('team', p.team); url.searchParams.set('id', p.id); url.searchParams.set('stat', playersState.stat);
     const res = await fetch(url, { headers: { Accept: 'application/json' } });
     const body = await res.json();
     if (!res.ok || !body.rows) { el.playersStatus.textContent = body.error ? `No luck: ${body.error}.` : "Couldn't load that game log."; playersState.log = null; }
@@ -10080,7 +10085,7 @@ async function runPlayerSearch() {
 
 /** From a Trends or Pixel's Picks detail sheet: the same player, stat and number on the Players tab. */
 async function openPlayerSearch({ sportKey, id, name, team, headshot, stat, point, side }) {
-  playersState.sport = PLAYER_LEAGUES.some(([k]) => k === sportKey) ? sportKey : playersState.sport;
+  playersState.sport = PLAYER_LEAGUES.some(([k]) => k === playerTabOf(sportKey)) ? playerTabOf(sportKey) : playersState.sport;
   playersState.stat = stat ?? '';
   playersState.side = side === 'under' ? 'under' : 'over';
   playersState.point = Number.isFinite(point) ? String(point) : '';

@@ -67,6 +67,17 @@ export const MAX_GAMES_PER_TICK = 6;
  * is the league the tab opens on when more than one has rows.
  */
 export const TREND_ENABLED_SPORTS = ['basketball_nba', NFL_SPORT_KEY, NHL_SPORT_KEY, ...SOCCER_PROP_KEYS];
+/**
+ * The tabs the client shows: the soccer leagues build one at a time but
+ * read as one "Soccer" group (2026-11-03: "just put soccer and have it
+ * all in there"), its rows carrying their own league.
+ */
+export const TREND_GROUPS = { soccer: { title: 'Soccer', keys: SOCCER_PROP_KEYS } };
+export const TREND_TABS = ['basketball_nba', NFL_SPORT_KEY, NHL_SPORT_KEY, 'soccer'];
+/** A key the routes answer for: a built league, or a group of them. */
+export const isTrendKey = (key) => TREND_ENABLED_SPORTS.includes(key) || Object.hasOwn(TREND_GROUPS, key);
+/** The built leagues behind a key: the group's, or the key itself. */
+export const trendKeysOf = (key) => TREND_GROUPS[key]?.keys ?? [key];
 export const MAX_PLAYERS_PER_GAME = 40;
 /** Rows with fewer logged games than this have no rate worth sorting on. */
 const MIN_GAMES = 3;
@@ -177,6 +188,24 @@ export async function getTrends(env, sportKey) {
   if (raw) return JSON.parse(raw);
   return { sportKey, title: spec.title, builtAt: null, games: 0, pending: 0, rows: [], stamps: {} };
 }
+
+/** A group's leagues read as one: every row with its own league, the best hit rates first, the logs side by side. */
+export async function getTrendsGroup(env, group) {
+  const spec = TREND_GROUPS[group];
+  if (!spec) return null;
+  const parts = await Promise.all(spec.keys.map((k) => getTrends(env, k)));
+  const merged = sortTrends(parts.flatMap((p) => attachSeries(p.rows ?? [], p.logs ?? {})), { window: 'l20' });
+  const { rows, logs } = detachSeries(merged);
+  const max = (field) => parts.reduce((m, p) => (p[field] && (!m || p[field] > m) ? p[field] : m), null);
+  return {
+    sportKey: group, title: spec.title, builtAt: max('builtAt'), checkedAt: max('checkedAt'),
+    games: parts.reduce((n, p) => n + (p.games ?? 0), 0), pending: parts.reduce((n, p) => n + (p.pending ?? 0), 0),
+    rows, logs, stamps: {},
+    leagues: parts.map((p) => ({ sportKey: p.sportKey, title: p.title, rows: (p.rows ?? []).length, builtAt: p.builtAt ?? null })),
+  };
+}
+/** The stored rows for a key: a group read as one, or the league itself. */
+export const getTrendsFor = (env, key) => (TREND_GROUPS[key] ? getTrendsGroup(env, key) : getTrends(env, key));
 
 /** The games a league shows: today's and tomorrow's (ET), not yet over, soonest first, from the slate or the events list. */
 export async function trendGamesFor(sportKey, events, env, ctx, now) {
