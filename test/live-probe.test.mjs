@@ -38,3 +38,17 @@ test('the live call names every book the site lists that posts props, ten at mos
   const ids = new Set(keys.map((k) => bookIdFor(k)));
   for (const id of Object.keys(SPORTSBOOKS)) if (id !== 'kalshi') assert.ok(ids.has(id), `${id} is on the site but not in the live call`);
 });
+
+test('pickLiveEvent: a club named one way by ESPN and another by the feed still matches on a shared word, never on a club word alone, the nearest kick-off breaking ties', () => {
+  const events = [
+    { id: 'u1', home_team: 'SK Slavia Praha', away_team: 'Arsenal FC', commence_time: '2026-11-04T20:00:00Z' },
+    { id: 'u2', home_team: 'Sparta Praha', away_team: 'FC Barcelona', commence_time: '2026-11-04T20:00:00Z' },
+    { id: 'u3', home_team: 'Manchester City', away_team: 'Borussia Dortmund', commence_time: '2026-11-04T20:00:00Z' },
+    { id: 'u4', home_team: 'Manchester United', away_team: 'Borussia Monchengladbach', commence_time: '2026-11-05T20:00:00Z' },
+  ];
+  assert.equal(pickLiveEvent(events, ['Arsenal', 'Slavia Prague'])?.id, 'u1', 'Slavia is the shared word; Praha and Prague differ');
+  assert.equal(pickLiveEvent(events, ['Arsenal', 'Sparta Prague']), null, 'Sparta is not Slavia; Prague alone does not carry it');
+  assert.equal(pickLiveEvent(events, ['Borussia Dortmund', 'Manchester City'])?.id, 'u3', 'full containment outranks the shared Manchester and Borussia');
+  assert.equal(pickLiveEvent(events, ['Dortmund', 'Man City'], { date: '2026-11-04T20:00:00Z' })?.id, 'u3');
+  assert.equal(pickLiveEvent([{ id: 'x', home_team: 'FC Nowhere', away_team: 'SK Elsewhere' }], ['FC Arsenal', 'SK Slavia']), null, 'FC and SK are club words, not a match');
+});

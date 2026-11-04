@@ -86,7 +86,7 @@ jobs:
                   if (pr) {
                     console.log("PROBE", pr.home, "v", pr.away, "snapshots", pr.snapshots.length);
                     for (const s of pr.snapshots) console.log(" ", new Date(s.at).toISOString().slice(11, 19), "books", s.booksPosting, s.status || "", "|", s.books.filter((b) => b.markets.length).map((b) => `${b.key}: ${b.markets.map((m) => `${m.key.replace("player_", "").replace("_alternate", "*")}=${m.players}p/${m.outcomes}`).join(" ")}`).join(" || "));
-                  } else console.log("PROBE none");
+                  } else console.log("PROBE none", d.miss ? `| MISS ${d.miss.name} on ${d.miss.sportKey} at ${new Date(d.miss.at).toISOString()}; feed listed: ${(d.miss.feed || []).join(" ; ")}` : "");
                   const w = d.watch;
                   if (w) {
                     console.log("WATCH", w.name, "ticks", w.ticks.length);
