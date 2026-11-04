@@ -3022,6 +3022,16 @@ button, [role="tab"], .league-chip, .parlay-btn, .trend-price { touch-action: ma
   box-shadow: var(--glow-magenta);
 }
 .league-chip.is-active .league-chip-icon { opacity: 1; }
+/* On reads as filled and ticked, off as an outline, at once (2026-11-04: "hard to tell if it's on or off, slow to respond"). */
+#parlayLeagues .league-chip, #playersLeagues .league-chip { transition: color 60ms ease, border-color 60ms ease, background 60ms ease, transform 60ms ease; }
+#parlayLeagues .league-chip.is-active, #playersLeagues .league-chip.is-active {
+  color: #fff; font-weight: 800; border-color: rgba(217, 70, 239, 0.9);
+  background: linear-gradient(135deg, rgba(217, 70, 239, 0.42), rgba(157, 78, 221, 0.42)) padding-box, var(--card-border-gradient) border-box;
+  box-shadow: 0 0 0 1px rgba(217, 70, 239, 0.35), var(--glow-magenta);
+}
+#parlayLeagues .league-chip:not(.is-active), #playersLeagues .league-chip:not(.is-active) { color: var(--muted); background: transparent; box-shadow: none; }
+.league-chip-on { font-size: 0.7rem; font-weight: 900; margin-left: 2px; color: #fff; }
+#parlayLeagues, #playersLeagues { gap: 12px; row-gap: 12px; padding: 4px 2px; }
 
 /* Off-season placeholders (NBA/NCAAB/NHL) read as dormant, not broken — no
    glow, no hover lift, just a dimmer chip sitting in the row until the
@@ -6646,6 +6656,13 @@ button, [role="tab"], .league-chip, .parlay-btn, .trend-price { touch-action: ma
 .rate-chips { display: flex; flex-wrap: wrap; gap: 8px; justify-content: center; }
 .rate-chip { border-radius: 999px; border: 1px solid var(--line); background: var(--surface-2); color: var(--text); font: inherit; font-weight: 700; padding: 10px 16px; cursor: pointer; }
 .rate-chip.is-active { background: var(--success); color: #06130a; border-color: var(--success); }
+.rate-chip.is-empty { opacity: 0.55; }
+.rate-chip small { font-weight: 700; opacity: 0.8; margin-left: 2px; }
+.parlay-ufc-note { margin: 8px 0 0; }
+.parlay-leg-price.is-none { font-size: 0.78rem; color: #fbbf24; display: flex; flex-direction: column; align-items: flex-end; line-height: 1.1; }
+.parlay-leg-price.is-none small { color: var(--muted); font-size: 0.68rem; }
+.parlay-leg.is-unpriced { border-color: rgba(251, 191, 36, 0.35); }
+.parlay-leg-note { margin: 6px 0 0; color: #fbbf24; font-size: 0.82rem; }
 
 /* Detail sheet */
 .detail-top { display: grid; grid-template-columns: 1fr auto; gap: 10px; align-items: start; padding-top: 34px; }
