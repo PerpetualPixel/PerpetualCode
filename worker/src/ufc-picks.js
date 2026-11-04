@@ -25,6 +25,7 @@
  * distance. Records live apart from NBA and NFL under ufc:picks:<eventId>.
  */
 import { getUfcEvents, getUfcEvent, nextUfcEvent, getUfcFighter } from './ufc-card.js';
+import { ufcCardProps, UFC_PROPS } from './ufc-props.js';
 import { normalizeName, namesLikelyMatch } from './ufc-events.js';
 import { callModel, STRAIGHT_RANGE, PARLAY_RANGE, PARLAY_TARGET, betRecordOf, TICKET_UNITS } from './trend-picks.js';
 import { bookIdFor, SPORTSBOOKS, americanToDecimal } from '../../docs/engine.js';
@@ -75,11 +76,12 @@ export async function fetchUfcOdds(env, ctx, lockMs, now = Date.now(), { deps = 
     const url = new URL(`https://api.the-odds-api.com/v4/sports/${UFC_SPORT}/odds`);
     url.searchParams.set('apiKey', env.ODDS_API_KEY.trim());
     url.searchParams.set('bookmakers', UFC_FEED_BOOKS);
-    // Moneylines only (2026-11-01 direction: picks are the moneyline, the
-    // method of victory and the double chance; no rounds totals). The feed
-    // carries no method markets for MMA, so those price off the engine's
-    // quote when it has one and otherwise post unpriced.
-    url.searchParams.set('markets', 'h2h');
+    // The moneyline for the picks (2026-11-01 direction: the moneyline, the
+    // method of victory and the double chance), plus the rounds total and
+    // the spread for the parlay pieces (2026-11-04). The feed carries no
+    // method markets for MMA, so those price off the engine's quote when
+    // it has one and otherwise post unpriced.
+    url.searchParams.set('markets', 'h2h,totals,spreads');
     url.searchParams.set('oddsFormat', 'american');
     url.searchParams.set('dateFormat', 'iso');
     url.searchParams.set('includeLinks', 'true');
@@ -125,7 +127,7 @@ export function boutOdds(bout, events) {
   const e = feedEventFor(bout, events);
   if (!e) return null;
   const a = normalizeName(bout.a?.name); const b = normalizeName(bout.b?.name);
-  const ml = { a: [], b: [] }; const totals = new Map();
+  const ml = { a: [], b: [] }; const totals = new Map(); const spreads = new Map();
   for (const bk of e.bookmakers ?? []) {
     const bookId = bookIdFor(bk.key) ?? bk.key;
     if (!UFC_BOOKS.includes(bookId)) continue;
@@ -141,12 +143,19 @@ export function boutOdds(bout, events) {
           if (side !== 'over' && side !== 'under') continue;
           if (!totals.has(o.point)) totals.set(o.point, { point: o.point, over: [], under: [] });
           totals.get(o.point)[side].push(q);
+        } else if (m.key === 'spreads' && Number.isFinite(o.point)) {
+          // The spread by its size, each side with its own number (+3.5 one way, -3.5 the other).
+          const side = matchSide(normalizeName(o.name), a, b);
+          if (!side) continue;
+          const key = Math.abs(o.point);
+          if (!spreads.has(key)) spreads.set(key, { point: { a: null, b: null }, a: [], b: [] });
+          spreads.get(key).point[side] = o.point; spreads.get(key)[side].push(q);
         }
       }
     }
   }
   const best = (list) => list.sort((x, y) => y.american - x.american);
-  return { feedId: e.id, a: best(ml.a), b: best(ml.b), totals: [...totals.values()].map((t) => ({ point: t.point, over: best(t.over), under: best(t.under) })).sort((x, y) => x.point - y.point) };
+  return { feedId: e.id, a: best(ml.a), b: best(ml.b), totals: [...totals.values()].map((t) => ({ point: t.point, over: best(t.over), under: best(t.under) })).sort((x, y) => x.point - y.point), spreads: [...spreads.values()].map((sp) => ({ point: sp.point, a: best(sp.a), b: best(sp.b) })) };
 }
 
 /* ---------------- the MMA engine ---------------- */
@@ -609,6 +618,13 @@ export async function runUfcTick(env, ctx, now = Date.now(), { deps = {} } = {})
     for (const combo of buildUfcParlays(pieces, { open: Math.max(0, room) })) { record.bets.push(parlayRecord(event, combo, now)); posted++; }
     // The underdog of the week follows the odds and the picks until the lock, never against a pick.
     record.underdog = underdogOfTheWeek(event, [...byBout.values()], record.bets);
+    // The parlay pieces by prop (worker/src/ufc-props.js): every scheduled bout's legs from the two records, the read, the cappers and the odds.
+    const profileOf = new Map();
+    const profile = async (id) => { if (!id) return null; if (!profileOf.has(id)) profileOf.set(id, await (deps.fighter ? deps.fighter(id) : getUfcFighter(env, id)).catch(() => null)); return profileOf.get(id); };
+    const pendingIds = new Set(record.bets.filter((b) => b.status === 'pending').flatMap((b) => (b.legs ?? []).filter((l) => l.result == null && l.fighterId).map((l) => l.fighterId)));
+    const reads = new Map();
+    for (const [id, x] of byBout) reads.set(id, { odds: x.odds, breakdown: x.breakdown, engine: x.engine, profiles: { a: await profile(x.bout.a?.id), b: await profile(x.bout.b?.id) }, against: new Set([x.bout.a?.id, x.bout.b?.id].filter((fid) => fid && pendingIds.has(fid)).map((fid) => (fid === x.bout.a?.id ? x.bout.b?.id : x.bout.a?.id))) });
+    record.props = { ...ufcCardProps(live, (bout) => reads.get(bout.id) ?? null, { now }), labels: UFC_PROPS };
     if (record.underdog) {
       // How the underdog wins: the two records, and the cappers' method call on that side when there is one.
       const dogBout = event.bouts.find((b) => b.id === record.underdog.boutId);
