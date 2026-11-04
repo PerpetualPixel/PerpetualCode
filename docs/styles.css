@@ -7099,8 +7099,11 @@ a.trend-price:hover { background: rgba(255, 255, 255, 0.06); }
 .ufc-h2h-stats dt { color: var(--muted); }
 .ufc-h2h-stats dd { margin: 0; font-weight: 700; font-family: var(--mono); }
 .ufc-h2h-more { margin-top: 6px; }
-.ufc-h2h-pick { padding: 12px 14px; border: 1px solid rgba(94, 224, 122, 0.5); border-radius: 14px; margin-bottom: 6px; font-size: 0.9rem; }
-.ufc-h2h-pick .pick-bet-link { display: inline-block; margin-top: 8px; }
+/* The pick line in the matchup sheet: the tag, the selection and the status sit on one wrapping row with a fixed gap, never mid-word. */
+.ufc-h2h-pick { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 8px; padding: 12px 14px; border: 1px solid rgba(94, 224, 122, 0.5); border-radius: 14px; margin-bottom: 6px; font-size: 0.9rem; line-height: 1.35; }
+.ufc-h2h-pick > .ufc-pick-tag { flex: none; }
+.ufc-h2h-pick > p, .ufc-h2h-pick > .pick-bet-link { flex-basis: 100%; margin: 0; }
+.ufc-h2h-pick .pick-bet-link { display: inline-block; margin-top: 2px; }
 .ufc-odds { width: 100%; border-collapse: collapse; font-size: 0.88rem; }
 .ufc-odds th { text-align: left; font-size: 0.68rem; text-transform: uppercase; letter-spacing: 0.06em; color: var(--muted); padding: 6px 8px; border-bottom: 1px solid var(--line); }
 .ufc-odds td { padding: 8px; border-bottom: 1px solid var(--line); font-family: var(--mono); font-weight: 700; }
