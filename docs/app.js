@@ -10291,6 +10291,11 @@ function combinedSlipLink(bookId, legLinks) {
       // Literal brackets, the way FanDuel reads them (URLSearchParams would percent-encode them).
       return `https://sportsbook.fanduel.com/addToBetslip?${pairs.map(([m, sel], i) => `marketId[${i}]=${encodeURIComponent(m)}&selectionId[${i}]=${encodeURIComponent(sel)}`).join('&')}`;
     }
+    if (bookId === 'betmgm') {
+      // BetMGM's options list takes several fixture-market-option triplets joined by commas; type names the slip kind (Single, Multi).
+      const ids = links.map((u) => new URL(u.replace('{state}', 'nj')).searchParams.get('options')).filter(Boolean);
+      return ids.length === links.length ? `https://sports.{state}.betmgm.com/en/sports?options=${ids.join(',')}&type=Multi` : null;
+    }
     if (bookId === 'caesars') {
       const first = new URL(links[0].replace('{state}', 'nj'));
       const ids = links.map((u) => new URL(u.replace('{state}', 'nj')).searchParams.get('selectionIds')).filter(Boolean);
@@ -10302,6 +10307,13 @@ function combinedSlipLink(bookId, legLinks) {
   return null;
 }
 const parlayAllLink = (legs) => combinedSlipLink(parlayState.book, legs.map((l) => l.quote.link));
+/** The card's slip line when no one link fills the slip: per-leg links where the book posts them, else the book itself to add the legs by hand. */
+function parlaySlipNote(book, legs) {
+  const name = parlayBookName(book);
+  if (legs.some((l) => l.quote?.link)) return `<p class="row-sub">${esc(name)} takes legs one at a time: use each leg's Add to slip.</p>`;
+  const url = SPORTSBOOKS[book]?.url ?? (book === 'prizepicks' ? 'https://app.prizepicks.com/' : null);
+  return `<p class="row-sub">${esc(name)} gives out no slip links: ${url ? `<a href="${esc(url)}" target="_blank" rel="noopener">open ${esc(name)} ↗</a>` : `open ${esc(name)}`} and add the ${legs.length} legs by hand.</p>`;
+}
 
 /** The footer of a posted ticket: one link that fills the whole slip where the book takes a list, else the single line's link, else the book. */
 function ticketSlipFoot(bet) {
@@ -10309,7 +10321,7 @@ function ticketSlipFoot(bet) {
   const href = all ?? bet.link ?? bet.bookUrl ?? (bookIdFor(bet.bookId) ? SPORTSBOOKS[bookIdFor(bet.bookId)]?.url : null);
   if (!href) return '';
   const label = all ? `Add all ${bet.legs.length} legs to your ${esc(bet.book)} slip ↗` : bet.link ? `Open on your ${esc(bet.book)} slip ↗` : `Open ${esc(bet.book)}`;
-  const perLeg = !all && bet.type === 'parlay' && bet.legs.some((l) => l.link) ? `<p class="row-sub">${esc(bet.book)} takes legs one at a time: tap each leg's price to add it.</p>` : '';
+  const perLeg = !all && bet.type === 'parlay' ? (bet.legs.some((l) => l.link) ? `<p class="row-sub">${esc(bet.book)} takes legs one at a time: tap each leg's price to add it.</p>` : `<p class="row-sub">${esc(bet.book)} gives out no slip links: add the legs by hand.</p>`) : '';
   return `<div class="pick-bet-foot">${perLeg}<a class="pick-bet-link" href="${esc(href)}" target="_blank" rel="noopener">${label}</a></div>`;
 }
 
@@ -10407,9 +10419,9 @@ function renderParlay() {
     <div class="parlay-card">
       <div class="parlay-card-head"><strong>${legs.length}-leg ${s.book === 'prizepicks' ? 'Power Play' : 'parlay'}</strong> ${price ? `<span class="parlay-price">${esc(formatAmerican(price.american))}</span>` : ''}<span class="parlay-card-book">${bookBadge(s.book, parlayBookName(s.book))}${esc(parlayBookName(s.book))}</span></div>
       ${s.note ? `<p class="parlay-note">${esc(s.note)}</p>` : ''}
-      <div class="parlay-card-top">${all ? `<a class="parlay-all" href="${esc(all)}" target="_blank" rel="noopener">Add all ${legs.length} legs to your ${esc(parlayBookName(s.book))} slip ↗</a>` : `<p class="row-sub">${esc(parlayBookName(s.book))} takes legs one at a time: use each leg's Add to slip.</p>`}</div>
+      <div class="parlay-card-top">${all ? `<a class="parlay-all" href="${esc(all)}" target="_blank" rel="noopener">Add all ${legs.length} legs to your ${esc(parlayBookName(s.book))} slip ↗</a>` : parlaySlipNote(s.book, legs)}</div>
       <div class="parlay-legs">${legs.map(renderParlayLeg).join('')}</div>
-      <div class="parlay-card-foot">${all ? `<a class="parlay-all" href="${esc(all)}" target="_blank" rel="noopener">Add all ${legs.length} legs to your ${esc(parlayBookName(s.book))} slip ↗</a>` : `<p class="row-sub">${esc(parlayBookName(s.book))} takes legs one at a time: use each leg's Add to slip.</p>`}</div>
+      <div class="parlay-card-foot">${all ? `<a class="parlay-all" href="${esc(all)}" target="_blank" rel="noopener">Add all ${legs.length} legs to your ${esc(parlayBookName(s.book))} slip ↗</a>` : parlaySlipNote(s.book, legs)}</div>
     </div>
     <div class="parlay-payout">
       <h3>Potential payout</h3>
