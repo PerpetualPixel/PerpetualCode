@@ -260,6 +260,15 @@ export function nflWeek(now = Date.now()) {
  * 'odds' (price) or 'date' (kickoff); `dir` 'desc' (the default) or 'asc'.
  * Rows without a rate in the period sink to the bottom whichever way.
  */
+/** The quotes best price first: the longest decimal (the most back per dollar), with American odds as the tie-break and fallback. */
+export function sortQuotes(quotes) {
+  const dec = (q) => (Number.isFinite(q?.decimal) ? q.decimal : Number.isFinite(q?.american) ? americanToDecimalLoose(q.american) : 0);
+  return [...(quotes ?? [])].filter(Boolean).sort((a, b) => dec(b) - dec(a) || (b.american ?? 0) - (a.american ?? 0));
+}
+const americanToDecimalLoose = (a) => (a >= 100 ? 1 + a / 100 : a <= -100 ? 1 + 100 / -a : 0);
+/** The best price on offer: the first of sortQuotes, or null. */
+export const bestQuote = (quotes) => sortQuotes(quotes)[0] ?? null;
+
 export function sortTrends(rows, { window = 'l10', by = 'hitRate', dir = 'desc' } = {}) {
   const sign = dir === 'asc' ? -1 : 1;
   const rate = (r) => (Number.isFinite(r.rates?.[window]) ? r.rates[window] : null);

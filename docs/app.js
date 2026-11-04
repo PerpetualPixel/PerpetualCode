@@ -23,7 +23,7 @@ import { CONFIG } from './config.js';
 import { DEMO_EVENTS } from './demo.js';
 import { teamLogoUrl, espnAbbr, soccerTeamId } from './team-logos.js';
 import { leagueIconSvg } from './league-icons.js';
-import { sortTrends, attachSeries, hitFlags, nflWeek, legScore, parlayDecimal, isAltLine } from './trends.js';
+import { sortTrends, sortQuotes, bestQuote, attachSeries, hitFlags, nflWeek, legScore, parlayDecimal, isAltLine } from './trends.js';
 import { enhanceSelect } from './custom-select.js';
 import { BUILD_INFO } from './version.js';
 import { summarizePicks, gradePick } from './learning.js';
@@ -9009,10 +9009,11 @@ function renderTrendLeagues() {
 /** Whether a quote's book is one the user chose — by registry id, or by the feed's own key for an unlisted book. */
 const bookChosen = (bookKey) => trendsState.books.has(bookIdFor(bookKey) ?? bookKey) || trendsState.books.has(bookKey);
 
+/** The price a row shows: the best on offer among the user's books (every book when none is chosen), whatever order the quotes arrived in. */
 function trendQuote(row) {
-  const quotes = row.quotes ?? [{ american: row.american, decimal: row.decimal, book: row.book, bookKey: row.bookKey }];
+  const quotes = row.quotes ?? [{ american: row.american, decimal: row.decimal, book: row.book, bookKey: row.bookKey, link: row.link ?? null }];
   const pool = trendsState.books.size ? quotes.filter((q) => bookChosen(q.bookKey)) : quotes;
-  return pool[0] ?? null;
+  return bestQuote(pool);
 }
 
 /**
@@ -9366,8 +9367,9 @@ function renderTrendDetail(row) {
   const max = Math.max(row.point, ...series.map((s) => s.value), 1);
   const lineTop = 100 - Math.min(100, (row.point / max) * 100);
   const hitShare = stats.games ? stats.hits / stats.games : 0;
-  const quote = trendQuote(row) ?? row.quotes?.[0];
-  const quotes = row.quotes ?? [];
+  const quote = trendQuote(row) ?? bestQuote(row.quotes);
+  // The rest of the books under "more", best price first.
+  const quotes = sortQuotes(row.quotes ?? []);
   const bookMeta = (key) => (bookIdFor(key) ? SPORTSBOOKS[bookIdFor(key)] : null);
   const bookPill = (q) => bookBadge(q.bookKey, q.book, 'book-badge is-large');
   const log = (row.series ?? []).filter((g) => period === 'h2h' || period.startsWith('s') ? periodSeries(row, period).includes(g) : true).slice(0, 20);
