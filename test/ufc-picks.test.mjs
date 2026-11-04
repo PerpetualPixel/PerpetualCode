@@ -258,3 +258,17 @@ test('engineForBout: the MMA Engine feed matched to a bout by surnames either wa
   assert.equal(calls, 1, 'within the half hour: from KV');
   assert.ok(store.has('ufc:engine'));
 });
+
+test('enginePicksForEvent: a feed still naming the last card leaves the new card with no consensus; only fights on this card stay', async () => {
+  const { enginePicksForEvent, fightIsBout } = await import('../worker/src/ufc-picks.js');
+  const feed = { event: 'UFC Fight Night: last week', picks: [
+    { fight: 'Lucia Szabova vs Tainara Lisboa', market: 'moneyline', selection: 'Lucia Szabova', tier: 'strong', strength: 10 },
+    { fight: 'Zachary Reese vs Mickey Gall', market: 'moneyline', selection: 'Zachary Reese', tier: 'strong', strength: 9.7 },
+  ] };
+  const lastCard = { bouts: [bout('1', f('a', 'Tainara Lisboa'), f('b', 'Lucia Szabová')), bout('2', f('a', 'Mickey Gall'), f('b', 'Zachary Reese'))] };
+  const nextCard = { bouts: [bout('3', f('a', 'Jack Della Maddalena'), f('b', 'Belal Muhammad'))] };
+  assert.equal(enginePicksForEvent(lastCard, feed).length, 2);
+  assert.deepEqual(enginePicksForEvent(nextCard, feed), [], 'the old card wears none of it');
+  assert.deepEqual(enginePicksForEvent({ bouts: [lastCard.bouts[1]] }, feed).map((p) => p.selection), ['Zachary Reese']);
+  assert.ok(fightIsBout('Mickey Gall vs Zachary Reese', lastCard.bouts[1]) && !fightIsBout('Mickey Gall vs Zachary Reese', nextCard.bouts[0]));
+});

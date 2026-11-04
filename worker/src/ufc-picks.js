@@ -179,15 +179,29 @@ const surnamesAlike = (x, y) => Boolean(x && y) && (x === y || (Math.min(x.lengt
  * its two surnames are the bout's two, either way round; the side comes
  * from the whole name, so two fighters sharing a surname each get theirs.
  */
+/** Whether a feed fight ("A vs B") is this bout: its two surnames are the bout's two, either way round. */
+export function fightIsBout(fight, bout) {
+  const sa = surname(bout?.a?.name); const sb = surname(bout?.b?.name);
+  if (!sa || !sb) return false;
+  const sides = String(fight ?? '').split(/\s+vs\.?\s+/i).map(surname);
+  if (sides.length !== 2) return false;
+  return (surnamesAlike(sides[0], sa) && surnamesAlike(sides[1], sb)) || (surnamesAlike(sides[0], sb) && surnamesAlike(sides[1], sa));
+}
+
+/**
+ * The feed's picks that belong to this card: the engine runs once a week
+ * and its feed names the last card it read until the next run, so a new
+ * card must not wear the old card's consensus (2026-11-04: "after the UFC
+ * event, remove the capper consensus from previous event"). A pick stays
+ * only when its fight is a bout on this event.
+ */
+export const enginePicksForEvent = (event, feed) => (feed?.picks ?? []).filter((p) => (event?.bouts ?? []).some((b) => fightIsBout(p.fight, b)));
+
 export function engineForBout(bout, feed) {
   const a = normalizeName(bout.a?.name); const b = normalizeName(bout.b?.name);
   const sa = surname(bout.a?.name); const sb = surname(bout.b?.name);
   if (!sa || !sb) return null;
-  const mine = (feed?.picks ?? []).filter((p) => {
-    const sides = String(p.fight ?? '').split(/\s+vs\.?\s+/i).map(surname);
-    if (sides.length !== 2) return false;
-    return (surnamesAlike(sides[0], sa) && surnamesAlike(sides[1], sb)) || (surnamesAlike(sides[0], sb) && surnamesAlike(sides[1], sa));
-  });
+  const mine = (feed?.picks ?? []).filter((p) => fightIsBout(p.fight, bout));
   if (!mine.length) return null;
   const sideOf = (selection) => { const n = normalizeName(String(selection ?? '').replace(/\s+by\s+.*$/i, '')); const exact = matchSide(n, a, b); if (exact) return exact; const sn = surname(n); return surnamesAlike(sn, sa) && !surnamesAlike(sn, sb) ? 'a' : surnamesAlike(sn, sb) && !surnamesAlike(sn, sa) ? 'b' : null; };
   const shape = (p) => ({ selection: p.selection, side: sideOf(p.selection), method: /\sby\s/i.test(String(p.selection ?? '')) ? methodClass(String(p.selection).replace(/^.*\sby\s+/i, '')) : null, consensusPct: p.consensusPct, strength: p.strength, tier: p.tier, pickCount: p.pickCount, suggestedUnits: p.suggestedUnits, quotedOdds: Number.isFinite(Number(p.quotedOdds)) ? Number(p.quotedOdds) : null, comments: p.comments ?? [] });
@@ -431,7 +445,9 @@ export async function runUfcTick(env, ctx, now = Date.now(), { deps = {} } = {})
     record.oddsAt = odds.at ?? record.oddsAt;
     const engineFeed = await fetchMmaEngine(env, now, { deps });
     const engineStamp = engineFeed.generatedAt ? String(engineFeed.generatedAt).replace(/[^0-9]/g, '').slice(0, 12) : '';
-    record.engine = { generatedAt: engineFeed.generatedAt, event: engineFeed.event, totals: engineFeed.totals ?? null, page: MMA_ENGINE_PAGE, picks: engineFeed.picks.filter((p) => p.tier !== 'pass').map((p) => ({ fight: p.fight, market: p.market, selection: p.selection, consensusPct: p.consensusPct, strength: p.strength, tier: p.tier, pickCount: p.pickCount, suggestedUnits: p.suggestedUnits })) };
+    // Only this card's fights: a feed still naming the last card leaves the section empty until the engine's next run.
+    const cardPicks = enginePicksForEvent(event, engineFeed);
+    record.engine = { generatedAt: cardPicks.length ? engineFeed.generatedAt : null, event: cardPicks.length ? engineFeed.event : null, totals: cardPicks.length ? engineFeed.totals ?? null : null, page: MMA_ENGINE_PAGE, picks: cardPicks.filter((p) => p.tier !== 'pass').map((p) => ({ fight: p.fight, market: p.market, selection: p.selection, consensusPct: p.consensusPct, strength: p.strength, tier: p.tier, pickCount: p.pickCount, suggestedUnits: p.suggestedUnits })) };
     const live = event.bouts.filter((b) => b.status === 'scheduled' && b.a?.id && b.b?.id);
     const byBout = new Map();
     for (const bout of live) {
