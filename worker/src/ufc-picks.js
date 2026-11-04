@@ -624,7 +624,7 @@ export async function runUfcTick(env, ctx, now = Date.now(), { deps = {} } = {})
     const pendingIds = new Set(record.bets.filter((b) => b.status === 'pending').flatMap((b) => (b.legs ?? []).filter((l) => l.result == null && l.fighterId).map((l) => l.fighterId)));
     const reads = new Map();
     for (const [id, x] of byBout) reads.set(id, { odds: x.odds, breakdown: x.breakdown, engine: x.engine, profiles: { a: await profile(x.bout.a?.id), b: await profile(x.bout.b?.id) }, against: new Set([x.bout.a?.id, x.bout.b?.id].filter((fid) => fid && pendingIds.has(fid)).map((fid) => (fid === x.bout.a?.id ? x.bout.b?.id : x.bout.a?.id))) });
-    record.props = { ...ufcCardProps(live, (bout) => reads.get(bout.id) ?? null, { now }), labels: UFC_PROPS };
+    record.props = { ...ufcCardProps(live, (bout) => reads.get(bout.id) ?? null, { now, engine: record.engine }), labels: UFC_PROPS };
     if (record.underdog) {
       // How the underdog wins: the two records, and the cappers' method call on that side when there is one.
       const dogBout = event.bouts.find((b) => b.id === record.underdog.boutId);
