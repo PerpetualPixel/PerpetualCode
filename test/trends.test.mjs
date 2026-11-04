@@ -380,3 +380,12 @@ test('the soccer leagues read as one Soccer tab: rows side by side with their ow
   assert.deepEqual(g.leagues.map((l) => [l.sportKey, l.rows]).filter((l) => l[1]), [['soccer_epl', 1], ['soccer_spain_la_liga', 1]]);
   assert.equal(await getTrendsGroup(env, 'nope'), null);
 });
+
+test('bestQuote is the longest price whatever order the quotes arrived in; sortQuotes lists them best first', async () => {
+  const { bestQuote, sortQuotes } = await import('../docs/trends.js');
+  const quotes = [{ book: 'Fanatics', bookKey: 'fanatics', american: -450, decimal: 1.2222 }, { book: 'DraftKings', bookKey: 'draftkings', american: -361, decimal: 1.277 }, { book: 'Caesars', bookKey: 'williamhill_us', american: -480, decimal: 1.2083 }];
+  assert.equal(bestQuote(quotes).book, 'DraftKings');
+  assert.deepEqual(sortQuotes(quotes).map((q) => q.book), ['DraftKings', 'Fanatics', 'Caesars']);
+  assert.equal(bestQuote([{ book: 'A', american: -120 }, { book: 'B', american: 110 }]).book, 'B', 'American odds alone still rank');
+  assert.equal(bestQuote([]), null);
+});
