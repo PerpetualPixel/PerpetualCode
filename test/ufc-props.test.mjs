@@ -70,3 +70,19 @@ test('ufcCardProps: every bout read, with the notes for the props without stats 
   assert.ok(out.legs.length > 5 && out.legs.every((l) => l.boutId === '1'));
   assert.deepEqual([out.notes.strikes, out.notes.takedowns, out.notes.knockdowns, out.notes.spread], [NO_STATS_NOTE, NO_STATS_NOTE, NO_STATS_NOTE, NO_SPREAD_NOTE]);
 });
+
+test('the cappers move the grades once the MMA Engine has read the card: a strong call for the side lifts a star, one against costs a star, a method call lifts the method leg; the card says whether the engine is in', () => {
+  const b = bout('9', f('a9', 'Fav Fighter'), f('b9', 'Dog Fighter'));
+  const profiles = { a: fighter(6, { ko: 3, dec: 3, history: [...r1ko(3)] }), b: fighter(6, { sub: 4, dec: 2, history: [{ result: 'win', method: 'Submission', round: 1 }, { result: 'win', method: 'Submission', round: 2 }] }) };
+  const base = { odds: { a: [q(-150)], b: [q(130)], totals: [], spreads: [] }, breakdown: { lean: 'a', confidence: 3 }, profiles };
+  const without = ufcPropLegs(b, base);
+  const withEngine = ufcPropLegs(b, { ...base, engine: { moneyline: { side: 'b', tier: 'strong', consensusPct: 72 }, methods: [{ side: 'b', method: 'sub', tier: 'lean', consensusPct: 61, quotedOdds: null }] } });
+  const pick = (legs, sel) => legs.find((l) => l.selection === sel);
+  assert.equal(pick(withEngine, 'Dog Fighter to win').score, pick(without, 'Dog Fighter to win').score + 1, 'the cappers on the dog lift the dog');
+  assert.ok(pick(withEngine, 'Dog Fighter to win').why.some((w) => /cappers 72% on Dog Fighter/.test(w)));
+  assert.equal(pick(withEngine, 'Fav Fighter by KO/TKO').score, Math.max(1, pick(without, 'Fav Fighter by KO/TKO').score - 1), 'the cappers against the favourite cost his legs a star');
+  assert.ok(pick(withEngine, 'Dog Fighter by Submission').score >= pick(without, 'Dog Fighter by Submission').score + 1, 'the method call lifts the method leg on top');
+  const card = ufcCardProps([b], () => ({ ...base, engine: { moneyline: { side: 'b', tier: 'strong', consensusPct: 72 }, methods: [] } }), { now: 1, engine: { generatedAt: '2026-11-04T10:00:00Z' } });
+  assert.deepEqual(card.cappers, { read: true, bouts: 1, generatedAt: '2026-11-04T10:00:00Z' });
+  assert.deepEqual(ufcCardProps([b], () => base, { now: 1 }).cappers, { read: false, bouts: 0, generatedAt: null });
+});

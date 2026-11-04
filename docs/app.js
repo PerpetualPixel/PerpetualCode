@@ -10185,6 +10185,7 @@ function ufcParlayRows(picks) {
   const rec = picks?.current; if (!rec) return [];
   if (Array.isArray(rec.props?.legs)) {
     parlayState.ufcNotes = rec.props.notes ?? {};
+    parlayState.ufcCappers = rec.props.cappers ?? null;
     return rec.props.legs.map((l) => {
       const bd = rec.breakdowns?.[l.boutId] ?? {};
       const quotes = (l.quotes ?? []).map((q) => ({ ...q, bookKey: q.bookId }));
@@ -10465,7 +10466,10 @@ function renderParlay() {
     el.parlayUfcProps.innerHTML = UFC_PROP_ORDER.map((k) => `<button type="button" class="rate-chip ${s.ufcProps.has(k) ? 'is-active' : ''} ${!have.get(k) ? 'is-empty' : ''}" data-parlay-ufc-prop="${esc(k)}" aria-pressed="${s.ufcProps.has(k)}" title="${esc(notes[k] ?? (have.get(k) ? `${have.get(k)} legs` : 'No legs of this type on this card yet'))}">${esc(UFC_PROP_LABELS[k])}${have.get(k) ? ` <small>${esc(String(have.get(k)))}</small>` : ''}</button>`).join('');
     const chosenNotes = [...s.ufcProps].map((k) => notes[k]).filter(Boolean);
     const unpriced = live.filter((r) => r.ufc && !r.ufc.priced && (!s.ufcProps.size || s.ufcProps.has(r.ufc.prop))).length;
-    el.parlayUfcNote.textContent = [...new Set(chosenNotes)].join(' ') || (unpriced && isUfcParlay() ? `${unpriced} of these legs have no line at any book yet; they ride the ticket unpriced with a note, and the price covers the rest.` : '');
+    // The MMA Engine's consensus moves the grades: say whether its run has read this card, so a ticket that changes when it lands is explained.
+    const cap = s.ufcCappers;
+    const capNote = cap ? (cap.read ? `Capper consensus is in for ${cap.bouts} bout${cap.bouts === 1 ? '' : 's'}${cap.generatedAt ? ` (run ${ufcDayFmt.format(new Date(cap.generatedAt))})` : ''} and shapes these grades; the ticket re-grades when the engine updates.` : 'The MMA Engine has not read this card yet; the grades move once its run lands, so the ticket can change then.') : '';
+    el.parlayUfcNote.textContent = [[...new Set(chosenNotes)].join(' ') || (unpriced && isUfcParlay() ? `${unpriced} of these legs have no line at any book yet; they ride the ticket unpriced with a note, and the price covers the rest.` : ''), isUfcParlay() ? capNote : ''].filter(Boolean).join(' ');
   }
 
   const legs = s.built ?? [];

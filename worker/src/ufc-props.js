@@ -120,17 +120,34 @@ export function ufcPropLegs(bout, { odds = null, breakdown = null, engine = null
   const lean = breakdown?.lean ?? null; const conf = Number(breakdown?.confidence) || 0;
   const base = { boutId: bout.id, weightClass: bout.weightClass ?? null, boutDate: bout.date ?? null, rounds };
   const slug = (s) => String(s).toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '');
-  // A side's grade: its chance to stars, nudged with the lean, capped against it, and pinned to one star against a pending pick.
-  const grade = (side, p, why) => {
+  // A side's grade: its chance to stars, nudged with the lean, capped against it, moved by the cappers (the MMA Engine's
+  // consensus, once its run has read this card: a strong call for the side lifts a star, one against it costs a star), and
+  // pinned to one star against a pending pick.
+  const cappers = engine?.moneyline && engine.moneyline.tier !== 'pass' && Number.isFinite(engine.moneyline.consensusPct) ? engine.moneyline : null;
+  // The cappers' shift on a side: +1 with a strong call for it, -1 with one against, else 0; the line says which.
+  const capperShift = (side, why) => {
+    if (!side || !cappers?.side) return 0;
+    const strong = cappers.consensusPct >= 65 || cappers.tier === 'strong';
+    if (!strong) return 0;
+    why.push(`cappers ${Math.round(cappers.consensusPct)}% on ${cappers.side === side ? name[side] : name[other(side)]}`);
+    return cappers.side === side ? 1 : -1;
+  };
+  const grade = (side, p, why, { method = null } = {}) => {
     let stars = starsFor(p);
     if (side && lean === side && conf >= 4) stars = Math.min(5, stars + 1);
     if (side && lean && lean !== side) stars = Math.min(stars, Math.max(1, 5 - conf));
+    stars = Math.max(1, Math.min(5, stars + capperShift(side, why)));
+    if (side && method) {
+      const call = (engine?.methods ?? []).find((m) => m.side === side && m.method === method && m.tier !== 'pass');
+      if (call && !why.some((w) => /on this call/.test(w))) why.push(`cappers ${Math.round(call.consensusPct)}% on this call`);
+      if (call && (call.tier === 'strong' || call.consensusPct >= 60)) stars = Math.min(5, stars + 1);
+    }
     if (side && against.has(bout[side]?.id)) { stars = 1; why.push("goes against a Pixel's Pick on the other side"); }
     return stars;
   };
   const push = (prop, side, selection, p, why, quotes = [], extra = {}) => {
     const w = [...why];
-    const score = grade(side, p, w);
+    const score = grade(side, p, w, { method: extra.method ?? null });
     const priced = quotes.some((q) => Number.isFinite(q.american));
     legs.push({ ...base, id: `${bout.id}:${prop}:${slug(selection)}`, prop, label: UFC_PROPS[prop], side, fighterId: side ? bout[side]?.id ?? null : null, name: side ? name[side] : null, opponent: side ? name[other(side)] : null, fight: `${name.a} vs ${name.b}`, selection, chance: round3(p), score, why: w, quotes, priced, note: priced ? null : NO_LINE_NOTE, ...extra });
   };
@@ -143,7 +160,8 @@ export function ufcPropLegs(bout, { odds = null, breakdown = null, engine = null
     const leg = { prop: 'ml', side: s, selection: `${name[s]} to win`, p: chance[s], why, quotes: q };
     push(leg.prop, leg.side, leg.selection, leg.p, leg.why, leg.quotes);
     const ml = legs[legs.length - 1];
-    if (conf) ml.score = lean === s ? conf : Math.max(1, 5 - conf);
+    // Pixel's confidence sets the moneyline's stars (as the Card tab reads it); the cappers' shift and a pending pick still apply.
+    if (conf && !against.has(bout[s]?.id)) ml.score = Math.max(1, Math.min(5, (lean === s ? conf : Math.max(1, 5 - conf)) + capperShift(s, [])));
   }
   // Method of victory: each way a fighter's wins come often enough, priced off the cappers' quote when there is one.
   for (const s of sides) {
@@ -154,7 +172,7 @@ export function ufcPropLegs(bout, { odds = null, breakdown = null, engine = null
       const p = chance[s] * r.share[k];
       const quoted = (engine?.methods ?? []).find((m) => m.side === s && m.method === k && Number.isFinite(m.quotedOdds));
       const quotes = quoted ? [{ bookId: 'engine', book: 'cappers quote', american: quoted.quotedOdds, decimal: americanToDecimal(quoted.quotedOdds), link: null }] : [];
-      push('method', s, `${name[s]} by ${METHOD_LABEL[k]}`, p, [`${r.byMethod[k]} of ${r.wins} wins by ${METHOD_LABEL[k]} (${pct(r.share[k])})`, `${pct(chance[s])} to win`, ...(quoted ? [`cappers ${Math.round(quoted.consensusPct)}% on this call`] : [])], quotes, { method: k });
+      push('method', s, `${name[s]} by ${METHOD_LABEL[k]}`, p, [`${r.byMethod[k]} of ${r.wins} wins by ${METHOD_LABEL[k]} (${pct(r.share[k])})`, `${pct(chance[s])} to win`], quotes, { method: k });
     }
     // Double chance: the two likeliest ways.
     const top = ['ko', 'sub', 'dec'].sort((x, y) => r.share[y] - r.share[x]).slice(0, 2);
@@ -222,14 +240,18 @@ export function ufcPropLegs(bout, { odds = null, breakdown = null, engine = null
 }
 
 /** The card's pieces: every bout's legs, with the notes for the props that have no lines or no stats. */
-export function ufcCardProps(bouts, readBy, { now = Date.now() } = {}) {
+export function ufcCardProps(bouts, readBy, { now = Date.now(), engine = null } = {}) {
   const legs = [];
+  let cappersRead = 0;
   for (const bout of bouts ?? []) {
     const r = readBy(bout);
     if (!r) continue;
+    if (r.engine?.moneyline || r.engine?.methods?.length) cappersRead++;
     legs.push(...ufcPropLegs(bout, r));
   }
   const notes = { strikes: NO_STATS_NOTE, takedowns: NO_STATS_NOTE, knockdowns: NO_STATS_NOTE };
   if (!legs.some((l) => l.prop === 'spread')) notes.spread = NO_SPREAD_NOTE;
-  return { builtAt: now, legs, notes };
+  // Whether the MMA Engine's run has read this card: its consensus moves the grades, so the ticket can change when it lands.
+  const cappers = { read: cappersRead > 0, bouts: cappersRead, generatedAt: cappersRead ? engine?.generatedAt ?? null : null };
+  return { builtAt: now, legs, notes, cappers };
 }
