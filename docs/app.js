@@ -10759,11 +10759,13 @@ function renderUfc() {
     const picks = (rec?.bets ?? []).filter((p) => p.status !== 'void');
     const lockText = rec?.lockMs ? (rec.locked || rec.lockMs <= Date.now() ? 'Picks locked at the first bout.' : `Picks lock at the first bout, ${esc(ufcDateFmt.format(new Date(rec.lockMs)))} ET.`) : '';
     const eng = rec?.engine;
-    const favs = (eng?.picks ?? []).filter((p) => p.market === 'moneyline').sort((x, y) => y.strength - x.strength);
-    const methods = (eng?.picks ?? []).filter((p) => p.market === 'method_of_victory').sort((x, y) => y.strength - x.strength);
     const boutFor = (fight) => ev.bouts.find((b) => { const sides = String(fight).split(/\s+vs\.?\s+/i).map((n) => foldName(n).split(' ').at(-1)); const sa = foldName(b.a?.name ?? '').split(' ').at(-1); const sb = foldName(b.b?.name ?? '').split(' ').at(-1); return sides.length === 2 && ((sides[0] === sa && sides[1] === sb) || (sides[0] === sb && sides[1] === sa)); });
+    // Only this card's fights: the engine's feed names the last card until its next run, and a record read then must not show it here.
+    const onCard = (eng?.picks ?? []).filter((p) => boutFor(p.fight));
+    const favs = onCard.filter((p) => p.market === 'moneyline').sort((x, y) => y.strength - x.strength);
+    const methods = onCard.filter((p) => p.market === 'method_of_victory').sort((x, y) => y.strength - x.strength);
     const favRow = (p) => { const b = boutFor(p.fight); return `<div class="ufc-fav ${b ? 'is-link' : ''}" ${b ? `data-bout-link="${esc(b.id)}"` : ''}><span class="ufc-fav-tier is-${esc(p.tier)}">${esc(p.tier)}</span><span class="ufc-fav-main"><strong>${esc(p.selection)}</strong><small>${esc(p.fight)}</small></span><span class="ufc-fav-num">${esc(String(Math.round(p.consensusPct)))}%<small>${esc(String(p.pickCount))} picks · ${esc(String(p.strength))}/10${p.suggestedUnits ? ` · ${esc(String(p.suggestedUnits))}u` : ''}</small></span></div>`; };
-    const engineHtml = eng ? `<section class="ufc-engine"><h3>Capper consensus <small>the MMA Engine${eng.generatedAt ? `, run ${esc(ufcDayFmt.format(new Date(eng.generatedAt)))}` : ''}</small></h3>
+    const engineHtml = eng ? `<section class="ufc-engine"><h3>Capper consensus <small>the MMA Engine${eng.generatedAt && onCard.length ? `, run ${esc(ufcDayFmt.format(new Date(eng.generatedAt)))}` : ''}</small></h3>
       ${favs.length ? `<p class="row-sub">The favourites the tracked cappers back, strongest first. A tap opens the matchup.</p>${favs.map(favRow).join('')}` : '<p class="empty">No consensus on this card yet; the engine runs before the week\'s card.</p>'}
       ${methods.length ? `<details class="ufc-engine-more"><summary>Method calls (${methods.length})</summary>${methods.map(favRow).join('')}</details>` : ''}
       <p class="row-sub"><a href="${esc(eng.page ?? 'https://perpetualpixel.github.io/MMA_Engine/')}" target="_blank" rel="noopener">Open the MMA Engine ↗</a></p>
