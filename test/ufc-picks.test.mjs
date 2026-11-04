@@ -112,6 +112,9 @@ test('runUfcTick: picks post at confidence 4 or better inside the price range, a
   assert.deepEqual(rec.bets.map((b) => [b.boutId, b.legs[0].selection, b.american, b.book]), [['1', 'A One to win', -150, 'DraftKings']]);
   assert.deepEqual(rec.passed.map((p) => [p.boutId, p.reason]), [['2', 'no usable price at your books'], ['3', 'confidence 3 of 5']]);
   assert.equal(Object.keys(rec.breakdowns).length, 3);
+  // The underdog of the week: B Two is out (the pick backs A One), F Six at +100 with the read on his side beats D Four at +300 with the read against.
+  assert.deepEqual([rec.underdog.boutId, rec.underdog.name, rec.underdog.american, rec.underdog.pickAgrees, rec.underdog.result], ['3', 'F Six', 100, false, null]);
+  assert.ok(rec.underdog.chance > rec.underdog.market, 'the lean lifts the market read');
   assert.equal(JSON.parse(store.get('ufc:picks:index')).cards[0].id, 'ev');
   // The price moves and the same selection posts: the pick follows.
   odds[0] = feed('A One', 'B Two', { h2h: [-160, 135] });
@@ -271,4 +274,30 @@ test('enginePicksForEvent: a feed still naming the last card leaves the new card
   assert.deepEqual(enginePicksForEvent(nextCard, feed), [], 'the old card wears none of it');
   assert.deepEqual(enginePicksForEvent({ bouts: [lastCard.bouts[1]] }, feed).map((p) => p.selection), ['Zachary Reese']);
   assert.ok(fightIsBout('Mickey Gall vs Zachary Reese', lastCard.bouts[1]) && !fightIsBout('Mickey Gall vs Zachary Reese', nextCard.bouts[0]));
+});
+
+test('underdogOfTheWeek: the plus-money side with the best chance, never against a Pixel\'s Pick, lifted by the read and the cappers; settled on the result', async () => {
+  const { underdogOfTheWeek, settleUnderdog } = await import('../worker/src/ufc-picks.js');
+  const q = (american, bookId = 'draftkings') => ({ bookId, book: 'DraftKings', american, decimal: american > 0 ? 1 + american / 100 : 1 + 100 / -american, link: null });
+  const read = (id, a, b, pa, pb, breakdown, engine = null) => ({ bout: bout(id, f(`a${id}`, a), f(`b${id}`, b)), odds: { a: [q(pa)], b: [q(pb)], totals: [] }, breakdown, engine });
+  const reads = [
+    read('1', 'A One', 'B Two', -150, 130, { lean: 'a', confidence: 5 }),
+    read('2', 'C Three', 'D Four', -400, 300, { lean: 'a', confidence: 5 }),
+    read('3', 'E Five', 'F Six', -120, 100, { lean: 'b', confidence: 3 }),
+    read('4', 'G Seven', 'H Eight', -110, -105, { lean: 'b', confidence: 5 }),
+  ];
+  const pickOnA1 = [{ status: 'pending', legs: [{ fighterId: 'a1', result: null }] }];
+  const dog = underdogOfTheWeek({}, reads, pickOnA1);
+  assert.deepEqual([dog.boutId, dog.name, dog.side, dog.american, dog.pickAgrees], ['3', 'F Six', 'b', 100, false], 'B Two is out against the pick; H Eight at -105 is not a dog; F Six beats D Four');
+  assert.ok(dog.chance > dog.market && dog.reasons.some((r) => /leans F Six/.test(r)));
+  // A pick on the underdog agrees; the cappers lift it further, and a 2026-10 settled leg no longer counts.
+  const agrees = underdogOfTheWeek({}, [read('5', 'I Nine', 'J Ten', -200, 170, { lean: 'b', confidence: 4 }, { moneyline: { side: 'b', tier: 'strong', consensusPct: 70 } })], [{ status: 'pending', legs: [{ fighterId: 'b5', result: null }] }]);
+  assert.ok(agrees.pickAgrees && agrees.reasons.some((r) => /cappers 70% on J Ten/.test(r)) && agrees.reasons.some((r) => /Pixel's Pick backs/.test(r)));
+  assert.equal(underdogOfTheWeek({}, [read('5', 'I Nine', 'J Ten', -200, 170, { lean: 'b', confidence: 4 })], [{ status: 'pending', legs: [{ fighterId: 'a5', result: null }] }]), null, 'the only dog bout is against a pick');
+  assert.equal(underdogOfTheWeek({}, [read('5', 'I Nine', 'J Ten', -200, 170, { lean: 'b', confidence: 4 })], [{ status: 'graded', legs: [{ fighterId: 'a5', result: 'win' }] }])?.name, 'J Ten', 'a settled pick does not bind');
+  // Settling.
+  const b3 = reads[2].bout;
+  assert.equal(settleUnderdog(dog, b3).result, null, 'not in yet');
+  assert.deepEqual([settleUnderdog(dog, { ...b3, status: 'final', result: { winnerId: 'b3', method: 'Submission', round: 2 } }).result, settleUnderdog(dog, { ...b3, status: 'final', result: { winnerId: 'a3', method: 'KO/TKO', round: 1 } }).result, settleUnderdog(dog, { ...b3, status: 'final', result: { draw: true } }).result, settleUnderdog(dog, { ...b3, status: 'cancelled' }).result], ['win', 'loss', 'push', 'void']);
+  assert.equal(settleUnderdog(dog, { ...b3, status: 'final', result: { winnerId: 'b3', method: 'Submission', round: 2 } }).actual, 'F Six wins by Submission R2');
 });

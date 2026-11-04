@@ -10663,7 +10663,8 @@ function renderUfcBout(b, ev) {
   const sameSurname = b.a?.name && b.b?.name && b.a.name.split(' ').at(-1).toLowerCase() === b.b.name.split(' ').at(-1).toLowerCase();
   const short = (name) => (sameSurname ? String(name ?? '') : String(name ?? '').split(' ').at(-1));
   const cap = bd?.engine?.moneyline && bd.engine.moneyline.tier !== 'pass' ? `<span class="ufc-cap">Cappers ${esc(String(Math.round(bd.engine.moneyline.consensusPct)))}% ${esc(short(bd.engine.moneyline.selection))}</span>` : '';
-  const foot = bd ? `<div class="ufc-bout-foot">${price(bd.bestA)}<span class="ufc-foot-mid">${pick ? `<span class="ufc-pick-tag">Pixel's Pick</span>` : bd.confidence ? `<span class="ufc-lean">Lean ${esc(short(bd.leanName))} ${confStars(bd.confidence)}</span>` : ''}${cap}</span>${price(bd.bestB)}</div>` : '';
+  const dog = rec?.underdog?.boutId === b.id ? rec.underdog : null;
+  const foot = bd ? `<div class="ufc-bout-foot">${price(bd.bestA)}<span class="ufc-foot-mid">${pick ? `<span class="ufc-pick-tag">Pixel's Pick</span>` : bd.confidence ? `<span class="ufc-lean">Lean ${esc(short(bd.leanName))} ${confStars(bd.confidence)}</span>` : ''}${dog ? `<span class="ufc-dog-tag">Underdog of the week · ${esc(short(dog.name))}</span>` : ''}${cap}</span>${price(bd.bestB)}</div>` : '';
   return `<article class="ufc-bout ${b.status === 'cancelled' ? 'is-cancelled' : ''} ${pick ? 'is-picked' : ''}" data-bout="${esc(b.id)}" data-ufc-bout="${esc(b.id)}" tabindex="0" role="button" aria-label="${esc(b.a?.name ?? 'TBA')} vs ${esc(b.b?.name ?? 'TBA')}, open the matchup">
     <div class="ufc-bout-head"><span class="ufc-weight">${esc(b.weightClass ?? '')}${b.title ? ' · <b>Title fight</b>' : ''}${b.rounds ? ` · ${esc(String(b.rounds))} rounds` : ''}</span>${status || '<span class="ufc-open">Matchup ›</span>'}</div>
     <div class="ufc-bout-body">${side(b.a, 'a')}<span class="ufc-vs">vs</span>${side(b.b, 'b')}</div>
@@ -10770,7 +10771,23 @@ function renderUfc() {
       ${methods.length ? `<details class="ufc-engine-more"><summary>Method calls (${methods.length})</summary>${methods.map(favRow).join('')}</details>` : ''}
       <p class="row-sub"><a href="${esc(eng.page ?? 'https://perpetualpixel.github.io/MMA_Engine/')}" target="_blank" rel="noopener">Open the MMA Engine ↗</a></p>
     </section>` : '';
-    const picksHtml = `${engineHtml}<section class="ufc-picks"><h3>Pixel's Picks for this card <small>${picks.length ? `${picks.length} of up to 6` : ''}</small></h3>
+    const dog = rec?.underdog ?? null;
+    const dogBout = dog ? ev.bouts.find((b) => b.id === dog.boutId) : null;
+    const dogHref = dog ? (dog.link ?? (dog.bookId ? SPORTSBOOKS[dog.bookId]?.url : null)) : null;
+    const dogResult = dog?.result ? `<span class="ufc-dog-result is-${esc(dog.result)}">${dog.result === 'win' ? 'Won' : dog.result === 'loss' ? 'Lost' : dog.result === 'push' ? 'Draw' : 'Off the card'}${dog.actual ? ` · ${esc(dog.actual)}` : ''}</span>` : '';
+    const underdogHtml = dog ? `<section class="ufc-underdog"><h3>Underdog of the week <small>the live dog with the best chance</small></h3>
+      <div class="ufc-dog ${dogBout ? 'is-link' : ''}" ${dogBout ? `data-bout-link="${esc(dogBout.id)}"` : ''}>
+        ${dogBout ? ufcAvatar(dogBout[dog.side], 48) : ''}
+        <span class="ufc-dog-main"><strong>${esc(dog.name)}</strong><small>vs ${esc(dog.opponent)}${dog.weightClass ? ` · ${esc(dog.weightClass)}` : ''}</small>${dogResult}</span>
+        <span class="ufc-dog-num">${esc(String(Math.round(dog.chance * 100)))}%<small>to win</small></span>
+      </div>
+      <div class="ufc-dog-foot">
+        ${dogHref ? `<a class="ufc-price" href="${esc(dogHref)}" target="_blank" rel="noopener" title="${esc(dog.link ? `Open this line on your ${dog.book} slip` : `Open ${dog.book}`)}">${bookBadge(dog.bookId, dog.book)}${esc(formatAmerican(dog.american))} ↗</a>` : `<span class="ufc-price">${bookBadge(dog.bookId, dog.book)}${esc(formatAmerican(dog.american))}</span>`}
+        ${dog.pickAgrees ? `<span class="ufc-pick-tag">Also a Pixel's Pick</span>` : ''}
+      </div>
+      <p class="row-sub">${esc(((dog.reasons ?? []).join('; ') || '').replace(/^./, (c) => c.toUpperCase()))}. Shown for the card, not tracked in the ledger; it never goes against a Pixel's Pick.</p>
+    </section>` : '';
+    const picksHtml = `${engineHtml}${underdogHtml}<section class="ufc-picks"><h3>Pixel's Picks for this card <small>${picks.length ? `${picks.length} of up to 6` : ''}</small></h3>
       ${picks.length ? picks.map(renderUfcPickCard).join('') : `<p class="empty">${rec ? (rec.oddsAt ? 'No pick yet: nothing on this card clears confidence 4 at a usable price. It reads again as odds move.' : 'No odds posted yet; the picks come once the books price the card.') : 'No read of this card yet.'}</p>`}
       ${rec?.passed?.length && !picks.length ? `<div class="pick-passed"><p class="row-sub">Read but not picked:</p><ul>${rec.passed.slice(0, 6).map((x) => `<li><strong>${esc(x.selection)}</strong>: ${esc(x.reason)}</li>`).join('')}</ul></div>` : ''}
       ${lockText ? `<p class="row-sub">${lockText}</p>` : ''}
