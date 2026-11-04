@@ -891,6 +891,7 @@ const el = {
   parlayOddsMin: document.getElementById('parlayOddsMin'),
   parlayOddsMax: document.getElementById('parlayOddsMax'),
   parlayGames: document.getElementById('parlayGames'),
+  parlayGamesLabel: document.getElementById('parlayGamesLabel'),
   parlaySide: document.getElementById('parlaySide'),
   parlayTeam: document.getElementById('parlayTeam'),
   parlayBuild: document.getElementById('parlayBuild'),
@@ -10191,7 +10192,7 @@ function ufcParlayRows(picks) {
       const quotes = (l.quotes ?? []).map((q) => ({ ...q, bookKey: q.bookId }));
       const best = quotes.find((q) => q.bookKey !== 'engine') ?? quotes[0] ?? null;
       return { id: l.id, eventId: l.boutId, sportKey: UFC_SPORT_KEY, sportTitle: 'UFC', commenceMs: l.boutDate ?? bd.boutDate ?? rec.lockMs, home: bd.b ?? l.fight?.split(' vs ')[1], away: bd.a ?? l.fight?.split(' vs ')[0], playerName: l.name ?? l.fight, team: '', opponent: l.opponent ?? null, athleteId: l.fighterId ?? null, headshot: null, statKey: l.prop, statLabel: l.label, marketLabel: l.label, point: l.point ?? null, side: l.sideWord ?? 'over', selection: l.selection, american: best?.american ?? null, decimal: best?.decimal ?? null, book: best?.book ?? null, bookKey: best?.bookKey ?? null, quotes, periods: {}, series: [],
-        ufc: { prop: l.prop, score: l.score, chance: l.chance, priced: l.priced, note: l.note, why: l.why ?? [], fightLevel: !l.side, lean: l.side ? bd.lean === l.side : null, confidence: bd.confidence ?? 0, summary: bd.summary, reasons: bd.reasons, parlayPiece: l.side ? bd.lean === l.side && bd.parlayPiece : false, weightClass: l.weightClass ?? bd.weightClass } };
+        ufc: { prop: l.prop, score: l.score, chance: l.chance, priced: l.priced, note: l.note, why: l.why ?? [], fightLevel: !l.side, order: l.order ?? bd.order ?? null, lean: l.side ? bd.lean === l.side : null, confidence: bd.confidence ?? 0, summary: bd.summary, reasons: bd.reasons, parlayPiece: l.side ? bd.lean === l.side && bd.parlayPiece : false, weightClass: l.weightClass ?? bd.weightClass } };
     });
   }
   const rows = [];
@@ -10202,7 +10203,7 @@ function ufcParlayRows(picks) {
       if (!quotes.length) continue;
       const name = side === 'a' ? bd.a : bd.b; const other = side === 'a' ? bd.b : bd.a;
       const score = bd.lean === side ? bd.confidence : Math.max(0, 5 - (bd.confidence ?? 0));
-      rows.push({ id: `${boutId}:${side}`, eventId: boutId, sportKey: UFC_SPORT_KEY, sportTitle: 'UFC', commenceMs: bd.boutDate ?? rec.lockMs, home: bd.b, away: bd.a, playerName: name, team: '', opponent: other, athleteId: side === 'a' ? bd.aId : bd.bId, headshot: null, statKey: 'h2h', statLabel: 'ML', marketLabel: bd.weightClass ?? 'Moneyline', point: null, side: 'over', selection: `${name} to win`, american: quotes[0].american, decimal: quotes[0].decimal, book: quotes[0].book, bookKey: quotes[0].bookId, quotes: quotes.map((q) => ({ ...q, bookKey: q.bookId })), periods: {}, series: [], ufc: { score, lean: bd.lean === side, confidence: bd.confidence, summary: bd.summary, reasons: bd.reasons, parlayPiece: bd.lean === side && bd.parlayPiece, weightClass: bd.weightClass } });
+      rows.push({ id: `${boutId}:${side}`, eventId: boutId, sportKey: UFC_SPORT_KEY, sportTitle: 'UFC', commenceMs: bd.boutDate ?? rec.lockMs, home: bd.b, away: bd.a, playerName: name, team: '', opponent: other, athleteId: side === 'a' ? bd.aId : bd.bId, headshot: null, statKey: 'h2h', statLabel: 'ML', marketLabel: bd.weightClass ?? 'Moneyline', point: null, side: 'over', selection: `${name} to win`, american: quotes[0].american, decimal: quotes[0].decimal, book: quotes[0].book, bookKey: quotes[0].bookId, quotes: quotes.map((q) => ({ ...q, bookKey: q.bookId })), periods: {}, series: [], ufc: { score, lean: bd.lean === side, confidence: bd.confidence, summary: bd.summary, reasons: bd.reasons, parlayPiece: bd.lean === side && bd.parlayPiece, weightClass: bd.weightClass, order: bd.order ?? null } });
     }
   }
   return rows;
@@ -10450,7 +10451,11 @@ function renderParlay() {
   el.parlayOddsMin.value = String(s.odds[0]); el.parlayOddsMax.value = String(s.odds[1]);
   const gamesHere = new Map();
   for (const r of live) if (!gamesHere.has(r.eventId)) gamesHere.set(r.eventId, r);
-  el.parlayGames.innerHTML = [...gamesHere.values()].sort((a, b) => a.commenceMs - b.commenceMs).map((g) => `<button type="button" class="rate-chip ${s.games.has(g.eventId) ? 'is-active' : ''}" data-parlay-game="${esc(g.eventId)}">${g.ufc ? `${esc(g.away)} vs ${esc(g.home)}` : `${esc(teamAbbr(g.away))} @ ${esc(teamAbbr(g.home))}`} <small>${esc(trendTimeFmt.format(new Date(g.commenceMs)))}</small></button>`).join('') || '<span class="row-sub">No games yet.</span>';
+  // Fights in the order of the night (the card's order runs main event first, so a later number is an earlier fight), games by tip-off.
+  const ufcList = isUfcParlay();
+  if (el.parlayGamesLabel) el.parlayGamesLabel.textContent = ufcList ? 'Fights' : 'Games';
+  el.parlayGames.classList.toggle('is-fights', ufcList);
+  el.parlayGames.innerHTML = [...gamesHere.values()].sort((a, b) => a.commenceMs - b.commenceMs || (b.ufc?.order ?? 0) - (a.ufc?.order ?? 0)).map((g) => `<button type="button" class="rate-chip ${s.games.has(g.eventId) ? 'is-active' : ''}" data-parlay-game="${esc(g.eventId)}"><span>${g.ufc ? `${esc(g.away)} vs ${esc(g.home)}` : `${esc(teamAbbr(g.away))} @ ${esc(teamAbbr(g.home))}`}</span> <small>${esc(trendTimeFmt.format(new Date(g.commenceMs)))}</small></button>`).join('') || `<span class="row-sub">No ${ufcList ? 'fights' : 'games'} yet.</span>`;
   el.parlaySide.value = s.side;
   const teams = [...new Set(live.map((r) => r.team).filter(Boolean))].sort();
   el.parlayTeam.innerHTML = `<option value="">Any team</option>${teams.map((t) => `<option value="${esc(t)}" ${s.team === t ? 'selected' : ''}>${esc(t)}</option>`).join('')}`;
