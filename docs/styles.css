@@ -6657,6 +6657,12 @@ button, [role="tab"], .league-chip, .parlay-btn, .trend-price { touch-action: ma
 .rate-chip { border-radius: 999px; border: 1px solid var(--line); background: var(--surface-2); color: var(--text); font: inherit; font-weight: 700; padding: 10px 16px; cursor: pointer; }
 .rate-chip.is-active { background: var(--success); color: #06130a; border-color: var(--success); }
 .rate-chip.is-empty { opacity: 0.55; }
+/* The fights list on a UFC ticket: one even row per fight, the names left and the time right, in the order of the night. */
+.parlay-chips-wrap.is-fights { display: grid; grid-template-columns: 1fr; gap: 8px; justify-content: stretch; }
+.parlay-chips-wrap.is-fights .rate-chip { display: flex; justify-content: space-between; align-items: center; gap: 10px; width: 100%; text-align: left; padding: 10px 14px; }
+.parlay-chips-wrap.is-fights .rate-chip > span { min-width: 0; }
+.parlay-chips-wrap.is-fights .rate-chip small { flex: none; white-space: nowrap; font-weight: 600; opacity: 0.85; }
+@media (min-width: 900px) { .parlay-chips-wrap.is-fights { grid-template-columns: 1fr 1fr; } }
 .rate-chip small { font-weight: 700; opacity: 0.8; margin-left: 2px; }
 .parlay-ufc-note { margin: 8px 0 0; }
 .parlay-leg-price.is-none { font-size: 0.78rem; color: #fbbf24; display: flex; flex-direction: column; align-items: flex-end; line-height: 1.1; }

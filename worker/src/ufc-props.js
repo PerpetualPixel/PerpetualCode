@@ -118,7 +118,8 @@ export function ufcPropLegs(bout, { odds = null, breakdown = null, engine = null
   const name = { a: bout.a.name, b: bout.b.name };
   const other = (s) => (s === 'a' ? 'b' : 'a');
   const lean = breakdown?.lean ?? null; const conf = Number(breakdown?.confidence) || 0;
-  const base = { boutId: bout.id, weightClass: bout.weightClass ?? null, boutDate: bout.date ?? null, rounds };
+  // `order` is the card's: 1 is the main event, higher numbers come earlier in the night, so a chronological list runs it downward.
+  const base = { boutId: bout.id, weightClass: bout.weightClass ?? null, boutDate: bout.date ?? null, rounds, order: bout.order ?? null, segment: bout.segment ?? null };
   const slug = (s) => String(s).toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '');
   // A side's grade: its chance to stars, nudged with the lean, capped against it, moved by the cappers (the MMA Engine's
   // consensus, once its run has read this card: a strong call for the side lifts a star, one against it costs a star), and
