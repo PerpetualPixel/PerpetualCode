@@ -115,6 +115,8 @@ test('runUfcTick: picks post at confidence 4 or better inside the price range, a
   // The underdog of the week: B Two is out (the pick backs A One), F Six at +100 with the read on his side beats D Four at +300 with the read against.
   assert.deepEqual([rec.underdog.boutId, rec.underdog.name, rec.underdog.american, rec.underdog.pickAgrees, rec.underdog.result], ['3', 'F Six', 100, false, null]);
   assert.ok(rec.underdog.chance > rec.underdog.market, 'the lean lifts the market read');
+  assert.ok(rec.underdog.path.lines.length >= 3 && /F Six wins by KO\/TKO 50% of the time \(5 of 10 wins\) and finishes 80% of them/.test(rec.underdog.path.lines[0]), rec.underdog.path.lines.join(' | '));
+  assert.equal(rec.underdog.capperMethod, null);
   assert.equal(JSON.parse(store.get('ufc:picks:index')).cards[0].id, 'ev');
   // The price moves and the same selection posts: the pick follows.
   odds[0] = feed('A One', 'B Two', { h2h: [-160, 135] });
@@ -300,4 +302,24 @@ test('underdogOfTheWeek: the plus-money side with the best chance, never against
   assert.equal(settleUnderdog(dog, b3).result, null, 'not in yet');
   assert.deepEqual([settleUnderdog(dog, { ...b3, status: 'final', result: { winnerId: 'b3', method: 'Submission', round: 2 } }).result, settleUnderdog(dog, { ...b3, status: 'final', result: { winnerId: 'a3', method: 'KO/TKO', round: 1 } }).result, settleUnderdog(dog, { ...b3, status: 'final', result: { draw: true } }).result, settleUnderdog(dog, { ...b3, status: 'cancelled' }).result], ['win', 'loss', 'push', 'void']);
   assert.equal(settleUnderdog(dog, { ...b3, status: 'final', result: { winnerId: 'b3', method: 'Submission', round: 2 } }).actual, 'F Six wins by Submission R2');
+});
+
+test('underdogPath: the way the wins come and the finish rate, Round 1 finishes, how often the favourite is stopped, the last five', async () => {
+  const { underdogPath } = await import('../worker/src/ufc-picks.js');
+  const me = fighter('d', 'Dan Brown', { methods: { wins: { ko: 9, sub: 0, dec: 1, other: 0 }, losses: { ko: 0, sub: 1, dec: 1, other: 0 } }, lastFive: ['win', 'win', 'loss', 'win', 'win'], history: [
+    { result: 'win', method: 'KO/TKO', round: 1 }, { result: 'win', method: 'KO/TKO', round: 1 }, { result: 'loss', method: 'Decision (unanimous)', round: 3 }, { result: 'win', method: 'KO/TKO', round: 2 }, { result: 'win', method: 'KO/TKO', round: 1 }, { result: 'win', method: 'KO/TKO', round: 1 }, { result: 'win', method: 'KO/TKO', round: 1 }, { result: 'win', method: 'Decision (split)', round: 3 }] });
+  const them = fighter('c', 'Carl White', { methods: { wins: { ko: 4, sub: 4, dec: 4, other: 0 }, losses: { ko: 2, sub: 0, dec: 1, other: 0 } } });
+  const path = underdogPath('Dan Brown', 'Carl White', me, them);
+  assert.deepEqual(path.lines, [
+    'Dan Brown wins by KO/TKO 90% of the time (9 of 10 wins) and finishes 90% of them.',
+    '5 of the last 6 finishes on record came in Round 1; 1 in Round 2.',
+    'Carl White has been stopped in 2 of 3 losses (2 by KO/TKO).',
+    'Dan Brown has won 4 of the last 5.',
+  ]);
+  assert.deepEqual([path.topMethod, path.finishRate, path.round1, path.stopped], ['ko', 0.9, [5, 6], [2, 3]]);
+  // A decision fighter and an unbeaten favourite.
+  const grinder = fighter('g', 'Grinder', { methods: { wins: { ko: 1, sub: 0, dec: 7, other: 0 } }, history: [], lastFive: [] });
+  const unbeaten = fighter('u', 'Unbeaten', { methods: { wins: { ko: 5, sub: 5, dec: 0, other: 0 }, losses: { ko: 0, sub: 0, dec: 0, other: 0 } } });
+  assert.deepEqual(underdogPath('Grinder', 'Unbeaten', grinder, unbeaten).lines, ['Grinder goes the distance: 88% of 8 wins came by decision, 1 by a finish.', 'Unbeaten has no loss on record.']);
+  assert.deepEqual(underdogPath('X', 'Y', null, null).lines, []);
 });

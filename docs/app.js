@@ -10494,7 +10494,7 @@ el.parlayView?.addEventListener('change', (event) => {
 /* UFC: the next card and every fighter on it, from the runner's KV records (worker/src/ufc-card.js) */
 /* ================================================================ */
 
-const ufcState = { sub: 'card', events: [], eventId: null, event: null, builtAt: null, loading: false, fighters: null, fightersById: {}, query: '', focus: 0, picks: null, why: null, graphHover: null };
+const ufcState = { sub: 'card', events: [], eventId: null, event: null, builtAt: null, loading: false, fighters: null, fightersById: {}, query: '', focus: 0, picks: null, why: null, graphHover: null, dogHow: false };
 const UFC_SEGMENT_LABEL = { main: 'Main card', prelims: 'Prelims', early: 'Early prelims' };
 const ufcDateFmt = new Intl.DateTimeFormat('en-US', { weekday: 'short', month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit', timeZone: 'America/New_York' });
 const ufcDayFmt = new Intl.DateTimeFormat('en-US', { month: 'short', day: 'numeric', year: 'numeric', timeZone: 'America/New_York' });
@@ -10646,6 +10646,13 @@ const untilText = (ms) => {
 };
 const resultWord = { win: 'W', loss: 'L', draw: 'D', nc: 'NC' };
 
+/** How the underdog wins: the record lines the worker wrote, and the cappers' method call when there is one. */
+function ufcDogHowHtml(dog) {
+  const lines = [...(dog.path?.lines ?? [])];
+  if (dog.capperMethod) lines.push(`Cappers' method call: ${dog.capperMethod.selection} (${Math.round(dog.capperMethod.consensusPct)}%${Number.isFinite(dog.capperMethod.quotedOdds) ? `, quoted ${formatAmerican(dog.capperMethod.quotedOdds)}` : ''}).`);
+  return `<div class="ufc-dog-how"><strong>How ${esc(dog.name)} wins</strong>${lines.length ? `<ul>${lines.map((l) => `<li>${esc(l)}</li>`).join('')}</ul>` : '<p class="row-sub">No record on file yet; the runner fills the profiles within the quarter hour.</p>'}</div>`;
+}
+
 function renderUfcBout(b, ev) {
   const rec = ufcRecordFor(ev.id);
   const bd = rec?.breakdowns?.[b.id] ?? null;
@@ -10664,7 +10671,7 @@ function renderUfcBout(b, ev) {
   const short = (name) => (sameSurname ? String(name ?? '') : String(name ?? '').split(' ').at(-1));
   const cap = bd?.engine?.moneyline && bd.engine.moneyline.tier !== 'pass' ? `<span class="ufc-cap">Cappers ${esc(String(Math.round(bd.engine.moneyline.consensusPct)))}% ${esc(short(bd.engine.moneyline.selection))}</span>` : '';
   const dog = rec?.underdog?.boutId === b.id ? rec.underdog : null;
-  const foot = bd ? `<div class="ufc-bout-foot">${price(bd.bestA)}<span class="ufc-foot-mid">${pick ? `<span class="ufc-pick-tag">Pixel's Pick</span>` : bd.confidence ? `<span class="ufc-lean">Lean ${esc(short(bd.leanName))} ${confStars(bd.confidence)}</span>` : ''}${dog ? `<span class="ufc-dog-tag">Underdog of the week · ${esc(short(dog.name))}</span>` : ''}${cap}</span>${price(bd.bestB)}</div>` : '';
+  const foot = bd ? `<div class="ufc-bout-foot">${price(bd.bestA)}<span class="ufc-foot-mid">${pick ? `<span class="ufc-pick-tag">Pixel's Pick</span>` : bd.confidence ? `<span class="ufc-lean">Lean ${esc(short(bd.leanName))} ${confStars(bd.confidence)}</span>` : ''}${dog ? `<button type="button" class="ufc-dog-tag" data-dog-how="${esc(b.id)}" aria-expanded="${ufcState.dogHow ? 'true' : 'false'}" title="How ${esc(dog.name)} wins">Underdog of the week · ${esc(short(dog.name))} ${ufcState.dogHow ? '▴' : '▾'}</button>` : ''}${cap}</span>${price(bd.bestB)}</div>${dog && ufcState.dogHow ? ufcDogHowHtml(dog) : ''}` : '';
   return `<article class="ufc-bout ${b.status === 'cancelled' ? 'is-cancelled' : ''} ${pick ? 'is-picked' : ''}" data-bout="${esc(b.id)}" data-ufc-bout="${esc(b.id)}" tabindex="0" role="button" aria-label="${esc(b.a?.name ?? 'TBA')} vs ${esc(b.b?.name ?? 'TBA')}, open the matchup">
     <div class="ufc-bout-head"><span class="ufc-weight">${esc(b.weightClass ?? '')}${b.title ? ' · <b>Title fight</b>' : ''}${b.rounds ? ` · ${esc(String(b.rounds))} rounds` : ''}</span>${status || '<span class="ufc-open">Matchup ›</span>'}</div>
     <div class="ufc-bout-body">${side(b.a, 'a')}<span class="ufc-vs">vs</span>${side(b.b, 'b')}</div>
@@ -10786,6 +10793,7 @@ function renderUfc() {
         ${dog.pickAgrees ? `<span class="ufc-pick-tag">Also a Pixel's Pick</span>` : ''}
       </div>
       <p class="row-sub">${esc(((dog.reasons ?? []).join('; ') || '').replace(/^./, (c) => c.toUpperCase()))}. Shown for the card, not tracked in the ledger; it never goes against a Pixel's Pick.</p>
+      <details class="ufc-dog-details" ${ufcState.dogHow ? 'open' : ''}><summary>How ${esc(dog.name)} can win</summary>${ufcDogHowHtml(dog)}</details>
     </section>` : '';
     const picksHtml = `${engineHtml}${underdogHtml}<section class="ufc-picks"><h3>Pixel's Picks for this card <small>${picks.length ? `${picks.length} of up to 6` : ''}</small></h3>
       ${picks.length ? picks.map(renderUfcPickCard).join('') : `<p class="empty">${rec ? (rec.oddsAt ? 'No pick yet: nothing on this card clears confidence 4 at a usable price. It reads again as odds move.' : 'No odds posted yet; the picks come once the books price the card.') : 'No read of this card yet.'}</p>`}
@@ -10840,6 +10848,10 @@ el.ufcView?.addEventListener('click', (event) => {
   if (ev) { loadUfc(ev.dataset.ufcEvent); return; }
   const why = t.closest('[data-ufc-why]');
   if (why) { ufcState.why = ufcState.why === why.dataset.ufcWhy ? null : why.dataset.ufcWhy; renderUfc(); return; }
+  // The underdog tag: how the dog wins, under the bout, without opening the matchup.
+  const how = t.closest('[data-dog-how]');
+  if (how) { ufcState.dogHow = !ufcState.dogHow; renderUfc(); return; }
+  if (t.closest('.ufc-dog-details')) return;
   const f = t.closest('[data-ufc-fighter]');
   if (f) { openUfcFighter(f.dataset.ufcFighter, f.dataset.ufcName); if (el.ufcList) el.ufcList.hidden = true; return; }
   const row = t.closest('[data-ufc-bout]');
@@ -10849,7 +10861,7 @@ el.ufcView?.addEventListener('click', (event) => {
 });
 el.ufcView?.addEventListener('keydown', (event) => {
   const row = event.target.closest('[data-ufc-bout]');
-  if (row && (event.key === 'Enter' || event.key === ' ')) { event.preventDefault(); openUfcBout(row.dataset.ufcBout); }
+  if (row && !event.target.closest('button, a, summary') && (event.key === 'Enter' || event.key === ' ')) { event.preventDefault(); openUfcBout(row.dataset.ufcBout); }
 });
 el.ufcQuery?.addEventListener('input', () => { ufcState.query = el.ufcQuery.value; ufcState.focus = 0; renderUfc(); });
 el.ufcQuery?.addEventListener('keydown', (event) => {

@@ -7055,6 +7055,13 @@ a.trend-price:hover { background: rgba(255, 255, 255, 0.06); }
 .ufc-dog-num small { font-family: inherit; font-size: 0.66rem; font-weight: 700; text-transform: uppercase; letter-spacing: 0.06em; color: var(--muted); }
 .ufc-dog-foot { display: flex; align-items: center; flex-wrap: wrap; gap: 10px; margin-top: 10px; }
 .ufc-dog-foot a.ufc-price { text-decoration: none; color: var(--text); padding: 6px 10px; border: 1px solid var(--line); border-radius: 10px; }
+.ufc-dog-tag { cursor: pointer; font: inherit; font-size: 0.78rem; font-weight: 800; }
+.ufc-dog-how { margin-top: 10px; padding: 10px 12px; border-radius: 12px; background: rgba(251, 191, 36, 0.07); border: 1px solid rgba(251, 191, 36, 0.3); font-size: 0.9rem; }
+.ufc-dog-how strong { display: block; margin-bottom: 4px; color: #fbbf24; font-size: 0.78rem; text-transform: uppercase; letter-spacing: 0.06em; }
+.ufc-dog-how ul { margin: 0; padding-left: 18px; display: grid; gap: 4px; }
+.ufc-dog-details { margin-top: 8px; }
+.ufc-dog-details summary { cursor: pointer; color: #fbbf24; font-size: 0.84rem; font-weight: 700; }
+.ufc-dog-details .ufc-dog-how { margin-top: 6px; }
 .ufc-dog-result { font-size: 0.78rem; font-weight: 800; }
 .ufc-dog-result.is-win { color: var(--success); }
 .ufc-dog-result.is-loss { color: var(--danger, #ff6b6b); }
