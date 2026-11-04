@@ -257,6 +257,40 @@ export function underdogOfTheWeek(event, reads, bets = []) {
   return best;
 }
 
+/**
+ * How the underdog wins, from the two records (2026-11-04: "when a user
+ * clicks the tag, it will say how the underdog can win: a 90% finish
+ * rate by TKO, 5 of 6 fights ended in Round 1"): the way most of the
+ * wins came and the finish rate, how many recent finishes came in Round
+ * 1, how often the favourite has been stopped, and the last five.
+ */
+export function underdogPath(name, opponent, me, them) {
+  const lines = [];
+  const n = (v) => (Number.isFinite(Number(v)) ? Number(v) : 0);
+  const w = me?.methods?.wins ?? {};
+  const wins = n(w.ko) + n(w.sub) + n(w.dec) + n(w.other);
+  const finishes = n(w.ko) + n(w.sub);
+  const ways = [['ko', 'KO/TKO', n(w.ko)], ['sub', 'submission', n(w.sub)], ['dec', 'decision', n(w.dec)]].sort((x, y) => y[2] - x[2]);
+  const top = wins ? ways[0] : null;
+  if (top && top[2]) {
+    const pct = (k, of) => `${Math.round((k / of) * 100)}%`;
+    lines.push(top[0] === 'dec'
+      ? `${name} goes the distance: ${pct(top[2], wins)} of ${wins} wins came by decision${finishes ? `, ${finishes} by a finish` : ''}.`
+      : `${name} wins by ${top[1]} ${pct(top[2], wins)} of the time (${top[2]} of ${wins} wins) and finishes ${pct(finishes, wins)} of them.`);
+  }
+  const fin = (me?.history ?? []).filter((h) => h.result === 'win' && ['ko', 'sub'].includes(methodClass(h.method)) && Number.isFinite(Number(h.round)));
+  const r1 = fin.filter((h) => Number(h.round) === 1).length;
+  if (fin.length) lines.push(`${r1} of the last ${fin.length} finish${fin.length === 1 ? '' : 'es'} on record came in Round 1${fin.length - r1 ? `; ${fin.filter((h) => Number(h.round) === 2).length} in Round 2` : ''}.`);
+  const l = them?.methods?.losses ?? {};
+  const losses = n(l.ko) + n(l.sub) + n(l.dec) + n(l.other);
+  const stopped = n(l.ko) + n(l.sub);
+  if (losses) lines.push(`${opponent} has been stopped in ${stopped} of ${losses} loss${losses === 1 ? '' : 'es'}${stopped ? ` (${[n(l.ko) ? `${n(l.ko)} by KO/TKO` : null, n(l.sub) ? `${n(l.sub)} by submission` : null].filter(Boolean).join(', ')})` : ''}.`);
+  else if (them) lines.push(`${opponent} has no loss on record.`);
+  const five = (me?.lastFive ?? []).filter((x) => x === 'win').length;
+  if (me?.lastFive?.length) lines.push(`${name} has won ${five} of the last ${me.lastFive.length}.`);
+  return { lines, topMethod: top?.[0] ?? null, finishRate: wins ? Math.round((finishes / wins) * 1000) / 1000 : null, round1: fin.length ? [r1, fin.length] : null, stopped: losses ? [stopped, losses] : null };
+}
+
 /** The underdog's result once its bout is in: win, loss, push on a draw, void when the bout came off. */
 export function settleUnderdog(dog, bout) {
   if (!dog || dog.result) return dog;
@@ -572,6 +606,15 @@ export async function runUfcTick(env, ctx, now = Date.now(), { deps = {} } = {})
     for (const combo of buildUfcParlays(pieces, { open: Math.max(0, room) })) { record.bets.push(parlayRecord(event, combo, now)); posted++; }
     // The underdog of the week follows the odds and the picks until the lock, never against a pick.
     record.underdog = underdogOfTheWeek(event, [...byBout.values()], record.bets);
+    if (record.underdog) {
+      // How the underdog wins: the two records, and the cappers' method call on that side when there is one.
+      const dogBout = event.bouts.find((b) => b.id === record.underdog.boutId);
+      const favId = dogBout?.[record.underdog.side === 'a' ? 'b' : 'a']?.id;
+      const [me, them] = await Promise.all([record.underdog.fighterId, favId].map((id) => (id ? (deps.fighter ? deps.fighter(id) : getUfcFighter(env, id)) : null)));
+      record.underdog.path = underdogPath(record.underdog.name, record.underdog.opponent, me, them);
+      const call = (byBout.get(record.underdog.boutId)?.engine?.methods ?? []).find((m) => m.side === record.underdog.side && m.tier !== 'pass');
+      record.underdog.capperMethod = call ? { selection: call.selection, consensusPct: call.consensusPct, tier: call.tier, quotedOdds: call.quotedOdds ?? null } : null;
+    }
     record.lockMs = lock;
   }
   if (record.underdog) record.underdog = settleUnderdog(record.underdog, event.bouts.find((b) => b.id === record.underdog.boutId));
