@@ -47,13 +47,38 @@ const AFTER_MS = 5 * 3600e3;
 export const liveGameTeams = (name) => String(name ?? '').split(/\s+at\s+|\s+vs\.?\s+/i).map((s) => s.trim()).filter(Boolean).slice(0, 2);
 
 /** The feed event for the teams, either way round, or null. */
-export function pickLiveEvent(events, teams) {
-  const want = (teams ?? []).map((t) => String(t).toLowerCase());
+/** Words that name a kind of club, not the club: dropped before two names are compared by their words. */
+const CLUB_WORDS = new Set(['fc', 'sk', 'ac', 'cf', 'sc', 'afc', 'cfc', 'club', 'de', 'the', 'fk', 'bk', 'if', 'as', 'ss', 'us', 'rc', 'ca', 'cd', 'sv', 'tsv', 'vfb', 'vfl', 'bsc', 'rb']);
+const fold = (s) => String(s ?? '').normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase();
+const words = (s) => fold(s).split(/[^a-z0-9]+/).filter((w) => w.length >= 3 && !CLUB_WORDS.has(w));
+
+/**
+ * The feed event for the watched game: its two teams match the feed's
+ * two, either way round. A name contains the other (Chicago Bears,
+ * Bears) or, failing that, they share a word once the club words are
+ * dropped (ESPN's "Slavia Prague" against the feed's "SK Slavia Praha",
+ * 2026-11-04: the probe never found the Champions League game). The
+ * best-scoring event wins, the closest kick-off to `date` breaking ties.
+ */
+export function pickLiveEvent(events, teams, { date = null } = {}) {
+  const want = (teams ?? []).map((t) => String(t));
   if (want.length !== 2) return null;
-  return (events ?? []).find((e) => {
-    const names = [e.home_team, e.away_team].map((t) => String(t ?? '').toLowerCase());
-    return want.every((w) => names.some((n) => n.includes(w) || w.includes(n)));
-  }) ?? null;
+  const contains = (a, b) => { const x = fold(a); const y = fold(b); return Boolean(x && y) && (x.includes(y) || y.includes(x)); };
+  const shared = (a, b) => { const wb = new Set(words(b)); return words(a).filter((w) => wb.has(w)).length; };
+  const score = (w, n) => (contains(w, n) ? 10 : shared(w, n));
+  const at = date ? Date.parse(date) : NaN;
+  let best = null;
+  for (const e of events ?? []) {
+    const names = [e.home_team, e.away_team];
+    // Each watched team to a different feed team, both matched, the better pairing counted.
+    const straight = Math.min(score(want[0], names[0]), score(want[1], names[1])) > 0 ? score(want[0], names[0]) + score(want[1], names[1]) : 0;
+    const crossed = Math.min(score(want[0], names[1]), score(want[1], names[0])) > 0 ? score(want[0], names[1]) + score(want[1], names[0]) : 0;
+    const total = Math.max(straight, crossed);
+    if (!total) continue;
+    const gap = Number.isFinite(at) && e.commence_time ? Math.abs(Date.parse(e.commence_time) - at) : Infinity;
+    if (!best || total > best.total || (total === best.total && gap < best.gap)) best = { e, total, gap };
+  }
+  return best?.e ?? null;
 }
 
 /**
@@ -93,8 +118,12 @@ export async function runLiveProbe(env, ctx, now = Date.now(), { deps = {} } = {
     const league = g.league ?? 'nfl';
     const sportKey = LIVE_SPORT[league]; if (!sportKey) continue;
     const events = deps.events ? await deps.events(sportKey) : await listLeagueGames(sportKey, env, ctx).catch(() => []);
-    const event = pickLiveEvent(events, liveGameTeams(g.name));
-    if (!event) { done.push({ game: g.id, skipped: true, reason: 'game not on the feed' }); continue; }
+    const event = pickLiveEvent(events, liveGameTeams(g.name), { date: g.date });
+    if (!event) {
+      // The miss is written down with what the feed listed, so /live/probe?espn= can say why the game has no odds log.
+      await env.POTD_KV.put(`live:probe:miss:${g.id}`, JSON.stringify({ at: now, name: g.name, sportKey, feed: (events ?? []).slice(0, 12).map((e) => `${e.away_team} at ${e.home_team} (${e.commence_time ?? '?'})`) }), { expirationTtl: 2 * 86400 }).catch(() => {});
+      done.push({ game: g.id, skipped: true, reason: 'game not on the feed' }); continue;
+    }
     const payload = deps.props ? await deps.props(event.id) : await fetchLiveProps(sportKey, event.id, env, LIVE_MARKETS[league]);
     const snap = summariseProps(payload, now);
     snap.commence = event.commence_time ?? null;
@@ -132,11 +161,14 @@ async function fetchLiveProps(sportKey, eventId, env, markets) {
 
 /** What /live/probe answers: the latest (or named) game's props log and the runner's watch log. */
 export async function getLiveProbe(env, { eventId = null, espnEventId = null } = {}) {
-  const id = eventId ?? await env.POTD_KV.get('live:probe:latest').catch(() => null);
+  // A named ESPN game reads its own odds log (not the latest game's), and the miss note when the feed never matched it.
+  const forEspn = espnEventId ? await env.POTD_KV.get(`live:probe:for:${espnEventId}`).catch(() => null) : null;
+  const id = eventId ?? forEspn ?? (espnEventId ? null : await env.POTD_KV.get('live:probe:latest').catch(() => null));
   const probe = id ? JSON.parse((await env.POTD_KV.get(liveProbeKey(id)).catch(() => null)) ?? 'null') : null;
+  const miss = espnEventId && !probe ? JSON.parse((await env.POTD_KV.get(`live:probe:miss:${espnEventId}`).catch(() => null)) ?? 'null') : null;
   const idxRaw = await env.POTD_KV.get(LIVE_WATCH_INDEX).catch(() => null);
   const index = idxRaw ? JSON.parse(idxRaw) : { games: [] };
   const espnId = espnEventId ?? index.games?.[0]?.id ?? null;
   const watch = espnId ? JSON.parse((await env.POTD_KV.get(liveWatchKey(espnId)).catch(() => null)) ?? 'null') : null;
-  return { probe, watch, watched: index.games ?? [] };
+  return { probe, miss, watch, watched: index.games ?? [] };
 }
