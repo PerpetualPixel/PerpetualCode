@@ -7041,6 +7041,24 @@ a.trend-price:hover { background: rgba(255, 255, 255, 0.06); }
 .ufc-why-row { display: flex; align-items: center; flex-wrap: wrap; gap: 8px; margin-top: 10px; }
 .ufc-lean { font-size: 0.84rem; font-weight: 700; display: inline-flex; align-items: center; gap: 6px; }
 .ufc-pick-tag { padding: 4px 10px; border-radius: 999px; background: rgba(94, 224, 122, 0.16); border: 1px solid rgba(94, 224, 122, 0.5); color: var(--success); font-size: 0.78rem; font-weight: 800; }
+/* The underdog of the week: the card's one live dog with the best chance, amber like a lean. */
+.ufc-dog-tag { padding: 4px 10px; border-radius: 999px; background: rgba(251, 191, 36, 0.14); border: 1px solid rgba(251, 191, 36, 0.55); color: #fbbf24; font-size: 0.78rem; font-weight: 800; }
+.ufc-underdog { margin: 4px 0 18px; padding: 12px 14px; border: 1px solid rgba(251, 191, 36, 0.45); border-radius: 16px; background: var(--surface); }
+.ufc-underdog h3 { margin: 0 0 10px; font-size: 0.82rem; text-transform: uppercase; letter-spacing: 0.08em; color: #fbbf24; }
+.ufc-underdog h3 small { margin-left: 6px; text-transform: none; letter-spacing: 0; font-weight: 600; color: var(--muted); }
+.ufc-dog { display: flex; align-items: center; gap: 12px; }
+.ufc-dog.is-link { cursor: pointer; }
+.ufc-dog-main { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 2px; }
+.ufc-dog-main strong { font-size: 1.08rem; }
+.ufc-dog-main small { color: var(--muted); font-size: 0.82rem; }
+.ufc-dog-num { font-family: var(--mono); font-weight: 800; font-size: 1.3rem; text-align: right; display: flex; flex-direction: column; line-height: 1.05; }
+.ufc-dog-num small { font-family: inherit; font-size: 0.66rem; font-weight: 700; text-transform: uppercase; letter-spacing: 0.06em; color: var(--muted); }
+.ufc-dog-foot { display: flex; align-items: center; flex-wrap: wrap; gap: 10px; margin-top: 10px; }
+.ufc-dog-foot a.ufc-price { text-decoration: none; color: var(--text); padding: 6px 10px; border: 1px solid var(--line); border-radius: 10px; }
+.ufc-dog-result { font-size: 0.78rem; font-weight: 800; }
+.ufc-dog-result.is-win { color: var(--success); }
+.ufc-dog-result.is-loss { color: var(--danger, #ff6b6b); }
+.ufc-dog-result.is-push, .ufc-dog-result.is-void { color: var(--muted); }
 .ufc-why-row .parlay-btn { margin-left: auto; }
 .ufc-bout .parlay-breakdown { margin-top: 10px; }
 .pick-ufc { margin-top: 28px; padding-top: 18px; border-top: 1px solid var(--line); }

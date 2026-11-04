@@ -209,6 +209,65 @@ export function engineForBout(bout, feed) {
   return { moneyline: ml ? shape(ml) : null, methods: mine.filter((p) => p.market === 'method_of_victory').map(shape), cancelled: mine.some((p) => p.cardStatus === 'cancelled') };
 }
 
+/* ---------------- the underdog of the week ---------------- */
+
+/**
+ * The card's one underdog with the best chance of winning (2026-11-04:
+ * "an Underdog of the week, a tag for the best or highest probable
+ * underdog to win on the fight cards; it cannot contradict the Pixel
+ * Picks"). The underdog is the side at plus money; its chance starts at
+ * the no-vig market read of the two best prices and moves with Pixel's
+ * read of the bout (the lean and its confidence) and the capper
+ * consensus. A bout where a Pixel's Pick backs the favourite is out: the
+ * underdog never bets against a pick. Shown on the card, not tracked.
+ */
+const LEAN_WEIGHT = 0.03; const LEAN_AGAINST = 0.02; const CAPPER_WEIGHT = 0.12; const CAPPER_AGAINST = 0.06;
+export function underdogOfTheWeek(event, reads, bets = []) {
+  const live = (bets ?? []).filter((b) => b.status === 'pending').flatMap((b) => (b.legs ?? []).filter((l) => l.result == null && l.fighterId));
+  const dec = (q) => (Number.isFinite(q?.decimal) ? q.decimal : Number.isFinite(q?.american) ? americanToDecimal(q.american) : null);
+  const clamp = (x) => Math.min(0.65, Math.max(0.03, x));
+  let best = null;
+  for (const { bout, odds, breakdown, engine } of reads ?? []) {
+    if (!bout?.a?.id || !bout?.b?.id || bout.status !== 'scheduled') continue;
+    const qa = odds?.a?.[0]; const qb = odds?.b?.[0];
+    if (!dec(qa) || !dec(qb)) continue;
+    const dogSide = dec(qa) > dec(qb) ? 'a' : 'b';
+    const q = dogSide === 'a' ? qa : qb; const fq = dogSide === 'a' ? qb : qa;
+    if (!(q.american >= 100)) continue;
+    const dog = bout[dogSide]; const fav = bout[dogSide === 'a' ? 'b' : 'a'];
+    // Never against a Pixel's Pick: a pending leg on the favourite rules the bout out; one on the underdog agrees.
+    if (live.some((l) => l.fighterId === fav.id)) continue;
+    const pickAgrees = live.some((l) => l.fighterId === dog.id);
+    const market = (1 / dec(q)) / (1 / dec(q) + 1 / dec(fq));
+    const reasons = [`the market gives ${dog.name} ${Math.round(market * 100)}% at ${q.american > 0 ? '+' : ''}${q.american}${q.book ? ` (${q.book})` : ''}`];
+    let p = market;
+    const conf = Number(breakdown?.confidence) || 0;
+    if (breakdown?.lean === dogSide && conf) { p += LEAN_WEIGHT * conf; reasons.push(`Pixel's read leans ${dog.name}, ${conf} of 5`); }
+    else if (breakdown?.lean && conf) { p -= LEAN_AGAINST * conf; reasons.push(`Pixel's read leans ${fav.name}, ${conf} of 5`); }
+    const ml = engine?.moneyline;
+    if (ml && ml.tier !== 'pass' && Number.isFinite(ml.consensusPct)) {
+      if (ml.side === dogSide) { p += CAPPER_WEIGHT * ml.consensusPct / 100; reasons.push(`cappers ${Math.round(ml.consensusPct)}% on ${dog.name}`); }
+      else if (ml.side) { p -= CAPPER_AGAINST * ml.consensusPct / 100; reasons.push(`cappers ${Math.round(ml.consensusPct)}% on ${fav.name}`); }
+    }
+    if (pickAgrees) reasons.push("a Pixel's Pick backs this side");
+    const chance = Math.round(clamp(p) * 1000) / 1000;
+    const pick = { boutId: bout.id, fighterId: dog.id, name: dog.name, opponent: fav.name, side: dogSide, weightClass: bout.weightClass ?? null, american: q.american, decimal: Math.round(dec(q) * 10000) / 10000, bookId: q.bookId ?? null, book: q.book ?? null, link: q.link ?? null, chance, market: Math.round(market * 1000) / 1000, reasons, pickAgrees, result: null, actual: null };
+    if (!best || chance > best.chance || (chance === best.chance && q.american > best.american)) best = pick;
+  }
+  return best;
+}
+
+/** The underdog's result once its bout is in: win, loss, push on a draw, void when the bout came off. */
+export function settleUnderdog(dog, bout) {
+  if (!dog || dog.result) return dog;
+  if (!bout || bout.status === 'cancelled') return { ...dog, result: 'void', actual: 'the bout came off the card' };
+  const r = bout.result;
+  if (!r || bout.status !== 'final') return dog;
+  if (r.draw) return { ...dog, result: 'push', actual: 'a draw' };
+  const won = r.winnerId === dog.fighterId;
+  return { ...dog, result: won ? 'win' : 'loss', actual: `${(won ? bout[dog.side] : bout[dog.side === 'a' ? 'b' : 'a'])?.name ?? (won ? dog.name : dog.opponent)} wins${r.method ? ` by ${r.method}` : ''}${r.round ? ` R${r.round}` : ''}` };
+}
+
 /* ---------------- breakdowns ---------------- */
 
 const fmtAm = (n) => (n > 0 ? `+${n}` : String(n));
@@ -511,8 +570,11 @@ export async function runUfcTick(env, ctx, now = Date.now(), { deps = {} } = {})
     const pieces = [...byBout.values()].filter(({ bout, breakdown }) => !onTicket.has(bout.id) && breakdown.parlayPiece && breakdown.confidence >= UFC_MIN_CONFIDENCE && breakdown.lean);
     const room = UFC_MAX_PICKS - record.bets.filter((b) => b.status === 'pending').length;
     for (const combo of buildUfcParlays(pieces, { open: Math.max(0, room) })) { record.bets.push(parlayRecord(event, combo, now)); posted++; }
+    // The underdog of the week follows the odds and the picks until the lock, never against a pick.
+    record.underdog = underdogOfTheWeek(event, [...byBout.values()], record.bets);
     record.lockMs = lock;
   }
+  if (record.underdog) record.underdog = settleUnderdog(record.underdog, event.bouts.find((b) => b.id === record.underdog.boutId));
   // Grading: every pending pick whose bout is in.
   for (const pick of record.bets) {
     if (pick.status !== 'pending') continue;
