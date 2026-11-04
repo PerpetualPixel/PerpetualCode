@@ -96,22 +96,25 @@ test('settleUfcPick: the moneyline on the winner, void on a draw or a scrapped b
 
 test('runUfcTick: picks post at confidence 4 or better inside the price range, at most six, one per bout, follow the price, void on a replacement, grade on the result, and lock at the first bout', async () => {
   const { env, store } = kv();
-  const fighters = { a1: fighter('a1', 'A One'), b1: fighter('b1', 'B Two'), a2: fighter('a2', 'C Three'), b2: fighter('b2', 'D Four'), a3: fighter('a3', 'E Five'), b3: fighter('b3', 'F Six') };
+  const fighters = { a1: fighter('a1', 'A One'), b1: fighter('b1', 'B Two'), a2: fighter('a2', 'C Three'), b2: fighter('b2', 'D Four'), a3: fighter('a3', 'E Five'), b3: fighter('b3', 'F Six'), a4: fighter('a4', 'G Seven'), b4: fighter('b4', 'H Eight') };
   const event = { id: 'ev', name: 'UFC Test', date: NOW + 30 * 3600e3, status: 'upcoming', changes: [], bouts: [
     bout('1', f('a1', 'A One'), f('b1', 'B Two')),
     bout('2', f('a2', 'C Three'), f('b2', 'D Four')),
     bout('3', f('a3', 'E Five'), f('b3', 'F Six')),
+    // A late addition with no odds at any book yet: it still gets its read and lean, and passes for want of a price.
+    bout('4', f('a4', 'G Seven'), f('b4', 'H Eight')),
   ] };
   const odds = [feed('A One', 'B Two', { h2h: [-150, 130] }), feed('C Three', 'D Four', { h2h: [-400, 300] }), feed('E Five', 'F Six', { h2h: [-120, 100] })];
-  const reads = { 1: '{"lean":"a","confidence":5,"straight":{"market":"h2h","fighter":"a"},"parlayPiece":true,"summary":"A.","reasons":[]}', 2: '{"lean":"a","confidence":5,"straight":{"market":"h2h","fighter":"a"},"parlayPiece":true,"summary":"C.","reasons":[]}', 3: '{"lean":"b","confidence":3,"straight":{"market":"method","fighter":"b","method":"sub"},"parlayPiece":false,"summary":"E.","reasons":[]}' };
+  const reads = { 1: '{"lean":"a","confidence":5,"straight":{"market":"h2h","fighter":"a"},"parlayPiece":true,"summary":"A.","reasons":[]}', 2: '{"lean":"a","confidence":5,"straight":{"market":"h2h","fighter":"a"},"parlayPiece":true,"summary":"C.","reasons":[]}', 3: '{"lean":"b","confidence":3,"straight":{"market":"method","fighter":"b","method":"sub"},"parlayPiece":false,"summary":"E.","reasons":[]}', 4: '{"lean":"a","confidence":5,"straight":{"market":"h2h","fighter":"a"},"parlayPiece":true,"summary":"G.","reasons":[]}' };
   let which = 0;
   const deps = { events: async () => ({ events: [{ id: 'ev', date: event.date, status: event.status }] }), event: async () => event, odds: async () => odds, fighter: async (id) => fighters[id], model: async (prompt) => reads[/UFC Test: Lightweight/.test(prompt) ? (++which) : 1] };
   const r = await runUfcTick(env, ctx, NOW, { deps });
   assert.equal(r.posted, 1, 'A One at -150 posts; C Three at -400 is outside the range; E Five reads 3');
   let rec = JSON.parse(store.get('ufc:picks:ev'));
   assert.deepEqual(rec.bets.map((b) => [b.boutId, b.legs[0].selection, b.american, b.book]), [['1', 'A One to win', -150, 'DraftKings']]);
-  assert.deepEqual(rec.passed.map((p) => [p.boutId, p.reason]), [['2', 'no usable price at your books'], ['3', 'confidence 3 of 5']]);
-  assert.equal(Object.keys(rec.breakdowns).length, 3);
+  assert.deepEqual(rec.passed.map((p) => [p.boutId, p.reason]), [['2', 'no usable price at your books'], ['3', 'confidence 3 of 5'], ['4', 'no odds posted yet']]);
+  assert.equal(Object.keys(rec.breakdowns).length, 4);
+  assert.deepEqual([rec.breakdowns['4'].lean, rec.breakdowns['4'].leanName, rec.breakdowns['4'].confidence, rec.breakdowns['4'].bestA, rec.breakdowns['4'].quotesB], ['a', 'G Seven', 5, null, []], 'the unpriced bout still carries its lean');
   // The underdog of the week: B Two is out (the pick backs A One), F Six at +100 with the read on his side beats D Four at +300 with the read against.
   assert.deepEqual([rec.underdog.boutId, rec.underdog.name, rec.underdog.american, rec.underdog.pickAgrees, rec.underdog.result], ['3', 'F Six', 100, false, null]);
   assert.ok(rec.underdog.chance > rec.underdog.market, 'the lean lifts the market read');

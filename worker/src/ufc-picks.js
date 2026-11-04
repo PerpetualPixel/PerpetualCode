@@ -544,12 +544,15 @@ export async function runUfcTick(env, ctx, now = Date.now(), { deps = {} } = {})
     const live = event.bouts.filter((b) => b.status === 'scheduled' && b.a?.id && b.b?.id);
     const byBout = new Map();
     for (const bout of live) {
-      const bo = boutOdds(bout, odds.events);
-      if (!bo || (!bo.a.length && !bo.b.length)) continue;
+      // Every scheduled bout gets its read, odds or not (2026-11-04: a bout
+      // added late showed only its card-change tag, "I'd rather see the
+      // leans"); a pick still needs a price, so an unpriced bout passes.
+      const posted = boutOdds(bout, odds.events);
+      const bo = posted && (posted.a.length || posted.b.length) ? posted : null;
       const engine = engineForBout(bout, engineFeed);
       const bd = await ufcBreakdown(env, event, bout, bo, now, { deps, engine, engineStamp });
       byBout.set(bout.id, { bout, odds: bo, breakdown: bd, engine });
-      record.breakdowns[bout.id] = { engine, boutDate: bout.date ?? event.date, a: bout.a?.name ?? null, b: bout.b?.name ?? null, aId: bout.a?.id ?? null, bId: bout.b?.id ?? null, weightClass: bout.weightClass ?? null, segment: bout.segment, lean: bd.lean, leanName: bd.leanName ?? null, confidence: bd.confidence, straight: bd.straight, parlayPiece: bd.parlayPiece, summary: bd.summary, reasons: bd.reasons, model: bd.model, bestA: bo.a[0] ?? null, bestB: bo.b[0] ?? null, quotesA: bo.a.slice(0, 8), quotesB: bo.b.slice(0, 8), totals: bo.totals.map((t) => ({ point: t.point, over: t.over[0] ?? null, under: t.under[0] ?? null })) };
+      record.breakdowns[bout.id] = { engine, boutDate: bout.date ?? event.date, a: bout.a?.name ?? null, b: bout.b?.name ?? null, aId: bout.a?.id ?? null, bId: bout.b?.id ?? null, weightClass: bout.weightClass ?? null, segment: bout.segment, lean: bd.lean, leanName: bd.leanName ?? null, confidence: bd.confidence, straight: bd.straight, parlayPiece: bd.parlayPiece, summary: bd.summary, reasons: bd.reasons, model: bd.model, bestA: bo?.a[0] ?? null, bestB: bo?.b[0] ?? null, quotesA: bo?.a.slice(0, 8) ?? [], quotesB: bo?.b.slice(0, 8) ?? [], totals: (bo?.totals ?? []).map((t) => ({ point: t.point, over: t.over[0] ?? null, under: t.under[0] ?? null })) };
     }
     // Existing picks: voided when the bout is gone or a fighter changed; otherwise the price follows while the same selection posts.
     for (const pick of record.bets) {
@@ -597,11 +600,11 @@ export async function runUfcTick(env, ctx, now = Date.now(), { deps = {} } = {})
     const candidates = [...byBout.values()].filter(({ bout, breakdown }) => !taken.has(bout.id) && breakdown.confidence >= UFC_MIN_CONFIDENCE)
       .map((x) => ({ ...x, q: straightQuote(x.bout, x.breakdown, x.odds, x.engine) })).filter((x) => x.q && (x.q.american == null || inRange(x.q.american, STRAIGHT_RANGE)))
       .sort((x, y) => y.breakdown.confidence - x.breakdown.confidence || (y.q.american ?? -9999) - (x.q.american ?? -9999));
-    record.passed = [...byBout.values()].filter(({ bout, breakdown }) => !taken.has(bout.id) && !candidates.some((c) => c.bout.id === bout.id)).map(({ bout, breakdown }) => ({ boutId: bout.id, selection: `${bout.a?.name} vs ${bout.b?.name}`, reason: breakdown.confidence < UFC_MIN_CONFIDENCE ? `confidence ${breakdown.confidence} of 5` : 'no usable price at your books' }));
+    record.passed = [...byBout.values()].filter(({ bout, breakdown }) => !taken.has(bout.id) && !candidates.some((c) => c.bout.id === bout.id)).map(({ bout, breakdown, odds: bo }) => ({ boutId: bout.id, selection: `${bout.a?.name} vs ${bout.b?.name}`, reason: breakdown.confidence < UFC_MIN_CONFIDENCE ? `confidence ${breakdown.confidence} of 5` : bo ? 'no usable price at your books' : 'no odds posted yet' }));
     for (const c of candidates.slice(0, Math.max(0, open))) { record.bets.push(pickRecord(event, c.bout, c.breakdown, c.q, now)); posted++; }
     // Then the parlay pieces, at whatever room is left under the cap.
     const onTicket = new Set(record.bets.filter((b) => b.status === 'pending').flatMap((b) => b.boutIds ?? [b.boutId]));
-    const pieces = [...byBout.values()].filter(({ bout, breakdown }) => !onTicket.has(bout.id) && breakdown.parlayPiece && breakdown.confidence >= UFC_MIN_CONFIDENCE && breakdown.lean);
+    const pieces = [...byBout.values()].filter(({ bout, breakdown, odds: bo }) => bo && !onTicket.has(bout.id) && breakdown.parlayPiece && breakdown.confidence >= UFC_MIN_CONFIDENCE && breakdown.lean);
     const room = UFC_MAX_PICKS - record.bets.filter((b) => b.status === 'pending').length;
     for (const combo of buildUfcParlays(pieces, { open: Math.max(0, room) })) { record.bets.push(parlayRecord(event, combo, now)); posted++; }
     // The underdog of the week follows the odds and the picks until the lock, never against a pick.
