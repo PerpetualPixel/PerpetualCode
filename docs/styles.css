@@ -7106,6 +7106,10 @@ a.trend-price:hover { background: rgba(255, 255, 255, 0.06); }
 .ufc-bout-foot > :first-child { justify-self: start; }
 /* The price is the grid item itself, so it is placed, not text-aligned: under the right fighter's picture, the way the left one sits under his. */
 .ufc-bout-foot > :last-child { justify-self: end; text-align: right; }
+/* The two prices mirror: the badge sits at the card's edge on both sides, the number inside it, so the icons line up down the card (2026-11-04, mobile). */
+.ufc-bout-foot > .ufc-price:last-child { flex-direction: row-reverse; }
+.ufc-bout-foot .ufc-price .book-badge, .ufc-bout-foot .ufc-price .book-badge img { width: 22px; height: 22px; }
+.ufc-bout-foot .ufc-price { min-height: 24px; }
 .ufc-foot-mid { text-align: center; }
 .ufc-price.is-none { color: var(--muted); font-weight: 600; font-family: inherit; font-size: 0.78rem; }
 .ufc-h2h-meta { margin: 0 0 10px; color: var(--muted); font-size: 0.84rem; }
