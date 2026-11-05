@@ -202,3 +202,12 @@ test('soccer: the clock counts up to ninety with stoppage capped, half-time read
   assert.ok(!c.some((x) => x.stat === 'shotsOnTarget'), 'two on target project to three, short of 2.5 with margin');
   assert.equal(playerLines(t, 'ucl')[0].totalGoals, 1);
 });
+
+test('playSummary: the best slip cushion against the best game-line edge, as a score and stars; nothing playable is zero', async () => {
+  const { playSummary } = await import('../worker/src/live-board.js');
+  const slips = [{ legs: [{ cushion: 0.6 }, { cushion: 0.4 }] }, { legs: [{ cushion: 0.1 }] }];
+  const reads = [{ best: { edge: 0.1 } }];
+  assert.deepEqual(playSummary(slips, reads), { playable: true, score: 0.5, stars: 5, slips: 2, reads: 1 });
+  assert.deepEqual(playSummary([], reads), { playable: true, score: 0.25, stars: 3, slips: 0, reads: 1 }, 'a 10% edge reads as a quarter');
+  assert.deepEqual(playSummary([], []), { playable: false, score: 0, stars: 0, slips: 0, reads: 0 });
+});

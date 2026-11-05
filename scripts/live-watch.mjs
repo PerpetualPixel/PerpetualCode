@@ -86,17 +86,29 @@ function boxLines(summary) {
   return [...rows.values()];
 }
 
-/** One game's watch: its log from KV (or fresh), listed in the index. */
-async function openWatch(event) {
+/** Every game on the scoreboard still to come or in play: the whole slate, listed on the Live tab ahead of its watch. */
+export function listGames(sb) {
+  return (sb?.events ?? []).filter((e) => { const st = e.competitions?.[0]?.status?.type?.state ?? e.status?.type?.state ?? 'pre'; return st === 'pre' || st === 'in'; });
+}
+
+/** A tick from the scoreboard alone (a game listed ahead of its watch): the state, the score and the sides, no box. */
+function scoreboardTick(event) {
+  const comp = event.competitions?.[0]; const st = comp?.status ?? {}; const competitors = comp?.competitors ?? [];
+  return { at: Date.now(), state: st.type?.state ?? 'pre', detail: st.type?.detail ?? st.type?.description ?? null, period: st.period ?? null, clock: st.displayClock ?? null, score: Object.fromEntries(competitors.map((c) => [c.team?.abbreviation ?? c.homeAway, Number(c.score ?? 0)])), home: competitors.find((c) => c.homeAway === 'home')?.team?.abbreviation ?? null, away: competitors.find((c) => c.homeAway === 'away')?.team?.abbreviation ?? null, box: [] };
+}
+
+/** One game's watch: its log from KV (or fresh), listed in the index. `listOnly` registers a game ahead of its window with a scoreboard tick, so the Live tab shows the whole slate. */
+async function openWatch(event, { listOnly = false } = {}) {
   const key = `live:watch:${event.id}`;
   const existing = DRY ? null : await readKv(key).catch(() => null);
   const log = existing ?? { espnEventId: event.id, name: event.name, date: event.date, league, team: team || null, ticks: [] };
+  if (listOnly && !log.ticks.length) log.ticks = [scoreboardTick(event)];
   if (!DRY) {
     const idx = (await readKv('live:watch:index').catch(() => null)) ?? { games: [] };
     idx.games = [{ id: event.id, name: event.name, date: event.date, league }, ...idx.games.filter((g) => g.id !== event.id)].slice(0, 40);
-    await writeKv([{ key: 'live:watch:index', value: idx }], { ttlSeconds: 14 * 86400 });
+    await writeKv([{ key: 'live:watch:index', value: idx }, ...(listOnly ? [{ key, value: log }] : [])], { ttlSeconds: 14 * 86400 });
   }
-  say(`watching ${event.name} (${event.id}), ${event.date}`);
+  say(`${listOnly ? 'listed' : 'watching'} ${event.name} (${event.id}), ${event.date}`);
   return { event, key, log, finalSince: null };
 }
 
@@ -128,19 +140,27 @@ if (isMain) {
   const sb = await scoreboard();
   const first = pickGames(sb, { team, all: ALL });
   if (!first.length) {
+    // Nothing to watch yet: the slate is still listed, so the tab shows what is coming.
+    if (ALL) for (const e of listGames(sb)) await openWatch(e, { listOnly: true });
     say(ALL ? `no ${league.toUpperCase()} game in play or inside ${lead} minutes on today's scoreboard` : `no ${league.toUpperCase()} game for ${team} on today's scoreboard`);
     process.exit(ALL ? 0 : 1);
   }
   const watches = new Map();
+  const listed = new Set();
+  // --all: the rest of the slate is listed up front (a scoreboard tick each), so the tab shows every game of the night with its tip-off.
+  const listRest = async (sb) => { for (const e of ALL ? listGames(sb) : []) if (!watches.has(e.id) && !listed.has(e.id)) { listed.add(e.id); await openWatch(e, { listOnly: true }); } };
   for (const e of first) watches.set(e.id, await openWatch(e));
+  await listRest(sb);
   const deadline = Date.now() + hours * 3600e3;
   let lastScan = Date.now();
   while (Date.now() < deadline && watches.size) {
     for (const w of [...watches.values()]) { if (await tickWatch(w)) watches.delete(w.event.id); }
-    // --all: every five minutes, the scoreboard again for games now inside the lead.
+    // --all: every five minutes, the scoreboard again for games now inside the lead, and any new listing.
     if (ALL && Date.now() - lastScan >= 5 * 60e3) {
       lastScan = Date.now();
-      for (const e of pickGames(await scoreboard(), { all: true })) if (!watches.has(e.id)) watches.set(e.id, await openWatch(e));
+      const again = await scoreboard();
+      for (const e of pickGames(again, { all: true })) if (!watches.has(e.id)) watches.set(e.id, await openWatch(e));
+      await listRest(again);
     }
     if (watches.size) await sleep(every * 1000);
   }

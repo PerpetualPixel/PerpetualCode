@@ -312,11 +312,27 @@ export async function ensureLivePlays(env, game, payload, tick, { league = 'nfl'
 /** A watched game the board no longer shows: its last tick says final, or kick-off is six hours gone with nothing to say otherwise. */
 export const liveGameOver = (g, tick, now) => tick ? tick.state === 'post' : now > Date.parse(g.date) + 6 * 3600e3;
 
+/**
+ * How playable a game is right now, for the order of the board (2026-11-05:
+ * "playable lives at the very top in order of confidence"): the best slip's
+ * mean cushion (how far the pace clears its numbers) against the best game
+ * line's edge, as one score and as stars.
+ */
+export function playSummary(slips, reads) {
+  const slipScore = Math.max(0, ...(slips ?? []).map((s) => (s.legs?.length ? s.legs.reduce((a, l) => a + (Number(l.cushion) || 0), 0) / s.legs.length : 0)));
+  const readScore = Math.max(0, ...(reads ?? []).map((r) => Number(r.best?.edge) || 0)) * 2.5;
+  const score = Math.min(1, Math.max(slipScore, readScore));
+  const playable = (slips?.length ?? 0) > 0 || (reads?.length ?? 0) > 0;
+  const stars = !playable ? 0 : score >= 0.5 ? 5 : score >= 0.35 ? 4 : score >= 0.22 ? 3 : score >= 0.12 ? 2 : 1;
+  return { playable, score: Math.round(score * 100) / 100, stars, slips: slips?.length ?? 0, reads: reads?.length ?? 0 };
+}
+
 export async function getLiveBoard(env, now = Date.now(), { ctx = null } = {}) {
   const idxRaw = await env.POTD_KV.get(LIVE_WATCH_INDEX).catch(() => null);
   const games = (idxRaw ? JSON.parse(idxRaw).games : []) ?? [];
   const out = [];
-  for (const g of games.slice(0, 4)) {
+  // The whole slate (2026-11-05: "I only see two games, should be way more"): every watched game not yet over, up to forty.
+  for (const g of games.slice(0, 40)) {
     const watch = JSON.parse((await env.POTD_KV.get(liveWatchKey(g.id)).catch(() => null)) ?? 'null');
     const tick = watch?.ticks?.at(-1) ?? null;
     if (liveGameOver(g, tick, now)) continue; // the tab is for what is on or about to be, not last night
@@ -335,7 +351,9 @@ export async function getLiveBoard(env, now = Date.now(), { ctx = null } = {}) {
       : [];
     // A read shows the slips the last tick built (worker/src/live-probe.js rebuilds them every tick); it does not rebuild them itself.
     const plays = tick ? await ensureLivePlays(env, g, null, tick, { league, now, weather }) : null;
+    const slipList = plays ? refreshSlips(plays.slips, tick) : [];
     out.push({
+      play: playSummary(slipList, game),
       espnEventId: g.id, name: g.name, date: g.date, league,
       tick: tick ? { at: tick.at, state: tick.state, detail: tick.detail, period: tick.period, clock: tick.clock, score: tick.score } : null,
       elapsed: elapsedFraction(tick, league), halftime: isHalftime(tick, league), intermission: intermissionOf(tick, league), script: gameScript(tick, league),
@@ -345,7 +363,7 @@ export async function getLiveBoard(env, now = Date.now(), { ctx = null } = {}) {
       players: playerLines(tick, league),
       watch: whoToWatch(tick, candidates, league, { weather }),
       candidates: candidates.slice(0, 12),
-      slips: plays ? { builtAt: plays.builtAt, firstBuiltAt: plays.firstBuiltAt ?? plays.builtAt, builds: plays.builds ?? 1, score: plays.score, detail: plays.detail ?? null, period: plays.period ?? null, clock: plays.clock ?? null, list: refreshSlips(plays.slips, tick) } : null,
+      slips: plays ? { builtAt: plays.builtAt, firstBuiltAt: plays.firstBuiltAt ?? plays.builtAt, builds: plays.builds ?? 1, score: plays.score, detail: plays.detail ?? null, period: plays.period ?? null, clock: plays.clock ?? null, list: slipList } : null,
     });
   }
   return { at: now, games: out };
