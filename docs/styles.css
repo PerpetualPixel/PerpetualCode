@@ -7365,3 +7365,12 @@ a.trend-price:hover { background: rgba(255, 255, 255, 0.06); }
 /* Blowout risk: the one amber signal on a live card, in the head and as the first read in the body. */
 .live-flag { flex: none; font-size: 0.68rem; font-weight: 800; letter-spacing: 0.04em; text-transform: uppercase; padding: 2px 8px; border-radius: 999px; border: 1px solid rgba(251, 191, 36, 0.5); color: #fbbf24; background: rgba(251, 191, 36, 0.08); }
 .live-tag.is-blowout { color: #fbbf24; border-color: rgba(251, 191, 36, 0.5); background: rgba(251, 191, 36, 0.08); }
+
+/* "Fit screen" (desktop only): the shell widens to the window instead of its reading cap. The toggle hides below
+   the desktop breakpoint, where the shell already fills the screen. */
+.topbar-wide { display: none; }
+@media (min-width: 900px) {
+  .topbar-wide { display: inline-flex; }
+  .topbar-group-quiet .topbar-wide[aria-pressed="true"] { color: var(--text); background: var(--accent-dim); border-color: var(--line); }
+  :root[data-wide="1"] { --shell: calc(100vw - 48px); }
+}
