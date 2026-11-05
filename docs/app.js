@@ -11205,3 +11205,19 @@ el.liveView?.addEventListener('click', (event) => {
   const more = event.target.closest('[data-live-more]');
   if (more) { const k = more.dataset.liveMore; liveState.open[k] = !liveState.open[k]; renderLive(); }
 });
+
+/* "Fit screen" on desktop: the shell follows the window while it is on; the choice is remembered per browser (docs/wide.js applies it before first paint). */
+const wideToggle = document.getElementById('wideToggle');
+function renderWide() {
+  const on = document.documentElement.dataset.wide === '1';
+  if (!wideToggle) return;
+  wideToggle.setAttribute('aria-pressed', on ? 'true' : 'false');
+  wideToggle.textContent = on ? 'Fit screen \u2713' : 'Fit screen';
+}
+wideToggle?.addEventListener('click', () => {
+  const on = document.documentElement.dataset.wide !== '1';
+  if (on) document.documentElement.dataset.wide = '1'; else delete document.documentElement.dataset.wide;
+  try { localStorage.setItem('pp_wide', on ? '1' : '0'); } catch { /* storage off: this visit only */ }
+  renderWide();
+});
+renderWide();

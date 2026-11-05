@@ -36,7 +36,9 @@
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Syne:wght@600;700;800&family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
-<link rel="stylesheet" href="styles.css?v=1.304">
+<link rel="stylesheet" href="styles.css?v=1.305">
+<!-- Before first paint: a desktop reader who chose "Fit screen" gets the wide shell without a flash of the narrow one. -->
+<script src="wide.js?v=1.305"></script>
 </head>
 <body>
 
@@ -63,6 +65,10 @@
       </button>
       <button id="aboutToggle" class="icon-btn" aria-expanded="false" aria-controls="aboutPanel">
         About
+      </button>
+      <!-- Desktop only (2026-11-05: "toggle to fit the screen for desktop"): widens the shell to the window; remembered per browser. -->
+      <button id="wideToggle" class="icon-btn topbar-wide" aria-pressed="false" title="Use the whole width of the screen">
+        Fit screen
       </button>
     </div>
     <!-- Trends only (2026-10-27 direction): the Bankroll and Tracking tools
@@ -1056,6 +1062,6 @@
   </div>
 </aside>
 
-<script type="module" src="app.js?v=1.304"></script>
+<script type="module" src="app.js?v=1.305"></script>
 </body>
 </html>
