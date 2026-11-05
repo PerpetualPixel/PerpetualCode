@@ -322,6 +322,36 @@ export async function ensureLivePlays(env, game, payload, tick, { league = 'nfl'
   return record;
 }
 
+/**
+ * Last night's slips, graded (2026-11-05: "look over all the lives you
+ * called out last night ... how the performance was if I tailed all of
+ * the live plays for 1U"). For every game in the watch index: the last
+ * stored build under live:play (the slips rebuild on every tick, so this
+ * is the final call, not the first) against the final box score in the
+ * watch log, each leg hit or missed and each slip settled at one unit.
+ * A leg whose player is missing from the box stays open.
+ */
+export async function getLiveRecap(env, now = Date.now()) {
+  const { games } = await readWatchIndex(env);
+  const out = [];
+  for (const g of games) {
+    const watch = JSON.parse((await env.POTD_KV.get(liveWatchKey(g.id)).catch(() => null)) ?? 'null');
+    const play = JSON.parse((await env.POTD_KV.get(livePlayKey(g.id)).catch(() => null)) ?? 'null');
+    const fin = watch?.ticks?.[watch.ticks.length - 1] ?? null;
+    const box = new Map((fin?.box ?? []).map((p) => [String(p.name ?? '').toLowerCase(), p]));
+    const slips = (play?.slips ?? []).map((s) => {
+      const legs = s.legs.map((l) => { const p = box.get(String(l.player).toLowerCase()); const final = p ? num(p.stats?.[l.stat]) : null; return { player: l.player, team: l.team ?? null, stat: l.stat, label: l.label ?? l.stat, point: l.point, price: l.price, final, hit: final == null ? null : final >= l.point }; });
+      const result = legs.every((l) => l.hit === true) ? 'win' : legs.some((l) => l.hit === false) ? 'loss' : 'open';
+      const decimal = Number(s.decimal) || americanToDecimal(s.american);
+      return { bookId: s.bookId, book: s.book, american: s.american, decimal, diversified: Boolean(s.diversified), result, units: result === 'win' ? Math.round((decimal - 1) * 100) / 100 : result === 'loss' ? -1 : 0, legs };
+    });
+    out.push({ id: g.id, name: g.name, league: g.league ?? null, date: g.date ?? null, state: fin?.state ?? null, score: fin?.score ?? null, detail: fin?.detail ?? null,
+      built: play ? { at: play.builtAt, firstAt: play.firstBuiltAt ?? null, builds: play.builds ?? null, period: play.period ?? null, clock: play.clock ?? null, elapsed: play.elapsed ?? null, score: play.score ?? null } : null, slips });
+  }
+  const settled = out.flatMap((g) => g.slips).filter((s) => s.result !== 'open');
+  return { at: now, games: out, totals: { slips: settled.length, wins: settled.filter((s) => s.result === 'win').length, units: Math.round(settled.reduce((a, s) => a + s.units, 0) * 100) / 100 } };
+}
+
 /** The board: every watched game with its last reads, the books posting, the players, who to watch, and the slips. */
 /** A watched game the board no longer shows: its last tick says final, or kick-off is six hours gone with nothing to say otherwise. */
 export const liveGameOver = (g, tick, now) => tick ? tick.state === 'post' : now > Date.parse(g.date) + 6 * 3600e3;

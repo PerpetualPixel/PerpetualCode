@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { elapsedFraction, isHalftime, liveCandidates, buildLivePlay } from '../worker/src/live-board.js';
+import { elapsedFraction, isHalftime, liveCandidates, buildLivePlay, getLiveRecap } from '../worker/src/live-board.js';
 
 const tick = (over = {}) => ({ at: 1, state: 'in', detail: 'Halftime', period: 2, clock: '0:00', score: { PHI: 24, WSH: 3 }, box: [
   { id: '1', name: 'Saquon Barkley', team: 'PHI', stats: { rushingYards: '68', receptions: '2', receivingYards: '11' } },
@@ -226,4 +226,27 @@ test('projectStat: early in the game the pace is blended with the book number, s
   assert.equal(projectStat(4, 0.05, 'points', { league: 'nba', prior: 20 }), 32, '80 on pace, 20 on the number, a fifth of the way to the blend: 0.2*80 + 0.8*20');
   assert.equal(projectStat(4, 0.05, 'points', { league: 'nba' }), 80, 'no prior: the raw pace');
   assert.equal(projectStat(10, EARLY_BLEND, 'points', { league: 'nba', prior: 20 }), 40, 'a quarter in: the pace alone');
+});
+
+test('getLiveRecap grades each stored slip against the final box at one unit', async () => {
+  const m = new Map(); const env = { POTD_KV: { get: async (k) => m.get(k) ?? null, put: async (k, v) => { m.set(k, v); } } };
+  m.set('live:watch:index:nba', JSON.stringify({ games: [{ id: '9', name: 'Bulls at Knicks', league: 'nba', date: '2026-11-05T00:30:00Z' }, { id: '10', name: 'Heat at Clippers', league: 'nba', date: '2026-11-05T03:30:00Z' }] }));
+  m.set('live:watch:9', JSON.stringify({ ticks: [{ state: 'in', box: [] }, { state: 'post', score: { NY: 110, CHI: 100 }, detail: 'Final', box: [
+    { name: 'Landry Shamet', team: 'NY', stats: { points: '12' } }, { name: 'Josh Giddey', team: 'CHI', stats: { points: '8' } }, { name: 'OG Anunoby', team: 'NY', stats: { points: '20' } },
+  ] }] }));
+  m.set('live:play:9', JSON.stringify({ builtAt: 5, firstBuiltAt: 1, builds: 3, period: 3, clock: '4:00', elapsed: 0.6, score: { NY: 80, CHI: 70 }, slips: [
+    { bookId: 'fanduel', book: 'FanDuel', american: 152, decimal: 2.52, legs: [{ player: 'Landry Shamet', stat: 'points', point: 9.5, price: -270 }, { player: 'OG Anunoby', stat: 'points', point: 14.5, price: -280 }] },
+    { bookId: 'draftkings', book: 'DraftKings', american: 142, decimal: 2.42, legs: [{ player: 'Josh Giddey', stat: 'points', point: 9.5, price: -280 }, { player: 'OG Anunoby', stat: 'points', point: 14.5, price: -280 }] },
+    { bookId: 'caesars', book: 'Caesars', american: 150, legs: [{ player: 'Nobody Here', stat: 'points', point: 9.5, price: -280 }] },
+  ] }));
+  const r = await getLiveRecap(env, 99);
+  assert.equal(r.games.length, 2);
+  const g = r.games.find((x) => x.id === '9'); const none = r.games.find((x) => x.id === '10');
+  assert.equal(r.games[0].id, '10'); // newest first, as the index reads
+  assert.equal(g.state, 'post'); assert.deepEqual(g.score, { NY: 110, CHI: 100 }); assert.equal(g.built.builds, 3);
+  assert.deepEqual(g.slips.map((s) => [s.result, s.units]), [['win', 1.52], ['loss', -1], ['open', 0]]);
+  assert.deepEqual(g.slips[1].legs.map((l) => [l.final, l.hit]), [[8, false], [20, true]]);
+  assert.equal(g.slips[2].legs[0].hit, null);
+  assert.equal(none.built, null); assert.deepEqual(none.slips, []); assert.equal(none.state, null);
+  assert.deepEqual(r.totals, { slips: 2, wins: 1, units: 0.52 });
 });
