@@ -10958,6 +10958,8 @@ const LIVE_BOOKS_KEY = 'pixelpick.liveBooks.v1';
 /** The books a live slip can be at, in the order the picker shows them (worker/src/settings.js's LIVE_BOOKS). */
 const LIVE_BOOKS = ['draftkings', 'fanduel', 'caesars', 'betmgm', 'fanatics', 'hardrock', 'bet365', 'betrivers', 'espnbet', 'prizepicks'];
 const liveState = { data: null, loading: false, timer: null, open: {}, books: new Set(loadJSON(LIVE_BOOKS_KEY, []) ?? []), showAll: false, expandAll: false };
+/** How a game starts, by league: the tip in basketball, the puck drop in hockey, the kick-off in football and soccer. */
+const liveStartWord = (lg) => (lg === 'nba' ? 'Tips off' : lg === 'nhl' ? 'Drops' : 'Kicks off');
 /** Whether a game's card is open: tapped open, or every card opened at once. */
 const liveOpen = (g) => liveState.expandAll || Boolean(liveState.open[`game:${g.espnEventId}`]);
 /**
@@ -10977,7 +10979,7 @@ function liveSummary(g) {
     if (!slips && !reads) return g.elapsed < 0.03 ? 'Slips build from the first minutes' : 'Nothing playable right now';
     return [slips ? `${slips} slip${slips === 1 ? '' : 's'}` : null, reads ? `${reads} game line${reads === 1 ? '' : 's'}` : null].filter(Boolean).join(' · ');
   }
-  if (!t || t.state === 'pre') return `Tips ${liveKickFmt.format(new Date(g.date))}`;
+  if (!t || t.state === 'pre') return `${liveStartWord(g.league)} ${liveKickFmt.format(new Date(g.date))}`;
   return 'Final';
 }
 
@@ -11122,7 +11124,7 @@ function renderLiveGame(g) {
   const t = g.tick;
   const live = t?.state === 'in';
   const nhl = g.league === 'nhl'; const soccer = LIVE_SOCCER.has(g.league);
-  const state = !t ? 'No read yet' : t.state === 'pre' ? `${nhl ? 'Drops' : 'Kicks off'} ${esc(liveKickFmt.format(new Date(g.date)))}` : t.state === 'post' ? (soccer ? 'Full time' : 'Final') : g.intermission ? `${g.intermission === 1 ? '1st' : '2nd'} intermission` : g.halftime ? (soccer ? 'Half-time' : 'Halftime') : soccer ? esc(t.clock || t.detail || 'In play') : `${nhl ? (Number(t.period) > 3 ? 'OT' : `P${esc(String(t.period ?? ''))}`) : `Q${esc(String(t.period ?? ''))}`} ${esc(t.clock ?? '')}`;
+  const state = !t ? 'No read yet' : t.state === 'pre' ? `${liveStartWord(g.league)} ${esc(liveKickFmt.format(new Date(g.date)))}` : t.state === 'post' ? (soccer ? 'Full time' : 'Final') : g.intermission ? `${g.intermission === 1 ? '1st' : '2nd'} intermission` : g.halftime ? (soccer ? 'Half-time' : 'Halftime') : soccer ? esc(t.clock || t.detail || 'In play') : `${nhl ? (Number(t.period) > 3 ? 'OT' : `P${esc(String(t.period ?? ''))}`) : `Q${esc(String(t.period ?? ''))}`} ${esc(t.clock ?? '')}`;
   const score = t?.score ? Object.entries(t.score).map(([k, v]) => `${esc(k)} ${esc(String(v))}`).join(' · ') : '';
   const books = g.probe?.books?.filter((b) => b.markets.length) ?? [];
   const script = g.script?.leader ? `<span class="live-tag">${esc(g.script.leader)} up ${esc(String(g.script.margin))}: ${nhl || soccer ? 'the side behind shoots more' : 'run game favoured, passing faded'}</span>` : '';
