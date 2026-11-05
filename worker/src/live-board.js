@@ -109,9 +109,15 @@ export const roughWeather = (w) => Boolean(w) && ((Number(String(w.windSpeed ?? 
  * passing and catching down a fifth); a side down big throws (the
  * reverse); rough weather takes a sixth off passing and catching.
  */
-export function projectStat(current, elapsed, stat, { team, script, weather, league = 'nfl' } = {}) {
+/** Until this much of the game is in, a player's pace is blended with the book's number. */
+export const EARLY_BLEND = 0.25;
+export function projectStat(current, elapsed, stat, { team, script, weather, league = 'nfl', prior = null } = {}) {
   if (!Number.isFinite(current) || !elapsed) return null;
   let proj = current / elapsed;
+  // Early on the pace is a few minutes of noise: it is weighed against a prior (the book's own number for the player) until a
+  // quarter of the game is in, so a slip can build from the first minutes (2026-11-05: "they don't have to be by the quarter")
+  // without a hot start reading as a hundred-point night.
+  if (Number.isFinite(prior) && elapsed < EARLY_BLEND) { const w = elapsed / EARLY_BLEND; proj = w * proj + (1 - w) * prior; }
   if (goalSport(league)) {
     // Score effects: the side behind by two shoots more and its goalie faces less; the side ahead sits back and its goalie faces more.
     const shooting = /shots|points|goals|assists/i.test(stat);
@@ -170,7 +176,7 @@ export function liveCandidates(payload, tick, league = 'nfl', { weather = null }
         if (script.leader && p.team === script.leader && /passing|receiving|receptions/.test(stat)) continue;
         if (script.trailer && p.team === script.trailer && stat === 'rushingYards') continue;
         if (stat === 'passingYards' && roughWeather(weather)) continue;
-        const proj = projectStat(cur, elapsed, stat, { team: p.team, script, weather, league });
+        const proj = projectStat(cur, elapsed, stat, { team: p.team, script, weather, league, prior: o.point });
         if (proj < o.point * MARGIN) continue;
         out.push({ bookId, book: SPORTSBOOKS[bookId]?.name ?? b.key, market: m.key, stat, label: LIVE_LABEL[stat] ?? stat, player: o.description, team: p.team ?? null, athleteId: p.id ?? null, point: o.point, price: o.price, decimal: americanToDecimal(o.price), current: cur, pace: proj, cushion: Math.round(((proj - o.point) / o.point) * 100) / 100, link: o.link ?? null });
       }
@@ -281,8 +287,9 @@ function refreshSlips(slips, tick) {
 }
 
 /** Slips build once this much of the game is played (a quarter and a bit, enough pace to project from) and stop this far in (books pull ladders late). */
-export const BUILD_FROM = 0.2;
+export const BUILD_FROM = 0.03;
 export const BUILD_UNTIL = 0.9;
+
 
 /**
  * The plays for a game: rebuilt from the ladders on every tick while the

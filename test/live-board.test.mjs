@@ -73,7 +73,9 @@ test('the projection follows pace, script and weather; who to watch lists the bi
   const slips = buildLiveSlips(c);
   assert.deepEqual(slips.map((s) => s.bookId), ['draftkings'], 'FanDuel prices only one player: no slip there');
   const m = new Map(); const env = { POTD_KV: { get: async (k) => m.get(k) ?? null, put: async (k, v) => { m.set(k, v); } } };
-  assert.equal(await ensureLivePlays(env, { id: 'g', name: 'A at B' }, payload, { ...t, detail: '10:00 - 1st Quarter', period: 1, clock: '10:00' }), null, 'five minutes in: too little pace to build on');
+  assert.equal(await ensureLivePlays(env, { id: 'g', name: 'A at B' }, payload, { ...t, detail: '14:50 - 1st Quarter', period: 1, clock: '14:50' }), null, 'the first seconds: nothing to build on yet');
+  assert.ok((await ensureLivePlays(env, { id: 'g', name: 'A at B' }, payload, { ...t, detail: '10:00 - 1st Quarter', period: 1, clock: '10:00' }))?.slips, 'five minutes in: a slip builds, the early pace tempered by the book numbers (2026-11-05: not by the quarter)');
+  m.clear();
   const q2 = await ensureLivePlays(env, { id: 'g', name: 'A at B' }, payload, { ...t, detail: '7:00 - 2nd Quarter', period: 2, clock: '7:00' }, { now: 8 });
   assert.equal(q2.slips.length, 1); assert.deepEqual([q2.builtAt, q2.firstBuiltAt, q2.builds, q2.period, q2.clock], [8, 8, 1, 2, '7:00'], 'built in the second quarter, not only at the half');
   const built = await ensureLivePlays(env, { id: 'g', name: 'A at B' }, payload, t, { now: 9 });
@@ -210,4 +212,12 @@ test('playSummary: the best slip cushion against the best game-line edge, as a s
   assert.deepEqual(playSummary(slips, reads), { playable: true, score: 0.5, stars: 5, slips: 2, reads: 1 });
   assert.deepEqual(playSummary([], reads), { playable: true, score: 0.25, stars: 3, slips: 0, reads: 1 }, 'a 10% edge reads as a quarter');
   assert.deepEqual(playSummary([], []), { playable: false, score: 0, stars: 0, slips: 0, reads: 0 });
+});
+
+test('projectStat: early in the game the pace is blended with the book number, so a hot first minute does not read as a hundred-point night; by a quarter in it is the pace alone', async () => {
+  const { projectStat, BUILD_FROM, EARLY_BLEND } = await import('../worker/src/live-board.js');
+  assert.ok(BUILD_FROM <= 0.05, 'slips build from the first minutes');
+  assert.equal(projectStat(4, 0.05, 'points', { league: 'nba', prior: 20 }), 32, '80 on pace, 20 on the number, a fifth of the way to the blend: 0.2*80 + 0.8*20');
+  assert.equal(projectStat(4, 0.05, 'points', { league: 'nba' }), 80, 'no prior: the raw pace');
+  assert.equal(projectStat(10, EARLY_BLEND, 'points', { league: 'nba', prior: 20 }), 40, 'a quarter in: the pace alone');
 });
