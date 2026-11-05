@@ -24,6 +24,11 @@ on:
         description: 'For a page that is not JSON: print only the lines matching this regular expression'
         required: false
         type: string
+      raw:
+        description: 'For a page that is not JSON: print windows of the raw HTML around each GREP match (markup kept), for writing a parser'
+        required: false
+        type: boolean
+        default: false
   push:
     paths:
       - .github/workflows/worker-probe.yml
@@ -43,6 +48,7 @@ jobs:
           ATHLETES: ${{ inputs.athletes }}
           # The routes a push to this file reads: the open tickets' players, by team and ESPN id.
           GREP: ${{ inputs.grep }}
+          RAW: ${{ inputs.raw }}
           PROBES: |
             /live/probe
         run: |
@@ -56,7 +62,9 @@ jobs:
             echo "$body" | node -e '
               let raw = ""; process.stdin.on("data", (c) => { raw += c; }).on("end", () => {
                 let d; try { d = JSON.parse(raw); } catch {
-                  // Not JSON (a docs page): the lines that mention the words in GREP, or the head of it.
+                  // Raw mode: the markup itself around each match, for writing a parser against a page.
+                if (process.env.RAW === "true" && process.env.GREP) { const g = new RegExp(process.env.GREP, "gi"); let m; let k = 0; while ((m = g.exec(raw)) && k++ < 40) console.log("RAW", raw.slice(Math.max(0, m.index - 300), m.index + 700).replace(/\s+/g, " ")); return; }
+                // Not JSON (a docs page): the lines that mention the words in GREP, or the head of it.
                   const re = process.env.GREP ? new RegExp(process.env.GREP, "i") : null;
                   const text = raw.replace(/<script[\s\S]*?<\/script>|<style[\s\S]*?<\/style>/g, "").replace(/<[^>]+>/g, " ").replace(/&nbsp;|&#160;/g, " ").replace(/[ \t]+/g, " ");
                   const lines = text.split(/\n+/).map((l) => l.trim()).filter(Boolean);
