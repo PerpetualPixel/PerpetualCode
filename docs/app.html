@@ -36,9 +36,9 @@
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Syne:wght@600;700;800&family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
-<link rel="stylesheet" href="styles.css?v=1.308">
+<link rel="stylesheet" href="styles.css?v=1.309">
 <!-- Before first paint: a desktop reader who chose "Fit screen" gets the wide shell without a flash of the narrow one. -->
-<script src="wide.js?v=1.308"></script>
+<script src="wide.js?v=1.309"></script>
 </head>
 <body>
 
@@ -417,8 +417,7 @@
       <h2 class="parlay-h">Configure by</h2>
       <label class="parlay-field"><span>Sportsbook</span><select id="parlayBook"></select></label>
       <label class="parlay-field"><span>Parlay legs</span><select id="parlayLegs"></select></label>
-      <div class="parlay-field" data-ufc-hide><span>Last 5 hit rate <strong id="parlayL5Label">Any</strong></span><input id="parlayL5" type="range" min="0" max="100" step="10" value="0" aria-label="Last 5 hit rate at least"></div>
-      <div class="parlay-field" data-ufc-hide><span>Last 10 hit rate <strong id="parlayL10Label">Any</strong></span><input id="parlayL10" type="range" min="0" max="100" step="10" value="0" aria-label="Last 10 hit rate at least"></div>
+      <div class="parlay-field" data-ufc-hide><span>Hits in last 20 <strong id="parlayL20Label">Any</strong></span><input id="parlayL20" type="range" min="0" max="20" step="1" value="0" aria-label="Hits in the last 20 games, at least"><div class="parlay-season"><button type="button" id="parlaySeason" class="rate-chip parlay-season-chip" data-parlay-season aria-pressed="false">2026/2027</button><small id="parlaySeasonNote">Off: the last 20 games, last season included</small></div></div>
       <div class="parlay-field" data-ufc-hide><span>Vs. opponent hit rate <strong id="parlayH2HLabel">Any</strong></span><input id="parlayH2H" type="range" min="0" max="100" step="10" value="0" aria-label="Head to head hit rate at least"></div>
       <div class="parlay-field"><span>Score</span><div id="parlayScore" class="parlay-score"></div></div>
       <div class="parlay-field" data-ufc-hide><span>Prop type</span><div id="parlayStats" class="rate-chips parlay-chips-wrap"></div></div>
@@ -1062,6 +1061,6 @@
   </div>
 </aside>
 
-<script type="module" src="app.js?v=1.308"></script>
+<script type="module" src="app.js?v=1.309"></script>
 </body>
 </html>

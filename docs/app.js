@@ -878,10 +878,10 @@ const el = {
   parlayLeagues: document.getElementById('parlayLeagues'),
   parlayBook: document.getElementById('parlayBook'),
   parlayLegs: document.getElementById('parlayLegs'),
-  parlayL5: document.getElementById('parlayL5'),
-  parlayL5Label: document.getElementById('parlayL5Label'),
-  parlayL10: document.getElementById('parlayL10'),
-  parlayL10Label: document.getElementById('parlayL10Label'),
+  parlayL20: document.getElementById('parlayL20'),
+  parlayL20Label: document.getElementById('parlayL20Label'),
+  parlaySeason: document.getElementById('parlaySeason'),
+  parlaySeasonNote: document.getElementById('parlaySeasonNote'),
   parlayH2H: document.getElementById('parlayH2H'),
   parlayH2HLabel: document.getElementById('parlayH2HLabel'),
   parlayScore: document.getElementById('parlayScore'),
@@ -10152,7 +10152,7 @@ el.playersForm?.addEventListener('submit', (event) => { event.preventDefault(); 
 const parlayState = {
   // The leagues toggled on; a ticket can mix legs from all of them.
   sports: new Set(['basketball_nba']), rows: {}, loading: false,
-  book: 'draftkings', legs: 4, minL5: 0, minL10: 0, minH2H: 0, minScore: 2, stats: new Set(), odds: [-800, 800], games: new Set(), side: 'both', team: '',
+  book: 'draftkings', legs: 4, minL20: 0, season: false, minH2H: 0, minScore: 2, stats: new Set(), odds: [-800, 800], games: new Set(), side: 'both', team: '',
   // UFC only: the prop types the pieces come from (none chosen = every type).
   ufcProps: new Set(),
   built: null, locked: new Set(), seen: new Set(), breakdowns: {}, open: null, amount: 10, note: '', sprinkle: false,
@@ -10245,6 +10245,27 @@ async function loadParlay() {
 }
 
 /** The legs the configuration allows, best first: one per player, at the chosen book, inside the odds range, over the hit rate floors and the score. */
+/** The bar's label: "Any", or the floor as hits of 20 with its rate. */
+const parlayL20Text = (n) => (n ? `${n}+ of 20 (${Math.round((n / 20) * 100)}%)` : 'Any');
+/** The season under way across the parlay rows (the newest season they carry), else the calendar's. */
+function parlaySeasonYear() {
+  let y = 0;
+  for (const r of parlayRows()) { const s = Number(r.seasons?.[0]); if (s > y) y = s; }
+  return y || defaultSeasons()[0];
+}
+/**
+ * The window the "hits in last 20" bar judges a row on: the stored last
+ * 20 (which reaches into last season early in the year), or, with the
+ * season toggle on, only the season under way: its last 20 games, fewer
+ * when the season is young, and the bar's floor then reads as a rate
+ * (14+ of 20 is 70%, so 6 of 8 this season passes).
+ */
+function parlayWindow(row, seasonOnly) {
+  if (!seasonOnly) return { hits: row.periods?.l20?.hits ?? 0, games: row.periods?.l20?.games ?? 0 };
+  const y = parlaySeasonYear();
+  const flags = (row.series ?? []).filter((g) => Number(g.season) === y).slice(0, 20).map((g) => g.hit).filter((f) => f !== null && f !== undefined);
+  return { hits: flags.filter(Boolean).length, games: flags.length };
+}
 function parlayCandidates() {
   const now = Date.now();
   const s = parlayState;
@@ -10262,8 +10283,7 @@ function parlayCandidates() {
     if (!q) continue;
     if (!q.unpriced && (q.american < s.odds[0] || q.american > s.odds[1])) continue;
     if (!r.ufc) {
-      if (s.minL5 > 0 && !((rate(r, 'l5') ?? -1) >= s.minL5 - 1e-9)) continue;
-      if (s.minL10 > 0 && !((rate(r, 'l10') ?? -1) >= s.minL10 - 1e-9)) continue;
+      if (s.minL20 > 0) { const w = parlayWindow(r, s.season); if (!(w.games > 0 && w.hits / w.games >= s.minL20 / 20 - 1e-9)) continue; }
       if (s.minH2H > 0 && !((r.periods?.h2h?.games ?? 0) > 0 && rate(r, 'h2h') >= s.minH2H - 1e-9)) continue;
     }
     const score = r.ufc ? r.ufc.score : legScore(r);
@@ -10475,8 +10495,10 @@ function renderParlay() {
   if (s.legs > maxLegs) s.legs = maxLegs;
   el.parlayLegs.innerHTML = Array.from({ length: maxLegs - 1 }, (_, i) => i + 2).map((n) => `<option value="${n}" ${s.legs === n ? 'selected' : ''}>${n}${n === maxLegs ? ` (${esc(parlayBookName(s.book))} max)` : ''}</option>`).join('');
   el.parlayLegs.value = String(s.legs);
-  el.parlayL5.value = String(Math.round(s.minL5 * 100)); el.parlayL5Label.textContent = s.minL5 ? `${Math.round(s.minL5 * 100)}%+` : 'Any';
-  el.parlayL10.value = String(Math.round(s.minL10 * 100)); el.parlayL10Label.textContent = s.minL10 ? `${Math.round(s.minL10 * 100)}%+` : 'Any';
+  el.parlayL20.value = String(s.minL20); el.parlayL20Label.textContent = parlayL20Text(s.minL20);
+  const sy = parlaySeasonYear();
+  el.parlaySeason.textContent = `${sy}/${sy + 1}`; el.parlaySeason.classList.toggle('is-active', s.season); el.parlaySeason.setAttribute('aria-pressed', String(s.season));
+  el.parlaySeasonNote.textContent = s.season ? `On: only ${sy}/${sy + 1} games count` : 'Off: the last 20 games, last season included';
   el.parlayH2H.value = String(Math.round(s.minH2H * 100)); el.parlayH2HLabel.textContent = s.minH2H ? `${Math.round(s.minH2H * 100)}%+` : 'Any';
   el.parlayScore.innerHTML = [1, 2, 3, 4, 5].map((n) => `<button type="button" class="parlay-star ${n <= s.minScore ? 'is-on' : ''}" data-parlay-score="${n}" aria-label="${n} star${n === 1 ? '' : 's'} and up" aria-pressed="${n === s.minScore}">★</button>`).join('') + `<small>${esc(String(s.minScore))}+ stars</small>`;
   const statsHere = new Map();
@@ -10567,6 +10589,7 @@ el.parlayView?.addEventListener('click', (event) => {
   }
   const star = t.closest('[data-parlay-score]');
   if (star) { s.minScore = Number(star.dataset.parlayScore); renderParlay(); return; }
+  if (t.closest('[data-parlay-season]')) { s.season = !s.season; renderParlay(); return; }
   const stat = t.closest('[data-parlay-stat]');
   if (stat) { const k = stat.dataset.parlayStat; if (s.stats.has(k)) s.stats.delete(k); else s.stats.add(k); renderParlay(); return; }
   const ufcProp = t.closest('[data-parlay-ufc-prop]');
@@ -10575,7 +10598,7 @@ el.parlayView?.addEventListener('click', (event) => {
   if (game) { const k = game.dataset.parlayGame; if (s.games.has(k)) s.games.delete(k); else s.games.add(k); renderParlay(); return; }
   if (t.closest('[data-parlay-build]')) { s.sprinkle = false; buildParlay({ regenerate: Boolean(s.built) }); return; }
   if (t.closest('[data-parlay-sprinkle]')) { s.sprinkle = !s.sprinkle; renderParlay(); if (s.sprinkle && window.innerWidth <= 820) el.parlayResult?.scrollIntoView({ behavior: 'smooth', block: 'start' }); return; }
-  if (t.closest('[data-parlay-reset]')) { Object.assign(s, { legs: 4, minL5: 0, minL10: 0, minH2H: 0, minScore: 2, stats: new Set(), odds: [-800, 800], games: new Set(), side: 'both', team: '', ufcProps: new Set(), built: null, locked: new Set(), seen: new Set(), open: null, note: '' }); renderParlay(); return; }
+  if (t.closest('[data-parlay-reset]')) { Object.assign(s, { legs: 4, minL20: 0, season: false, minH2H: 0, minScore: 2, stats: new Set(), odds: [-800, 800], games: new Set(), side: 'both', team: '', ufcProps: new Set(), built: null, locked: new Set(), seen: new Set(), open: null, note: '' }); renderParlay(); return; }
   const lock = t.closest('[data-parlay-lock]');
   if (lock) { const id = lock.dataset.parlayLock; if (s.locked.has(id)) s.locked.delete(id); else s.locked.add(id); renderParlay(); return; }
   const view = t.closest('[data-parlay-view]');
@@ -10586,8 +10609,7 @@ el.parlayView?.addEventListener('click', (event) => {
 });
 el.parlayView?.addEventListener('input', (event) => {
   const s = parlayState; const t = event.target;
-  if (t === el.parlayL5) { s.minL5 = Math.round(Number(t.value) / 10) / 10; el.parlayL5Label.textContent = s.minL5 ? `${Math.round(s.minL5 * 100)}%+` : 'Any'; }
-  else if (t === el.parlayL10) { s.minL10 = Math.round(Number(t.value) / 10) / 10; el.parlayL10Label.textContent = s.minL10 ? `${Math.round(s.minL10 * 100)}%+` : 'Any'; }
+  if (t === el.parlayL20) { s.minL20 = Math.max(0, Math.min(20, Math.round(Number(t.value) || 0))); el.parlayL20Label.textContent = parlayL20Text(s.minL20); }
   else if (t === el.parlayH2H) { s.minH2H = Math.round(Number(t.value) / 10) / 10; el.parlayH2HLabel.textContent = s.minH2H ? `${Math.round(s.minH2H * 100)}%+` : 'Any'; }
   else if (t.id === 'parlayAmount') { s.amount = Math.max(0, Number(t.value) || 0); const strong = el.parlayResult.querySelector('.parlay-payout-value strong'); const price = parlayPriceOf(s.built ?? []); if (strong) strong.textContent = price ? `$${(s.amount * price.decimal).toFixed(2)}` : '—'; }
 });
