@@ -11049,7 +11049,7 @@ function liveBar(current, point) {
     <span class="live-bar-green" style="width:${cur.toFixed(1)}%"></span>
     <span class="live-bar-tick" style="left:${line.toFixed(1)}%"></span>
     <span class="live-bar-line" style="left:${line.toFixed(1)}%"><b>${esc(String(point))}</b></span>
-    <span class="live-bar-now" style="left:${cur.toFixed(1)}%">${esc(String(current))}</span>
+    <span class="live-bar-now" style="left:clamp(20px, ${cur.toFixed(1)}%, calc(100% - 20px))">${esc(String(current))}</span>
   </div>`;
 }
 

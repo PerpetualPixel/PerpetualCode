@@ -7242,7 +7242,8 @@ a.trend-price:hover { background: rgba(255, 255, 255, 0.06); }
 .live-bar-green { position: absolute; left: 0; top: 14px; height: 6px; border-radius: 3px; background: var(--success); }
 .live-bar-tick { position: absolute; top: 10px; width: 2px; height: 14px; margin-left: -1px; border-radius: 1px; background: var(--text); opacity: 0.85; }
 .live-bar-line { position: absolute; top: 24px; transform: translateX(-50%); font-family: var(--mono); font-size: 0.78rem; color: var(--text); }
-.live-bar-now { position: absolute; top: 4px; transform: translateX(-50%); min-width: 34px; padding: 2px 8px; border-radius: 999px; background: var(--surface); border: 2px solid var(--muted); font-family: var(--mono); font-weight: 800; font-size: 0.82rem; text-align: center; }
+/* The knob is a solid green pill: what he has now, in bold white, sitting on the green fill. */
+.live-bar-now { position: absolute; top: 2px; transform: translateX(-50%); min-width: 38px; padding: 4px 10px; border-radius: 999px; background: var(--success); color: #fff; border: 2px solid #fff; box-shadow: 0 0 0 2px var(--success), 0 4px 12px rgba(16, 185, 129, 0.45); font-family: var(--mono); font-weight: 900; font-size: 0.95rem; line-height: 1; letter-spacing: 0.01em; text-align: center; }
 .live-forming .live-leg { padding: 10px 0; }
 .live-updated { margin: 0 0 10px; }
 
@@ -7274,7 +7275,7 @@ a.trend-price:hover { background: rgba(255, 255, 255, 0.06); }
 .live-play.is-best { border-color: var(--success); box-shadow: 0 0 14px rgba(94, 224, 122, 0.18); }
 .live-play + .live-play { margin-top: 10px; }
 .live-leg.is-cleared .live-leg-head strong { color: var(--success); }
-.live-bar.is-cleared .live-bar-now { border-color: var(--success); }
+.live-bar.is-cleared .live-bar-now { background: #fff; color: var(--success); border-color: var(--success); }
 .live-books-wrap { margin-top: 12px; }
 .live-books-wrap summary { cursor: pointer; color: var(--muted); font-size: 0.82rem; font-weight: 700; }
 
@@ -7299,7 +7300,7 @@ a.trend-price:hover { background: rgba(255, 255, 255, 0.06); }
 .live-bar-track, .live-bar-green { top: 11px; height: 5px; }
 .live-bar-tick { top: 8px; height: 11px; }
 .live-bar-line { top: 18px; font-size: 0.74rem; }
-.live-bar-now { top: 1px; font-size: 0.78rem; padding: 1px 7px; min-width: 30px; }
+.live-bar-now { top: 0; font-size: 0.9rem; padding: 3px 9px; min-width: 34px; }
 .live-leg-sub { margin: 2px 0 0; font-size: 0.76rem; color: var(--muted); }
 .live-play .pick-bet-foot { padding: 6px 12px 10px; }
 .live-play .pick-bet-link { padding: 9px 12px; }
