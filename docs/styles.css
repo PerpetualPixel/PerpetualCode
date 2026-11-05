@@ -6658,11 +6658,13 @@ button, [role="tab"], .league-chip, .parlay-btn, .trend-price { touch-action: ma
 .rate-chip.is-active { background: var(--success); color: #06130a; border-color: var(--success); }
 .rate-chip.is-empty { opacity: 0.55; }
 /* The fights list on a UFC ticket: one even row per fight, the names left and the time right, in the order of the night. */
-.parlay-chips-wrap.is-fights { display: grid; grid-template-columns: 1fr; gap: 8px; justify-content: stretch; }
-.parlay-chips-wrap.is-fights .rate-chip { display: flex; justify-content: space-between; align-items: center; gap: 10px; width: 100%; text-align: left; padding: 10px 14px; }
-.parlay-chips-wrap.is-fights .rate-chip > span { min-width: 0; }
-.parlay-chips-wrap.is-fights .rate-chip small { flex: none; white-space: nowrap; font-weight: 600; opacity: 0.85; }
-@media (min-width: 900px) { .parlay-chips-wrap.is-fights { grid-template-columns: 1fr 1fr; } }
+.parlay-chips-wrap.is-fights { display: grid; grid-template-columns: minmax(0, 1fr); gap: 8px; justify-content: stretch; }
+/* A fight chip stacks the pairing over its time, so a long pairing wraps inside the chip instead of widening it; the
+   radius stays a rounded corner, not a pill, so a two-line chip does not turn into an oval. */
+.parlay-chips-wrap.is-fights .rate-chip { display: flex; flex-direction: column; align-items: flex-start; gap: 2px; width: 100%; min-width: 0; text-align: left; padding: 9px 12px; border-radius: 14px; }
+.parlay-chips-wrap.is-fights .rate-chip > span { min-width: 0; max-width: 100%; overflow-wrap: anywhere; }
+.parlay-chips-wrap.is-fights .rate-chip small { white-space: nowrap; font-weight: 600; opacity: 0.85; margin-left: 0; }
+@media (min-width: 900px) { .parlay-chips-wrap.is-fights { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
 .rate-chip small { font-weight: 700; opacity: 0.8; margin-left: 2px; }
 .parlay-ufc-note { margin: 8px 0 0; }
 .parlay-leg-price.is-none { font-size: 0.78rem; color: #fbbf24; display: flex; flex-direction: column; align-items: flex-end; line-height: 1.1; }
@@ -6881,7 +6883,11 @@ a.trend-price:hover { background: rgba(255, 255, 255, 0.06); }
 /* Parlay Builder                                                    */
 /* ---------------------------------------------------------------- */
 .parlay-layout { display: grid; grid-template-columns: 320px 1fr; gap: 20px; align-items: start; margin-top: 10px; }
-.parlay-config-col { display: grid; gap: 14px; padding: 16px; border: 1px solid var(--line); border-radius: 16px; background: var(--surface); position: sticky; top: 12px; }
+.parlay-config-col { display: grid; gap: 14px; padding: 16px; border: 1px solid var(--line); border-radius: 16px; background: var(--surface); position: sticky; top: 12px; min-width: 0; }
+/* Grid items keep their min-content width by default, so a wide child (the fights grid, a long note) pushed every
+   control past the panel's edge on desktop (2026-11-05: "some of the UI was overlapping"); nothing exceeds the column. */
+.parlay-config-col > * { min-width: 0; max-width: 100%; }
+.parlay-config-col select, .parlay-config-col input { max-width: 100%; }
 .parlay-h { margin: 0 0 4px; font-size: 1.1rem; }
 .parlay-field { display: grid; gap: 6px; }
 .parlay-field > span { font-size: 0.74rem; font-weight: 700; letter-spacing: 0.06em; text-transform: uppercase; color: var(--muted); display: flex; justify-content: space-between; align-items: center; }
