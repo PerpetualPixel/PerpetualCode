@@ -10188,6 +10188,7 @@ function ufcParlayRows(picks) {
   if (Array.isArray(rec.props?.legs)) {
     parlayState.ufcNotes = rec.props.notes ?? {};
     parlayState.ufcCappers = rec.props.cappers ?? null;
+    parlayState.ufcBoard = rec.props.board ?? null;
     return rec.props.legs.map((l) => {
       const bd = rec.breakdowns?.[l.boutId] ?? {};
       const quotes = (l.quotes ?? []).map((q) => ({ ...q, bookKey: q.bookId }));
@@ -10394,7 +10395,7 @@ function renderParlayLeg(leg) {
       <div class="parlay-leg-actions">
         <button type="button" class="parlay-btn" data-parlay-view="${esc(r.id)}">${open ? 'Hide breakdown' : 'Why this leg'}</button>
         ${r.athleteId ? `<button type="button" class="parlay-btn" data-parlay-stats="${esc(r.id)}">Fighter info</button>` : ''}
-        ${q.link ? `<a class="parlay-btn is-slip" href="${esc(q.link)}" target="_blank" rel="noopener">Add to slip ↗</a>` : ''}
+        ${q.link ? `<a class="parlay-btn is-slip" href="${esc(q.link)}" target="_blank" rel="noopener">${q.source === 'bestfightodds' ? 'See the board ↗' : 'Add to slip ↗'}</a>` : ''}
       </div>
       ${open ? `<div class="parlay-breakdown ${leg.score >= 4 ? 'is-good' : 'is-risky'}">${(u.why ?? []).length ? `<ul>${u.why.map((x) => `<li>${esc(x)}</li>`).join('')}</ul>` : ''}${u.summary ? `<p><strong>${u.lean === null ? "Pixel's read of the fight." : u.lean ? 'With the lean.' : 'Against the lean.'}</strong> ${esc(u.summary)}</p>` : ''}${(u.reasons ?? []).length ? `<ul>${u.reasons.map((x) => `<li>${esc(x)}</li>`).join('')}</ul>` : ''}</div>` : ''}
     </div>
@@ -10414,7 +10415,7 @@ function renderParlayLeg(leg) {
       <div class="parlay-leg-actions">
         <button type="button" class="parlay-btn" data-parlay-view="${esc(r.id)}">${open ? 'Hide breakdown' : 'Why this leg'}</button>
         <button type="button" class="parlay-btn" data-parlay-stats="${esc(r.id)}">View stats</button>
-        ${q.link ? `<a class="parlay-btn is-slip" href="${esc(q.link)}" target="_blank" rel="noopener">Add to slip ↗</a>` : ''}
+        ${q.link ? `<a class="parlay-btn is-slip" href="${esc(q.link)}" target="_blank" rel="noopener">${q.source === 'bestfightodds' ? 'See the board ↗' : 'Add to slip ↗'}</a>` : ''}
       </div>
       ${open ? `<div class="parlay-breakdown ${b?.verdict === 'risky' ? 'is-risky' : 'is-good'}">${b ? `<p><strong>${b.verdict === 'good' ? 'Good leg' : 'Risky leg'}.</strong> ${esc(b.summary)}</p><ul>${(b.reasons ?? []).map((x) => `<li>${esc(x)}</li>`).join('')}</ul>${b.model ? '' : b.capped ? '<p class="row-sub">Today\'s model reads are used up (a free service keeps a daily budget); this is the record alone. The reads come back tomorrow.</p>' : '<p class="row-sub">The model read was unavailable; this is the record alone.</p>'}` : '<p class="row-sub">Reading the leg…</p>'}</div>` : ''}
     </div>
@@ -10506,8 +10507,10 @@ function renderParlay() {
     const unpriced = live.filter((r) => r.ufc && !r.ufc.priced && (!s.ufcProps.size || s.ufcProps.has(r.ufc.prop))).length;
     // The MMA Engine's consensus moves the grades: say whether its run has read this card, so a ticket that changes when it lands is explained.
     const cap = s.ufcCappers;
+    const board = s.ufcBoard;
+    const boardNote = board?.at ? `Fight prop prices come from the BestFightOdds board (read ${ufcDayFmt.format(new Date(board.at))}, ${board.bouts} bout${board.bouts === 1 ? '' : 's'} listed); a leg links to the board, and the bet itself is placed at your book.` : '';
     const capNote = cap ? (cap.read ? `Capper consensus is in for ${cap.bouts} bout${cap.bouts === 1 ? '' : 's'}${cap.generatedAt ? ` (run ${ufcDayFmt.format(new Date(cap.generatedAt))})` : ''} and shapes these grades; the ticket re-grades when the engine updates.` : 'The MMA Engine has not read this card yet; the grades move once its run lands, so the ticket can change then.') : '';
-    el.parlayUfcNote.textContent = [[...new Set(chosenNotes)].join(' ') || (unpriced && isUfcParlay() ? `${unpriced} of these legs have no line at any book yet; they ride the ticket unpriced with a note, and the price covers the rest.` : ''), isUfcParlay() ? capNote : ''].filter(Boolean).join(' ');
+    el.parlayUfcNote.textContent = [[...new Set(chosenNotes)].join(' ') || (unpriced && isUfcParlay() ? `${unpriced} of these legs have no line at any book yet; they ride the ticket unpriced with a note, and the price covers the rest.` : ''), isUfcParlay() ? boardNote : '', isUfcParlay() ? capNote : ''].filter(Boolean).join(' ');
   }
 
   if (el.parlaySprinkle) { el.parlaySprinkle.hidden = !isUfcParlay(); el.parlaySprinkle.disabled = !live.some((r) => r.ufc?.sprinkle); el.parlaySprinkle.setAttribute('aria-pressed', s.sprinkle ? 'true' : 'false'); }

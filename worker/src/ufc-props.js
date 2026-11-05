@@ -20,6 +20,7 @@
  * does not pull yet, so those chips carry a note and no legs.
  */
 import { americanToDecimal, decimalToAmerican } from '../../docs/engine.js';
+import { priceLegsFromBoard } from './ufc-prop-odds.js';
 
 /** Pixel's fair price for a chance: the odds the leg would be worth with no vig, in American form, or null. */
 export const fairAmerican = (p) => (p > 0 && p < 1 ? decimalToAmerican(1 / p) : null);
@@ -214,16 +215,16 @@ export function ufcPropLegs(bout, { odds = null, breakdown = null, engine = null
     push('distance', null, 'Fight does not go the distance', 1 - pDist, fightWhy());
     for (const r of allRounds) {
       const p = endIn([r]);
-      if (p >= 0.12) push('end_round', null, `Fight ends in Round ${r}`, p, [...fightWhy(), `${pct(p)} of the finishes land in Round ${r} across both records`]);
+      if (p >= 0.12) push('end_round', null, `Fight ends in Round ${r}`, p, [...fightWhy(), `${pct(p)} of the finishes land in Round ${r} across both records`], [], { round: r });
     }
     for (const r of [2, 3].filter((x) => x <= rounds)) {
       const p = 1 - endIn(allRounds.filter((x) => x < r));
-      push('round_start', null, `Round ${r} to start`, p, [`${pct(1 - p)} chance the fight is over before Round ${r}`, ...fightWhy()]);
+      push('round_start', null, `Round ${r} to start`, p, [`${pct(1 - p)} chance the fight is over before Round ${r}`, ...fightWhy()], [], { round: r, answer: 'yes' });
     }
     for (const k of ['ko', 'sub', 'dec']) {
       const p = endBy(k);
       // FanDuel's market name and options (2026-11-05): "How fight will end", KO/TKO, Submission, Points.
-      if (p >= 0.15) push('end_method', null, `How fight will end: ${END_LABEL[k]}`, p, sides.map((s) => `${name[s]}: ${pct(read[s].share[k])} of wins by ${METHOD_LABEL[k]}`));
+      if (p >= 0.15) push('end_method', null, `How fight will end: ${END_LABEL[k]}`, p, sides.map((s) => `${name[s]}: ${pct(read[s].share[k])} of wins by ${METHOD_LABEL[k]}`), [], { method: k });
     }
     // Rounds over/under: every total the feed posts, or the usual number unpriced.
     const totals = (odds?.totals ?? []).length ? odds.totals : [{ point: rounds === 5 ? 2.5 : 1.5, over: [], under: [] }];
@@ -349,14 +350,17 @@ export function sprinklePicks(legs, { perBout = 2, max = SPRINKLE_MAX } = {}) {
 }
 
 /** The card's pieces: every bout's legs, with the notes for the props that have no lines or no stats. */
-export function ufcCardProps(bouts, readBy, { now = Date.now(), engine = null } = {}) {
+export function ufcCardProps(bouts, readBy, { now = Date.now(), engine = null, board = null } = {}) {
   const legs = [];
-  let cappersRead = 0;
+  let cappersRead = 0; let boutsOnBoard = 0; let pricedFromBoard = 0;
   for (const bout of bouts ?? []) {
     const r = readBy(bout);
     if (!r) continue;
     if (r.engine?.moneyline || r.engine?.methods?.length) cappersRead++;
-    legs.push(...ufcPropLegs(bout, r));
+    let mine = ufcPropLegs(bout, r);
+    // The fight props' prices from the BestFightOdds board the runner writes (worker/src/ufc-prop-odds.js), where it lists the bout.
+    if (board) { const priced = priceLegsFromBoard(mine, bout, board); mine = priced.legs; if (priced.matched) { boutsOnBoard++; pricedFromBoard += priced.priced ?? 0; } }
+    legs.push(...mine);
   }
   const notes = { strikes: NO_STATS_NOTE, takedowns: NO_STATS_NOTE, knockdowns: NO_STATS_NOTE };
   if (!legs.some((l) => l.prop === 'spread')) notes.spread = NO_SPREAD_NOTE;
@@ -364,5 +368,6 @@ export function ufcCardProps(bouts, readBy, { now = Date.now(), engine = null } 
   const cappers = { read: cappersRead > 0, bouts: cappersRead, generatedAt: cappersRead ? engine?.generatedAt ?? null : null };
   const sprinkles = sprinklePicks(legs);
   sprinkles.forEach((l, i) => { l.sprinkle = true; l.sprinkleRank = i + 1; });
-  return { builtAt: now, legs, notes, cappers, sprinkles: sprinkles.map((l) => l.id) };
+  const boardRead = board ? { at: board.at ?? null, source: board.source ?? 'bestfightodds', events: (board.events ?? []).map((e) => ({ title: e.title, url: e.url })), bouts: boutsOnBoard, priced: pricedFromBoard } : null;
+  return { builtAt: now, legs, notes, cappers, board: boardRead, sprinkles: sprinkles.map((l) => l.id) };
 }

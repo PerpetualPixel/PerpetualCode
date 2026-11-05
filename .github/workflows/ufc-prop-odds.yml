@@ -1,0 +1,38 @@
+# The fight props' prices from BestFightOdds' public board
+# (scripts/ufc-prop-odds.mjs; worker/src/ufc-prop-odds.js prices the
+# parlay legs from it). The odds feed carries no fight props for MMA and
+# the books refuse a cloud runner at the edge; the board answers. Every
+# two hours, a few pages a run, with a pause between them.
+name: UFC prop odds
+
+on:
+  workflow_dispatch:
+    inputs:
+      args:
+        description: 'Extra arguments (--dry-run, --dump)'
+        required: false
+        default: ''
+  schedule:
+    - cron: '23 */2 * * *'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ufc-prop-odds
+  cancel-in-progress: false
+
+jobs:
+  board:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Read the board and write KV
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+        run: node scripts/ufc-prop-odds.mjs ${{ inputs.args }}
