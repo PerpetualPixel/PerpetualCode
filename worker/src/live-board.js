@@ -98,6 +98,31 @@ const num = (v) => { const n = Number(String(v ?? '').split('/')[0].replace(/,/g
 const toAmerican = (decimal) => (decimal >= 2 ? Math.round((decimal - 1) * 100) : Math.round(-100 / (decimal - 1)));
 const inRange = (x, [lo, hi]) => x >= lo && x <= hi;
 
+/**
+ * Blowout risk (2026-11-05: "every Knicks slip died on the 30-point
+ * blowout, which sat the starters; flag blowout potential on the Live
+ * tab and do not make live bets for those games"). The lead against the
+ * time left: a comeback needs points in proportion to the square root
+ * of the minutes left, so the level is the margin over that reach; at
+ * BLOWOUT_LEVEL and a floor on the margin the starters may sit and the
+ * pace no longer holds. Null before the game and once it is over.
+ */
+export const BLOWOUT_LEVEL = 1.25;
+const BLOWOUT_SHAPE = { nba: { base: 6, k: 1.6, floor: 12 }, nfl: { base: 8, k: 2, floor: 14 }, nhl: { base: 1.2, k: 0.4, floor: 3 }, soccer: { base: 1, k: 0.25, floor: 2 } };
+export function blowoutRisk(tick, league = 'nfl') {
+  if (!tick || tick.state !== 'in') return null;
+  const teams = Object.entries(tick.score ?? {});
+  if (teams.length !== 2) return null;
+  const lead = (Number(teams[0][1]) || 0) - (Number(teams[1][1]) || 0);
+  const margin = Math.abs(lead);
+  if (!margin) return null;
+  const shape = BLOWOUT_SHAPE[isSoccer(league) ? 'soccer' : league] ?? BLOWOUT_SHAPE.nfl;
+  const total = isSoccer(league) ? 90 : GAME_MINUTES[league] ?? 60;
+  const minutesLeft = Math.max(0, total * (1 - elapsedFraction(tick, league)));
+  const level = Math.round((margin / (shape.base + shape.k * Math.sqrt(minutesLeft))) * 100) / 100;
+  return { leader: lead > 0 ? teams[0][0] : teams[1][0], trailer: lead > 0 ? teams[1][0] : teams[0][0], margin, minutesLeft: Math.round(minutesLeft), level, blowout: margin >= shape.floor && level >= BLOWOUT_LEVEL };
+}
+
 /** The game script from the score: who is up big, who is down big. */
 export function gameScript(tick, league = 'nfl') {
   const teams = Object.entries(tick?.score ?? {});
@@ -311,6 +336,7 @@ export async function ensureLivePlays(env, game, payload, tick, { league = 'nfl'
   const stored = raw ? JSON.parse(raw) : null;
   const elapsed = elapsedFraction(tick, league);
   if (!tick || tick.state !== 'in' || elapsed < BUILD_FROM || elapsed > BUILD_UNTIL || !payload) return stored;
+  if (blowoutRisk(tick, league)?.blowout) return stored; // no live bets on a blowout: the starters may sit (the board withholds what stands)
   const candidates = liveCandidates(payload, tick, league, { weather });
   const slips = buildLiveSlips(candidates);
   if (!slips.length) return stored;
@@ -394,19 +420,24 @@ export async function getLiveBoard(env, now = Date.now(), { ctx = null } = {}) {
       : [];
     // A read shows the slips the last tick built (worker/src/live-probe.js rebuilds them every tick); it does not rebuild them itself.
     const plays = tick ? await ensureLivePlays(env, g, null, tick, { league, now, weather }) : null;
-    const slipList = plays ? refreshSlips(plays.slips, tick) : [];
+    // A blowout withholds the game's plays: no slips and no game reads while the lead is past the time left.
+    const blowout = blowoutRisk(tick, league);
+    const withheld = Boolean(blowout?.blowout);
+    const slipList = plays && !withheld ? refreshSlips(plays.slips, tick) : [];
+    const reads = withheld ? [] : game;
     out.push({
-      play: playSummary(slipList, game),
+      play: playSummary(slipList, reads),
+      blowout,
       espnEventId: g.id, name: g.name, date: g.date, league,
       tick: tick ? { at: tick.at, state: tick.state, detail: tick.detail, period: tick.period, clock: tick.clock, score: tick.score } : null,
       elapsed: elapsedFraction(tick, league), halftime: isHalftime(tick, league), intermission: intermissionOf(tick, league), script: gameScript(tick, league),
-      game,
+      game: reads,
       weather: weather ? { ...weather, rough: roughWeather(weather) } : null,
       probe: snap ? { at: snap.at, booksPosting: snap.booksPosting, books: snap.books.map((b) => ({ key: b.key, bookId: bookIdFor(b.key) ?? b.key, markets: b.markets.map((m) => ({ key: m.key, outcomes: m.outcomes, players: m.players })) })), snapshots: probe.snapshots.length } : null,
       players: playerLines(tick, league),
       watch: whoToWatch(tick, candidates, league, { weather }),
       candidates: candidates.slice(0, 12),
-      slips: plays ? { builtAt: plays.builtAt, firstBuiltAt: plays.firstBuiltAt ?? plays.builtAt, builds: plays.builds ?? 1, score: plays.score, detail: plays.detail ?? null, period: plays.period ?? null, clock: plays.clock ?? null, list: slipList } : null,
+      slips: plays && !withheld ? { builtAt: plays.builtAt, firstBuiltAt: plays.firstBuiltAt ?? plays.builtAt, builds: plays.builds ?? 1, score: plays.score, detail: plays.detail ?? null, period: plays.period ?? null, clock: plays.clock ?? null, list: slipList } : null,
     });
   }
   return { at: now, games: out };
