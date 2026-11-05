@@ -281,6 +281,24 @@ test('enginePicksForEvent: a feed still naming the last card leaves the new card
   assert.ok(fightIsBout('Mickey Gall vs Zachary Reese', lastCard.bouts[1]) && !fightIsBout('Mickey Gall vs Zachary Reese', nextCard.bouts[0]));
 });
 
+test('engine fights pair across a hyphen: the feed writes Cortes-Acosta, ESPN Cortes Acosta', async () => {
+  const { enginePicksForEvent, fightIsBout, engineForBout } = await import('../worker/src/ufc-picks.js');
+  const main = bout('9', f('a', 'Waldo Cortes Acosta'), f('b', 'Johnny Walker'));
+  const feed = { picks: [
+    { fight: 'Waldo Cortes-Acosta vs Johnny Walker', market: 'moneyline', selection: 'Waldo Cortes-Acosta', tier: 'strong', strength: 7.6, consensusPct: 76.4, pickCount: 55 },
+    { fight: 'Waldo Cortes-Acosta vs Johnny Walker', market: 'method_of_victory', selection: 'Waldo Cortes-Acosta by KO/TKO', tier: 'strong', strength: 8.1, consensusPct: 81.2, pickCount: 39 },
+  ] };
+  assert.ok(fightIsBout('Waldo Cortes-Acosta vs Johnny Walker', main));
+  assert.equal(enginePicksForEvent({ bouts: [main] }, feed).length, 2);
+  const e = engineForBout(main, feed);
+  assert.equal(e.moneyline.side, 'a');
+  assert.deepEqual(e.methods.map((m) => [m.side, m.method]), [['a', 'ko']]);
+  // And the other way round: a hyphen on the card, a space in the feed.
+  const hy = bout('10', f('a', 'Waldo Cortes-Acosta'), f('b', 'Johnny Walker'));
+  assert.ok(fightIsBout('Waldo Cortes Acosta vs Johnny Walker', hy));
+  assert.equal(engineForBout(hy, { picks: [{ fight: 'Waldo Cortes Acosta vs Johnny Walker', market: 'moneyline', selection: 'Waldo Cortes Acosta', tier: 'lean', strength: 6 }] }).moneyline.side, 'a');
+});
+
 test('underdogOfTheWeek: the plus-money side with the best chance, never against a Pixel\'s Pick, lifted by the read and the cappers; settled on the result', async () => {
   const { underdogOfTheWeek, settleUnderdog } = await import('../worker/src/ufc-picks.js');
   const q = (american, bookId = 'draftkings') => ({ bookId, book: 'DraftKings', american, decimal: american > 0 ? 1 + american / 100 : 1 + 100 / -american, link: null });
