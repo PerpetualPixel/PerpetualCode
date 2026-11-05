@@ -52,3 +52,13 @@ test('pickLiveEvent: a club named one way by ESPN and another by the feed still 
   assert.equal(pickLiveEvent(events, ['Dortmund', 'Man City'], { date: '2026-11-04T20:00:00Z' })?.id, 'u3');
   assert.equal(pickLiveEvent([{ id: 'x', home_team: 'FC Nowhere', away_team: 'SK Elsewhere' }], ['FC Arsenal', 'SK Slavia']), null, 'FC and SK are club words, not a match');
 });
+
+test('readWatchIndex: the per-league indexes and the old shared one merge, newest first, one entry per game', async () => {
+  const { readWatchIndex, liveWatchIndexKey } = await import('../worker/src/live-probe.js');
+  const m = new Map();
+  m.set('live:watch:index', JSON.stringify({ games: [{ id: 'old', name: 'A at B', date: '2026-11-04T00:00Z', league: 'nfl' }, { id: 'n1', name: 'C at D', date: '2026-11-05T00:00Z', league: 'nba' }] }));
+  m.set(liveWatchIndexKey('nba'), JSON.stringify({ games: [{ id: 'n1', name: 'C at D', date: '2026-11-05T00:00Z', league: 'nba' }, { id: 'n2', name: 'E at F', date: '2026-11-05T01:00Z', league: 'nba' }] }));
+  m.set(liveWatchIndexKey('nhl'), JSON.stringify({ games: [{ id: 'h1', name: 'G at H', date: '2026-11-05T00:30Z', league: 'nhl' }] }));
+  const env = { POTD_KV: { get: async (k) => m.get(k) ?? null } };
+  assert.deepEqual((await readWatchIndex(env)).games.map((g) => g.id), ['n2', 'h1', 'n1', 'old']);
+});
