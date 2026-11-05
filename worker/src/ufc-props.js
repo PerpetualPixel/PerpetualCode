@@ -30,7 +30,7 @@ export const UFC_PROPS = {
   method_round: 'Method + round',
   distance: 'Goes the distance',
   round_start: 'Round to start',
-  end_method: 'Ends by',
+  end_method: 'How fight will end',
   spread: 'Spread',
   strikes: 'Strikes',
   takedowns: 'Takedowns',
@@ -40,10 +40,12 @@ export const UFC_PROP_KEYS = Object.keys(UFC_PROPS);
 /** The props that need fight stats the profiles do not carry yet. */
 export const UFC_PROPS_WITHOUT_STATS = ['strikes', 'takedowns', 'knockdowns'];
 export const NO_STATS_NOTE = 'No per-fight stats on file for strikes, takedowns or knockdowns yet; those legs come once the runner pulls fight stats.';
-export const NO_LINE_NOTE = 'Lines for this prop are not out yet; the leg rides unpriced until a book posts one.';
+export const NO_LINE_NOTE = 'Our odds feed carries no fight props for MMA (moneyline, round totals and spreads only), so this leg rides unpriced; the price is on the fight page at your book.';
 export const NO_SPREAD_NOTE = 'No spread lines on this card yet.';
 
 const METHOD_LABEL = { ko: 'KO/TKO', sub: 'Submission', dec: 'Decision' };
+/** The "How fight will end" options as FanDuel names them: a decision is "Points" there. */
+const END_LABEL = { ko: 'KO/TKO', sub: 'Submission', dec: 'Points' };
 const n = (v) => (Number.isFinite(Number(v)) ? Number(v) : 0);
 const round3 = (x) => Math.round(x * 1000) / 1000;
 
@@ -150,7 +152,7 @@ export function ufcPropLegs(bout, { odds = null, breakdown = null, engine = null
     const w = [...why];
     const score = grade(side, p, w, { method: extra.method ?? null });
     const priced = quotes.some((q) => Number.isFinite(q.american));
-    legs.push({ ...base, id: `${bout.id}:${prop}:${slug(selection)}`, prop, label: UFC_PROPS[prop], side, fighterId: side ? bout[side]?.id ?? null : null, name: side ? name[side] : null, opponent: side ? name[other(side)] : null, fight: `${name.a} vs ${name.b}`, selection, chance: round3(p), score, why: w, quotes, priced, note: priced ? null : NO_LINE_NOTE, ...extra });
+    legs.push({ ...base, books: odds?.books ?? [], id: `${bout.id}:${prop}:${slug(selection)}`, prop, label: UFC_PROPS[prop], side, fighterId: side ? bout[side]?.id ?? null : null, name: side ? name[side] : null, opponent: side ? name[other(side)] : null, fight: `${name.a} vs ${name.b}`, selection, chance: round3(p), score, why: w, quotes, priced, note: priced ? null : NO_LINE_NOTE, ...extra });
   };
   const sides = ['a', 'b'];
   // Moneyline: the lean side at its confidence, the other side at what is left, as the Card tab reads it.
@@ -202,7 +204,8 @@ export function ufcPropLegs(bout, { odds = null, breakdown = null, engine = null
     }
     for (const k of ['ko', 'sub', 'dec']) {
       const p = endBy(k);
-      if (p >= 0.15) push('end_method', null, `Fight ends by ${METHOD_LABEL[k]}`, p, sides.map((s) => `${name[s]}: ${pct(read[s].share[k])} of wins by ${METHOD_LABEL[k]}`));
+      // FanDuel's market name and options (2026-11-05): "How fight will end", KO/TKO, Submission, Points.
+      if (p >= 0.15) push('end_method', null, `How fight will end: ${END_LABEL[k]}`, p, sides.map((s) => `${name[s]}: ${pct(read[s].share[k])} of wins by ${METHOD_LABEL[k]}`));
     }
     // Rounds over/under: every total the feed posts, or the usual number unpriced.
     const totals = (odds?.totals ?? []).length ? odds.totals : [{ point: rounds === 5 ? 2.5 : 1.5, over: [], under: [] }];

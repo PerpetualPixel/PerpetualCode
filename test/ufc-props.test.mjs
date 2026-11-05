@@ -45,7 +45,7 @@ test('ufcPropLegs: an 8-for-8 first-round knockout artist who is favoured gets a
   assert.ok(by('end_round', 'Fight ends in Round 1').chance > 0.6);
   assert.ok(by('distance', 'Fight does not go the distance').chance > by('distance', 'Fight goes the distance').chance);
   assert.ok(by('round_start', 'Round 2 to start').chance < 0.4);
-  assert.ok(by('end_method', 'Fight ends by KO/TKO').chance > 0.6);
+  assert.ok(by('end_method', 'How fight will end: KO/TKO').chance > 0.6);
   assert.equal(legs.filter((l) => l.prop === 'spread').length, 0, 'no spread without a feed line');
   assert.ok(legs.every((l) => UFC_PROP_KEYS.includes(l.prop) && l.label === UFC_PROPS[l.prop]));
 });
@@ -85,4 +85,13 @@ test('the cappers move the grades once the MMA Engine has read the card: a stron
   const card = ufcCardProps([b], () => ({ ...base, engine: { moneyline: { side: 'b', tier: 'strong', consensusPct: 72 }, methods: [] } }), { now: 1, engine: { generatedAt: '2026-11-04T10:00:00Z' } });
   assert.deepEqual(card.cappers, { read: true, bouts: 1, generatedAt: '2026-11-04T10:00:00Z' });
   assert.deepEqual(ufcCardProps([b], () => base, { now: 1 }).cappers, { read: false, bouts: 0, generatedAt: null });
+});
+
+test('ufcPropLegs: every leg carries the books with a page for the fight, for an unpriced prop to open at the book', async () => {
+  const { ufcPropLegs } = await import('../worker/src/ufc-props.js');
+  const f = (id, name) => ({ id, name });
+  const bout = { id: '7', a: f('a', 'Thomas Petersen'), b: f('b', 'Gabriel Lorenco'), weightClass: 'Heavyweight', rounds: 3, date: 1 };
+  const legs = ufcPropLegs(bout, { odds: { books: [{ bookId: 'fanduel', book: 'FanDuel', link: 'https://sportsbook.fanduel.com/mma/x' }], a: [], b: [], totals: [], spreads: [] }, breakdown: { lean: 'b', confidence: 4 } });
+  assert.ok(legs.length);
+  assert.ok(legs.every((l) => l.books.length === 1 && l.books[0].bookId === 'fanduel'));
 });

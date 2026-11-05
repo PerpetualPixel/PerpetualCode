@@ -155,7 +155,9 @@ export function boutOdds(bout, events) {
     }
   }
   const best = (list) => list.sort((x, y) => y.american - x.american);
-  return { feedId: e.id, a: best(ml.a), b: best(ml.b), totals: [...totals.values()].map((t) => ({ point: t.point, over: best(t.over), under: best(t.under) })).sort((x, y) => x.point - y.point), spreads: [...spreads.values()].map((sp) => ({ point: sp.point, a: best(sp.a), b: best(sp.b) })) };
+  // Each listed book's page for the fight: the feed carries no fight props for MMA, so an unpriced leg sends the reader there.
+  const books = (e.bookmakers ?? []).map((bk) => ({ bookId: bookIdFor(bk.key) ?? bk.key, link: bk.link ?? null })).filter((x) => UFC_BOOKS.includes(x.bookId) && x.link).map((x) => ({ ...x, book: bookName(x.bookId) }));
+  return { feedId: e.id, books, a: best(ml.a), b: best(ml.b), totals: [...totals.values()].map((t) => ({ point: t.point, over: best(t.over), under: best(t.under) })).sort((x, y) => x.point - y.point), spreads: [...spreads.values()].map((sp) => ({ point: sp.point, a: best(sp.a), b: best(sp.b) })) };
 }
 
 /* ---------------- the MMA engine ---------------- */
