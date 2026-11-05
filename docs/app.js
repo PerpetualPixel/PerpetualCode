@@ -10733,7 +10733,9 @@ function renderUfcBout(b, ev) {
       ${ufcAvatar(f, 48)}
       <div class="ufc-side-text"><span class="ufc-name">${esc(f.name)}</span><span class="ufc-record">${esc(recordText(f.record))}${f.country ? ` · ${esc(f.country)}` : ''}</span></div>
     </div>` : '<div class="ufc-side"><span class="row-sub">TBA</span></div>');
-  const tags = (ev.changes ?? []).filter((c) => c.boutId === b.id).slice(-1).map((c) => `<span class="ufc-tag is-${esc(c.type)}">${esc(c.detail)}</span>`).join('');
+  // The pick itself sits at the foot of the card (2026-11-05: "leave the updates off the cards, I'd rather see the pick
+  // at the bottom"); card changes stay in the matchup sheet and the card-changes panel, and an off bout says so in its head.
+  const pickLine = pick ? `<div class="ufc-bout-pick"><strong>${esc(pick.type === 'parlay' ? pick.legs.map((l) => l.selection).join(' + ') : pick.legs[0].selection)}</strong>${Number.isFinite(pick.american) ? ` · ${esc(pick.book)} ${esc(formatAmerican(pick.american))}` : ' · at your book'}${pick.type === 'parlay' ? ' · parlay' : ''} ${ufcPickBadge(pick)}</div>` : '';
   const status = b.status === 'final' && b.result
     ? `<span class="ufc-result">${b.result.draw ? 'Draw' : `${esc((b.result.winnerId === b.a?.id ? b.a : b.b)?.name ?? '')} wins`}${b.result.method ? ` · ${esc(b.result.method)}` : ''}${b.result.round ? ` · R${esc(String(b.result.round))}` : ''}</span>`
     : b.status === 'live' ? '<span class="ufc-result is-live">Live</span>' : b.status === 'cancelled' ? '<span class="ufc-result is-off">Off the card</span>' : '';
@@ -10748,7 +10750,7 @@ function renderUfcBout(b, ev) {
     <div class="ufc-bout-head"><span class="ufc-weight">${esc(b.weightClass ?? '')}${b.title ? ' · <b>Title fight</b>' : ''}${b.rounds ? ` · ${esc(String(b.rounds))} rounds` : ''}</span>${status || '<span class="ufc-open">Matchup ›</span>'}</div>
     <div class="ufc-bout-body">${side(b.a, 'a')}<span class="ufc-vs">vs</span>${side(b.b, 'b')}</div>
     ${foot}
-    ${tags ? `<div class="ufc-tags">${tags}</div>` : ''}
+    ${pickLine}
   </article>`;
 }
 

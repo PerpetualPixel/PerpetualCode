@@ -7001,6 +7001,9 @@ a.trend-price:hover { background: rgba(255, 255, 255, 0.06); }
 .ufc-side-b .ufc-more { margin-left: auto; }
 .ufc-vs { color: var(--muted); font-weight: 800; font-size: 0.8rem; }
 .ufc-tags { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 10px; }
+/* The pick at the foot of a bout card: the selection, the book and price, and how it stands. */
+.ufc-bout-pick { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 6px; margin-top: 10px; padding: 8px 12px; border: 1px solid rgba(94, 224, 122, 0.4); border-radius: 12px; font-size: 0.86rem; line-height: 1.35; color: var(--muted); }
+.ufc-bout-pick strong { color: var(--text); }
 .ufc-tag { display: inline-block; padding: 3px 9px; border-radius: 999px; font-size: 0.74rem; font-weight: 700; border: 1px solid currentColor; color: #fbbf24; }
 .ufc-tag.is-removed { color: var(--danger); }
 .ufc-tag.is-added { color: var(--success); }
