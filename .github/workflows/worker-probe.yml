@@ -66,6 +66,16 @@ jobs:
                   console.log((re ? lines.filter((l) => re.test(l)) : lines).slice(0, 120).join("\n").slice(0, 12000));
                   return;
                 }
+                if (d && d.totals && Array.isArray(d.games) && d.games.every((g) => Array.isArray(g.slips))) {
+                  // The recap (worker/src/live-board.js getLiveRecap): each game's final score, its last build, and every slip graded at one unit.
+                  console.log("TOTALS", JSON.stringify(d.totals));
+                  for (const g of d.games) {
+                    const b = g.built;
+                    console.log("RECAP", g.name, "|", g.league, g.state, JSON.stringify(g.score), "| built", b ? `${new Date(b.at).toISOString().slice(11, 16)}Z Q${b.period} ${b.clock} (${b.builds} builds, first ${b.firstAt ? new Date(b.firstAt).toISOString().slice(11, 16) : "?"}Z) at ${JSON.stringify(b.score)}` : "none");
+                    for (const s of g.slips) console.log("  SLIP", s.bookId, s.american, s.result.toUpperCase(), s.units, "|", s.legs.map((l) => `${l.player} ${l.point}+ ${l.stat} ${l.price} final=${l.final} ${l.hit === true ? "HIT" : l.hit === false ? "MISS" : "?"}`).join(" ; "));
+                  }
+                  return;
+                }
                 if (d && Array.isArray(d.games) && d.games.every((g) => g.espnEventId)) {
                   // The Live board (worker/src/live-board.js): each game, its clock and score, the books posting, who to watch, and the slips with their links.
                   for (const g of d.games) {

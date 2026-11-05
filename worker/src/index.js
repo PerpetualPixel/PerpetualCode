@@ -65,7 +65,7 @@ import { sendUfcTicketNotifications, sendUfcChangeNotifications } from './notifi
 import { legBreakdown } from './parlay-builder.js';
 import { runTrendPicksDaily, runTrendPicksGrading, getTrendPicks } from './trend-picks.js';
 import { runLiveProbe, getLiveProbe } from './live-probe.js';
-import { getLiveBoard } from './live-board.js';
+import { getLiveBoard, getLiveRecap } from './live-board.js';
 import { getMyPicks } from './my-picks.js';
 
 /** The Trends build's own cron (must match wrangler.toml's second trigger exactly — Cloudflare hands the string back as written). */
@@ -1551,6 +1551,10 @@ export default {
     // The Live tab's board (worker/src/live-board.js): the watched games, their last reads, the lines and the play.
     if (pathname === '/live' && request.method === 'GET') {
       return json(await getLiveBoard(env, Date.now(), { ctx }), { headers: { ...cors, 'Cache-Control': 'no-store' } });
+    }
+    // Last night's slips graded against the final box scores (worker/src/live-board.js): read-only.
+    if (pathname === '/live/recap' && request.method === 'GET') {
+      return json(await getLiveRecap(env), { headers: { ...cors, 'Cache-Control': 'no-store' } });
     }
     // The live-props probe's logs (worker/src/live-probe.js): read-only.
     if (pathname === '/live/probe' && request.method === 'GET') {
