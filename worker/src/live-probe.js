@@ -111,10 +111,11 @@ export function liveGamesNow(index, now) {
 export async function runLiveProbe(env, ctx, now = Date.now(), { deps = {} } = {}) {
   const idxRaw = await env.POTD_KV.get(LIVE_WATCH_INDEX).catch(() => null);
   const index = deps.index ?? (idxRaw ? JSON.parse(idxRaw) : { games: [] });
-  const games = liveGamesNow(index, now);
+  // A whole slate at once (2026-11-05, the Live tab unattended): the earliest games first, up to twelve a tick; each is one feed call.
+  const games = liveGamesNow(index, now).sort((a, b) => Date.parse(a.date) - Date.parse(b.date));
   if (!games.length) return { skipped: true, reason: 'no watched game in its window' };
   const done = [];
-  for (const g of games.slice(0, 4)) {
+  for (const g of games.slice(0, 12)) {
     const league = g.league ?? 'nfl';
     const sportKey = LIVE_SPORT[league]; if (!sportKey) continue;
     const events = deps.events ? await deps.events(sportKey) : await listLeagueGames(sportKey, env, ctx).catch(() => []);
