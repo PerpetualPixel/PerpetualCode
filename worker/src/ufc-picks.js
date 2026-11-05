@@ -352,6 +352,19 @@ export function parseUfcBreakdown(text, bout) {
 }
 
 /** One bout's breakdown, cached per pairing. */
+/**
+ * The cappers' line in a breakdown: the moneyline consensus when the engine
+ * has one, the method calls either way. A bout the tracker counted only by
+ * method (UFC Vegas 124: Ko vs Turman) still says what the cappers called.
+ */
+export function capperLine(engine) {
+  const ml = engine?.moneyline; const methods = engine?.methods ?? [];
+  const methodText = methods.length ? `Method calls: ${methods.map((m) => `${m.selection} (${m.consensusPct}%, ${m.tier})`).join('; ')}.` : '';
+  if (ml) return `Capper consensus (the MMA Engine, ${ml.pickCount} picks): ${ml.consensusPct}% back ${ml.selection}, strength ${ml.strength} of 10, ${ml.tier}.${methodText ? ` ${methodText}` : ''}`;
+  if (methodText) return `No moneyline consensus from the cappers on this bout. ${methodText}`;
+  return 'No capper consensus on this bout.';
+}
+
 export async function ufcBreakdown(env, event, bout, odds, now = Date.now(), { deps = {}, engine = null, engineStamp = '' } = {}) {
   const key = ufcBreakdownKey(bout, engineStamp);
   const cached = await env.POTD_KV.get(key).catch(() => null);
@@ -363,7 +376,7 @@ export async function ufcBreakdown(env, event, bout, odds, now = Date.now(), { d
     `${event.name}: ${bout.weightClass ?? ''}${bout.title ? ' title fight' : ''}, ${bout.rounds ?? 3} rounds, ${bout.segment === 'main' ? 'main card' : bout.segment}.`,
     fighterFacts(fa, 'A', now), fighterFacts(fb, 'B', now),
     notice ? `Card change: ${notice}.` : null, line,
-    engine?.moneyline ? `Capper consensus (the MMA Engine, ${engine.moneyline.pickCount} picks): ${engine.moneyline.consensusPct}% back ${engine.moneyline.selection}, strength ${engine.moneyline.strength} of 10, ${engine.moneyline.tier}.${engine.methods.length ? ` Method calls: ${engine.methods.map((m) => `${m.selection} (${m.consensusPct}%, ${m.tier})`).join('; ')}.` : ''}` : 'No capper consensus on this bout.',
+    capperLine(engine),
   ].filter(Boolean).join('\n');
   const prompt = `You break down one UFC fight for a bettor. Use only the facts below and what you know of these fighters' styles in general; do not invent news. The capper consensus is one input, not the answer: agree with it when the record and the price back it, say so when they do not.
 
