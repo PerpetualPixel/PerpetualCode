@@ -7320,3 +7320,35 @@ a.trend-price:hover { background: rgba(255, 255, 255, 0.06); }
 .live-mine { margin-left: 6px; font-size: 0.68rem; font-weight: 800; letter-spacing: 0.04em; text-transform: uppercase; color: var(--success); }
 .link-button { background: none; border: 0; padding: 0; color: var(--accent, #c084fc); font: inherit; font-weight: 700; cursor: pointer; text-decoration: underline; }
 .live-books-wrap { margin-top: 8px; }
+
+/* A calmer Live tab: one accent for the frame (the site's violet hairline), green only where a number has
+   cleared or is filling, and every tag in the same quiet gray. Nothing shouts but the live dot and the knob. */
+#liveView a { color: var(--muted); text-decoration: underline; text-decoration-color: rgba(156, 152, 184, 0.45); text-underline-offset: 2px; }
+#liveView a:hover { color: var(--text); }
+.live-game.is-live, .live-game.is-playable.is-live { border-color: var(--line); }
+.live-game.is-playable.is-live { box-shadow: inset 3px 0 0 rgba(16, 185, 129, 0.55); }
+.live-state.is-on { color: var(--text); border-color: var(--line); }
+.live-conf { color: rgba(251, 191, 36, 0.75); }
+.live-play, .live-play.is-best { border-color: var(--line); box-shadow: none; background: var(--surface); }
+.live-play.is-best { border-color: rgba(124, 58, 237, 0.5); }
+.live-play .pick-bet-head { background: rgba(255, 255, 255, 0.035); }
+.live-play .pick-bet-type { color: var(--muted); }
+.live-play.is-best .pick-bet-type { color: var(--accent); }
+.live-shared, .live-mine, .live-read.is-fresh, .live-tag.is-rough, .live-play .pick-result.is-win { color: var(--muted); background: var(--surface-2); border: 1px solid var(--line); font-weight: 700; }
+.live-mine { padding: 1px 6px; border-radius: 999px; }
+.live-read.is-fresh { border-style: solid; }
+.live-tag.is-rough { color: var(--text); }
+.live-play .pick-result.is-win { color: var(--success); }
+.live-edge { color: var(--muted); font-weight: 700; }
+.live-leg.is-cleared .live-leg-head strong { color: var(--text); }
+.live-leg.is-cleared .live-leg-sub { color: var(--success); }
+.live-bar-track { background: rgba(255, 255, 255, 0.07); border-color: transparent; }
+.live-bar-green { background: rgba(16, 185, 129, 0.75); }
+.live-bar-tick { background: var(--muted); opacity: 1; }
+.live-bar-line { color: var(--muted); }
+.live-bar-now { border-color: rgba(255, 255, 255, 0.85); box-shadow: 0 2px 8px rgba(0, 0, 0, 0.4); }
+#liveView .pick-bet-link { background: var(--accent); color: var(--on-accent); text-decoration: none; box-shadow: none; }
+#liveView .pick-bet-link:hover { color: var(--on-accent); filter: brightness(1.1); }
+.live-bar.is-cleared .live-bar-line { opacity: 0.55; }
+.live-watch, .live-book, .live-count { background: rgba(255, 255, 255, 0.03); }
+.live-watch-nums b { font-weight: 700; }
