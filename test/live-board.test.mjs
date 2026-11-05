@@ -22,6 +22,12 @@ test('the clock reads as a fraction of the game, and the half is the half', () =
   assert.equal(elapsedFraction({ state: 'pre' }), 0);
   assert.equal(elapsedFraction({ state: 'in', period: 1, clock: '7:30' }), 0.125);
   assert.equal(elapsedFraction({ state: 'in', period: 3, clock: '15:00' }), 0.5);
+  // A clock under a minute shows seconds with tenths; the end of a period has no clock worth reading.
+  assert.ok(Math.abs(elapsedFraction({ state: 'in', period: 1, clock: '31.1', detail: '31.1 - 1st Quarter' }, 'nba') - (12 - 31.1 / 60) / 48) < 1e-9);
+  assert.ok(Math.abs(elapsedFraction({ state: 'in', period: 1, clock: ':31', detail: ':31 - 1st' }, 'nfl') - (15 - 31 / 60) / 60) < 1e-9);
+  assert.equal(elapsedFraction({ state: 'in', period: 1, clock: '0.0', detail: 'End of 1st Quarter' }, 'nba'), 0.25);
+  assert.equal(elapsedFraction({ state: 'in', period: 2, clock: '', detail: 'End of 2nd Period' }, 'nhl'), 2 / 3);
+  assert.equal(elapsedFraction({ state: 'in', period: 2, clock: 'garbage' }, 'nba'), 0.25);
   assert.equal(elapsedFraction(tick()), 0.5);
   assert.equal(isHalftime(tick()), true);
   assert.equal(isHalftime({ state: 'in', period: 3, clock: '14:50', detail: '14:50 - 3rd' }), false);
