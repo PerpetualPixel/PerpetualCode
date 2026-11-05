@@ -7378,3 +7378,20 @@ a.trend-price:hover { background: rgba(255, 255, 255, 0.06); }
 /* The book link inside an unpriced leg's note reads in the note's own color, not browser blue. */
 .parlay-leg-note a { color: inherit; font-weight: 700; text-decoration: underline; text-underline-offset: 2px; }
 .parlay-leg-note a:hover { color: var(--text); }
+
+/* Sprinkles: the long-shot singles. Gold, since they are the flyers, not the green of a built ticket. */
+.parlay-sprinkle { min-height: 44px; border-radius: 12px; border: 1px solid rgba(245, 197, 66, 0.55); background: rgba(245, 197, 66, 0.1); color: #f5c542; font: inherit; font-weight: 800; cursor: pointer; }
+.parlay-sprinkle:hover { background: rgba(245, 197, 66, 0.18); }
+.parlay-sprinkle[aria-pressed="true"] { background: #f5c542; color: #1a1300; }
+.parlay-sprinkle:disabled { opacity: 0.4; cursor: default; }
+.parlay-card.is-sprinkle { border-color: rgba(245, 197, 66, 0.45); }
+.parlay-leg-price.is-fair { color: #f5c542; }
+.parlay-why { margin: 6px 0 0; padding-left: 18px; font-size: 0.82rem; color: var(--muted); display: grid; gap: 2px; }
+/* The fight card's sprinkle: a gold tag beside the lean, and the bout's long shots beneath. */
+.ufc-sprinkle-tag { cursor: pointer; padding: 4px 10px; border-radius: 999px; background: rgba(245, 197, 66, 0.12); border: 1px solid rgba(245, 197, 66, 0.5); color: #f5c542; font: inherit; font-size: 0.78rem; font-weight: 800; }
+.ufc-sprinkle { margin-top: 10px; padding: 10px 12px; border-radius: 12px; background: rgba(245, 197, 66, 0.06); border: 1px solid rgba(245, 197, 66, 0.3); font-size: 0.88rem; display: grid; gap: 8px; text-align: left; }
+.ufc-sprinkle strong { color: #f5c542; font-size: 0.78rem; text-transform: uppercase; letter-spacing: 0.06em; }
+.ufc-sprinkle-leg { display: grid; gap: 2px; }
+.ufc-sprinkle-leg b { font-weight: 700; }
+.ufc-sprinkle-leg small { color: var(--muted); }
+.ufc-sprinkle-leg a { color: inherit; font-weight: 700; text-decoration: underline; text-underline-offset: 2px; }

@@ -33,7 +33,7 @@ test('ufcPropLegs: an 8-for-8 first-round knockout artist who is favoured gets a
   const ml = by('ml', 'Kayla Finisher to win');
   assert.deepEqual([ml.score, ml.priced, ml.quotes[0].american, ml.note], [5, true, -250, null]);
   assert.equal(by('ml', 'Pat Grinder to win').score, 1, 'the other side carries what the confidence leaves');
-  const r1 = by('method_round', 'Kayla Finisher by KO/TKO in Round 1');
+  const r1 = by('method_round', 'Kayla Finisher KO/TKO & Round 1');
   assert.ok(r1, legs.map((l) => l.selection).join(' | '));
   assert.deepEqual([r1.score, r1.priced, r1.note, r1.fighterId], [5, false, NO_LINE_NOTE, 'a1']);
   assert.ok(r1.why.some((w) => /8 of 8 wins by KO\/TKO in Round 1/.test(w)));
@@ -94,4 +94,35 @@ test('ufcPropLegs: every leg carries the books with a page for the fight, for an
   const legs = ufcPropLegs(bout, { odds: { books: [{ bookId: 'fanduel', book: 'FanDuel', link: 'https://sportsbook.fanduel.com/mma/x' }], a: [], b: [], totals: [], spreads: [] }, breakdown: { lean: 'b', confidence: 4 } });
   assert.ok(legs.length);
   assert.ok(legs.every((l) => l.books.length === 1 && l.books[0].bookId === 'fanduel'));
+});
+
+test('FanDuel combos, specials and sprinkles: round betting, method round windows, win & round 2 to start, either-fighter specials, minute specials with fair prices, and the sprinkle picks the likeliest long shots', async () => {
+  const { sprinklePicks, clockSeconds, fairAmerican } = await import('../worker/src/ufc-props.js');
+  assert.equal(clockSeconds('2:34'), 154); assert.equal(clockSeconds(null), null); assert.equal(fairAmerican(0.05), 1900); assert.equal(fairAmerican(0.5), 100);
+  const b = bout('9', f('a9', 'Jonny Parsons'), f('b9', 'Jose Souza'));
+  const win = (method, round, time) => ({ result: 'win', method, round, time });
+  const profiles = {
+    a: fighter(8, { ko: 5, sub: 2, dec: 1, history: [win('KO/TKO', 1, '0:25'), win('KO/TKO', 1, '2:10'), win('KO/TKO', 2, '3:40'), win('KO/TKO', 3, '4:45'), win('KO/TKO', 1, '0:55'), win('Submission', 2, '1:20'), win('Submission', 3, '2:00'), win('Decision', 3, '5:00')] }),
+    b: fighter(10, { dec: 7, sub: 3, history: [win('Submission', 1, '3:30'), win('Submission', 2, '2:00'), win('Submission', 3, '3:50'), ...Array.from({ length: 7 }, () => win('Decision (unanimous)', 3, '5:00'))] }),
+  };
+  const legs = ufcPropLegs(b, { odds: { a: [q(190)], b: [q(-240)], totals: [], spreads: [] }, breakdown: { lean: 'b', confidence: 3 }, profiles });
+  const sel = (prop) => legs.filter((l) => l.prop === prop).map((l) => l.selection);
+  assert.ok(sel('method_round').includes('Jonny Parsons KO/TKO & Round 1') && sel('method_round').includes('Jonny Parsons KO/TKO & Round 3'), sel('method_round').join(' | '));
+  assert.ok(sel('method_rounds').includes('Jose Souza to win by Submission in Rounds 1 or 2'), sel('method_rounds').join(' | '));
+  assert.ok(sel('win_round').includes('Jonny Parsons to win in Round 2'));
+  assert.ok(sel('round_start').includes('Fight to start Round 2: No') && sel('round_start').includes('Round 2 to start'));
+  assert.ok(sel('win_round_start').includes('Jose Souza to win & Round 2 to start'));
+  assert.equal(sel('method_either').length, 3); assert.ok(sel('method_either').every((x) => /^Jonny Parsons by \S+(\/\S+)? or Jose Souza by /.test(x)), sel('method_either').join(' | '));
+  const specials = legs.filter((l) => l.prop === 'special');
+  assert.ok(specials.some((l) => l.selection === 'Jonny Parsons to win in the 1st 30 seconds of the fight' && l.side === 'a'), specials.map((l) => l.selection).join(' | '));
+  assert.ok(specials.some((l) => l.selection === 'Fight to be won in the 4th minute of any round' && !l.side));
+  assert.ok(specials.some((l) => l.selection === 'Either fighter to win in the last 30 seconds of the 3rd round'));
+  assert.ok(!specials.some((l) => l.selection.startsWith('Jose Souza to win in the 1st 30 seconds')), 'no such finish on file: no leg');
+  for (const l of legs) assert.ok(Number.isFinite(l.fairAmerican), `${l.selection} has a fair price`);
+  const sp = sprinklePicks(legs);
+  assert.ok(sp.length >= 2 && sp.length <= 2, 'at most two a bout');
+  assert.ok(sp.every((l) => l.chance <= 0.12 && l.chance >= 0.012 && l.fairAmerican >= 700), sp.map((l) => `${l.selection} ${l.chance}`).join(' | '));
+  assert.ok(sp[0].chance >= sp[1].chance, 'the likeliest long shot first');
+  const card = ufcCardProps([b], () => ({ odds: null, breakdown: { lean: 'b', confidence: 3 }, profiles }), { now: 5 });
+  assert.equal(card.sprinkles.length, 2); assert.ok(card.legs.filter((l) => l.sprinkle).every((l) => card.sprinkles.includes(l.id) && l.sprinkleRank >= 1));
 });

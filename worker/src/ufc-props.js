@@ -19,18 +19,26 @@
  * yet. Strikes, takedowns and knockdowns need per-fight stats the runner
  * does not pull yet, so those chips carry a note and no legs.
  */
-import { americanToDecimal } from '../../docs/engine.js';
+import { americanToDecimal, decimalToAmerican } from '../../docs/engine.js';
+
+/** Pixel's fair price for a chance: the odds the leg would be worth with no vig, in American form, or null. */
+export const fairAmerican = (p) => (p > 0 && p < 1 ? decimalToAmerican(1 / p) : null);
 
 export const UFC_PROPS = {
   ml: 'Moneyline',
   method: 'Method of victory',
   double: 'Double chance',
-  rounds: 'Rounds over/under',
+  rounds: 'Total rounds',
   end_round: 'Ends in round',
-  method_round: 'Method + round',
-  distance: 'Goes the distance',
-  round_start: 'Round to start',
+  method_round: 'Method & round combo',
+  method_rounds: 'Method round combos',
+  win_round: 'Round betting',
+  distance: 'Will the fight go the distance?',
+  round_start: 'Fight to start round',
   end_method: 'How fight will end',
+  method_either: 'Either-fighter specials',
+  win_round_start: 'Win & round to start',
+  special: 'Specials',
   spread: 'Spread',
   strikes: 'Strikes',
   takedowns: 'Takedowns',
@@ -47,6 +55,8 @@ const METHOD_LABEL = { ko: 'KO/TKO', sub: 'Submission', dec: 'Decision' };
 /** The "How fight will end" options as FanDuel names them: a decision is "Points" there. */
 const END_LABEL = { ko: 'KO/TKO', sub: 'Submission', dec: 'Points' };
 const n = (v) => (Number.isFinite(Number(v)) ? Number(v) : 0);
+/** Seconds into the round from ESPN's clock at the stoppage ("2:34" is 154), or null. */
+export function clockSeconds(t) { const m = String(t ?? '').match(/^(\d+):(\d{2})$/); return m ? Number(m[1]) * 60 + Number(m[2]) : null; }
 const round3 = (x) => Math.round(x * 1000) / 1000;
 
 /** The way a result came, from its text: ko, sub, dec, or null. */
@@ -79,8 +89,15 @@ export function recordRead(f) {
   }
   const share = (k) => (wins ? byMethod[k] / wins : 0);
   const finishes = byMethod.ko + byMethod.sub;
+  // Every finish with its round and the seconds into that round it came (ESPN's clock at the stoppage), for the
+  // minute specials; a decision never lands in a time window.
+  const timed = hWins.map((h) => ({ k: methodKind(h.method), round: Number(h.round), secs: clockSeconds(h.time) })).filter((x) => x.k && x.k !== 'dec' && Number.isFinite(x.round) && Number.isFinite(x.secs));
   return {
-    wins, byMethod, byRound, byMethodRound,
+    wins, byMethod, byRound, byMethodRound, timed,
+    // The share of wins that land in a window, shrunk toward the league's base rate so one early stoppage on a short
+    // record does not read as a habit: (count + 2 × base) / (wins + 2).
+    timeShare: (pred, base) => (wins ? (timed.filter(pred).length + 2 * base) / (wins + 2) : base),
+    timeCount: (pred) => timed.filter(pred).length,
     share: { ko: share('ko'), sub: share('sub'), dec: share('dec') },
     finishShare: wins ? finishes / wins : 0,
     roundShare: (r) => (wins ? (byRound[r] ?? 0) / wins : 0),
@@ -105,6 +122,7 @@ export function winChance(odds, breakdown) {
 /** Stars from a leg's chance: the bands a bettor would call strong, good, fair, thin, a flyer. */
 export const starsFor = (p) => (p >= 0.62 ? 5 : p >= 0.5 ? 4 : p >= 0.38 ? 3 : p >= 0.25 ? 2 : 1);
 const pct = (p) => `${Math.round(p * 100)}%`;
+const ordinal = (r) => `${r}${r === 1 ? 'st' : r === 2 ? 'nd' : r === 3 ? 'rd' : 'th'}`;
 
 /**
  * Every candidate leg for one bout, by prop. `bout` carries a and b;
@@ -152,7 +170,7 @@ export function ufcPropLegs(bout, { odds = null, breakdown = null, engine = null
     const w = [...why];
     const score = grade(side, p, w, { method: extra.method ?? null });
     const priced = quotes.some((q) => Number.isFinite(q.american));
-    legs.push({ ...base, books: odds?.books ?? [], id: `${bout.id}:${prop}:${slug(selection)}`, prop, label: UFC_PROPS[prop], side, fighterId: side ? bout[side]?.id ?? null : null, name: side ? name[side] : null, opponent: side ? name[other(side)] : null, fight: `${name.a} vs ${name.b}`, selection, chance: round3(p), score, why: w, quotes, priced, note: priced ? null : NO_LINE_NOTE, ...extra });
+    legs.push({ ...base, books: odds?.books ?? [], id: `${bout.id}:${prop}:${slug(selection)}`, prop, label: UFC_PROPS[prop], side, fighterId: side ? bout[side]?.id ?? null : null, name: side ? name[side] : null, opponent: side ? name[other(side)] : null, fight: `${name.a} vs ${name.b}`, selection, chance: round3(p), fairAmerican: fairAmerican(p), score, why: w, quotes, priced, note: priced ? null : NO_LINE_NOTE, ...extra });
   };
   const sides = ['a', 'b'];
   // Moneyline: the lean side at its confidence, the other side at what is left, as the Card tab reads it.
@@ -215,20 +233,77 @@ export function ufcPropLegs(bout, { odds = null, breakdown = null, engine = null
       push('rounds', null, `Under ${t.point} rounds`, 1 - pOver, [`${pct(1 - pOver)} to end inside ${t.point} rounds`, ...fightWhy()], t.under ?? [], { point: t.point, sideWord: 'under' });
     }
   }
-  // Method + round, and a win in a round, by who: the combos a record backs (two finishes or more that way). The method combos
-  // come first so that, on a tie, the ticket takes "by KO/TKO in Round 1" over the plain "wins in Round 1".
+  // FanDuel's combos (2026-11-05 screenshots): "Method & Round Combo" is a fighter, a way and one round; the
+  // "Submission Round Combos" (and KO) are a fighter, a way and a two-round window; "Round Betting" is a fighter and
+  // a round. One finish that way is enough for a leg (the long ones are what the sprinkle wants), two for a window.
   for (const s of sides) {
     const r = read[s];
     if (r.wins < 3) continue;
     for (const k of ['ko', 'sub']) {
-      for (const rs of [[1], [1, 2]]) {
+      for (const rr of allRounds) {
+        const c = r.methodRoundCount(k, [rr]);
+        if (c >= 1 && c / r.wins >= 0.1) push('method_round', s, `${name[s]} ${METHOD_LABEL[k]} & Round ${rr}`, chance[s] * (c / r.wins), [`${c} of ${r.wins} wins by ${METHOD_LABEL[k]} in Round ${rr} (${pct(c / r.wins)})`, `${pct(chance[s])} to win`], [], { method: k, round: rr });
+      }
+      for (const rs of allRounds.slice(0, -1).map((x) => [x, x + 1])) {
         const c = r.methodRoundCount(k, rs);
-        if (c >= 2 && c / r.wins >= 0.2) push('method_round', s, `${name[s]} by ${METHOD_LABEL[k]} in Round ${rs.join(' or ')}`, chance[s] * (c / r.wins), [`${c} of ${r.wins} wins by ${METHOD_LABEL[k]} in Round ${rs.join(' or ')} (${pct(c / r.wins)})`, `${pct(chance[s])} to win`], [], { method: k, rounds: rs });
+        if (c >= 2 && c / r.wins >= 0.2) push('method_rounds', s, `${name[s]} to win by ${METHOD_LABEL[k]} in Rounds ${rs.join(' or ')}`, chance[s] * (c / r.wins), [`${c} of ${r.wins} wins by ${METHOD_LABEL[k]} in Rounds ${rs.join(' or ')} (${pct(c / r.wins)})`, `${pct(chance[s])} to win`], [], { method: k, rounds: rs });
       }
     }
     for (const rr of allRounds) {
       const c = r.roundCount([rr]);
-      if (c >= 2 && c / r.wins >= 0.2) push('method_round', s, `${name[s]} wins in Round ${rr}`, chance[s] * (c / r.wins), [`${c} of ${r.wins} wins came in Round ${rr}`, `${pct(chance[s])} to win`], [], { round: rr });
+      if (c >= 1 && c / r.wins >= 0.1) push('win_round', s, `${name[s]} to win in Round ${rr}`, chance[s] * (c / r.wins), [`${c} of ${r.wins} wins came in Round ${rr}`, `${pct(chance[s])} to win`], [], { round: rr });
+    }
+    // "Fighter to Win & Round 2 to Start": the win comes after the first round (a later finish or the cards).
+    if (rounds >= 2) {
+      const after = 1 - r.roundShare(1);
+      push('win_round_start', s, `${name[s]} to win & Round 2 to start`, chance[s] * after, [`${pct(after)} of ${name[s]}'s wins come after Round 1`, `${pct(chance[s])} to win`], [], { round: 2 });
+    }
+  }
+  // "Fight to start Round N": both answers, as the book lists them.
+  if (!thin) {
+    for (const r of [2, 3].filter((x) => x <= rounds)) {
+      const p = 1 - endIn(allRounds.filter((x) => x < r));
+      push('round_start', null, `Fight to start Round ${r}: No`, 1 - p, [`${pct(1 - p)} chance the fight is over before Round ${r}`, ...fightWhy()], [], { round: r, answer: 'no' });
+    }
+    // "Match specials": one fighter by one way or the other by another ("A by Submission or B by KO/TKO"), the three likeliest cross pairs.
+    const cross = [];
+    for (const ka of ['ko', 'sub', 'dec']) for (const kb of ['ko', 'sub', 'dec']) {
+      if (ka === kb) continue;
+      const p = chance.a * read.a.share[ka] + chance.b * read.b.share[kb];
+      if (p >= 0.05) cross.push({ ka, kb, p });
+    }
+    for (const x of cross.sort((u, v) => v.p - u.p).slice(0, 3)) {
+      push('method_either', null, `${name.a} by ${END_LABEL[x.ka]} or ${name.b} by ${END_LABEL[x.kb]}`, x.p, [`${name.a}: ${pct(read.a.share[x.ka])} of wins by ${METHOD_LABEL[x.ka]}`, `${name.b}: ${pct(read.b.share[x.kb])} of wins by ${METHOD_LABEL[x.kb]}`], [], { methods: [x.ka, x.kb] });
+    }
+    // The minute specials (FanDuel's "MMA Match Specials" and "UFC Specials: +2000 and above"), from the clock at each
+    // finish on file; a window's share is shrunk toward its base rate across the sport. A fighter's own special
+    // needs at least one finish in the window on file; the either-fighter ones read both records.
+    const final = rounds;
+    const W = {
+      first30: { pred: (x) => x.round === 1 && x.secs <= 30, base: 0.02, text: 'the 1st 30 seconds of the fight' },
+      first2min: { pred: (x) => x.round === 1 && x.secs <= 120, base: 0.07, text: 'the 1st 2 minutes of the fight' },
+      first3min: { pred: (x) => x.round === 1 && x.secs <= 180, base: 0.1, text: 'the 1st 3 minutes of the fight' },
+      min4any: { pred: (x) => x.secs > 180 && x.secs <= 240, base: 0.07, text: 'the 4th minute of any round' },
+      last30final: { pred: (x) => x.round === final && x.secs >= 270, base: 0.015, text: `the last 30 seconds of the ${ordinal(final)} round` },
+      last2final: { pred: (x) => x.round === final && x.secs >= 180, base: 0.04, text: `the last 2 minutes of the ${ordinal(final)} round` },
+      r1min1OrLast: { pred: (x) => (x.round === 1 && x.secs <= 60) || (x.round === final && x.secs >= 240), base: 0.055, text: `the 1st minute of Round 1 or the last minute of the ${ordinal(final)} round` },
+      subFirst3R1: { pred: (x) => x.k === 'sub' && x.round === 1 && x.secs <= 180, base: 0.03, text: 'by Submission in the 1st 3 minutes of Round 1' },
+      koFirst30R1: { pred: (x) => x.k === 'ko' && x.round === 1 && x.secs <= 30, base: 0.012, text: 'by KO/TKO in the 1st 30 seconds of Round 1' },
+    };
+    const winWhy = (s, w) => `${name[s]}: ${read[s].timeCount(w.pred)} of ${read[s].wins} wins in ${w.text}`;
+    for (const s of sides) {
+      for (const key of ['first30', 'first2min', 'first3min', 'koFirst30R1']) {
+        const w = W[key];
+        if (!read[s].timeCount(w.pred)) continue;
+        push('special', s, `${name[s]} to win in ${w.text}`.replace(' in by ', ' by '), chance[s] * read[s].timeShare(w.pred, w.base), [winWhy(s, w), `${pct(chance[s])} to win`], [], { window: key });
+      }
+    }
+    for (const key of ['first30', 'min4any', 'last30final', 'last2final', 'r1min1OrLast', 'subFirst3R1']) {
+      const w = W[key];
+      if (!sides.some((s) => read[s].timeCount(w.pred))) continue; // a base rate alone is no read: one finish in the window on file, either side
+      const p = sides.reduce((sum, s) => sum + chance[s] * read[s].timeShare(w.pred, w.base), 0);
+      const label = key === 'min4any' || key === 'r1min1OrLast' ? `Fight to be won in ${w.text}` : `Either fighter to win in ${w.text}`.replace(' in by ', ' by ');
+      push('special', null, label, p, sides.map((s) => winWhy(s, w)), [], { window: key });
     }
   }
   // The spread, only when the feed posts one.
@@ -241,6 +316,36 @@ export function ufcPropLegs(bout, { odds = null, breakdown = null, engine = null
     }
   }
   return legs;
+}
+
+/**
+ * The sprinkles (2026-11-05: "a Sprinkle button for super high odds props
+ * worth sprinkling a couple of dollars on for a high payout"): the long
+ * shots the records back best. A leg is a sprinkle when its fair price is
+ * long (a chance inside SPRINKLE_BAND) and it is a real prop, not a side,
+ * a total or a yes/no; the likeliest long shots come first, at most two
+ * a bout and SPRINKLE_MAX a card. Each carries its fair price; the book's
+ * own number is on its fight page.
+ */
+export const SPRINKLE_BAND = [0.012, 0.12];
+export const SPRINKLE_MAX = 8;
+const SPRINKLE_PROPS = new Set(['method', 'method_round', 'method_rounds', 'win_round', 'end_round', 'method_either', 'win_round_start', 'special']);
+export function sprinklePicks(legs, { perBout = 2, max = SPRINKLE_MAX } = {}) {
+  const perBoutCount = new Map(); const out = [];
+  // The combo props first on a tie, so "Submission & Round 2" is taken over "to win in Round 2" when every Round 2 win
+  // came by submission: the same chance, the longer price at the book.
+  const rank = { method_round: 0, method_rounds: 1, special: 2, method_either: 3, win_round_start: 4, end_round: 5, win_round: 6, method: 7 };
+  const pool = (legs ?? []).filter((l) => SPRINKLE_PROPS.has(l.prop) && l.chance >= SPRINKLE_BAND[0] && l.chance <= SPRINKLE_BAND[1]).sort((x, y) => y.chance - x.chance || (rank[x.prop] ?? 9) - (rank[y.prop] ?? 9) || String(x.id).localeCompare(String(y.id)));
+  const same = (x, y) => x.boutId === y.boutId && (x.side ?? null) === (y.side ?? null) && x.round != null && x.round === y.round;
+  for (const l of pool) {
+    if (out.length >= max) break;
+    const c = perBoutCount.get(l.boutId) ?? 0;
+    if (c >= perBout) continue;
+    if (out.some((o) => same(o, l))) continue; // the same fighter in the same round is one bet, not two
+    perBoutCount.set(l.boutId, c + 1);
+    out.push(l);
+  }
+  return out;
 }
 
 /** The card's pieces: every bout's legs, with the notes for the props that have no lines or no stats. */
@@ -257,5 +362,7 @@ export function ufcCardProps(bouts, readBy, { now = Date.now(), engine = null } 
   if (!legs.some((l) => l.prop === 'spread')) notes.spread = NO_SPREAD_NOTE;
   // Whether the MMA Engine's run has read this card: its consensus moves the grades, so the ticket can change when it lands.
   const cappers = { read: cappersRead > 0, bouts: cappersRead, generatedAt: cappersRead ? engine?.generatedAt ?? null : null };
-  return { builtAt: now, legs, notes, cappers };
+  const sprinkles = sprinklePicks(legs);
+  sprinkles.forEach((l, i) => { l.sprinkle = true; l.sprinkleRank = i + 1; });
+  return { builtAt: now, legs, notes, cappers, sprinkles: sprinkles.map((l) => l.id) };
 }

@@ -887,6 +887,7 @@ const el = {
   parlayScore: document.getElementById('parlayScore'),
   parlayStats: document.getElementById('parlayStats'),
   parlayUfcProps: document.getElementById('parlayUfcProps'),
+  parlaySprinkle: document.getElementById('parlaySprinkle'),
   parlayUfcNote: document.getElementById('parlayUfcNote'),
   parlayOddsMin: document.getElementById('parlayOddsMin'),
   parlayOddsMax: document.getElementById('parlayOddsMax'),
@@ -10154,11 +10155,11 @@ const parlayState = {
   book: 'draftkings', legs: 4, minL5: 0, minL10: 0, minH2H: 0, minScore: 2, stats: new Set(), odds: [-800, 800], games: new Set(), side: 'both', team: '',
   // UFC only: the prop types the pieces come from (none chosen = every type).
   ufcProps: new Set(),
-  built: null, locked: new Set(), seen: new Set(), breakdowns: {}, open: null, amount: 10, note: '',
+  built: null, locked: new Set(), seen: new Set(), breakdowns: {}, open: null, amount: 10, note: '', sprinkle: false,
 };
 /** The UFC prop types in the order the chips show (worker/src/ufc-props.js's UFC_PROPS; the record carries the labels too). */
-const UFC_PROP_ORDER = ['ml', 'method', 'double', 'rounds', 'end_round', 'method_round', 'distance', 'round_start', 'end_method', 'spread', 'strikes', 'takedowns', 'knockdowns'];
-const UFC_PROP_LABELS = { ml: 'Moneyline', method: 'Method of victory', double: 'Double chance', rounds: 'Rounds over/under', end_round: 'Ends in round', method_round: 'Method + round', distance: 'Goes the distance', round_start: 'Round to start', end_method: 'How fight will end', spread: 'Spread', strikes: 'Strikes', takedowns: 'Takedowns', knockdowns: 'Knockdowns' };
+const UFC_PROP_ORDER = ['ml', 'method', 'double', 'rounds', 'end_round', 'method_round', 'method_rounds', 'win_round', 'distance', 'round_start', 'end_method', 'method_either', 'win_round_start', 'special', 'spread', 'strikes', 'takedowns', 'knockdowns'];
+const UFC_PROP_LABELS = { ml: 'Moneyline', method: 'Method of victory', double: 'Double chance', rounds: 'Total rounds', end_round: 'Ends in round', method_round: 'Method & round combo', method_rounds: 'Method round combos', win_round: 'Round betting', distance: 'Go the distance?', round_start: 'Fight to start round', end_method: 'How fight will end', method_either: 'Either-fighter specials', win_round_start: 'Win & round to start', special: 'Specials', spread: 'Spread', strikes: 'Strikes', takedowns: 'Takedowns', knockdowns: 'Knockdowns' };
 /** A leg with no line at any book yet: it rides the ticket unpriced, with a note, and the price covers the priced legs. */
 const UNPRICED_QUOTE = { american: null, decimal: null, link: null, book: null, bookKey: null, unpriced: true };
 const PARLAY_BOOKS = ['draftkings', 'fanduel', 'caesars', 'fanatics', 'betmgm', 'prizepicks', 'hardrock', 'bet365', 'betrivers'];
@@ -10192,7 +10193,7 @@ function ufcParlayRows(picks) {
       const quotes = (l.quotes ?? []).map((q) => ({ ...q, bookKey: q.bookId }));
       const best = quotes.find((q) => q.bookKey !== 'engine') ?? quotes[0] ?? null;
       return { id: l.id, eventId: l.boutId, sportKey: UFC_SPORT_KEY, sportTitle: 'UFC', commenceMs: l.boutDate ?? bd.boutDate ?? rec.lockMs, home: bd.b ?? l.fight?.split(' vs ')[1], away: bd.a ?? l.fight?.split(' vs ')[0], playerName: l.name ?? l.fight, team: '', opponent: l.opponent ?? null, athleteId: l.fighterId ?? null, headshot: null, statKey: l.prop, statLabel: l.label, marketLabel: l.label, point: l.point ?? null, side: l.sideWord ?? 'over', selection: l.selection, american: best?.american ?? null, decimal: best?.decimal ?? null, book: best?.book ?? null, bookKey: best?.bookKey ?? null, quotes, periods: {}, series: [],
-        ufc: { prop: l.prop, score: l.score, chance: l.chance, priced: l.priced, note: l.note, books: l.books ?? [], why: l.why ?? [], fightLevel: !l.side, order: l.order ?? bd.order ?? null, lean: l.side ? bd.lean === l.side : null, confidence: bd.confidence ?? 0, summary: bd.summary, reasons: bd.reasons, parlayPiece: l.side ? bd.lean === l.side && bd.parlayPiece : false, weightClass: l.weightClass ?? bd.weightClass } };
+        ufc: { prop: l.prop, score: l.score, chance: l.chance, fair: l.fairAmerican ?? null, sprinkle: Boolean(l.sprinkle), sprinkleRank: l.sprinkleRank ?? null, priced: l.priced, note: l.note, books: l.books ?? [], why: l.why ?? [], fightLevel: !l.side, order: l.order ?? bd.order ?? null, lean: l.side ? bd.lean === l.side : null, confidence: bd.confidence ?? 0, summary: bd.summary, reasons: bd.reasons, parlayPiece: l.side ? bd.lean === l.side && bd.parlayPiece : false, weightClass: l.weightClass ?? bd.weightClass } };
     });
   }
   const rows = [];
@@ -10426,6 +10427,37 @@ function renderParlayLeagues() {
   el.parlayLeagues.innerHTML = [...PLAYER_LEAGUES, [UFC_SPORT_KEY, 'UFC']].map(([key, label]) => `<button type="button" class="league-chip ${s.sports.has(key) ? 'is-active' : ''}" data-parlay-league="${esc(key)}" aria-pressed="${s.sports.has(key)}" title="${key === UFC_SPORT_KEY ? 'UFC tickets stand alone' : 'Toggle; a ticket can mix leagues'}">${leagueIconSvg(TREND_LEAGUE_ICON[key] ?? key)}<span class="league-chip-label">${esc(label)}</span>${s.sports.has(key) ? '<span class="league-chip-on" aria-hidden="true">✓</span>' : ''}</button>`).join('');
 }
 
+/**
+ * The sprinkles (2026-11-05: "super high odds props worth sprinkling a couple dollars on for high payout"): the card's
+ * long shots the records back best, likeliest first, each with Pixel's fair price and the book's fight page, since the
+ * odds feed carries no fight props for MMA. Singles to sprinkle, not a parlay.
+ */
+function renderSprinkles(live) {
+  const s = parlayState;
+  const legs = live.filter((r) => r.ufc?.sprinkle).sort((x, y) => (x.ufc.sprinkleRank ?? 99) - (y.ufc.sprinkleRank ?? 99));
+  const bookOf = (r) => (r.ufc.books ?? []).find((b) => b.bookId === s.book) ?? (r.ufc.books ?? [])[0] ?? null;
+  const stake = 2;
+  const legHtml = (r) => {
+    const u = r.ufc; const at = bookOf(r); const fair = Number.isFinite(u.fair) ? u.fair : null;
+    return `<div class="parlay-leg is-unpriced" data-parlay-leg="${esc(r.id)}">
+        <div class="parlay-leg-bar" style="--tone:#f5c542"></div>
+        <div class="parlay-leg-body">
+          <div class="parlay-leg-head"><div class="parlay-leg-who"><strong>${esc(r.away ?? '')} vs ${esc(r.home ?? '')}</strong> <small>${esc(u.weightClass ?? '')} · ${esc(trendTimeFmt.format(new Date(r.commenceMs)))}</small></div>${fair != null ? `<span class="parlay-leg-price is-fair" title="Pixel's fair price, no vig">fair ${esc(formatAmerican(fair))}</span>` : ''}</div>
+          <p class="parlay-leg-line">${esc(r.selection)}</p>
+          <div class="parlay-chips"><span class="parlay-chip">${esc(UFC_PROP_LABELS[u.prop] ?? '')}</span>${Number.isFinite(u.chance) ? `<span class="parlay-chip">${esc(pct(u.chance))} chance</span>` : ''}${fair != null ? `<span class="parlay-chip">$${stake} pays about $${esc((stake * (1 + fair / 100)).toFixed(0))} at fair</span>` : ''}</div>
+          ${u.why?.length ? `<ul class="parlay-why">${u.why.map((w) => `<li>${esc(w)}</li>`).join('')}</ul>` : ''}
+          <div class="parlay-leg-actions">${at ? `<a class="parlay-btn is-slip" href="${esc(at.link)}" target="_blank" rel="noopener">Open the fight at ${esc(at.book)} ↗</a>` : ''}${r.athleteId ? `<button type="button" class="parlay-btn" data-parlay-stats="${esc(r.id)}">Fighter info</button>` : ''}</div>
+        </div>
+      </div>`;
+  };
+  return `<div class="parlay-config"><span class="parlay-tag">✨ Sprinkles</span><span class="parlay-tag">${esc(String(legs.length))} long shot${legs.length === 1 ? '' : 's'}</span><span class="parlay-tag">$${stake} each</span></div>
+    <div class="parlay-card is-sprinkle">
+      <div class="parlay-card-head"><strong>✨ Sprinkles</strong><span class="parlay-card-book">a couple of dollars each</span></div>
+      <p class="parlay-note">The card's long shots the records back best, likeliest first. Our odds feed carries no fight props for MMA, so each shows Pixel's fair price; the book's own number is on the fight page. Singles, not a parlay: sprinkle what you would not miss.</p>
+      <div class="parlay-legs">${legs.map(legHtml).join('') || '<p class="empty">No long shots the records back on this card yet; they come once the fighter profiles are on file.</p>'}</div>
+    </div>`;
+}
+
 function renderParlay() {
   if (!el.parlayView) return;
   const s = parlayState;
@@ -10478,6 +10510,8 @@ function renderParlay() {
     el.parlayUfcNote.textContent = [[...new Set(chosenNotes)].join(' ') || (unpriced && isUfcParlay() ? `${unpriced} of these legs have no line at any book yet; they ride the ticket unpriced with a note, and the price covers the rest.` : ''), isUfcParlay() ? capNote : ''].filter(Boolean).join(' ');
   }
 
+  if (el.parlaySprinkle) { el.parlaySprinkle.hidden = !isUfcParlay(); el.parlaySprinkle.disabled = !live.some((r) => r.ufc?.sprinkle); el.parlaySprinkle.setAttribute('aria-pressed', s.sprinkle ? 'true' : 'false'); }
+  if (s.sprinkle && isUfcParlay()) { el.parlayResult.innerHTML = renderSprinkles(live); return; }
   const legs = s.built ?? [];
   const price = parlayPriceOf(legs);
   const all = parlayAllLink(legs);
@@ -10536,7 +10570,8 @@ el.parlayView?.addEventListener('click', (event) => {
   if (ufcProp) { const k = ufcProp.dataset.parlayUfcProp; if (s.ufcProps.has(k)) s.ufcProps.delete(k); else s.ufcProps.add(k); renderParlay(); return; }
   const game = t.closest('[data-parlay-game]');
   if (game) { const k = game.dataset.parlayGame; if (s.games.has(k)) s.games.delete(k); else s.games.add(k); renderParlay(); return; }
-  if (t.closest('[data-parlay-build]')) { buildParlay({ regenerate: Boolean(s.built) }); return; }
+  if (t.closest('[data-parlay-build]')) { s.sprinkle = false; buildParlay({ regenerate: Boolean(s.built) }); return; }
+  if (t.closest('[data-parlay-sprinkle]')) { s.sprinkle = !s.sprinkle; renderParlay(); if (s.sprinkle && window.innerWidth <= 820) el.parlayResult?.scrollIntoView({ behavior: 'smooth', block: 'start' }); return; }
   if (t.closest('[data-parlay-reset]')) { Object.assign(s, { legs: 4, minL5: 0, minL10: 0, minH2H: 0, minScore: 2, stats: new Set(), odds: [-800, 800], games: new Set(), side: 'both', team: '', ufcProps: new Set(), built: null, locked: new Set(), seen: new Set(), open: null, note: '' }); renderParlay(); return; }
   const lock = t.closest('[data-parlay-lock]');
   if (lock) { const id = lock.dataset.parlayLock; if (s.locked.has(id)) s.locked.delete(id); else s.locked.add(id); renderParlay(); return; }
@@ -10566,7 +10601,7 @@ el.parlayView?.addEventListener('change', (event) => {
 /* UFC: the next card and every fighter on it, from the runner's KV records (worker/src/ufc-card.js) */
 /* ================================================================ */
 
-const ufcState = { sub: 'card', events: [], eventId: null, event: null, builtAt: null, loading: false, fighters: null, fightersById: {}, query: '', focus: 0, picks: null, why: null, graphHover: null, dogHow: false };
+const ufcState = { sub: 'card', events: [], eventId: null, event: null, builtAt: null, loading: false, fighters: null, fightersById: {}, query: '', focus: 0, picks: null, why: null, graphHover: null, dogHow: false, sprinkleOpen: null };
 const UFC_SEGMENT_LABEL = { main: 'Main card', prelims: 'Prelims', early: 'Early prelims' };
 const ufcDateFmt = new Intl.DateTimeFormat('en-US', { weekday: 'short', month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit', timeZone: 'America/New_York' });
 const ufcDayFmt = new Intl.DateTimeFormat('en-US', { month: 'short', day: 'numeric', year: 'numeric', timeZone: 'America/New_York' });
@@ -10719,6 +10754,16 @@ const untilText = (ms) => {
 const resultWord = { win: 'W', loss: 'L', draw: 'D', nc: 'NC' };
 
 /** How the underdog wins: the record lines the worker wrote, and the cappers' method call when there is one. */
+/** A bout's sprinkles: each long shot with its chance, Pixel's fair price, what two dollars pays at it, and the fight page at the book. */
+function ufcSprinkleHtml(legs) {
+  const stake = 2;
+  return `<div class="ufc-sprinkle"><strong>Sprinkle · a couple of dollars each</strong>${legs.map((l) => {
+    const fair = Number.isFinite(l.fairAmerican) ? l.fairAmerican : null;
+    const at = (l.books ?? []).find((x) => x.bookId === 'fanduel') ?? (l.books ?? [])[0] ?? null;
+    return `<div class="ufc-sprinkle-leg"><b>${esc(l.selection)}</b><small>${esc(pct(l.chance))} chance${fair != null ? ` · fair ${esc(formatAmerican(fair))} · $${stake} pays about $${esc((stake * (1 + fair / 100)).toFixed(0))}` : ''}</small>${at ? `<a href="${esc(at.link)}" target="_blank" rel="noopener">Open the fight at ${esc(at.book)} ↗</a>` : ''}</div>`;
+  }).join('')}<p class="row-sub">Pixel's fair price, no vig; the book's own number is on the fight page. Our odds feed carries no fight props for MMA.</p></div>`;
+}
+
 function ufcDogHowHtml(dog) {
   const lines = [...(dog.path?.lines ?? [])];
   if (dog.capperMethod) lines.push(`Cappers' method call: ${dog.capperMethod.selection} (${Math.round(dog.capperMethod.consensusPct)}%${Number.isFinite(dog.capperMethod.quotedOdds) ? `, quoted ${formatAmerican(dog.capperMethod.quotedOdds)}` : ''}).`);
@@ -10745,7 +10790,11 @@ function renderUfcBout(b, ev) {
   const short = (name) => (sameSurname ? String(name ?? '') : String(name ?? '').split(' ').at(-1));
   const cap = bd?.engine?.moneyline && bd.engine.moneyline.tier !== 'pass' ? `<span class="ufc-cap">Cappers ${esc(String(Math.round(bd.engine.moneyline.consensusPct)))}% ${esc(short(bd.engine.moneyline.selection))}</span>` : '';
   const dog = rec?.underdog?.boutId === b.id ? rec.underdog : null;
-  const foot = bd ? `<div class="ufc-bout-foot">${price(bd.bestA)}<span class="ufc-foot-mid">${pick ? `<span class="ufc-pick-tag">Pixel's Pick</span>` : bd.confidence ? `<span class="ufc-lean">Lean ${esc(short(bd.leanName))} ${confStars(bd.confidence)}</span>` : ''}${dog ? `<button type="button" class="ufc-dog-tag" data-dog-how="${esc(b.id)}" aria-expanded="${ufcState.dogHow ? 'true' : 'false'}" title="How ${esc(dog.name)} wins">Underdog of the week · ${esc(short(dog.name))} ${ufcState.dogHow ? '▴' : '▾'}</button>` : ''}${cap}</span>${price(bd.bestB)}</div>${dog && ufcState.dogHow ? ufcDogHowHtml(dog) : ''}` : '';
+  // The bout's sprinkles (2026-11-05: "a Sprinkle button on fight cards for super high odds props worth a couple of dollars").
+  const sprinkles = (rec?.props?.legs ?? []).filter((l) => l.boutId === b.id && l.sprinkle).sort((x, y) => (x.sprinkleRank ?? 99) - (y.sprinkleRank ?? 99));
+  const sprinkleOpen = ufcState.sprinkleOpen === b.id;
+  const sprinkleTag = sprinkles.length && b.status === 'scheduled' ? `<button type="button" class="ufc-sprinkle-tag" data-sprinkle="${esc(b.id)}" aria-expanded="${sprinkleOpen ? 'true' : 'false'}" title="Long shots worth a couple of dollars">Sprinkle ${sprinkleOpen ? '▴' : '▾'}</button>` : '';
+  const foot = bd ? `<div class="ufc-bout-foot">${price(bd.bestA)}<span class="ufc-foot-mid">${pick ? `<span class="ufc-pick-tag">Pixel's Pick</span>` : bd.confidence ? `<span class="ufc-lean">Lean ${esc(short(bd.leanName))} ${confStars(bd.confidence)}</span>` : ''}${dog ? `<button type="button" class="ufc-dog-tag" data-dog-how="${esc(b.id)}" aria-expanded="${ufcState.dogHow ? 'true' : 'false'}" title="How ${esc(dog.name)} wins">Underdog of the week · ${esc(short(dog.name))} ${ufcState.dogHow ? '▴' : '▾'}</button>` : ''}${cap}${sprinkleTag}</span>${price(bd.bestB)}</div>${dog && ufcState.dogHow ? ufcDogHowHtml(dog) : ''}${sprinkleOpen ? ufcSprinkleHtml(sprinkles) : ''}` : '';
   return `<article class="ufc-bout ${b.status === 'cancelled' ? 'is-cancelled' : ''} ${pick ? 'is-picked' : ''}" data-bout="${esc(b.id)}" data-ufc-bout="${esc(b.id)}" tabindex="0" role="button" aria-label="${esc(b.a?.name ?? 'TBA')} vs ${esc(b.b?.name ?? 'TBA')}, open the matchup">
     <div class="ufc-bout-head"><span class="ufc-weight">${esc(b.weightClass ?? '')}${b.title ? ' · <b>Title fight</b>' : ''}${b.rounds ? ` · ${esc(String(b.rounds))} rounds` : ''}</span>${status || '<span class="ufc-open">Matchup ›</span>'}</div>
     <div class="ufc-bout-body">${side(b.a, 'a')}<span class="ufc-vs">vs</span>${side(b.b, 'b')}</div>
@@ -10925,6 +10974,8 @@ el.ufcView?.addEventListener('click', (event) => {
   // The underdog tag: how the dog wins, under the bout, without opening the matchup.
   const how = t.closest('[data-dog-how]');
   if (how) { ufcState.dogHow = !ufcState.dogHow; renderUfc(); return; }
+  const sp = t.closest('[data-sprinkle]');
+  if (sp) { ufcState.sprinkleOpen = ufcState.sprinkleOpen === sp.dataset.sprinkle ? null : sp.dataset.sprinkle; renderUfc(); return; }
   if (t.closest('.ufc-dog-details')) return;
   const f = t.closest('[data-ufc-fighter]');
   if (f) { openUfcFighter(f.dataset.ufcFighter, f.dataset.ufcName); if (el.ufcList) el.ufcList.hidden = true; return; }
