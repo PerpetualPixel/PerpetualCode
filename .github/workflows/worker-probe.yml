@@ -83,6 +83,8 @@ jobs:
                   const bds = Object.values(d.breakdowns || {}).sort((x, y) => (x.order || 0) - (y.order || 0));
                   for (const b of bds) { const g = b.engine; console.log("  BOUT", b.order, b.a, "vs", b.b, "| lean", b.leanName, b.confidence, "| cappers", g ? `ML ${g.moneyline ? `${g.moneyline.side}=${g.moneyline.selection} ${g.moneyline.consensusPct}% ${g.moneyline.tier}` : "none"}; methods ${(g.methods || []).map((m) => `${m.side}:${m.method} ${m.consensusPct}%`).join(", ") || "none"}` : "NONE"); }
                   if (d.props) console.log("PROPS legs", (d.props.legs || []).length, "| cappers read", JSON.stringify(d.props.cappers));
+                  if (d.props && d.props.board) { const b = d.props.board; const legs = d.props.legs || []; const fromBoard = legs.filter((l) => (l.quotes || []).some((q) => q.source === "bestfightodds")); console.log("BOARD", b.source, "read", b.at && new Date(b.at).toISOString(), "| events", (b.events || []).map((e) => e.title).join(" / "), "| bouts", b.bouts, "| priced", b.priced, "| legs with a board quote", fromBoard.length, "of", legs.length); for (const l of fromBoard.slice(0, 12)) console.log("  PRICED", l.prop, "|", l.selection, "|", (l.quotes || []).slice(0, 3).map((q) => `${q.bookId} ${q.american > 0 ? "+" : ""}${q.american}`).join(", ")); }
+                  else if (d.props) console.log("BOARD none (no board read in the record)");
                   if (d.underdog) console.log("UNDERDOG", d.underdog.name, "vs", d.underdog.opponent, d.underdog.american, "chance", d.underdog.chance);
                   return;
                 }
