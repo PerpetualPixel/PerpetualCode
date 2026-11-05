@@ -578,6 +578,9 @@ export async function runUfcTick(env, ctx, now = Date.now(), { deps = {} } = {})
       byBout.set(bout.id, { bout, odds: bo, breakdown: bd, engine });
       record.breakdowns[bout.id] = { engine, boutDate: bout.date ?? event.date, order: bout.order ?? null, a: bout.a?.name ?? null, b: bout.b?.name ?? null, aId: bout.a?.id ?? null, bId: bout.b?.id ?? null, weightClass: bout.weightClass ?? null, segment: bout.segment, lean: bd.lean, leanName: bd.leanName ?? null, confidence: bd.confidence, straight: bd.straight, parlayPiece: bd.parlayPiece, summary: bd.summary, reasons: bd.reasons, model: bd.model, bestA: bo?.a[0] ?? null, bestB: bo?.b[0] ?? null, quotesA: bo?.a.slice(0, 8) ?? [], quotesB: bo?.b.slice(0, 8) ?? [], totals: (bo?.totals ?? []).map((t) => ({ point: t.point, over: t.over[0] ?? null, under: t.under[0] ?? null })) };
     }
+    // A bout ESPN took off the card (a pairing re-issued under a new id when a fighter is replaced, as Brennan vs Bashi
+    // became Bashi vs Calderon) takes its read with it; a cancelled or finished bout stays on the card and keeps its own.
+    for (const id of Object.keys(record.breakdowns)) if (!event.bouts.some((b) => b.id === id)) delete record.breakdowns[id];
     // Existing picks: voided when the bout is gone or a fighter changed; otherwise the price follows while the same selection posts.
     for (const pick of record.bets) {
       if (pick.status !== 'pending') continue;
