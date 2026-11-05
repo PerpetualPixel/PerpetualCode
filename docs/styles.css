@@ -7368,7 +7368,7 @@ a.trend-price:hover { background: rgba(255, 255, 255, 0.06); }
 
 /* "Fit screen" (desktop only): the shell widens to the window instead of its reading cap. The toggle hides below
    the desktop breakpoint, where the shell already fills the screen. */
-.topbar-wide { display: none; }
+.topbar-wide { display: none; animation: none; }
 @media (min-width: 900px) {
   .topbar-wide { display: inline-flex; }
   .topbar-group-quiet .topbar-wide[aria-pressed="true"] { color: var(--text); background: var(--accent-dim); border-color: var(--line); }
