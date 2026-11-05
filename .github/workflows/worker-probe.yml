@@ -66,6 +66,16 @@ jobs:
                   console.log((re ? lines.filter((l) => re.test(l)) : lines).slice(0, 120).join("\n").slice(0, 12000));
                   return;
                 }
+                if (d && d.breakdowns && d.engine !== undefined) {
+                  // The UFC picks record (worker/src/ufc-picks.js): the engine feed it read, and per bout whether the cappers paired.
+                  const e = d.engine || {};
+                  console.log("ENGINE", e.event, "| generated", e.generatedAt, "| picks on card", (e.picks || []).length, "| totals", JSON.stringify(e.totals));
+                  const bds = Object.values(d.breakdowns || {}).sort((x, y) => (x.order || 0) - (y.order || 0));
+                  for (const b of bds) { const g = b.engine; console.log("  BOUT", b.order, b.a, "vs", b.b, "| lean", b.leanName, b.confidence, "| cappers", g ? `ML ${g.moneyline ? `${g.moneyline.side}=${g.moneyline.selection} ${g.moneyline.consensusPct}% ${g.moneyline.tier}` : "none"}; methods ${(g.methods || []).map((m) => `${m.side}:${m.method} ${m.consensusPct}%`).join(", ") || "none"}` : "NONE"); }
+                  if (d.props) console.log("PROPS legs", (d.props.legs || []).length, "| cappers read", JSON.stringify(d.props.cappers));
+                  if (d.underdog) console.log("UNDERDOG", d.underdog.name, "vs", d.underdog.opponent, d.underdog.american, "chance", d.underdog.chance);
+                  return;
+                }
                 if (d && d.event && Array.isArray(d.event.bouts)) {
                   // A UFC card (worker/src/ufc-events.js): one line per bout, the names as ESPN spells them, for matching against the MMA Engine feed.
                   const ev = d.event;
