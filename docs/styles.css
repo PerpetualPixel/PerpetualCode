@@ -7204,11 +7204,22 @@ a.trend-price:hover { background: rgba(255, 255, 255, 0.06); }
 @keyframes livePulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.35; } }
 .live-game { padding: 14px 16px; }
 .live-game.is-live { border-color: rgba(255, 59, 92, 0.45); }
-.live-head { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; }
+/* A compact card that opens on a tap (2026-11-05): the head is the button, the body shows when open. */
+.live-head { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; width: 100%; background: none; border: 0; padding: 0; color: inherit; font: inherit; text-align: left; cursor: pointer; }
+.live-head-main { flex: 1 1 160px; min-width: 0; display: flex; flex-direction: column; gap: 2px; }
+.live-head-main strong { font-size: 1rem; line-height: 1.2; }
+.live-head-main small { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.live-conf { color: #fbbf24; font-size: 0.8rem; letter-spacing: 0.04em; flex: none; }
+.live-caret { color: var(--muted); font-size: 0.8rem; flex: none; }
+.live-game.is-closed { padding-top: 10px; padding-bottom: 10px; }
+.live-game.is-playable.is-live { border-color: rgba(94, 224, 122, 0.55); }
+.live-body { margin-top: 10px; }
+.live-list-head { display: flex; align-items: center; justify-content: space-between; gap: 10px; flex-wrap: wrap; margin: 0 0 10px; }
+.live-list-head .row-sub { margin: 0; }
 .live-head small { color: var(--muted); font-weight: 600; }
 .live-state { display: inline-flex; align-items: center; gap: 6px; padding: 4px 10px; border-radius: 999px; border: 1px solid var(--line); font-size: 0.78rem; font-weight: 800; text-transform: uppercase; letter-spacing: 0.05em; color: var(--muted); }
 .live-state.is-on { color: #fff; border-color: rgba(255, 59, 92, 0.6); }
-.live-score { margin-left: auto; font-family: var(--mono); font-weight: 800; }
+.live-score { font-family: var(--mono); font-weight: 800; flex: none; }
 .live-reads { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 10px; }
 .live-read { font-size: 0.76rem; color: var(--muted); padding: 3px 9px; border-radius: 999px; border: 1px dashed var(--line); }
 .live-read.is-fresh { color: var(--success); border-style: solid; border-color: rgba(94, 224, 122, 0.5); }
