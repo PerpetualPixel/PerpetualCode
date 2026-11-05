@@ -140,6 +140,11 @@ test('runUfcTick: picks post at confidence 4 or better inside the price range, a
   assert.equal(r2.voided.length, 1, 'the tick names the voided pick for the change email');
   assert.equal(r2.posted, 1, 'the new pairing posts on its fresh read');
   assert.equal(rec.bets[1].american, -130);
+  // ESPN re-issues the fourth bout under a new id: the old id's read leaves the record, the new one reads.
+  event.bouts[3] = bout('5', f('a4', 'G Seven'), f('b4', 'H Eight'));
+  await runUfcTick(env, ctx, NOW + 180e3, { deps });
+  rec = JSON.parse(store.get('ufc:picks:ev'));
+  assert.deepEqual(Object.keys(rec.breakdowns).sort(), ['1', '2', '3', '5'], 'the dropped bout id takes its breakdown with it');
   // After the lock nothing new posts; a finished bout grades.
   event.bouts[0] = { ...event.bouts[0], status: 'final', result: { winnerId: 'a1', method: 'KO/TKO', round: 1, time: '2:00' } };
   const r3 = await runUfcTick(env, ctx, event.date + 3600e3, { deps });
