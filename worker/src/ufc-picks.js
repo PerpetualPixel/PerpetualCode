@@ -179,7 +179,9 @@ export async function fetchMmaEngine(env, now = Date.now(), { deps = {} } = {}) 
   return record;
 }
 
-const surname = (n) => normalizeName(n).split(' ').filter(Boolean).at(-1) ?? '';
+/** A fighter's name with a hyphen read as a space: the engine writes "Cortes-Acosta", ESPN "Cortes Acosta", and both must give the surname "acosta". */
+const nameKey = (n) => normalizeName(String(n ?? '').replace(/-/g, ' '));
+const surname = (n) => nameKey(n).split(' ').filter(Boolean).at(-1) ?? '';
 const surnamesAlike = (x, y) => Boolean(x && y) && (x === y || (Math.min(x.length, y.length) >= 4 && (x.startsWith(y) || y.startsWith(x))));
 
 /**
@@ -207,12 +209,12 @@ export function fightIsBout(fight, bout) {
 export const enginePicksForEvent = (event, feed) => (feed?.picks ?? []).filter((p) => (event?.bouts ?? []).some((b) => fightIsBout(p.fight, b)));
 
 export function engineForBout(bout, feed) {
-  const a = normalizeName(bout.a?.name); const b = normalizeName(bout.b?.name);
+  const a = nameKey(bout.a?.name); const b = nameKey(bout.b?.name);
   const sa = surname(bout.a?.name); const sb = surname(bout.b?.name);
   if (!sa || !sb) return null;
   const mine = (feed?.picks ?? []).filter((p) => fightIsBout(p.fight, bout));
   if (!mine.length) return null;
-  const sideOf = (selection) => { const n = normalizeName(String(selection ?? '').replace(/\s+by\s+.*$/i, '')); const exact = matchSide(n, a, b); if (exact) return exact; const sn = surname(n); return surnamesAlike(sn, sa) && !surnamesAlike(sn, sb) ? 'a' : surnamesAlike(sn, sb) && !surnamesAlike(sn, sa) ? 'b' : null; };
+  const sideOf = (selection) => { const n = nameKey(String(selection ?? '').replace(/\s+by\s+.*$/i, '')); const exact = matchSide(n, a, b); if (exact) return exact; const sn = surname(n); return surnamesAlike(sn, sa) && !surnamesAlike(sn, sb) ? 'a' : surnamesAlike(sn, sb) && !surnamesAlike(sn, sa) ? 'b' : null; };
   const shape = (p) => ({ selection: p.selection, side: sideOf(p.selection), method: /\sby\s/i.test(String(p.selection ?? '')) ? methodClass(String(p.selection).replace(/^.*\sby\s+/i, '')) : null, consensusPct: p.consensusPct, strength: p.strength, tier: p.tier, pickCount: p.pickCount, suggestedUnits: p.suggestedUnits, quotedOdds: Number.isFinite(Number(p.quotedOdds)) ? Number(p.quotedOdds) : null, comments: p.comments ?? [] });
   const ml = mine.find((p) => p.market === 'moneyline');
   return { moneyline: ml ? shape(ml) : null, methods: mine.filter((p) => p.market === 'method_of_victory').map(shape), cancelled: mine.some((p) => p.cardStatus === 'cancelled') };

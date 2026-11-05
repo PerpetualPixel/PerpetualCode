@@ -66,6 +66,13 @@ jobs:
                   console.log((re ? lines.filter((l) => re.test(l)) : lines).slice(0, 120).join("\n").slice(0, 12000));
                   return;
                 }
+                if (d && d.event && Array.isArray(d.event.bouts)) {
+                  // A UFC card (worker/src/ufc-events.js): one line per bout, the names as ESPN spells them, for matching against the MMA Engine feed.
+                  const ev = d.event;
+                  console.log("CARD", ev.id, ev.name, "|", new Date(ev.date).toISOString(), "| bouts", ev.bouts.length, "| status", ev.status);
+                  for (const b of ev.bouts) console.log("  BOUT", b.order, b.segment, b.weightClass, "|", b.a && b.a.name, "(" + (b.a && b.a.id) + ")", "vs", b.b && b.b.name, "(" + (b.b && b.b.id) + ")", "|", b.status, b.result ? JSON.stringify(b.result) : "");
+                  return;
+                }
                 if (d && d.totals && Array.isArray(d.games) && d.games.every((g) => Array.isArray(g.slips))) {
                   // The recap (worker/src/live-board.js getLiveRecap): the final score of each game, its last build, and every slip graded at one unit.
                   console.log("TOTALS", JSON.stringify(d.totals));
