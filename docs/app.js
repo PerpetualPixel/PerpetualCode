@@ -10974,7 +10974,7 @@ function liveSummary(g) {
   const t = g.tick;
   if (t?.state === 'in') {
     const slips = liveSlipsFor(g).length; const reads = (g.game ?? []).length;
-    if (!slips && !reads) return g.elapsed < 0.2 ? 'Slips build once a quarter is in' : 'Nothing playable right now';
+    if (!slips && !reads) return g.elapsed < 0.03 ? 'Slips build from the first minutes' : 'Nothing playable right now';
     return [slips ? `${slips} slip${slips === 1 ? '' : 's'}` : null, reads ? `${reads} game line${reads === 1 ? '' : 's'}` : null].filter(Boolean).join(' · ');
   }
   if (!t || t.state === 'pre') return `Tips ${liveKickFmt.format(new Date(g.date))}`;
@@ -11164,7 +11164,7 @@ function liveBuiltWhen(slips) {
 }
 /** Why a game in play has no slip yet. */
 function liveNoSlipWhy(g) {
-  if (g.elapsed < 0.2) return 'Slips build once a quarter and a bit is in the books, one at every book that prices one, and rebuild as the game moves.';
+  if (g.elapsed < 0.03) return 'Slips build from the first minutes in play, one at every book that prices one, and rebuild as the game moves.';
   if (g.elapsed > 0.9) return 'Too late in the game for a new slip: the books pull their ladders from here.';
   return 'Nothing on the board clears the pace with margin at a usable price right now; checked again every few minutes.';
 }
@@ -11182,7 +11182,7 @@ function renderLive() {
   const reads = games.reduce((n, g) => n + (g.game ?? []).filter((r) => !liveState.books.size || liveState.showAll || r.lines.some((l) => liveState.books.has(l.bookId))).length, 0);
   const ordered = liveOrder(games);
   const playable = ordered.filter((g) => g.tick?.state === 'in' && g.play?.playable).length;
-  el.liveBody.innerHTML = `<div class="live-top"><span class="live-count ${slips || reads ? 'is-on' : ''}">${slips ? `${slips} live slip${slips === 1 ? '' : 's'} ready${where}` : elsewhere ? `No live slip${where}` : inPlay ? 'No live slip yet: they build once a quarter is in' : 'No live slip'}${reads ? ` · ${reads} game line${reads === 1 ? '' : 's'} with an edge` : ''}</span><span class="row-sub">Board read ${esc(liveTimeFmt.format(new Date(d.at)))} · re-reads every minute while open</span></div>${liveBooksPicker()}<div class="live-list-head"><span class="row-sub">${playable ? `${playable} playable now, most confident first` : inPlay ? `${inPlay} in play, nothing playable yet` : `${games.length} game${games.length === 1 ? '' : 's'} on the slate`} · ${games.length} listed. Tap a game to open it.</span><button type="button" class="link-button" data-live-expand="1">${liveState.expandAll ? 'Collapse all' : 'Expand all'}</button></div>${ordered.map(renderLiveGame).join('')}`;
+  el.liveBody.innerHTML = `<div class="live-top"><span class="live-count ${slips || reads ? 'is-on' : ''}">${slips ? `${slips} live slip${slips === 1 ? '' : 's'} ready${where}` : elsewhere ? `No live slip${where}` : inPlay ? 'No live slip yet: they build from the first minutes and rebuild as the game moves' : 'No live slip'}${reads ? ` · ${reads} game line${reads === 1 ? '' : 's'} with an edge` : ''}</span><span class="row-sub">Board read ${esc(liveTimeFmt.format(new Date(d.at)))} · re-reads every minute while open</span></div>${liveBooksPicker()}<div class="live-list-head"><span class="row-sub">${playable ? `${playable} playable now, most confident first` : inPlay ? `${inPlay} in play, nothing playable yet` : `${games.length} game${games.length === 1 ? '' : 's'} on the slate`} · ${games.length} listed. Tap a game to open it.</span><button type="button" class="link-button" data-live-expand="1">${liveState.expandAll ? 'Collapse all' : 'Expand all'}</button></div>${ordered.map(renderLiveGame).join('')}`;
 }
 
 el.liveView?.addEventListener('click', (event) => {
