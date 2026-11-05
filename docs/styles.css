@@ -7374,3 +7374,7 @@ a.trend-price:hover { background: rgba(255, 255, 255, 0.06); }
   .topbar-group-quiet .topbar-wide[aria-pressed="true"] { color: var(--text); background: var(--accent-dim); border-color: var(--line); }
   :root[data-wide="1"] { --shell: calc(100vw - 48px); }
 }
+
+/* The book link inside an unpriced leg's note reads in the note's own color, not browser blue. */
+.parlay-leg-note a { color: inherit; font-weight: 700; text-decoration: underline; text-underline-offset: 2px; }
+.parlay-leg-note a:hover { color: var(--text); }

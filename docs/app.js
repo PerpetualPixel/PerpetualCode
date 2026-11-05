@@ -10158,7 +10158,7 @@ const parlayState = {
 };
 /** The UFC prop types in the order the chips show (worker/src/ufc-props.js's UFC_PROPS; the record carries the labels too). */
 const UFC_PROP_ORDER = ['ml', 'method', 'double', 'rounds', 'end_round', 'method_round', 'distance', 'round_start', 'end_method', 'spread', 'strikes', 'takedowns', 'knockdowns'];
-const UFC_PROP_LABELS = { ml: 'Moneyline', method: 'Method of victory', double: 'Double chance', rounds: 'Rounds over/under', end_round: 'Ends in round', method_round: 'Method + round', distance: 'Goes the distance', round_start: 'Round to start', end_method: 'Ends by', spread: 'Spread', strikes: 'Strikes', takedowns: 'Takedowns', knockdowns: 'Knockdowns' };
+const UFC_PROP_LABELS = { ml: 'Moneyline', method: 'Method of victory', double: 'Double chance', rounds: 'Rounds over/under', end_round: 'Ends in round', method_round: 'Method + round', distance: 'Goes the distance', round_start: 'Round to start', end_method: 'How fight will end', spread: 'Spread', strikes: 'Strikes', takedowns: 'Takedowns', knockdowns: 'Knockdowns' };
 /** A leg with no line at any book yet: it rides the ticket unpriced, with a note, and the price covers the priced legs. */
 const UNPRICED_QUOTE = { american: null, decimal: null, link: null, book: null, bookKey: null, unpriced: true };
 const PARLAY_BOOKS = ['draftkings', 'fanduel', 'caesars', 'fanatics', 'betmgm', 'prizepicks', 'hardrock', 'bet365', 'betrivers'];
@@ -10192,7 +10192,7 @@ function ufcParlayRows(picks) {
       const quotes = (l.quotes ?? []).map((q) => ({ ...q, bookKey: q.bookId }));
       const best = quotes.find((q) => q.bookKey !== 'engine') ?? quotes[0] ?? null;
       return { id: l.id, eventId: l.boutId, sportKey: UFC_SPORT_KEY, sportTitle: 'UFC', commenceMs: l.boutDate ?? bd.boutDate ?? rec.lockMs, home: bd.b ?? l.fight?.split(' vs ')[1], away: bd.a ?? l.fight?.split(' vs ')[0], playerName: l.name ?? l.fight, team: '', opponent: l.opponent ?? null, athleteId: l.fighterId ?? null, headshot: null, statKey: l.prop, statLabel: l.label, marketLabel: l.label, point: l.point ?? null, side: l.sideWord ?? 'over', selection: l.selection, american: best?.american ?? null, decimal: best?.decimal ?? null, book: best?.book ?? null, bookKey: best?.bookKey ?? null, quotes, periods: {}, series: [],
-        ufc: { prop: l.prop, score: l.score, chance: l.chance, priced: l.priced, note: l.note, why: l.why ?? [], fightLevel: !l.side, order: l.order ?? bd.order ?? null, lean: l.side ? bd.lean === l.side : null, confidence: bd.confidence ?? 0, summary: bd.summary, reasons: bd.reasons, parlayPiece: l.side ? bd.lean === l.side && bd.parlayPiece : false, weightClass: l.weightClass ?? bd.weightClass } };
+        ufc: { prop: l.prop, score: l.score, chance: l.chance, priced: l.priced, note: l.note, books: l.books ?? [], why: l.why ?? [], fightLevel: !l.side, order: l.order ?? bd.order ?? null, lean: l.side ? bd.lean === l.side : null, confidence: bd.confidence ?? 0, summary: bd.summary, reasons: bd.reasons, parlayPiece: l.side ? bd.lean === l.side && bd.parlayPiece : false, weightClass: l.weightClass ?? bd.weightClass } };
     });
   }
   const rows = [];
@@ -10389,7 +10389,7 @@ function renderParlayLeg(leg) {
       </div>
       <p class="parlay-leg-line">${esc(r.selection)} <small>${esc(u.weightClass ?? '')} · ${esc(trendTimeFmt.format(new Date(r.commenceMs)))}</small></p>
       <div class="parlay-chips"><span class="parlay-chip">${esc(UFC_PROP_LABELS[u.prop] ?? r.marketLabel ?? '')}</span>${Number.isFinite(u.chance) ? `<span class="parlay-chip">${esc(pct(u.chance))} chance</span>` : ''}${leanChip}${u.parlayPiece ? '<span class="parlay-chip">Parlay piece</span>' : ''}</div>
-      ${q.unpriced ? `<p class="parlay-leg-note">${esc(u.note ?? 'Lines for this prop are not out yet; the leg rides unpriced.')}</p>` : ''}
+      ${q.unpriced ? `<p class="parlay-leg-note">${esc(u.note ?? 'Lines for this prop are not out yet; the leg rides unpriced.')}${(() => { const at = (u.books ?? []).find((b) => b.bookId === parlayState.book) ?? (u.books ?? [])[0]; return at ? ` <a href="${esc(at.link)}" target="_blank" rel="noopener">Open the fight at ${esc(at.book)} ↗</a>` : ''; })()}</p>` : ''}
       <div class="parlay-leg-actions">
         <button type="button" class="parlay-btn" data-parlay-view="${esc(r.id)}">${open ? 'Hide breakdown' : 'Why this leg'}</button>
         ${r.athleteId ? `<button type="button" class="parlay-btn" data-parlay-stats="${esc(r.id)}">Fighter info</button>` : ''}
