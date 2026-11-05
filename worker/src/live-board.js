@@ -81,9 +81,16 @@ export function elapsedFraction(tick, league = 'nfl') {
   const perPeriod = (GAME_MINUTES[league] ?? 60) / periods;
   if (/half/i.test(String(tick.detail ?? ''))) return 0.5;
   const p = Number(tick.period) || 1;
-  const m = String(tick.clock ?? '').match(/^(\d+):(\d+)/);
-  const left = m ? Number(m[1]) + Number(m[2]) / 60 : perPeriod;
-  return Math.min(1, Math.max(0.02, ((p - 1) * perPeriod + (perPeriod - left)) / (GAME_MINUTES[league] ?? 60)));
+  return Math.min(1, Math.max(0.02, ((p - 1) * perPeriod + (perPeriod - minutesLeft(tick, perPeriod))) / (GAME_MINUTES[league] ?? 60)));
+}
+/** Minutes left in the period: "7:30", a sub-minute clock ("31.1" or ":31"), or none at the end of a period; otherwise the whole period. */
+function minutesLeft(tick, perPeriod) {
+  const c = String(tick.clock ?? '').trim();
+  const m = c.match(/^(\d+):(\d+(?:\.\d+)?)$/);
+  if (m) return Math.min(perPeriod, Number(m[1]) + Number(m[2]) / 60);
+  if (/^:?\d+(?:\.\d+)?$/.test(c)) return Math.min(perPeriod, Number(c.replace(':', '')) / 60);
+  if (/^end of/i.test(String(tick.detail ?? ''))) return 0;
+  return perPeriod;
 }
 export const isHalftime = (tick, league = 'nfl') => Boolean(tick) && tick.state === 'in' && (/^ht$|half/i.test(String(tick.detail ?? '')) || (!isSoccer(league) && Number(tick.period) === (PERIODS[league] ?? 4) / 2 && /^0:00/.test(String(tick.clock ?? ''))));
 
