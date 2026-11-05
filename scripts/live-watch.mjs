@@ -103,15 +103,24 @@ async function openWatch(event, { listOnly = false } = {}) {
   const existing = DRY ? null : await readKv(key).catch(() => null);
   const log = existing ?? { espnEventId: event.id, name: event.name, date: event.date, league, team: team || null, ticks: [] };
   if (listOnly && !log.ticks.length) log.ticks = [scoreboardTick(event)];
-  if (!DRY) {
-    // This league's own index: one watcher per league at a time, so no other job writes it (worker/src/live-probe.js merges them).
-    const idxKey = `live:watch:index:${league}`;
-    const idx = (await readKv(idxKey).catch(() => null)) ?? { games: [] };
-    idx.games = [{ id: event.id, name: event.name, date: event.date, league }, ...idx.games.filter((g) => g.id !== event.id)].slice(0, 40);
-    await writeKv([{ key: idxKey, value: idx }, ...(listOnly ? [{ key, value: log }] : [])], { ttlSeconds: 14 * 86400 });
-  }
+  registry.set(event.id, { id: event.id, name: event.name, date: event.date, league });
+  if (!DRY && listOnly) { try { await writeKv([{ key, value: log }], { ttlSeconds: 14 * 86400 }); } catch (e) { say(`! KV: ${e.message}`); } }
   say(`${listOnly ? 'listed' : 'watching'} ${event.name} (${event.id}), ${event.date}`);
   return { event, key, log, finalSince: null };
+}
+
+/**
+ * This league's index, written from what this run knows (worker/src/live-probe.js merges the leagues). The store is
+ * eventually consistent, so a read straight after a write can hand back the old list; every game this run registered
+ * is kept in memory and written as one union with whatever the read returns, so none is lost to a stale read.
+ */
+const registry = new Map();
+async function flushIndex() {
+  if (DRY || !registry.size) return;
+  const idxKey = `live:watch:index:${league}`;
+  const existing = (await readKv(idxKey).catch(() => null))?.games ?? [];
+  const games = [...registry.values(), ...existing.filter((g) => g?.id && !registry.has(g.id))].slice(0, 60);
+  try { await writeKv([{ key: idxKey, value: { games } }], { ttlSeconds: 14 * 86400 }); } catch (e) { say(`! KV index: ${e.message}`); }
 }
 
 /** One read of a game: the clock, the score, the box; true once the game has been final for a while. */
@@ -143,7 +152,7 @@ if (isMain) {
   const first = pickGames(sb, { team, all: ALL });
   if (!first.length) {
     // Nothing to watch yet: the slate is still listed, so the tab shows what is coming.
-    if (ALL) for (const e of listGames(sb)) await openWatch(e, { listOnly: true });
+    if (ALL) { for (const e of listGames(sb)) await openWatch(e, { listOnly: true }); await flushIndex(); }
     say(ALL ? `no ${league.toUpperCase()} game in play or inside ${lead} minutes on today's scoreboard` : `no ${league.toUpperCase()} game for ${team} on today's scoreboard`);
     process.exit(ALL ? 0 : 1);
   }
@@ -153,6 +162,7 @@ if (isMain) {
   const listRest = async (sb) => { for (const e of ALL ? listGames(sb) : []) if (!watches.has(e.id) && !listed.has(e.id)) { listed.add(e.id); await openWatch(e, { listOnly: true }); } };
   for (const e of first) watches.set(e.id, await openWatch(e));
   await listRest(sb);
+  await flushIndex();
   const deadline = Date.now() + hours * 3600e3;
   let lastScan = Date.now();
   while (Date.now() < deadline && watches.size) {
@@ -163,6 +173,7 @@ if (isMain) {
       const again = await scoreboard();
       for (const e of pickGames(again, { all: true })) if (!watches.has(e.id)) watches.set(e.id, await openWatch(e));
       await listRest(again);
+      await flushIndex();
     }
     if (watches.size) await sleep(every * 1000);
   }
