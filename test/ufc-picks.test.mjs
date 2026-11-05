@@ -344,3 +344,11 @@ test('underdogPath: the way the wins come and the finish rate, Round 1 finishes,
   assert.deepEqual(underdogPath('Grinder', 'Unbeaten', grinder, unbeaten).lines, ['Grinder goes the distance: 88% of 8 wins came by decision, 1 by a finish.', 'Unbeaten has no loss on record.']);
   assert.deepEqual(underdogPath('X', 'Y', null, null).lines, []);
 });
+
+test('capperLine: a bout the cappers called only by method still reads the method calls', async () => {
+  const { capperLine } = await import('../worker/src/ufc-picks.js');
+  assert.equal(capperLine(null), 'No capper consensus on this bout.');
+  assert.equal(capperLine({ moneyline: null, methods: [] }), 'No capper consensus on this bout.');
+  assert.equal(capperLine({ moneyline: null, methods: [{ selection: 'Seokhyeon Ko by KO/TKO', consensusPct: 53.3, tier: 'lean' }] }), 'No moneyline consensus from the cappers on this bout. Method calls: Seokhyeon Ko by KO/TKO (53.3%, lean).');
+  assert.match(capperLine({ moneyline: { pickCount: 55, consensusPct: 76.4, selection: 'Waldo Cortes-Acosta', strength: 7.6, tier: 'strong' }, methods: [{ selection: 'Waldo Cortes-Acosta by KO/TKO', consensusPct: 81.2, tier: 'strong' }] }), /55 picks.*76\.4% back Waldo Cortes-Acosta.*Method calls: Waldo Cortes-Acosta by KO\/TKO \(81\.2%, strong\)\./);
+});
