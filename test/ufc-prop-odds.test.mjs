@@ -31,6 +31,7 @@ ${prop('Parsons wins by TKO/KO in round 1', cell(21, 1, 45556, '+1100') + cell(2
 ${prop('Any other result', cell(21, 2, 45556, '-2500'))}
 ${prop('Henrique wins in round 2', cell(21, 1, 45556, '+1000'))}
 ${prop('Fight ends in round 1', cell(21, 1, 45556, '+230'))}
+${prop('Fight ends in round 1', cell(25, 1, 45556, '+1200') + cell(21, 1, 45556, '+900'))}
 ${prop('Either fighter wins by TKO/KO', cell(21, 1, 45556, '-130'))}
 ${prop('Either fighter wins by submission', cell(21, 1, 45556, '+750'))}
 ${fighter(45560, 'Tatiana Suarez', 'tatiana-suarez-3', mlCell(21, 1, 45560, '-350'))}
@@ -102,6 +103,7 @@ test('priceLegsFromBoard prices the legs the board lists, best book first, linki
   assert.ok(by('Fight goes the distance').priced && by('Fight goes the distance').quotes[0].american === 135);
   assert.ok(by('Round 2 to start').priced && by('Fight to start Round 2: No').priced);
   assert.equal(by('How fight will end: KO/TKO').quotes[0].american, -130);
+  assert.deepEqual(by('Fight ends in Round 1').quotes.map((q) => [q.bookId, q.american]), [['betrivers', 1200], ['fanduel', 230]], 'same-label rows merge, the first price a book posts kept');
   const special = priced.find((l) => l.prop === 'special');
   assert.ok(special && !special.priced && special.note === BOARD_NOTE, 'a prop the board does not list keeps the note that it is not posted');
   const card = ufcCardProps([b], () => ({ odds: null, breakdown: { lean: 'b', confidence: 3 }, profiles }), { now: 9, board });

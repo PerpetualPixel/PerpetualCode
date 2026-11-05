@@ -95,7 +95,12 @@ export function priceLegsFromBoard(legs, bout, board) {
   const { matchup, event, aIndex } = hit;
   const names = { aName: matchup.fighters[aIndex], bName: matchup.fighters[1 - aIndex] };
   const link = event?.url ?? null;
-  const rows = new Map((matchup.props ?? []).map((p) => [norm(p.label), p.quotes ?? []]));
+  // The board repeats a label on one row per book group; the rows merge, the first price a book posts for the label kept.
+  const rows = new Map();
+  for (const p of matchup.props ?? []) {
+    const k = norm(p.label); const have = rows.get(k) ?? []; const seen = new Set(have.map((q) => q.bookId));
+    rows.set(k, [...have, ...(p.quotes ?? []).filter((q) => !seen.has(q.bookId))]);
+  }
   const toQuotes = (list) => (list ?? []).filter((q) => SPORTSBOOKS[q.bookId] && Number.isFinite(q.american)).map((q) => ({ bookId: q.bookId, book: SPORTSBOOKS[q.bookId]?.name ?? q.book, american: q.american, decimal: americanToDecimal(q.american), link, source: 'bestfightodds' })).sort((x, y) => y.american - x.american);
   let priced = 0;
   const out = legs.map((leg) => {
