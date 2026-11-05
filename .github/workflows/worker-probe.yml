@@ -67,7 +67,7 @@ jobs:
                   return;
                 }
                 if (d && d.totals && Array.isArray(d.games) && d.games.every((g) => Array.isArray(g.slips))) {
-                  // The recap (worker/src/live-board.js getLiveRecap): each game's final score, its last build, and every slip graded at one unit.
+                  // The recap (worker/src/live-board.js getLiveRecap): the final score of each game, its last build, and every slip graded at one unit.
                   console.log("TOTALS", JSON.stringify(d.totals));
                   for (const g of d.games) {
                     const b = g.built;
