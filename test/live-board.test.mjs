@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { elapsedFraction, isHalftime, liveCandidates, buildLivePlay, getLiveRecap } from '../worker/src/live-board.js';
+import { elapsedFraction, isHalftime, liveCandidates, buildLivePlay, getLiveRecap, blowoutRisk, ensureLivePlays, livePlayKey } from '../worker/src/live-board.js';
 
 const tick = (over = {}) => ({ at: 1, state: 'in', detail: 'Halftime', period: 2, clock: '0:00', score: { PHI: 24, WSH: 3 }, box: [
   { id: '1', name: 'Saquon Barkley', team: 'PHI', stats: { rushingYards: '68', receptions: '2', receivingYards: '11' } },
@@ -249,4 +249,29 @@ test('getLiveRecap grades each stored slip against the final box at one unit', a
   assert.equal(g.slips[2].legs[0].hit, null);
   assert.equal(none.built, null); assert.deepEqual(none.slips, []); assert.equal(none.state, null);
   assert.deepEqual(r.totals, { slips: 2, wins: 1, units: 0.52 });
+});
+
+test('blowoutRisk: the lead against the time left; a blowout withholds live bets', () => {
+  // Bulls at Knicks, 43-21 at the end of the first: the starters sat, every slip died.
+  const q1 = blowoutRisk({ state: 'in', period: 1, clock: '0.0', detail: 'End of 1st Quarter', score: { NY: 43, CHI: 21 } }, 'nba');
+  assert.equal(q1.blowout, true); assert.equal(q1.leader, 'NY'); assert.equal(q1.margin, 22); assert.equal(q1.minutesLeft, 36);
+  assert.equal(blowoutRisk({ state: 'in', period: 2, clock: '0:00', detail: 'Halftime', score: { BOS: 60, MIL: 50 } }, 'nba').blowout, false, 'ten up at the half is a game');
+  assert.equal(blowoutRisk({ state: 'in', period: 4, clock: '6:00', detail: '6:00 - 4th Quarter', score: { DEN: 110, TOR: 95 } }, 'nba').blowout, true, 'fifteen up with six left');
+  assert.equal(blowoutRisk({ state: 'in', period: 2, clock: '0:00', detail: 'Halftime', score: { PHI: 24, WSH: 3 } }, 'nfl').blowout, false, 'three scores at the half is not yet a blowout in football');
+  assert.equal(blowoutRisk({ state: 'in', period: 4, clock: '10:00', score: { PHI: 31, WSH: 10 } }, 'nfl').blowout, true);
+  assert.equal(blowoutRisk({ state: 'in', period: 3, clock: '5:00', detail: '5:00 - 3rd Period', score: { FLA: 3, CHI: 0 } }, 'nhl').blowout, true);
+  assert.equal(blowoutRisk({ state: 'in', period: 2, clock: '20:00', detail: '20:00 - 2nd Period', score: { FLA: 2, CHI: 0 } }, 'nhl').blowout, false);
+  assert.equal(blowoutRisk({ state: 'pre', score: { NY: 0, CHI: 0 } }, 'nba'), null);
+  assert.equal(blowoutRisk({ state: 'in', period: 1, clock: '5:00', score: { NY: 10, CHI: 10 } }, 'nba'), null, 'level pegging is no risk');
+});
+
+test('ensureLivePlays: a blowout builds no slip', async () => {
+  const m = new Map(); const env = { POTD_KV: { get: async (k) => m.get(k) ?? null, put: async (k, v) => { m.set(k, v); } } };
+  const game = { id: '77', name: 'Washington Commanders at Philadelphia Eagles' };
+  const rout = tick({ state: 'in', period: 4, clock: '10:00', detail: '10:00 - 4th Quarter', score: { PHI: 31, WSH: 10 } });
+  assert.equal(await ensureLivePlays(env, game, payload, rout, { league: 'nfl', now: 5 }), null);
+  assert.equal(m.has(livePlayKey('77')), false, 'nothing stored');
+  const close = tick({ state: 'in', period: 3, clock: '10:00', detail: '10:00 - 3rd Quarter', score: { PHI: 17, WSH: 14 } });
+  const built = await ensureLivePlays(env, game, payload, close, { league: 'nfl', now: 6 });
+  assert.ok(built && built.slips.length, 'a close game builds');
 });

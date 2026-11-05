@@ -11140,14 +11140,14 @@ function renderLiveGame(g) {
       <div class="live-head-main"><strong>${esc(g.name)}</strong><small>${esc(league(g.league))} · ${esc(liveSummary(g))}</small></div>
       <span class="live-state ${live ? 'is-on' : ''}">${live ? '<i class="live-dot"></i>' : ''}${state}</span>
       <span class="live-score">${score}</span>
-      ${stars}
+      ${g.blowout?.blowout ? '<span class="live-flag" title="The lead is past the time left: no live bets on this game">Blowout risk</span>' : ''}${stars}
       <span class="live-caret" aria-hidden="true">${open ? '▴' : '▾'}</span>
     </button>
     ${open ? `<div class="live-body">
     <div class="live-reads">
       <span class="live-read ${t && Date.now() - t.at < 3 * 60e3 ? 'is-fresh' : ''}">Box score ${t ? `${esc(ago(t.at))}` : 'not read yet'}</span>
       <span class="live-read ${g.probe && Date.now() - g.probe.at < 10 * 60e3 ? 'is-fresh' : ''}">Odds ${g.probe ? `${esc(ago(g.probe.at))} · ${books.length} book${books.length === 1 ? '' : 's'} posting` : 'not read yet'}</span>
-      ${script}${weather}
+      ${g.blowout?.blowout ? `<span class="live-tag is-blowout">${esc(g.blowout.leader)} up ${esc(String(g.blowout.margin))} with ${esc(String(g.blowout.minutesLeft))} min left: no live bets, the starters may sit</span>` : ''}${script}${weather}
     </div>
     ${g.players?.length ? `<p class="live-sub">Box score <small>as of ${t ? esc(liveTimeFmt.format(new Date(t.at))) : ''}</small></p>${livePlayersTable(g)}` : live ? '<p class="row-sub">No box lines yet.</p>' : ''}
     ${liveGameReads(g)}
@@ -11168,6 +11168,7 @@ function liveBuiltWhen(slips) {
 }
 /** Why a game in play has no slip yet. */
 function liveNoSlipWhy(g) {
+  if (g.blowout?.blowout) return `No live slips: ${g.blowout.leader} is up ${g.blowout.margin} with ${g.blowout.minutesLeft} minutes left, so the starters may sit and the pace no longer holds. Slips come back if the game tightens.`;
   if (g.elapsed < 0.03) return 'Slips build from the first minutes in play, one at every book that prices one, and rebuild as the game moves.';
   if (g.elapsed > 0.9) return 'Too late in the game for a new slip: the books pull their ladders from here.';
   return 'Nothing on the board clears the pace with margin at a usable price right now; checked again every few minutes.';

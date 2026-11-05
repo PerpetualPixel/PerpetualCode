@@ -7355,3 +7355,7 @@ a.trend-price:hover { background: rgba(255, 255, 255, 0.06); }
 .live-bar.is-cleared .live-bar-line { opacity: 0.55; }
 .live-watch, .live-book, .live-count { background: rgba(255, 255, 255, 0.03); }
 .live-watch-nums b { font-weight: 700; }
+
+/* Blowout risk: the one amber signal on a live card, in the head and as the first read in the body. */
+.live-flag { flex: none; font-size: 0.68rem; font-weight: 800; letter-spacing: 0.04em; text-transform: uppercase; padding: 2px 8px; border-radius: 999px; border: 1px solid rgba(251, 191, 36, 0.5); color: #fbbf24; background: rgba(251, 191, 36, 0.08); }
+.live-tag.is-blowout { color: #fbbf24; border-color: rgba(251, 191, 36, 0.5); background: rgba(251, 191, 36, 0.08); }
