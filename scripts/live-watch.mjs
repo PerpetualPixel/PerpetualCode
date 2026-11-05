@@ -104,9 +104,11 @@ async function openWatch(event, { listOnly = false } = {}) {
   const log = existing ?? { espnEventId: event.id, name: event.name, date: event.date, league, team: team || null, ticks: [] };
   if (listOnly && !log.ticks.length) log.ticks = [scoreboardTick(event)];
   if (!DRY) {
-    const idx = (await readKv('live:watch:index').catch(() => null)) ?? { games: [] };
+    // This league's own index: one watcher per league at a time, so no other job writes it (worker/src/live-probe.js merges them).
+    const idxKey = `live:watch:index:${league}`;
+    const idx = (await readKv(idxKey).catch(() => null)) ?? { games: [] };
     idx.games = [{ id: event.id, name: event.name, date: event.date, league }, ...idx.games.filter((g) => g.id !== event.id)].slice(0, 40);
-    await writeKv([{ key: 'live:watch:index', value: idx }, ...(listOnly ? [{ key, value: log }] : [])], { ttlSeconds: 14 * 86400 });
+    await writeKv([{ key: idxKey, value: idx }, ...(listOnly ? [{ key, value: log }] : [])], { ttlSeconds: 14 * 86400 });
   }
   say(`${listOnly ? 'listed' : 'watching'} ${event.name} (${event.id}), ${event.date}`);
   return { event, key, log, finalSince: null };

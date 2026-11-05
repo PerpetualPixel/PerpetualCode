@@ -39,6 +39,17 @@ export const liveProbeKey = (eventId) => `live:probe:${eventId}`;
 export const liveLatestKey = (eventId) => `live:probe:${eventId}:latest`;
 export const liveWatchKey = (espnEventId) => `live:watch:${espnEventId}`;
 export const LIVE_WATCH_INDEX = 'live:watch:index';
+/** One index per league (2026-11-05): the leagues' watchers run side by side, and a shared key lost entries to each other's writes. */
+export const liveWatchIndexKey = (league) => `live:watch:index:${league}`;
+
+/** Every watched game: the per-league indexes merged with the old shared one, newest first, one entry per game. */
+export async function readWatchIndex(env) {
+  const keys = [LIVE_WATCH_INDEX, ...Object.keys(LIVE_SPORT).map(liveWatchIndexKey)];
+  const lists = await Promise.all(keys.map(async (k) => { const raw = await env.POTD_KV.get(k).catch(() => null); try { return raw ? JSON.parse(raw).games ?? [] : []; } catch { return []; } }));
+  const seen = new Set(); const games = [];
+  for (const g of lists.flat().sort((a, b) => (Date.parse(b.date) || 0) - (Date.parse(a.date) || 0))) { if (!g?.id || seen.has(g.id)) continue; seen.add(g.id); games.push(g); }
+  return { games };
+}
 const MAX_SNAPSHOTS = 80;
 const BEFORE_MS = 40 * 60e3;
 const AFTER_MS = 5 * 3600e3;
@@ -109,8 +120,7 @@ export function liveGamesNow(index, now) {
 
 /** One tick: for each watched game in its window, one props call, appended to its log; in play, the plays rebuilt from it. Returns what it did. */
 export async function runLiveProbe(env, ctx, now = Date.now(), { deps = {} } = {}) {
-  const idxRaw = await env.POTD_KV.get(LIVE_WATCH_INDEX).catch(() => null);
-  const index = deps.index ?? (idxRaw ? JSON.parse(idxRaw) : { games: [] });
+  const index = deps.index ?? await readWatchIndex(env);
   // A whole slate at once (2026-11-05, the Live tab unattended): the earliest games first, up to twelve a tick; each is one feed call.
   const games = liveGamesNow(index, now).sort((a, b) => Date.parse(a.date) - Date.parse(b.date));
   if (!games.length) return { skipped: true, reason: 'no watched game in its window' };
@@ -167,8 +177,7 @@ export async function getLiveProbe(env, { eventId = null, espnEventId = null } =
   const id = eventId ?? forEspn ?? (espnEventId ? null : await env.POTD_KV.get('live:probe:latest').catch(() => null));
   const probe = id ? JSON.parse((await env.POTD_KV.get(liveProbeKey(id)).catch(() => null)) ?? 'null') : null;
   const miss = espnEventId && !probe ? JSON.parse((await env.POTD_KV.get(`live:probe:miss:${espnEventId}`).catch(() => null)) ?? 'null') : null;
-  const idxRaw = await env.POTD_KV.get(LIVE_WATCH_INDEX).catch(() => null);
-  const index = idxRaw ? JSON.parse(idxRaw) : { games: [] };
+  const index = await readWatchIndex(env);
   const espnId = espnEventId ?? index.games?.[0]?.id ?? null;
   const watch = espnId ? JSON.parse((await env.POTD_KV.get(liveWatchKey(espnId)).catch(() => null)) ?? 'null') : null;
   return { probe, miss, watch, watched: index.games ?? [] };

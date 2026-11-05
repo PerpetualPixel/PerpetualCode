@@ -20,7 +20,7 @@
  * A deterministic first cut: no model read yet, and the plays are
  * shown, not tracked.
  */
-import { liveWatchKey, LIVE_WATCH_INDEX, liveProbeKey, liveLatestKey, liveGameTeams } from './live-probe.js';
+import { liveWatchKey, readWatchIndex, liveProbeKey, liveLatestKey, liveGameTeams } from './live-probe.js';
 import { bookIdFor, SPORTSBOOKS, americanToDecimal } from '../../docs/engine.js';
 import { fetchWeather } from './weather.js';
 import { gameReads } from './live-game.js';
@@ -335,8 +335,7 @@ export function playSummary(slips, reads) {
 }
 
 export async function getLiveBoard(env, now = Date.now(), { ctx = null } = {}) {
-  const idxRaw = await env.POTD_KV.get(LIVE_WATCH_INDEX).catch(() => null);
-  const games = (idxRaw ? JSON.parse(idxRaw).games : []) ?? [];
+  const { games } = await readWatchIndex(env);
   const out = [];
   // The whole slate (2026-11-05: "I only see two games, should be way more"): every watched game not yet over, up to forty.
   for (const g of games.slice(0, 40)) {
