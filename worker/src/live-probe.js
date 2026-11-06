@@ -25,7 +25,7 @@ export const LIVE_MARKETS = {
   nhl: 'player_shots_on_goal_alternate,player_total_saves_alternate,player_points_alternate,player_shots_on_goal,player_total_saves,player_points,h2h,spreads,totals,alternate_spreads,alternate_totals',
 };
 export { SOCCER_LIVE, LIVE_SPORT } from './live-leagues.js';
-import { SOCCER_LIVE, LIVE_SPORT } from './live-leagues.js';
+import { SOCCER_LIVE, LIVE_SPORT, LIVE_ON } from './live-leagues.js';
 const SOCCER_GAME_MARKETS = 'h2h,totals,alternate_totals,btts,draw_no_bet';
 for (const id of Object.keys(SOCCER_LIVE)) LIVE_MARKETS[id] = id === 'ucl' ? SOCCER_GAME_MARKETS : `${SOCCER_GAME_MARKETS},player_shots_on_target,player_shots`;
 /**
@@ -122,7 +122,7 @@ export function liveGamesNow(index, now) {
 export async function runLiveProbe(env, ctx, now = Date.now(), { deps = {} } = {}) {
   const index = deps.index ?? await readWatchIndex(env);
   // A whole slate at once (2026-11-05, the Live tab unattended): the earliest games first, up to twelve a tick; each is one feed call.
-  const games = liveGamesNow(index, now).sort((a, b) => Date.parse(a.date) - Date.parse(b.date));
+  const games = liveGamesNow(index, now).filter((g) => LIVE_ON.includes(g.league ?? 'nfl')).sort((a, b) => Date.parse(a.date) - Date.parse(b.date));
   if (!games.length) return { skipped: true, reason: 'no watched game in its window' };
   const done = [];
   for (const g of games.slice(0, 12)) {
