@@ -53,6 +53,12 @@ Return ONLY a JSON object, no prose and no markdown fence:
       "selection": "<exactly what the slip says this leg is, e.g. 'Aja Wilson Over 24.5 Points' or 'Lakers ML'>",
       "american": <the American odds for THIS leg as an integer, e.g. -118 or 145, or null if not legible>,
       "market": "<one of: MONEYLINE, SPREAD, TOTAL, PROP, OTHER>",
+      "player": "<for a player prop, the player's name as written; else null>",
+      "team": "<for a team line, the team as written; for a prop the player's team if shown; else null>",
+      "stat": "<for a prop, the stat as written, e.g. 'Points', 'Rebounds', '3-Pointers Made', 'Passing Yards', 'Shots on Goal', 'Aces'; else null>",
+      "side": "<OVER or UNDER for a prop or total (MORE reads as OVER, LESS as UNDER, '25+' as OVER); else null>",
+      "line": <the number of the prop, total or spread as a number, e.g. 27.5, or -3.5 for a spread; else null>,
+      "league": "<NBA, NFL, NHL, MLB, SOCCER, TENNIS, UFC or null when not shown>",
       "confidence": <0.0 to 1.0, how sure you are you read this leg correctly>
     }
   ],
@@ -110,10 +116,14 @@ export function sanitizeLeg(raw) {
     : null;
 
   const confidence = Number(raw.confidence);
+  const text = (v, n = 80) => (typeof v === 'string' && v.trim() ? v.trim().slice(0, n) : null);
+  const line = Number(raw.line);
   return {
     selection: selection.slice(0, 200),
     american,
     market: typeof raw.market === 'string' ? raw.market.toUpperCase().slice(0, 20) : 'OTHER',
+    // The structured fields (Slip Check reads them; Tail or Fade ignores them): never invented, null when the slip does not show them.
+    player: text(raw.player), team: text(raw.team), stat: text(raw.stat, 40), side: text(raw.side, 8)?.toUpperCase() ?? null, line: Number.isFinite(line) ? line : null, league: text(raw.league, 10)?.toUpperCase() ?? null,
     confidence: Number.isFinite(confidence) ? Math.max(0, Math.min(1, confidence)) : 0.5,
     source: 'image',
   };
