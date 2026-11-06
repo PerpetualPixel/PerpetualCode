@@ -245,7 +245,7 @@ test('the live tennis read lists the day\'s singles from ESPN with each play\'s 
   const m = new Map(); const env = { POTD_KV: { get: async (k) => m.get(k) ?? null, put: async (k, v) => { m.set(k, v); } } };
   const now = Date.parse('2026-11-06T18:00:00Z');
   const comp = (id, a, b, state, linescores = [[], []], over = {}) => ({ id, date: '2026-11-06T17:00Z', round: { displayName: 'Quarterfinal' }, status: { type: { state, completed: state === 'post', name: state === 'post' ? 'STATUS_FINAL' : state === 'in' ? 'STATUS_IN_PROGRESS' : 'STATUS_SCHEDULED', detail: state === 'in' ? '2nd Set' : '' } }, competitors: [{ id: `${id}a`, athlete: { displayName: a }, linescores: linescores[0].map((v) => ({ value: v })), winner: over.winner === 'a' }, { id: `${id}b`, athlete: { displayName: b }, linescores: linescores[1].map((v) => ({ value: v })), winner: over.winner === 'b' }] });
-  const scoreboard = { atp: { events: [{ id: '13', name: 'Rolex Paris Masters', groupings: [{ grouping: { slug: 'mens-singles' }, competitions: [comp('1', 'Jannik Sinner', 'Ben Shelton', 'in', [[6, 3], [4, 5]]), comp('2', 'Carlos Alcaraz', 'Taylor Fritz', 'pre'), comp('3', 'Alex Zverev', 'Casper Ruud', 'post', [[6, 4], [6, 2]], { winner: 'a' })] }, { grouping: { slug: 'mens-doubles' }, competitions: [comp('4', 'A / B', 'C / D', 'in')] }] }] }, wta: { events: [] } };
+  const scoreboard = { atp: { events: [{ id: '13', name: 'Rolex Paris Masters', groupings: [{ grouping: { slug: 'mens-singles' }, competitions: [comp('1', 'Jannik Sinner', 'Ben Shelton', 'in', [[6, 3], [4, 5]]), comp('2', 'Carlos Alcaraz', 'Taylor Fritz', 'pre'), comp('3', 'Alex Zverev', 'Casper Ruud', 'post', [[6, 4], [6, 2]], { winner: 'a' }), { ...comp('9', 'Old Match', 'From Monday', 'post', [[6, 4], [6, 2]], { winner: 'a' }), date: '2026-11-02T12:00Z' }] }, { grouping: { slug: 'mens-doubles' }, competitions: [comp('4', 'A / B', 'C / D', 'in')] }] }] }, wta: { events: [] } };
   let calls = 0;
   const fetchJson = async (url) => { calls++; return /atp/.test(url) ? scoreboard.atp : scoreboard.wta; };
   const record = { date: '2026-11-06', plays: [
@@ -255,7 +255,7 @@ test('the live tennis read lists the day\'s singles from ESPN with each play\'s 
   ] };
   m.set('tennis:picks:2026-11-06', JSON.stringify(record));
   const live = await getTennisLive(env, now, { fetchJson });
-  assert.equal(calls, 2, 'one scoreboard a tour'); assert.equal(live.matches.length, 3, 'singles only'); assert.equal(live.inPlay, 1);
+  assert.equal(calls, 2, 'one scoreboard a tour'); assert.equal(live.matches.length, 3, 'singles only, today only: the draw\'s earlier rounds stay out'); assert.equal(live.inPlay, 1);
   assert.equal(live.matches[0].id, 'atp:1', 'in play first'); assert.equal(live.matches[0].plays[0].standing.state, 'on', '6-3 4-5: Shelton inside 4.5');
   const final = live.matches.find((x) => x.id === 'atp:3'); assert.equal(final.plays[0].standing.state, 'lost', '18 games: the over lost');
   assert.equal(live.parlays.length, 1); assert.equal(live.parlays[0].legs[0].standing.state, 'on'); assert.equal(live.parlays[0].legs[1].standing.state, 'wait');

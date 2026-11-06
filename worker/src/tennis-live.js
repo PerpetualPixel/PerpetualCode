@@ -72,11 +72,13 @@ export async function getTennisLive(env, now = Date.now(), { fetchJson = getJson
     await env.POTD_KV.put(TENNIS_LIVE_KEY, JSON.stringify(scoreboard), { expirationTtl: 3600 }).catch(() => {});
   }
   const day = etParts(now).date;
+  // A scoreboard day answers with the tournament's whole draw: the Live tab wants today's matches (the Eastern day, as the board) and whatever is in play.
+  const todays = scoreboard.matches.filter((m) => m.state === 'in' || (Number.isFinite(Date.parse(m.date)) && etParts(Date.parse(m.date)).date === day));
   const plays = [];
   for (const d of [day, etParts(now - 864e5).date]) { const r = await env.POTD_KV.get(tennisPicksKey(d)).catch(() => null); if (r) { try { plays.push(...(JSON.parse(r).plays ?? [])); } catch { /* a bad record is no record */ } } }
   const byMatch = new Map(scoreboard.matches.map((m) => [`${m.tour}:${m.id}`, m]));
   const playsOf = (id) => plays.filter((p) => p.matchId === id && p.market !== 'ml_parlay').map((p) => ({ id: p.id, market: p.market, selection: p.selection, side: p.side, point: p.point, american: p.american, bookId: p.bookId, book: p.book, link: p.link, prob: p.prob, standing: playStanding(p, byMatch.get(id)) }));
-  const matches = scoreboard.matches.map((m) => { const id = `${m.tour}:${m.id}`; return { id, tour: m.tour, event: m.eventName, tier: m.tier, round: m.round, date: m.date, state: m.state, completed: m.completed, detail: m.detail, a: m.a.name, b: m.b.name, sets: m.sets, winner: m.winner, plays: playsOf(id) }; });
+  const matches = todays.map((m) => { const id = `${m.tour}:${m.id}`; return { id, tour: m.tour, event: m.eventName, tier: m.tier, round: m.round, date: m.date, state: m.state, completed: m.completed, detail: m.detail, a: m.a.name, b: m.b.name, sets: m.sets, winner: m.winner, plays: playsOf(id) }; });
   const rank = (m) => (m.state === 'in' ? 0 : m.state === 'pre' ? 1 : 2);
   matches.sort((x, y) => rank(x) - rank(y) || (y.plays.length - x.plays.length) || Date.parse(x.date) - Date.parse(y.date));
   // The day's moneyline parlay with each leg's standing.
