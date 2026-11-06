@@ -95,3 +95,51 @@ test('matchLeg finds the player on the board, in a Players-tab log, in the tenni
   const res = checkSlip(parseSlipText('Tatum Over 27.5 Points -115\nJaylen Brown 6+ Rebounds -120\nLakers ML -150\nElena Rybakina Over 3.5 Aces'), data);
   assert.equal(res.scored.length, 4); assert.equal(res.slip.known, 4); assert.ok(res.slip.lands > 0); assert.ok(res.suggestions.length);
 });
+
+import { TICKET_TYPES, verdictFor, replacementsFor } from '../docs/slip-check.js';
+
+test('the ticket type sets the verdict and the advice: a builder is strict and offers replacement legs with links, a regular trims a leg or two, a lotto names its one soft leg', () => {
+  const strong = log([30, 31, 29, 33, 30, 28, 32, 30, 31, 29, 30, 28, 33, 31, 30, 29, 32, 30, 31, 30]);
+  const soft = log([24, 31, 23, 25, 30, 22, 24, 30, 23, 25, 30, 22, 24, 25, 30, 23, 24, 30, 25, 24]);
+  const hopeless = log([10, 12, 9, 11, 10, 13, 9, 10, 12, 11, 10, 9, 12, 11, 10, 10, 9, 12, 11, 10]);
+  const mk = (name, rows, point, extra = {}) => { const leg = { kind: 'prop', player: name.toLowerCase(), stat: { key: 'points', leagues: ['basketball_nba'] }, side: 'over', point, american: -110, selection: `${name} Over ${point} Points` }; const match = { source: 'trends', name, rows, rates: ratesAt(rows, point, 'over'), gameId: 'g1', sportKey: 'basketball_nba', ...extra }; return { leg, match, score: scoreLeg(leg, match) }; };
+  const A = mk('A', strong, 27.5); const B = mk('B', soft, 27.5); const C = mk('C', hopeless, 27.5); const D = mk('D', strong, 28.5, { gameId: 'g2' });
+  const board = { trendsRows: { basketball_nba: [
+    { id: 'r1', playerName: 'Fresh One', selection: 'Fresh One Over 19.5 Points', statKey: 'points', point: 19.5, side: 'over', eventId: 'g1', away: 'BOS', home: 'NYK', commenceMs: Date.now() + 3600e3, periods: { l20: { rate: 0.9, games: 20, hits: 18 }, l10: { rate: 0.9, games: 10, hits: 9 } }, quotes: [{ bookKey: 'draftkings', bookId: 'draftkings', book: 'DraftKings', american: -120, link: 'https://dk/1' }, { bookKey: 'fanduel', bookId: 'fanduel', book: 'FanDuel', american: -115, link: 'https://fd/1' }], injury: null },
+    { id: 'r2', playerName: 'Another', selection: 'Another Over 5.5 Rebounds', statKey: 'rebounds', point: 5.5, side: 'over', eventId: 'g3', away: 'LAL', home: 'DEN', commenceMs: Date.now() + 3600e3, periods: { l20: { rate: 0.85, games: 20, hits: 17 }, l10: { rate: 0.8, games: 10, hits: 8 } }, quotes: [{ bookKey: 'fanduel', bookId: 'fanduel', book: 'FanDuel', american: -130, link: 'https://fd/2' }], injury: null },
+    { id: 'r3', playerName: 'Hurt Guy', selection: 'Hurt Guy Over 1.5 Threes', statKey: 'threes', point: 1.5, side: 'over', eventId: 'g1', commenceMs: Date.now() + 3600e3, periods: { l20: { rate: 0.95, games: 20, hits: 19 }, l10: { rate: 1, games: 10, hits: 10 } }, quotes: [{ bookKey: 'fanduel', bookId: 'fanduel', book: 'FanDuel', american: -200, link: 'https://fd/3' }], injury: { level: 'questionable' } },
+    { id: 'r4', playerName: 'A', selection: 'A Over 25.5 Points', statKey: 'points', point: 25.5, side: 'over', eventId: 'g1', commenceMs: Date.now() + 3600e3, periods: { l20: { rate: 1, games: 20, hits: 20 }, l10: { rate: 1, games: 10, hits: 10 } }, quotes: [{ bookKey: 'fanduel', bookId: 'fanduel', book: 'FanDuel', american: -150, link: 'https://fd/4' }], injury: null },
+  ] } };
+  assert.ok(Object.keys(TICKET_TYPES).join() === 'builder,regular,lotto');
+  // Builder: A clears, B can move, C is hopeless and gets replacements with links; the verdict is "fix".
+  const b = scoreSlip([A, B, C], { type: 'builder' });
+  assert.equal(b.type, 'builder'); assert.equal(b.verdict.state, 'fix', b.verdict.title);
+  const bs = suggestions([A, B, C], b, { data: board, books: ['fanduel'] });
+  const move = bs.find((x) => x.type === 'move'); assert.ok(move && /Lower B over 27.5 to over 2\d\.5/.test(move.text), move?.text);
+  const rep = bs.find((x) => x.type === 'replace'); assert.ok(rep, 'C gets replacement legs'); assert.ok(rep.text.startsWith('Take C Over 27.5 Points'));
+  assert.ok(rep.props.length >= 1 && rep.props[0].player === 'Fresh One', `same-game first: ${rep.props.map((p) => p.player)}`);
+  assert.equal(rep.props[0].link, 'https://fd/1', 'the user\'s book first'); assert.equal(rep.props[0].american, -115);
+  assert.ok(!rep.props.some((p) => p.player === 'Hurt Guy'), 'a listed player is not offered'); assert.ok(!rep.props.some((p) => p.player === 'A'), 'a player already on the ticket is not offered');
+  // Builder: all strong -> play; seven legs -> pass; two hopeless -> pass with a board instead.
+  assert.equal(scoreSlip([A, D], { type: 'builder' }).verdict.state, 'play');
+  assert.equal(scoreSlip([A, A, A, A, A, A, A], { type: 'builder' }).verdict.state, 'pass');
+  const bad = scoreSlip([C, mk('E', hopeless, 27.5), A], { type: 'builder' }); assert.equal(bad.verdict.state, 'pass');
+  assert.ok(suggestions([C, mk('E', hopeless, 27.5), A], bad, { data: board }).some((x) => x.type === 'replace' && x.props.length >= 2), 'a builder from the board instead');
+  assert.deepEqual(replacementsFor([A], board, { limit: 5 }).map((p) => p.player), ['Fresh One', 'Another']);
+  // Regular: trim one soft leg; too many soft legs -> pass.
+  const r = scoreSlip([A, B, D], { type: 'regular' }); assert.equal(r.verdict.state, 'fix'); assert.ok(/Trim one leg/.test(r.verdict.title));
+  const rs = suggestions([A, B, D], r, { data: board }); assert.ok(rs.find((x) => x.type === 'drop' && /Drop B/.test(x.text)));
+  assert.equal(scoreSlip([A, D], { type: 'regular' }).verdict.state, 'play');
+  assert.equal(scoreSlip([B, C, mk('E', hopeless, 27.5), A], { type: 'regular' }).verdict.state, 'pass');
+  // Lotto: one soft leg named, the rest sound; two soft legs -> pass; all sound at short odds -> not priced like a lotto.
+  const l = scoreSlip([A, D, C], { type: 'lotto', combinedAmerican: 1200 }); assert.equal(l.verdict.state, 'fix'); assert.ok(/One leg to drop/.test(l.verdict.title));
+  const ls = suggestions([A, D, C], l, { data: board }); const drop = ls.find((x) => x.type === 'drop'); assert.ok(drop && /This is the leg to drop: C Over 27.5 Points/.test(drop.text) && /Everything else is sound/.test(drop.text), drop?.text);
+  assert.equal(scoreSlip([A, C, mk('E', hopeless, 27.5)], { type: 'lotto', combinedAmerican: 1200 }).verdict.state, 'pass');
+  const short = scoreSlip([A, D], { type: 'lotto' }); assert.equal(short.verdict.state, 'play'); assert.ok(/not priced like a lotto/.test(short.verdict.title));
+  const unpriced = (x) => ({ ...x, leg: { ...x.leg, american: null } });
+  assert.equal(scoreSlip([unpriced(A), unpriced(D)], { type: 'lotto', combinedAmerican: 900 }).verdict.title, 'A sound lotto', 'the slip\'s own price counts when the legs carry none');
+  // No type: the old behavior, no verdict.
+  assert.equal(scoreSlip([A, B]).verdict, null);
+  const whole = checkSlip([A.leg, B.leg], { trendsRows: { basketball_nba: [{ playerName: 'A', statKey: 'points', point: 27.5, side: 'over', eventId: 'g1', series: strong.map((x) => ({ ...x })) }, { playerName: 'B', statKey: 'points', point: 27.5, side: 'over', eventId: 'g1', series: soft.map((x) => ({ ...x })) }] } }, { type: 'builder' });
+  assert.equal(whole.slip.type, 'builder'); assert.ok(whole.slip.verdict);
+});
