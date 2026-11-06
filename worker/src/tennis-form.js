@@ -13,9 +13,15 @@
  */
 import { TOUR_AVG } from './tennis-model.js';
 
-/** A match in the last FATIGUE_DAYS days counts as load; FATIGUE_MATCHES of them, or a marathon yesterday, flags fatigue. */
+/**
+ * A match in the last FATIGUE_DAYS days counts as load; FATIGUE_MATCHES of
+ * them, or a marathon yesterday, flags fatigue. Five, not four: a
+ * quarterfinalist at a Masters has four in the week by Friday, which is the
+ * ordinary run of a tournament, while five means a final last Sunday on
+ * top of it, or qualifying.
+ */
 export const FATIGUE_DAYS = 7;
-export const FATIGUE_MATCHES = 4;
+export const FATIGUE_MATCHES = 5;
 export const MARATHON_GAMES = 30;
 /** A retirement or a walkover given inside INJURY_DAYS flags an injury doubt. */
 export const INJURY_DAYS = 21;

@@ -13,12 +13,13 @@ export const TENNIS_LIVE_TTL = 2 * 60e3;
 export const ESPN_TENNIS = { atp: 'https://site.web.api.espn.com/apis/site/v2/sports/tennis/atp/scoreboard', wta: 'https://site.web.api.espn.com/apis/site/v2/sports/tennis/wta/scoreboard' };
 const ymd = (ms) => new Date(ms).toISOString().slice(0, 10).replace(/-/g, '');
 
-async function getJson(url) {
+/** One ESPN page as JSON; null with the reason noted when it will not come (the same plain fetch worker/src/tennis-espn.js uses). */
+async function getJson(url, note = () => {}) {
   try {
-    const res = await fetch(url, { headers: { Accept: 'application/json', 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36' }, signal: AbortSignal.timeout(12000) });
-    if (!res.ok) return null;
+    const res = await fetch(url, { headers: { Accept: 'application/json', 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36' } });
+    if (!res.ok) { note(`HTTP ${res.status}`); return null; }
     return await res.json();
-  } catch { return null; }
+  } catch (e) { note(String(e?.message ?? e)); return null; }
 }
 
 /**
@@ -56,14 +57,18 @@ export async function getTennisLive(env, now = Date.now(), { fetchJson = getJson
   if (raw) { try { const c = JSON.parse(raw); if (now - (c.at ?? 0) < TENNIS_LIVE_TTL) scoreboard = c; } catch { /* read again */ } }
   if (!scoreboard) {
     const byId = new Map();
+    const sources = {};
     // Today (UTC) and, in the small hours, yesterday: the Americas' night matches run past midnight UTC.
     const days = new Date(now).getUTCHours() < 8 ? [ymd(now - 864e5), ymd(now)] : [ymd(now)];
     for (const tour of ['atp', 'wta']) for (const day of days) {
-      const data = await fetchJson(`${ESPN_TENNIS[tour]}?dates=${day}`);
-      if (!data) continue;
-      for (const m of parseScoreboard(data, tour)) { const prev = byId.get(`${tour}:${m.id}`); if (!prev || m.state === 'in' || (m.completed && !prev.completed) || (!prev.sets.length && m.sets.length)) byId.set(`${tour}:${m.id}`, m); }
+      const key = `${tour}:${day}`;
+      const data = await fetchJson(`${ESPN_TENNIS[tour]}?dates=${day}`, (why) => { sources[key] = why; });
+      if (!data) { sources[key] = sources[key] ?? 'no body'; continue; }
+      const parsed = parseScoreboard(data, tour);
+      sources[key] = `${(data.events ?? []).length} events, ${parsed.length} singles`;
+      for (const m of parsed) { const prev = byId.get(`${tour}:${m.id}`); if (!prev || m.state === 'in' || (m.completed && !prev.completed) || (!prev.sets.length && m.sets.length)) byId.set(`${tour}:${m.id}`, m); }
     }
-    scoreboard = { at: now, matches: [...byId.values()].filter((m) => !m.qualifying && m.tier !== 'challenger') };
+    scoreboard = { at: now, sources, matches: [...byId.values()].filter((m) => !m.qualifying && m.tier !== 'challenger') };
     await env.POTD_KV.put(TENNIS_LIVE_KEY, JSON.stringify(scoreboard), { expirationTtl: 3600 }).catch(() => {});
   }
   const day = etParts(now).date;
@@ -76,7 +81,7 @@ export async function getTennisLive(env, now = Date.now(), { fetchJson = getJson
   matches.sort((x, y) => rank(x) - rank(y) || (y.plays.length - x.plays.length) || Date.parse(x.date) - Date.parse(y.date));
   // The day's moneyline parlay with each leg's standing.
   const parlays = plays.filter((p) => p.market === 'ml_parlay' && p.status === 'pending').map((p) => ({ id: p.id, selection: p.selection, american: p.american, bookId: p.bookId, book: p.book, link: p.link, prob: p.prob, legs: (p.legs ?? []).map((l) => { const m = byMatch.get(l.matchId); const r = m ? legStanding(l, m) : { state: 'wait', text: 'Not started' }; return { ...l, standing: r }; }) }));
-  return { at: scoreboard.at, day, matches, inPlay: matches.filter((m) => m.state === 'in').length, parlays };
+  return { at: scoreboard.at, day, sources: scoreboard.sources ?? {}, matches, inPlay: matches.filter((m) => m.state === 'in').length, parlays };
 }
 
 /** A moneyline leg against the match so far. */
