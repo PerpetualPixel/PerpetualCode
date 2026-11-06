@@ -63,6 +63,7 @@ import { getUfcEvents, getUfcEvent, nextUfcEvent, getUfcFighter, getUfcFighters 
 import { runUfcTick, getUfcPicks } from './ufc-picks.js';
 import { runTennisTick, getTennisPicks } from './tennis-picks.js';
 import { getTennisLive } from './tennis-live.js';
+import { getTennisTrends } from './tennis-trends.js';
 import { sendUfcTicketNotifications, sendUfcChangeNotifications } from './notifications.js';
 import { legBreakdown } from './parlay-builder.js';
 import { runTrendPicksDaily, runTrendPicksGrading, getTrendPicks } from './trend-picks.js';
@@ -1587,6 +1588,10 @@ export default {
     // The Tennis tab (worker/src/tennis-picks.js): today's plays that clear the bar, the matches read, the record.
     if (pathname === '/tennis/picks' && request.method === 'GET') {
       return json(await getTennisPicks(env), { headers: { ...cors, 'Cache-Control': 'public, max-age=120' } });
+    }
+    // Tennis in the Trends tab (worker/src/tennis-trends.js): every player's consistent lines, aces modeled from the rate.
+    if (pathname === '/tennis/trends' && request.method === 'GET') {
+      return json(await getTennisTrends(env), { headers: { ...cors, 'Cache-Control': 'public, max-age=300' } });
     }
     if (pathname === '/ufc/fighters' && request.method === 'GET') {
       return json(await getUfcFighters(env), { headers: { ...cors, 'Cache-Control': 'public, max-age=1800' } });

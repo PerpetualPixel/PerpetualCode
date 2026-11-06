@@ -40,10 +40,11 @@ import { bookIdFor, americanToDecimal } from '../../docs/engine.js';
 import { etParts } from './potd.js';
 import { betRecordOf } from './trend-picks.js';
 import { matchServeProbs, simulate, fitToTarget, distributions, shareOver, aceCounts, devig, impliedOf, highestLineAt, winShare } from './tennis-model.js';
-import { nameKey, surfaceOf } from './tennis-card-parse.js';
+import { nameKey, surfaceOf, setDone } from './tennis-card-parse.js';
 import { formOf, formLine, styleOf, matchupProb, flagsOf, STYLE_LABEL } from './tennis-form.js';
+import { ensureTennisTrends } from './tennis-trends.js';
 
-export { surfaceOf };
+export { surfaceOf, setDone };
 
 export const TENNIS_CARD_KEY = 'tennis:card';
 export const tennisProfilesKey = (tour) => `tennis:profiles:${tour}`;
@@ -391,6 +392,8 @@ export async function runTennisTick(env, ctx, now = Date.now(), { deps = {} } = 
   }
   record.candidates = candidates.length;
   record.oddsAt = now;
+  // The Trends tab's tennis lines (worker/src/tennis-trends.js), rebuilt once an hour from the same card and profiles and the boards just read.
+  const trends = deps.trends === false ? { built: false } : await ensureTennisTrends(env, { card, profiles, now, boards: Object.fromEntries([...boards].map(([t, b]) => [t, b])) }).catch((e) => { console.error('Tennis trends build failed:', e); return { built: false }; });
   // Grading: every pending play whose match has a result.
   let graded = 0;
   const results = new Map((card.results ?? []).map((r) => [`${r.tour}:${r.id}`, r]));
@@ -413,7 +416,7 @@ export async function runTennisTick(env, ctx, now = Date.now(), { deps = {} } = 
   await env.POTD_KV.put(key, JSON.stringify(record), { expirationTtl: KV_TTL });
   const index = (await readJson(env, TENNIS_PICKS_INDEX)) ?? { dates: [] };
   if (!index.dates.includes(date)) { index.dates = [date, ...index.dates].slice(0, 120); await env.POTD_KV.put(TENNIS_PICKS_INDEX, JSON.stringify(index), { expirationTtl: KV_TTL }).catch(() => {}); }
-  return { skipped: false, date, considered, candidates: candidates.length, posted, parlay: parlay ? parlay.legs.length : 0, graded, plays: record.plays.length, units: unitsPosted(record.plays), keys: Object.fromEntries(TOURS.map((t) => [t, (keys[t] ?? []).map((k) => k.key)])) };
+  return { skipped: false, date, considered, candidates: candidates.length, posted, parlay: parlay ? parlay.legs.length : 0, graded, plays: record.plays.length, units: unitsPosted(record.plays), trendsBuilt: Boolean(trends.built), keys: Object.fromEntries(TOURS.map((t) => [t, (keys[t] ?? []).map((k) => k.key)])) };
 }
 
 /**
@@ -441,9 +444,6 @@ export function gradeParlay(play, results) {
   const dec = standing.reduce((d, l) => d * americanToDecimal(l.american), 1);
   return { status: 'graded', result: 'win', net: Math.round((dec - 1) * play.units * 100) / 100, actual: `${standing.length} of ${legs.length} legs won${legs.length > standing.length ? `, ${legs.length - standing.length} void` : ''}`, legs, gradedAt: Date.now() };
 }
-
-/** Whether a set's score is a finished set (6+ by two, or a 7), not one in play. */
-export const setDone = ([a, b]) => (Math.max(a, b) >= 6 && Math.abs(a - b) >= 2) || Math.max(a, b) === 7;
 
 const settle = (play, won, actual, { push = false, voided = false } = {}) => {
   const result = voided ? 'void' : push ? 'push' : won ? 'win' : 'loss';

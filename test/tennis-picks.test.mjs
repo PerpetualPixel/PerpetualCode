@@ -271,3 +271,39 @@ test('the live tennis read lists the day\'s singles from ESPN with each play\'s 
   const fallback = await getTennisLive(env, now, { fetchJson: async (url, note) => { refused++; note('HTTP 403'); return null; } });
   assert.equal(refused, 4, 'both hosts, both tours'); assert.equal(fallback.matches.length, 1); assert.equal(fallback.matches[0].a, 'Iga Swiatek'); assert.match(fallback.sources.card, /runner's card/); assert.match(fallback.sources['atp:20261106'], /403/);
 });
+
+import { buildTennisTrends, acesProp, poissonAtLeast, linesFor, playerMatches, ensureTennisTrends, getTennisTrends } from '../worker/src/tennis-trends.js';
+
+test('tennis trends: a line per prop at the number the player clears most often, aces modeled from the rate, today\'s lines from the board', async () => {
+  const now = Date.now();
+  // Rybakina: ten matches, 9-1, big games-won numbers; her serve profile says 0.65 aces a service game.
+  const results = [];
+  const scores = [[[6, 3], [6, 4]], [[6, 2], [6, 2]], [[7, 6], [6, 4]], [[6, 4], [3, 6], [6, 3]], [[6, 1], [6, 3]], [[6, 4], [6, 4]], [[4, 6], [6, 3], [7, 5]], [[6, 3], [6, 2]], [[6, 4], [7, 6]], [[3, 6], [4, 6]]];
+  scores.forEach((sets, i) => results.push({ id: `r${i}`, tour: 'wta', completed: true, statusName: 'STATUS_FINAL', date: new Date(now - (i + 1) * 2 * 864e5).toISOString(), eventName: 'Some Open', a: { id: 'ryb', key: 'elena rybakina', name: 'Elena Rybakina' }, b: { id: `o${i}`, key: `opp ${i}`, name: `Opp ${i}` }, sets, winner: sets.filter(([x, y]) => x > y).length >= 2 ? 'a' : 'b' }));
+  const profiles = { wta: { players: { 'elena rybakina': { name: 'Elena Rybakina', key: 'elena rybakina', matches: 86, overall: { matches: 86, serve: 0.65, acesPerGame: 0.649, ace: 0.1014, points: 6054 }, bySurface: {} } } }, atp: { players: {} } };
+  const card = { at: now, results, slate: [{ id: 's1', tour: 'wta', eventName: 'WTA Finals', tier: '1000', round: 'Semifinal', qualifying: false, completed: false, state: 'pre', date: new Date(now + 5 * 3600e3).toISOString(), a: { id: 'ryb', key: 'elena rybakina', name: 'Elena Rybakina' }, b: { id: 'x', key: 'jessica pegula', name: 'Jessica Pegula' }, sets: [] }] };
+  const boards = { wta: [{ id: 'ev', home_team: 'Elena Rybakina', away_team: 'Jessica Pegula', bookmakers: [{ key: 'fanduel', title: 'FanDuel', markets: [{ key: 'h2h', outcomes: [{ name: 'Elena Rybakina', price: -150 }, { name: 'Jessica Pegula', price: 125 }] }, { key: 'spreads', outcomes: [{ name: 'Elena Rybakina', point: -2.5, price: -110 }, { name: 'Jessica Pegula', point: 2.5, price: -110 }] }, { key: 'totals', outcomes: [{ name: 'Over', point: 21.5, price: -115 }, { name: 'Under', point: 21.5, price: -105 }] }] }] }], atp: [] };
+  const t = buildTennisTrends({ card, profiles, boards, now });
+  const ryb = t.players.find((p) => p.key === 'elena rybakina');
+  assert.ok(ryb, 'Rybakina is listed'); assert.equal(ryb.matches, 10); assert.equal(ryb.record, '9-1'); assert.equal(ryb.form.length, 10);
+  const aces = ryb.props.find((p) => p.market === 'aces');
+  assert.ok(aces.modeled); assert.ok(aces.mean > 5 && aces.mean < 9, `mean ${aces.mean}`); assert.ok(aces.line >= 2.5 && aces.line <= 5.5, `aces line ${aces.line}`); assert.ok(aces.ladder.find((l) => l.line === 2.5).rate > 0.9, 'three aces is near certain for her');
+  const gw = ryb.props.find((p) => p.market === 'games_won');
+  assert.ok(gw.line >= 9.5, `games won line ${gw.line}`); assert.ok(gw.rate >= 0.8); assert.equal(gw.values.length, 10); assert.ok(gw.ladder.length > 3);
+  const total = ryb.props.find((p) => p.market === 'games_total'); assert.ok(total.line >= 15.5);
+  const set1 = ryb.props.find((p) => p.market === 'set1_total'); assert.ok(set1);
+  const spread = ryb.props.find((p) => p.market === 'games_spread'); assert.ok(spread.plus); assert.ok(spread.line != null);
+  const sets = ryb.props.find((p) => p.market === 'set_spread'); assert.ok(sets.rate >= 0.9, 'a set in all but the straight-sets loss');
+  assert.ok(ryb.today && ryb.today.opponent === 'Jessica Pegula' && ryb.today.lines.h2h.american === -150 && ryb.today.lines.spread.point === -2.5 && ryb.today.lines.total.point === 21.5);
+  assert.equal(t.players[0].key, 'elena rybakina', 'playing today first');
+  assert.ok(!t.players.some((p) => p.key === 'opp 0'), 'one match is too few for a line');
+  assert.ok(Math.abs(poissonAtLeast(7, 3) - 0.97) < 0.01);
+  assert.equal(acesProp({ overall: { matches: 5, acesPerGame: 0.6 } }, []), null, 'too few matches on file');
+  assert.equal(playerMatches({ id: 'ryb', key: 'elena rybakina' }, results, now)[0].gamesWon, 12);
+  // Stored once an hour; the read gives it back.
+  const m = new Map(); const env = { POTD_KV: { get: async (k) => m.get(k) ?? null, put: async (k, v) => { m.set(k, v); } } };
+  const first = await ensureTennisTrends(env, { card, profiles, now, boards }); assert.equal(first.built, true);
+  const second = await ensureTennisTrends(env, { card, profiles, now: now + 60e3, boards }); assert.equal(second.built, false);
+  const read = await getTennisTrends(env); assert.equal(read.players.length, t.players.length); assert.equal(read.counts.today, 1);
+  assert.equal(linesFor(boards.wta[0], 'E. Rybakina').h2h.american, -150, 'an initial fits the surname');
+});

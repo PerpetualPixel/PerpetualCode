@@ -75,6 +75,13 @@ jobs:
                   return;
                 }
                 if (d && d.current && d.current.breakdowns) d = d.current; // /ufc/picks wraps the card under current, with the history beside it
+                if (d && Array.isArray(d.players) && d.counts && d.window) {
+                // Tennis in Trends (worker/src/tennis-trends.js getTennisTrends): each player's lines; TT_PLAYER=name narrows to one.
+                console.log("TENNIS TRENDS at", d.at && new Date(d.at).toISOString(), "| counts", JSON.stringify(d.counts), "| players", d.players.length);
+                const want = String(process.env.ATHLETES || "").toLowerCase();
+                for (const p of d.players.filter((x) => !want || x.name.toLowerCase().includes(want)).slice(0, want ? 5 : 25)) console.log("  PLAYER", p.tour, p.name, p.record, p.form, "| flags", p.flags.join(","), "| today", p.today ? `${p.today.opponent} ${p.today.event} ${p.today.lines ? JSON.stringify(p.today.lines) : "no lines"}` : "-", "|", p.props.map((x) => `${x.market} ${x.line == null ? "none" : x.plus ? "+" + x.line : "o" + x.line} ${Math.round(x.rate * 100)}%${x.modeled ? " (mean " + x.mean + ")" : " " + x.hits + "/" + x.n}`).join(" | "));
+                return;
+                }
                 if (d && d.byTour && d.bar && Array.isArray(d.slate)) {
                 // The Tennis tab (worker/src/tennis-picks.js getTennisPicks): the record, the plays of the day, the matches read and why they passed.
                 console.log("TENNIS", d.date, "| record", JSON.stringify(d.record), "| atp", JSON.stringify(d.byTour.atp), "| wta", JSON.stringify(d.byTour.wta), "| card at", d.cardAt && new Date(d.cardAt).toISOString(), "| slate", d.slate.length);
