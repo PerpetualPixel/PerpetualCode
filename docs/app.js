@@ -8986,6 +8986,7 @@ function bookBadge(bookKey, bookName, cls = 'book-badge') {
 
 async function loadTrends({ force = false } = {}) {
   if (!el.trendsBody || !CONFIG.WORKER_URL) return;
+  if (trendsState.sport === 'tennis') { renderTrendLeagues(); await loadTennisTrends({ force }); return; }
   if (trendsState.data && !force && trendsState.data.sportKey === trendsState.sport) { renderTrends(); return; }
   showLoading(el.trendsStatus, 'Loading trends…');
   try {
@@ -9007,13 +9008,17 @@ async function loadTrends({ force = false } = {}) {
   }
 }
 
+/** The league chips when the worker has not answered yet (a first open on tennis). */
+const TREND_DEFAULT_LEAGUES = [['basketball_nba', 'NBA'], ['americanfootball_nfl', 'NFL'], ['icehockey_nhl', 'NHL'], ['soccer', 'Soccer']].map(([sportKey, title]) => ({ sportKey, title, rows: null }));
 function renderTrendLeagues() {
   if (!el.trendsLeagues) return;
-  el.trendsLeagues.innerHTML = trendsState.available.map((a) => `
+  // Tennis (2026-11-06: "under trends, I'd like to be able to find lines for aces, games won etc.") sits with the leagues; its lines come from /tennis/trends.
+  const leagues = [...(trendsState.available.length ? trendsState.available : TREND_DEFAULT_LEAGUES), { sportKey: 'tennis', title: 'Tennis', rows: tennisTrendsState.data?.players?.length ?? null }];
+  el.trendsLeagues.innerHTML = leagues.map((a) => `
     <button type="button" class="league-chip ${a.sportKey === trendsState.sport ? 'is-active' : ''} ${a.rows ? '' : 'is-off-season'}"
             data-trends-league="${esc(a.sportKey)}" aria-pressed="${a.sportKey === trendsState.sport ? 'true' : 'false'}"
-            title="${a.rows ? `${a.rows} lines` : 'No lines yet'}">
-      ${leagueIconSvg(TREND_LEAGUE_ICON[a.sportKey] ?? a.sportKey)}<span class="league-chip-label">${esc(a.title)}</span>
+            title="${a.rows ? `${a.rows} ${a.sportKey === 'tennis' ? 'players' : 'lines'}` : a.sportKey === 'tennis' ? 'Every player on both tours' : 'No lines yet'}">
+      ${leagueIconSvg(a.sportKey === 'tennis' ? 'atp' : TREND_LEAGUE_ICON[a.sportKey] ?? a.sportKey)}<span class="league-chip-label">${esc(a.title)}</span>
     </button>`).join('');
 }
 
@@ -9155,6 +9160,9 @@ function renderTrendCard(row) {
 
 function renderTrends() {
   if (!el.trendsBody) return;
+  const dock = document.querySelector('.trends-dock');
+  if (dock) dock.hidden = trendsState.sport === 'tennis';
+  if (trendsState.sport === 'tennis') return renderTennisTrends();
   const data = trendsState.data;
   el.trendsPeriodLabel.textContent = periodDockLabel();
   el.trendsSortLabel.textContent = SORT_LABEL[trendsState.sort.by];
@@ -9436,6 +9444,87 @@ el.trendsLeagues?.addEventListener('click', (event) => {
   loadTrends({ force: true });
 });
 el.trendsSearch?.addEventListener('input', () => { trendsState.search = el.trendsSearch.value; renderTrends(); });
+
+/* ---- Tennis in Trends (worker/src/tennis-trends.js) ------------------------------------------------ */
+/* 2026-11-06: "under trends, I'd like to be able to find lines for aces, games won etc. There should be some props
+   that tennis players are consistent in, like Elena Rybakina for 3 aces." Every player on both tours with matches
+   on the card: a line per prop at the number they clear most often in their last ten (games won, total games, first-set
+   games, the game spread, the set spread), aces modeled from their ace rate this year, and today's lines from the feed. */
+const tennisTrendsState = { data: null, loading: false, tour: 'all', today: false, market: 'all', open: {} };
+const TENNIS_TREND_MARKET_ORDER = ['aces', 'games_won', 'games_total', 'set1_total', 'games_spread', 'set_spread'];
+async function loadTennisTrends({ force = false } = {}) {
+  if (!CONFIG.WORKER_URL) return;
+  if (tennisTrendsState.data && !force) { renderTrends(); return; }
+  if (tennisTrendsState.loading) return;
+  tennisTrendsState.loading = true;
+  if (!tennisTrendsState.data) showLoading(el.trendsStatus, 'Reading the tennis lines…');
+  try {
+    const res = await fetch(new URL('/tennis/trends', CONFIG.WORKER_URL), { headers: { Accept: 'application/json' } });
+    if (res.ok) tennisTrendsState.data = await res.json();
+  } catch { el.trendsStatus.textContent = "Couldn't reach the worker."; }
+  tennisTrendsState.loading = false;
+  renderTrendLeagues();
+  renderTrends();
+}
+/** A prop's number as the books write it: "over 3.5" for a count, "+4.5" for a spread. */
+const tennisPropLine = (p) => (p.line == null ? 'no line clears' : p.plus ? `+${p.line}${p.market === 'set_spread' ? ' sets' : ' games'}` : `over ${p.line}`);
+const tennisPropHit = (p) => (p.modeled ? `${Math.round(p.rate * 100)}% modeled · ${p.mean} expected` : `${Math.round(p.rate * 100)}% · ${p.hits} of ${p.n}`);
+/** The last-ten bars for a match-based prop: a hit past the line in green, a miss in red, the match on the title. */
+function tennisPropBars(player, p) {
+  if (p.modeled || !p.values?.length) return '';
+  const max = Math.max(...p.values.map((v) => Math.abs(v)), p.line ?? 1, 1);
+  return `<div class="trend-bars tt-bars">${p.values.map((v, i) => { const hit = p.plus ? v + (p.line ?? 0) > 0 : p.line != null && v > p.line; const m = player.last?.[i]; const h = p.plus ? Math.max(12, Math.round(((v + max) / (2 * max)) * 100)) : Math.max(12, Math.round((v / max) * 100)); return `<span class="trend-bar ${p.line == null ? '' : hit ? 'is-hit' : 'is-miss'}" style="height:${h}%" title="${esc(m ? `${m.won ? 'W' : 'L'} ${m.sets} vs ${m.opponent ?? ''}` : '')}: ${esc(String(v))}"></span>`; }).join('')}</div>`;
+}
+function renderTennisTrendProp(player, p) {
+  const key = `${player.tour}:${player.key}:${p.market}`;
+  const open = Boolean(tennisTrendsState.open[key]);
+  const ladder = open ? `<div class="tt-ladder">${p.ladder.map((l) => `<span class="tt-rung ${l.rate >= (p.modeled ? 0.85 : 0.8) ? 'is-good' : ''} ${l.line === p.line ? 'is-pick' : ''}">${p.plus ? `+${l.line}` : `${l.line}+`} <b>${Math.round(l.rate * 100)}%</b></span>`).join('')}</div>${p.modeled ? `<p class="row-sub">Modeled: ${esc(String(p.perGame))} aces a service game over ${esc(String(p.n))} matches this year, about ${esc(String(p.serviceGames))} service games a match, so ${esc(String(p.mean))} aces expected. ESPN posts no per-match aces, so this is the rate, not a match-by-match count.</p>` : `<p class="row-sub">Last ${p.n} matches, newest first: ${esc(p.values.join(', '))}.</p>`}` : '';
+  return `<div class="tt-prop ${p.line == null ? 'is-off' : ''}" data-tt-prop="${esc(key)}">
+    <div class="tt-prop-row"><span class="tt-prop-name">${esc(p.label)} <b>${esc(tennisPropLine(p))}</b>${p.modeled ? '<small class="tt-tag">modeled</small>' : ''}</span><span class="trend-rate ${rateTone(p.rate)}">${Math.round(p.rate * 100)}%</span></div>
+    <div class="tt-prop-sub"><small>${esc(tennisPropHit(p))}</small>${tennisPropBars(player, p)}</div>
+    ${ladder}
+  </div>`;
+}
+function renderTennisTrendPlayer(player) {
+  const key = `${player.tour}:${player.key}`;
+  const open = Boolean(tennisTrendsState.open[key]);
+  const t = player.today;
+  const lines = t?.lines ? [t.lines.h2h ? `ML ${formatAmerican(t.lines.h2h.american)}` : null, t.lines.spread ? `${t.lines.spread.point > 0 ? '+' : ''}${t.lines.spread.point} games ${formatAmerican(t.lines.spread.american)}` : null, t.lines.total ? `O ${t.lines.total.point} ${formatAmerican(t.lines.total.american)}` : null].filter(Boolean).join(' · ') : '';
+  const book = t?.lines?.h2h ?? t?.lines?.spread ?? t?.lines?.total;
+  const props = tennisTrendsState.market === 'all' ? player.props : player.props.filter((p) => p.market === tennisTrendsState.market);
+  const shown = open ? props : props.filter((p) => p.line != null).slice(0, 3);
+  return `<article class="trend-card tt-card ${t ? 'is-today' : ''}">
+    <button type="button" class="tt-head" data-tt-player="${esc(key)}" aria-expanded="${open}">
+      <span class="tt-name"><strong>${esc(player.name)}</strong><span class="trend-league">${esc(TENNIS_TOUR_LABEL[player.tour] ?? player.tour)}</span>${player.flags.map((f) => `<span class="tennis-flag is-${esc(f)}">${esc(TENNIS_FLAG_LABEL[f] ?? f)}</span>`).join('')}</span>
+      <span class="tt-form" title="Last ${player.form.length}">${player.record} <small>${player.form.split('').map((c) => `<i class="tt-dot ${c === 'W' ? 'is-w' : 'is-l'}"></i>`).join('')}</small></span>
+      <span class="live-caret" aria-hidden="true">${open ? '▴' : '▾'}</span>
+    </button>
+    ${t ? `<p class="tt-today"><strong>${t.state === 'in' ? 'In play' : esc(tennisTimeFmt.format(new Date(t.date)))}</strong> vs ${esc(t.opponent)} · ${esc(t.event ?? '')}${t.round ? ` · ${esc(t.round)}` : ''}${lines ? `<br><span class="tt-lines">${book?.bookId ? bookBadge(book.bookId, book.book) : ''}${esc(lines)}</span>` : '<br><span class="tt-lines row-sub">No board price yet</span>'}</p>` : ''}
+    <div class="tt-props">${shown.map((p) => renderTennisTrendProp(player, p)).join('') || '<p class="row-sub">No line clears the bar for this player yet.</p>'}</div>
+    ${!open && props.length > shown.length ? `<button type="button" class="link-button tt-more" data-tt-player="${esc(key)}">${props.length - shown.length} more line${props.length - shown.length === 1 ? '' : 's'}</button>` : ''}
+  </article>`;
+}
+function renderTennisTrends() {
+  const d = tennisTrendsState.data;
+  if (!d) { if (!tennisTrendsState.loading) { el.trendsStatus.textContent = 'The tennis lines have not been built yet.'; el.trendsBody.innerHTML = ''; } return; }
+  if (!d.players?.length) { el.trendsStatus.textContent = 'No tennis lines yet: the worker builds them once an hour from the card and the serve profiles.'; el.trendsBody.innerHTML = ''; return; }
+  const q = trendsState.search.trim().toLowerCase();
+  let players = d.players.filter((p) => (tennisTrendsState.tour === 'all' || p.tour === tennisTrendsState.tour) && (!tennisTrendsState.today || p.today) && (!q || p.name.toLowerCase().includes(q)));
+  if (tennisTrendsState.market !== 'all') players = players.filter((p) => p.props.some((x) => x.market === tennisTrendsState.market && x.line != null)).sort((a, b) => (b.today ? 1 : 0) - (a.today ? 1 : 0) || (b.props.find((x) => x.market === tennisTrendsState.market)?.rate ?? 0) - (a.props.find((x) => x.market === tennisTrendsState.market)?.rate ?? 0));
+  const chip = (attr, value, label, on, n = null) => `<button type="button" class="league-chip ${on ? 'is-active' : ''}" data-${attr}="${esc(value)}" aria-pressed="${on}"><span class="league-chip-label">${esc(label)}</span>${n != null ? `<small class="live-league-n">${n}</small>` : ''}</button>`;
+  const tours = `<div class="live-books-pick live-leagues-pick" role="group" aria-label="Tour">${chip('tt-tour', 'all', 'Both', tennisTrendsState.tour === 'all')}${chip('tt-tour', 'atp', 'ATP', tennisTrendsState.tour === 'atp', d.counts?.atp)}${chip('tt-tour', 'wta', 'WTA', tennisTrendsState.tour === 'wta', d.counts?.wta)}${chip('tt-today', '1', 'Playing today', tennisTrendsState.today, d.counts?.today)}</div>`;
+  const markets = `<div class="live-books-pick" role="group" aria-label="Prop">${chip('tt-market', 'all', 'All props', tennisTrendsState.market === 'all')}${TENNIS_TREND_MARKET_ORDER.map((k) => chip('tt-market', k, d.markets?.[k] ?? k, tennisTrendsState.market === k)).join('')}</div>`;
+  el.trendsStatus.innerHTML = `${players.length} of ${d.players.length} players · ${d.counts?.today ?? 0} playing today · lines as of ${esc(trendTimeFmt.format(new Date(d.at)))}`;
+  el.trendsBody.innerHTML = `${tours}${markets}<p class="row-sub tt-note">A line is the highest number the player cleared in at least ${Math.round((d.bar?.consistent ?? 0.8) * 100)}% of their last ${d.window ?? 10} matches on the card; aces are modeled from the player's ace rate this year (${Math.round((d.bar?.aces ?? 0.85) * 100)}%+), since no feed posts per-match aces. Players on today's card come first with the feed's prices.</p>${players.slice(0, 120).map(renderTennisTrendPlayer).join('') || '<p class="empty">No player fits those filters.</p>'}`;
+}
+el.trendsBody?.addEventListener('click', (event) => {
+  if (trendsState.sport !== 'tennis') return;
+  const tour = event.target.closest('[data-tt-tour]'); if (tour) { tennisTrendsState.tour = tour.dataset.ttTour; renderTrends(); return; }
+  if (event.target.closest('[data-tt-today]')) { tennisTrendsState.today = !tennisTrendsState.today; renderTrends(); return; }
+  const market = event.target.closest('[data-tt-market]'); if (market) { tennisTrendsState.market = market.dataset.ttMarket; renderTrends(); return; }
+  const prop = event.target.closest('[data-tt-prop]'); if (prop) { const k = prop.dataset.ttProp; tennisTrendsState.open[k] = !tennisTrendsState.open[k]; renderTrends(); return; }
+  const player = event.target.closest('[data-tt-player]'); if (player) { const k = player.dataset.ttPlayer; tennisTrendsState.open[k] = !tennisTrendsState.open[k]; renderTrends(); }
+});
 // A headshot or crest ESPN doesn't have falls back to initials or nothing —
 // handled here, not inline, because the page's CSP forbids inline handlers.
 function trendImageFallback(event) {
@@ -9607,7 +9696,7 @@ el.trendsSheet?.addEventListener('input', (event) => {
 const trendPicksState = { data: null, loaded: false, filter: 'all', hover: null, emblemOpen: null, mine: null, mineLoading: false, mineError: null };
 const pickDayFmt = new Intl.DateTimeFormat(undefined, { weekday: 'short', month: 'short', day: 'numeric' });
 const pickShortFmt = new Intl.DateTimeFormat(undefined, { month: 'numeric', day: 'numeric' });
-const PICK_FILTERS = [['all', 'All'], ['basketball_nba', 'NBA'], ['americanfootball_nfl', 'NFL'], ['icehockey_nhl', 'NHL'], ['soccer', 'Soccer']];
+const PICK_FILTERS = [['all', 'All'], ['basketball_nba', 'NBA'], ['americanfootball_nfl', 'NFL'], ['icehockey_nhl', 'NHL'], ['soccer', 'Soccer'], ['tennis', 'Tennis']];
 
 /**
  * The user's own ticket (worker/src/my-picks.js): read once per visit,
@@ -9869,6 +9958,10 @@ function renderTrendPicks() {
   if (el.trendPicksFilters) {
     el.trendPicksFilters.innerHTML = PICK_FILTERS.map(([key, label]) => `<button type="button" class="league-chip ${trendPicksState.filter === key ? 'is-active' : ''}" data-pick-filter="${esc(key)}" aria-pressed="${trendPicksState.filter === key ? 'true' : 'false'}"><span class="league-chip-label">${esc(label)}</span></button>`).join('');
   }
+  // Tennis (2026-11-06: "I don't see tennis tabs in Pixel's Picks"): its own plays, record and days under the Tennis chip.
+  if (el.trendPicksUfc) el.trendPicksUfc.hidden = trendPicksState.filter === 'tennis';
+  if (el.trendPicksTennis) el.trendPicksTennis.hidden = trendPicksState.filter !== 'all';
+  if (trendPicksState.filter === 'tennis') return renderTennisPicksTab();
   const today = d?.today ?? null;
   const bets = (today?.bets ?? []).filter(betMatches);
   if (bets.length) {
@@ -9914,6 +10007,8 @@ el.trendPicksView?.addEventListener('click', (event) => {
   if (emblem) { const k = emblem.dataset.pickEmblem; trendPicksState.emblemOpen = trendPicksState.emblemOpen === k ? null : k; renderTrendPicks(); return; }
   const chip = event.target.closest('[data-pick-filter]');
   if (chip) { trendPicksState.filter = chip.dataset.pickFilter; trendPicksState.hover = null; renderTrendPicks(); return; }
+  const tennisWhy = event.target.closest('[data-tennis-why]');
+  if (tennisWhy) { const id = tennisWhy.dataset.tennisWhy; tennisState.open[id] = !tennisState.open[id]; renderTrendPicks(); return; }
   if (event.target.closest('[data-my-redraw]')) { loadMyPicks({ redraw: true }); return; }
   const dot = event.target.closest('[data-pick-day]');
   if (dot) { const i = Number(dot.dataset.pickDay); trendPicksState.hover = trendPicksState.hover === i ? null : i; renderPickGraph(); return; }
@@ -11481,9 +11576,33 @@ function renderTennis() {
     ${readsHtml}`;
 }
 
+/** The Pixel's Picks tab under its Tennis chip: today's plays as cards, the record, the days. */
+function renderTennisPicksTab() {
+  const d = tennisState.data;
+  if (!d) {
+    el.trendPicksStatus.textContent = tennisState.loading ? 'Reading the tennis board…' : 'The tennis board has not been read yet.';
+    el.trendPicksBody.innerHTML = ''; if (el.trendPicksRecord) el.trendPicksRecord.innerHTML = ''; if (el.trendPicksGraph) el.trendPicksGraph.innerHTML = ''; el.trendPicksHistory.innerHTML = '';
+    if (!tennisState.loading) loadTennis();
+    return;
+  }
+  const plays = [...(d.current?.plays ?? [])].sort((a, b) => (a.market === 'ml_parlay' ? -1 : 0) - (b.market === 'ml_parlay' ? -1 : 0) || (a.commenceMs ?? 0) - (b.commenceMs ?? 0));
+  const bar = d.bar ?? {};
+  el.trendPicksStatus.textContent = plays.length
+    ? `${plays.length} tennis play${plays.length === 1 ? '' : 's'} today · ${d.unitsToday ?? plays.length} of ${bar.maxUnits ?? 5} units · read ${d.current?.refreshedAt ? ago(d.current.refreshedAt) : 'today'}`
+    : `No tennis play today yet: the board is read every quarter hour; a play posts only where the model clears the bar.`;
+  el.trendPicksBody.innerHTML = plays.map(renderTennisPlay).join('') || `<p class="empty">${Object.keys(d.current?.reads ?? {}).length ? `${Object.keys(d.current.reads).length} matches read, none with a leg the model likes at the price yet.` : 'No ATP or WTA singles read yet today.'}</p>`;
+  const rec = d.record ?? { wins: 0, losses: 0, pushes: 0, units: 0, roi: null, risked: 0 };
+  const line = (r) => `${r.wins}-${r.losses}${r.pushes ? `-${r.pushes}` : ''} <small>${esc(signedUnits(r.units ?? 0))}u</small>`;
+  if (el.trendPicksRecord) el.trendPicksRecord.innerHTML = `<p class="pick-record">${rec.wins}-${rec.losses}${rec.pushes ? `-${rec.pushes}` : ''} <small>${esc(signedUnits(rec.units ?? 0))} units · ${esc(roiText(rec.roi))} on ${rec.risked ?? 0} risked, one unit a play · ATP ${line(d.byTour?.atp ?? rec)} · WTA ${line(d.byTour?.wta ?? rec)}</small></p>`;
+  if (el.trendPicksGraph) el.trendPicksGraph.innerHTML = '';
+  const days = (d.history ?? []).filter((r) => (r.plays ?? []).length);
+  el.trendPicksHistory.innerHTML = days.length ? days.map((r) => `<div class="pick-day"><h3>${esc(tennisDayFmt.format(new Date(`${r.date}T12:00:00Z`)))}</h3>${r.plays.map((p) => `<div class="pick-hist-row"><span><strong>${esc(p.selection)}</strong> <small>${esc(p.tour === 'both' ? 'ATP + WTA' : TENNIS_TOUR_LABEL[p.tour] ?? p.tour)} · ${p.market === 'ml_parlay' ? `${(p.legs ?? []).length} legs` : `${esc(p.a)} vs ${esc(p.b)}`}${Number.isFinite(p.american) ? ` · ${esc(formatAmerican(p.american))}` : ''}</small></span>${tennisPickBadge(p)}</div>`).join('')}</div>`).join('') : '<p class="empty">No tennis play has posted yet.</p>';
+}
+
 /** The Pixel's Picks tab's tennis section: its own record, by tour and by market, and the plays by day. */
 function renderTennisLedger() {
   if (!el.trendPicksTennis) return;
+  if (trendPicksState.filter === 'tennis') renderTrendPicks();
   const d = tennisState.data;
   if (!d) { el.trendPicksTennis.innerHTML = ''; return; }
   const rec = d.record;

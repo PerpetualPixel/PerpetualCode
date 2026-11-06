@@ -7437,3 +7437,34 @@ a.trend-price:hover { background: rgba(255, 255, 255, 0.06); }
 .live-tennis-rest { border: 1px solid var(--line); border-radius: 14px; padding: 8px 12px; background: var(--surface); display: grid; gap: 8px; }
 .live-tennis-rest summary { cursor: pointer; font-weight: 700; color: var(--muted); }
 .live-tennis-parlay { display: grid; gap: 6px; }
+/* Tennis in Trends: a card per player, a row per prop with its line and rate, the ladder and the last ten on a tap. */
+.tt-note { margin: 0 0 12px; }
+.tt-card { padding: 12px 14px; cursor: default; }
+.tt-card.is-today { border-color: rgba(94, 224, 122, 0.4); }
+.tt-head { display: flex; align-items: center; gap: 10px; width: 100%; background: none; border: 0; color: inherit; font: inherit; text-align: left; padding: 0; cursor: pointer; }
+.tt-name { flex: 1 1 auto; min-width: 0; display: flex; align-items: center; flex-wrap: wrap; gap: 6px; font-size: 1rem; }
+.tt-form { font-family: var(--mono); font-weight: 800; font-variant-numeric: tabular-nums; white-space: nowrap; display: inline-flex; align-items: center; gap: 6px; }
+.tt-dot { display: inline-block; width: 6px; height: 6px; border-radius: 50%; margin-right: 2px; background: rgba(148, 163, 184, 0.4); }
+.tt-dot.is-w { background: var(--success); }
+.tt-dot.is-l { background: var(--danger, #ff5c7a); }
+.tt-today { margin: 8px 0 0; font-size: 0.86rem; color: var(--muted); }
+.tt-today strong { color: var(--text); }
+.tt-lines { display: inline-flex; align-items: center; gap: 6px; margin-top: 4px; font-family: var(--mono); font-size: 0.82rem; color: var(--text); }
+.tt-lines .book-badge { width: 16px; height: 16px; }
+.tt-props { display: grid; gap: 6px; margin-top: 10px; }
+.tt-prop { padding: 8px 10px; border-radius: 10px; background: var(--surface-2); cursor: pointer; }
+.tt-prop.is-off { opacity: 0.6; }
+.tt-prop-row { display: flex; align-items: center; justify-content: space-between; gap: 10px; }
+.tt-prop-name b { margin-left: 4px; }
+.tt-prop .trend-rate { font-size: 1.05rem; }
+.tt-tag { margin-left: 6px; padding: 1px 6px; border-radius: 999px; border: 1px solid var(--line); font-size: 0.64rem; font-weight: 800; letter-spacing: 0.04em; text-transform: uppercase; color: var(--muted); }
+.tt-prop-sub { display: grid; grid-template-columns: 1fr auto; align-items: center; gap: 10px; margin-top: 4px; }
+.tt-prop-sub small { color: var(--muted); font-size: 0.78rem; }
+.tt-bars { height: 26px; width: 130px; }
+.tt-bars .trend-bar { max-width: 10px; }
+.tt-ladder { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 8px; }
+.tt-rung { padding: 3px 8px; border-radius: 999px; border: 1px solid var(--line); font-family: var(--mono); font-size: 0.74rem; color: var(--muted); }
+.tt-rung.is-good { color: var(--success); border-color: var(--success); }
+.tt-rung.is-pick { background: var(--success); color: #06120a; }
+.tt-prop .row-sub { margin: 6px 0 0; font-size: 0.78rem; }
+.tt-more { margin-top: 8px; }

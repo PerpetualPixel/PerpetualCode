@@ -69,3 +69,6 @@ export function parseScoreboard(data, tour) {
   }
   return out;
 }
+
+/** Whether a set's score is a finished set (6+ by two, or a 7), not one in play. */
+export const setDone = ([a, b]) => (Math.max(a, b) >= 6 && Math.abs(a - b) >= 2) || Math.max(a, b) === 7;
