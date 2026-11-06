@@ -307,3 +307,42 @@ test('tennis trends: a line per prop at the number the player clears most often,
   const read = await getTennisTrends(env); assert.equal(read.players.length, t.players.length); assert.equal(read.counts.today, 1);
   assert.equal(linesFor(boards.wta[0], 'E. Rybakina').h2h.american, -150, 'an initial fits the surname');
 });
+
+import { builderLegs, legScoreOf, consistencyFrom, getTennisParlay, BUILDER_MARKETS } from '../worker/src/tennis-picks.js';
+
+test('builderLegs prices every number on the board for the Parlay Builder, scored by the model with the consistency at the line, and the tick stores them', async () => {
+  const ratesA = { serve: 0.72, firstIn: 0.62, return: 0.43, ace: 0.11, acesPerGame: 0.7, points: 4800, matches: 60, aceMatches: 60 };
+  const ratesB = { serve: 0.66, firstIn: 0.6, return: 0.36, ace: 0.12, acesPerGame: 0.78, points: 3600, matches: 45, aceMatches: 45 };
+  const { pA, pB } = matchServeProbs(ratesA, ratesB, 'atp');
+  const fit = fitToTarget(pA, pB, 0.78, { n: 800, seed: 7 });
+  const dist = distributions(simulate(fit.pA, fit.pB, { n: 1500, seed: 11 }));
+  const trends = { players: [{ tour: 'atp', key: 'ben shelton', props: [{ market: 'games_spread', modeled: false, n: 10, ladder: [{ line: 4.5, rate: 0.8, hits: 8, n: 10 }, { line: 6.5, rate: 0.9, hits: 9, n: 10 }] }, { market: 'aces', modeled: true, ladder: [] }] }] };
+  const cons = consistencyFrom(trends);
+  const legs = builderLegs(match(), { dist, board: boardEvent(), deep: deepEvent(), pFinal: 0.8, flags: { a: [], b: ['fatigue'] }, context: ['Form: ...'], consistency: (player, market, line) => cons(player, market, line, 'atp') });
+  const markets = new Set(legs.map((l) => l.market));
+  assert.ok(['ml', 'games_spread', 'games_total', 'set_spread', 'set1_total'].every((k) => markets.has(k)), `markets ${[...markets]}`);
+  const mlA = legs.find((l) => l.market === 'ml' && l.side === 'a'); const mlB = legs.find((l) => l.market === 'ml' && l.side === 'b');
+  assert.equal(mlA.prob, 0.8); assert.equal(mlB.prob, 0.2); assert.equal(mlA.quotes.length, 2, 'both books'); assert.ok(mlA.score >= 4 && mlB.score <= 1.5, `scores ${mlA.score} ${mlB.score}`);
+  assert.ok(mlB.flags.includes('fatigue') && mlA.opponentFlags.includes('fatigue'));
+  const sp = legs.find((l) => l.market === 'games_spread' && l.side === 'b' && l.point === 6.5);
+  assert.ok(sp, 'the alternate +6.5'); assert.equal(sp.consistency.rate, 0.9, 'the Trends rung at 6.5'); assert.ok(sp.prob > 0.7); assert.ok(sp.why.length >= 2);
+  const under = legs.find((l) => l.market === 'games_total' && l.sideWord === 'under');
+  assert.ok(under && under.prob + legs.find((l) => l.market === 'games_total' && l.sideWord === 'over' && l.point === under.point).prob <= 1.001);
+  assert.ok(legs.find((l) => l.market === 'set_spread' && l.side === 'a' && l.point === -1.5), 'the favourite -1.5 sets');
+  assert.ok(legs.every((l) => l.id && l.selection && l.label === BUILDER_MARKETS[l.market] && Number.isFinite(l.implied) && l.quotes.every((q) => q.bookId && Number.isFinite(q.decimal))));
+  assert.equal(legScoreOf(0.9, 0.1), 5); assert.equal(legScoreOf(0.5, 0), 1); assert.equal(legScoreOf(0.7, 0.06, true), 2.5);
+  assert.equal(cons({ name: 'Ben Shelton' }, 'games_spread', 5.5, 'atp').line, 4.5, 'the rung below the line');
+  assert.equal(cons({ name: 'Ben Shelton' }, 'aces', 3.5, 'atp'), null, 'a modeled prop is no consistency');
+  // The tick writes the legs for a posted match too (the cached deeper markets only).
+  const m = new Map(); const env = { POTD_KV: { get: async (k) => m.get(k) ?? null, put: async (k, v) => { m.set(k, v); } } };
+  const card = { at: 1, slate: [match({ date: new Date(Date.now() + 6 * 3600e3).toISOString() })], results: [] };
+  const profiles = { players: { 'jannik sinner': profile('Jannik Sinner', 60, 0.72, 0.43, 0.11), 'ben shelton': profile('Ben Shelton', 45, 0.66, 0.36, 0.12) } };
+  let deepCalls = [];
+  const deps = { card: async () => card, profiles: async () => profiles, sportKeys: async () => ({ atp: [{ key: 'tennis_atp_finals', title: 'ATP Finals' }], wta: [] }), board: async () => [boardEvent()], eventMarkets: async (k, id, opts) => { deepCalls.push(opts); return deepEvent(); }, aceLog: async () => ({}), trends: false };
+  const r = await runTennisTick(env, null, Date.now(), { deps });
+  assert.ok(r.builderLegs >= 6, `legs ${r.builderLegs}`);
+  const stored = await getTennisParlay(env);
+  assert.equal(stored.legs.length, r.builderLegs); assert.equal(stored.matches.length, 1); assert.ok(stored.matches[0].pFinal > 0.5);
+  const again = await runTennisTick(env, null, Date.now(), { deps });
+  assert.ok(again.builderLegs >= 6, 'the posted match keeps its legs'); assert.equal(deepCalls.length, 2, 'the deeper markets are read each tick (the KV cache answers for three hours in the worker)');
+});

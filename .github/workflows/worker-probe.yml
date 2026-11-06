@@ -75,6 +75,13 @@ jobs:
                   return;
                 }
                 if (d && d.current && d.current.breakdowns) d = d.current; // /ufc/picks wraps the card under current, with the history beside it
+                if (d && Array.isArray(d.legs) && Array.isArray(d.matches) && !d.byTour) {
+                // The Parlay Builder tennis legs (worker/src/tennis-picks.js getTennisParlay): the matches read and the best legs by score.
+                console.log("TENNIS PARLAY at", d.at && new Date(d.at).toISOString(), "| matches", d.matches.length, "| legs", d.legs.length);
+                for (const m of d.matches) console.log("  MATCH", m.tour, m.a, "v", m.b, "|", m.event, m.round, "| pFinal", m.pFinal, "| flags", JSON.stringify(m.flags));
+                for (const l of [...d.legs].sort((x, y) => y.score - x.score).slice(0, 25)) console.log("  LEG", l.score, l.tour, l.market, "|", l.selection, "| prob", l.prob, "edge", l.edge, "| books", l.quotes.map((q) => q.bookId + " " + q.american).join(", "), "|", l.consistency ? "L" + (l.consistency.window || l.consistency.n) + " at " + l.consistency.line + " " + Math.round(l.consistency.rate * 100) + "%" : "", "| flags", l.flags.join(","));
+                return;
+                }
                 if (d && Array.isArray(d.players) && d.counts && d.window) {
                 // Tennis in Trends (worker/src/tennis-trends.js getTennisTrends): the lines per player; ATHLETES=name narrows to one.
                 console.log("TENNIS TRENDS at", d.at && new Date(d.at).toISOString(), "| counts", JSON.stringify(d.counts), "| players", d.players.length);

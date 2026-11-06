@@ -39,7 +39,7 @@ import { UPSTREAM, TREND_BOOKMAKERS, recordOddsDiag } from './odds.js';
 import { bookIdFor, americanToDecimal } from '../../docs/engine.js';
 import { etParts } from './potd.js';
 import { betRecordOf } from './trend-picks.js';
-import { matchServeProbs, simulate, fitToTarget, distributions, shareOver, aceCounts, devig, impliedOf, highestLineAt, winShare } from './tennis-model.js';
+import { matchServeProbs, simulate, fitToTarget, distributions, shareOver, shareUnder, aceCounts, devig, impliedOf, highestLineAt, winShare } from './tennis-model.js';
 import { nameKey, surfaceOf, setDone } from './tennis-card-parse.js';
 import { formOf, formLine, styleOf, matchupProb, flagsOf, STYLE_LABEL } from './tennis-form.js';
 import { ensureTennisTrends } from './tennis-trends.js';
@@ -51,6 +51,8 @@ export const tennisProfilesKey = (tour) => `tennis:profiles:${tour}`;
 export const TENNIS_ACELOG_KEY = (tour) => `tennis:acelog:${tour}`;
 export const tennisPicksKey = (date) => `tennis:picks:${date}`;
 export const TENNIS_PICKS_INDEX = 'tennis:picks:index';
+/** The Parlay Builder's tennis legs (2026-11-06: "add tennis to the parlay builder too"): every priced leg on the matches read, scored. */
+export const TENNIS_PARLAY_KEY = 'tennis:parlay';
 export const TENNIS_RECORD_VERSION = 1;
 const KV_TTL = 90 * 86400;
 
@@ -90,9 +92,10 @@ const sameName = (x, y) => { const a = nameKey(x); const b = nameKey(y); return 
 const readJson = async (env, key) => { const raw = await env.POTD_KV.get(key).catch(() => null); if (!raw) return null; try { return JSON.parse(raw); } catch { return null; } };
 
 /** A feed call cached in KV for `ttl`, with the credits left noted; null on a failure (the stale copy, when there is one, stands). */
-async function feedJson(env, ctx, url, cacheKey, ttl, { now = Date.now(), sport = 'tennis' } = {}) {
+async function feedJson(env, ctx, url, cacheKey, ttl, { now = Date.now(), sport = 'tennis', cachedOnly = false } = {}) {
   const cached = await readJson(env, cacheKey);
-  if (cached && now - (cached.at ?? 0) < ttl) return cached.body;
+  if (cached && (cachedOnly || now - (cached.at ?? 0) < ttl)) return cached.body;
+  if (cachedOnly) return null;
   const u = new URL(url); u.searchParams.set('apiKey', (env.ODDS_API_KEY ?? '').trim());
   try {
     const res = await fetch(u.toString(), { headers: { Accept: 'application/json' } });
@@ -125,9 +128,9 @@ async function tournamentBoard(env, ctx, key, now) {
   return Array.isArray(body) ? body : [];
 }
 /** One match's deeper markets (the set spread, the set totals, the alternate games lines): only for a match the model has a case on. */
-async function eventMarkets(env, ctx, key, eventId, now) {
+async function eventMarkets(env, ctx, key, eventId, now, { cachedOnly = false } = {}) {
   const url = `${UPSTREAM}/sports/${key}/events/${eventId}/odds?bookmakers=${TREND_BOOKMAKERS}&markets=${EVENT_MARKETS}&oddsFormat=american&dateFormat=iso&includeLinks=true`;
-  return feedJson(env, ctx, url, `tennis:odds:event:${eventId}`, EVENT_TTL, { now, sport: key });
+  return feedJson(env, ctx, url, `tennis:odds:event:${eventId}`, EVENT_TTL, { now, sport: key, cachedOnly });
 }
 
 /** The feed event for a card match on a board: both names fit, either order. */
@@ -298,6 +301,91 @@ export function buildParlay(candidates, now = Date.now()) {
   };
 }
 
+/** A builder leg's score, 1 to 5: the model's share (50% is 1, 90% is 5), half a star for edge over the price, a star off a flagged side. */
+export const legScoreOf = (prob, edge, flagged = false) => Math.max(1, Math.min(5, Math.round((1 + 4 * Math.max(0, Math.min(1, (prob - 0.5) / 0.4)) + (edge >= 0.05 ? 0.5 : 0) - (flagged ? 1 : 0)) * 10) / 10));
+export const BUILDER_MARKETS = { ml: 'Moneyline', games_spread: 'Game spread', games_total: 'Total games', set_spread: 'Set spread', set1_total: '1st set games' };
+
+/**
+ * Every priced leg on one match for the Parlay Builder: each side's
+ * moneyline at the blended share, every game spread and total on the
+ * board (and the alternates when the deeper markets are cached), the set
+ * spread and the first-set total, each with its share from the
+ * simulation, the price at every book, the edge at the best, a score, and
+ * the player's consistency at the number from the Trends build.
+ */
+export function builderLegs(match, { dist, board, deep, pFinal, flags = { a: [], b: [] }, context = [], consistency = () => null }) {
+  const legs = [];
+  const bookQuotes = (quotes) => { const by = new Map(); for (const q of quotes) if (!by.has(q.bookId) || q.american > by.get(q.bookId).american) by.set(q.bookId, q); return [...by.values()].map((q) => ({ bookId: q.bookId, book: q.book, american: q.american, decimal: Math.round(americanToDecimal(q.american) * 1000) / 1000, link: q.link ?? null })); };
+  const push = (market, side, selection, point, sideWord, quotes, prob, why, cons = null) => {
+    const qs = bookQuotes(quotes); if (!qs.length) return;
+    const bestQ = [...qs].sort((x, y) => y.american - x.american)[0];
+    const implied = impliedOf(bestQ.american); const edge = prob - implied;
+    const flagged = Boolean(side && flags[side]?.length);
+    legs.push({ id: `${match.tour}:${match.id}:${market}:${side ?? 'm'}:${point ?? ''}:${sideWord ?? ''}`, matchId: `${match.tour}:${match.id}`, tour: match.tour, event: match.eventName, round: match.round, commenceMs: Date.parse(match.date), a: match.a.name, b: match.b.name, side, name: side ? match[side].name : null, opponent: side ? match[side === 'a' ? 'b' : 'a'].name : null, market, label: BUILDER_MARKETS[market], selection, point, sideWord, prob: Math.round(prob * 1000) / 1000, implied: Math.round(implied * 1000) / 1000, edge: Math.round(edge * 1000) / 1000, score: legScoreOf(prob, edge, flagged), flags: side ? flags[side] ?? [] : [], opponentFlags: side ? flags[side === 'a' ? 'b' : 'a'] ?? [] : [], quotes: qs, consistency: cons, why: [...why, ...context] });
+  };
+  const pct = (x) => `${Math.round(x * 100)}%`;
+  const dog = pFinal < 0.5 ? 'a' : 'b';
+  // Moneyline, both sides.
+  for (const side of ['a', 'b']) {
+    const prob = side === 'a' ? pFinal : 1 - pFinal;
+    push('ml', side, `${match[side].name} to win`, null, null, h2hQuotesFor(board, match[side].name), prob, [`${match[side].name} ${pct(prob)} to win by the model (form, fatigue, style and surface read, blended with the market)`]);
+  }
+  // Game spreads: every number on the board and the alternate ladder, both sides.
+  const spreads = [...quotesOf(board, 'spreads'), ...quotesOf(deep, 'alternate_spreads')].filter((q) => q.point != null);
+  const bySpread = new Map();
+  for (const q of spreads) { const side = sameName(q.name, match.a.name) ? 'a' : sameName(q.name, match.b.name) ? 'b' : null; if (!side) continue; const k = `${side}:${q.point}`; if (!bySpread.has(k)) bySpread.set(k, { side, point: q.point, quotes: [] }); bySpread.get(k).quotes.push(q); }
+  for (const { side, point, quotes } of bySpread.values()) {
+    const margin = side === 'a' ? dist.marginA : dist.marginA.map((m) => -m);
+    const prob = shareOver(margin, -point);
+    push('games_spread', side, `${match[side].name} ${point > 0 ? '+' : ''}${point} games`, point, null, quotes, prob, [`${pct(prob)} of simulations have ${match[side].name} ${point > 0 ? `within ${point} games` : `clear by more than ${-point} games`}`], point > 0 ? consistency(match[side], 'games_spread', point) : null);
+  }
+  // Total games, over and under, every number.
+  const totals = [...quotesOf(board, 'totals'), ...quotesOf(deep, 'alternate_totals')].filter((q) => q.point != null);
+  const byTotal = new Map();
+  for (const q of totals) { const w = /over/i.test(q.name) ? 'over' : /under/i.test(q.name) ? 'under' : null; if (!w) continue; const k = `${w}:${q.point}`; if (!byTotal.has(k)) byTotal.set(k, { sideWord: w, point: q.point, quotes: [] }); byTotal.get(k).quotes.push(q); }
+  for (const { sideWord, point, quotes } of byTotal.values()) {
+    const prob = sideWord === 'over' ? shareOver(dist.games, point) : shareUnder(dist.games, point);
+    const cons = sideWord === 'over' ? [consistency(match.a, 'games_total', point), consistency(match.b, 'games_total', point)].filter(Boolean).sort((x, y) => y.rate - x.rate)[0] ?? null : null;
+    push('games_total', null, `${sideWord === 'over' ? 'Over' : 'Under'} ${point} games`, point, sideWord, quotes, prob, [`${pct(prob)} of simulations ${sideWord === 'over' ? 'run past' : 'stay under'} ${point} games (${Math.round(dist.meanGames)} expected)`], cons);
+  }
+  // The set spread: the dog +1.5, the favourite -1.5.
+  for (const q of quotesOf(deep, 'alternate_set_spreads')) {
+    const side = sameName(q.name, match.a.name) ? 'a' : sameName(q.name, match.b.name) ? 'b' : null; if (!side || Math.abs(q.point) !== 1.5) continue;
+    const key = `${side}:${q.point}`; if (legs.some((l) => l.market === 'set_spread' && l.side === side && l.point === q.point)) continue;
+    const quotes = quotesOf(deep, 'alternate_set_spreads').filter((x) => sameName(x.name, q.name) && x.point === q.point);
+    const prob = q.point > 0 ? (side === 'a' ? dist.aWinsASet : dist.bWinsASet) : 1 - (side === 'a' ? dist.bWinsASet : dist.aWinsASet);
+    push('set_spread', side, `${match[side].name} ${q.point > 0 ? '+' : ''}${q.point} sets`, q.point, null, quotes, prob, [q.point > 0 ? `${pct(prob)} of simulations give ${match[side].name} a set` : `${pct(prob)} of simulations have ${match[side].name} winning in straight sets`], q.point > 0 ? consistency(match[side], 'set_spread', 1.5) : null);
+    void key;
+  }
+  // The first set's games, over and under.
+  const s1 = [...quotesOf(deep, 'totals_s1'), ...quotesOf(deep, 'alternate_totals_s1')].filter((q) => q.point != null);
+  const byS1 = new Map();
+  for (const q of s1) { const w = /over/i.test(q.name) ? 'over' : /under/i.test(q.name) ? 'under' : null; if (!w) continue; const k = `${w}:${q.point}`; if (!byS1.has(k)) byS1.set(k, { sideWord: w, point: q.point, quotes: [] }); byS1.get(k).quotes.push(q); }
+  for (const { sideWord, point, quotes } of byS1.values()) {
+    const prob = sideWord === 'over' ? shareOver(dist.set1, point) : shareUnder(dist.set1, point);
+    const cons = sideWord === 'over' ? [consistency(match.a, 'set1_total', point), consistency(match.b, 'set1_total', point)].filter(Boolean).sort((x, y) => y.rate - x.rate)[0] ?? null : null;
+    push('set1_total', null, `1st set ${sideWord} ${point} games`, point, sideWord, quotes, prob, [`${pct(prob)} of simulated first sets ${sideWord === 'over' ? 'run past' : 'stay under'} ${point} games`], cons);
+  }
+  void dog;
+  return legs;
+}
+
+/** A player's consistency at a number from the Trends build: the ladder rung at the line (the nearest below it), as {rate, hits, n, line}. */
+export function consistencyFrom(trends) {
+  const byKey = new Map((trends?.players ?? []).map((p) => [`${p.tour}:${p.key}`, p]));
+  return (player, market, line, tour) => {
+    const p = byKey.get(`${tour ?? ''}:${player?.key ?? nameKey(player?.name)}`) ?? [...byKey.values()].find((x) => x.key === (player?.key ?? nameKey(player?.name)));
+    const prop = p?.props?.find((x) => x.market === market); if (!prop || prop.modeled) return null;
+    const rung = [...(prop.ladder ?? [])].filter((r) => r.line <= line).sort((x, y) => y.line - x.line)[0] ?? null;
+    return rung ? { rate: rung.rate, hits: rung.hits, n: rung.n ?? prop.n, line: rung.line, window: prop.n } : null;
+  };
+}
+
+/** The Parlay Builder's read. */
+export async function getTennisParlay(env) {
+  return (await readJson(env, TENNIS_PARLAY_KEY)) ?? { at: null, legs: [], matches: [] };
+}
+
 /** One tick: read, price, post and grade. Returns what it did. */
 export async function runTennisTick(env, ctx, now = Date.now(), { deps = {} } = {}) {
   const card = deps.card ? await deps.card() : await readJson(env, TENNIS_CARD_KEY);
@@ -324,6 +412,10 @@ export async function runTennisTick(env, ctx, now = Date.now(), { deps = {} } = 
   const roomFor = (market) => unitsPosted(record.plays) + (market === 'ml_parlay' || parlayPosted() ? 0 : 1) < MAX_UNITS_DAY;
   let posted = 0; let considered = 0;
   const candidates = [];
+  // The Trends tab's tennis lines (worker/src/tennis-trends.js), rebuilt once an hour from the same card and profiles and the last boards; the builder legs read their consistency.
+  const trends = deps.trends === false ? { built: false, trends: null } : await ensureTennisTrends(env, { card, profiles, now }).catch((e) => { console.error('Tennis trends build failed:', e); return { built: false, trends: null }; });
+  const consistency = consistencyFrom(trends.trends);
+  const builder = { at: now, legs: [], matches: [] };
   const upcoming = (card.slate ?? []).filter((m) => m.state === 'pre' && !m.qualifying && m.tier !== 'challenger' && Date.parse(m.date) > now && Date.parse(m.date) < now + 30 * 3600e3);
   for (const m of upcoming) {
     const id = `${m.tour}:${m.id}`;
@@ -350,17 +442,21 @@ export async function runTennisTick(env, ctx, now = Date.now(), { deps = {} } = 
     const favSide = pFinal >= 0.5 ? 'a' : 'b';
     const favName = m[favSide].name;
     if (pMarket != null) candidates.push({ matchId: id, tour: m.tour, event: m.eventName, round: m.round, commenceMs: Date.parse(m.date), a: m.a.name, b: m.b.name, side: favSide, name: favName, prob: favSide === 'a' ? pFinal : Math.round((1 - pFinal) * 1000) / 1000, pModel: favSide === 'a' ? pModel : Math.round((1 - pModel) * 1000) / 1000, pMarket: favSide === 'a' ? pMarket : 1 - pMarket, flags: flags[favSide], opponentFlags: flags[favSide === 'a' ? 'b' : 'a'], quotes: h2hQuotesFor(board, favName), why: context });
-    if (record.plays.some((p) => p.matchId === id)) continue; // posted once; the price stands as drawn
-    considered++;
+    const alreadyPosted = record.plays.some((p) => p.matchId === id); // posted once; the price stands as drawn
+    if (!alreadyPosted) considered++;
     const fit = fitToTarget(pA, pB, pFinal, { bestOf: m.bestOf, seed: 7 });
     const sims = simulate(fit.pA, fit.pB, { n: 3000, seed: 11, bestOf: m.bestOf });
     const dist = distributions(sims);
     const aceA = aceCounts(dist.svptA, ratesA.ace ?? 0, { seed: 13, tour: m.tour, samplePoints: ratesA.points });
     const aceB = aceCounts(dist.svptB, ratesB.ace ?? 0, { seed: 17, tour: m.tour, samplePoints: ratesB.points });
-    // The deeper markets are one billed call per match: only when the board's own legs or the shape give the model a case.
+    // The deeper markets are one billed call per match: only when the board's own legs or the shape give the model a case; a match already posted reads the cached copy only.
     const dogSet = dist.pA < 0.5 ? dist.aWinsASet : dist.bWinsASet;
     const shapeCase = dogSet >= MIN_PROB || shareOver(dist.set1, 8.5) >= MIN_PROB || shareOver(dist.games, 20.5) >= MIN_PROB || shareOver(dist.set2, 8.5) >= MIN_PROB;
-    const deep = shapeCase ? (deps.eventMarkets ? await deps.eventMarkets(board.sportKey, board.id) : await eventMarkets(env, ctx, board.sportKey, board.id, now)) : null;
+    const deep = shapeCase || alreadyPosted ? (deps.eventMarkets ? await deps.eventMarkets(board.sportKey, board.id, { cachedOnly: alreadyPosted && !shapeCase }) : await eventMarkets(env, ctx, board.sportKey, board.id, now, { cachedOnly: alreadyPosted && !shapeCase })) : null;
+    // The Parlay Builder's legs for this match (every priced number, scored), posted or not.
+    builder.matches.push({ id, tour: m.tour, event: m.eventName, round: m.round, commenceMs: Date.parse(m.date), a: m.a.name, b: m.b.name, pFinal, flags });
+    builder.legs.push(...builderLegs(m, { dist, board, deep, pFinal, flags, context, consistency: (player, market, line) => consistency(player, market, line, m.tour) }));
+    if (alreadyPosted) continue;
     const legs = readMatch(m, { dist, aceA, aceB, board, deep, ratesA, ratesB, pMarket, pModel, context });
     // A leg on a player flagged for injury or fatigue never posts: a side with a doubt is not a clear advantage.
     const sideClear = (l) => !l.side || !flags[l.side].length;
@@ -392,8 +488,7 @@ export async function runTennisTick(env, ctx, now = Date.now(), { deps = {} } = 
   }
   record.candidates = candidates.length;
   record.oddsAt = now;
-  // The Trends tab's tennis lines (worker/src/tennis-trends.js), rebuilt once an hour from the same card and profiles and the boards just read.
-  const trends = deps.trends === false ? { built: false } : await ensureTennisTrends(env, { card, profiles, now, boards: Object.fromEntries([...boards].map(([t, b]) => [t, b])) }).catch((e) => { console.error('Tennis trends build failed:', e); return { built: false }; });
+  await env.POTD_KV.put(TENNIS_PARLAY_KEY, JSON.stringify(builder), { expirationTtl: 2 * 86400 }).catch(() => {});
   // Grading: every pending play whose match has a result.
   let graded = 0;
   const results = new Map((card.results ?? []).map((r) => [`${r.tour}:${r.id}`, r]));
@@ -416,7 +511,7 @@ export async function runTennisTick(env, ctx, now = Date.now(), { deps = {} } = 
   await env.POTD_KV.put(key, JSON.stringify(record), { expirationTtl: KV_TTL });
   const index = (await readJson(env, TENNIS_PICKS_INDEX)) ?? { dates: [] };
   if (!index.dates.includes(date)) { index.dates = [date, ...index.dates].slice(0, 120); await env.POTD_KV.put(TENNIS_PICKS_INDEX, JSON.stringify(index), { expirationTtl: KV_TTL }).catch(() => {}); }
-  return { skipped: false, date, considered, candidates: candidates.length, posted, parlay: parlay ? parlay.legs.length : 0, graded, plays: record.plays.length, units: unitsPosted(record.plays), trendsBuilt: Boolean(trends.built), keys: Object.fromEntries(TOURS.map((t) => [t, (keys[t] ?? []).map((k) => k.key)])) };
+  return { skipped: false, date, considered, candidates: candidates.length, posted, parlay: parlay ? parlay.legs.length : 0, graded, plays: record.plays.length, units: unitsPosted(record.plays), trendsBuilt: Boolean(trends.built), builderLegs: builder.legs.length, keys: Object.fromEntries(TOURS.map((t) => [t, (keys[t] ?? []).map((k) => k.key)])) };
 }
 
 /**
