@@ -874,6 +874,11 @@ const el = {
   ufcList: document.getElementById('ufcList'),
   ufcFightersStatus: document.getElementById('ufcFightersStatus'),
   trendPicksUfc: document.getElementById('trendPicksUfc'),
+  tabTennis: document.getElementById('tabTennis'),
+  tennisView: document.getElementById('tennisView'),
+  tennisStatus: document.getElementById('tennisStatus'),
+  tennisBody: document.getElementById('tennisBody'),
+  trendPicksTennis: document.getElementById('trendPicksTennis'),
   parlayView: document.getElementById('parlayView'),
   parlayLeagues: document.getElementById('parlayLeagues'),
   parlayBook: document.getElementById('parlayBook'),
@@ -6199,8 +6204,8 @@ const loadingHtml = (text) => `<span class="pp-loading"><img class="pp-loading-l
 const showLoading = (node, text) => { if (node) node.innerHTML = loadingHtml(text); };
 
 function setActiveTab(tab) {
-  const views = { slate: el.slateView, board: el.boardView, potd: el.potdView, trends: el.trendsView, trendPicks: el.trendPicksView, players: el.playersView, parlay: el.parlayView, ufc: el.ufcView, live: el.liveView };
-  const tabs = { slate: el.tabSlate, board: el.tabBoard, potd: el.tabPotd, trends: el.tabTrends, trendPicks: el.tabTrendPicks, players: el.tabPlayers, parlay: el.tabParlay, ufc: el.tabUfc, live: el.tabLive };
+  const views = { slate: el.slateView, board: el.boardView, potd: el.potdView, trends: el.trendsView, trendPicks: el.trendPicksView, players: el.playersView, parlay: el.parlayView, ufc: el.ufcView, live: el.liveView, tennis: el.tennisView };
+  const tabs = { slate: el.tabSlate, board: el.tabBoard, potd: el.tabPotd, trends: el.tabTrends, trendPicks: el.tabTrendPicks, players: el.tabPlayers, parlay: el.tabParlay, ufc: el.tabUfc, live: el.tabLive, tennis: el.tabTennis };
 
   for (const [name, view] of Object.entries(views)) {
     const active = name === tab;
@@ -6212,7 +6217,7 @@ function setActiveTab(tab) {
   // The day toggle applies to Full Slate only — Play of the Day and
   // Pixel's Picks are both fixed daily sets locked server-side, with no
   // Today/Tomorrow of their own to choose.
-  el.dayFilterBar.hidden = tab === 'potd' || tab === 'board' || tab === 'trends' || tab === 'trendPicks' || tab === 'players' || tab === 'parlay' || tab === 'ufc' || tab === 'live';
+  el.dayFilterBar.hidden = tab === 'potd' || tab === 'board' || tab === 'trends' || tab === 'trendPicks' || tab === 'players' || tab === 'parlay' || tab === 'ufc' || tab === 'live' || tab === 'tennis';
   // The highlight paints on this frame; the board's render (hundreds of
   // cards on Trends) runs on the next, so a tap answers at once.
   requestAnimationFrame(() => loadTabContent(tab));
@@ -6242,7 +6247,9 @@ function loadTabContent(tab) {
   if (tab === 'parlay') loadParlay();
   if (tab === 'ufc') { if (ufcState.event) renderUfc(); else loadUfc(); }
   if (tab === 'live') loadLive({ force: true });
+  if (tab === 'tennis') loadTennis({ force: true });
   if (tab === 'trendPicks' && !ufcState.picks) loadUfcPicks();
+  if (tab === 'trendPicks' && !tennisState.data) loadTennis();
   // Re-render from whatever's already loaded rather than re-fetching —
   // everything loads once at boot (refreshAllLeagues), so switching tabs is
   // never itself a billed call.
@@ -6261,6 +6268,7 @@ el.tabPlayers?.addEventListener('click', () => setActiveTab('players'));
 el.tabParlay?.addEventListener('click', () => setActiveTab('parlay'));
 el.tabUfc?.addEventListener('click', () => setActiveTab('ufc'));
 el.tabLive?.addEventListener('click', () => setActiveTab('live'));
+el.tabTennis?.addEventListener('click', () => setActiveTab('tennis'));
 
 /* ---------------------------------------------------------------- */
 /* Tracking Dashboard                                                */
@@ -11319,3 +11327,117 @@ wideToggle?.addEventListener('click', () => {
   renderWide();
 });
 renderWide();
+
+/* ---------------------------------------------------------------- */
+/* Tennis: the plays that clear the bar (worker/src/tennis-picks.js)  */
+/* ---------------------------------------------------------------- */
+/* 2026-11-06: "add a tennis section ... very picky ... aces, over games,
+   over in the first or second set, plus spreads for games and sets ...
+   WTA and ATP ... only display high conviction." The worker reads every
+   main-draw singles match on both tours and posts a play only where the
+   model clears the bar; the tab shows those, the matches it read and
+   why each passed, and keeps its own record in Pixel's Picks. */
+const TENNIS_TOURS_KEY = 'pixelpick.tennisTours.v1';
+const tennisState = { data: null, loading: false, tours: new Set((loadJSON(TENNIS_TOURS_KEY, null) ?? ['atp', 'wta']).filter((t) => t === 'atp' || t === 'wta')), open: {}, reads: false, graphHover: null };
+if (!tennisState.tours.size) { tennisState.tours.add('atp'); tennisState.tours.add('wta'); }
+const TENNIS_TOUR_LABEL = { atp: 'ATP', wta: 'WTA' };
+const tennisTimeFmt = new Intl.DateTimeFormat(undefined, { weekday: 'short', hour: 'numeric', minute: '2-digit' });
+const tennisDayFmt = new Intl.DateTimeFormat('en-US', { month: 'short', day: 'numeric', timeZone: 'America/New_York' });
+
+async function loadTennis({ force = false } = {}) {
+  if (!CONFIG.WORKER_URL) return;
+  if (tennisState.loading && !force) return;
+  tennisState.loading = true;
+  if (!tennisState.data && el.tennisStatus) showLoading(el.tennisStatus, 'Reading the tennis board…');
+  try {
+    const res = await fetch(new URL('/tennis/picks', CONFIG.WORKER_URL), { headers: { Accept: 'application/json' } });
+    if (res.ok) tennisState.data = await res.json();
+    if (el.tennisStatus) el.tennisStatus.textContent = '';
+  } catch {
+    if (el.tennisStatus) el.tennisStatus.textContent = "Couldn't reach the worker.";
+  }
+  tennisState.loading = false;
+  renderTennis();
+  renderTennisLedger();
+}
+
+const tennisPickBadge = (p) => {
+  if (p.status === 'graded' || p.status === 'void') return `<span class="pick-result is-${esc(p.result)}">${esc(RESULT_LABEL[p.result] ?? p.result)}${Number.isFinite(p.net) && p.result !== 'void' ? ` · ${esc(unitsText(p.net))}` : ''}</span>`;
+  if (p.market === 'aces' && p.commenceMs <= Date.now()) return '<span class="pick-result">Awaiting serve stats</span>';
+  return p.commenceMs <= Date.now() ? '<span class="pick-result is-live">In play</span>' : '<span class="pick-result">Pending</span>';
+};
+
+function renderTennisPlay(p) {
+  const market = tennisState.data?.markets?.[p.market] ?? p.market;
+  const open = Boolean(tennisState.open[p.id]);
+  const start = Number.isFinite(p.commenceMs) ? tennisTimeFmt.format(new Date(p.commenceMs)) : '';
+  const price = Number.isFinite(p.american) ? esc(formatAmerican(p.american)) : '<small>price at your book</small>';
+  const book = p.bookId ? `${bookBadge(p.bookId, p.book)}${esc(p.book ?? '')}` : 'Your book';
+  const vs = p.implied != null ? `model ${Math.round(p.prob * 100)}% vs the price's ${Math.round(p.implied * 100)}%` : `model ${Math.round(p.prob * 100)}% to clear`;
+  return `<article class="trend-card pick-bet-card tennis-play ${p.market === 'aces' ? 'is-aces' : ''}">
+    <div class="pick-bet-head">
+      <span class="pick-bet-type">${esc(TENNIS_TOUR_LABEL[p.tour] ?? p.tour)} · ${esc(market)}</span>
+      <span class="pick-bet-book">${book}</span>
+      <span class="pick-bet-price">${price}</span>
+      <span class="pick-bet-stake">${esc(String(p.units))} unit</span>
+      ${tennisPickBadge(p)}
+    </div>
+    <div class="ufc-pick-body">
+      <p class="ufc-pick-sel"><strong>${esc(p.selection)}</strong><small>${esc(p.a)} vs ${esc(p.b)} · ${esc(p.event ?? '')}${p.round ? ` · ${esc(p.round)}` : ''}${start ? ` · ${esc(start)}` : ''}</small></p>
+      <p class="ufc-pick-conf">${confStars(p.stars)} <small>${esc(vs)}${p.edge != null ? ` · ${Math.round(p.edge * 100)} points of edge` : ''}</small></p>
+      ${p.market === 'aces' ? '<p class="row-sub">The feed carries no aces market: this is the number the model clears at 80%+; take it at your book where the line sits at or under it.</p>' : ''}
+      ${p.actual ? `<p class="row-sub">Result: ${esc(p.actual)}</p>` : ''}
+      <button type="button" class="parlay-btn tennis-why" data-tennis-why="${esc(p.id)}">${open ? 'Hide the read' : 'Why this play'}</button>
+      ${open ? `<ul class="tennis-why-list">${(p.why ?? []).map((w) => `<li>${esc(w)}</li>`).join('')}</ul>` : ''}
+    </div>
+    ${p.link || p.bookId ? ticketSlipFoot({ type: 'straight', bookId: p.bookId, book: p.book, link: p.link, legs: [{ link: p.link }] }) : ''}
+  </article>`;
+}
+
+function renderTennis() {
+  if (!el.tennisBody) return;
+  const d = tennisState.data;
+  if (!d) { el.tennisBody.innerHTML = '<p class="empty">The tennis board has not been read yet.</p>'; return; }
+  const plays = (d.current?.plays ?? []).filter((p) => tennisState.tours.has(p.tour)).sort((a, b) => (a.commenceMs ?? 0) - (b.commenceMs ?? 0));
+  const allPlays = d.current?.plays ?? [];
+  const reads = Object.entries(d.current?.reads ?? {}).map(([id, r]) => ({ id, ...r, tour: id.split(':')[0] })).filter((r) => tennisState.tours.has(r.tour)).sort((a, b) => Date.parse(a.start ?? 0) - Date.parse(b.start ?? 0));
+  const rec = d.record ?? { wins: 0, losses: 0, pushes: 0, units: 0, roi: null, risked: 0 };
+  const chips = ['atp', 'wta'].map((t) => { const n = allPlays.filter((p) => p.tour === t).length; const on = tennisState.tours.has(t); return `<button type="button" class="league-chip ${on ? 'is-active' : ''}" data-tennis-tour="${t}" aria-pressed="${on}"><span class="league-chip-label">${TENNIS_TOUR_LABEL[t]}</span><small class="live-league-n">${n}</small></button>`; }).join('');
+  const bar = d.bar ?? { minProb: 0.74, minEdge: 0.07, aceProb: 0.8, band: [-250, 250] };
+  const barNote = `A play posts only where the model gives it ${Math.round(bar.minProb * 100)}%+ and the price sits ${Math.round(bar.minEdge * 100)}+ points under that, between ${bar.band[0]} and +${bar.band[1]}; aces at ${Math.round(bar.aceProb * 100)}%+ with the price left to your book. One play a match, a few a tour a day.`;
+  const readWhen = d.current?.refreshedAt ? `read ${ago(d.current.refreshedAt)}` : 'not read today yet';
+  const readsHtml = reads.length ? `<details class="tennis-reads" ${tennisState.reads ? 'open' : ''}><summary>Matches read today <small>${reads.length}, ${reads.filter((r) => !r.passed).length} with a play</small></summary><div class="tennis-reads-list">${reads.map((r) => `<div class="tennis-read ${r.passed ? '' : 'is-play'}"><strong>${esc(r.a)} vs ${esc(r.b)}</strong><small>${esc(TENNIS_TOUR_LABEL[r.tour] ?? r.tour)} · ${esc(r.event ?? '')}${r.round ? ` · ${esc(r.round)}` : ''}${r.start ? ` · ${esc(tennisTimeFmt.format(new Date(r.start)))}` : ''}</small><span class="row-sub">${r.pMarket != null ? `favourite ${Math.round(Math.max(r.pMarket, 1 - r.pMarket) * 100)}% · ${esc(String(r.meanGames))} games expected · straight sets ${Math.round((r.straightSets ?? 0) * 100)}% · ` : ''}${esc(r.passed ?? 'a play posted')}</span></div>`).join('')}</div></details>` : '';
+  el.tennisBody.innerHTML = `<div class="live-top"><span class="live-count ${plays.length ? 'is-on' : ''}">${plays.length ? `${plays.length} tennis play${plays.length === 1 ? '' : 's'} clear the bar` : 'No tennis play clears the bar today'}</span><span class="row-sub">${esc(tennisDayFmt.format(new Date()))} · ${esc(readWhen)} · record ${rec.wins}-${rec.losses}${rec.pushes ? `-${rec.pushes}` : ''}, ${esc(signedUnits(rec.units ?? 0))} units</span></div>
+    <div class="live-books-pick live-leagues-pick" role="group" aria-label="Tours">${chips}</div>
+    <p class="row-sub tennis-bar">${esc(barNote)}</p>
+    ${plays.length ? plays.map(renderTennisPlay).join('') : `<p class="empty">${reads.length ? `${reads.length} match${reads.length === 1 ? '' : 'es'} read, none with a leg the model likes at the price. The board is read again every quarter hour until the first ball.` : d.slate?.length ? 'The matches of the day are listed but not read yet: the serve profiles or the board are still on their way.' : 'No ATP or WTA singles on the card today.'}</p>`}
+    ${readsHtml}`;
+}
+
+/** The Pixel's Picks tab's tennis section: its own record, by tour and by market, and the plays by day. */
+function renderTennisLedger() {
+  if (!el.trendPicksTennis) return;
+  const d = tennisState.data;
+  if (!d) { el.trendPicksTennis.innerHTML = ''; return; }
+  const rec = d.record;
+  const days = (d.history ?? []).filter((r) => (r.plays ?? []).length);
+  const line = (r) => `${r.wins}-${r.losses}${r.pushes ? `-${r.pushes}` : ''} <small>${esc(signedUnits(r.units ?? 0))}u</small>`;
+  const byMarket = Object.entries(d.byMarket ?? {}).filter(([, r]) => r.wins + r.losses + r.pushes > 0);
+  el.trendPicksTennis.innerHTML = `<h2 class="pick-h2">Tennis <small>tracked apart, one unit a play</small></h2>
+    <p class="pick-record">${rec.wins}-${rec.losses}${rec.pushes ? `-${rec.pushes}` : ''} <small>${esc(signedUnits(rec.units ?? 0))} units · ${esc(roiText(rec.roi))} on ${rec.risked ?? 0} risked · ATP ${line(d.byTour?.atp ?? rec)} · WTA ${line(d.byTour?.wta ?? rec)}</small></p>
+    ${byMarket.length ? `<p class="row-sub">${byMarket.map(([k, r]) => `${esc(d.markets?.[k] ?? k)} ${r.wins}-${r.losses}`).join(' · ')}</p>` : ''}
+    ${days.length ? days.map((r) => `<div class="pick-day"><h3>${esc(tennisDayFmt.format(new Date(`${r.date}T12:00:00Z`)))}</h3>${r.plays.map((p) => `<div class="pick-hist-row"><span><strong>${esc(p.selection)}</strong> <small>${esc(TENNIS_TOUR_LABEL[p.tour] ?? p.tour)} · ${esc(p.a)} vs ${esc(p.b)}${Number.isFinite(p.american) ? ` · ${esc(formatAmerican(p.american))}` : ''}</small></span>${tennisPickBadge(p)}</div>`).join('')}</div>`).join('') : '<p class="empty">No tennis play has posted yet.</p>'}`;
+}
+
+el.tennisView?.addEventListener('click', (event) => {
+  const tour = event.target.closest('[data-tennis-tour]');
+  if (tour) {
+    const t = tour.dataset.tennisTour;
+    if (tennisState.tours.has(t)) { if (tennisState.tours.size > 1) tennisState.tours.delete(t); } else tennisState.tours.add(t);
+    saveJSON(TENNIS_TOURS_KEY, [...tennisState.tours]); renderTennis(); return;
+  }
+  const why = event.target.closest('[data-tennis-why]');
+  if (why) { const id = why.dataset.tennisWhy; tennisState.open[id] = !tennisState.open[id]; renderTennis(); return; }
+  const reads = event.target.closest('details.tennis-reads');
+  if (reads) setTimeout(() => { tennisState.reads = reads.open; }, 0);
+});

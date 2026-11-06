@@ -1,0 +1,39 @@
+# The Tennis tab's card from a runner ESPN answers (scripts/tennis-card.mjs;
+# worker/src/tennis-picks.js reads it): today's and tomorrow's singles on
+# both tours with their state and set scores, and twelve days of results
+# for form and grading. Every half hour by schedule, though GitHub delivers
+# a fraction of the firings (2026-11-05: three of forty-eight); the runs
+# that do land keep the card within the hour.
+name: Tennis card
+
+on:
+  workflow_dispatch:
+    inputs:
+      args:
+        description: 'Extra arguments (--dry-run, --dump)'
+        required: false
+        default: ''
+  schedule:
+    - cron: '9,39 * * * *'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: tennis-card
+  cancel-in-progress: false
+
+jobs:
+  card:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Read the scoreboards and write KV
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+        run: node scripts/tennis-card.mjs ${{ inputs.args }}
