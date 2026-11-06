@@ -264,4 +264,10 @@ test('the live tennis read lists the day\'s singles from ESPN with each play\'s 
   assert.equal(playStanding({ market: 'set_spread', side: 'b', a: 'A', b: 'B', point: 1.5, status: 'pending' }, { state: 'in', sets: [[6, 4]], completed: false }).state, 'on');
   assert.equal(playStanding({ market: 'set_spread', side: 'b', a: 'A', b: 'B', point: 1.5, status: 'pending' }, { state: 'in', sets: [[4, 6]], completed: false }).state, 'won');
   assert.equal(legStanding({ side: 'b' }, { state: 'in', sets: [[6, 4], [3, 6], [2, 1]] }).text, '6-4 3-6 2-1: 1-1 in sets');
+  // ESPN refuses both hosts: the runner's card stands in, and the record says so.
+  m.delete('tennis:live');
+  m.set('tennis:card', JSON.stringify({ at: now - 600e3, slate: [{ id: '7', tour: 'wta', eventName: 'WTA Finals', tier: '1000', round: 'Semifinal', qualifying: false, date: '2026-11-06T17:30Z', state: 'in', completed: false, detail: '1st Set', a: { id: 'x', name: 'Iga Swiatek' }, b: { id: 'y', name: 'Coco Gauff' }, sets: [[3, 2]], winner: null }] }));
+  let refused = 0;
+  const fallback = await getTennisLive(env, now, { fetchJson: async (url, note) => { refused++; note('HTTP 403'); return null; } });
+  assert.equal(refused, 4, 'both hosts, both tours'); assert.equal(fallback.matches.length, 1); assert.equal(fallback.matches[0].a, 'Iga Swiatek'); assert.match(fallback.sources.card, /runner's card/); assert.match(fallback.sources['atp:20261106'], /403/);
 });

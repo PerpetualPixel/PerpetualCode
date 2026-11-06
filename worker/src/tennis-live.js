@@ -10,7 +10,10 @@ import { etParts } from './potd.js';
 
 export const TENNIS_LIVE_KEY = 'tennis:live';
 export const TENNIS_LIVE_TTL = 2 * 60e3;
-export const ESPN_TENNIS = { atp: 'https://site.web.api.espn.com/apis/site/v2/sports/tennis/atp/scoreboard', wta: 'https://site.web.api.espn.com/apis/site/v2/sports/tennis/wta/scoreboard' };
+/** ESPN's hosts for the scoreboard: site.api answers a Worker (the UFC and MLB reads use it); site.web.api, the runner's host, answered a Worker 403 on 2026-11-06. */
+export const ESPN_TENNIS_HOSTS = ['https://site.api.espn.com', 'https://site.web.api.espn.com'];
+export const scoreboardUrl = (host, tour, day) => `${host}/apis/site/v2/sports/tennis/${tour}/scoreboard?dates=${day}`;
+const TENNIS_CARD_KEY = 'tennis:card';
 const ymd = (ms) => new Date(ms).toISOString().slice(0, 10).replace(/-/g, '');
 
 /** One ESPN page as JSON; null with the reason noted when it will not come (the same plain fetch worker/src/tennis-espn.js uses). */
@@ -60,13 +63,21 @@ export async function getTennisLive(env, now = Date.now(), { fetchJson = getJson
     const sources = {};
     // Today (UTC) and, in the small hours, yesterday: the Americas' night matches run past midnight UTC.
     const days = new Date(now).getUTCHours() < 8 ? [ymd(now - 864e5), ymd(now)] : [ymd(now)];
+    let answered = 0;
     for (const tour of ['atp', 'wta']) for (const day of days) {
       const key = `${tour}:${day}`;
-      const data = await fetchJson(`${ESPN_TENNIS[tour]}?dates=${day}`, (why) => { sources[key] = why; });
+      let data = null;
+      for (const host of ESPN_TENNIS_HOSTS) { data = await fetchJson(scoreboardUrl(host, tour, day), (why) => { sources[key] = `${sources[key] ? `${sources[key]}; ` : ''}${host.replace('https://', '')} ${why}`; }); if (data) break; }
       if (!data) { sources[key] = sources[key] ?? 'no body'; continue; }
+      answered++;
       const parsed = parseScoreboard(data, tour);
       sources[key] = `${(data.events ?? []).length} events, ${parsed.length} singles`;
       for (const m of parsed) { const prev = byId.get(`${tour}:${m.id}`); if (!prev || m.state === 'in' || (m.completed && !prev.completed) || (!prev.sets.length && m.sets.length)) byId.set(`${tour}:${m.id}`, m); }
+    }
+    // Neither host answers: the card the runner wrote (scripts/tennis-card.mjs, every half hour) stands in, its age noted.
+    if (!answered) {
+      const raw = await env.POTD_KV.get(TENNIS_CARD_KEY).catch(() => null);
+      if (raw) { try { const card = JSON.parse(raw); for (const m of card.slate ?? []) byId.set(`${m.tour}:${m.id}`, m); sources.card = `the runner's card from ${new Date(card.at).toISOString()}`; } catch { /* no card either */ } }
     }
     scoreboard = { at: now, sources, matches: [...byId.values()].filter((m) => !m.qualifying && m.tier !== 'challenger') };
     await env.POTD_KV.put(TENNIS_LIVE_KEY, JSON.stringify(scoreboard), { expirationTtl: 3600 }).catch(() => {});
