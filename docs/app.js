@@ -53,6 +53,8 @@ import {
   supportsQualitativeSignal,
   tennisUnderdogBlocked,
 } from './qualitative.js';
+import { parseLeg as parseSlipLeg, parseSlipText, parseAmerican as parseSlipAmerican, checkSlip, CATEGORY_LABEL as SLIP_CATEGORY_LABEL } from './slip-check.js';
+import { hitFlags as slipHitFlags } from './trends.js';
 import {
   auditLegs,
   MODE_SLATE,
@@ -875,6 +877,18 @@ const el = {
   ufcFightersStatus: document.getElementById('ufcFightersStatus'),
   trendPicksUfc: document.getElementById('trendPicksUfc'),
   tabTennis: document.getElementById('tabTennis'),
+  tabSlipCheck: document.getElementById('tabSlipCheck'),
+  slipCheckView: document.getElementById('slipCheckView'),
+  slipDrop: document.getElementById('slipDrop'),
+  slipFile: document.getElementById('slipFile'),
+  slipQuota: document.getElementById('slipQuota'),
+  slipPreview: document.getElementById('slipPreview'),
+  slipText: document.getElementById('slipText'),
+  slipPasteBtn: document.getElementById('slipPasteBtn'),
+  slipCheckBtn: document.getElementById('slipCheckBtn'),
+  slipClearBtn: document.getElementById('slipClearBtn'),
+  slipStatus: document.getElementById('slipStatus'),
+  slipResult: document.getElementById('slipResult'),
   tennisView: document.getElementById('tennisView'),
   tennisStatus: document.getElementById('tennisStatus'),
   tennisBody: document.getElementById('tennisBody'),
@@ -6204,8 +6218,8 @@ const loadingHtml = (text) => `<span class="pp-loading"><img class="pp-loading-l
 const showLoading = (node, text) => { if (node) node.innerHTML = loadingHtml(text); };
 
 function setActiveTab(tab) {
-  const views = { slate: el.slateView, board: el.boardView, potd: el.potdView, trends: el.trendsView, trendPicks: el.trendPicksView, players: el.playersView, parlay: el.parlayView, ufc: el.ufcView, live: el.liveView, tennis: el.tennisView };
-  const tabs = { slate: el.tabSlate, board: el.tabBoard, potd: el.tabPotd, trends: el.tabTrends, trendPicks: el.tabTrendPicks, players: el.tabPlayers, parlay: el.tabParlay, ufc: el.tabUfc, live: el.tabLive, tennis: el.tabTennis };
+  const views = { slate: el.slateView, board: el.boardView, potd: el.potdView, trends: el.trendsView, trendPicks: el.trendPicksView, players: el.playersView, parlay: el.parlayView, ufc: el.ufcView, live: el.liveView, tennis: el.tennisView, slipCheck: el.slipCheckView };
+  const tabs = { slate: el.tabSlate, board: el.tabBoard, potd: el.tabPotd, trends: el.tabTrends, trendPicks: el.tabTrendPicks, players: el.tabPlayers, parlay: el.tabParlay, ufc: el.tabUfc, live: el.tabLive, tennis: el.tabTennis, slipCheck: el.tabSlipCheck };
 
   for (const [name, view] of Object.entries(views)) {
     const active = name === tab;
@@ -6217,7 +6231,7 @@ function setActiveTab(tab) {
   // The day toggle applies to Full Slate only — Play of the Day and
   // Pixel's Picks are both fixed daily sets locked server-side, with no
   // Today/Tomorrow of their own to choose.
-  el.dayFilterBar.hidden = tab === 'potd' || tab === 'board' || tab === 'trends' || tab === 'trendPicks' || tab === 'players' || tab === 'parlay' || tab === 'ufc' || tab === 'live' || tab === 'tennis';
+  el.dayFilterBar.hidden = tab === 'potd' || tab === 'board' || tab === 'trends' || tab === 'trendPicks' || tab === 'players' || tab === 'parlay' || tab === 'ufc' || tab === 'live' || tab === 'tennis' || tab === 'slipCheck';
   // The highlight paints on this frame; the board's render (hundreds of
   // cards on Trends) runs on the next, so a tap answers at once.
   requestAnimationFrame(() => loadTabContent(tab));
@@ -6248,6 +6262,7 @@ function loadTabContent(tab) {
   if (tab === 'ufc') { if (ufcState.event) renderUfc(); else loadUfc(); }
   if (tab === 'live') loadLive({ force: true });
   if (tab === 'tennis') loadTennis({ force: true });
+  if (tab === 'slipCheck') loadSlipQuota();
   if (tab === 'trendPicks' && !ufcState.picks) loadUfcPicks();
   if (tab === 'trendPicks' && !tennisState.data) loadTennis();
   // Re-render from whatever's already loaded rather than re-fetching —
@@ -6269,6 +6284,7 @@ el.tabParlay?.addEventListener('click', () => setActiveTab('parlay'));
 el.tabUfc?.addEventListener('click', () => setActiveTab('ufc'));
 el.tabLive?.addEventListener('click', () => setActiveTab('live'));
 el.tabTennis?.addEventListener('click', () => setActiveTab('tennis'));
+el.tabSlipCheck?.addEventListener('click', () => setActiveTab('slipCheck'));
 
 /* ---------------------------------------------------------------- */
 /* Tracking Dashboard                                                */
@@ -11663,6 +11679,235 @@ function renderTennisLedger() {
     ${byMarket.length ? `<p class="row-sub">${byMarket.map(([k, r]) => `${esc(d.markets?.[k] ?? k)} ${r.wins}-${r.losses}`).join(' · ')}</p>` : ''}
     ${days.length ? days.map((r) => `<div class="pick-day"><h3>${esc(tennisDayFmt.format(new Date(`${r.date}T12:00:00Z`)))}</h3>${r.plays.map((p) => `<div class="pick-hist-row"><span><strong>${esc(p.selection)}</strong> <small>${esc(p.tour === 'both' ? 'ATP + WTA' : TENNIS_TOUR_LABEL[p.tour] ?? p.tour)} · ${p.market === 'ml_parlay' ? `${(p.legs ?? []).length} legs` : `${esc(p.a)} vs ${esc(p.b)}`}${Number.isFinite(p.american) ? ` · ${esc(formatAmerican(p.american))}` : ''}</small></span>${tennisPickBadge(p)}</div>`).join('')}</div>`).join('') : '<p class="empty">No tennis play has posted yet.</p>'}`;
 }
+
+/* ---------------------------------------------------------------- */
+/* Slip Check: a bet slip in, every leg's hit rates and the ticket's grade out (docs/slip-check.js) */
+/* ---------------------------------------------------------------- */
+/* 2026-11-06: "importing slips where a user can upload a bet and the app
+   analyzes the percentage of each leg on its last 5, 10, 20 game hit rate
+   and H2H, scores each leg 0-100 on confidence, an overall rating for the
+   parlay ... lotto tickets ... suggestions: drop a leg or move the line".
+   The image route is the worker's slip reader (worker/src/slip-vision.js,
+   the same one Tail or Fade uses, with its daily allowance); the text
+   route is docs/slip-check.js's parser. The legs are read against the
+   Trends rows' game logs, a player's log from the Players tab when the
+   player is off the board, the tennis legs, and the slate's prices for
+   team lines. */
+const SLIP_LEAGUES = ['basketball_nba', 'americanfootball_nfl', 'icehockey_nhl', 'soccer'];
+const slipState = { legs: [], combinedAmerican: null, imageName: null, busy: false, result: null, open: {}, data: { trends: {}, trendsAt: 0, playerIndex: {}, playerLogs: {}, tennisLegs: null, tennisAt: 0 }, quota: null };
+
+function renderSlipQuota(q) {
+  slipState.quota = q;
+  if (!el.slipQuota) return;
+  if (!q || !Number.isFinite(q.limit)) { el.slipQuota.textContent = ''; return; }
+  const left = Math.max(0, (q.limit ?? 0) - (q.used ?? 0));
+  el.slipQuota.textContent = q.owner ? 'Slip reads: no daily limit on this account.' : `${left} of ${q.limit} slip image reads left today${q.authenticated === false ? ' (sign in for more)' : ''}; pasted text is never limited.`;
+}
+async function loadSlipQuota() {
+  if (!CONFIG.WORKER_URL || !el.slipQuota) return;
+  try { const res = await fetch(new URL('/tail-fade/quota', CONFIG.WORKER_URL), { headers: { Accept: 'application/json' } }); if (res.ok) renderSlipQuota(await res.json()); } catch { /* the allowance is a courtesy */ }
+}
+const slipSay = (text) => { if (el.slipStatus) el.slipStatus.textContent = text; };
+
+/** A screenshot or photo through the worker's slip reader, then the check. */
+async function slipHandleImage(file) {
+  if (!file || slipState.busy) return;
+  if (!String(file.type ?? '').startsWith('image/')) { slipSay('That file is not an image.'); return; }
+  slipState.busy = true; slipState.imageName = file.name || 'pasted image';
+  const url = URL.createObjectURL(file);
+  if (el.slipPreview) { el.slipPreview.hidden = false; el.slipPreview.innerHTML = `<img src="${url}" alt="Your bet slip"><p class="tail-fade-preview-name">${esc(slipState.imageName)}</p>`; }
+  showLoading(el.slipStatus, 'Reading the slip…');
+  try {
+    const image = await fileToBase64(file);
+    const res = await fetch(new URL('/tail-fade/extract', CONFIG.WORKER_URL), { method: 'POST', headers: { 'Content-Type': 'application/json', Accept: 'application/json' }, body: JSON.stringify({ image, mediaType: file.type }) });
+    let body = null; try { body = await res.json(); } catch { /* below */ }
+    if (body?.quota) renderSlipQuota(body.quota);
+    if (!res.ok) throw new Error(body?.error || `The slip reader answered ${res.status}.`);
+    const legs = (body?.legs ?? []).map((l) => parseSlipLeg(l.selection, l)).filter(Boolean);
+    if (!legs.length) { slipSay(body?.note || 'No bet legs were readable in that image. Try a clearer screenshot, or paste the legs as text.'); slipState.busy = false; return; }
+    slipState.legs = legs; slipState.combinedAmerican = body.combinedAmerican ?? null;
+    if (el.slipText) el.slipText.value = (body.legs ?? []).map((l) => `${l.selection}${Number.isFinite(l.american) ? ` ${l.american > 0 ? '+' : ''}${l.american}` : ''}`).join('\n');
+    const shaky = (body.legs ?? []).filter((l) => Number(l.confidence) < 0.7).length;
+    await slipRun({ note: shaky ? `${shaky} leg${shaky === 1 ? '' : 's'} read with low confidence from the image: check them against your slip (they are in the text box to fix).` : '' });
+  } catch (e) { slipSay(e.message || 'Could not read that slip.'); }
+  slipState.busy = false;
+}
+
+/** The pasted or typed text into legs, then the check. */
+async function slipHandleText() {
+  if (slipState.busy) return;
+  const text = el.slipText?.value ?? '';
+  const legs = parseSlipText(text);
+  // A line that is only a price is the ticket's combined odds.
+  const lone = text.split(/\r?\n/).map((l) => l.trim()).filter((l) => /^[+-]\d{3,5}$/.test(l.replace(/[−–]/g, '-')));
+  slipState.combinedAmerican = lone.length ? parseSlipAmerican(lone.at(-1)) : null;
+  if (!legs.length) { slipSay('Nothing read as a leg yet. One leg per line, the way the book writes it: player, over or under, the number, the stat.'); return; }
+  slipState.legs = legs;
+  await slipRun();
+}
+
+/** The Trends rows (with their game logs) for every league, cached ten minutes. */
+async function slipTrendsRows() {
+  const now = Date.now();
+  if (now - slipState.data.trendsAt < 10 * 60e3 && Object.keys(slipState.data.trends).length) return slipState.data.trends;
+  await Promise.all(SLIP_LEAGUES.map(async (sport) => {
+    try {
+      const url = new URL('/trends', CONFIG.WORKER_URL); url.searchParams.set('sport', sport);
+      const res = await fetch(url, { headers: { Accept: 'application/json' } });
+      const body = await res.json();
+      const t = body.trends;
+      slipState.data.trends[sport] = t?.sportKey === sport ? attachSeries(t.rows ?? [], t.logs) : [];
+    } catch { slipState.data.trends[sport] = slipState.data.trends[sport] ?? []; }
+  }));
+  slipState.data.trendsAt = now;
+  return slipState.data.trends;
+}
+async function slipTennisLegs() {
+  const now = Date.now();
+  if (slipState.data.tennisLegs && now - slipState.data.tennisAt < 10 * 60e3) return slipState.data.tennisLegs;
+  try { const res = await fetch(new URL('/tennis/parlay', CONFIG.WORKER_URL), { headers: { Accept: 'application/json' } }); const body = await res.json(); slipState.data.tennisLegs = body?.legs ?? []; } catch { slipState.data.tennisLegs = slipState.data.tennisLegs ?? []; }
+  slipState.data.tennisAt = now;
+  return slipState.data.tennisLegs;
+}
+/** A player off the board: the Players tab's index and log, by league and stat. */
+async function slipPlayerLog(leg, sport) {
+  const key = `${sport}:${leg.stat.key}:${leg.player}`;
+  if (slipState.data.playerLogs[key] !== undefined) return slipState.data.playerLogs[key];
+  try {
+    if (!slipState.data.playerIndex[sport]) {
+      const url = new URL('/players', CONFIG.WORKER_URL); url.searchParams.set('sport', sport);
+      const res = await fetch(url, { headers: { Accept: 'application/json' } });
+      const body = await res.json();
+      slipState.data.playerIndex[sport] = { players: body.players ?? [], stats: body.stats ?? [] };
+    }
+    const idx = slipState.data.playerIndex[sport];
+    if (!idx.stats.some((x) => x.key === leg.stat.key)) { slipState.data.playerLogs[key] = null; return null; }
+    const hit = idx.players.find((x) => x.name && (foldName(x.name) === foldName(leg.player) || (foldName(x.name).split(' ').at(-1) === foldName(leg.player).split(' ').at(-1) && foldName(x.name)[0] === foldName(leg.player)[0])));
+    if (!hit) { slipState.data.playerLogs[key] = null; return null; }
+    const url = new URL('/player', CONFIG.WORKER_URL); url.searchParams.set('sport', hit.sportKey ?? sport); url.searchParams.set('team', hit.team); url.searchParams.set('id', hit.id); url.searchParams.set('stat', leg.stat.key);
+    const res = await fetch(url, { headers: { Accept: 'application/json' } });
+    const body = await res.json();
+    slipState.data.playerLogs[key] = res.ok && body.rows ? { rows: body.rows, player: body.player, opponent: null } : null;
+  } catch { slipState.data.playerLogs[key] = null; }
+  return slipState.data.playerLogs[key];
+}
+/** The slate's priced games, for team lines, when the slate has loaded. */
+function slipSlateGames() {
+  try { return state.candidates?.length ? buildSlateGames([...new Set(state.candidates.map((c) => c.sportKey))]) : []; } catch { return []; }
+}
+
+/** The check itself: the data, the match, the scores, the render. */
+async function slipRun({ note = '' } = {}) {
+  if (!CONFIG.WORKER_URL) { slipSay('Slip Check needs the odds worker.'); return; }
+  slipState.busy = true; if (el.slipCheckBtn) el.slipCheckBtn.disabled = true;
+  showLoading(el.slipStatus, `Reading ${slipState.legs.length} leg${slipState.legs.length === 1 ? '' : 's'} against the game logs…`);
+  try {
+    const trendsRows = await slipTrendsRows();
+    const tennisLegs = slipState.legs.some((l) => l.stat?.leagues?.includes('tennis') || l.kind === 'team') ? await slipTennisLegs() : [];
+    // The players the board does not carry: their logs from the Players tab, league by league.
+    const playerLogs = {};
+    for (const leg of slipState.legs) {
+      if (leg.kind !== 'prop' || !leg.stat || !leg.player) continue;
+      const onBoard = leg.stat.leagues.some((sport) => (trendsRows[sport] ?? []).some((r) => r.statKey === leg.stat.key && (foldName(r.playerName) === foldName(leg.player) || foldName(r.playerName).includes(foldName(leg.player)) || foldName(leg.player).includes(foldName(r.playerName)))));
+      if (onBoard) continue;
+      for (const sport of leg.stat.leagues.filter((k) => k !== 'tennis')) {
+        const log = await slipPlayerLog(leg, sport);
+        if (log) { playerLogs[`${sport}:${leg.stat.key}:${leg.player}`] = log; break; }
+      }
+    }
+    slipState.result = checkSlip(slipState.legs, { trendsRows, playerLogs, tennisLegs, slateGames: slipSlateGames() }, { combinedAmerican: slipState.combinedAmerican });
+    slipState.open = {};
+    renderSlipResult(note);
+  } catch (e) { slipSay(`Could not check the slip: ${e.message}`); }
+  slipState.busy = false; if (el.slipCheckBtn) el.slipCheckBtn.disabled = false;
+}
+
+const slipTone = (c) => (c == null ? '' : c >= 70 ? 'is-hot' : c >= 50 ? 'is-warm' : 'is-cold');
+const slipGradeTone = (g) => (g === 'A' || g === 'B' ? 'is-hot' : g === 'C' ? 'is-warm' : g ? 'is-cold' : '');
+const slipPct = (r) => (r ? `${Math.round(r.rate * 100)}%` : '—');
+/** The last ten games as bars at the slip's number: a hit in green, a miss in red, a push grey. */
+function slipBars(match, leg) {
+  const rows = (match?.rows ?? []).slice(0, 10);
+  if (!rows.length || leg.point == null || !leg.side) return '';
+  const flags = slipHitFlags(rows, leg.point, leg.side);
+  const max = Math.max(...rows.map((r) => r.value), leg.point, 1);
+  return `<div class="trend-bars sc-bars"><span class="trend-line-mark" style="bottom:${Math.round((leg.point / max) * 100)}%"></span>${rows.map((r, i) => `<span class="trend-bar ${flags[i] === 1 ? 'is-hit' : flags[i] === 0 ? 'is-miss' : 'is-push'}" style="height:${Math.max(8, Math.round((r.value / max) * 100))}%" title="${esc(`${r.value}${r.opponent ? ` vs ${r.opponent}` : ''}${r.date ? ` · ${String(r.date).slice(0, 10)}` : ''}`)}"></span>`).join('')}</div>`;
+}
+function renderSlipLeg(s, i) {
+  const { leg, match, score } = s;
+  const open = Boolean(slipState.open[i]);
+  const r = score.parts ?? {};
+  const cell = (label, x, title) => `<span class="sc-rate" title="${esc(title ?? '')}"><small>${esc(label)}</small><b class="${x ? slipTone(x.rate * 100) : ''}">${slipPct(x)}</b>${x ? `<i>${x.hits} of ${x.games}</i>` : '<i>no games</i>'}</span>`;
+  const name = match?.name ?? (leg.kind === 'prop' ? leg.player : leg.selection.replace(/\s*[+-]\d{3,5}\s*$/, '')) ?? '';
+  const where = match?.source === 'trends' ? `on the board${match.opponent ? ` · vs ${esc(match.opponent)}` : ''}` : match?.source === 'player' ? 'from the game log' : match?.source === 'tennis' ? 'tennis model' : score.source === 'market' ? 'priced, not hit-rated' : 'no data';
+  const rates = score.source === 'trends' || score.source === 'player' ? `<div class="sc-rates">${cell('L5', r.l5)}${cell('L10', r.l10)}${cell('L20', r.l20)}${cell(`H2H${match?.opponent ? ` ${match.opponent}` : ''}`, r.h2h, 'Against this opponent, every season on the log')}</div>` : score.source === 'tennis' && r.l10 ? `<div class="sc-rates">${cell('L10 at the line', r.l10)}<span class="sc-rate"><small>Model</small><b class="${slipTone(score.confidence)}">${Math.round((r.model ?? 0) * 100)}%</b><i>share</i></span></div>` : '';
+  return `<article class="trend-card sc-leg" data-slip-leg="${i}">
+    <div class="sc-leg-head">
+      <div class="sc-leg-who"><strong>${esc(leg.selection)}</strong><small>${esc(name)}${leg.stat ? ` · ${esc(leg.stat.label)}` : leg.kind === 'total' ? ' · game total' : leg.kind === 'team' ? ' · team line' : ''} · ${where}${match?.injury ? ` ${injuryTag(match.injury)}` : ''}</small></div>
+      <span class="sc-conf ${slipTone(score.confidence)}">${score.confidence != null ? `${score.confidence}<small>%</small>` : '<small>n/a</small>'}</span>
+      ${Number.isFinite(leg.american) ? `<span class="parlay-leg-price">${esc(formatAmerican(leg.american))}</span>` : ''}
+    </div>
+    ${rates}
+    ${slipBars(match, leg)}
+    ${score.warnings?.length ? `<p class="sc-warn">${score.warnings.map(esc).join(' ')}</p>` : ''}
+    <button type="button" class="parlay-btn sc-why" data-slip-why="${i}">${open ? 'Hide the read' : 'The read'}</button>
+    ${open ? `<ul class="tennis-why-list">${(score.notes ?? []).map((n) => `<li>${esc(n)}</li>`).join('') || '<li>No notes for this leg.</li>'}</ul>` : ''}
+  </article>`;
+}
+const SLIP_SUGGESTION_ICON = { drop: '✂️', move: '↔️', flip: '🔁', injury: '🩹', warn: '⚠️', 'same-game': '🔗', lotto: '🎟️', unmatched: '🔎', ok: '✅' };
+function renderSlipResult(note = '') {
+  const res = slipState.result;
+  if (!res || !el.slipResult) return;
+  const { scored, slip, suggestions } = res;
+  slipSay(`${scored.length} leg${scored.length === 1 ? '' : 's'} checked · ${slip.known} with a read${note ? ` · ${note}` : ''}`);
+  const fairText = slip.fair != null ? `${slip.fair > 0 ? '+' : ''}${slip.fair}` : '—';
+  const combinedText = slip.combined != null ? `${slip.combined > 0 ? '+' : ''}${slip.combined}` : '—';
+  el.slipResult.innerHTML = `<section class="sc-overall ${slipGradeTone(slip.grade)}">
+      <div class="sc-grade"><span class="sc-grade-letter ${slipGradeTone(slip.grade)}">${esc(slip.grade ?? '?')}</span><span class="sc-grade-sub">${esc(SLIP_CATEGORY_LABEL[slip.category] ?? slip.category)}${slip.category === 'lotto' ? ' 🎟️' : ''}</span></div>
+      <div class="sc-overall-stats">
+        <span><small>Lands</small><b>${slip.lands != null ? `${slip.lands * 100 < 1 ? '<1' : Math.round(slip.lands * 100)}%` : '—'}</b></span>
+        <span><small>Strength</small><b>${slip.strength != null ? `${slip.strength}/100` : '—'}</b></span>
+        <span><small>Odds</small><b>${esc(combinedText)}</b></span>
+        <span><small>Fair odds</small><b>${esc(fairText)}</b></span>
+        ${slip.edge != null ? `<span><small>Edge</small><b class="${slip.edge >= 0 ? 'is-hot' : 'is-cold'}">${slip.edge >= 0 ? '+' : ''}${slip.edge} pts</b></span>` : ''}
+      </div>
+      <p class="row-sub">${slip.known < scored.length ? `${scored.length - slip.known} leg${scored.length - slip.known === 1 ? '' : 's'} without a read are left out of the chance. ` : ''}The chance reads the legs as independent; the strength is the legs' confidence averaged, the grade follows it (A from 75, B from 65, C from 55, D from 45).</p>
+    </section>
+    <h3 class="sc-h">What to do</h3>
+    <ul class="sc-suggestions">${suggestions.map((x) => `<li class="sc-suggestion is-${esc(x.type)}"><span class="sc-sug-icon" aria-hidden="true">${SLIP_SUGGESTION_ICON[x.type] ?? '•'}</span><span>${esc(x.text)}</span></li>`).join('')}</ul>
+    <h3 class="sc-h">Every leg</h3>
+    <div class="sc-legs">${scored.map(renderSlipLeg).join('')}</div>`;
+  if (window.innerWidth <= 820) el.slipResult.scrollIntoView({ behavior: 'smooth', block: 'start' });
+}
+
+el.slipDrop?.addEventListener('click', () => el.slipFile?.click());
+el.slipDrop?.addEventListener('keydown', (e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); el.slipFile?.click(); } });
+el.slipFile?.addEventListener('change', () => { slipHandleImage(el.slipFile.files?.[0]); el.slipFile.value = ''; });
+['dragenter', 'dragover'].forEach((evt) => el.slipDrop?.addEventListener(evt, (e) => { e.preventDefault(); el.slipDrop.classList.add('is-dragging'); }));
+['dragleave', 'drop'].forEach((evt) => el.slipDrop?.addEventListener(evt, (e) => { e.preventDefault(); el.slipDrop.classList.remove('is-dragging'); }));
+el.slipDrop?.addEventListener('drop', (e) => { const f = e.dataTransfer?.files?.[0]; if (f) slipHandleImage(f); });
+// Paste anywhere on the tab: an image goes to the reader, text into the box.
+document.addEventListener('paste', (event) => {
+  if (!el.slipCheckView || el.slipCheckView.hidden) return;
+  const item = [...(event.clipboardData?.items ?? [])].find((i) => i.type.startsWith('image/'));
+  if (item) { event.preventDefault(); slipHandleImage(item.getAsFile()); return; }
+  if (document.activeElement === el.slipText) return;
+  const text = event.clipboardData?.getData('text/plain');
+  if (text && el.slipText) { event.preventDefault(); el.slipText.value = text; slipHandleText(); }
+});
+el.slipPasteBtn?.addEventListener('click', async () => {
+  try {
+    if (navigator.clipboard?.read) {
+      const items = await navigator.clipboard.read();
+      for (const it of items) { const type = it.types.find((x) => x.startsWith('image/')); if (type) { const blob = await it.getType(type); slipHandleImage(new File([blob], 'clipboard.png', { type })); return; } }
+    }
+    const text = await navigator.clipboard.readText();
+    if (text?.trim()) { el.slipText.value = text; slipHandleText(); } else slipSay('The clipboard is empty: copy the slip text or a screenshot first.');
+  } catch { slipSay('The browser would not hand over the clipboard: paste into the box with Ctrl+V, or long-press and Paste on a phone.'); }
+});
+el.slipCheckBtn?.addEventListener('click', slipHandleText);
+el.slipClearBtn?.addEventListener('click', () => { slipState.legs = []; slipState.result = null; slipState.combinedAmerican = null; if (el.slipText) el.slipText.value = ''; if (el.slipPreview) { el.slipPreview.hidden = true; el.slipPreview.innerHTML = ''; } if (el.slipResult) el.slipResult.innerHTML = ''; slipSay(''); });
+el.slipResult?.addEventListener('click', (event) => { const why = event.target.closest('[data-slip-why]'); if (why) { const i = why.dataset.slipWhy; slipState.open[i] = !slipState.open[i]; renderSlipResult(); } });
 
 el.tennisView?.addEventListener('click', (event) => {
   const tour = event.target.closest('[data-tennis-tour]');

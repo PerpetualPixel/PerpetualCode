@@ -36,9 +36,9 @@
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Syne:wght@600;700;800&family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
-<link rel="stylesheet" href="styles.css?v=1.314">
+<link rel="stylesheet" href="styles.css?v=1.315">
 <!-- Before first paint: a desktop reader who chose "Fit screen" gets the wide shell without a flash of the narrow one. -->
-<script src="wide.js?v=1.314"></script>
+<script src="wide.js?v=1.315"></script>
 </head>
 <body>
 
@@ -128,6 +128,11 @@
   <button id="tabTennis" class="top-tab" role="tab" aria-selected="false" aria-controls="tennisView">
     <svg class="top-tab-icon" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><circle cx="12" cy="12" r="9" fill="none" stroke="currentColor" stroke-width="2"/><path d="M5.5 5.5c3.5 1.5 5.5 4 5.5 6.5s-2 5-5.5 6.5M18.5 5.5C15 7 13 9.5 13 12s2 5 5.5 6.5" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>
     Tennis
+  </button>
+  <!-- Slip Check (2026-11-06): upload or paste a bet slip and get every leg's hit rates, a confidence, the ticket's grade and what to change. -->
+  <button id="tabSlipCheck" class="top-tab" role="tab" aria-selected="false" aria-controls="slipCheckView">
+    <svg class="top-tab-icon" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="M6 2.5h12a1.5 1.5 0 0 1 1.5 1.5v17.5l-3-2-3 2-3-2-3 2-3-2-1.5 1V4A1.5 1.5 0 0 1 6 2.5z" fill="none" stroke="currentColor" stroke-width="2" stroke-linejoin="round"/><path d="M8 11l2.5 2.5L16 8" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"/></svg>
+    Slip Check
   </button>
   <!-- Player search sits apart at the far end: a lookup, not a board. -->
   <span class="top-tabs-gap" aria-hidden="true"></span>
@@ -392,6 +397,42 @@
      and set totals, game and set spreads), the matches read and why each
      passed, with its own record in Pixel's Picks (worker/src/tennis-picks.js;
      docs/app.js's renderTennis). -->
+<!-- Slip Check: a bet slip in (a screenshot or photo from the library, or
+     pasted text), every leg's last-5, last-10, last-20 and head-to-head
+     hit rates at its number, a confidence per leg, the ticket's grade and
+     category, and what to change (docs/slip-check.js; docs/app.js's
+     slipRun). -->
+<section id="slipCheckView" role="tabpanel" aria-labelledby="tabSlipCheck" hidden>
+  <div class="sc-intro">
+    <h2 class="parlay-h">Slip Check</h2>
+    <p class="row-sub">Drop in a bet and get every leg's hit rate over its last 5, 10 and 20 games and against tonight's opponent, a confidence out of 100 for each leg, a grade for the ticket, and what to drop or move.</p>
+  </div>
+  <div class="sc-inputs">
+    <div class="sc-card">
+      <h3 class="sc-h">Upload a slip</h3>
+      <div id="slipDrop" class="tail-fade-drop sc-drop" tabindex="0" role="button" aria-label="Upload a bet slip screenshot or photo">
+        <span class="tail-fade-drop-icon" aria-hidden="true">⬆︎</span>
+        <p class="tail-fade-drop-title">Click to upload</p>
+        <p class="tail-fade-drop-sub">A screenshot or a photo from your library, on a phone or a PC · drag one here · or paste an image with <kbd>Ctrl</kbd>+<kbd>V</kbd></p>
+        <input id="slipFile" type="file" accept="image/*" hidden>
+      </div>
+      <p id="slipQuota" class="row-sub" role="status"></p>
+      <div id="slipPreview" class="tail-fade-preview sc-preview" hidden></div>
+    </div>
+    <div class="sc-card">
+      <h3 class="sc-h">Or paste the bet</h3>
+      <textarea id="slipText" class="tail-fade-textarea sc-text" rows="6" placeholder="One leg per line, the way the book writes it:&#10;Jayson Tatum Over 27.5 Points -115&#10;Josh Allen 250+ Passing Yards&#10;Lakers -3.5&#10;+450 (the ticket's odds, if you have them)"></textarea>
+      <div class="sc-actions">
+        <button type="button" id="slipPasteBtn" class="parlay-btn">Paste from clipboard</button>
+        <button type="button" id="slipCheckBtn" class="parlay-build sc-check">Check my slip</button>
+        <button type="button" id="slipClearBtn" class="parlay-reset">Clear</button>
+      </div>
+    </div>
+  </div>
+  <div id="slipStatus" class="status trends-status" role="status" aria-live="polite"></div>
+  <section id="slipResult" class="sc-result" aria-live="polite"></section>
+</section>
+
 <section id="tennisView" role="tabpanel" aria-labelledby="tabTennis" hidden>
   <div id="tennisStatus" class="status trends-status" role="status" aria-live="polite"></div>
   <section id="tennisBody" class="trends-body" aria-live="polite"></section>
@@ -1075,6 +1116,6 @@
   </div>
 </aside>
 
-<script type="module" src="app.js?v=1.314"></script>
+<script type="module" src="app.js?v=1.315"></script>
 </body>
 </html>
