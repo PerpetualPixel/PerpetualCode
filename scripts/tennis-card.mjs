@@ -4,8 +4,8 @@
  * ATP"), from a runner ESPN answers: today's and tomorrow's singles
  * matches on both tours (main draw, with the qualifying marked), each
  * with its players, round, start time, state and set scores as they come,
- * and the completed singles results of the last twelve days for form and
- * for grading. Written to the worker's KV under tennis:card;
+ * and the completed singles results of the last six weeks for form,
+ * fatigue, a recent retirement, and for grading. Written to the worker's KV under tennis:card;
  * worker/src/tennis-picks.js reads it.
  *
  *   node scripts/tennis-card.mjs            read and write
@@ -16,7 +16,7 @@ import { writeKv } from './lib/kv.mjs';
 
 export const TENNIS_CARD_KEY = 'tennis:card';
 const SITE = { atp: 'https://site.web.api.espn.com/apis/site/v2/sports/tennis/atp/scoreboard', wta: 'https://site.web.api.espn.com/apis/site/v2/sports/tennis/wta/scoreboard' };
-const RESULT_DAYS = 12;
+const RESULT_DAYS = 45; // form, fatigue and a recent retirement read from the last six weeks
 const say = (m) => console.log(`${new Date().toISOString().slice(11, 19)} ${m}`);
 const ymd = (ms) => new Date(ms).toISOString().slice(0, 10).replace(/-/g, '');
 
@@ -32,62 +32,8 @@ async function getJson(url, tries = 3) {
   return null;
 }
 
-/** A player's key for matching across sources: lowercase ASCII, letters and digits, single spaces. */
-export const nameKey = (name) => String(name ?? '').normalize('NFD').replace(/[̀-ͯ]/g, '').toLowerCase().replace(/[^a-z0-9 ]/g, ' ').replace(/\s+/g, ' ').trim();
-
-/** Men's Grand Slam main draws are best of five; everything else on either tour is best of three. */
-export function bestOfFor(tour, eventName, round) {
-  const slam = /australian open|roland garros|french open|wimbledon|us open/i.test(String(eventName ?? ''));
-  return tour === 'atp' && slam && !/qualifying/i.test(String(round ?? '')) ? 5 : 3;
-}
-
-/** The tier the Tennis tab reads a tournament at, from ESPN's name: Slams and 1000s, the Finals, then 500s and 250s. */
-export function tierOf(eventName) {
-  const n = String(eventName ?? '').toLowerCase();
-  if (/australian open|roland garros|french open|wimbledon|us open/.test(n)) return 'slam';
-  if (/masters|1000|indian wells|miami open|madrid|rome|italian open|canadian|national bank|cincinnati|shanghai|paris|wuhan|china open|qatar|dubai|atp finals|wta finals|nitto/.test(n)) return '1000';
-  if (/challenger|itf|125/.test(n)) return 'challenger';
-  return 'tour';
-}
-
-/** One competitor as the card lists a player; null for a doubles pairing. */
-function player(c) {
-  if (!c || c.roster) return null;
-  const a = c.athlete ?? {};
-  if (!a.displayName) return null;
-  return { id: String(c.id ?? a.id ?? ''), name: a.displayName, short: a.shortName ?? null, key: nameKey(a.displayName), country: a.flag?.alt ?? null, flag: a.flag?.href ?? null };
-}
-
-/**
- * The singles matches in a scoreboard payload: {id, tour, eventId, eventName, tier, round, qualifying, date, state,
- * completed, statusName, bestOf, court, a, b, sets, tiebreaks, winner, note}.
- */
-export function parseScoreboard(data, tour) {
-  const out = [];
-  for (const event of data?.events ?? []) {
-    const groupings = event.groupings?.length ? event.groupings : [{ grouping: { slug: '' }, competitions: event.competitions ?? [] }];
-    for (const g of groupings) {
-      if (/doubles/i.test(String(g?.grouping?.slug ?? ''))) continue;
-      for (const c of g.competitions ?? []) {
-        if (/doubles/i.test(String(c?.type?.slug ?? ''))) continue;
-        const [first, second] = c.competitors ?? [];
-        const a = player(first); const b = player(second);
-        if (!a || !b) continue;
-        const round = c.round?.displayName ?? null;
-        const la = first.linescores ?? []; const lb = second.linescores ?? [];
-        const sets = la.length === lb.length ? la.map((s, i) => [Number(s?.value ?? 0), Number(lb[i]?.value ?? 0)]) : [];
-        const tiebreaks = la.length === lb.length ? la.map((s, i) => (s?.tiebreak != null || lb[i]?.tiebreak != null ? [s?.tiebreak ?? null, lb[i]?.tiebreak ?? null] : null)) : [];
-        out.push({
-          id: String(c.id), tour, eventId: String(event.id), eventName: event.name ?? null, tier: tierOf(event.name), round, qualifying: /qualifying/i.test(String(round ?? '')),
-          date: c.date ?? c.startDate ?? null, state: c.status?.type?.state ?? 'pre', completed: Boolean(c.status?.type?.completed), statusName: c.status?.type?.name ?? null, detail: c.status?.type?.detail ?? null,
-          bestOf: bestOfFor(tour, event.name, round), court: c.venue?.court ?? null, venue: c.venue?.fullName ?? null,
-          a, b, sets, tiebreaks, winner: first.winner === true ? 'a' : second.winner === true ? 'b' : null, note: (c.notes ?? []).find((n) => n?.text)?.text ?? null,
-        });
-      }
-    }
-  }
-  return out;
-}
+export { nameKey, bestOfFor, tierOf, surfaceOf, parseScoreboard } from '../worker/src/tennis-card-parse.js';
+import { parseScoreboard, tierOf } from '../worker/src/tennis-card-parse.js';
 
 /** The card: both tours, today and tomorrow for the slate, the last RESULT_DAYS days for results, one entry per match. */
 export async function buildCard(now = Date.now(), { get = getJson } = {}) {
@@ -95,7 +41,7 @@ export async function buildCard(now = Date.now(), { get = getJson } = {}) {
   const events = new Map();
   for (const tour of ['atp', 'wta']) {
     // A scoreboard day returns every tournament active that day with its whole draw, so a few days cover the fortnight.
-    const days = [1, 0, -2, -5, -8, -11].map((d) => ymd(now + d * 864e5));
+    const days = [1, 0, -2, -5, -8, -11, -15, -19, -23, -27, -31, -35, -39, -43].map((d) => ymd(now + d * 864e5));
     for (const day of days) {
       const data = await get(`${SITE[tour]}?dates=${day}`);
       if (!data) continue;

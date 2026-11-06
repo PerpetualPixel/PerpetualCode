@@ -62,6 +62,7 @@ import { getPlayerIndex, getPlayerLog, playerStats } from './player-search.js';
 import { getUfcEvents, getUfcEvent, nextUfcEvent, getUfcFighter, getUfcFighters } from './ufc-card.js';
 import { runUfcTick, getUfcPicks } from './ufc-picks.js';
 import { runTennisTick, getTennisPicks } from './tennis-picks.js';
+import { getTennisLive } from './tennis-live.js';
 import { sendUfcTicketNotifications, sendUfcChangeNotifications } from './notifications.js';
 import { legBreakdown } from './parlay-builder.js';
 import { runTrendPicksDaily, runTrendPicksGrading, getTrendPicks } from './trend-picks.js';
@@ -1553,7 +1554,10 @@ export default {
     // one fighter's profile and history.
     // The Live tab's board (worker/src/live-board.js): the watched games, their last reads, the lines and the play.
     if (pathname === '/live' && request.method === 'GET') {
-      return json(await getLiveBoard(env, Date.now(), { ctx }), { headers: { ...cors, 'Cache-Control': 'no-store' } });
+      // The board, and tennis beside it (worker/src/tennis-live.js: the day's singles from ESPN with the Tennis tab's plays on them).
+      const now = Date.now();
+      const [board, tennis] = await Promise.all([getLiveBoard(env, now, { ctx }), getTennisLive(env, now).catch((e) => { console.error('Tennis live failed:', e); return null; })]);
+      return json({ ...board, tennis }, { headers: { ...cors, 'Cache-Control': 'no-store' } });
     }
     // Last night's slips graded against the final box scores (worker/src/live-board.js): read-only.
     if (pathname === '/live/recap' && request.method === 'GET') {

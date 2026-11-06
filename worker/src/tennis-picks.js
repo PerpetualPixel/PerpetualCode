@@ -20,13 +20,30 @@
  *   5. Grading from the results' set scores (aces from the data runner's
  *      ace log once the match data lands), one unit a play.
  *
+ * 2026-11-06, the second ask: "recent form ... play style matchup, surface
+ * type, and possible injury and possible player fatigue ... at least one
+ * play for tennis posted ... a 2 leg parlay or a 4 leg moneyline parlay
+ * ... Max 5U in plays a day." So the winner is the model's own read first
+ * (worker/src/tennis-form.js: the surface Elo and the serve simulation,
+ * then the form gap, a heavy week, a recent retirement, rust and the style
+ * on the surface), blended half and half with the market before the shape
+ * is simulated; a player flagged for injury or fatigue is never the side
+ * of a play; and once a day the clearest favourites (the blended share at
+ * PARLAY_LEG_PROB or better, no flag) go into one moneyline parlay of two
+ * to four legs at one book. The day's plays stop at MAX_UNITS_DAY units,
+ * one unit kept for the parlay until it posts.
+ *
  * Records live under tennis:picks:<ET date>, listed in tennis:picks:index.
  */
 import { UPSTREAM, TREND_BOOKMAKERS, recordOddsDiag } from './odds.js';
 import { bookIdFor, americanToDecimal } from '../../docs/engine.js';
 import { etParts } from './potd.js';
 import { betRecordOf } from './trend-picks.js';
-import { matchServeProbs, simulate, fitToTarget, distributions, shareOver, aceCounts, devig, impliedOf, highestLineAt } from './tennis-model.js';
+import { matchServeProbs, simulate, fitToTarget, distributions, shareOver, aceCounts, devig, impliedOf, highestLineAt, winShare } from './tennis-model.js';
+import { nameKey, surfaceOf } from './tennis-card-parse.js';
+import { formOf, formLine, styleOf, matchupProb, flagsOf, STYLE_LABEL } from './tennis-form.js';
+
+export { surfaceOf };
 
 export const TENNIS_CARD_KEY = 'tennis:card';
 export const tennisProfilesKey = (tour) => `tennis:profiles:${tour}`;
@@ -47,9 +64,18 @@ export const MAX_ACES_PER_TOUR = 3;
 export const MIN_MATCHES = 10;
 export const MIN_ACE_MATCHES = 15;
 export const MIN_SURFACE_MATCHES = 8;
+/** The day's plays stop here (2026-11-06: "Max 5U in plays a day"), one unit each; one unit is kept for the parlay until it posts. */
+export const MAX_UNITS_DAY = 5;
+/** The moneyline parlay: a leg needs the blended share here (relaxed to fill the second leg), the parlay's own share at least PARLAY_MIN_PROB, two to four legs. */
+export const PARLAY_LEG_PROB = 0.78;
+export const PARLAY_LEG_PROB_RELAXED = 0.72;
+export const PARLAY_MIN_PROB = 0.58;
+export const PARLAY_LEGS = [2, 4];
+/** The model's say against the market's in the winner the shape is simulated from. */
+export const MODEL_WEIGHT = 0.5;
 export const TOURS = ['atp', 'wta'];
 export const TENNIS_MARKETS = {
-  games_spread: 'Game spread', games_total: 'Total games', set_spread: 'Set spread', set1_total: '1st set games', set2_total: '2nd set games', aces: 'Aces',
+  games_spread: 'Game spread', games_total: 'Total games', set_spread: 'Set spread', set1_total: '1st set games', set2_total: '2nd set games', aces: 'Aces', ml_parlay: 'Moneyline parlay',
 };
 const BOARD_MARKETS = 'h2h,spreads,totals';
 const EVENT_MARKETS = 'alternate_spreads,alternate_totals,alternate_set_spreads,totals_s1,alternate_totals_s1,alternate_totals_s2';
@@ -57,7 +83,6 @@ const BOARD_TTL = 30 * 60e3;
 const EVENT_TTL = 3 * 3600e3;
 const SPORTS_TTL = 6 * 3600e3;
 
-const nameKey = (name) => String(name ?? '').normalize('NFD').replace(/[̀-ͯ]/g, '').toLowerCase().replace(/[^a-z0-9 ]/g, ' ').replace(/\s+/g, ' ').trim();
 const surname = (name) => nameKey(name).split(' ').filter(Boolean).at(-1) ?? '';
 const sameName = (x, y) => { const a = nameKey(x); const b = nameKey(y); return Boolean(a && b) && (a === b || (surname(a) === surname(b) && surname(a).length >= 4 && a[0] === b[0])); };
 
@@ -153,7 +178,7 @@ export function ratesFor(profile, surface) {
   const overall = profile.overall;
   if (!overall || !((overall.matches ?? 0) >= MIN_MATCHES) || overall.serve == null) return null;
   const line = surface && profile.bySurface?.[surface] && (profile.bySurface[surface].matches ?? 0) >= MIN_SURFACE_MATCHES ? profile.bySurface[surface] : overall;
-  return { serve: line.serve, firstIn: line.firstIn ?? null, return: line.return ?? overall.return ?? null, ace: line.ace ?? overall.ace ?? null, acesPerGame: line.acesPerGame ?? overall.acesPerGame ?? null, points: line.points ?? overall.points ?? 0, matches: overall.matches, aceMatches: overall.matches, surfaceUsed: line !== overall };
+  return { serve: line.serve, firstIn: line.firstIn ?? null, return: line.return ?? overall.return ?? null, ace: line.ace ?? overall.ace ?? null, acesPerGame: line.acesPerGame ?? overall.acesPerGame ?? null, points: line.points ?? overall.points ?? 0, matches: overall.matches, aceMatches: overall.matches, surfaceUsed: line !== overall, elo: line.elo ?? overall.elo ?? null, eloOverall: overall.elo ?? null };
 }
 
 const stars = (p) => (p >= 0.86 ? 5 : p >= 0.8 ? 4 : 3);
@@ -166,7 +191,7 @@ const best = (quotes) => [...quotes].sort((x, y) => y.american - x.american)[0] 
  * total games over, the dog's +1.5 sets, the first- and second-set games
  * over, and each player's aces. Unpriced legs other than aces are dropped.
  */
-export function readMatch(match, { dist, aceA, aceB, board, deep, ratesA, ratesB, pMarket }) {
+export function readMatch(match, { dist, aceA, aceB, board, deep, ratesA, ratesB, pMarket, pModel = null, context = [] }) {
   const legs = [];
   const dog = dist.pA < 0.5 ? 'a' : 'b';
   const dogName = match[dog].name; const favName = match[dog === 'a' ? 'b' : 'a'].name;
@@ -177,9 +202,13 @@ export function readMatch(match, { dist, aceA, aceB, board, deep, ratesA, ratesB
     const implied = q ? impliedOf(q.american) : null;
     legs.push({ market, side, selection, point, prob: Math.round(prob * 1000) / 1000, implied: implied != null ? Math.round(implied * 1000) / 1000 : null, edge: implied != null ? Math.round((prob - implied) * 1000) / 1000 : null, bookId: q?.bookId ?? null, book: q?.book ?? null, american: q?.american ?? null, link: q?.link ?? null, why });
   };
+  const favShare = (p) => (p == null ? null : dog === 'a' ? 1 - p : p);
   const why = (extra = []) => [
-    `Market: ${favName} ${pct(Math.max(pMarket ?? dist.pA, 1 - (pMarket ?? dist.pA)))} to win; the model is fitted to that`,
+    pMarket != null && pModel != null
+      ? `${favName} to win: the market ${pct(favShare(pMarket))}, the model's own read ${pct(favShare(pModel))}; the shape is simulated from the two blended`
+      : `Market: ${favName} ${pct(Math.max(pMarket ?? dist.pA, 1 - (pMarket ?? dist.pA)))} to win; the model is fitted to that`,
     `${match.a.name} holds on ${pct(ratesA.serve)} of serve points, ${match.b.name} on ${pct(ratesB.serve)}; ${Math.round(dist.meanGames)} games expected, straight sets ${pct(dist.straightSets)}`,
+    ...context,
     ...extra,
   ];
   // Game spread: the dog plus games, from the board's spread and the alternate ladder.
@@ -224,12 +253,48 @@ export function readMatch(match, { dist, aceA, aceB, board, deep, ratesA, ratesB
 /** The legs that clear the bar: the price inside the band and the edge over it; aces by their share alone. */
 export const clearsBar = (leg) => (leg.market === 'aces' ? leg.prob >= ACE_PROB : leg.american != null && leg.american >= PRICE_BAND[0] && leg.american <= PRICE_BAND[1] && leg.prob >= MIN_PROB && leg.edge >= MIN_EDGE);
 
-/** The surface a tournament plays on, from its name (the Finals and the indoor swing are hard courts). */
-export function surfaceOf(eventName) {
-  const n = String(eventName ?? '').toLowerCase();
-  if (/roland garros|french open|monte|madrid|rome|italian|barcelona|hamburg|munich|geneva|lyon|estoril|marrakech|bucharest|rabat|strasbourg|umag|gstaad|bastad|kitzbuhel|rio|buenos aires|santiago|clay/.test(n)) return 'clay';
-  if (/wimbledon|queen|halle|eastbourne|stuttgart|s-hertogenbosch|berlin|bad homburg|mallorca|nottingham|birmingham|grass/.test(n)) return 'grass';
-  return 'hard';
+/** The h2h quotes for one player on a board event: [{bookId, book, american, link}]. */
+const h2hQuotesFor = (board, name) => quotesOf(board, 'h2h').filter((q) => sameName(q.name, name));
+const americanOfDecimal = (d) => (d >= 2 ? Math.round((d - 1) * 100) : Math.round(-100 / (d - 1)));
+
+/** The units the day's plays have taken so far (every posted play is one unit; a void gives its unit back). */
+export const unitsPosted = (plays) => (plays ?? []).filter((p) => p.status !== 'void').reduce((n, p) => n + (p.units ?? 1), 0);
+
+/**
+ * The day's moneyline parlay from the candidates (one per match read: the
+ * favourite's blended share, flags, and h2h quotes): the clearest
+ * favourites first, two to four legs, the parlay's share at least
+ * PARLAY_MIN_PROB, at the one book that prices every leg best. Null when
+ * two legs cannot be found.
+ */
+export function buildParlay(candidates, now = Date.now()) {
+  const live = (c) => c.commenceMs > now && c.quotes?.length;
+  const clean = (c) => !(c.flags ?? []).length;
+  const strict = candidates.filter((c) => live(c) && clean(c) && c.prob >= PARLAY_LEG_PROB).sort((x, y) => y.prob - x.prob);
+  const relaxed = candidates.filter((c) => live(c) && clean(c) && c.prob >= PARLAY_LEG_PROB_RELAXED && c.prob < PARLAY_LEG_PROB).sort((x, y) => y.prob - x.prob);
+  const legs = [];
+  let product = 1;
+  for (const c of strict) { if (legs.length >= PARLAY_LEGS[1]) break; if (product * c.prob < PARLAY_MIN_PROB && legs.length >= PARLAY_LEGS[0]) break; if (legs.some((l) => l.matchId === c.matchId)) continue; legs.push(c); product *= c.prob; }
+  for (const c of relaxed) { if (legs.length >= PARLAY_LEGS[0]) break; if (product * c.prob < 0.55) break; legs.push(c); product *= c.prob; }
+  if (legs.length < PARLAY_LEGS[0]) return null;
+  // The book: the one carrying the most legs, the best combined price among those; the legs it does not carry drop.
+  const books = new Map();
+  for (const l of legs) for (const q of l.quotes) { if (!books.has(q.bookId)) books.set(q.bookId, { bookId: q.bookId, book: q.book, legs: new Map() }); const b = books.get(q.bookId); if (!b.legs.has(l.matchId) || q.american > b.legs.get(l.matchId).american) b.legs.set(l.matchId, q); }
+  const ranked = [...books.values()].map((b) => ({ ...b, n: b.legs.size, dec: [...b.legs.values()].reduce((d, q) => d * americanToDecimal(q.american), 1) })).sort((x, y) => y.n - x.n || y.dec - x.dec);
+  const pick = ranked[0];
+  if (!pick || pick.n < PARLAY_LEGS[0]) return null;
+  const chosen = legs.filter((l) => pick.legs.has(l.matchId));
+  const prob = chosen.reduce((p, l) => p * l.prob, 1);
+  const dec = chosen.reduce((d, l) => d * americanToDecimal(pick.legs.get(l.matchId).american), 1);
+  const american = americanOfDecimal(dec);
+  const implied = 1 / dec;
+  const legList = chosen.map((l) => { const q = pick.legs.get(l.matchId); return { matchId: l.matchId, tour: l.tour, event: l.event, round: l.round, commenceMs: l.commenceMs, a: l.a, b: l.b, side: l.side, selection: `${l.name} to win`, american: q.american, link: q.link ?? null, prob: l.prob, pModel: l.pModel, pMarket: l.pMarket, opponentFlags: l.opponentFlags ?? [], why: l.why ?? [] }; });
+  return {
+    market: 'ml_parlay', side: null, point: null, selection: `${legList.length}-leg moneyline parlay: ${legList.map((l) => l.selection.replace(' to win', '')).join(' + ')}`,
+    prob: Math.round(prob * 1000) / 1000, implied: Math.round(implied * 1000) / 1000, edge: Math.round((prob - implied) * 1000) / 1000, bookId: pick.bookId, book: pick.book, american, link: legList.find((l) => l.link)?.link ?? null,
+    legs: legList, commenceMs: Math.min(...legList.map((l) => l.commenceMs)), lastMs: Math.max(...legList.map((l) => l.commenceMs)),
+    why: [`${legList.length} favourites with a clear advantage, none flagged for injury, fatigue or rust; together ${pct(prob)} by the model against the price's ${pct(implied)}`, ...legList.map((l) => `${l.selection} (${pct(l.prob)} blended: model ${pct(l.pModel)}, market ${pct(l.pMarket)})${l.opponentFlags.length ? `, opponent flagged for ${l.opponentFlags.join(' and ')}` : ''}`)],
+  };
 }
 
 /** One tick: read, price, post and grade. Returns what it did. */
@@ -252,23 +317,41 @@ export async function runTennisTick(env, ctx, now = Date.now(), { deps = {} } = 
     }
     return boards.get(tour);
   };
+  // The results for form: the card's last six weeks and whatever on the slate has finished.
+  const allResults = [...(card.results ?? []), ...(card.slate ?? []).filter((m) => m.completed)];
+  const parlayPosted = () => record.plays.some((p) => p.market === 'ml_parlay');
+  const roomFor = (market) => unitsPosted(record.plays) + (market === 'ml_parlay' || parlayPosted() ? 0 : 1) < MAX_UNITS_DAY;
   let posted = 0; let considered = 0;
+  const candidates = [];
   const upcoming = (card.slate ?? []).filter((m) => m.state === 'pre' && !m.qualifying && m.tier !== 'challenger' && Date.parse(m.date) > now && Date.parse(m.date) < now + 30 * 3600e3);
   for (const m of upcoming) {
     const id = `${m.tour}:${m.id}`;
-    if (record.plays.some((p) => p.matchId === id)) continue; // posted once; the price stands as drawn
     const prof = profiles[m.tour]?.players ?? {};
     const surface = surfaceOf(m.eventName);
     const ratesA = ratesFor(prof[m.a.key] ?? prof[nameKey(m.a.name)], surface); const ratesB = ratesFor(prof[m.b.key] ?? prof[nameKey(m.b.name)], surface);
-    if (!ratesA || !ratesB) { record.reads[id] = { a: m.a.name, b: m.b.name, event: m.eventName, round: m.round, start: m.date, passed: `no serve numbers on file for ${!ratesA ? m.a.name : m.b.name}` }; continue; }
+    const base = { a: m.a.name, b: m.b.name, event: m.eventName, round: m.round, start: m.date, surface };
+    if (!ratesA || !ratesB) { if (!record.reads[id]?.pMarket) record.reads[id] = { ...base, passed: `no serve numbers on file for ${!ratesA ? m.a.name : m.b.name}` }; continue; }
     const events = await boardFor(m.tour);
     const hit = feedEventFor(m, events);
-    if (!hit) { record.reads[id] = { a: m.a.name, b: m.b.name, event: m.eventName, round: m.round, start: m.date, passed: 'the feed has no board for this match yet' }; continue; }
-    considered++;
+    if (!hit) { if (!record.reads[id]?.pMarket) record.reads[id] = { ...base, passed: 'the feed has no board for this match yet' }; continue; }
     const board = hit.event;
     const pMarket = marketWinShare(board, m.a.name);
+    // The read of the two players: form and flags, style, Elo, the serve simulation, and the model's winner from all of it.
+    const formA = formOf({ id: m.a.id, key: m.a.key ?? nameKey(m.a.name) }, allResults, now); const formB = formOf({ id: m.b.id, key: m.b.key ?? nameKey(m.b.name) }, allResults, now);
+    const styleA = styleOf(ratesA, m.tour); const styleB = styleOf(ratesB, m.tour);
     const { pA, pB } = matchServeProbs(ratesA, ratesB, m.tour);
-    const fit = pMarket != null ? fitToTarget(pA, pB, pMarket, { bestOf: m.bestOf, seed: 7 }) : { pA, pB };
+    const pSim = winShare(simulate(pA, pB, { n: 1200, seed: 5, bestOf: m.bestOf }));
+    const read = matchupProb({ pSim, eloA: ratesA.elo, eloB: ratesB.elo, formA, formB, styleA, styleB, surface, nameA: m.a.name, nameB: m.b.name });
+    const pModel = read.p;
+    const pFinal = pMarket != null ? Math.round((MODEL_WEIGHT * pModel + (1 - MODEL_WEIGHT) * pMarket) * 1000) / 1000 : pModel;
+    const context = [`Form: ${formLine(m.a.name, formA)}; ${formLine(m.b.name, formB)}`, `Style on ${surface}: ${m.a.name} a ${STYLE_LABEL[styleA.style]}, ${m.b.name} a ${STYLE_LABEL[styleB.style]}${read.pElo != null ? `; surface Elo gives ${m.a.name} ${pct(read.pElo)}` : ''}`, ...read.reasons];
+    const flags = read.flags;
+    const favSide = pFinal >= 0.5 ? 'a' : 'b';
+    const favName = m[favSide].name;
+    if (pMarket != null) candidates.push({ matchId: id, tour: m.tour, event: m.eventName, round: m.round, commenceMs: Date.parse(m.date), a: m.a.name, b: m.b.name, side: favSide, name: favName, prob: favSide === 'a' ? pFinal : Math.round((1 - pFinal) * 1000) / 1000, pModel: favSide === 'a' ? pModel : Math.round((1 - pModel) * 1000) / 1000, pMarket: favSide === 'a' ? pMarket : 1 - pMarket, flags: flags[favSide], opponentFlags: flags[favSide === 'a' ? 'b' : 'a'], quotes: h2hQuotesFor(board, favName), why: context });
+    if (record.plays.some((p) => p.matchId === id)) continue; // posted once; the price stands as drawn
+    considered++;
+    const fit = fitToTarget(pA, pB, pFinal, { bestOf: m.bestOf, seed: 7 });
     const sims = simulate(fit.pA, fit.pB, { n: 3000, seed: 11, bestOf: m.bestOf });
     const dist = distributions(sims);
     const aceA = aceCounts(dist.svptA, ratesA.ace ?? 0, { seed: 13, tour: m.tour, samplePoints: ratesA.points });
@@ -277,21 +360,36 @@ export async function runTennisTick(env, ctx, now = Date.now(), { deps = {} } = 
     const dogSet = dist.pA < 0.5 ? dist.aWinsASet : dist.bWinsASet;
     const shapeCase = dogSet >= MIN_PROB || shareOver(dist.set1, 8.5) >= MIN_PROB || shareOver(dist.games, 20.5) >= MIN_PROB || shareOver(dist.set2, 8.5) >= MIN_PROB;
     const deep = shapeCase ? (deps.eventMarkets ? await deps.eventMarkets(board.sportKey, board.id) : await eventMarkets(env, ctx, board.sportKey, board.id, now)) : null;
-    const legs = readMatch(m, { dist, aceA, aceB, board, deep, ratesA, ratesB, pMarket });
-    const clear = legs.filter(clearsBar);
-    record.reads[id] = { a: m.a.name, b: m.b.name, event: m.eventName, round: m.round, start: m.date, pMarket: pMarket != null ? Math.round(pMarket * 1000) / 1000 : null, meanGames: Math.round(dist.meanGames * 10) / 10, straightSets: Math.round(dist.straightSets * 100) / 100, dogSet: Math.round(dogSet * 100) / 100, legs: legs.length, clear: clear.length, passed: clear.length ? null : legs.length ? 'nothing clears the bar: the best leg is short of the price' : 'no leg the model likes at this price' };
+    const legs = readMatch(m, { dist, aceA, aceB, board, deep, ratesA, ratesB, pMarket, pModel, context });
+    // A leg on a player flagged for injury or fatigue never posts: a side with a doubt is not a clear advantage.
+    const sideClear = (l) => !l.side || !flags[l.side].length;
+    const clear = legs.filter((l) => clearsBar(l) && sideClear(l));
+    const flagged = legs.filter((l) => clearsBar(l) && !sideClear(l));
+    record.reads[id] = { ...base, pMarket: pMarket != null ? Math.round(pMarket * 1000) / 1000 : null, pModel, pFinal, pElo: read.pElo, meanGames: Math.round(dist.meanGames * 10) / 10, straightSets: Math.round(dist.straightSets * 100) / 100, dogSet: Math.round(dogSet * 100) / 100, flags, form: { a: formLine(m.a.name, formA), b: formLine(m.b.name, formB) }, style: { a: styleA.style, b: styleB.style }, reasons: read.reasons, legs: legs.length, clear: clear.length, passed: clear.length ? null : flagged.length ? `the only legs that clear sit on a player flagged for ${[...new Set(flagged.flatMap((l) => flags[l.side]))].join(' and ')}` : legs.length ? 'nothing clears the bar: the best leg is short of the price' : 'no leg the model likes at this price' };
     if (!clear.length) continue;
-    // The best priced leg, then the best aces leg, each under its cap for the tour and the day.
-    const tourCount = (market) => record.plays.filter((p) => p.tour === m.tour && (market === 'aces' ? p.market === 'aces' : p.market !== 'aces')).length;
+    // The best priced leg, then the best aces leg, each under its cap for the tour and the day's units.
+    const tourCount = (market) => record.plays.filter((p) => p.tour === m.tour && (market === 'aces' ? p.market === 'aces' : p.market !== 'aces' && p.market !== 'ml_parlay')).length;
     const priced = clear.filter((l) => l.market !== 'aces').sort((x, y) => (y.edge * y.prob) - (x.edge * x.prob))[0] ?? null;
     const ace = clear.filter((l) => l.market === 'aces').sort((x, y) => y.prob - x.prob)[0] ?? null;
     for (const leg of [priced, ace]) {
       if (!leg) continue;
       if (tourCount(leg.market) >= (leg.market === 'aces' ? MAX_ACES_PER_TOUR : MAX_PER_TOUR)) continue;
-      record.plays.push({ id: `${id}:${leg.market}`, matchId: id, tour: m.tour, event: m.eventName, tier: m.tier, round: m.round, surface, commenceMs: Date.parse(m.date), a: m.a.name, b: m.b.name, aId: m.a.id, bId: m.b.id, ...leg, stars: stars(leg.prob), units: 1, postedAt: now, status: 'pending', result: null, net: null, actual: null });
+      if (!roomFor(leg.market)) { record.reads[id].passed = `cleared, but the day's ${MAX_UNITS_DAY} units are placed`; continue; }
+      record.plays.push({ id: `${id}:${leg.market}`, matchId: id, tour: m.tour, event: m.eventName, tier: m.tier, round: m.round, surface, commenceMs: Date.parse(m.date), a: m.a.name, b: m.b.name, aId: m.a.id, bId: m.b.id, ...leg, flags: { a: flags.a, b: flags.b }, stars: stars(leg.prob), units: 1, postedAt: now, status: 'pending', result: null, net: null, actual: null });
       posted++;
     }
   }
+  // The day's moneyline parlay (2026-11-06: "at least one play for tennis posted ... a 2 leg parlay or a 4 leg moneyline parlay"), once.
+  let parlay = null;
+  if (!parlayPosted() && roomFor('ml_parlay')) {
+    parlay = buildParlay(candidates, now);
+    if (parlay) {
+      const tours = [...new Set(parlay.legs.map((l) => l.tour))];
+      record.plays.push({ id: `parlay:${date}`, matchId: null, tour: tours.length === 1 ? tours[0] : 'both', event: tours.length === 1 ? parlay.legs[0].event : 'ATP and WTA', tier: null, round: null, surface: null, a: null, b: null, ...parlay, stars: stars(parlay.prob + 0.2), units: 1, postedAt: now, status: 'pending', result: null, net: null, actual: null });
+      posted++;
+    }
+  }
+  record.candidates = candidates.length;
   record.oddsAt = now;
   // Grading: every pending play whose match has a result.
   let graded = 0;
@@ -300,6 +398,7 @@ export async function runTennisTick(env, ctx, now = Date.now(), { deps = {} } = 
   const aceLogs = {};
   for (const p of record.plays) {
     if (p.status !== 'pending') continue;
+    if (p.market === 'ml_parlay') { const g = gradeParlay(p, results); if (g) { Object.assign(p, g); graded++; } continue; }
     const r = results.get(p.matchId);
     if (p.market === 'aces') {
       if (!aceLogs[p.tour]) aceLogs[p.tour] = (deps.aceLog ? await deps.aceLog(p.tour) : await readJson(env, TENNIS_ACELOG_KEY(p.tour))) ?? {};
@@ -314,8 +413,37 @@ export async function runTennisTick(env, ctx, now = Date.now(), { deps = {} } = 
   await env.POTD_KV.put(key, JSON.stringify(record), { expirationTtl: KV_TTL });
   const index = (await readJson(env, TENNIS_PICKS_INDEX)) ?? { dates: [] };
   if (!index.dates.includes(date)) { index.dates = [date, ...index.dates].slice(0, 120); await env.POTD_KV.put(TENNIS_PICKS_INDEX, JSON.stringify(index), { expirationTtl: KV_TTL }).catch(() => {}); }
-  return { skipped: false, date, considered, posted, graded, plays: record.plays.length, keys: Object.fromEntries(TOURS.map((t) => [t, (keys[t] ?? []).map((k) => k.key)])) };
+  return { skipped: false, date, considered, candidates: candidates.length, posted, parlay: parlay ? parlay.legs.length : 0, graded, plays: record.plays.length, units: unitsPosted(record.plays), keys: Object.fromEntries(TOURS.map((t) => [t, (keys[t] ?? []).map((k) => k.key)])) };
 }
+
+/**
+ * A moneyline parlay against the results: a leg loses with its match, wins
+ * with it, and is void (its price dropped) on a walkover or a retirement
+ * before a set was completed. The parlay loses on the first lost leg, wins
+ * once every leg is won or void, and waits otherwise.
+ */
+export function gradeParlay(play, results) {
+  const legs = (play.legs ?? []).map((l) => {
+    const r = results.get(l.matchId);
+    if (!r?.completed) return { ...l, result: null };
+    const retired = /retire|walkover/i.test(String(r.statusName ?? '')) || /ret\.|retired|w\/o|walkover/i.test(String(r.note ?? ''));
+    const setsDone = (r.sets ?? []).filter(setDone).length;
+    const walkover = /walkover/i.test(String(r.statusName ?? '')) || /w\/o|walkover/i.test(String(r.note ?? ''));
+    if (walkover || (retired && !setsDone) || !r.winner) return { ...l, result: 'void', actual: walkover ? 'walkover' : retired ? 'retired before a set was completed' : 'no winner listed' };
+    const line = (r.sets ?? []).map(([a, b]) => `${a}-${b}`).join(' ');
+    return { ...l, result: r.winner === l.side ? 'win' : 'loss', actual: `${line}${retired ? ' (ret.)' : ''}` };
+  });
+  const lost = legs.find((l) => l.result === 'loss');
+  if (lost) return { status: 'graded', result: 'loss', net: -play.units, actual: `${lost.selection.replace(' to win', '')} lost (${lost.actual})`, legs, gradedAt: Date.now() };
+  if (legs.some((l) => l.result == null)) return null;
+  const standing = legs.filter((l) => l.result === 'win');
+  if (!standing.length) return { status: 'void', result: 'void', net: 0, actual: 'every leg was void', legs, gradedAt: Date.now() };
+  const dec = standing.reduce((d, l) => d * americanToDecimal(l.american), 1);
+  return { status: 'graded', result: 'win', net: Math.round((dec - 1) * play.units * 100) / 100, actual: `${standing.length} of ${legs.length} legs won${legs.length > standing.length ? `, ${legs.length - standing.length} void` : ''}`, legs, gradedAt: Date.now() };
+}
+
+/** Whether a set's score is a finished set (6+ by two, or a 7), not one in play. */
+export const setDone = ([a, b]) => (Math.max(a, b) >= 6 && Math.abs(a - b) >= 2) || Math.max(a, b) === 7;
 
 const settle = (play, won, actual, { push = false, voided = false } = {}) => {
   const result = voided ? 'void' : push ? 'push' : won ? 'win' : 'loss';
@@ -347,20 +475,20 @@ export function gradePlay(play, r) {
       return settle(play, total > play.point, `${line}: ${total} games`, { push: total === play.point });
     }
     case 'set_spread': {
-      const dogSets = sets.filter(([a, b]) => (play.side === 'a' ? a > b : b > a)).length;
+      const dogSets = sets.filter((x) => setDone(x) && (play.side === 'a' ? x[0] > x[1] : x[1] > x[0])).length;
       if (dogSets >= 1) return settle(play, true, `${line}: took a set`);
       if (live) return null;
       if (!final) return settle(play, false, `${line}: not played to a finish`, { voided: true });
       return settle(play, false, `${line}: straight sets`);
     }
     case 'set1_total': {
-      const s = sets[0]; const done = s && (Math.max(s[0], s[1]) >= 6 && Math.abs(s[0] - s[1]) >= 2 || Math.max(s[0], s[1]) === 7);
+      const s = sets[0]; const done = s && setDone(s);
       if (!done) return r.completed ? settle(play, false, `${line}: the first set was not completed`, { voided: true }) : null;
       const total = s[0] + s[1];
       return settle(play, total > play.point, `${line}: ${total} games in the first set`, { push: total === play.point });
     }
     case 'set2_total': {
-      const s = sets[1]; const done = s && (Math.max(s[0], s[1]) >= 6 && Math.abs(s[0] - s[1]) >= 2 || Math.max(s[0], s[1]) === 7);
+      const s = sets[1]; const done = s && setDone(s);
       if (!done) return r.completed ? settle(play, false, `${line}: the second set was not completed`, { voided: true }) : null;
       const total = s[0] + s[1];
       return settle(play, total > play.point, `${line}: ${total} games in the second set`, { push: total === play.point });
@@ -394,5 +522,5 @@ export async function getTennisPicks(env, now = Date.now(), { days = 45 } = {}) 
   const all = history.flatMap((r) => r.plays ?? []);
   const current = history.find((r) => r.date === today) ?? null;
   const card = await readJson(env, TENNIS_CARD_KEY);
-  return { date: today, current, history: history.map((r) => ({ date: r.date, plays: r.plays, refreshedAt: r.refreshedAt ?? null })), record: betRecordOf(all), byTour: Object.fromEntries(TOURS.map((t) => [t, betRecordOf(all.filter((p) => p.tour === t))])), byMarket: Object.fromEntries(Object.keys(TENNIS_MARKETS).map((k) => [k, betRecordOf(all.filter((p) => p.market === k))])), markets: TENNIS_MARKETS, cardAt: card?.at ?? null, slate: (card?.slate ?? []).filter((m) => !m.qualifying).map((m) => ({ id: `${m.tour}:${m.id}`, tour: m.tour, event: m.eventName, tier: m.tier, round: m.round, date: m.date, state: m.state, a: m.a.name, b: m.b.name, sets: m.sets, winner: m.winner })), bar: { minProb: MIN_PROB, minEdge: MIN_EDGE, aceProb: ACE_PROB, band: PRICE_BAND } };
+  return { date: today, current, history: history.map((r) => ({ date: r.date, plays: r.plays, refreshedAt: r.refreshedAt ?? null })), record: betRecordOf(all), byTour: Object.fromEntries(TOURS.map((t) => [t, betRecordOf(all.filter((p) => p.tour === t))])), byMarket: Object.fromEntries(Object.keys(TENNIS_MARKETS).map((k) => [k, betRecordOf(all.filter((p) => p.market === k))])), markets: TENNIS_MARKETS, cardAt: card?.at ?? null, slate: (card?.slate ?? []).filter((m) => !m.qualifying).map((m) => ({ id: `${m.tour}:${m.id}`, tour: m.tour, event: m.eventName, tier: m.tier, round: m.round, date: m.date, state: m.state, a: m.a.name, b: m.b.name, sets: m.sets, winner: m.winner })), bar: { minProb: MIN_PROB, minEdge: MIN_EDGE, aceProb: ACE_PROB, band: PRICE_BAND, maxUnits: MAX_UNITS_DAY, parlayLegProb: PARLAY_LEG_PROB, parlayLegs: PARLAY_LEGS }, unitsToday: unitsPosted(current?.plays) };
 }
