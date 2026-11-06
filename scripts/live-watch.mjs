@@ -11,12 +11,17 @@
  * --team watches one game: today's game for the team on the league
  * scoreboard, until it is final (plus a few minutes) or the hours run
  * out. --all watches the whole slate (2026-11-05: "the live should be
- * running for NBA games right now"): every game in play or starting
- * inside the lead, picking up later games as they come into it, and
- * exits once none is left; the scheduled workflow (.github/workflows/
- * live-auto.yml) runs it every half hour per league so a night's games
- * are always covered.
+ * running for NBA games right now"): today's games (Eastern), every one
+ * in play or starting inside the lead, picking up later games as they
+ * come into it. With nothing inside the lead yet it waits, a scoreboard
+ * read every five minutes, rather than exiting: GitHub's scheduler
+ * delivered three of forty-eight cron firings on 2026-11-05, so a run
+ * cannot count on the next one. It exits once no game of the day is
+ * left, and at its hours limit with games still to come it says so
+ * (more=yes on GITHUB_OUTPUT) and the workflow (.github/workflows/
+ * live-auto.yml) starts the next run itself.
  */
+import { appendFileSync } from 'node:fs';
 import { readKv, writeKv } from './lib/kv.mjs';
 
 const args = process.argv.slice(2);
@@ -29,7 +34,6 @@ const hours = Number(opt('--hours', ALL ? 5.5 : 5));
 const every = Math.max(30, Number(opt('--every', 60)));
 const lead = Math.max(0, Number(opt('--lead', 45)));
 const fixture = opt('--scoreboard-file', null);
-if (!team && !ALL) { console.error('usage: node scripts/live-watch.mjs --league nfl (--team PHI | --all) [--hours 5] [--every 60] [--lead 45]'); process.exit(2); }
 
 const SOCCER = { ucl: 'uefa.champions', epl: 'eng.1', laliga: 'esp.1', seriea: 'ita.1', bundesliga: 'ger.1', ligue1: 'fra.1' };
 const SITE = { nfl: 'https://site.api.espn.com/apis/site/v2/sports/football/nfl', nba: 'https://site.api.espn.com/apis/site/v2/sports/basketball/nba', nhl: 'https://site.api.espn.com/apis/site/v2/sports/hockey/nhl', ...Object.fromEntries(Object.entries(SOCCER).map(([k, slug]) => [k, `https://site.api.espn.com/apis/site/v2/sports/soccer/${slug}`])) }[league];
@@ -45,15 +49,33 @@ async function scoreboard() {
   return getJson(`${SITE}/scoreboard`);
 }
 
-/** The games to watch on the scoreboard: the team's, or (--all) every game in play or starting inside the lead. */
+/** The calendar day of a moment in the Eastern time zone ("2026-11-05"): the day a slate belongs to. */
+export const dayKey = (ms, tz = 'America/New_York') => new Intl.DateTimeFormat('en-CA', { timeZone: tz, year: 'numeric', month: '2-digit', day: '2-digit' }).format(new Date(ms));
+/** The state of a scoreboard event: pre, in or post. */
+const stateOf = (e) => e.competitions?.[0]?.status?.type?.state ?? e.status?.type?.state ?? 'pre';
+/**
+ * Today's slate on the scoreboard (2026-11-06: "only show the games on the
+ * current day"): the games of the current Eastern day still to come or in
+ * play, plus any game in play from the day before (a late tip past
+ * midnight). The NFL scoreboard lists the whole week; only today's stay.
+ */
+export function todaySlate(sb, now = Date.now()) {
+  const today = dayKey(now);
+  return (sb?.events ?? []).filter((e) => { const st = stateOf(e); const t = Date.parse(e.date); return st === 'in' || (st === 'pre' && Number.isFinite(t) && dayKey(t) === today); });
+}
+/** How many of today's games are still to come or in play. */
+export const slateLeft = (sb, now = Date.now()) => todaySlate(sb, now).length;
+
+/** The games to watch on the scoreboard: the team's, or (--all) every game of today in play or starting inside the lead. */
 export function pickGames(sb, { team: want = '', all = false, leadMs = lead * 60e3, now = Date.now() } = {}) {
   const out = [];
+  const today = all ? new Set(todaySlate(sb, now).map((e) => e.id)) : null;
   for (const e of sb?.events ?? []) {
     const comp = e.competitions?.[0];
     const state = comp?.status?.type?.state ?? e.status?.type?.state ?? 'pre';
     const start = Date.parse(e.date);
     if (want) { if ((comp?.competitors ?? []).some((c) => String(c.team?.abbreviation ?? '').toUpperCase() === want)) out.push(e); continue; }
-    if (!all) continue;
+    if (!all || !today.has(e.id)) continue;
     if (state === 'in') out.push(e);
     else if (state === 'pre' && Number.isFinite(start) && start - now <= leadMs && start - now > -3 * 3600e3) out.push(e);
   }
@@ -146,36 +168,65 @@ async function tickWatch(w) {
   return false;
 }
 
+/** The watcher's heartbeat for the league: when it last looked, and what is next, so the board can say whether a watcher is on. */
+async function beat(sb) {
+  if (DRY) return;
+  const left = todaySlate(sb).sort((a, b) => Date.parse(a.date) - Date.parse(b.date));
+  const next = left.find((e) => stateOf(e) === 'pre');
+  const value = { at: Date.now(), league, inPlay: left.filter((e) => stateOf(e) === 'in').length, left: left.length, next: next ? { name: next.name, date: next.date } : null };
+  try { await writeKv([{ key: `live:watch:beat:${league}`, value }], { ttlSeconds: 86400 }); } catch (e) { say(`! KV beat: ${e.message}`); }
+}
+/** What the workflow reads after the run: whether the day still has games for a next run to pick up. */
+function finish(more) {
+  const line = `more=${more ? 'yes' : 'no'}`;
+  say(more ? 'hours up with games still to come today: the workflow starts the next run' : 'nothing left today; watch over');
+  if (process.env.GITHUB_OUTPUT) { try { appendFileSync(process.env.GITHUB_OUTPUT, `${line}\n`); } catch { /* printed below either way */ } }
+  console.log(line);
+}
+
 const isMain = process.argv[1] && import.meta.url.endsWith(process.argv[1].split('/').pop());
 if (isMain) {
-  const sb = await scoreboard();
-  const first = pickGames(sb, { team, all: ALL });
-  if (!first.length) {
-    // Nothing to watch yet: the slate is still listed, so the tab shows what is coming.
-    if (ALL) { for (const e of listGames(sb)) await openWatch(e, { listOnly: true }); await flushIndex(); }
-    say(ALL ? `no ${league.toUpperCase()} game in play or inside ${lead} minutes on today's scoreboard` : `no ${league.toUpperCase()} game for ${team} on today's scoreboard`);
-    process.exit(ALL ? 0 : 1);
-  }
+  if (!team && !ALL) { console.error('usage: node scripts/live-watch.mjs --league nfl (--team PHI | --all) [--hours 5] [--every 60] [--lead 45]'); process.exit(2); }
+  const deadline = Date.now() + hours * 3600e3;
+  let sb = await scoreboard();
+  let first = pickGames(sb, { team, all: ALL });
+  if (!first.length && !ALL) { say(`no ${league.toUpperCase()} game for ${team} on today's scoreboard`); process.exit(1); }
   const watches = new Map();
   const listed = new Set();
-  // --all: the rest of the slate is listed up front (a scoreboard tick each), so the tab shows every game of the night with its tip-off.
-  const listRest = async (sb) => { for (const e of ALL ? listGames(sb) : []) if (!watches.has(e.id) && !listed.has(e.id)) { listed.add(e.id); await openWatch(e, { listOnly: true }); } };
-  for (const e of first) watches.set(e.id, await openWatch(e));
+  // --all: today's slate is listed up front (a scoreboard tick each), so the tab shows every game of the day with its tip-off.
+  const listRest = async (sb) => { for (const e of ALL ? todaySlate(sb) : []) if (!watches.has(e.id) && !listed.has(e.id)) { listed.add(e.id); await openWatch(e, { listOnly: true }); } };
   await listRest(sb);
   await flushIndex();
-  const deadline = Date.now() + hours * 3600e3;
-  let lastScan = Date.now();
-  while (Date.now() < deadline && watches.size) {
-    for (const w of [...watches.values()]) { if (await tickWatch(w)) watches.delete(w.event.id); }
-    // --all: every five minutes, the scoreboard again for games now inside the lead, and any new listing.
-    if (ALL && Date.now() - lastScan >= 5 * 60e3) {
-      lastScan = Date.now();
-      const again = await scoreboard();
-      for (const e of pickGames(again, { all: true })) if (!watches.has(e.id)) watches.set(e.id, await openWatch(e));
-      await listRest(again);
-      await flushIndex();
-    }
-    if (watches.size) await sleep(every * 1000);
+  if (ALL) await beat(sb);
+  // --all with nothing inside the lead yet: wait for the first game, a scoreboard read every five minutes, as long as the day has games.
+  while (ALL && !first.length && Date.now() < deadline) {
+    const left = todaySlate(sb).filter((e) => stateOf(e) !== 'post');
+    if (!left.length) { say(`no ${league.toUpperCase()} game left on today's scoreboard`); finish(false); process.exit(0); }
+    const next = left.map((e) => Date.parse(e.date)).filter(Number.isFinite).sort((a, b) => a - b)[0];
+    say(`no ${league.toUpperCase()} game inside ${lead} minutes yet; ${left.length} today, the first at ${next ? new Date(next).toISOString() : '?'}; looking again in five minutes`);
+    await sleep(5 * 60e3);
+    sb = await scoreboard();
+    first = pickGames(sb, { all: true });
+    await listRest(sb); await flushIndex(); await beat(sb);
   }
-  say(watches.size ? 'hours up; watch over' : 'every game final; watch over');
+  if (!first.length) { finish(slateLeft(sb) > 0); process.exit(0); }
+  for (const e of first) watches.set(e.id, await openWatch(e));
+  await flushIndex();
+  let lastScan = Date.now();
+  while (Date.now() < deadline) {
+    for (const w of [...watches.values()]) { if (await tickWatch(w)) watches.delete(w.event.id); }
+    // --all: every five minutes (at once when nothing is being watched), the scoreboard again for games now inside the lead, and any new listing.
+    if (ALL && (Date.now() - lastScan >= 5 * 60e3 || !watches.size)) {
+      lastScan = Date.now();
+      sb = await scoreboard();
+      for (const e of pickGames(sb, { all: true })) if (!watches.has(e.id)) watches.set(e.id, await openWatch(e));
+      await listRest(sb); await flushIndex(); await beat(sb);
+      if (!watches.size && !todaySlate(sb).some((e) => stateOf(e) !== 'post')) break;
+    }
+    if (!ALL && !watches.size) break;
+    if (!watches.size) say(`every watched ${league.toUpperCase()} game final; ${todaySlate(sb).filter((e) => stateOf(e) === 'pre').length} still to come today`);
+    await sleep(watches.size ? every * 1000 : 5 * 60e3);
+  }
+  if (!ALL) { say(watches.size ? 'hours up; watch over' : 'game final; watch over'); }
+  else finish(Date.now() >= deadline && (watches.size > 0 || todaySlate(sb).some((e) => stateOf(e) !== 'post')));
 }

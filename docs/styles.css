@@ -7325,6 +7325,9 @@ a.trend-price:hover { background: rgba(255, 255, 255, 0.06); }
 .live-books-pick .row-sub { margin: 0 4px 0 0; }
 .live-books-pick .league-chip { padding: 5px 10px; font-size: 0.8rem; gap: 6px; }
 .live-books-pick .league-chip .book-badge { width: 16px; height: 16px; }
+.live-leagues-pick { margin-bottom: 8px; }
+.live-leagues-pick .league-chip { font-weight: 800; letter-spacing: 0.04em; padding: 6px 12px; }
+.live-league-n { font-size: 0.72rem; font-weight: 700; opacity: 0.75; margin-left: 2px; }
 /* The league beside a soccer player's club: the Soccer tab holds five leagues. */
 .trend-league { display: inline-block; vertical-align: middle; margin-left: 6px; font-size: 0.62rem; font-weight: 800; letter-spacing: 0.04em; text-transform: uppercase; color: var(--muted); padding: 1px 6px; border: 1px solid var(--line); border-radius: 999px; }
 .live-edge { margin-left: 6px; font-weight: 800; color: var(--success); }

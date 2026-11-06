@@ -132,6 +132,35 @@ test('the board drops a game once it is final, and a stale watch six hours past 
   m.set('live:watch:last', JSON.stringify({ ticks: [{ at: 1, state: 'post', detail: 'Final', score: { WSH: 27, PHI: 10 }, box: [] }] }));
   const board = await getLiveBoard(env, kick - 30 * 60e3);
   assert.deepEqual(board.games.map((g) => g.espnEventId), ['tonight']);
+  assert.deepEqual([board.day, board.leagues], ['2026-11-02', ['nba', 'nfl']]);
+});
+
+test('the board is today only, Eastern: a final from today stays, a late game in play past midnight stays, yesterday and the rest of the week go, and a league not on is left off', async () => {
+  const { getLiveBoard } = await import('../worker/src/live-board.js');
+  const now = Date.UTC(2026, 10, 6, 5, 30); // Fri 00:30 ET: still Thursday night's late game
+  const m = new Map(); const env = { POTD_KV: { get: async (k) => m.get(k) ?? null, put: async (k, v) => { m.set(k, v); } } };
+  m.set('live:watch:index:nba', JSON.stringify({ games: [
+    { id: 'late', name: 'Miami Heat at Golden State Warriors', date: '2026-11-06T03:00Z', league: 'nba' },
+    { id: 'early', name: 'Orlando Magic at Phoenix Suns', date: '2026-11-06T02:00Z', league: 'nba' },
+    { id: 'tomorrow', name: 'Boston Celtics at New York Knicks', date: '2026-11-07T00:30Z', league: 'nba' },
+  ] }));
+  m.set('live:watch:index:nfl', JSON.stringify({ games: [
+    { id: 'tnf', name: 'Jacksonville Jaguars at Baltimore Ravens', date: '2026-11-06T01:15Z', league: 'nfl' },
+    { id: 'sunday', name: 'Green Bay Packers at New England Patriots', date: '2026-11-08T21:25Z', league: 'nfl' },
+  ] }));
+  m.set('live:watch:index:nhl', JSON.stringify({ games: [{ id: 'puck', name: 'Boston Bruins at Pittsburgh Penguins', date: '2026-11-06T00:00Z', league: 'nhl' }] }));
+  const tick = (state, score) => JSON.stringify({ ticks: [{ at: now - 60e3, state, detail: state === 'post' ? 'Final' : 'Q4', period: 4, clock: '2:00', score, box: [] }] });
+  m.set('live:watch:late', tick('in', { GS: 100, MIA: 98 }));
+  m.set('live:watch:early', tick('post', { PHX: 110, ORL: 101 }));
+  m.set('live:watch:tnf', tick('post', { BAL: 24, JAX: 17 }));
+  m.set('live:watch:puck', tick('in', { PIT: 2, BOS: 2 }));
+  m.set('live:watch:beat:nba', JSON.stringify({ at: now - 30e3, league: 'nba', inPlay: 1, left: 1, next: null }));
+  const board = await getLiveBoard(env, now);
+  assert.equal(board.day, '2026-11-06', 'half past midnight Eastern is the next day');
+  assert.deepEqual(board.games.map((g) => g.espnEventId).sort(), ['late', 'tomorrow'], 'past midnight: the game still in play crosses with the new day\'s slate; the finals of the day before and the rest of the week are off');
+  assert.equal(board.watcher.nba.inPlay, 1);
+  const evening = await getLiveBoard(env, Date.UTC(2026, 10, 6, 4, 0)); // Thu 11 PM ET
+  assert.deepEqual(evening.games.map((g) => g.espnEventId).sort(), ['early', 'late', 'tnf'], 'Thursday evening: the finals of the day stay with the game in play; Sunday and Friday are not listed; the NHL game is off');
 });
 
 test('a deep ladder is read from its cheap end too: the three-leg at +100 comes from the low rungs, not the plus-money ones alone', async () => {

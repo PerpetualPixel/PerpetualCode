@@ -24,7 +24,7 @@ import { liveWatchKey, readWatchIndex, liveProbeKey, liveLatestKey, liveGameTeam
 import { bookIdFor, SPORTSBOOKS, americanToDecimal } from '../../docs/engine.js';
 import { fetchWeather } from './weather.js';
 import { gameReads } from './live-game.js';
-import { SOCCER_LIVE, LIVE_SPORT, isSoccer } from './live-leagues.js';
+import { SOCCER_LIVE, LIVE_SPORT, isSoccer, LIVE_ON, liveDay } from './live-leagues.js';
 import { espnAbbr } from '../../docs/team-logos.js';
 
 /** The box-score key each market settles on, per league. */
@@ -400,12 +400,21 @@ export function playSummary(slips, reads) {
 export async function getLiveBoard(env, now = Date.now(), { ctx = null } = {}) {
   const { games } = await readWatchIndex(env);
   const out = [];
-  // The whole slate (2026-11-05: "I only see two games, should be way more"): every watched game not yet over, up to forty.
-  for (const g of games.slice(0, 40)) {
+  const today = liveDay(now);
+  // The whole slate (2026-11-05: "I only see two games, should be way more"), today only (2026-11-06: "only show the games on
+  // the current day"): the current Eastern day's games in the leagues on, finals included until the day turns, a game in play
+  // past midnight with them; up to forty.
+  let seen = 0;
+  for (const g of games) {
+    if (seen >= 40) break;
+    const league = g.league ?? 'nfl';
+    if (!LIVE_ON.includes(league)) continue;
     const watch = JSON.parse((await env.POTD_KV.get(liveWatchKey(g.id)).catch(() => null)) ?? 'null');
     const tick = watch?.ticks?.at(-1) ?? null;
-    if (liveGameOver(g, tick, now)) continue; // the tab is for what is on or about to be, not last night
-    const league = g.league ?? watch?.league ?? 'nfl';
+    const onToday = liveDay(Date.parse(g.date) || 0) === today;
+    if (!onToday && tick?.state !== 'in') continue;
+    if (!tick && liveGameOver(g, null, now)) continue; // listed, never read, long past its start
+    seen++;
     const probeId = await env.POTD_KV.get(`live:probe:for:${g.id}`).catch(() => null);
     const probe = probeId ? JSON.parse((await env.POTD_KV.get(liveProbeKey(probeId)).catch(() => null)) ?? 'null') : null;
     const payload = probeId ? JSON.parse((await env.POTD_KV.get(liveLatestKey(probeId)).catch(() => null)) ?? 'null') : null;
@@ -440,5 +449,8 @@ export async function getLiveBoard(env, now = Date.now(), { ctx = null } = {}) {
       slips: plays && !withheld ? { builtAt: plays.builtAt, firstBuiltAt: plays.firstBuiltAt ?? plays.builtAt, builds: plays.builds ?? 1, score: plays.score, detail: plays.detail ?? null, period: plays.period ?? null, clock: plays.clock ?? null, list: slipList } : null,
     });
   }
-  return { at: now, games: out };
+  // The watchers' heartbeats (scripts/live-watch.mjs): when each league's runner last looked at the scoreboard.
+  const watcher = {};
+  for (const league of LIVE_ON) { const raw = await env.POTD_KV.get(`live:watch:beat:${league}`).catch(() => null); if (raw) { try { watcher[league] = JSON.parse(raw); } catch { /* a bad beat is no beat */ } } }
+  return { at: now, day: today, leagues: LIVE_ON, watcher, games: out };
 }

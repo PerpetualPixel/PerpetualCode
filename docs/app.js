@@ -11033,9 +11033,13 @@ el.trendsSheet?.addEventListener('click', (event) => {
 /* ================================================================ */
 
 const LIVE_BOOKS_KEY = 'pixelpick.liveBooks.v1';
+const LIVE_LEAGUES_KEY = 'pixelpick.liveLeagues.v1';
+/** The leagues the Live tab runs (the board says which; NBA and NFL for now) and the ones the user has on. */
+const LIVE_LEAGUES_DEFAULT = ['nba', 'nfl'];
 /** The books a live slip can be at, in the order the picker shows them (worker/src/settings.js's LIVE_BOOKS). */
 const LIVE_BOOKS = ['draftkings', 'fanduel', 'caesars', 'betmgm', 'fanatics', 'hardrock', 'bet365', 'betrivers', 'espnbet', 'prizepicks'];
-const liveState = { data: null, loading: false, timer: null, open: {}, books: new Set(loadJSON(LIVE_BOOKS_KEY, []) ?? []), showAll: false, expandAll: false };
+const liveState = { data: null, loading: false, timer: null, open: {}, books: new Set(loadJSON(LIVE_BOOKS_KEY, []) ?? []), leagues: new Set((loadJSON(LIVE_LEAGUES_KEY, null) ?? LIVE_LEAGUES_DEFAULT).filter((k) => LIVE_LEAGUES_DEFAULT.includes(k))), showAll: false, expandAll: false };
+if (!liveState.leagues.size) LIVE_LEAGUES_DEFAULT.forEach((k) => liveState.leagues.add(k));
 /** How a game starts, by league: the tip in basketball, the puck drop in hockey, the kick-off in football and soccer. */
 const liveStartWord = (lg) => (lg === 'nba' ? 'Tips off' : lg === 'nhl' ? 'Drops' : 'Kicks off');
 /** Whether a game's card is open: tapped open, or every card opened at once. */
@@ -11075,6 +11079,11 @@ function persistLiveBooks() {
 }
 /** The slips the user's books leave standing (all of them with no books chosen, or while "show all" is on). */
 const liveSlipsFor = (g) => { const all = g.slips?.list ?? []; return liveState.books.size && !liveState.showAll ? all.filter((s) => liveState.books.has(s.bookId)) : all; };
+/** The league toggles (2026-11-06): NBA and NFL, each on or off; the last one on stays on. */
+function liveLeaguePicker(all) {
+  const leagues = liveState.data?.leagues ?? LIVE_LEAGUES_DEFAULT;
+  return `<div class="live-books-pick live-leagues-pick" role="group" aria-label="Leagues on the board">${leagues.map((k) => { const n = all.filter((g) => g.league === k).length; const on = liveState.leagues.has(k); return `<button type="button" class="league-chip ${on ? 'is-active' : ''}" data-live-league="${esc(k)}" aria-pressed="${on}"><span class="league-chip-label">${esc(league(k))}</span><small class="live-league-n">${n}</small></button>`; }).join('')}</div>`;
+}
 function liveBooksPicker() {
   const none = !liveState.books.size;
   return `<div class="live-books-pick" role="group" aria-label="Slips at your books"><span class="row-sub">Slips at</span><button type="button" class="league-chip ${none ? 'is-active' : ''}" data-live-book="all" aria-pressed="${none}"><span class="league-chip-label">All books</span></button>${LIVE_BOOKS.map((id) => `<button type="button" class="league-chip ${liveState.books.has(id) ? 'is-active' : ''}" data-live-book="${esc(id)}" aria-pressed="${liveState.books.has(id)}" title="${esc(SPORTSBOOKS[id]?.name ?? id)}">${bookBadge(id, id)}<span class="league-chip-label">${esc(SPORTSBOOKS[id]?.name ?? id)}</span></button>`).join('')}</div>`;
@@ -11253,9 +11262,16 @@ function liveNoSlipWhy(g) {
 function renderLive() {
   if (!el.liveBody) return;
   const d = liveState.data;
-  const games = d?.games ?? [];
-  setLiveGlow(games.some((g) => g.tick?.state === 'in'));
-  if (!games.length) { el.liveBody.innerHTML = '<p class="empty">No game is being watched right now. The watcher starts before each game it is set for.</p>'; return; }
+  const all = d?.games ?? [];
+  const games = all.filter((g) => liveState.leagues.has(g.league));
+  setLiveGlow(all.some((g) => g.tick?.state === 'in'));
+  const beats = Object.values(d?.watcher ?? {}); const lastBeat = beats.length ? Math.max(...beats.map((b) => b.at ?? 0)) : 0;
+  const watcherNote = lastBeat ? (Date.now() - lastBeat < 12 * 60e3 ? `Watcher on, looked ${esc(ago(lastBeat))}` : `Watcher quiet since ${esc(ago(lastBeat))}`) : 'Watcher not started today';
+  if (!games.length) {
+    const chosen = [...liveState.leagues].map(league).join(' or ');
+    el.liveBody.innerHTML = `${liveLeaguePicker(all)}<p class="empty">${all.length ? `No ${esc(chosen)} game on today's board. ${all.length} ${esc([...new Set(all.map((g) => league(g.league)))].join(' and '))} game${all.length === 1 ? '' : 's'} today: turn the league on above.` : 'No NBA or NFL game on today\'s board yet. The watcher lists the day\'s games as it starts and reads each one from tip-off to the final.'}</p><p class="row-sub">${watcherNote}.</p>`;
+    return;
+  }
   const slips = games.reduce((n, g) => n + liveSlipsFor(g).length, 0);
   const elsewhere = games.reduce((n, g) => n + (g.slips?.list?.length ?? 0), 0) - slips;
   const inPlay = games.filter((g) => g.tick?.state === 'in').length;
@@ -11263,7 +11279,7 @@ function renderLive() {
   const reads = games.reduce((n, g) => n + (g.game ?? []).filter((r) => !liveState.books.size || liveState.showAll || r.lines.some((l) => liveState.books.has(l.bookId))).length, 0);
   const ordered = liveOrder(games);
   const playable = ordered.filter((g) => g.tick?.state === 'in' && g.play?.playable).length;
-  el.liveBody.innerHTML = `<div class="live-top"><span class="live-count ${slips || reads ? 'is-on' : ''}">${slips ? `${slips} live slip${slips === 1 ? '' : 's'} ready${where}` : elsewhere ? `No live slip${where}` : inPlay ? 'No live slip yet: they build from the first minutes and rebuild as the game moves' : 'No live slip'}${reads ? ` · ${reads} game line${reads === 1 ? '' : 's'} with an edge` : ''}</span><span class="row-sub">Board read ${esc(liveTimeFmt.format(new Date(d.at)))} · re-reads every minute while open</span></div>${liveBooksPicker()}<div class="live-list-head"><span class="row-sub">${playable ? `${playable} playable now, most confident first` : inPlay ? `${inPlay} in play, nothing playable yet` : `${games.length} game${games.length === 1 ? '' : 's'} on the slate`} · ${games.length} listed. Tap a game to open it.</span><button type="button" class="link-button" data-live-expand="1">${liveState.expandAll ? 'Collapse all' : 'Expand all'}</button></div>${ordered.map(renderLiveGame).join('')}`;
+  el.liveBody.innerHTML = `<div class="live-top"><span class="live-count ${slips || reads ? 'is-on' : ''}">${slips ? `${slips} live slip${slips === 1 ? '' : 's'} ready${where}` : elsewhere ? `No live slip${where}` : inPlay ? 'No live slip yet: they build from the first minutes and rebuild as the game moves' : 'No live slip'}${reads ? ` · ${reads} game line${reads === 1 ? '' : 's'} with an edge` : ''}</span><span class="row-sub">Today's games · board read ${esc(liveTimeFmt.format(new Date(d.at)))}, re-read every minute while open · ${watcherNote}</span></div>${liveLeaguePicker(all)}${liveBooksPicker()}<div class="live-list-head"><span class="row-sub">${playable ? `${playable} playable now, most confident first` : inPlay ? `${inPlay} in play, nothing playable yet` : `${games.length} game${games.length === 1 ? '' : 's'} on the slate`} · ${games.length} listed. Tap a game to open it.</span><button type="button" class="link-button" data-live-expand="1">${liveState.expandAll ? 'Collapse all' : 'Expand all'}</button></div>${ordered.map(renderLiveGame).join('')}`;
 }
 
 el.liveView?.addEventListener('click', (event) => {
@@ -11273,6 +11289,12 @@ el.liveView?.addEventListener('click', (event) => {
     if (id === 'all') liveState.books.clear(); else if (liveState.books.has(id)) liveState.books.delete(id); else liveState.books.add(id);
     liveState.showAll = false;
     persistLiveBooks(); renderLive(); return;
+  }
+  const lg = event.target.closest('[data-live-league]');
+  if (lg) {
+    const k = lg.dataset.liveLeague;
+    if (liveState.leagues.has(k)) { if (liveState.leagues.size > 1) liveState.leagues.delete(k); } else liveState.leagues.add(k);
+    saveJSON(LIVE_LEAGUES_KEY, [...liveState.leagues]); renderLive(); return;
   }
   if (event.target.closest('[data-live-showall]')) { liveState.showAll = true; renderLive(); return; }
   if (event.target.closest('[data-live-expand]')) { liveState.expandAll = !liveState.expandAll; if (!liveState.expandAll) liveState.open = Object.fromEntries(Object.entries(liveState.open).filter(([k]) => !k.startsWith('game:'))); renderLive(); return; }
