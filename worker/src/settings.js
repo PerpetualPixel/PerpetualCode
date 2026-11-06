@@ -135,9 +135,28 @@ export function cleanPicks(value, existing = null) {
  * `existing` holds — the bankroll panel and the Trends tab each save their
  * own field without wiping the other's.
  */
+/**
+ * The user's sportsbooks (2026-11-06: "for new users, ask them what book
+ * they use and set preferences to show those books only unless they
+ * choose other in the settings, keep this selection persistent per
+ * user"): one list the tabs follow. Null until the user has answered;
+ * an empty list means every book. When the client sends it, the Trends
+ * books, the Live books and the personal ticket's book follow it unless
+ * the same save sets them itself.
+ */
 function normalize(input, existing = null) {
   const bankroll = input?.bankroll ?? existing?.bankroll ?? {};
+  const myBooks = cleanBooks(input?.myBooks);
+  const follow = myBooks != null;
+  // The personal ticket's book follows the list when the stored one is not on it (or nothing is stored yet).
+  let picksInput = input?.picks ?? null;
+  if (!picksInput && follow && myBooks.length) {
+    const first = myBooks.find((b) => PICK_PREF_BOOKS.includes(b));
+    const current = existing?.picks?.book ?? null;
+    if (first && (!current || !myBooks.includes(current))) picksInput = { book: first };
+  }
   return {
+    myBooks: myBooks ?? cleanBooks(existing?.myBooks) ?? null,
     version: SETTINGS_VERSION,
     bankroll: {
       amount: cleanAmount(bankroll.amount),
@@ -145,10 +164,10 @@ function normalize(input, existing = null) {
       displayMode: bankroll.displayMode === 'units' ? 'units' : 'dollars',
       confirmed: bankroll.confirmed === true,
     },
-    trendBooks: cleanBooks(input?.trendBooks) ?? cleanBooks(existing?.trendBooks) ?? [],
+    trendBooks: cleanBooks(input?.trendBooks) ?? (follow ? myBooks : null) ?? cleanBooks(existing?.trendBooks) ?? [],
     // The books the Live tab shows slips for and imports to; empty means every book.
-    liveBooks: cleanLiveBooks(input?.liveBooks) ?? cleanLiveBooks(existing?.liveBooks) ?? [],
-    picks: cleanPicks(input?.picks, existing?.picks ?? null),
+    liveBooks: cleanLiveBooks(input?.liveBooks) ?? (follow ? cleanLiveBooks(myBooks) : null) ?? cleanLiveBooks(existing?.liveBooks) ?? [],
+    picks: cleanPicks(picksInput, existing?.picks ?? null),
     updatedAt: Date.now(),
   };
 }

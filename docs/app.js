@@ -790,6 +790,12 @@ const el = {
   updateBannerRefresh: document.getElementById('updateBannerRefresh'),
   updateBannerDismiss: document.getElementById('updateBannerDismiss'),
   whatsNewHint: document.getElementById('whatsNewHint'),
+  booksScrim: document.getElementById('booksScrim'),
+  booksOnboard: document.getElementById('booksOnboard'),
+  booksOnboardGrid: document.getElementById('booksOnboardGrid'),
+  booksOnboardSave: document.getElementById('booksOnboardSave'),
+  booksOnboardAll: document.getElementById('booksOnboardAll'),
+  booksOnboardNote: document.getElementById('booksOnboardNote'),
   whatsNewHintClose: document.getElementById('whatsNewHintClose'),
   bankrollToggle: document.getElementById('bankrollToggle'),
   bankrollPanel: document.getElementById('bankrollPanel'),
@@ -3351,6 +3357,8 @@ async function loadSettings() {
       state.bankroll = { ...state.bankroll, ...settings.bankroll };
       saveJSON(BANKROLL_KEY, state.bankroll); // keep the offline copy in step
     }
+    // The user's sportsbooks (see openBooksOnboard): the account's answer wins over this device's.
+    if (Array.isArray(settings?.myBooks)) saveJSON(MY_BOOKS_KEY, settings.myBooks);
     // The user's sportsbooks (see persistTrendBooks): the account's list
     // wins over this device's, same as the bankroll.
     if (Array.isArray(settings?.trendBooks)) {
@@ -3363,11 +3371,70 @@ async function loadSettings() {
       saveJSON(LIVE_BOOKS_KEY, settings.liveBooks);
       if (liveState.data) renderLive();
     }
-    return { ok: true, hadRecord: Boolean(settings) };
+    return { ok: true, hadRecord: Boolean(settings), chosenBooks: Array.isArray(settings?.myBooks) };
   } catch {
     return { ok: false, reason: 'unavailable' };
   }
 }
+
+/* ---------------------------------------------------------------- */
+/* Your sportsbooks (2026-11-06): asked once, kept per user, applied to every tab */
+/* ---------------------------------------------------------------- */
+/* One list under pixelpick.myBooks.v1 and, signed in, the account's
+   myBooks (worker/src/settings.js). Null means never asked; an empty list
+   means every book. On save the Trends books, the Live books and the
+   Parlay Builder's book follow it here, and the worker makes the
+   personal ticket's book follow it too. */
+const MY_BOOKS_KEY = 'pixelpick.myBooks.v1';
+const ONBOARD_BOOKS = ['draftkings', 'fanduel', 'betmgm', 'caesars', 'fanatics', 'hardrock', 'bet365', 'betrivers', 'espnbet', 'prizepicks', 'kalshi'];
+const myBooksState = { chosen: new Set(), open: false };
+const myBooks = () => { const v = loadJSON(MY_BOOKS_KEY, null); return Array.isArray(v) ? v : null; };
+
+/** The list applied to every tab and saved: this device at once, the account when signed in. */
+function applyMyBooks(list, { push = true } = {}) {
+  const books = [...new Set((list ?? []).filter((b) => SPORTSBOOKS[b]))];
+  saveJSON(MY_BOOKS_KEY, books);
+  if (typeof trendsState !== 'undefined') { trendsState.books = new Set(books); saveJSON(TREND_BOOKS_KEY, books); if (trendsState.data) renderTrends(); }
+  if (typeof liveState !== 'undefined') { liveState.books = new Set(books.filter((b) => LIVE_BOOKS.includes(b))); saveJSON(LIVE_BOOKS_KEY, [...liveState.books]); if (liveState.data) renderLive(); }
+  if (typeof parlayState !== 'undefined') { const first = books.find((b) => PARLAY_BOOKS.includes(b)); if (first) { parlayState.book = first; parlayState.built = null; parlayState.locked.clear(); if (el.parlayView && !el.parlayView.hidden) renderParlay(); } }
+  const headers = settingsHeaders();
+  if (push && headers && CONFIG.WORKER_URL) {
+    fetch(new URL('/settings', CONFIG.WORKER_URL), { method: 'PUT', headers: { ...headers, 'Content-Type': 'application/json' }, body: JSON.stringify({ myBooks: books }) }).catch(() => {});
+  }
+}
+function renderBooksOnboard() {
+  if (!el.booksOnboardGrid) return;
+  el.booksOnboardGrid.innerHTML = ONBOARD_BOOKS.map((id) => { const on = myBooksState.chosen.has(id); return `<button type="button" class="books-chip ${on ? 'is-active' : ''}" data-onboard-book="${esc(id)}" aria-pressed="${on}">${bookBadge(id, SPORTSBOOKS[id]?.name)}<span>${esc(SPORTSBOOKS[id]?.name ?? id)}</span>${on ? '<span class="league-chip-on" aria-hidden="true">✓</span>' : ''}</button>`; }).join('');
+  if (el.booksOnboardSave) el.booksOnboardSave.textContent = myBooksState.chosen.size ? `Save ${myBooksState.chosen.size} book${myBooksState.chosen.size === 1 ? '' : 's'}` : 'Save my books';
+  if (el.booksOnboardNote) el.booksOnboardNote.textContent = settingsHeaders() ? 'Saved to your account, the same on every device.' : 'Saved on this device; sign in to keep it on every device.';
+}
+function openBooksOnboard(preset = null) {
+  if (!el.booksOnboard) return;
+  myBooksState.chosen = new Set((preset ?? myBooks() ?? []).filter((b) => SPORTSBOOKS[b]));
+  myBooksState.open = true;
+  renderBooksOnboard();
+  el.booksScrim.hidden = false; el.booksOnboard.hidden = false;
+  document.body.style.overflow = 'hidden';
+  el.booksOnboardSave?.focus();
+}
+function closeBooksOnboard() {
+  myBooksState.open = false;
+  if (el.booksScrim) el.booksScrim.hidden = true; if (el.booksOnboard) el.booksOnboard.hidden = true;
+  document.body.style.overflow = '';
+}
+/** New here: never asked on this device and, signed in, never on the account. */
+function maybeAskBooks(loaded) {
+  if (myBooks() !== null) return;
+  if (loaded?.chosenBooks) return;
+  openBooksOnboard([]);
+}
+el.booksOnboard?.addEventListener('click', (event) => {
+  const chip = event.target.closest('[data-onboard-book]');
+  if (chip) { const id = chip.dataset.onboardBook; if (myBooksState.chosen.has(id)) myBooksState.chosen.delete(id); else myBooksState.chosen.add(id); renderBooksOnboard(); return; }
+  if (event.target.closest('#booksOnboardSave')) { if (!myBooksState.chosen.size) { if (el.booksOnboardNote) el.booksOnboardNote.textContent = 'Tap the books you use, or choose "Show every book".'; return; } applyMyBooks([...myBooksState.chosen]); closeBooksOnboard(); return; }
+  if (event.target.closest('#booksOnboardAll')) { applyMyBooks([]); closeBooksOnboard(); }
+});
+el.booksScrim?.addEventListener('click', () => { if (myBooks() !== null) closeBooksOnboard(); });
 
 // Coalesces the burst of persistBankroll() calls a single Submit produces
 // (amount, unit, confirmed, and displayMode can all change at once) into one
@@ -7820,7 +7887,8 @@ const TRENDS_ONLY = true;
     setActiveTab('trends');
     // The account's sportsbooks first, so the first render is already
     // filtered to the books the user plays at.
-    await loadSettings();
+    const loaded = await loadSettings();
+    maybeAskBooks(loaded);
     await loadTrends();
     startUpdateChecks();
     return;
@@ -10271,7 +10339,7 @@ el.playersForm?.addEventListener('submit', (event) => { event.preventDefault(); 
 const parlayState = {
   // The leagues toggled on; a ticket can mix legs from all of them.
   sports: new Set(['basketball_nba']), rows: {}, loading: false,
-  book: 'draftkings', legs: 4, minL20: 0, season: false, minH2H: 0, minScore: 2, stats: new Set(), odds: [-800, 800], games: new Set(), side: 'both', team: '',
+  book: (() => { try { const v = JSON.parse(localStorage.getItem('pixelpick.myBooks.v1') ?? 'null'); const first = Array.isArray(v) ? v.find((b) => ['draftkings', 'fanduel', 'caesars', 'fanatics', 'betmgm', 'prizepicks', 'hardrock', 'bet365', 'betrivers'].includes(b)) : null; return first ?? 'draftkings'; } catch { return 'draftkings'; } })(), legs: 4, minL20: 0, season: false, minH2H: 0, minScore: 2, stats: new Set(), odds: [-800, 800], games: new Set(), side: 'both', team: '',
   // UFC only: the prop types the pieces come from (none chosen = every type).
   ufcProps: new Set(),
   built: null, locked: new Set(), seen: new Set(), breakdowns: {}, open: null, amount: 10, note: '', sprinkle: false,

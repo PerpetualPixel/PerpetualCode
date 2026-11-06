@@ -36,9 +36,9 @@
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Syne:wght@600;700;800&family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
-<link rel="stylesheet" href="styles.css?v=1.315">
+<link rel="stylesheet" href="styles.css?v=1.316">
 <!-- Before first paint: a desktop reader who chose "Fit screen" gets the wide shell without a flash of the narrow one. -->
-<script src="wide.js?v=1.315"></script>
+<script src="wide.js?v=1.316"></script>
 </head>
 <body>
 
@@ -555,6 +555,19 @@
      Games, Odds, Sportsbooks, Period Hit Rate, Period, Sort, Detail).
      Outside the tab panels: a Pixel's Picks leg opens the Detail sheet
      too, and a panel that is hidden would hide the sheet with it. -->
+<!-- The first-run question (2026-11-06): which sportsbooks the user plays at; the tabs then show those books only
+     until the user picks others in Account settings. docs/app.js's openBooksOnboard. -->
+<div id="booksScrim" class="trends-scrim books-scrim" hidden></div>
+<div id="booksOnboard" class="books-onboard" role="dialog" aria-modal="true" aria-labelledby="booksOnboardTitle" hidden>
+  <h2 id="booksOnboardTitle" class="books-onboard-title">Which sportsbooks do you use?</h2>
+  <p class="row-sub">Pick the ones you play at. Trends, the Parlay Builder, Live slips and your own Pixel's Pick then show those books only. Change it any time in Account settings.</p>
+  <div id="booksOnboardGrid" class="books-grid" role="group" aria-label="Your sportsbooks"></div>
+  <div class="books-onboard-actions">
+    <button type="button" id="booksOnboardSave" class="parlay-build">Save my books</button>
+    <button type="button" id="booksOnboardAll" class="parlay-reset">Show every book</button>
+  </div>
+  <p id="booksOnboardNote" class="row-sub"></p>
+</div>
 <div id="trendsScrim" class="trends-scrim" hidden></div>
 <div id="trendsSheet" class="trends-sheet" role="dialog" aria-modal="true" aria-labelledby="trendsSheetTitle" hidden></div>
 
@@ -1116,6 +1129,6 @@
   </div>
 </aside>
 
-<script type="module" src="app.js?v=1.315"></script>
+<script type="module" src="app.js?v=1.316"></script>
 </body>
 </html>

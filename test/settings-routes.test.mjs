@@ -226,3 +226,26 @@ test('the Trends sportsbooks save beside the bankroll: each PUT keeps the other 
   assert.deepEqual(live.settings.liveBooks, ['fanduel', 'betmgm'], 'cleaned to the books a live slip can be at');
   assert.deepEqual(live.settings.trendBooks, ['draftkings', 'fanduel', 'williamhill_us'], 'the Trends books stand');
 });
+
+test('the user\'s sportsbooks (myBooks): null until answered, the Trends and Live lists and the personal ticket\'s book follow a save, an empty list means every book', async () => {
+  const env = makeEnv();
+  const first = await (await worker.fetch(call('/settings', { method: 'PUT', token: TOKEN, body: { bankroll: { amount: 100, unit: 5 } } }), env, ctx)).json();
+  assert.equal(first.settings.myBooks, null, 'never asked yet');
+  const saved = await (await worker.fetch(call('/settings', { method: 'PUT', token: TOKEN, body: { myBooks: ['FanDuel', 'betmgm', 'kalshi', 'nope!'] } }), env, ctx)).json();
+  assert.deepEqual(saved.settings.myBooks, ['fanduel', 'betmgm', 'kalshi']);
+  assert.deepEqual(saved.settings.trendBooks, ['fanduel', 'betmgm', 'kalshi'], 'the Trends list follows');
+  assert.deepEqual(saved.settings.liveBooks, ['fanduel', 'betmgm'], 'the Live list follows, live books only');
+  assert.equal(saved.settings.picks.book, 'fanduel', 'the personal ticket draws at the first book');
+  assert.equal(saved.settings.bankroll.amount, 100, 'the bankroll stands');
+  // A Trends-only save still edits its own list; the answer stands.
+  await worker.fetch(call('/settings', { method: 'PUT', token: TOKEN, body: { trendBooks: ['draftkings'] } }), env, ctx);
+  const after = await (await worker.fetch(call('/settings', { token: TOKEN }), env, ctx)).json();
+  assert.deepEqual(after.settings.myBooks, ['fanduel', 'betmgm', 'kalshi']); assert.deepEqual(after.settings.trendBooks, ['draftkings']);
+  // A pick book already on the list stays when the list changes around it.
+  await worker.fetch(call('/settings', { method: 'PUT', token: TOKEN, body: { myBooks: ['draftkings', 'fanduel'] } }), env, ctx);
+  const kept = await (await worker.fetch(call('/settings', { token: TOKEN }), env, ctx)).json();
+  assert.equal(kept.settings.picks.book, 'fanduel', 'still on the list, so it stays');
+  // Every book: the lists empty, the pick book as it was.
+  const all = await (await worker.fetch(call('/settings', { method: 'PUT', token: TOKEN, body: { myBooks: [] } }), env, ctx)).json();
+  assert.deepEqual(all.settings.myBooks, []); assert.deepEqual(all.settings.trendBooks, []); assert.deepEqual(all.settings.liveBooks, []); assert.equal(all.settings.picks.book, 'fanduel');
+});
