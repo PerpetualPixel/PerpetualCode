@@ -61,9 +61,9 @@ jobs:
             body=$(curl -sS --max-time 60 -H 'Accept: application/json' "$url")
             echo "$body" | node -e '
               let raw = ""; process.stdin.on("data", (c) => { raw += c; }).on("end", () => {
-                let d; try { d = JSON.parse(raw); } catch {
-                  // Raw mode: the markup itself around each match, for writing a parser against a page.
+                // Raw mode: the text itself (markup or JSON) around each match, for writing a parser against a page or a feed shape.
                 if (process.env.RAW === "true" && process.env.GREP) { const g = new RegExp(process.env.GREP, "gi"); let m; let k = 0; while ((m = g.exec(raw)) && k++ < 40) console.log("RAW", raw.slice(Math.max(0, m.index - 300), m.index + 700).replace(/\s+/g, " ")); return; }
+                let d; try { d = JSON.parse(raw); } catch {
                 // Not JSON (a docs page): the lines that mention the words in GREP, or the head of it.
                   const re = process.env.GREP ? new RegExp(process.env.GREP, "i") : null;
                   const text = raw.replace(/<script[\s\S]*?<\/script>|<style[\s\S]*?<\/style>/g, "").replace(/<[^>]+>/g, " ").replace(/&nbsp;|&#160;/g, " ").replace(/[ \t]+/g, " ");
