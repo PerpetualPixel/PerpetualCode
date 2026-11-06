@@ -36,9 +36,9 @@
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Syne:wght@600;700;800&family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
-<link rel="stylesheet" href="styles.css?v=1.316">
+<link rel="stylesheet" href="styles.css?v=1.317">
 <!-- Before first paint: a desktop reader who chose "Fit screen" gets the wide shell without a flash of the narrow one. -->
-<script src="wide.js?v=1.316"></script>
+<script src="wide.js?v=1.317"></script>
 </head>
 <body>
 
@@ -406,6 +406,15 @@
   <div class="sc-intro">
     <h2 class="parlay-h">Slip Check</h2>
     <p class="row-sub">Drop in a bet and get every leg's hit rate over its last 5, 10 and 20 games and against tonight's opponent, a confidence out of 100 for each leg, a grade for the ticket, and what to drop or move.</p>
+  </div>
+  <div class="sc-type" role="group" aria-label="Ticket type">
+    <span class="sc-h">What kind of ticket is this?</span>
+    <div id="slipTypes" class="sc-type-chips">
+      <button type="button" class="sc-type-chip is-builder" data-slip-type="builder" aria-pressed="false"><strong>Builder</strong><small>Legs picked to hit, 4 or fewer ideally</small></button>
+      <button type="button" class="sc-type-chip is-regular" data-slip-type="regular" aria-pressed="false"><strong>Regular</strong><small>1 to 6 legs, varied risk, decent payout</small></button>
+      <button type="button" class="sc-type-chip is-lotto" data-slip-type="lotto" aria-pressed="false"><strong>Lotto</strong><small>High risk, high payout, long odds</small></button>
+    </div>
+    <p id="slipTypeNote" class="row-sub">Pick one. The grade and the advice change with it: a builder is held to a strict bar, a regular ticket gets a leg or two trimmed, a lotto gets its one soft leg named.</p>
   </div>
   <div class="sc-inputs">
     <div class="sc-card">
@@ -1129,6 +1138,6 @@
   </div>
 </aside>
 
-<script type="module" src="app.js?v=1.316"></script>
+<script type="module" src="app.js?v=1.317"></script>
 </body>
 </html>

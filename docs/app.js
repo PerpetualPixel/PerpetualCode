@@ -53,7 +53,7 @@ import {
   supportsQualitativeSignal,
   tennisUnderdogBlocked,
 } from './qualitative.js';
-import { parseLeg as parseSlipLeg, parseSlipText, parseAmerican as parseSlipAmerican, checkSlip, CATEGORY_LABEL as SLIP_CATEGORY_LABEL } from './slip-check.js';
+import { parseLeg as parseSlipLeg, parseSlipText, parseAmerican as parseSlipAmerican, checkSlip, CATEGORY_LABEL as SLIP_CATEGORY_LABEL, TICKET_TYPES as SLIP_TICKET_TYPES } from './slip-check.js';
 import { hitFlags as slipHitFlags } from './trends.js';
 import {
   auditLegs,
@@ -11762,7 +11762,28 @@ function renderTennisLedger() {
    player is off the board, the tennis legs, and the slate's prices for
    team lines. */
 const SLIP_LEAGUES = ['basketball_nba', 'americanfootball_nfl', 'icehockey_nhl', 'soccer'];
-const slipState = { legs: [], combinedAmerican: null, imageName: null, busy: false, result: null, open: {}, data: { trends: {}, trendsAt: 0, playerIndex: {}, playerLogs: {}, tennisLegs: null, tennisAt: 0 }, quota: null };
+const slipState = { legs: [], combinedAmerican: null, imageName: null, busy: false, result: null, open: {}, data: { trends: {}, trendsAt: 0, playerIndex: {}, playerLogs: {}, tennisLegs: null, tennisAt: 0 }, quota: null, type: null, pendingImage: null };
+/** The ticket type: one at a time, none until the user picks (the check waits for it). */
+function renderSlipType() {
+  document.querySelectorAll('[data-slip-type]').forEach((b) => { const on = b.dataset.slipType === slipState.type; b.classList.toggle('is-active', on); b.setAttribute('aria-pressed', String(on)); });
+  const note = document.getElementById('slipTypeNote');
+  if (note) note.textContent = slipState.type ? SLIP_TICKET_TYPES[slipState.type].blurb : 'Pick one. The grade and the advice change with it: a builder is held to a strict bar, a regular ticket gets a leg or two trimmed, a lotto gets its one soft leg named.';
+  document.getElementById('slipTypes')?.classList.toggle('is-missing', false);
+}
+/** No type chosen: say so, point at the chips, and remember the legs for when one is picked. */
+function slipNeedsType() {
+  if (slipState.type) return false;
+  slipSay('Pick the ticket type first: Builder, Regular or Lotto. The check runs as soon as you choose.');
+  document.getElementById('slipTypes')?.classList.add('is-missing');
+  document.getElementById('slipTypes')?.scrollIntoView({ behavior: 'smooth', block: 'center' });
+  return true;
+}
+document.getElementById('slipTypes')?.addEventListener('click', (event) => {
+  const chip = event.target.closest('[data-slip-type]'); if (!chip) return;
+  slipState.type = chip.dataset.slipType;
+  renderSlipType();
+  if (slipState.legs.length) slipRun(); else if (slipState.pendingImage) { const f = slipState.pendingImage; slipState.pendingImage = null; slipHandleImage(f); }
+});
 
 function renderSlipQuota(q) {
   slipState.quota = q;
@@ -11781,6 +11802,7 @@ const slipSay = (text) => { if (el.slipStatus) el.slipStatus.textContent = text;
 async function slipHandleImage(file) {
   if (!file || slipState.busy) return;
   if (!String(file.type ?? '').startsWith('image/')) { slipSay('That file is not an image.'); return; }
+  if (!slipState.type) { slipState.pendingImage = file; const url = URL.createObjectURL(file); if (el.slipPreview) { el.slipPreview.hidden = false; el.slipPreview.innerHTML = `<img src="${url}" alt="Your bet slip"><p class="tail-fade-preview-name">${esc(file.name || 'pasted image')}</p>`; } slipNeedsType(); return; }
   slipState.busy = true; slipState.imageName = file.name || 'pasted image';
   const url = URL.createObjectURL(file);
   if (el.slipPreview) { el.slipPreview.hidden = false; el.slipPreview.innerHTML = `<img src="${url}" alt="Your bet slip"><p class="tail-fade-preview-name">${esc(slipState.imageName)}</p>`; }
@@ -11811,6 +11833,7 @@ async function slipHandleText() {
   slipState.combinedAmerican = lone.length ? parseSlipAmerican(lone.at(-1)) : null;
   if (!legs.length) { slipSay('Nothing read as a leg yet. One leg per line, the way the book writes it: player, over or under, the number, the stat.'); return; }
   slipState.legs = legs;
+  if (slipNeedsType()) return;
   await slipRun();
 }
 
@@ -11883,7 +11906,7 @@ async function slipRun({ note = '' } = {}) {
         if (log) { playerLogs[`${sport}:${leg.stat.key}:${leg.player}`] = log; break; }
       }
     }
-    slipState.result = checkSlip(slipState.legs, { trendsRows, playerLogs, tennisLegs, slateGames: slipSlateGames() }, { combinedAmerican: slipState.combinedAmerican });
+    slipState.result = checkSlip(slipState.legs, { trendsRows, playerLogs, tennisLegs, slateGames: slipSlateGames() }, { combinedAmerican: slipState.combinedAmerican, type: slipState.type, books: [...(trendsState.books ?? [])] });
     slipState.open = {};
     renderSlipResult(note);
   } catch (e) { slipSay(`Could not check the slip: ${e.message}`); }
@@ -11922,7 +11945,9 @@ function renderSlipLeg(s, i) {
     ${open ? `<ul class="tennis-why-list">${(score.notes ?? []).map((n) => `<li>${esc(n)}</li>`).join('') || '<li>No notes for this leg.</li>'}</ul>` : ''}
   </article>`;
 }
-const SLIP_SUGGESTION_ICON = { drop: '✂️', move: '↔️', flip: '🔁', injury: '🩹', warn: '⚠️', 'same-game': '🔗', lotto: '🎟️', unmatched: '🔎', ok: '✅' };
+const SLIP_SUGGESTION_ICON = { drop: '✂️', move: '↔️', flip: '🔁', injury: '🩹', warn: '⚠️', 'same-game': '🔗', lotto: '🎟️', unmatched: '🔎', ok: '✅', replace: '🔄' };
+/** A replacement leg off the board, with its price and the book's link. */
+const renderSlipProp = (p) => `<div class="sc-prop"><span class="sc-prop-main"><strong>${esc(p.selection)}</strong><small>${esc(p.game)} · L20 ${Math.round(p.rate * 100)}%${p.l10 != null ? ` · L10 ${Math.round(p.l10 * 100)}%` : ''}</small></span>${p.link ? `<a class="parlay-btn is-slip" href="${esc(p.link)}" target="_blank" rel="noopener">${p.bookId ? bookBadge(p.bookId, p.book) : ''}${esc(formatAmerican(p.american))} · Add to slip ↗</a>` : `<span class="parlay-leg-price">${p.bookId ? bookBadge(p.bookId, p.book) : ''}${esc(formatAmerican(p.american))}</span>`}</div>`;
 function renderSlipResult(note = '') {
   const res = slipState.result;
   if (!res || !el.slipResult) return;
@@ -11930,7 +11955,10 @@ function renderSlipResult(note = '') {
   slipSay(`${scored.length} leg${scored.length === 1 ? '' : 's'} checked · ${slip.known} with a read${note ? ` · ${note}` : ''}`);
   const fairText = slip.fair != null ? `${slip.fair > 0 ? '+' : ''}${slip.fair}` : '—';
   const combinedText = slip.combined != null ? `${slip.combined > 0 ? '+' : ''}${slip.combined}` : '—';
-  el.slipResult.innerHTML = `<section class="sc-overall ${slipGradeTone(slip.grade)}">
+  const v = slip.verdict;
+  const vTone = v ? (v.state === 'play' ? 'is-hot' : v.state === 'fix' ? 'is-warm' : 'is-cold') : slipGradeTone(slip.grade);
+  el.slipResult.innerHTML = `<section class="sc-overall ${vTone} ${slip.type ? `is-type-${esc(slip.type)}` : ''}">
+      ${slip.type ? `<div class="sc-type-head"><span class="sc-type-badge is-${esc(slip.type)}">${esc(SLIP_TICKET_TYPES[slip.type].label)} ticket</span>${v ? `<strong class="sc-verdict ${vTone}">${esc(v.title)}</strong>` : ''}</div>${v ? `<p class="sc-verdict-text">${esc(v.text)}</p>` : ''}` : ''}
       <div class="sc-grade"><span class="sc-grade-letter ${slipGradeTone(slip.grade)}">${esc(slip.grade ?? '?')}</span><span class="sc-grade-sub">${esc(SLIP_CATEGORY_LABEL[slip.category] ?? slip.category)}${slip.category === 'lotto' ? ' 🎟️' : ''}</span></div>
       <div class="sc-overall-stats">
         <span><small>Lands</small><b>${slip.lands != null ? `${slip.lands * 100 < 1 ? '<1' : Math.round(slip.lands * 100)}%` : '—'}</b></span>
@@ -11942,7 +11970,7 @@ function renderSlipResult(note = '') {
       <p class="row-sub">${slip.known < scored.length ? `${scored.length - slip.known} leg${scored.length - slip.known === 1 ? '' : 's'} without a read are left out of the chance. ` : ''}The chance reads the legs as independent; the strength is the legs' confidence averaged, the grade follows it (A from 75, B from 65, C from 55, D from 45).</p>
     </section>
     <h3 class="sc-h">What to do</h3>
-    <ul class="sc-suggestions">${suggestions.map((x) => `<li class="sc-suggestion is-${esc(x.type)}"><span class="sc-sug-icon" aria-hidden="true">${SLIP_SUGGESTION_ICON[x.type] ?? '•'}</span><span>${esc(x.text)}</span></li>`).join('')}</ul>
+    <ul class="sc-suggestions">${suggestions.map((x) => `<li class="sc-suggestion is-${esc(x.type)}"><span class="sc-sug-icon" aria-hidden="true">${SLIP_SUGGESTION_ICON[x.type] ?? '•'}</span><span class="sc-sug-body"><span>${esc(x.text)}</span>${x.props?.length ? `<div class="sc-props">${x.props.map(renderSlipProp).join('')}</div>` : ''}</span></li>`).join('')}</ul>
     <h3 class="sc-h">Every leg</h3>
     <div class="sc-legs">${scored.map(renderSlipLeg).join('')}</div>`;
   if (window.innerWidth <= 820) el.slipResult.scrollIntoView({ behavior: 'smooth', block: 'start' });
@@ -11974,7 +12002,7 @@ el.slipPasteBtn?.addEventListener('click', async () => {
   } catch { slipSay('The browser would not hand over the clipboard: paste into the box with Ctrl+V, or long-press and Paste on a phone.'); }
 });
 el.slipCheckBtn?.addEventListener('click', slipHandleText);
-el.slipClearBtn?.addEventListener('click', () => { slipState.legs = []; slipState.result = null; slipState.combinedAmerican = null; if (el.slipText) el.slipText.value = ''; if (el.slipPreview) { el.slipPreview.hidden = true; el.slipPreview.innerHTML = ''; } if (el.slipResult) el.slipResult.innerHTML = ''; slipSay(''); });
+el.slipClearBtn?.addEventListener('click', () => { slipState.legs = []; slipState.result = null; slipState.combinedAmerican = null; slipState.type = null; slipState.pendingImage = null; renderSlipType(); if (el.slipText) el.slipText.value = ''; if (el.slipPreview) { el.slipPreview.hidden = true; el.slipPreview.innerHTML = ''; } if (el.slipResult) el.slipResult.innerHTML = ''; slipSay(''); });
 el.slipResult?.addEventListener('click', (event) => { const why = event.target.closest('[data-slip-why]'); if (why) { const i = why.dataset.slipWhy; slipState.open[i] = !slipState.open[i]; renderSlipResult(); } });
 
 el.tennisView?.addEventListener('click', (event) => {

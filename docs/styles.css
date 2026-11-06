@@ -7538,3 +7538,40 @@ a.trend-price:hover { background: rgba(255, 255, 255, 0.06); }
 .sc-bars .trend-bar { max-width: 22px; }
 .sc-warn { margin: 0; color: var(--danger, #ff5c7a); font-size: 0.82rem; }
 .sc-why { justify-self: start; }
+/* The ticket type: one of three, none until chosen; the chips pulse when the check waits on one. */
+.sc-type { display: grid; gap: 8px; margin: 0 0 12px; }
+.sc-type-chips { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; }
+@media (max-width: 520px) { .sc-type-chips { grid-template-columns: 1fr; } }
+.sc-type-chip { display: grid; gap: 2px; text-align: left; padding: 10px 12px; border-radius: 14px; border: 1px solid var(--line); background: var(--surface); color: var(--text); font: inherit; cursor: pointer; border-left-width: 4px; }
+.sc-type-chip small { color: var(--muted); font-size: 0.74rem; }
+.sc-type-chip.is-builder { border-left-color: var(--success); }
+.sc-type-chip.is-regular { border-left-color: #60a5fa; }
+.sc-type-chip.is-lotto { border-left-color: #f5c542; }
+.sc-type-chip.is-active { background: var(--accent-dim); border-color: var(--accent); }
+.sc-type-chip.is-active.is-builder { border-color: var(--success); background: rgba(94, 224, 122, 0.12); }
+.sc-type-chip.is-active.is-regular { border-color: #60a5fa; background: rgba(96, 165, 250, 0.12); }
+.sc-type-chip.is-active.is-lotto { border-color: #f5c542; background: rgba(245, 197, 66, 0.12); }
+.sc-type-chips.is-missing .sc-type-chip { animation: scPulse 1.2s ease-in-out 2; }
+@keyframes scPulse { 0%, 100% { box-shadow: none; } 50% { box-shadow: 0 0 0 3px rgba(157, 78, 221, 0.45); } }
+.sc-type .row-sub { margin: 0; }
+.sc-type-head { grid-column: 1 / -1; display: flex; align-items: center; flex-wrap: wrap; gap: 10px; }
+.sc-type-badge { padding: 3px 10px; border-radius: 999px; font-size: 0.72rem; font-weight: 800; letter-spacing: 0.05em; text-transform: uppercase; border: 1px solid var(--line); color: var(--muted); }
+.sc-type-badge.is-builder { color: var(--success); border-color: var(--success); }
+.sc-type-badge.is-regular { color: #60a5fa; border-color: #60a5fa; }
+.sc-type-badge.is-lotto { color: #f5c542; border-color: #f5c542; }
+.sc-verdict { font-size: 1.1rem; }
+.sc-verdict.is-hot { color: var(--success); }
+.sc-verdict.is-warm { color: #eab308; }
+.sc-verdict.is-cold { color: var(--danger, #ff5c7a); }
+.sc-verdict-text { grid-column: 1 / -1; margin: 0; }
+.sc-overall.is-type-builder { border-left: 4px solid var(--success); }
+.sc-overall.is-type-regular { border-left: 4px solid #60a5fa; }
+.sc-overall.is-type-lotto { border-left: 4px solid #f5c542; }
+.sc-sug-body { display: grid; gap: 8px; min-width: 0; flex: 1 1 auto; }
+.sc-props { display: grid; gap: 6px; }
+.sc-prop { display: flex; align-items: center; justify-content: space-between; gap: 10px; padding: 8px 10px; border-radius: 10px; background: var(--surface-2); }
+.sc-prop-main { display: grid; gap: 2px; min-width: 0; }
+.sc-prop-main small { color: var(--muted); font-size: 0.76rem; }
+.sc-prop .parlay-btn { white-space: nowrap; display: inline-flex; align-items: center; gap: 6px; }
+.sc-prop .book-badge { width: 16px; height: 16px; }
+.sc-suggestion.is-replace { border-color: rgba(157, 78, 221, 0.5); }
