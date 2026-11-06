@@ -7401,3 +7401,17 @@ a.trend-price:hover { background: rgba(255, 255, 255, 0.06); }
 .ufc-sprinkle-leg b { font-weight: 700; }
 .ufc-sprinkle-leg small { color: var(--muted); }
 .ufc-sprinkle-leg a { color: inherit; font-weight: 700; text-decoration: underline; text-underline-offset: 2px; }
+
+/* Tennis (2026-11-06): the plays that clear the bar, the matches read, the record. */
+.tennis-bar { margin: 0 0 12px; }
+.tennis-play .ufc-pick-sel small { display: block; margin-top: 4px; font-size: 0.8rem; color: var(--muted); }
+.tennis-play.is-aces .pick-bet-price small { font-size: 0.72rem; color: var(--muted); }
+.tennis-why { margin-top: 8px; }
+.tennis-why-list { margin: 10px 0 0; padding-left: 18px; color: var(--muted); font-size: 0.86rem; display: grid; gap: 6px; }
+.tennis-reads { margin-top: 14px; border: 1px solid var(--line); border-radius: 14px; padding: 10px 14px; background: var(--surface); }
+.tennis-reads summary { cursor: pointer; font-weight: 800; }
+.tennis-reads summary small { margin-left: 8px; color: var(--muted); font-weight: 600; }
+.tennis-reads-list { display: grid; gap: 10px; margin-top: 10px; }
+.tennis-read { display: grid; gap: 2px; padding: 8px 10px; border-radius: 10px; background: var(--surface-2); }
+.tennis-read.is-play { border: 1px solid var(--success); }
+.tennis-read small { color: var(--muted); font-size: 0.78rem; }

@@ -75,6 +75,15 @@ jobs:
                   return;
                 }
                 if (d && d.current && d.current.breakdowns) d = d.current; // /ufc/picks wraps the card under current, with the history beside it
+                if (d && d.byTour && d.bar && Array.isArray(d.slate)) {
+                // The Tennis tab (worker/src/tennis-picks.js getTennisPicks): the record, the plays of the day, the matches read and why they passed.
+                console.log("TENNIS", d.date, "| record", JSON.stringify(d.record), "| atp", JSON.stringify(d.byTour.atp), "| wta", JSON.stringify(d.byTour.wta), "| card at", d.cardAt && new Date(d.cardAt).toISOString(), "| slate", d.slate.length);
+                const cur = d.current || {};
+                console.log("TODAY plays", (cur.plays || []).length, "| refreshed", cur.refreshedAt && new Date(cur.refreshedAt).toISOString(), "| reads", Object.keys(cur.reads || {}).length);
+                for (const p of cur.plays || []) console.log("  PLAY", p.tour, p.market, "|", p.selection, "|", p.bookId, p.american, "| prob", p.prob, "edge", p.edge, "stars", p.stars, "|", p.status, p.result || "", p.actual || "", "|", p.event, p.round);
+                for (const [id, r] of Object.entries(cur.reads || {})) console.log("  READ", id, r.a, "v", r.b, "|", r.event, r.round, "| market", r.pMarket, "games", r.meanGames, "straight", r.straightSets, "dogSet", r.dogSet, "| legs", r.legs, "clear", r.clear, "|", r.passed || "PLAY");
+                return;
+                }
                 if (d && d.breakdowns && d.engine !== undefined) {
                   // The UFC picks record (worker/src/ufc-picks.js): the engine feed it read, and per bout whether the cappers paired.
                   console.log("RECORD", d.eventName, "| generated", d.generatedAt && new Date(d.generatedAt).toISOString(), "| refreshed", d.refreshedAt && new Date(d.refreshedAt).toISOString(), "| bets", (d.bets || []).length, "| passed", (d.passed || []).length);

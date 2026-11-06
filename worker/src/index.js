@@ -61,6 +61,7 @@ import { loadBundleIndex, loadInjuries, injuryFor, withInjuries } from './espn-b
 import { getPlayerIndex, getPlayerLog, playerStats } from './player-search.js';
 import { getUfcEvents, getUfcEvent, nextUfcEvent, getUfcFighter, getUfcFighters } from './ufc-card.js';
 import { runUfcTick, getUfcPicks } from './ufc-picks.js';
+import { runTennisTick, getTennisPicks } from './tennis-picks.js';
 import { sendUfcTicketNotifications, sendUfcChangeNotifications } from './notifications.js';
 import { legBreakdown } from './parlay-builder.js';
 import { runTrendPicksDaily, runTrendPicksGrading, getTrendPicks } from './trend-picks.js';
@@ -513,6 +514,8 @@ export default {
         .then(async (r) => { if (r?.voided?.length) await sendUfcChangeNotifications(env, r, now); return r; })
         .then((r) => (r && !r.skipped && r.posted > 0 ? sendUfcTicketNotifications(env, now) : 0))
         .catch((e) => console.error('UFC tick failed:', e)));
+      // The Tennis tab's plays and grading (worker/src/tennis-picks.js): the runner's card, the serve profiles, the feed.
+      ctx.waitUntil(runTennisTick(env, ctx, now).catch((e) => console.error('Tennis tick failed:', e)));
       // Monday, 9 AM ET, the first tick of the hour: the weekly report of
       // the Pixel's Picks tickets (worker/src/weekly-report.js), to the
       // users who asked for it. Its own waitUntil, so a send failure
@@ -1576,6 +1579,10 @@ export default {
     }
     if (pathname === '/ufc/picks' && request.method === 'GET') {
       return json(await getUfcPicks(env), { headers: { ...cors, 'Cache-Control': 'public, max-age=120' } });
+    }
+    // The Tennis tab (worker/src/tennis-picks.js): today's plays that clear the bar, the matches read, the record.
+    if (pathname === '/tennis/picks' && request.method === 'GET') {
+      return json(await getTennisPicks(env), { headers: { ...cors, 'Cache-Control': 'public, max-age=120' } });
     }
     if (pathname === '/ufc/fighters' && request.method === 'GET') {
       return json(await getUfcFighters(env), { headers: { ...cors, 'Cache-Control': 'public, max-age=1800' } });

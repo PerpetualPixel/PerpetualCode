@@ -1,0 +1,38 @@
+# The Tennis tab's serve profiles (scripts/tennis-data.mjs): each player's
+# last-52-week serve and return numbers from Wheelo Ratings' public stats
+# table, both tours, overall and by surface, written to KV for the worker
+# (worker/src/tennis-picks.js). Once a day is plenty: the table moves a
+# little a week.
+name: Tennis data
+
+on:
+  workflow_dispatch:
+    inputs:
+      args:
+        description: 'Extra arguments (--dry-run, --columns)'
+        required: false
+        default: ''
+  schedule:
+    - cron: '41 9 * * *'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: tennis-data
+  cancel-in-progress: false
+
+jobs:
+  profiles:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Read the stats tables and write KV
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+        run: node scripts/tennis-data.mjs ${{ inputs.args }}
