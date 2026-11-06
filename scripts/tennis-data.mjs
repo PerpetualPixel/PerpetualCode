@@ -61,6 +61,9 @@ export function parseProfiles(t) {
   const serviceGames = series(t, /^ServiceGames$|ServiceGamesPlayed/i);
   const holdPct = series(t, /^ServiceGamesWonPercentage$|Service Games Won/i);
   const breakPct = series(t, /^ReturnGamesWonPercentage$|Return Games Won/i);
+  const elo = series(t, /^Elo$/i); const eloRank = series(t, /^EloRank$/i); const eloServe = series(t, /^EloServe$/i); const eloReturn = series(t, /^EloReturn$/i);
+  const wins = series(t, /^Wins$/i); const losses = series(t, /^Losses$/i); const tbPct = series(t, /^TieBreaksWonPercentage$/i); const decPct = series(t, /^DecSetWinPercentage$/i);
+  const bpSaved = series(t, /^BreakPointsSavedPercentage$/i); const bpConverted = series(t, /^BreakPointsConvertedPercentage$/i);
   const out = {};
   for (let i = 0; i < players.length; i++) {
     const name = String(players[i] ?? '').trim(); if (!name) continue;
@@ -72,7 +75,7 @@ export function parseProfiles(t) {
     const m = num(matches?.[i]);
     const games = num(serviceGames?.[i]) ?? (m != null ? m * 11 : null);
     const apg = num(acesPerGame?.[i]) ?? (num(aces?.[i]) != null && games ? num(aces[i]) / games : null);
-    const line = { matches: m, serve: round(serve), firstIn: round(fi), firstWon: round(fw), secondWon: round(sw), return: round(share(returnPts?.[i])), hold: round(share(holdPct?.[i])), break: round(share(breakPct?.[i])), acesPerGame: apg != null ? round(apg, 3) : null, ace: share(acePct?.[i]) != null ? round(share(acePct[i]), 4) : apg != null ? round(apg / 6.4, 4) : null, aces: num(aces?.[i]), doubleFaults: num(dfs?.[i]), points: games ? Math.round(games * 6.4) : null };
+    const line = { matches: m, serve: round(serve), firstIn: round(fi), firstWon: round(fw), secondWon: round(sw), return: round(share(returnPts?.[i])), hold: round(share(holdPct?.[i])), break: round(share(breakPct?.[i])), acesPerGame: apg != null ? round(apg, 3) : null, ace: share(acePct?.[i]) != null ? round(share(acePct[i]), 4) : apg != null ? round(apg / 6.4, 4) : null, aces: num(aces?.[i]), doubleFaults: num(dfs?.[i]), points: games ? Math.round(games * 6.4) : null, elo: num(elo?.[i]), eloRank: num(eloRank?.[i]), eloServe: num(eloServe?.[i]), eloReturn: num(eloReturn?.[i]), wins: num(wins?.[i]), losses: num(losses?.[i]), tiebreak: round(share(tbPct?.[i])), deciding: round(share(decPct?.[i])), bpSaved: round(share(bpSaved?.[i])), bpConverted: round(share(bpConverted?.[i])) };
     const key = nameKey(name);
     if (!out[key]) out[key] = { name, key, matches: null, overall: null, bySurface: {} };
     if (surface === 'all' || surface === 'overall' || surface === '') { out[key].overall = line; out[key].matches = m; } else out[key].bySurface[surface] = line;

@@ -11042,8 +11042,8 @@ el.trendsSheet?.addEventListener('click', (event) => {
 
 const LIVE_BOOKS_KEY = 'pixelpick.liveBooks.v1';
 const LIVE_LEAGUES_KEY = 'pixelpick.liveLeagues.v1';
-/** The leagues the Live tab runs (the board says which; NBA and NFL for now) and the ones the user has on. */
-const LIVE_LEAGUES_DEFAULT = ['nba', 'nfl'];
+/** The leagues the Live tab runs (the board says which; NBA and NFL for now), tennis beside them (worker/src/tennis-live.js), and the ones the user has on. */
+const LIVE_LEAGUES_DEFAULT = ['nba', 'nfl', 'tennis'];
 /** The books a live slip can be at, in the order the picker shows them (worker/src/settings.js's LIVE_BOOKS). */
 const LIVE_BOOKS = ['draftkings', 'fanduel', 'caesars', 'betmgm', 'fanatics', 'hardrock', 'bet365', 'betrivers', 'espnbet', 'prizepicks'];
 const liveState = { data: null, loading: false, timer: null, open: {}, books: new Set(loadJSON(LIVE_BOOKS_KEY, []) ?? []), leagues: new Set((loadJSON(LIVE_LEAGUES_KEY, null) ?? LIVE_LEAGUES_DEFAULT).filter((k) => LIVE_LEAGUES_DEFAULT.includes(k))), showAll: false, expandAll: false };
@@ -11087,10 +11087,10 @@ function persistLiveBooks() {
 }
 /** The slips the user's books leave standing (all of them with no books chosen, or while "show all" is on). */
 const liveSlipsFor = (g) => { const all = g.slips?.list ?? []; return liveState.books.size && !liveState.showAll ? all.filter((s) => liveState.books.has(s.bookId)) : all; };
-/** The league toggles (2026-11-06): NBA and NFL, each on or off; the last one on stays on. */
+/** The league toggles (2026-11-06): NBA, NFL and tennis, each on or off; the last one on stays on. */
 function liveLeaguePicker(all) {
-  const leagues = liveState.data?.leagues ?? LIVE_LEAGUES_DEFAULT;
-  return `<div class="live-books-pick live-leagues-pick" role="group" aria-label="Leagues on the board">${leagues.map((k) => { const n = all.filter((g) => g.league === k).length; const on = liveState.leagues.has(k); return `<button type="button" class="league-chip ${on ? 'is-active' : ''}" data-live-league="${esc(k)}" aria-pressed="${on}"><span class="league-chip-label">${esc(league(k))}</span><small class="live-league-n">${n}</small></button>`; }).join('')}</div>`;
+  const leagues = [...(liveState.data?.leagues ?? LIVE_LEAGUES_DEFAULT.filter((k) => k !== 'tennis')), 'tennis'];
+  return `<div class="live-books-pick live-leagues-pick" role="group" aria-label="Leagues on the board">${leagues.map((k) => { const n = k === 'tennis' ? (liveState.data?.tennis?.matches?.length ?? 0) : all.filter((g) => g.league === k).length; const on = liveState.leagues.has(k); return `<button type="button" class="league-chip ${on ? 'is-active' : ''}" data-live-league="${esc(k)}" aria-pressed="${on}"><span class="league-chip-label">${esc(league(k))}</span><small class="live-league-n">${n}</small></button>`; }).join('')}</div>`;
 }
 function liveBooksPicker() {
   const none = !liveState.books.size;
@@ -11099,7 +11099,7 @@ function liveBooksPicker() {
 const liveTimeFmt = new Intl.DateTimeFormat(undefined, { hour: 'numeric', minute: '2-digit', second: '2-digit' });
 const liveKickFmt = new Intl.DateTimeFormat(undefined, { weekday: 'short', hour: 'numeric', minute: '2-digit' });
 const ago = (ms) => { const s = Math.max(0, Math.round((Date.now() - ms) / 1000)); return s < 60 ? `${s}s ago` : s < 3600 ? `${Math.floor(s / 60)} min ago` : `${Math.floor(s / 3600)} h ago`; };
-const league = (k) => ({ nfl: 'NFL', nba: 'NBA', nhl: 'NHL', ucl: 'Champions League', epl: 'Premier League', laliga: 'La Liga', seriea: 'Serie A', bundesliga: 'Bundesliga', ligue1: 'Ligue 1' }[k] ?? String(k ?? '').toUpperCase());
+const league = (k) => ({ nfl: 'NFL', nba: 'NBA', nhl: 'NHL', tennis: 'Tennis', ucl: 'Champions League', epl: 'Premier League', laliga: 'La Liga', seriea: 'Serie A', bundesliga: 'Bundesliga', ligue1: 'Ligue 1' }[k] ?? String(k ?? '').toUpperCase());
 const LIVE_SOCCER = new Set(['ucl', 'epl', 'laliga', 'seriea', 'bundesliga', 'ligue1']);
 
 async function loadLive({ force = false } = {}) {
@@ -11128,7 +11128,7 @@ async function pollLiveGlow() {
     const res = await fetch(new URL('/live', CONFIG.WORKER_URL), { headers: { Accept: 'application/json' } });
     const d = await res.json();
     if (el.liveView.hidden) liveState.data = d;
-    setLiveGlow((d.games ?? []).some((g) => g.tick?.state === 'in'));
+    setLiveGlow((d.games ?? []).some((g) => g.tick?.state === 'in') || (d.tennis?.inPlay ?? 0) > 0);
   } catch { /* the glow stays as it was */ }
   setTimeout(pollLiveGlow, 120e3);
 }
@@ -11267,17 +11267,53 @@ function liveNoSlipWhy(g) {
   return 'Nothing on the board clears the pace with margin at a usable price right now; checked again every few minutes.';
 }
 
+/** A play's standing on a live tennis card: the word and the colour. */
+const TENNIS_STANDING = { won: ['Won', 'is-win'], lost: ['Lost', 'is-loss'], push: ['Push', ''], void: ['Void', ''], on: ['On track', 'is-live'], off: ['Behind', 'is-loss'], wait: ['Waiting', ''] };
+const tennisStanding = (st) => { const [word, cls] = TENNIS_STANDING[st?.state] ?? ['Pending', '']; return `<span class="pick-result ${cls}" title="${esc(st?.text ?? '')}">${word}</span>`; };
+const liveSetScore = (m) => (m.sets?.length ? m.sets.map(([a, b]) => `${a}-${b}`).join(' ') : '');
+/** One match on the live tennis list: the players, the sets, the state, and the Tennis tab's plays on it with where each stands. */
+function renderLiveTennisMatch(m) {
+  const live = m.state === 'in';
+  const state = live ? esc(m.detail || 'In play') : m.state === 'pre' ? esc(liveKickFmt.format(new Date(m.date))) : m.winner ? `Final · ${esc(m.winner === 'a' ? m.a : m.b)}` : 'Final';
+  return `<div class="live-tennis-match ${live ? 'is-live' : ''} ${m.plays.length ? 'has-play' : ''}">
+    <div class="live-tennis-row"><strong>${esc(m.a)} <small>vs</small> ${esc(m.b)}</strong><span class="live-state ${live ? 'is-on' : ''}">${live ? '<i class="live-dot"></i>' : ''}${state}</span><span class="live-score">${esc(liveSetScore(m))}</span></div>
+    <small class="row-sub">${esc(TENNIS_TOUR_LABEL[m.tour] ?? m.tour)} · ${esc(m.event ?? '')}${m.round ? ` · ${esc(m.round)}` : ''}</small>
+    ${m.plays.map((p) => `<div class="live-tennis-play"><span>${esc(p.selection)}${Number.isFinite(p.american) ? ` <small>${esc(formatAmerican(p.american))}${p.book ? ` · ${esc(p.book)}` : ''}</small>` : ''}<small class="live-tennis-note">${esc(p.standing?.text ?? '')}</small></span>${tennisStanding(p.standing)}</div>`).join('')}
+  </div>`;
+}
+/** Tennis on the Live tab: the day's parlay with each leg's standing, the matches in play, the matches with a play, the rest folded. */
+function renderLiveTennis(t) {
+  if (!t) return '<p class="row-sub">The tennis scoreboard did not come through.</p>';
+  const matches = t.matches ?? [];
+  const inPlay = matches.filter((m) => m.state === 'in');
+  const withPlay = matches.filter((m) => m.state !== 'in' && m.plays.length);
+  const rest = matches.filter((m) => m.state !== 'in' && !m.plays.length);
+  const parlays = (t.parlays ?? []).map((p) => `<article class="trend-card live-tennis-parlay"><div class="pick-bet-head"><span class="pick-bet-type">Tennis · Moneyline parlay</span><span class="pick-bet-book">${p.bookId ? `${bookBadge(p.bookId, p.book)}${esc(p.book ?? '')}` : ''}</span><span class="pick-bet-price">${Number.isFinite(p.american) ? esc(formatAmerican(p.american)) : ''}</span></div>
+    <div class="tennis-legs">${p.legs.map((l) => `<div class="live-tennis-play"><span>${esc(l.selection)} <small>${esc(formatAmerican(l.american))} · ${esc(l.a)} vs ${esc(l.b)}</small><small class="live-tennis-note">${esc(l.standing?.text ?? '')}</small></span>${tennisStanding(l.standing)}</div>`).join('')}</div></article>`).join('');
+  if (!matches.length) return `<div class="live-tennis"><p class="live-sub">Tennis <small>no ATP or WTA singles on today's scoreboard</small></p>${parlays}</div>`;
+  return `<div class="live-tennis">
+    <p class="live-sub">Tennis <small>${inPlay.length ? `${inPlay.length} in play · ` : ''}${matches.length} singles today · scoreboard read ${esc(ago(t.at))}</small></p>
+    ${parlays}
+    ${[...inPlay, ...withPlay].map(renderLiveTennisMatch).join('')}
+    ${rest.length ? `<details class="live-tennis-rest" ${liveState.open['tennis:rest'] ? 'open' : ''}><summary>${rest.length} more match${rest.length === 1 ? '' : 'es'} today without a play</summary>${rest.map(renderLiveTennisMatch).join('')}</details>` : ''}
+  </div>`;
+}
+
 function renderLive() {
   if (!el.liveBody) return;
   const d = liveState.data;
   const all = d?.games ?? [];
   const games = all.filter((g) => liveState.leagues.has(g.league));
-  setLiveGlow(all.some((g) => g.tick?.state === 'in'));
+  const tennisOn = liveState.leagues.has('tennis');
+  const tennis = tennisOn ? (d?.tennis ?? null) : null;
+  const tennisHtml = tennisOn ? renderLiveTennis(d?.tennis ?? null) : '';
+  setLiveGlow(all.some((g) => g.tick?.state === 'in') || (d?.tennis?.inPlay ?? 0) > 0);
   const beats = Object.values(d?.watcher ?? {}); const lastBeat = beats.length ? Math.max(...beats.map((b) => b.at ?? 0)) : 0;
   const watcherNote = lastBeat ? (Date.now() - lastBeat < 12 * 60e3 ? `Watcher on, looked ${esc(ago(lastBeat))}` : `Watcher quiet since ${esc(ago(lastBeat))}`) : 'Watcher not started today';
   if (!games.length) {
-    const chosen = [...liveState.leagues].map(league).join(' or ');
-    el.liveBody.innerHTML = `${liveLeaguePicker(all)}<p class="empty">${all.length ? `No ${esc(chosen)} game on today's board. ${all.length} ${esc([...new Set(all.map((g) => league(g.league)))].join(' and '))} game${all.length === 1 ? '' : 's'} today: turn the league on above.` : 'No NBA or NFL game on today\'s board yet. The watcher lists the day\'s games as it starts and reads each one from tip-off to the final.'}</p><p class="row-sub">${watcherNote}.</p>`;
+    const chosen = [...liveState.leagues].filter((k) => k !== 'tennis').map(league).join(' or ');
+    const note = all.length ? `No ${esc(chosen)} game on today's board. ${all.length} ${esc([...new Set(all.map((g) => league(g.league)))].join(' and '))} game${all.length === 1 ? '' : 's'} today: turn the league on above.` : chosen ? `No ${esc(chosen)} game on today's board yet. The watcher lists the day's games as it starts and reads each one from tip-off to the final.` : '';
+    el.liveBody.innerHTML = `${liveLeaguePicker(all)}${tennis?.matches?.length ? '' : `<p class="empty">${note || 'Nothing on today\'s board.'}</p>`}${tennisHtml}<p class="row-sub">${watcherNote}.</p>`;
     return;
   }
   const slips = games.reduce((n, g) => n + liveSlipsFor(g).length, 0);
@@ -11287,7 +11323,7 @@ function renderLive() {
   const reads = games.reduce((n, g) => n + (g.game ?? []).filter((r) => !liveState.books.size || liveState.showAll || r.lines.some((l) => liveState.books.has(l.bookId))).length, 0);
   const ordered = liveOrder(games);
   const playable = ordered.filter((g) => g.tick?.state === 'in' && g.play?.playable).length;
-  el.liveBody.innerHTML = `<div class="live-top"><span class="live-count ${slips || reads ? 'is-on' : ''}">${slips ? `${slips} live slip${slips === 1 ? '' : 's'} ready${where}` : elsewhere ? `No live slip${where}` : inPlay ? 'No live slip yet: they build from the first minutes and rebuild as the game moves' : 'No live slip'}${reads ? ` · ${reads} game line${reads === 1 ? '' : 's'} with an edge` : ''}</span><span class="row-sub">Today's games · board read ${esc(liveTimeFmt.format(new Date(d.at)))}, re-read every minute while open · ${watcherNote}</span></div>${liveLeaguePicker(all)}${liveBooksPicker()}<div class="live-list-head"><span class="row-sub">${playable ? `${playable} playable now, most confident first` : inPlay ? `${inPlay} in play, nothing playable yet` : `${games.length} game${games.length === 1 ? '' : 's'} on the slate`} · ${games.length} listed. Tap a game to open it.</span><button type="button" class="link-button" data-live-expand="1">${liveState.expandAll ? 'Collapse all' : 'Expand all'}</button></div>${ordered.map(renderLiveGame).join('')}`;
+  el.liveBody.innerHTML = `<div class="live-top"><span class="live-count ${slips || reads ? 'is-on' : ''}">${slips ? `${slips} live slip${slips === 1 ? '' : 's'} ready${where}` : elsewhere ? `No live slip${where}` : inPlay ? 'No live slip yet: they build from the first minutes and rebuild as the game moves' : 'No live slip'}${reads ? ` · ${reads} game line${reads === 1 ? '' : 's'} with an edge` : ''}</span><span class="row-sub">Today's games · board read ${esc(liveTimeFmt.format(new Date(d.at)))}, re-read every minute while open · ${watcherNote}</span></div>${liveLeaguePicker(all)}${liveBooksPicker()}<div class="live-list-head"><span class="row-sub">${playable ? `${playable} playable now, most confident first` : inPlay ? `${inPlay} in play, nothing playable yet` : `${games.length} game${games.length === 1 ? '' : 's'} on the slate`} · ${games.length} listed. Tap a game to open it.</span><button type="button" class="link-button" data-live-expand="1">${liveState.expandAll ? 'Collapse all' : 'Expand all'}</button></div>${ordered.map(renderLiveGame).join('')}${tennisHtml}`;
 }
 
 el.liveView?.addEventListener('click', (event) => {
@@ -11305,6 +11341,8 @@ el.liveView?.addEventListener('click', (event) => {
     saveJSON(LIVE_LEAGUES_KEY, [...liveState.leagues]); renderLive(); return;
   }
   if (event.target.closest('[data-live-showall]')) { liveState.showAll = true; renderLive(); return; }
+  const rest = event.target.closest('details.live-tennis-rest');
+  if (rest) { setTimeout(() => { liveState.open['tennis:rest'] = rest.open; }, 0); return; }
   if (event.target.closest('[data-live-expand]')) { liveState.expandAll = !liveState.expandAll; if (!liveState.expandAll) liveState.open = Object.fromEntries(Object.entries(liveState.open).filter(([k]) => !k.startsWith('game:'))); renderLive(); return; }
   const toggle = event.target.closest('[data-live-toggle]');
   if (toggle) { const k = `game:${toggle.dataset.liveToggle}`; if (liveState.expandAll) { liveState.expandAll = false; liveState.data?.games?.forEach((g) => { liveState.open[`game:${g.espnEventId}`] = true; }); } liveState.open[k] = !liveState.open[k]; renderLive(); return; }
@@ -11361,13 +11399,41 @@ async function loadTennis({ force = false } = {}) {
   renderTennisLedger();
 }
 
+const TENNIS_FLAG_LABEL = { injury: 'injury doubt', fatigue: 'heavy week', rust: 'rust' };
+const tennisFlags = (flags) => (flags ?? []).map((f) => `<span class="tennis-flag is-${esc(f)}">${esc(TENNIS_FLAG_LABEL[f] ?? f)}</span>`).join('');
 const tennisPickBadge = (p) => {
   if (p.status === 'graded' || p.status === 'void') return `<span class="pick-result is-${esc(p.result)}">${esc(RESULT_LABEL[p.result] ?? p.result)}${Number.isFinite(p.net) && p.result !== 'void' ? ` · ${esc(unitsText(p.net))}` : ''}</span>`;
   if (p.market === 'aces' && p.commenceMs <= Date.now()) return '<span class="pick-result">Awaiting serve stats</span>';
   return p.commenceMs <= Date.now() ? '<span class="pick-result is-live">In play</span>' : '<span class="pick-result">Pending</span>';
 };
 
+/** The day's moneyline parlay (2026-11-06: "a 2 leg parlay or a 4 leg moneyline parlay"): the legs with their prices and, once graded, how each went. */
+function renderTennisParlay(p) {
+  const open = Boolean(tennisState.open[p.id]);
+  const start = Number.isFinite(p.commenceMs) ? tennisTimeFmt.format(new Date(p.commenceMs)) : '';
+  const legResult = (l) => (l.result ? `<span class="pick-result is-${esc(l.result)}">${esc(RESULT_LABEL[l.result] ?? l.result)}</span>` : l.commenceMs <= Date.now() ? '<span class="pick-result is-live">In play</span>' : '');
+  return `<article class="trend-card pick-bet-card tennis-play is-parlay">
+    <div class="pick-bet-head">
+      <span class="pick-bet-type">${esc(p.tour === 'both' ? 'ATP + WTA' : TENNIS_TOUR_LABEL[p.tour] ?? p.tour)} · Moneyline parlay</span>
+      <span class="pick-bet-book">${p.bookId ? `${bookBadge(p.bookId, p.book)}${esc(p.book ?? '')}` : ''}</span>
+      <span class="pick-bet-price">${Number.isFinite(p.american) ? esc(formatAmerican(p.american)) : ''}</span>
+      <span class="pick-bet-stake">${esc(String(p.units))} unit</span>
+      ${tennisPickBadge(p)}
+    </div>
+    <div class="ufc-pick-body">
+      <p class="ufc-pick-sel"><strong>${(p.legs ?? []).length} legs, the clearest favourites of the day</strong><small>${start ? `first ball ${esc(start)}` : ''}</small></p>
+      <div class="tennis-legs">${(p.legs ?? []).map((l) => `<div class="tennis-leg"><span><strong>${esc(l.selection)}</strong> <small>${esc(formatAmerican(l.american))} · vs ${esc(l.side === 'a' ? l.b : l.a)} · ${esc(l.event ?? '')}${l.round ? ` · ${esc(l.round)}` : ''}</small><small class="row-sub">${Math.round((l.prob ?? 0) * 100)}% blended: model ${Math.round((l.pModel ?? 0) * 100)}%, market ${Math.round((l.pMarket ?? 0) * 100)}%${l.opponentFlags?.length ? ` · opponent: ${tennisFlags(l.opponentFlags)}` : ''}${l.actual ? ` · ${esc(l.actual)}` : ''}</small></span>${legResult(l)}</div>`).join('')}</div>
+      <p class="ufc-pick-conf">${confStars(p.stars)} <small>model ${Math.round(p.prob * 100)}% for the parlay vs the price's ${Math.round((p.implied ?? 0) * 100)}%${p.edge != null ? ` · ${Math.round(p.edge * 100)} points of edge` : ''}</small></p>
+      ${p.actual ? `<p class="row-sub">Result: ${esc(p.actual)}</p>` : ''}
+      <button type="button" class="parlay-btn tennis-why" data-tennis-why="${esc(p.id)}">${open ? 'Hide the read' : 'Why these legs'}</button>
+      ${open ? `<ul class="tennis-why-list">${(p.why ?? []).map((w) => `<li>${esc(w)}</li>`).join('')}${(p.legs ?? []).flatMap((l) => (l.why ?? []).map((w) => `<li>${esc(w)}</li>`)).join('')}</ul>` : ''}
+    </div>
+    ${p.link || p.bookId ? ticketSlipFoot({ type: 'parlay', bookId: p.bookId, book: p.book, link: p.link, legs: (p.legs ?? []).map((l) => ({ link: l.link })) }) : ''}
+  </article>`;
+}
+
 function renderTennisPlay(p) {
+  if (p.market === 'ml_parlay') return renderTennisParlay(p);
   const market = tennisState.data?.markets?.[p.market] ?? p.market;
   const open = Boolean(tennisState.open[p.id]);
   const start = Number.isFinite(p.commenceMs) ? tennisTimeFmt.format(new Date(p.commenceMs)) : '';
@@ -11385,6 +11451,7 @@ function renderTennisPlay(p) {
     <div class="ufc-pick-body">
       <p class="ufc-pick-sel"><strong>${esc(p.selection)}</strong><small>${esc(p.a)} vs ${esc(p.b)} · ${esc(p.event ?? '')}${p.round ? ` · ${esc(p.round)}` : ''}${start ? ` · ${esc(start)}` : ''}</small></p>
       <p class="ufc-pick-conf">${confStars(p.stars)} <small>${esc(vs)}${p.edge != null ? ` · ${Math.round(p.edge * 100)} points of edge` : ''}</small></p>
+      ${p.side && p.flags?.[p.side === 'a' ? 'b' : 'a']?.length ? `<p class="row-sub">Opponent flagged: ${tennisFlags(p.flags[p.side === 'a' ? 'b' : 'a'])}</p>` : ''}
       ${p.market === 'aces' ? '<p class="row-sub">The feed carries no aces market: this is the number the model clears at 80%+; take it at your book where the line sits at or under it.</p>' : ''}
       ${p.actual ? `<p class="row-sub">Result: ${esc(p.actual)}</p>` : ''}
       <button type="button" class="parlay-btn tennis-why" data-tennis-why="${esc(p.id)}">${open ? 'Hide the read' : 'Why this play'}</button>
@@ -11398,16 +11465,16 @@ function renderTennis() {
   if (!el.tennisBody) return;
   const d = tennisState.data;
   if (!d) { el.tennisBody.innerHTML = '<p class="empty">The tennis board has not been read yet.</p>'; return; }
-  const plays = (d.current?.plays ?? []).filter((p) => tennisState.tours.has(p.tour)).sort((a, b) => (a.commenceMs ?? 0) - (b.commenceMs ?? 0));
+  const plays = (d.current?.plays ?? []).filter((p) => p.tour === 'both' || tennisState.tours.has(p.tour)).sort((a, b) => (a.market === 'ml_parlay' ? -1 : 0) - (b.market === 'ml_parlay' ? -1 : 0) || (a.commenceMs ?? 0) - (b.commenceMs ?? 0));
   const allPlays = d.current?.plays ?? [];
   const reads = Object.entries(d.current?.reads ?? {}).map(([id, r]) => ({ id, ...r, tour: id.split(':')[0] })).filter((r) => tennisState.tours.has(r.tour)).sort((a, b) => Date.parse(a.start ?? 0) - Date.parse(b.start ?? 0));
   const rec = d.record ?? { wins: 0, losses: 0, pushes: 0, units: 0, roi: null, risked: 0 };
-  const chips = ['atp', 'wta'].map((t) => { const n = allPlays.filter((p) => p.tour === t).length; const on = tennisState.tours.has(t); return `<button type="button" class="league-chip ${on ? 'is-active' : ''}" data-tennis-tour="${t}" aria-pressed="${on}"><span class="league-chip-label">${TENNIS_TOUR_LABEL[t]}</span><small class="live-league-n">${n}</small></button>`; }).join('');
+  const chips = ['atp', 'wta'].map((t) => { const n = allPlays.filter((p) => p.tour === t || p.tour === 'both').length; const on = tennisState.tours.has(t); return `<button type="button" class="league-chip ${on ? 'is-active' : ''}" data-tennis-tour="${t}" aria-pressed="${on}"><span class="league-chip-label">${TENNIS_TOUR_LABEL[t]}</span><small class="live-league-n">${n}</small></button>`; }).join('');
   const bar = d.bar ?? { minProb: 0.74, minEdge: 0.07, aceProb: 0.8, band: [-250, 250] };
-  const barNote = `A play posts only where the model gives it ${Math.round(bar.minProb * 100)}%+ and the price sits ${Math.round(bar.minEdge * 100)}+ points under that, between ${bar.band[0]} and +${bar.band[1]}; aces at ${Math.round(bar.aceProb * 100)}%+ with the price left to your book. One play a match, a few a tour a day.`;
+  const barNote = `Every match is read for form, fatigue, a recent retirement, play style and the surface before the market. A play posts only where the model gives it ${Math.round(bar.minProb * 100)}%+ and the price sits ${Math.round(bar.minEdge * 100)}+ points under that, between ${bar.band[0]} and +${bar.band[1]}, never on a player flagged for injury or fatigue; aces at ${Math.round(bar.aceProb * 100)}%+ with the price left to your book. Once a day the clearest favourites (${Math.round((bar.parlayLegProb ?? 0.78) * 100)}%+ each) go into one moneyline parlay of ${(bar.parlayLegs ?? [2, 4]).join(' to ')} legs. One play a match, ${bar.maxUnits ?? 5} units a day at most.`;
   const readWhen = d.current?.refreshedAt ? `read ${ago(d.current.refreshedAt)}` : 'not read today yet';
-  const readsHtml = reads.length ? `<details class="tennis-reads" ${tennisState.reads ? 'open' : ''}><summary>Matches read today <small>${reads.length}, ${reads.filter((r) => !r.passed).length} with a play</small></summary><div class="tennis-reads-list">${reads.map((r) => `<div class="tennis-read ${r.passed ? '' : 'is-play'}"><strong>${esc(r.a)} vs ${esc(r.b)}</strong><small>${esc(TENNIS_TOUR_LABEL[r.tour] ?? r.tour)} · ${esc(r.event ?? '')}${r.round ? ` · ${esc(r.round)}` : ''}${r.start ? ` · ${esc(tennisTimeFmt.format(new Date(r.start)))}` : ''}</small><span class="row-sub">${r.pMarket != null ? `favourite ${Math.round(Math.max(r.pMarket, 1 - r.pMarket) * 100)}% · ${esc(String(r.meanGames))} games expected · straight sets ${Math.round((r.straightSets ?? 0) * 100)}% · ` : ''}${esc(r.passed ?? 'a play posted')}</span></div>`).join('')}</div></details>` : '';
-  el.tennisBody.innerHTML = `<div class="live-top"><span class="live-count ${plays.length ? 'is-on' : ''}">${plays.length ? `${plays.length} tennis play${plays.length === 1 ? '' : 's'} clear the bar` : 'No tennis play clears the bar today'}</span><span class="row-sub">${esc(tennisDayFmt.format(new Date()))} · ${esc(readWhen)} · record ${rec.wins}-${rec.losses}${rec.pushes ? `-${rec.pushes}` : ''}, ${esc(signedUnits(rec.units ?? 0))} units</span></div>
+  const readsHtml = reads.length ? `<details class="tennis-reads" ${tennisState.reads ? 'open' : ''}><summary>Matches read today <small>${reads.length}, ${reads.filter((r) => !r.passed).length} with a play</small></summary><div class="tennis-reads-list">${reads.map((r) => `<div class="tennis-read ${r.passed ? '' : 'is-play'}"><strong>${esc(r.a)} vs ${esc(r.b)}</strong><small>${esc(TENNIS_TOUR_LABEL[r.tour] ?? r.tour)} · ${esc(r.event ?? '')}${r.round ? ` · ${esc(r.round)}` : ''}${r.start ? ` · ${esc(tennisTimeFmt.format(new Date(r.start)))}` : ''}</small><span class="row-sub">${r.pMarket != null ? `market ${Math.round(Math.max(r.pMarket, 1 - r.pMarket) * 100)}% on the favourite${r.pModel != null ? `, the model ${Math.round(Math.max(r.pModel, 1 - r.pModel) * 100)}% on ${esc(r.pModel >= 0.5 ? r.a : r.b)}` : ''} · ${esc(String(r.meanGames))} games expected · straight sets ${Math.round((r.straightSets ?? 0) * 100)}% · ` : ''}${esc(r.passed ?? 'a play posted')}</span>${r.flags && (r.flags.a?.length || r.flags.b?.length) ? `<span class="row-sub">${r.flags.a?.length ? `${esc(r.a)}: ${tennisFlags(r.flags.a)} ` : ''}${r.flags.b?.length ? `${esc(r.b)}: ${tennisFlags(r.flags.b)}` : ''}</span>` : ''}${r.form ? `<span class="row-sub tennis-form">${esc(r.form.a)} · ${esc(r.form.b)}</span>` : ''}</div>`).join('')}</div></details>` : '';
+  el.tennisBody.innerHTML = `<div class="live-top"><span class="live-count ${plays.length ? 'is-on' : ''}">${plays.length ? `${plays.length} tennis play${plays.length === 1 ? '' : 's'} clear the bar` : 'No tennis play clears the bar today'}</span><span class="row-sub">${esc(tennisDayFmt.format(new Date()))} · ${esc(readWhen)} · ${esc(String(d.unitsToday ?? allPlays.length))} of ${esc(String(bar.maxUnits ?? 5))} units placed · record ${rec.wins}-${rec.losses}${rec.pushes ? `-${rec.pushes}` : ''}, ${esc(signedUnits(rec.units ?? 0))} units</span></div>
     <div class="live-books-pick live-leagues-pick" role="group" aria-label="Tours">${chips}</div>
     <p class="row-sub tennis-bar">${esc(barNote)}</p>
     ${plays.length ? plays.map(renderTennisPlay).join('') : `<p class="empty">${reads.length ? `${reads.length} match${reads.length === 1 ? '' : 'es'} read, none with a leg the model likes at the price. The board is read again every quarter hour until the first ball.` : d.slate?.length ? 'The matches of the day are listed but not read yet: the serve profiles or the board are still on their way.' : 'No ATP or WTA singles on the card today.'}</p>`}
@@ -11426,7 +11493,7 @@ function renderTennisLedger() {
   el.trendPicksTennis.innerHTML = `<h2 class="pick-h2">Tennis <small>tracked apart, one unit a play</small></h2>
     <p class="pick-record">${rec.wins}-${rec.losses}${rec.pushes ? `-${rec.pushes}` : ''} <small>${esc(signedUnits(rec.units ?? 0))} units · ${esc(roiText(rec.roi))} on ${rec.risked ?? 0} risked · ATP ${line(d.byTour?.atp ?? rec)} · WTA ${line(d.byTour?.wta ?? rec)}</small></p>
     ${byMarket.length ? `<p class="row-sub">${byMarket.map(([k, r]) => `${esc(d.markets?.[k] ?? k)} ${r.wins}-${r.losses}`).join(' · ')}</p>` : ''}
-    ${days.length ? days.map((r) => `<div class="pick-day"><h3>${esc(tennisDayFmt.format(new Date(`${r.date}T12:00:00Z`)))}</h3>${r.plays.map((p) => `<div class="pick-hist-row"><span><strong>${esc(p.selection)}</strong> <small>${esc(TENNIS_TOUR_LABEL[p.tour] ?? p.tour)} · ${esc(p.a)} vs ${esc(p.b)}${Number.isFinite(p.american) ? ` · ${esc(formatAmerican(p.american))}` : ''}</small></span>${tennisPickBadge(p)}</div>`).join('')}</div>`).join('') : '<p class="empty">No tennis play has posted yet.</p>'}`;
+    ${days.length ? days.map((r) => `<div class="pick-day"><h3>${esc(tennisDayFmt.format(new Date(`${r.date}T12:00:00Z`)))}</h3>${r.plays.map((p) => `<div class="pick-hist-row"><span><strong>${esc(p.selection)}</strong> <small>${esc(p.tour === 'both' ? 'ATP + WTA' : TENNIS_TOUR_LABEL[p.tour] ?? p.tour)} · ${p.market === 'ml_parlay' ? `${(p.legs ?? []).length} legs` : `${esc(p.a)} vs ${esc(p.b)}`}${Number.isFinite(p.american) ? ` · ${esc(formatAmerican(p.american))}` : ''}</small></span>${tennisPickBadge(p)}</div>`).join('')}</div>`).join('') : '<p class="empty">No tennis play has posted yet.</p>'}`;
 }
 
 el.tennisView?.addEventListener('click', (event) => {

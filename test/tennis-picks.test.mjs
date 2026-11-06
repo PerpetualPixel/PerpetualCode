@@ -120,3 +120,148 @@ test('the data runner parses the stats table: a row per player and surface, with
   assert.equal(players['ben shelton'].overall.ace, 0.124);
   assert.ok(ratesFor(s, 'hard').surfaceUsed);
 });
+
+import { formOf, styleOf, matchupProb, eloShare } from '../worker/src/tennis-form.js';
+import { buildParlay, gradeParlay, unitsPosted, MAX_UNITS_DAY, PARLAY_LEG_PROB } from '../worker/src/tennis-picks.js';
+import { getTennisLive, playStanding, legStanding } from '../worker/src/tennis-live.js';
+
+const result = (id, a, b, sets, daysAgo, over = {}) => ({ id, tour: 'atp', completed: true, statusName: 'STATUS_FINAL', date: new Date(Date.now() - daysAgo * 864e5).toISOString(), a: { id: a.toLowerCase(), key: a.toLowerCase(), name: a }, b: { id: b.toLowerCase(), key: b.toLowerCase(), name: b }, sets, winner: sets.filter(([x, y]) => x > y).length > sets.filter(([x, y]) => y > x).length ? 'a' : 'b', ...over });
+
+test('formOf reads the last six weeks: the record, the games margin, a heavy week, a marathon, a retirement and rust', () => {
+  const now = Date.now();
+  const hot = [result('1', 'Hot', 'X', [[6, 2], [6, 3]], 1), result('2', 'Hot', 'Y', [[6, 4], [6, 4]], 2), result('3', 'Z', 'Hot', [[3, 6], [4, 6]], 3), result('4', 'Hot', 'W', [[6, 1], [6, 2]], 5), result('5', 'Hot', 'V', [[7, 6], [6, 3]], 6)];
+  const f = formOf({ id: 'hot', key: 'hot' }, hot, now);
+  assert.equal(f.wins, 5); assert.equal(f.losses, 0); assert.ok(f.gamesDiff > 4, `diff ${f.gamesDiff}`); assert.equal(f.straightSetWins, 5);
+  assert.equal(f.loadWeek, 5, 'five matches in seven days'); assert.equal(f.fatigue, true, 'a heavy week'); assert.equal(f.injury, false); assert.equal(f.rust, false);
+  assert.ok(f.score > 0.6, `score ${f.score}`);
+  const cold = [result('6', 'Cold', 'X', [[2, 6], [3, 6]], 10), result('7', 'Y', 'Cold', [[6, 1], [6, 2]], 14), result('8', 'Cold', 'Z', [[6, 4], [2, 1]], 12, { statusName: 'STATUS_RETIRED', winner: 'b', note: 'Cold retired' })];
+  const g = formOf({ id: 'cold', key: 'cold' }, cold, now);
+  assert.equal(g.wins, 0); assert.equal(g.injury, true, 'retired inside three weeks'); assert.equal(g.fatigue, false); assert.ok(g.score < -0.5, `score ${g.score}`);
+  const marathon = [result('9', 'Long', 'X', [[7, 6], [6, 7], [7, 6]], 0.5)];
+  assert.equal(formOf({ id: 'long', key: 'long' }, marathon, now).marathonYesterday, true);
+  const rusty = [result('10', 'Old', 'X', [[6, 4], [6, 4]], 35)];
+  const r = formOf({ id: 'old', key: 'old' }, rusty, now); assert.equal(r.rust, true); assert.ok(r.daysSince >= 34 && r.daysSince <= 35);
+  assert.equal(formOf({ id: 'nobody', key: 'nobody' }, hot, now).matches, 0);
+});
+
+test('styleOf names the game from the serve and return numbers; matchupProb blends Elo and the simulation and moves for form, fatigue, injury and the surface', () => {
+  assert.equal(styleOf({ serve: 0.70, ace: 0.13, return: 0.36 }, 'atp').style, 'server');
+  assert.equal(styleOf({ serve: 0.63, ace: 0.05, return: 0.42 }, 'atp').style, 'returner');
+  assert.equal(styleOf({ serve: 0.70, ace: 0.10, return: 0.42 }, 'atp').style, 'complete');
+  assert.equal(styleOf({ serve: 0.64, ace: 0.07, return: 0.37 }, 'atp').style, 'grinder');
+  assert.ok(Math.abs(eloShare(2000, 1800) - 0.76) < 0.01);
+  const even = { pSim: 0.5, eloA: 1900, eloB: 1900, surface: 'hard' };
+  assert.equal(matchupProb(even).p, 0.5);
+  const now = Date.now();
+  const formA = formOf({ id: 'a', key: 'a' }, [result('1', 'A', 'X', [[6, 2], [6, 2]], 2), result('2', 'A', 'Y', [[6, 3], [6, 4]], 4), result('3', 'A', 'Z', [[6, 1], [6, 2]], 8)], now);
+  const formB = formOf({ id: 'b', key: 'b' }, [result('4', 'X', 'B', [[6, 2], [6, 2]], 2), result('5', 'Y', 'B', [[6, 3], [6, 4]], 4), result('6', 'Z', 'B', [[6, 1], [6, 2]], 8)], now);
+  const form = matchupProb({ ...even, formA, formB });
+  assert.ok(form.p > 0.6, `form moves the share: ${form.p}`); assert.ok(form.reasons.some((r) => /form favours A/.test(r)));
+  const tiredA = { ...formA, fatigue: true, loadWeek: 4 };
+  assert.ok(matchupProb({ ...even, formA: tiredA, formB: formA }).p < 0.5, 'fatigue costs');
+  const hurtB = { ...formA, injury: true };
+  assert.ok(matchupProb({ ...even, formA, formB: hurtB }).p > 0.58, 'an injury doubt on B helps A');
+  const server = styleOf({ serve: 0.70, ace: 0.13, return: 0.36 }, 'atp'); const returner = styleOf({ serve: 0.63, ace: 0.05, return: 0.42 }, 'atp');
+  assert.ok(matchupProb({ ...even, styleA: server, styleB: returner, surface: 'grass' }).p > 0.5, 'the server on grass');
+  assert.ok(matchupProb({ ...even, styleA: server, styleB: returner, surface: 'clay' }).p < 0.5, 'the returner on clay');
+  assert.ok(matchupProb({ pSim: 0.9, eloA: 2200, eloB: 1500, surface: 'hard', formA: tiredA, formB: formB }).p <= 0.97, 'clamped');
+});
+
+test('buildParlay takes the clearest unflagged favourites, two to four legs, at the book that prices every leg, and fills the second leg from the relaxed bar', () => {
+  const now = Date.now();
+  const q = (bookId, american) => ({ bookId, book: bookId, american, link: `https://${bookId}/x` });
+  const cand = (matchId, prob, flags = [], quotes = [q('fanduel', -300), q('draftkings', -280)], over = {}) => ({ matchId, tour: 'atp', event: 'Paris', round: 'R16', commenceMs: now + 3 * 3600e3, a: `${matchId} fav`, b: `${matchId} dog`, side: 'a', name: `${matchId} fav`, prob, pModel: prob, pMarket: prob, flags, opponentFlags: [], quotes, why: [] });
+  const p = buildParlay([cand('m1', 0.9), cand('m2', 0.85), cand('m3', 0.8), cand('m4', 0.79), cand('m5', 0.78)], now);
+  assert.ok(p, 'a parlay'); assert.equal(p.market, 'ml_parlay');
+  assert.ok(p.legs.length >= 2 && p.legs.length <= 4, `legs ${p.legs.length}`);
+  assert.ok(p.prob >= 0.58, `prob ${p.prob}`); assert.equal(p.bookId, 'draftkings', 'the better combined price'); assert.ok(p.american > 0 || p.american <= -100);
+  assert.ok(p.legs.every((l) => l.selection.endsWith('to win') && l.american === -280));
+  assert.equal(buildParlay([cand('m1', 0.9, ['fatigue']), cand('m2', 0.85, ['injury']), cand('m3', 0.8)], now), null, 'flagged favourites never go in; one leg is no parlay');
+  const relaxed = buildParlay([cand('m1', 0.9), cand('m2', 0.74)], now);
+  assert.ok(relaxed && relaxed.legs.length === 2, 'the second leg from the relaxed bar');
+  assert.equal(buildParlay([cand('m1', 0.9), cand('m2', 0.7)], now), null, 'below the relaxed bar: no second leg');
+  const split = buildParlay([cand('m1', 0.9, [], [q('fanduel', -300)]), cand('m2', 0.85, [], [q('draftkings', -200)]), cand('m3', 0.8, [], [q('fanduel', -150)])], now);
+  assert.equal(split.bookId, 'fanduel'); assert.equal(split.legs.length, 2, 'the legs the book carries');
+  assert.equal(buildParlay([cand('m1', 0.9, [], [], { }), cand('m2', 0.85, [], [])], now), null, 'no quotes, no parlay');
+  const started = buildParlay([{ ...cand('m1', 0.9), commenceMs: now - 1000 }, cand('m2', 0.85)], now);
+  assert.equal(started, null, 'a match under way is not a leg');
+});
+
+test('gradeParlay loses on the first lost leg, waits on an open one, voids a walkover leg and pays the rest', () => {
+  const play = { market: 'ml_parlay', units: 1, legs: [{ matchId: 'atp:1', side: 'a', selection: 'A to win', american: -300 }, { matchId: 'atp:2', side: 'b', selection: 'B to win', american: -150 }] };
+  const done = (id, winner, over = {}) => [id, { completed: true, statusName: 'STATUS_FINAL', winner, sets: [[6, 4], [6, 4]], ...over }];
+  assert.equal(gradeParlay(play, new Map([done('atp:1', 'a')])), null, 'one leg open');
+  const won = gradeParlay(play, new Map([done('atp:1', 'a'), done('atp:2', 'b')]));
+  assert.equal(won.result, 'win'); assert.equal(won.net, Math.round(((4 / 3) * (5 / 3) - 1) * 100) / 100);
+  assert.equal(gradeParlay(play, new Map([done('atp:1', 'b')])).result, 'loss', 'lost at once');
+  const voided = gradeParlay(play, new Map([done('atp:1', 'a'), done('atp:2', 'b', { statusName: 'STATUS_WALKOVER', sets: [] })]));
+  assert.equal(voided.result, 'win'); assert.equal(voided.net, 0.33, 'the walkover leg drops, the other pays');
+  const retiredLate = gradeParlay(play, new Map([done('atp:1', 'a'), done('atp:2', 'b', { statusName: 'STATUS_RETIRED', sets: [[6, 4], [2, 1]] })]));
+  assert.equal(retiredLate.net, won.net, 'a retirement after a completed set stands');
+  assert.equal(gradeParlay(play, new Map([done('atp:1', 'a', { statusName: 'STATUS_WALKOVER', sets: [] }), done('atp:2', 'b', { statusName: 'STATUS_WALKOVER', sets: [] })])).result, 'void');
+});
+
+test('runTennisTick never puts a flagged player on a play, posts the day\'s parlay once, and stops at the units cap with one unit kept for the parlay', async () => {
+  const m = new Map(); const env = { POTD_KV: { get: async (k) => m.get(k) ?? null, put: async (k, v) => { m.set(k, v); } } };
+  const now = Date.now();
+  const names = ['Alpha One', 'Beta Two', 'Gamma Three', 'Delta Four', 'Epsilon Five', 'Zeta Six', 'Eta Seven', 'Theta Eight'];
+  const slate = names.map((fav, i) => match({ id: `${100 + i}`, date: new Date(now + (3 + i) * 3600e3).toISOString(), a: { id: `f${i}`, name: fav, key: fav.toLowerCase() }, b: { id: `d${i}`, name: `Dog ${i}`, key: `dog ${i}` } }));
+  const players = {};
+  for (let i = 0; i < names.length; i++) { players[names[i].toLowerCase()] = { ...profile(names[i], 60, 0.72, 0.43, 0.11), overall: { ...line(60, 0.72, 0.43, 0.11), elo: 2100 } }; players[`dog ${i}`] = { ...profile(`Dog ${i}`, 45, 0.64, 0.37, 0.07), overall: { ...line(45, 0.64, 0.37, 0.07), elo: 1750 } }; }
+  // Favourite 0 retired last week: flagged, never a side.
+  const results = [{ id: '900', tour: 'atp', completed: true, statusName: 'STATUS_RETIRED', note: 'Alpha One retired', date: new Date(now - 5 * 864e5).toISOString(), a: { id: 'x', key: 'x', name: 'X' }, b: { id: 'f0', key: 'alpha one', name: 'Alpha One' }, sets: [[6, 2], [2, 0]], winner: 'a' }];
+  const boardFor = (s) => ({ id: `ev${s.id}`, sport_key: 'tennis_atp_paris', home_team: s.a.name, away_team: s.b.name, commence_time: s.date, bookmakers: [
+    book('fanduel', { h2h: [{ name: s.a.name, price: -400 }, { name: s.b.name, price: 300 }], spreads: [{ name: s.a.name, point: -4.5, price: -115 }, { name: s.b.name, point: 4.5, price: -105 }], totals: [{ name: 'Over', point: 21.5, price: -110 }, { name: 'Under', point: 21.5, price: -110 }] }),
+    book('draftkings', { h2h: [{ name: s.a.name, price: -380 }, { name: s.b.name, price: 290 }], spreads: [{ name: s.a.name, point: -4.5, price: -110 }, { name: s.b.name, point: 4.5, price: -110 }] }),
+  ] });
+  const deps = { card: async () => ({ at: 1, slate, results }), profiles: async () => ({ players }), sportKeys: async () => ({ atp: [{ key: 'tennis_atp_paris', title: 'Paris' }], wta: [] }), board: async () => slate.map(boardFor), eventMarkets: async () => deepEvent(), aceLog: async () => ({}) };
+  const r = await runTennisTick(env, null, now, { deps });
+  assert.equal(r.skipped, false); assert.equal(r.candidates, 8);
+  const picks = await getTennisPicks(env, now);
+  const plays = picks.current.plays;
+  const parlay = plays.find((p) => p.market === 'ml_parlay');
+  assert.ok(parlay, 'the day\'s parlay posted'); assert.ok(parlay.legs.length >= 2 && parlay.legs.length <= 4); assert.ok(parlay.prob >= 0.58);
+  assert.ok(parlay.legs.every((l) => l.a !== 'Alpha One'), 'the flagged favourite is not a leg');
+  assert.ok(parlay.legs.every((l) => l.prob >= PARLAY_LEG_PROB - 0.07), `legs ${parlay.legs.map((l) => l.prob)}`);
+  assert.ok(plays.every((p) => !p.side || !(p.flags?.[p.side] ?? []).length), 'no play sits on a flagged side');
+  assert.ok(unitsPosted(plays) <= MAX_UNITS_DAY, `units ${unitsPosted(plays)}`);
+  assert.equal(picks.unitsToday, unitsPosted(plays)); assert.equal(picks.bar.maxUnits, MAX_UNITS_DAY);
+  const read0 = picks.current.reads['atp:100'];
+  assert.ok(read0.flags.a.includes('injury'), `flags ${JSON.stringify(read0.flags)}`); assert.ok(/Alpha One/.test(read0.form.a)); assert.ok(read0.pModel != null && read0.pFinal != null);
+  const again = await runTennisTick(env, null, now, { deps });
+  assert.equal(again.posted, 0, 'posted once: the parlay and the plays stand'); assert.equal(again.parlay, 0);
+  // Every leg's favourite wins: the parlay grades a win.
+  const doneSlate = slate.map((s) => match({ ...s, state: 'post', completed: true, statusName: 'STATUS_FINAL', sets: [[6, 3], [6, 4]], winner: 'a' }));
+  deps.card = async () => ({ at: 1, slate: doneSlate, results });
+  const g = await runTennisTick(env, null, now, { deps });
+  assert.ok(g.graded >= 1);
+  const after = await getTennisPicks(env, now);
+  const gradedParlay = after.current.plays.find((p) => p.market === 'ml_parlay');
+  assert.equal(gradedParlay.result, 'win'); assert.ok(gradedParlay.net > 0);
+  assert.ok(after.byMarket.ml_parlay.wins === 1);
+});
+
+test('the live tennis read lists the day\'s singles from ESPN with each play\'s standing, cached two minutes', async () => {
+  const m = new Map(); const env = { POTD_KV: { get: async (k) => m.get(k) ?? null, put: async (k, v) => { m.set(k, v); } } };
+  const now = Date.parse('2026-11-06T18:00:00Z');
+  const comp = (id, a, b, state, linescores = [[], []], over = {}) => ({ id, date: '2026-11-06T17:00Z', round: { displayName: 'Quarterfinal' }, status: { type: { state, completed: state === 'post', name: state === 'post' ? 'STATUS_FINAL' : state === 'in' ? 'STATUS_IN_PROGRESS' : 'STATUS_SCHEDULED', detail: state === 'in' ? '2nd Set' : '' } }, competitors: [{ id: `${id}a`, athlete: { displayName: a }, linescores: linescores[0].map((v) => ({ value: v })), winner: over.winner === 'a' }, { id: `${id}b`, athlete: { displayName: b }, linescores: linescores[1].map((v) => ({ value: v })), winner: over.winner === 'b' }] });
+  const scoreboard = { atp: { events: [{ id: '13', name: 'Rolex Paris Masters', groupings: [{ grouping: { slug: 'mens-singles' }, competitions: [comp('1', 'Jannik Sinner', 'Ben Shelton', 'in', [[6, 3], [4, 5]]), comp('2', 'Carlos Alcaraz', 'Taylor Fritz', 'pre'), comp('3', 'Alex Zverev', 'Casper Ruud', 'post', [[6, 4], [6, 2]], { winner: 'a' })] }, { grouping: { slug: 'mens-doubles' }, competitions: [comp('4', 'A / B', 'C / D', 'in')] }] }] }, wta: { events: [] } };
+  let calls = 0;
+  const fetchJson = async (url) => { calls++; return /atp/.test(url) ? scoreboard.atp : scoreboard.wta; };
+  const record = { date: '2026-11-06', plays: [
+    { id: 'atp:1:games_spread', matchId: 'atp:1', market: 'games_spread', side: 'b', a: 'Jannik Sinner', b: 'Ben Shelton', point: 4.5, american: -110, status: 'pending', selection: 'Ben Shelton +4.5 games' },
+    { id: 'atp:3:games_total', matchId: 'atp:3', market: 'games_total', point: 21.5, american: -110, units: 1, status: 'pending', selection: 'Over 21.5 games', a: 'Alex Zverev', b: 'Casper Ruud' },
+    { id: 'parlay:2026-11-06', market: 'ml_parlay', status: 'pending', selection: '2-leg', american: 120, legs: [{ matchId: 'atp:1', side: 'a', selection: 'Jannik Sinner to win', american: -300 }, { matchId: 'atp:2', side: 'a', selection: 'Carlos Alcaraz to win', american: -250 }] },
+  ] };
+  m.set('tennis:picks:2026-11-06', JSON.stringify(record));
+  const live = await getTennisLive(env, now, { fetchJson });
+  assert.equal(calls, 2, 'one scoreboard a tour'); assert.equal(live.matches.length, 3, 'singles only'); assert.equal(live.inPlay, 1);
+  assert.equal(live.matches[0].id, 'atp:1', 'in play first'); assert.equal(live.matches[0].plays[0].standing.state, 'on', '6-3 4-5: Shelton inside 4.5');
+  const final = live.matches.find((x) => x.id === 'atp:3'); assert.equal(final.plays[0].standing.state, 'lost', '18 games: the over lost');
+  assert.equal(live.parlays.length, 1); assert.equal(live.parlays[0].legs[0].standing.state, 'on'); assert.equal(live.parlays[0].legs[1].standing.state, 'wait');
+  const again = await getTennisLive(env, now + 60e3, { fetchJson });
+  assert.equal(calls, 2, 'cached'); assert.equal(again.matches.length, 3);
+  assert.equal(playStanding({ market: 'set_spread', side: 'b', a: 'A', b: 'B', point: 1.5, status: 'pending' }, { state: 'in', sets: [[6, 4]], completed: false }).state, 'on');
+  assert.equal(playStanding({ market: 'set_spread', side: 'b', a: 'A', b: 'B', point: 1.5, status: 'pending' }, { state: 'in', sets: [[4, 6]], completed: false }).state, 'won');
+  assert.equal(legStanding({ side: 'b' }, { state: 'in', sets: [[6, 4], [3, 6], [2, 1]] }).text, '6-4 3-6 2-1: 1-1 in sets');
+});

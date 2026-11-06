@@ -7415,3 +7415,25 @@ a.trend-price:hover { background: rgba(255, 255, 255, 0.06); }
 .tennis-read { display: grid; gap: 2px; padding: 8px 10px; border-radius: 10px; background: var(--surface-2); }
 .tennis-read.is-play { border: 1px solid var(--success); }
 .tennis-read small { color: var(--muted); font-size: 0.78rem; }
+.tennis-read .tennis-form { font-size: 0.76rem; }
+.tennis-flag { display: inline-block; margin-right: 4px; padding: 1px 7px; border-radius: 999px; border: 1px solid var(--line); font-size: 0.68rem; font-weight: 800; letter-spacing: 0.04em; text-transform: uppercase; color: var(--muted); }
+.tennis-flag.is-injury { color: var(--danger, #ff5c7a); border-color: var(--danger, #ff5c7a); }
+.tennis-flag.is-fatigue { color: #f5b942; border-color: #f5b942; }
+.tennis-legs { display: grid; gap: 8px; margin: 8px 0; }
+.tennis-leg, .live-tennis-play { display: flex; align-items: center; justify-content: space-between; gap: 10px; padding: 8px 10px; border-radius: 10px; background: var(--surface-2); }
+.tennis-leg > span, .live-tennis-play > span { display: grid; gap: 2px; min-width: 0; }
+.tennis-leg small, .live-tennis-play small { color: var(--muted); font-size: 0.78rem; }
+.live-tennis-note { font-size: 0.74rem; }
+/* Tennis on the Live tab (worker/src/tennis-live.js): the day's singles, the plays on them, the parlay's legs. */
+.live-tennis { margin-top: 14px; display: grid; gap: 10px; }
+.live-tennis .live-sub { margin: 0; }
+.live-tennis-match { display: grid; gap: 6px; padding: 10px 12px; border: 1px solid var(--line); border-radius: 14px; background: var(--surface); }
+.live-tennis-match.is-live { border-color: rgba(255, 59, 92, 0.45); }
+.live-tennis-match.has-play { border-color: rgba(94, 224, 122, 0.45); }
+.live-tennis-row { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+.live-tennis-row strong { flex: 1 1 auto; min-width: 0; }
+.live-tennis-row strong small { color: var(--muted); font-weight: 600; margin: 0 4px; }
+.live-tennis-match .row-sub { margin: 0; }
+.live-tennis-rest { border: 1px solid var(--line); border-radius: 14px; padding: 8px 12px; background: var(--surface); display: grid; gap: 8px; }
+.live-tennis-rest summary { cursor: pointer; font-weight: 700; color: var(--muted); }
+.live-tennis-parlay { display: grid; gap: 6px; }
