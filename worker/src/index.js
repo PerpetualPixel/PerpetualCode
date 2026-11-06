@@ -61,7 +61,7 @@ import { loadBundleIndex, loadInjuries, injuryFor, withInjuries } from './espn-b
 import { getPlayerIndex, getPlayerLog, playerStats } from './player-search.js';
 import { getUfcEvents, getUfcEvent, nextUfcEvent, getUfcFighter, getUfcFighters } from './ufc-card.js';
 import { runUfcTick, getUfcPicks } from './ufc-picks.js';
-import { runTennisTick, getTennisPicks } from './tennis-picks.js';
+import { runTennisTick, getTennisPicks, getTennisParlay } from './tennis-picks.js';
 import { getTennisLive } from './tennis-live.js';
 import { getTennisTrends } from './tennis-trends.js';
 import { sendUfcTicketNotifications, sendUfcChangeNotifications } from './notifications.js';
@@ -1592,6 +1592,10 @@ export default {
     // Tennis in the Trends tab (worker/src/tennis-trends.js): every player's consistent lines, aces modeled from the rate.
     if (pathname === '/tennis/trends' && request.method === 'GET') {
       return json(await getTennisTrends(env), { headers: { ...cors, 'Cache-Control': 'public, max-age=300' } });
+    }
+    // Tennis in the Parlay Builder (worker/src/tennis-picks.js builderLegs): every priced leg on the matches read, scored.
+    if (pathname === '/tennis/parlay' && request.method === 'GET') {
+      return json(await getTennisParlay(env), { headers: { ...cors, 'Cache-Control': 'public, max-age=120' } });
     }
     if (pathname === '/ufc/fighters' && request.method === 'GET') {
       return json(await getUfcFighters(env), { headers: { ...cors, 'Cache-Control': 'public, max-age=1800' } });
