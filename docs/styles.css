@@ -6568,6 +6568,18 @@ button, [role="tab"], .league-chip, .parlay-btn, .trend-price { touch-action: ma
    card on every frame of the sheet's open, close and scroll, which is what
    made the Period and Filters menus feel slow. A plain dim is instant. */
 .trends-scrim { position: fixed; inset: 0; background: rgba(0, 0, 0, 0.66); z-index: 60; }
+/* The first-run sportsbooks question: a centered card over the scrim. */
+.books-scrim { z-index: 70; }
+.books-onboard { position: fixed; left: 50%; top: 50%; transform: translate(-50%, -50%); z-index: 71; width: min(92vw, 520px); max-height: calc(100% - 32px); overflow: auto; background: #141222; border: 1px solid var(--line); border-radius: 22px; padding: 20px 18px; box-shadow: 0 20px 60px rgba(0, 0, 0, 0.6); display: grid; gap: 12px; }
+.books-onboard-title { margin: 0; font-size: 1.25rem; }
+.books-onboard .row-sub { margin: 0; }
+.books-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(140px, 1fr)); gap: 8px; }
+.books-chip { display: flex; align-items: center; gap: 8px; padding: 10px 12px; border-radius: 12px; border: 1px solid var(--line); background: var(--surface); color: var(--text); font: inherit; font-weight: 700; cursor: pointer; text-align: left; }
+.books-chip .book-badge { width: 22px; height: 22px; flex: 0 0 auto; }
+.books-chip.is-active { border-color: var(--accent); background: var(--accent-dim); }
+.books-chip .league-chip-on { margin-left: auto; color: var(--accent); }
+.books-onboard-actions { display: flex; flex-wrap: wrap; gap: 8px; }
+.books-onboard-actions .parlay-build { padding: 10px 18px; }
 .trends-sheet {
   position: fixed; left: 0; right: 0; bottom: 0; z-index: 61; max-height: calc(100% - 24px); overflow: auto;
   background: #141222; border-radius: 22px 22px 0 0; border: 1px solid var(--line); border-bottom: 0;
