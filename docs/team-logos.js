@@ -99,8 +99,8 @@ const EPL = {
 };
 const LA_LIGA = {
   'alaves': 'ala', 'deportivo alaves': 'ala', 'athletic club': 'ath', 'athletic bilbao': 'ath', 'atletico madrid': 'atm', 'barcelona': 'bar',
-  'fc barcelona': 'bar', 'celta vigo': 'cel', 'deportivo': 'dep', 'deportivo la coruna': 'dep', 'elche': 'elc', 'espanyol': 'esp', 'getafe': 'get',
-  'levante': 'lev', 'malaga': 'mcf', 'osasuna': 'osa', 'racing santander': 'rac', 'rayo vallecano': 'ray', 'real betis': 'bet', 'real madrid': 'rma',
+  'fc barcelona': 'bar', 'celta vigo': 'cel', 'deportivo': 'dep', 'deportivo la coruna': 'dep', 'elche': 'elc', 'elche cf': 'elc', 'espanyol': 'esp', 'getafe': 'get',
+  'levante': 'lev', 'malaga': 'mcf', 'osasuna': 'osa', 'ca osasuna': 'osa', 'racing santander': 'rac', 'racing club de santander': 'rac', 'real racing club de santander': 'rac', 'rayo vallecano': 'ray', 'real betis': 'bet', 'real madrid': 'rma',
   'real sociedad': 'rso', 'sevilla': 'sev', 'valencia': 'val', 'villarreal': 'vil',
 };
 const SERIE_A = {
@@ -113,7 +113,7 @@ const BUNDESLIGA = {
   '1 fc union berlin': 'fcu', 'union berlin': 'fcu', 'bayer leverkusen': 'b04', 'bayern munich': 'mun', 'fc bayern munich': 'mun',
   'borussia dortmund': 'dor', 'borussia monchengladbach': 'bmg', 'eintracht frankfurt': 'sge', 'fc augsburg': 'fca', 'augsburg': 'fca',
   'fc cologne': 'koe', '1 fc koln': 'koe', 'fc koln': 'koe', 'hamburg sv': 'hsv', 'hamburger sv': 'hsv', 'mainz': 'm05', 'fsv mainz 05': 'm05',
-  'mainz 05': 'm05', 'rb leipzig': 'rbl', 'sc freiburg': 'scf', 'freiburg': 'scf', 'sc paderborn 07': 'scp', 'paderborn': 'scp',
+  'mainz 05': 'm05', 'rb leipzig': 'rbl', 'sc freiburg': 'scf', 'freiburg': 'scf', 'sc paderborn 07': 'scp', 'sc paderborn': 'scp', 'paderborn': 'scp',
   'sv elversberg': 'elv', 'elversberg': 'elv', 'schalke 04': 's04', 'fc schalke 04': 's04', 'tsg hoffenheim': 'tsg', 'hoffenheim': 'tsg',
   'vfb stuttgart': 'vfb', 'werder bremen': 'svw',
 };
