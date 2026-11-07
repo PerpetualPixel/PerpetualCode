@@ -75,6 +75,17 @@ jobs:
                   return;
                 }
                 if (d && d.current && d.current.breakdowns) d = d.current; // /ufc/picks wraps the card under current, with the history beside it
+                if (d && d.trends && Array.isArray(d.trends.rows) && d.available) {
+                // A Trends board (worker/src/trends.js getTrendsFor): the build, a sample of rows, the diagnostic lines (an unresolved player, a club the team map does not know reads as ?).
+                const t = d.trends;
+                console.log("TRENDS", t.sportKey, t.title, "| built", t.builtAt && new Date(t.builtAt).toISOString(), "| games", t.games, "pending", t.pending, "| rows", t.rows.length, "| injuries at", t.injuriesAt && new Date(t.injuriesAt).toISOString(), "| lastError", t.lastError || "");
+                console.log("AVAILABLE", d.available.map((a) => a.sportKey + " " + a.rows).join(", "), "| feed", JSON.stringify(d.feed));
+                const teams = {}; for (const r of t.rows) { teams[r.team || "?"] = (teams[r.team || "?"] || 0) + 1; }
+                console.log("TEAMS", JSON.stringify(teams), "| unknown clubs", t.rows.filter((r) => !r.team || r.team === "?" || !r.opponent || r.opponent === "?").map((r) => r.away + " @ " + r.home).filter((v, i, a) => a.indexOf(v) === i).join("; ") || "none");
+                for (const r of t.rows.slice(0, 12)) console.log("  ROW", r.playerName, r.team, "|", r.marketLabel, r.side, r.point, "|", r.book, r.american, "|", r.bookCount, "books | L5", r.periods.l5 && r.periods.l5.rate, "L10", r.periods.l10 && r.periods.l10.rate, "L20", r.periods.l20 && r.periods.l20.rate, "(" + (r.periods.l20 && r.periods.l20.games) + " games) |", r.away, "@", r.home);
+                for (const line of t.diag || []) console.log("  DIAG", line);
+                return;
+                }
                 if (d && Array.isArray(d.legs) && Array.isArray(d.matches) && !d.byTour) {
                 // The Parlay Builder tennis legs (worker/src/tennis-picks.js getTennisParlay): the matches read and the best legs by score.
                 console.log("TENNIS PARLAY at", d.at && new Date(d.at).toISOString(), "| matches", d.matches.length, "| legs", d.legs.length);
