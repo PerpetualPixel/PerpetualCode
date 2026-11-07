@@ -441,6 +441,24 @@
         </form>
       </div>
 
+      <!-- Playbook, the Discord bot (worker/src/settings.js's playbook; docs/playbook.js): where the user tags it, and its user id for a real tag. -->
+      <div class="card" id="playbook">
+        <h2>Playbook on Discord</h2>
+        <p class="card-desc">Playbook (playbookbot.com) turns a written bet into a slip at any book, Fanatics included. Every ticket in the app can send its legs to your Discord for the bot and take the slip link back as its Bet now button. Keep your channel link here for a one-tap open, and the bot's user id so the message tags it for real (Discord: User Settings → Advanced → Developer Mode, then right-click Playbook → Copy User ID).</p>
+        <div id="playbook-message"></div>
+        <form id="playbook-form">
+          <div class="picks-grid">
+            <label>Discord channel link
+              <input type="url" id="playbook-channel" inputmode="url" placeholder="https://discord.com/channels/…" autocomplete="off">
+            </label>
+            <label>Playbook's user id (optional)
+              <input type="text" id="playbook-mention" inputmode="numeric" placeholder="e.g. 123456789012345678" autocomplete="off">
+            </label>
+          </div>
+          <button type="submit" class="button">Save</button>
+        </form>
+      </div>
+
       <!-- The books the Live tab shows slips for and imports to (worker/src/settings.js's liveBooks). -->
       <div class="card" id="live-books">
         <h2>Live slips: your books</h2>
@@ -526,6 +544,6 @@
     </div>
   </div>
 
-  <script src="account.js?v=1.318" defer></script>
+  <script src="account.js?v=1.319" defer></script>
 </body>
 </html>

@@ -54,6 +54,7 @@ import {
   tennisUnderdogBlocked,
 } from './qualitative.js';
 import { parseLeg as parseSlipLeg, parseSlipText, parseAmerican as parseSlipAmerican, checkSlip, CATEGORY_LABEL as SLIP_CATEGORY_LABEL, TICKET_TYPES as SLIP_TICKET_TYPES } from './slip-check.js';
+import { playbookText, playbookKey, playbookUserId, discordChannelUrl, cleanPlaybookLink, PLAYBOOK_SITE } from './playbook.js';
 import { hitFlags as slipHitFlags } from './trends.js';
 import {
   auditLegs,
@@ -3359,6 +3360,8 @@ async function loadSettings() {
     }
     // The user's sportsbooks (see openBooksOnboard): the account's answer wins over this device's.
     if (Array.isArray(settings?.myBooks)) saveJSON(MY_BOOKS_KEY, settings.myBooks);
+    // The Playbook setup (see playbookBlock): the account's wins over this device's.
+    if (settings?.playbook && typeof settings.playbook === 'object') saveJSON(PLAYBOOK_KEY, { channel: settings.playbook.channel ?? '', mention: settings.playbook.mention ?? '' });
     // The user's sportsbooks (see persistTrendBooks): the account's list
     // wins over this device's, same as the bankroll.
     if (Array.isArray(settings?.trendBooks)) {
@@ -3386,6 +3389,9 @@ async function loadSettings() {
    Parlay Builder's book follow it here, and the worker makes the
    personal ticket's book follow it too. */
 const MY_BOOKS_KEY = 'pixelpick.myBooks.v1';
+/* The Playbook setup (worker/src/settings.js's playbook) and the slip links brought back per ticket. */
+const PLAYBOOK_KEY = 'pixelpick.playbook.v1';
+const PLAYBOOK_LINKS_KEY = 'pixelpick.playbookLinks.v1';
 const ONBOARD_BOOKS = ['draftkings', 'fanduel', 'betmgm', 'caesars', 'fanatics', 'hardrock', 'bet365', 'betrivers', 'espnbet', 'prizepicks', 'kalshi'];
 const myBooksState = { chosen: new Set(), open: false };
 const myBooks = () => { const v = loadJSON(MY_BOOKS_KEY, null); return Array.isArray(v) ? v : null; };
@@ -10586,15 +10592,98 @@ function parlaySlipNote(book, legs) {
   return `<p class="row-sub">${esc(name)} gives out no slip links: ${url ? `<a href="${esc(url)}" target="_blank" rel="noopener">open ${esc(name)} ↗</a>` : `open ${esc(name)}`} and add ${priced === 1 ? 'the leg' : `the ${priced} legs`} by hand${priced < legs.length ? `; ${legs.length - priced} more wait on a line` : ''}.</p>`;
 }
 
-/** The footer of a posted ticket: one link that fills the whole slip where the book takes a list, else the single line's link, else the book. */
+/** The footer of a posted ticket: one link that fills the whole slip where the book takes a list, else the single line's link, else the book; then Playbook for the books that take no slip at all. */
 function ticketSlipFoot(bet) {
   const all = bet.type === 'parlay' && bet.legs.length > 1 ? combinedSlipLink(bet.bookId, bet.legs.map((l) => l.link)) : null;
   const href = all ?? bet.link ?? bet.bookUrl ?? (bookIdFor(bet.bookId) ? SPORTSBOOKS[bookIdFor(bet.bookId)]?.url : null);
-  if (!href) return '';
+  const legs = (bet.legs ?? []).filter((l) => l.selection);
+  const pb = legs.length ? playbookBlock({ key: playbookKey(bet.bookId ?? bet.book, legs.map((l) => l.id ?? l.selection)), legs: legs.map((l) => ({ selection: l.selection, game: l.away && l.home ? `${l.away} @ ${l.home}` : '' })), book: bookIdFor(bet.bookId) ?? bet.bookId ?? bet.book, bookName: bet.book }) : '';
+  if (!href) return pb ? `<div class="pick-bet-foot">${pb}</div>` : '';
   const label = all ? `Add all ${bet.legs.length} legs to your ${esc(bet.book)} slip ↗` : bet.link ? `Open on your ${esc(bet.book)} slip ↗` : `Open ${esc(bet.book)}`;
   const perLeg = !all && bet.type === 'parlay' ? (bet.legs.some((l) => l.link) ? `<p class="row-sub">${esc(bet.book)} takes legs one at a time: tap each leg's price to add it.</p>` : `<p class="row-sub">${esc(bet.book)} gives out no slip links: add the legs by hand.</p>`) : '';
-  return `<div class="pick-bet-foot">${perLeg}<a class="pick-bet-link" href="${esc(href)}" target="_blank" rel="noopener">${label}</a></div>`;
+  return `<div class="pick-bet-foot">${perLeg}<a class="pick-bet-link" href="${esc(href)}" target="_blank" rel="noopener">${label}</a>${pb}</div>`;
 }
+
+/* ---------------------------------------------------------------- */
+/* Playbook (docs/playbook.js; 2026-11-07): the Discord bot's slip for any book */
+/* ---------------------------------------------------------------- */
+/* Playbook has no API: the user tags the bot in Discord with the legs
+   written out and it replies with a playbookbot.com slip for the book
+   named, Fanatics and the rest included. Each ticket carries a block that
+   writes that message (share sheet on a phone, clipboard on a PC), and a
+   field for the link Playbook replies with, which then becomes the
+   ticket's Bet now button. Links are kept per ticket under
+   PLAYBOOK_LINKS_KEY (the book and the legs: a rebuilt ticket starts
+   clean); the channel link and the bot's user id under PLAYBOOK_KEY. */
+const playbookSettings = () => { const v = loadJSON(PLAYBOOK_KEY, null); return v && typeof v === 'object' ? v : {}; };
+const playbookLinks = () => { const v = loadJSON(PLAYBOOK_LINKS_KEY, {}); return v && typeof v === 'object' && !Array.isArray(v) ? v : {}; };
+function savePlaybookLink(key, url) {
+  const links = playbookLinks();
+  if (url) links[key] = { url, at: Date.now() }; else delete links[key];
+  const keep = Object.keys(links).sort((a, b) => (links[b]?.at ?? 0) - (links[a]?.at ?? 0)).slice(0, 60);
+  saveJSON(PLAYBOOK_LINKS_KEY, Object.fromEntries(keep.map((k) => [k, links[k]])));
+}
+/** A phone shares the message straight to Discord; a PC copies it and opens the channel. */
+const playbookCanShare = () => typeof navigator.share === 'function' && window.matchMedia?.('(pointer: coarse)').matches;
+function playbookBlock({ key, legs, book, bookName }) {
+  const text = playbookText({ legs, book, mention: playbookSettings().mention });
+  return text ? playbookBlockHtml({ key, text, bookName: bookName ?? book }) : '';
+}
+function playbookBlockHtml({ key, text, bookName, status = '' }) {
+  const link = playbookLinks()[key]?.url ?? null;
+  const prefs = playbookSettings();
+  const channel = discordChannelUrl(prefs.channel);
+  const tagged = Boolean(playbookUserId(prefs.mention));
+  const setup = `<a href="account.html#playbook">Settings</a>`;
+  const note = link
+    ? `Playbook's slip for ${esc(bookName)}. A rebuilt ticket asks for a new one.`
+    : `${playbookCanShare() ? 'Send the message to your Discord' : 'Paste the message in your Discord'} and tag Playbook; it replies with a ${esc(bookName)} slip. Paste that link here and it becomes the Bet now button.${tagged ? '' : ` Pasted text does not ping the bot: pick @Playbook from Discord's autocomplete, or save its user id in ${setup} for a real tag.`}${channel ? '' : ` Keep your channel link in ${setup} to open it in one tap.`}`;
+  return `<div class="pb-block" data-pb-key="${esc(key)}" data-pb-text="${esc(text)}" data-pb-book="${esc(bookName)}">
+    <div class="pb-head"><span class="pb-mark" aria-hidden="true">P</span><strong>Playbook</strong><small>${link ? 'slip attached' : `a ${esc(bookName)} slip from the Discord bot`}</small><a class="pb-site" href="${esc(PLAYBOOK_SITE)}" target="_blank" rel="noopener">playbookbot.com ↗</a></div>
+    ${link ? `<a class="pb-open" href="${esc(link)}" target="_blank" rel="noopener">Bet now on Playbook · ${esc(bookName)} ↗</a>
+    <div class="pb-row"><button type="button" class="pb-btn" data-pb-send>${playbookCanShare() ? 'Send again' : 'Copy again'}</button><button type="button" class="pb-btn" data-pb-clear>Remove link</button></div>`
+    : `<div class="pb-row"><button type="button" class="pb-btn is-main" data-pb-send>${playbookCanShare() ? 'Send to Discord' : 'Copy for Discord'}</button><button type="button" class="pb-btn" data-pb-copy>Copy text</button>${channel ? `<a class="pb-btn" href="${esc(channel)}" target="_blank" rel="noopener">Open channel ↗</a>` : ''}</div>
+    <form class="pb-form" data-pb-form><input type="url" inputmode="url" autocomplete="off" placeholder="Paste the playbookbot.com link Playbook replies with" aria-label="Playbook slip link" required><button type="submit" class="pb-btn">Attach</button></form>`}
+    <p class="row-sub pb-status" data-pb-status ${status ? '' : 'hidden'}>${esc(status)}</p>
+    <p class="row-sub pb-note">${note}</p>
+  </div>`;
+}
+function playbookStatus(block, text) { const node = block.querySelector('[data-pb-status]'); if (node) { node.textContent = text; node.hidden = !text; } }
+async function playbookCopy(block, text) {
+  try { await navigator.clipboard.writeText(text); return true; } catch { /* no clipboard: show the text to copy by hand */ }
+  if (!block.querySelector('.pb-text')) block.insertAdjacentHTML('beforeend', `<textarea class="pb-text" readonly rows="4" aria-label="Message for Playbook">${esc(text)}</textarea>`);
+  return false;
+}
+document.addEventListener('click', async (event) => {
+  const block = event.target.closest('.pb-block');
+  if (!block) return;
+  const t = event.target;
+  const text = block.dataset.pbText ?? '';
+  const key = block.dataset.pbKey ?? '';
+  if (t.closest('[data-pb-send]')) {
+    event.preventDefault();
+    if (playbookCanShare()) {
+      try { await navigator.share({ text }); playbookStatus(block, 'Sent. When Playbook replies, paste its link below.'); return; } catch (e) { if (e?.name === 'AbortError') return; }
+    }
+    const ok = await playbookCopy(block, text);
+    const channel = discordChannelUrl(playbookSettings().channel);
+    if (ok && channel) window.open(channel, '_blank', 'noopener');
+    playbookStatus(block, ok ? `Copied. Paste it in ${channel ? 'your channel' : 'Discord'} to tag Playbook, then bring its link back here.` : 'Clipboard blocked: copy the text below by hand.');
+    return;
+  }
+  if (t.closest('[data-pb-copy]')) { event.preventDefault(); const ok = await playbookCopy(block, text); playbookStatus(block, ok ? 'Copied.' : 'Clipboard blocked: copy the text below by hand.'); return; }
+  if (t.closest('[data-pb-clear]')) { event.preventDefault(); savePlaybookLink(key, null); block.outerHTML = playbookBlockHtml({ key, text, bookName: block.dataset.pbBook ?? '' }); }
+});
+document.addEventListener('submit', (event) => {
+  const form = event.target.closest?.('[data-pb-form]');
+  if (!form) return;
+  event.preventDefault();
+  const block = form.closest('.pb-block');
+  const url = cleanPlaybookLink(form.querySelector('input')?.value);
+  if (!url) { playbookStatus(block, 'That is not a playbookbot.com link: paste the one Playbook replied with.'); return; }
+  savePlaybookLink(block.dataset.pbKey, url);
+  block.outerHTML = playbookBlockHtml({ key: block.dataset.pbKey, text: block.dataset.pbText, bookName: block.dataset.pbBook ?? '', status: 'Attached: Bet now opens your Playbook slip.' });
+});
 
 const stars = (score) => `<span class="parlay-stars" aria-label="${esc(String(score))} of 5">${'★'.repeat(Math.round(score))}${'☆'.repeat(5 - Math.round(score))}<small>${esc(score.toFixed(1))}</small></span>`;
 
@@ -10783,7 +10872,7 @@ function renderParlay() {
       ${price?.unpriced ? `<p class="parlay-note">${esc(String(price.unpriced))} leg${price.unpriced === 1 ? ' has' : 's have'} no line yet; the price covers the ${esc(String(price.priced))} priced leg${price.priced === 1 ? '' : 's'}.</p>` : legs.length && !price ? '<p class="parlay-note">No line on any of these legs yet; the price comes once a book posts them.</p>' : ''}
       <div class="parlay-card-top">${all ? `<a class="parlay-all" href="${esc(all)}" target="_blank" rel="noopener">Add all ${legs.length} legs to your ${esc(parlayBookName(s.book))} slip ↗</a>` : parlaySlipNote(s.book, legs)}</div>
       <div class="parlay-legs">${legs.map(renderParlayLeg).join('')}</div>
-      <div class="parlay-card-foot">${all ? `<a class="parlay-all" href="${esc(all)}" target="_blank" rel="noopener">Add all ${legs.length} legs to your ${esc(parlayBookName(s.book))} slip ↗</a>` : parlaySlipNote(s.book, legs)}</div>
+      <div class="parlay-card-foot">${all ? `<a class="parlay-all" href="${esc(all)}" target="_blank" rel="noopener">Add all ${legs.length} legs to your ${esc(parlayBookName(s.book))} slip ↗</a>` : parlaySlipNote(s.book, legs)}${playbookBlock({ key: playbookKey(s.book, legs.map((l) => l.row.id)), legs: legs.map((l) => ({ selection: l.row.selection ?? `${l.row.playerName} ${l.row.side} ${l.row.point} ${l.row.marketLabel ?? l.row.statLabel}`, game: l.row.ufc || l.row.tennis ? `${l.row.away} vs ${l.row.home}` : `${l.row.away} @ ${l.row.home}` })), book: s.book, bookName: parlayBookName(s.book) })}</div>
     </div>
     <div class="parlay-payout">
       <h3>Potential payout</h3>
