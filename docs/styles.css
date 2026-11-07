@@ -7575,3 +7575,22 @@ a.trend-price:hover { background: rgba(255, 255, 255, 0.06); }
 .sc-prop .parlay-btn { white-space: nowrap; display: inline-flex; align-items: center; gap: 6px; }
 .sc-prop .book-badge { width: 16px; height: 16px; }
 .sc-suggestion.is-replace { border-color: rgba(157, 78, 221, 0.5); }
+
+/* Playbook (docs/playbook.js): the Discord bot's slip for any book, on a ticket's footer */
+.pb-block { display: grid; gap: 8px; margin-top: 12px; padding: 12px; border-radius: 14px; border: 1px solid var(--line); background: var(--surface); }
+.pb-head { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.pb-head small { color: var(--muted); font-size: 0.78rem; }
+.pb-head .pb-site { margin-left: auto; font-size: 0.74rem; color: var(--muted); text-decoration: none; }
+.pb-mark { display: inline-grid; place-items: center; width: 22px; height: 22px; border-radius: 7px; background: #2fd66d; color: #06120a; font-weight: 900; font-size: 0.8rem; }
+.pb-row { display: flex; gap: 8px; flex-wrap: wrap; }
+.pb-btn { flex: 1 1 auto; display: inline-flex; align-items: center; justify-content: center; min-height: 40px; padding: 8px 12px; border-radius: 10px; border: 1px solid var(--line); background: var(--surface-2, transparent); color: var(--text); font: inherit; font-weight: 700; font-size: 0.86rem; text-decoration: none; cursor: pointer; }
+.pb-btn.is-main { background: #2fd66d; color: #06120a; border-color: #2fd66d; }
+.pb-btn:active { transform: scale(0.97); }
+.pb-open { display: flex; justify-content: center; padding: 12px; border-radius: 12px; background: #2fd66d; color: #06120a; font-weight: 800; text-decoration: none; }
+.pb-form { display: flex; gap: 8px; }
+.pb-form input { flex: 1 1 auto; min-width: 0; padding: 9px 12px; border-radius: 10px; border: 1px solid var(--line); background: var(--bg); color: var(--text); font: inherit; font-size: 0.86rem; }
+.pb-form .pb-btn { flex: 0 0 auto; }
+.pb-block .row-sub { margin: 0; }
+.pb-note a { color: var(--accent); }
+.pb-status { color: var(--success); font-weight: 600; }
+.pb-text { width: 100%; padding: 8px 10px; border-radius: 10px; border: 1px solid var(--line); background: var(--bg); color: var(--text); font: inherit; font-size: 0.82rem; resize: vertical; }

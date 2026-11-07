@@ -249,3 +249,16 @@ test('the user\'s sportsbooks (myBooks): null until answered, the Trends and Liv
   const all = await (await worker.fetch(call('/settings', { method: 'PUT', token: TOKEN, body: { myBooks: [] } }), env, ctx)).json();
   assert.deepEqual(all.settings.myBooks, []); assert.deepEqual(all.settings.trendBooks, []); assert.deepEqual(all.settings.liveBooks, []); assert.equal(all.settings.picks.book, 'fanduel');
 });
+
+test('the user\'s Playbook setup: a Discord channel link and the bot\'s user id, kept across other saves, cleared by a blank', async () => {
+  const env = makeEnv();
+  const first = await (await worker.fetch(call('/settings', { method: 'PUT', token: TOKEN, body: { bankroll: { amount: 100, unit: 5 } } }), env, ctx)).json();
+  assert.equal(first.settings.playbook, null, 'never set');
+  const saved = await (await worker.fetch(call('/settings', { method: 'PUT', token: TOKEN, body: { playbook: { channel: 'https://discord.com/channels/111/222', mention: '<@!123456789012>' } } }), env, ctx)).json();
+  assert.equal(saved.settings.playbook.channel, 'https://discord.com/channels/111/222'); assert.equal(saved.settings.playbook.mention, '123456789012');
+  await worker.fetch(call('/settings', { method: 'PUT', token: TOKEN, body: { myBooks: ['fanatics'] } }), env, ctx);
+  const kept = await (await worker.fetch(call('/settings', { token: TOKEN }), env, ctx)).json();
+  assert.equal(kept.settings.playbook.channel, 'https://discord.com/channels/111/222', 'a books save leaves it alone');
+  const bad = await (await worker.fetch(call('/settings', { method: 'PUT', token: TOKEN, body: { playbook: { channel: 'https://evil.com/discord.com', mention: 'Playbook' } } }), env, ctx)).json();
+  assert.equal(bad.settings.playbook.channel, ''); assert.equal(bad.settings.playbook.mention, '');
+});

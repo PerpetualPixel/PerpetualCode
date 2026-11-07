@@ -103,6 +103,22 @@ export const LIVE_BOOKS = ['draftkings', 'fanduel', 'caesars', 'fanatics', 'betm
 const cleanLiveBooks = (value) => { const list = cleanBooks(value); return list ? list.filter((b) => LIVE_BOOKS.includes(b)) : null; };
 
 /** The books a personal ticket may be drawn at: the Parlay Builder's list (docs/app.js's PARLAY_BOOKS). */
+/**
+ * The user's Playbook setup (docs/playbook.js; 2026-11-07: "I use Playbook's
+ * bot on Discord to create the links for Fanatics and other books"): the
+ * Discord link of the channel they tag the bot in, and the bot's user id
+ * when they have copied it (a pasted "@Playbook" pings nothing; <@id> does).
+ * Null until saved; a field left blank clears it.
+ */
+export function cleanPlaybook(value) {
+  if (!value || typeof value !== 'object') return null;
+  const channel = String(value.channel ?? '').trim().slice(0, 300);
+  let channelOk = '';
+  try { const u = new URL(channel); const host = u.hostname.toLowerCase().replace(/^www\./, ''); if (u.protocol === 'https:' && ['discord.com', 'discordapp.com', 'discord.gg', 'ptb.discord.com', 'canary.discord.com'].includes(host)) channelOk = u.toString(); } catch { channelOk = ''; }
+  const m = String(value.mention ?? '').trim().match(/^(?:<@!?)?(\d{5,25})>?$/);
+  return { channel: channelOk, mention: m ? m[1] : '', updatedAt: Date.now() };
+}
+
 export const PICK_PREF_BOOKS = ['draftkings', 'fanduel', 'caesars', 'fanatics', 'betmgm', 'prizepicks', 'hardrock', 'bet365', 'betrivers'];
 export const PICK_PREF_DEFAULTS = { book: 'draftkings', minScore: 4, legs: 2 };
 
@@ -168,6 +184,7 @@ function normalize(input, existing = null) {
     // The books the Live tab shows slips for and imports to; empty means every book.
     liveBooks: cleanLiveBooks(input?.liveBooks) ?? (follow ? cleanLiveBooks(myBooks) : null) ?? cleanLiveBooks(existing?.liveBooks) ?? [],
     picks: cleanPicks(picksInput, existing?.picks ?? null),
+    playbook: input?.playbook !== undefined ? cleanPlaybook(input.playbook) : (existing?.playbook ?? null),
     updatedAt: Date.now(),
   };
 }

@@ -125,6 +125,8 @@ async function loadPickSettings() {
     const mine = Array.isArray(settings?.myBooks) ? settings.myBooks : null;
     for (const box of document.querySelectorAll('input[name="myBook"]')) box.checked = Boolean(mine?.includes(box.value));
     const all = document.getElementById('my-books-all'); if (all) all.checked = Array.isArray(mine) && mine.length === 0;
+    const pb = settings?.playbook;
+    if (pb) { const ch = document.getElementById('playbook-channel'); const me = document.getElementById('playbook-mention'); if (ch) ch.value = pb.channel ?? ''; if (me) me.value = pb.mention ?? ''; }
     const picks = settings?.picks;
     if (!picks) return;
     document.getElementById('picks-book').value = picks.book;
@@ -370,3 +372,28 @@ document.getElementById('signout-btn').addEventListener('click', () => {
 });
 
 init();
+
+document.getElementById('playbook-form')?.addEventListener('submit', async (e) => {
+  e.preventDefault();
+  const btn = e.target.querySelector('button');
+  const original = btn.textContent;
+  const channel = document.getElementById('playbook-channel').value.trim();
+  const mention = document.getElementById('playbook-mention').value.trim();
+  if (channel && !/^https:\/\/(www\.)?(ptb\.|canary\.)?(discord\.com|discordapp\.com|discord\.gg)\//i.test(channel)) { showMessage('playbook-message', 'The channel link should be a discord.com link (open the channel in Discord and copy its link).', true); return; }
+  if (mention && !/^(<@!?)?\d{5,25}>?$/.test(mention)) { showMessage('playbook-message', 'The user id is the number Discord copies with "Copy User ID".', true); return; }
+  try {
+    btn.disabled = true;
+    btn.innerHTML = '<span class="spinner"></span> Saving...';
+    const res = await fetch(`${window.API_BASE}/settings`, { method: 'PUT', headers: authHeaders(), body: JSON.stringify({ playbook: { channel, mention } }) });
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.error || 'Save failed');
+    const saved = data.settings?.playbook ?? { channel: '', mention: '' };
+    try { localStorage.setItem('pixelpick.playbook.v1', JSON.stringify({ channel: saved.channel ?? '', mention: saved.mention ?? '' })); } catch { /* storage off */ }
+    showMessage('playbook-message', `Saved.${saved.channel ? ' Tickets open your channel in one tap.' : ''}${saved.mention ? ' Messages tag Playbook for real.' : ''}`, false);
+  } catch (err) {
+    showMessage('playbook-message', err.message, true);
+  } finally {
+    btn.disabled = false;
+    btn.textContent = original;
+  }
+});
