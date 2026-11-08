@@ -89,8 +89,8 @@ export const RETRY_EMPTY_MINUTES = 30;
  * find. Bumped 2026-10-27: builds that failed on the spent key, and on
  * the refused roster path, had stamped their games as tried for hours.
  */
-// 6 (2026-11-08): the anytime touchdown and first-basket markets joined the feeds, so every stored game is rebuilt to carry them.
-export const STAMPS_VERSION = 6;
+// 6 (2026-11-08): the anytime touchdown and first-basket markets joined the feeds, so every stored game is rebuilt to carry them; 7 the same day for rushing plus receiving yards.
+export const STAMPS_VERSION = 7;
 /** How many diagnostic lines a build keeps for /trends to show. */
 const MAX_DIAG = 60;
 /**

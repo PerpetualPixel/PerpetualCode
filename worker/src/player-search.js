@@ -6,7 +6,7 @@
  * the type-ahead, the player's team record for the log. No odds credits.
  */
 import { NBA_TREND_MARKETS, basketballStatRows } from './basketball-props.js';
-import { NFL_TREND_MARKETS, gamelogStatIndex } from './football-props.js';
+import { NFL_TREND_MARKETS, nflStatRows } from './football-props.js';
 import { NHL_PROP_MARKETS, NHL_ALT_MARKETS, nhlStatIndex } from './hockey-props.js';
 import { SOCCER_TREND_MARKETS, soccerStatIndex, isSoccerKey } from './soccer-props.js';
 import { seasonColumnRows } from '../../docs/prop-legs.js';
@@ -18,7 +18,8 @@ export function playerStats(sportKey) {
   if (!markets) return [];
   const seen = new Map();
   for (const m of Object.values(markets)) {
-    if (seen.has(m.stat)) continue;
+    // A market with no stat behind it (the first touchdown, the first basket) has no log to search.
+    if (m.noLog || seen.has(m.stat)) continue;
     seen.set(m.stat, { key: m.stat, label: m.marketLabel.replace(/\s*\(alt\)$/i, ''), short: m.label });
   }
   return [...seen.values()];
@@ -46,7 +47,7 @@ export async function getPlayerLog(env, sportKey, team, athleteId, stat) {
       ? seasonColumnRows(player.log, nhlStatIndex(player.log, stat), { allSeasons: true })
       : isSoccerKey(sportKey)
         ? seasonColumnRows(player.log, soccerStatIndex(player.log, stat), { allSeasons: true })
-        : seasonColumnRows(player.log, gamelogStatIndex(player.log, stat), { allSeasons: true });
+        : nflStatRows(player.log, stat, { allSeasons: true });
   return {
     player: { id: player.id, name: player.name, team: String(team).toUpperCase(), position: player.position ?? null, injuries: player.injuries ?? [], sportKey },
     stat,

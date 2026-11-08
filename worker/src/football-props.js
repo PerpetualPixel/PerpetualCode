@@ -121,6 +121,9 @@ export const NFL_TREND_MARKETS = {
   player_pass_attempts: { stat: 'passAttempts', label: 'Att', marketLabel: 'Pass Attempts' },
   player_pass_tds: { stat: 'passTds', label: 'Pass TD', marketLabel: 'Passing Touchdowns' },
   player_rush_attempts: { stat: 'rushAttempts', label: 'Car', marketLabel: 'Rush Attempts' },
+  // Rushing + receiving yards (2026-11-08 direction): the two yardage columns summed game by game, main line and the alternate ladder.
+  player_rush_reception_yds: { stat: 'rushRecYds', label: 'Rush+Rec Yds', marketLabel: 'Rushing + Receiving Yards' },
+  player_rush_reception_yds_alternate: { stat: 'rushRecYds', label: 'Rush+Rec Yds', marketLabel: 'Rushing + Receiving Yards (alt)' },
   // Anytime touchdown (2026-11-08 direction, for the Parlay Builder): a yes-or-no market read as Over 0.5 touchdowns, settled on rushing plus receiving scores.
   player_anytime_td: { stat: 'anyTd', label: 'TD', marketLabel: 'Anytime Touchdown', yesNo: true },
   // First touchdown scorer: no stat behind it; the chance is the market's own, normalized across the game (docs/trends.js's chanceRowsFor).
@@ -132,12 +135,15 @@ export const NFL_TREND_MARKET_PARAMS = [Object.keys(NFL_TREND_MARKETS).join(',')
 /**
  * Per-game rows of one Trends stat from a football game log, most recent
  * first (docs/prop-legs.js's seasonColumnRows shape): a column of the
- * log, or for the anytime touchdown the rushing and receiving scores
- * summed game by game (a column the log lacks counts as none).
+ * log, or a stat summed from two columns game by game (NFL_COMBO: the
+ * anytime touchdown from the rushing and receiving scores, rushing plus
+ * receiving yards from the two yardage columns).
  */
+/** The stats summed from two columns of the log: a column the log lacks (a receiver who never rushed) counts as none. */
+export const NFL_COMBO = { anyTd: ['rushTds', 'recTds'], rushRecYds: ['rushYds', 'recYds'] };
 export function nflStatRows(gamelog, statKey, { allSeasons = true } = {}) {
-  if (statKey !== 'anyTd') return seasonColumnRows(gamelog, gamelogStatIndex(gamelog, statKey), { allSeasons });
-  const parts = ['rushTds', 'recTds'].map((k) => seasonColumnRows(gamelog, gamelogStatIndex(gamelog, k), { allSeasons })).filter((rows) => rows.length);
+  if (!NFL_COMBO[statKey]) return seasonColumnRows(gamelog, gamelogStatIndex(gamelog, statKey), { allSeasons });
+  const parts = NFL_COMBO[statKey].map((k) => seasonColumnRows(gamelog, gamelogStatIndex(gamelog, k), { allSeasons })).filter((rows) => rows.length);
   if (!parts.length) return [];
   const byEvent = new Map();
   for (const rows of parts) for (const r of rows) { const cur = byEvent.get(r.eventId); if (cur) cur.value += r.value; else byEvent.set(r.eventId, { ...r }); }
