@@ -89,11 +89,24 @@ test('the roles record: starter flags read from an NBA box score and a soccer li
   const nfl = { boxscore: { players: [{ team: { abbreviation: 'PHI' }, statistics: [{ athletes: [{ athlete: { id: 9, displayName: 'Q' }, stats: ['300'] }] }] }] } };
   assert.deepEqual(startersFromSummary(nfl), [], 'no flag, no entry: the NFL is not read as all bench');
   const record = { builtAt: 5, games: {}, players: { 1: { name: 'A', team: 'BOS', starter: true, date: '2026-11-07T00:00Z' }, 2: { name: 'B', team: 'BOS', starter: false, date: '2026-11-07T00:00Z' } } };
-  assert.deepEqual(roleFor(record, 1), { starter: true, team: 'BOS', date: '2026-11-07T00:00Z' });
+  assert.deepEqual(roleFor(record, 1, Date.parse('2026-11-07T00:00Z')), { starter: true, team: 'BOS', date: '2026-11-07T00:00Z', source: 'box', today: true });
   assert.equal(roleFor(record, '2').starter, false); assert.equal(roleFor(record, 99), null);
   assert.deepEqual(withRoles([{ athleteId: '1' }, { athleteId: '2' }, { athleteId: '9' }], record).map((r) => r.role?.starter ?? null), [true, false, null]);
   const store = new Map([[rolesKey('basketball_nba'), JSON.stringify(record)]]);
   const env = { POTD_KV: { async get(k) { return store.get(k) ?? null; } } };
   assert.equal((await loadRoles(env, 'basketball_nba')).builtAt, 5);
   assert.deepEqual(await loadRoles(env, 'americanfootball_nfl'), { builtAt: null, games: {}, players: {} });
+});
+
+test('a posted lineup from the core roster: nothing until a starter is flagged, then every entry; the role says today and its source', async () => {
+  const { startersFromRoster, roleFor } = await import('../worker/src/espn-bundle.js');
+  const unposted = { entries: [{ playerId: 1, active: false, starter: false, didNotPlay: true }, { playerId: 2, active: false, starter: false, didNotPlay: true }] };
+  assert.deepEqual(startersFromRoster(unposted), [], 'all false is a lineup not yet posted, not a whole bench');
+  assert.deepEqual(startersFromRoster({ entries: [{ playerId: 1 }, { playerId: 2 }] }), [], 'a day out the entries carry no flag');
+  const posted = { entries: [{ playerId: 3202, active: true, starter: true, displayName: 'Durant' }, { playerId: 3136777, active: false, starter: false, displayName: 'X' }] };
+  assert.deepEqual(startersFromRoster(posted).map((p) => `${p.id}:${p.starter}`), ['3202:true', '3136777:false']);
+  const now = Date.parse('2026-11-08T01:00:00Z'); // 8 PM ET on the 7th
+  const record = { players: { 1: { starter: true, team: 'HOU', date: '2026-11-08T02:00Z', source: 'lineup' }, 2: { starter: false, team: 'BOS', date: '2026-11-07T00:30Z', source: 'box' } } };
+  const a = roleFor(record, 1, now); assert.equal(a.today, true); assert.equal(a.source, 'lineup');
+  const b = roleFor(record, 2, now); assert.equal(b.today, false, 'last night in the East'); assert.equal(b.source, 'box');
 });
