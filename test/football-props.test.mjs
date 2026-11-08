@@ -149,3 +149,14 @@ test('a prop leg grades off the exact stat: a win, a loss, a real zero, and a di
   // An integer line landed on exactly pushes.
   assert.equal(gradeNflPropLeg({ statKey: 'receptions', point: 6, need: 7 }, shakir).void, true);
 });
+
+test('anytime touchdown rows sum the rushing and receiving scores game by game; a log without one column counts the other', async () => {
+  const { nflStatRows } = await import('../worker/src/football-props.js');
+  const log = { names: ['rushingYards', 'rushingTouchdowns', 'receivingYards', 'receivingTouchdowns'], labels: ['YDS', 'TD', 'YDS', 'TD'], displayNames: ['Rushing Yards', 'Rushing Touchdowns', 'Receiving Yards', 'Receiving Touchdowns'],
+    seasonTypes: [{ displayName: '2026 Regular Season', categories: [{ events: [{ eventId: 'a', stats: ['80', '1', '20', '1'] }, { eventId: 'b', stats: ['60', '0', '35', '0'] }, { eventId: 'c', stats: ['100', '2', '0', '0'] }] }] }],
+    events: { a: { gameDate: '2026-11-01T18:00Z', opponent: { abbreviation: 'DAL' } }, b: { gameDate: '2026-10-25T18:00Z', opponent: { abbreviation: 'NYG' } }, c: { gameDate: '2026-10-18T18:00Z', opponent: { abbreviation: 'WSH' } } } };
+  assert.deepEqual(nflStatRows(log, 'anyTd').map((r) => `${r.eventId}:${r.value}`), ['a:2', 'b:0', 'c:2']);
+  assert.deepEqual(nflStatRows(log, 'rushYds').map((r) => r.value), [80, 60, 100], 'a plain stat reads its column');
+  const recOnly = { ...log, names: ['receivingYards', 'receivingTouchdowns'], labels: ['YDS', 'TD'], displayNames: ['Receiving Yards', 'Receiving Touchdowns'], seasonTypes: [{ displayName: '2026 Regular Season', categories: [{ events: [{ eventId: 'a', stats: ['20', '1'] }] }] }] };
+  assert.deepEqual(nflStatRows(recOnly, 'anyTd').map((r) => r.value), [1]);
+});

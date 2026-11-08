@@ -21,7 +21,7 @@ import { getTrends, TREND_ENABLED_SPORTS } from './trends.js';
 import { etParts, etDatePlusDays } from './potd.js';
 import { fetchContext, hasContext } from './context.js';
 import { fetchBasketballGamelog, basketballStatRows } from './basketball-props.js';
-import { fetchNflGamelog, gamelogStatIndex } from './football-props.js';
+import { fetchNflGamelog, gamelogStatIndex, nflStatRows } from './football-props.js';
 import { bundlePlayer, loadBundleTeams, loadInjuries, injuryFor } from './espn-bundle.js';
 import { boxKey, boxLegKey } from './box-grading.js';
 import { seasonColumnRows } from '../../docs/prop-legs.js';
@@ -745,7 +745,7 @@ async function actualFor(pick, env, ctx, deps = {}) {
   let rows = [];
   const log = await gamelogFor(env, pick.sportKey, pick.team, pick.athleteId, ctx);
   if (pick.sportKey === 'basketball_nba') rows = basketballStatRows(log, pick.statKey, { allSeasons: false });
-  else if (pick.sportKey === 'americanfootball_nfl') rows = seasonColumnRows(log, gamelogStatIndex(log, pick.statKey));
+  else if (pick.sportKey === 'americanfootball_nfl') rows = nflStatRows(log, pick.statKey, { allSeasons: false });
   const row = rows.find((r) => r.date && etParts(r.date).date === pick.gameDate);
   return row ? row.value : null;
 }

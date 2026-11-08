@@ -21,12 +21,12 @@ import { ODDS_DIAG_KEY } from './odds.js';
 import { etParts, etDatePlusDays } from './potd.js';
 import { probeEspn } from './espn-search.js';
 import { loadBundleTeams, bundleDeps, bundleLine } from './espn-bundle.js';
-import { extractTrendLines, trendRowsFor, sortTrends, nflWeekDates, detachSeries, attachSeries } from '../../docs/trends.js';
+import { extractTrendLines, trendRowsFor, chanceRowsFor, sortTrends, nflWeekDates, detachSeries, attachSeries } from '../../docs/trends.js';
 import { normalizeName as normalizeNflName } from '../../docs/nfl-props.js';
 import { normalizeName as normalizeNbaName } from '../../docs/wnba-props.js';
 import { normalizeName as normalizeNhlName } from '../../docs/nhl-props.js';
 import {
-  NFL_SPORT_KEY, NFL_TREND_MARKETS, fetchNflAltProps, resolveNflAthleteId, fetchNflGamelog, gamelogStatIndex, nflHeadshotUrl, fetchNflRoster,
+  NFL_SPORT_KEY, NFL_TREND_MARKETS, NFL_TREND_MARKET_PARAMS, nflStatRows, fetchNflAltProps, resolveNflAthleteId, fetchNflGamelog, gamelogStatIndex, nflHeadshotUrl, fetchNflRoster,
   fetchDiag as nflFetchDiag,
 } from './football-props.js';
 import {
@@ -116,7 +116,9 @@ export const TREND_SPORTS = {
     // game is about 110 credits a build.
     ttlMinutes: 720,
     normalizeName: normalizeNflName,
-    fetchOdds: (eventId, env, ctx) => fetchNflAltProps(eventId, env, ctx, Object.keys(NFL_TREND_MARKETS).join(',')),
+    fetchOdds: async (eventId, env, ctx) => { for (const markets of NFL_TREND_MARKET_PARAMS) { const odds = await fetchNflAltProps(eventId, env, ctx, markets); if (odds) return odds; } return null; },
+    // The anytime touchdown sums the rushing and receiving scores game by game.
+    statRows: (log, statKey) => nflStatRows(log, statKey, { allSeasons: true }),
     resolve: (name, abbrs, ctx) => resolveNflAthleteId(name, abbrs, ctx),
     gamelog: (athleteId, ctx) => fetchNflGamelog(athleteId, ctx),
     // Last season too, so L20 and the prior-season period can reach back
@@ -270,6 +272,8 @@ export async function buildTrends(sportKey, games, env, ctx, now = Date.now(), d
     const abbrs = { home: espnAbbr(sportKey, game.home_team), away: espnAbbr(sportKey, game.away_team) };
     const marketKeys = [...new Set((odds.bookmakers ?? []).flatMap((b) => (b.markets ?? []).map((m) => m.key)))];
     note(`${game.away_team} @ ${game.home_team}: ${lines.length} lines, ${byPlayer.size} players, books [${(odds.bookmakers ?? []).map((b) => b.key).join(',')}], markets [${marketKeys.join(',')}], abbrs ${abbrs.away ?? '?'}/${abbrs.home ?? '?'}`);
+    // Lines with no stat behind them (first basket): kept with the player's team and priced as a field once every player is resolved.
+    const chance = [];
     for (const [, playerLines] of players) {
       const name = playerLines[0].playerName;
       let team = null;
@@ -300,6 +304,7 @@ export async function buildTrends(sportKey, games, env, ctx, now = Date.now(), d
       const headshot = spec.headshot ? spec.headshot(athleteId) : null;
       const rowsByStat = new Map();
       for (const line of playerLines) {
+        if (line.noLog) { chance.push({ ...line, team, athleteId, headshot, opponent }); continue; }
         if (!rowsByStat.has(line.statKey)) {
           rowsByStat.set(line.statKey, spec.statRows
             ? spec.statRows(merged, line.statKey)
@@ -312,6 +317,10 @@ export async function buildTrends(sportKey, games, env, ctx, now = Date.now(), d
         }
         rows.push(...trendRowsFor({ ...line, team, athleteId, headshot }, statRows, { opponent }));
       }
+    }
+    for (const stat of new Set(chance.map((l) => l.statKey))) {
+      const byTeam = Boolean(Object.values(spec.markets).find((m) => m.stat === stat)?.byTeam);
+      rows.push(...chanceRowsFor(chance.filter((l) => l.statKey === stat), { byTeam }));
     }
   }
   note(`rows built: ${rows.length}`);

@@ -389,3 +389,34 @@ test('bestQuote is the longest price whatever order the quotes arrived in; sortQ
   assert.equal(bestQuote([{ book: 'A', american: -120 }, { book: 'B', american: 110 }]).book, 'B', 'American odds alone still rank');
   assert.equal(bestQuote([]), null);
 });
+
+test('a yes-or-no market reads as Over 0.5 on the player; a first-basket field is priced as chances that sum to one, the favorite at five stars', async () => {
+  const { extractTrendLines, chanceRowsFor, legScore, sortTrends } = await import('../docs/trends.js');
+  const game = { eventId: 'g1', sportKey: 'basketball_nba', sportTitle: 'NBA', commenceMs: 1, home: 'Boston Celtics', away: 'New York Knicks' };
+  const markets = { player_first_basket: { stat: 'firstBasket', label: 'First basket', marketLabel: 'First Basket', yesNo: true, noLog: true }, player_anytime_td: { stat: 'anyTd', label: 'TD', marketLabel: 'Anytime Touchdown', yesNo: true } };
+  const odds = { bookmakers: [
+    { key: 'draftkings', title: 'DraftKings', markets: [{ key: 'player_first_basket', outcomes: [{ name: 'Yes', description: 'Jayson Tatum', price: 400 }, { name: 'Yes', description: 'Jalen Brunson', price: 500 }, { name: 'Yes', description: 'Payton Pritchard', price: 2000 }] }] },
+    { key: 'fanduel', title: 'FanDuel', markets: [{ key: 'player_first_basket', outcomes: [{ name: 'Jayson Tatum', price: 450 }] }, { key: 'player_anytime_td', outcomes: [{ name: 'Yes', description: 'Saquon Barkley', price: -150 }, { name: 'No', description: 'Saquon Barkley', price: 120 }] }] },
+  ] };
+  const lines = extractTrendLines(odds, game, markets);
+  const tatum = lines.find((l) => l.playerName === 'Jayson Tatum');
+  assert.equal(tatum.point, 0.5); assert.equal(tatum.yesNo, true); assert.equal(tatum.noLog, true);
+  assert.equal(tatum.over[0].american, 450, 'the player named as the outcome is a Yes; the best price leads');
+  const td = lines.find((l) => l.playerName === 'Saquon Barkley');
+  assert.equal(td.over[0].american, -150); assert.equal(td.under[0].american, 120, 'a No is the Under');
+  const rows = chanceRowsFor(lines.filter((l) => l.statKey === 'firstBasket').map((l) => ({ ...l, team: 'BOS' })));
+  assert.equal(rows.length, 3);
+  const sum = rows.reduce((s, r) => s + r.prob, 0); assert.ok(Math.abs(sum - 1) < 0.01, `chances sum to one (${sum})`);
+  const fav = rows.find((r) => r.playerName === 'Jayson Tatum');
+  assert.equal(fav.fieldRank, 1); assert.equal(fav.fieldSize, 3); assert.equal(legScore(fav), 5);
+  assert.equal(fav.selection, 'Jayson Tatum First Basket'); assert.equal(fav.side, 'over'); assert.equal(fav.yesNo, true);
+  const long = rows.find((r) => r.playerName === 'Payton Pritchard');
+  assert.ok(legScore(long) < 1.5, `a long shot ranks low (${legScore(long)})`);
+  assert.equal(legScore({ ...fav, injury: { level: 'out' } }), 0);
+  // By team: each side's field sums to one on its own.
+  const byTeam = chanceRowsFor(lines.filter((l) => l.statKey === 'firstBasket').map((l) => ({ ...l, team: l.playerName === 'Jalen Brunson' ? 'NY' : 'BOS' })), { byTeam: true });
+  assert.equal(byTeam.find((r) => r.playerName === 'Jalen Brunson').prob, 1);
+  // On a sorted board a chance row keeps a place by its chance rather than sinking with no rate.
+  const sorted = sortTrends([{ rates: { l20: 0.1 }, decimal: 2 }, fav, { rates: {}, decimal: 3 }], { window: 'l20' });
+  assert.equal(sorted[0], fav);
+});

@@ -130,6 +130,9 @@ export const NBA_TREND_MARKETS = {
   player_points_rebounds_alternate: { stat: 'pr', label: 'Pts+Reb', marketLabel: 'Points + Rebounds (alt)' },
   player_points_assists_alternate: { stat: 'pa', label: 'Pts+Ast', marketLabel: 'Points + Assists (alt)' },
   player_rebounds_assists_alternate: { stat: 'ra', label: 'Reb+Ast', marketLabel: 'Rebounds + Assists (alt)' },
+  // First basket, and first basket on the team (2026-11-08 direction, for the Parlay Builder): yes-or-no markets with no stat behind them; the chance is the market's own, normalized across the field (docs/trends.js's chanceRowsFor).
+  player_first_basket: { stat: 'firstBasket', label: 'First basket', marketLabel: 'First Basket', yesNo: true, noLog: true },
+  player_first_team_basket: { stat: 'firstTeamBasket', label: 'First team basket', marketLabel: 'First Basket (Team)', yesNo: true, noLog: true, byTeam: true },
 };
 /**
  * The market lists asked for, in order: everything, then the core eight
@@ -137,6 +140,8 @@ export const NBA_TREND_MARKETS = {
  */
 export const NBA_TREND_MARKET_PARAMS = [
   Object.keys(NBA_TREND_MARKETS).join(','),
+  // Without the first-basket markets, in case the feed refuses one of them.
+  Object.keys(NBA_TREND_MARKETS).filter((k) => !NBA_TREND_MARKETS[k].yesNo).join(','),
   ['player_points', 'player_rebounds', 'player_assists', 'player_threes', 'player_points_rebounds_assists', 'player_points_alternate', 'player_rebounds_alternate', 'player_assists_alternate'].join(','),
 ];
 
