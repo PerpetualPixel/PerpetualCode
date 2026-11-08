@@ -160,3 +160,17 @@ test('anytime touchdown rows sum the rushing and receiving scores game by game; 
   const recOnly = { ...log, names: ['receivingYards', 'receivingTouchdowns'], labels: ['YDS', 'TD'], displayNames: ['Receiving Yards', 'Receiving Touchdowns'], seasonTypes: [{ displayName: '2026 Regular Season', categories: [{ events: [{ eventId: 'a', stats: ['20', '1'] }] }] }] };
   assert.deepEqual(nflStatRows(recOnly, 'anyTd').map((r) => r.value), [1]);
 });
+
+test('rushing plus receiving yards sum the two yardage columns game by game, and the Players tab lists it but not the first touchdown', async () => {
+  const { nflStatRows, NFL_TREND_MARKETS } = await import('../worker/src/football-props.js');
+  const { playerStats } = await import('../worker/src/player-search.js');
+  const log = { names: ['rushingYards', 'rushingTouchdowns', 'receivingYards', 'receivingTouchdowns'], labels: ['YDS', 'TD', 'YDS', 'TD'], displayNames: ['Rushing Yards', 'Rushing Touchdowns', 'Receiving Yards', 'Receiving Touchdowns'],
+    seasonTypes: [{ displayName: '2026 Regular Season', categories: [{ events: [{ eventId: 'a', stats: ['80', '1', '20', '1'] }, { eventId: 'b', stats: ['60', '0', '35', '0'] }] }] }],
+    events: { a: { gameDate: '2026-11-01T18:00Z', opponent: { abbreviation: 'DAL' } }, b: { gameDate: '2026-10-25T18:00Z', opponent: { abbreviation: 'NYG' } } } };
+  assert.deepEqual(nflStatRows(log, 'rushRecYds').map((r) => `${r.eventId}:${r.value}`), ['a:100', 'b:95']);
+  assert.equal(NFL_TREND_MARKETS.player_rush_reception_yds.stat, 'rushRecYds'); assert.equal(NFL_TREND_MARKETS.player_rush_reception_yds_alternate.stat, 'rushRecYds');
+  const stats = playerStats('americanfootball_nfl').map((s) => s.key);
+  assert.ok(stats.includes('rushRecYds') && stats.includes('anyTd'), `summed stats are searchable (${stats.join(',')})`);
+  assert.ok(!stats.includes('firstTd'), 'the first touchdown has no log to search');
+  assert.ok(!playerStats('basketball_nba').map((s) => s.key).includes('firstBasket'));
+});

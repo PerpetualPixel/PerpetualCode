@@ -34,6 +34,7 @@ export const STAT_WORDS = [
   [/\b(steals|stl)\b/, { key: 'steals', label: 'Steals', leagues: ['basketball_nba'] }],
   [/\b(blocks|blk)\b/, { key: 'blocks', label: 'Blocks', leagues: ['basketball_nba'] }],
   [/\b(turnovers|to)\b/, { key: 'turnovers', label: 'Turnovers', leagues: ['basketball_nba'] }],
+  [/\b(rushing|rush)\s*(\+|and|&)\s*(receiving|rec)\s*(yards|yds)\b|\brush\s*\+\s*rec\b/, { key: 'rushRecYds', label: 'Rush + Rec yards', leagues: ['americanfootball_nfl'] }],
   [/\b(passing|pass) (yards|yds)\b/, { key: 'passYds', label: 'Passing yards', leagues: ['americanfootball_nfl'] }],
   [/\b(rushing|rush) (yards|yds)\b/, { key: 'rushYds', label: 'Rushing yards', leagues: ['americanfootball_nfl'] }],
   [/\b(receiving|rec) (yards|yds)\b/, { key: 'recYds', label: 'Receiving yards', leagues: ['americanfootball_nfl'] }],
