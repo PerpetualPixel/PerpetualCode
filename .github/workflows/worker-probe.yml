@@ -78,7 +78,7 @@ jobs:
                 if (d && d.trends && Array.isArray(d.trends.rows) && d.available) {
                 // A Trends board (worker/src/trends.js getTrendsFor): the build, a sample of rows, the diagnostic lines (an unresolved player, a club the team map does not know reads as ?).
                 const t = d.trends;
-                console.log("TRENDS", t.sportKey, t.title, "| built", t.builtAt && new Date(t.builtAt).toISOString(), "| games", t.games, "pending", t.pending, "| rows", t.rows.length, "| injuries at", t.injuriesAt && new Date(t.injuriesAt).toISOString(), "| lastError", t.lastError || "");
+                console.log("TRENDS", t.sportKey, t.title, "| built", t.builtAt && new Date(t.builtAt).toISOString(), "| games", t.games, "pending", t.pending, "| rows", t.rows.length, "| roles", t.rows.filter((r) => r.role).length, "starters", t.rows.filter((r) => r.role && r.role.starter).length, "at", t.rolesAt && new Date(t.rolesAt).toISOString(), "| injuries at", t.injuriesAt && new Date(t.injuriesAt).toISOString(), "| lastError", t.lastError || "");
                 console.log("AVAILABLE", d.available.map((a) => a.sportKey + " " + a.rows).join(", "), "| feed", JSON.stringify(d.feed));
                 const teams = {}; for (const r of t.rows) { teams[r.team || "?"] = (teams[r.team || "?"] || 0) + 1; }
                 console.log("TEAMS", JSON.stringify(teams), "| unknown clubs", t.rows.filter((r) => !r.team || r.team === "?" || !r.opponent || r.opponent === "?").map((r) => r.away + " @ " + r.home).filter((v, i, a) => a.indexOf(v) === i).join("; ") || "none");

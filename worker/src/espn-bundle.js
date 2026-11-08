@@ -30,6 +30,46 @@ export const playersIndexKey = (sportKey) => `espn:${sportKey}:players`;
 /** The league's injury report, by athlete id, written every half hour (the ESPN injuries workflow). */
 export const injuriesKey = (sportKey) => `espn:${sportKey}:injuries`;
 
+/** Who started each team's last game, by athlete id, written with the injury report (scripts/espn-bundle.mjs's recordRoles). */
+export const rolesKey = (sportKey) => `espn:${sportKey}:roles`;
+
+/**
+ * The starter flags in one ESPN summary (2026-11-08 direction: "a toggle
+ * for the parlay builder to only show starters and not bench players"):
+ * one entry per athlete the box score lists with a starter flag, the
+ * soccer lineups included. A league whose box carries no flag (the NFL)
+ * yields nothing, so its players stay untagged rather than read as bench.
+ */
+export function startersFromSummary(summary) {
+  const out = new Map();
+  const add = (id, name, team, starter) => { if (id && typeof starter === 'boolean' && !out.has(id)) out.set(id, { id, name: name ?? null, team: team ?? null, starter }); };
+  if (Array.isArray(summary?.rosters) && !summary?.boxscore?.players?.length) {
+    for (const side of summary.rosters) for (const p of side?.roster ?? []) add(String(p?.athlete?.id ?? ''), p?.athlete?.displayName, side?.team?.abbreviation, p?.starter);
+    return [...out.values()];
+  }
+  for (const side of summary?.boxscore?.players ?? []) for (const block of side?.statistics ?? []) for (const a of block?.athletes ?? []) add(String(a?.athlete?.id ?? ''), a?.athlete?.displayName, side?.team?.abbreviation, a?.starter);
+  return [...out.values()];
+}
+
+/** The roles record as the runner wrote it: { builtAt, games: { eventId: { at, date } }, players: { id: { name, team, starter, eventId, date } } }, or empty. */
+export async function loadRoles(env, sportKey) {
+  const raw = await env?.POTD_KV?.get?.(rolesKey(sportKey)).catch(() => null);
+  if (!raw) return { builtAt: null, games: {}, players: {} };
+  try { const v = JSON.parse(raw); return { builtAt: v.builtAt ?? null, games: v.games ?? {}, players: v.players ?? {} }; } catch { return { builtAt: null, games: {}, players: {} }; }
+}
+
+/** The role tag for one player: { starter, team, date }, or null when no box score has listed him. */
+export function roleFor(record, athleteId) {
+  const entry = record?.players?.[String(athleteId ?? '')];
+  if (!entry || typeof entry.starter !== 'boolean') return null;
+  return { starter: entry.starter, team: entry.team ?? null, date: entry.date ?? null };
+}
+
+/** Rows with `role` set from the record by athleteId. */
+export function withRoles(rows, record) {
+  return (rows ?? []).map((r) => ({ ...r, role: roleFor(record, r.athleteId ?? r.id) }));
+}
+
 /** The injury report as the runner wrote it: { builtAt, players: { id: { name, team, status, detail, date } } }, or empty. */
 export async function loadInjuries(env, sportKey) {
   const raw = await env?.POTD_KV?.get?.(injuriesKey(sportKey)).catch(() => null);

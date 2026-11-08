@@ -7594,3 +7594,7 @@ a.trend-price:hover { background: rgba(255, 255, 255, 0.06); }
 .pb-note a { color: var(--accent); }
 .pb-status { color: var(--success); font-weight: 600; }
 .pb-text { width: 100%; padding: 8px 10px; border-radius: 10px; border: 1px solid var(--line); background: var(--bg); color: var(--text); font: inherit; font-size: 0.82rem; resize: vertical; }
+/* Role tag on a parlay leg (worker/src/espn-bundle.js's roles): started, or came off the bench in, his team's last game */
+.role-tag { display: inline-flex; align-items: center; margin-top: 6px; margin-right: 4px; padding: 3px 8px; border-radius: 999px; font-size: 0.72rem; font-weight: 800; letter-spacing: 0.04em; text-transform: uppercase; border: 1px solid var(--line); color: var(--muted); }
+.role-tag.is-starter { color: var(--success); border-color: rgba(94, 224, 122, 0.5); background: rgba(94, 224, 122, 0.1); }
+.role-tag.is-bench { color: #c4b5fd; border-color: rgba(167, 139, 250, 0.5); background: rgba(167, 139, 250, 0.12); }

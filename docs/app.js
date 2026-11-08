@@ -920,6 +920,8 @@ const el = {
   parlayGames: document.getElementById('parlayGames'),
   parlayGamesLabel: document.getElementById('parlayGamesLabel'),
   parlaySide: document.getElementById('parlaySide'),
+  parlayStarters: document.getElementById('parlayStarters'),
+  parlayStartersNote: document.getElementById('parlayStartersNote'),
   parlayTeam: document.getElementById('parlayTeam'),
   parlayBuild: document.getElementById('parlayBuild'),
   parlayStatus: document.getElementById('parlayStatus'),
@@ -10345,7 +10347,7 @@ el.playersForm?.addEventListener('submit', (event) => { event.preventDefault(); 
 const parlayState = {
   // The leagues toggled on; a ticket can mix legs from all of them.
   sports: new Set(['basketball_nba']), rows: {}, loading: false,
-  book: (() => { try { const v = JSON.parse(localStorage.getItem('pixelpick.myBooks.v1') ?? 'null'); const first = Array.isArray(v) ? v.find((b) => ['draftkings', 'fanduel', 'caesars', 'fanatics', 'betmgm', 'prizepicks', 'hardrock', 'bet365', 'betrivers'].includes(b)) : null; return first ?? 'draftkings'; } catch { return 'draftkings'; } })(), legs: 4, minL20: 0, season: false, minH2H: 0, minScore: 2, stats: new Set(), odds: [-800, 800], games: new Set(), side: 'both', team: '',
+  book: (() => { try { const v = JSON.parse(localStorage.getItem('pixelpick.myBooks.v1') ?? 'null'); const first = Array.isArray(v) ? v.find((b) => ['draftkings', 'fanduel', 'caesars', 'fanatics', 'betmgm', 'prizepicks', 'hardrock', 'bet365', 'betrivers'].includes(b)) : null; return first ?? 'draftkings'; } catch { return 'draftkings'; } })(), legs: 4, minL20: 0, season: false, minH2H: 0, minScore: 2, stats: new Set(), odds: [-800, 800], games: new Set(), side: 'both', team: '', starters: false,
   // UFC only: the prop types the pieces come from (none chosen = every type).
   ufcProps: new Set(),
   built: null, locked: new Set(), seen: new Set(), breakdowns: {}, open: null, amount: 10, note: '', sprinkle: false,
@@ -10379,6 +10381,14 @@ const isUfcParlay = () => parlayState.sports.size > 0 && [...parlayState.sports]
 const TENNIS_SPORT_KEY = 'tennis';
 /** No player-prop league toggled on (UFC or tennis alone): the last-20, head-to-head and over/under fields have nothing to apply to. */
 const isPropFreeParlay = () => parlayState.sports.size > 0 && [...parlayState.sports].every((k) => k === UFC_SPORT_KEY || k === TENNIS_SPORT_KEY);
+/** The leagues on the board whose rows carry a role (who started his team's last game): the Starters only toggle filters those only. */
+const parlayRoleLeagues = () => new Set(parlayRows().filter((r) => r.role).map((r) => r.sportKey));
+/** The role tag on a leg: started, or came off the bench, in his team's last game. */
+function roleTag(role) {
+  if (!role || typeof role.starter !== 'boolean') return '';
+  const when = role.date ? ` (${pickDayFmt.format(new Date(role.date))})` : '';
+  return `<span class="role-tag ${role.starter ? 'is-starter' : 'is-bench'}" title="${esc(`${role.starter ? 'Started' : 'Came off the bench in'} ${role.team ? `${role.team}'s` : 'his team\'s'} last game${when}`)}">${role.starter ? 'Starter' : 'Bench'}</span>`;
+}
 const isTennisOnlyParlay = () => parlayState.sports.size > 0 && [...parlayState.sports].every((k) => k === TENNIS_SPORT_KEY);
 /** The day's tennis legs as builder rows: one row per priced number, the match as the game, the tour as the team. */
 function tennisParlayRows(body) {
@@ -10483,6 +10493,7 @@ function parlayWindow(row, seasonOnly) {
 function parlayCandidates() {
   const now = Date.now();
   const s = parlayState;
+  const roleLeagues = parlayRoleLeagues();
   const rate = (r, k) => (Number.isFinite(r.periods?.[k]?.rate) ? r.periods[k].rate : null);
   const best = new Map();
   for (const r of parlayRows()) {
@@ -10492,6 +10503,8 @@ function parlayCandidates() {
     if (s.games.size && !s.games.has(r.eventId)) continue;
     if (s.side !== 'both' && r.side !== s.side && !r.tennis) continue;
     if (s.team && r.team !== s.team) continue;
+    // Starters only: a player the box score lists as bench is out; a league with no starter flags (the NFL) is not filtered.
+    if (s.starters && roleLeagues.has(r.sportKey) && !r.role?.starter) continue;
     if (r.ufc && s.ufcProps.size && !s.ufcProps.has(r.ufc.prop)) continue;
     const q = parlayQuote(r);
     if (!q) continue;
@@ -10747,7 +10760,7 @@ function renderParlayLeg(leg) {
     <div class="parlay-leg-body">
       <div class="parlay-leg-head">
         ${avatarHtml(r)}
-        <div class="parlay-leg-who"><strong>${esc(r.playerName)}</strong> <small>${esc(r.team ?? '')}</small> ${stars(leg.score)}${injuryTag(r.injury)}</div>
+        <div class="parlay-leg-who"><strong>${esc(r.playerName)}</strong> <small>${esc(r.team ?? '')}</small> ${stars(leg.score)}${roleTag(r.role)}${injuryTag(r.injury)}</div>
         <span class="parlay-leg-price">${esc(formatAmerican(q.american))}</span>
         <button type="button" class="parlay-lock ${locked ? 'is-on' : ''}" data-parlay-lock="${esc(r.id)}" aria-pressed="${locked}" title="${locked ? 'Unlock' : 'Lock this leg'}">${locked ? '🔒' : '🔓'}</button>
       </div>
@@ -10834,6 +10847,14 @@ function renderParlay() {
   if (el.parlayGamesLabel) el.parlayGamesLabel.textContent = ufcList ? 'Fights' : isTennisOnlyParlay() ? 'Matches' : 'Games';
   el.parlayGames.innerHTML = [...gamesHere.values()].sort((a, b) => a.commenceMs - b.commenceMs || (b.ufc?.order ?? 0) - (a.ufc?.order ?? 0)).map((g) => `<button type="button" class="rate-chip ${s.games.has(g.eventId) ? 'is-active' : ''}" data-parlay-game="${esc(g.eventId)}"><span>${g.ufc || g.tennis ? `${esc(g.away)} vs ${esc(g.home)}` : `${esc(teamAbbr(g.away))} @ ${esc(teamAbbr(g.home))}`}</span> <small>${esc(trendTimeFmt.format(new Date(g.commenceMs)))}</small></button>`).join('') || `<span class="row-sub">No ${ufcList ? 'fights' : 'games'} yet.</span>`;
   el.parlaySide.value = s.side;
+  if (el.parlayStarters) {
+    const known = live.filter((r) => r.role).length; const starters = live.filter((r) => r.role?.starter).length;
+    const none = [...s.sports].filter((k) => k !== UFC_SPORT_KEY && k !== TENNIS_SPORT_KEY && (s.rows[k] ?? []).length && !(s.rows[k] ?? []).some((r) => r.role)).map((k) => PLAYER_LEAGUES.find(([key]) => key === k)?.[1] ?? k);
+    el.parlayStarters.classList.toggle('is-active', s.starters); el.parlayStarters.setAttribute('aria-pressed', String(s.starters));
+    el.parlayStartersNote.textContent = s.starters
+      ? `On: only players who started their team's last game${known ? ` (${starters} of ${known} lines)` : ''}${none.length ? `; no starter data for ${none.join(', ')} yet, so those lines all stay` : ''}`
+      : `Off: every player with a line${known ? ` (${starters} starters, ${known - starters} bench)` : ''}`;
+  }
   const teams = [...new Set(live.map((r) => r.team).filter(Boolean))].sort();
   el.parlayTeam.innerHTML = `<option value="">${isTennisOnlyParlay() ? 'Both tours' : 'Any team'}</option>${teams.map((t) => `<option value="${esc(t)}" ${s.team === t ? 'selected' : ''}>${esc(t)}</option>`).join('')}`;
   const teamLabel = el.parlayTeam.closest('.parlay-field')?.querySelector('span'); if (teamLabel) teamLabel.textContent = isTennisOnlyParlay() ? 'Tour' : 'Team';
@@ -10913,6 +10934,7 @@ el.parlayView?.addEventListener('click', (event) => {
   const star = t.closest('[data-parlay-score]');
   if (star) { s.minScore = Number(star.dataset.parlayScore); renderParlay(); return; }
   if (t.closest('[data-parlay-season]')) { s.season = !s.season; renderParlay(); return; }
+  if (t.closest('[data-parlay-starters]')) { s.starters = !s.starters; renderParlay(); return; }
   const stat = t.closest('[data-parlay-stat]');
   if (stat) { const k = stat.dataset.parlayStat; if (s.stats.has(k)) s.stats.delete(k); else s.stats.add(k); renderParlay(); return; }
   const ufcProp = t.closest('[data-parlay-ufc-prop]');
@@ -10921,7 +10943,7 @@ el.parlayView?.addEventListener('click', (event) => {
   if (game) { const k = game.dataset.parlayGame; if (s.games.has(k)) s.games.delete(k); else s.games.add(k); renderParlay(); return; }
   if (t.closest('[data-parlay-build]')) { s.sprinkle = false; buildParlay({ regenerate: Boolean(s.built) }); return; }
   if (t.closest('[data-parlay-sprinkle]')) { s.sprinkle = !s.sprinkle; renderParlay(); if (s.sprinkle && window.innerWidth <= 820) el.parlayResult?.scrollIntoView({ behavior: 'smooth', block: 'start' }); return; }
-  if (t.closest('[data-parlay-reset]')) { Object.assign(s, { legs: 4, minL20: 0, season: false, minH2H: 0, minScore: 2, stats: new Set(), odds: [-800, 800], games: new Set(), side: 'both', team: '', ufcProps: new Set(), built: null, locked: new Set(), seen: new Set(), open: null, note: '' }); renderParlay(); return; }
+  if (t.closest('[data-parlay-reset]')) { Object.assign(s, { legs: 4, minL20: 0, season: false, minH2H: 0, minScore: 2, stats: new Set(), odds: [-800, 800], games: new Set(), side: 'both', team: '', starters: false, ufcProps: new Set(), built: null, locked: new Set(), seen: new Set(), open: null, note: '' }); renderParlay(); return; }
   const lock = t.closest('[data-parlay-lock]');
   if (lock) { const id = lock.dataset.parlayLock; if (s.locked.has(id)) s.locked.delete(id); else s.locked.add(id); renderParlay(); return; }
   const view = t.closest('[data-parlay-view]');

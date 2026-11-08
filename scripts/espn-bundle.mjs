@@ -17,7 +17,7 @@
 import { readFileSync } from 'node:fs';
 import { espnAbbr } from '../docs/team-logos.js';
 import { priorSeasonKey } from '../docs/prop-legs.js';
-import { bundleKey, bundleIndexKey, playersIndexKey, injuriesKey } from '../worker/src/espn-bundle.js';
+import { bundleKey, bundleIndexKey, playersIndexKey, injuriesKey, rolesKey, startersFromSummary } from '../worker/src/espn-bundle.js';
 import { boxKey, boxLegKey, findBoxEvent, eventFinal, boxLine, boxActual } from '../worker/src/box-grading.js';
 import { basketballHeadshotUrl } from '../worker/src/basketball-props.js';
 import { nflHeadshotUrl } from '../worker/src/football-props.js';
@@ -290,6 +290,47 @@ async function gradeTicketBoxes(league, now) {
   await writeKv(entries);
 }
 
+/**
+ * Who started each team's last game (worker/src/espn-bundle.js's roles
+ * record): yesterday's and today's scoreboards, every game in play or
+ * final read once, the box score's starter flags laid over the record by
+ * athlete, newest game winning. A team that has not played keeps its last
+ * entry; games older than a month and players unseen for six weeks fall
+ * off. A league whose box carries no flag writes nothing.
+ */
+async function recordRoles(league, now) {
+  const key = rolesKey(league.sportKey);
+  const existing = (await readKv(key).catch(() => null)) ?? {};
+  const games = { ...(existing.games ?? {}) };
+  const players = { ...(existing.players ?? {}) };
+  const events = new Map();
+  for (const d of [etDate(now - 864e5), etDate(now)]) {
+    const sb = await getJson(`${league.site}/scoreboard?dates=${d.replace(/-/g, '')}`);
+    for (const e of sb?.events ?? []) { const st = e?.competitions?.[0]?.status?.type ?? e?.status?.type; if (e?.id && (st?.state === 'in' || st?.completed)) events.set(String(e.id), e); }
+  }
+  const fresh = [...events.values()].filter((e) => !games[String(e.id)]);
+  let read = 0; let tagged = 0;
+  for (const e of fresh) {
+    const summary = await getJson(`${league.site}/summary?event=${e.id}`);
+    const entries = startersFromSummary(summary);
+    if (!entries.length) { if (summary) games[String(e.id)] = { at: now, date: e.date ?? null, none: true }; continue; }
+    read++;
+    for (const p of entries) {
+      const prev = players[p.id];
+      if (prev?.date && e.date && Date.parse(prev.date) > Date.parse(e.date)) continue;
+      players[p.id] = { name: p.name, team: p.team, starter: p.starter, eventId: String(e.id), date: e.date ?? null };
+      tagged++;
+    }
+    games[String(e.id)] = { at: now, date: e.date ?? null };
+  }
+  for (const [id, g] of Object.entries(games)) if ((g?.at ?? 0) < now - 30 * 864e5) delete games[id];
+  for (const [id, p] of Object.entries(players)) if (p?.date && Date.parse(p.date) < now - 45 * 864e5) delete players[id];
+  const starters = Object.values(players).filter((p) => p.starter).length;
+  say(`roles: ${fresh.length} new game${fresh.length === 1 ? '' : 's'}, ${read} with starter flags, ${tagged} players tagged; ${Object.keys(players).length} on record, ${starters} starters`);
+  if (!fresh.length || DRY) return;
+  await writeKv([{ key, value: { sportKey: league.sportKey, builtAt: now, games, players } }]);
+}
+
 function kvConfig() {
   const toml = readFileSync(new URL('../worker/wrangler.toml', import.meta.url), 'utf8');
   const block = /\[\[kv_namespaces\]\][\s\S]*?binding\s*=\s*"POTD_KV"[\s\S]*?id\s*=\s*"([0-9a-f]+)"/.exec(toml);
@@ -327,6 +368,7 @@ for (const [name, league] of Object.entries(LEAGUES)) {
     if (!DRY) { try { await writeKv([{ key: injuriesKey(league.sportKey), value: { sportKey: league.sportKey, builtAt: now, players } }]); } catch (e) { failed = true; say(`  ! ${e.message}`); } }
     try { await refreshTicketLogs(league, now); } catch (e) { say(`  ! ticket logs: ${e.message}`); }
     try { await gradeTicketBoxes(league, now); } catch (e) { say(`  ! box scores: ${e.message}`); }
+    try { await recordRoles(league, now); } catch (e) { say(`  ! roles: ${e.message}`); }
     continue;
   }
   const records = [];
@@ -341,5 +383,6 @@ for (const [name, league] of Object.entries(LEAGUES)) {
   say(`${records.length} team records, ${(size / 1e6).toFixed(2)} MB`);
   if (DRY) continue;
   try { await writeKv(entries); } catch (e) { failed = true; say(`  ! ${e.message}`); }
+  try { await recordRoles(league, now); } catch (e) { say(`  ! roles: ${e.message}`); }
 }
 if (failed) process.exit(1);
