@@ -51,6 +51,29 @@ export function startersFromSummary(summary) {
   return [...out.values()];
 }
 
+/**
+ * The starter flags in a competitor's roster from ESPN's core API
+ * (events/<id>/competitions/<id>/competitors/<teamId>/roster), which
+ * carries the lineup before tip-off: the NBA posts starters about half
+ * an hour out, and ESPN flags them there before the box score exists.
+ * Until the lineup is in, every entry reads starter false (or carries no
+ * flag at all a day out), so a side with no starter at all yields
+ * nothing rather than reading as a whole bench.
+ */
+export function startersFromRoster(roster) {
+  const entries = Array.isArray(roster?.entries) ? roster.entries : [];
+  const out = [];
+  for (const e of entries) {
+    const id = String(e?.playerId ?? e?.athlete?.id ?? '');
+    if (!id || typeof e?.starter !== 'boolean') continue;
+    out.push({ id, name: e.displayName ?? null, starter: e.starter, active: e.active !== false });
+  }
+  return out.some((p) => p.starter) ? out : [];
+}
+
+/** The Eastern calendar day of a moment, the day a slate belongs to. */
+const etDay = (ms) => new Intl.DateTimeFormat('en-CA', { timeZone: 'America/New_York', year: 'numeric', month: '2-digit', day: '2-digit' }).format(new Date(ms));
+
 /** The roles record as the runner wrote it: { builtAt, games: { eventId: { at, date } }, players: { id: { name, team, starter, eventId, date } } }, or empty. */
 export async function loadRoles(env, sportKey) {
   const raw = await env?.POTD_KV?.get?.(rolesKey(sportKey)).catch(() => null);
@@ -58,16 +81,23 @@ export async function loadRoles(env, sportKey) {
   try { const v = JSON.parse(raw); return { builtAt: v.builtAt ?? null, games: v.games ?? {}, players: v.players ?? {} }; } catch { return { builtAt: null, games: {}, players: {} }; }
 }
 
-/** The role tag for one player: { starter, team, date }, or null when no box score has listed him. */
-export function roleFor(record, athleteId) {
+/**
+ * The role tag for one player: { starter, team, date, source, today }, or
+ * null when nothing has listed him. `source` is lineup (today's posted
+ * lineup, before tip) or box (the box score, at tip and after); `today`
+ * when the game is today's in the East, so a tag can say "starting
+ * tonight" rather than "started last game".
+ */
+export function roleFor(record, athleteId, now = Date.now()) {
   const entry = record?.players?.[String(athleteId ?? '')];
   if (!entry || typeof entry.starter !== 'boolean') return null;
-  return { starter: entry.starter, team: entry.team ?? null, date: entry.date ?? null };
+  const ms = entry.date ? Date.parse(entry.date) : NaN;
+  return { starter: entry.starter, team: entry.team ?? null, date: entry.date ?? null, source: entry.source === 'lineup' ? 'lineup' : 'box', today: Number.isFinite(ms) && etDay(ms) === etDay(now) };
 }
 
 /** Rows with `role` set from the record by athleteId. */
-export function withRoles(rows, record) {
-  return (rows ?? []).map((r) => ({ ...r, role: roleFor(record, r.athleteId ?? r.id) }));
+export function withRoles(rows, record, now = Date.now()) {
+  return (rows ?? []).map((r) => ({ ...r, role: roleFor(record, r.athleteId ?? r.id, now) }));
 }
 
 /** The injury report as the runner wrote it: { builtAt, players: { id: { name, team, status, detail, date } } }, or empty. */

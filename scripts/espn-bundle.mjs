@@ -17,7 +17,7 @@
 import { readFileSync } from 'node:fs';
 import { espnAbbr } from '../docs/team-logos.js';
 import { priorSeasonKey } from '../docs/prop-legs.js';
-import { bundleKey, bundleIndexKey, playersIndexKey, injuriesKey, rolesKey, startersFromSummary } from '../worker/src/espn-bundle.js';
+import { bundleKey, bundleIndexKey, playersIndexKey, injuriesKey, rolesKey, startersFromSummary, startersFromRoster } from '../worker/src/espn-bundle.js';
 import { boxKey, boxLegKey, findBoxEvent, eventFinal, boxLine, boxActual } from '../worker/src/box-grading.js';
 import { basketballHeadshotUrl } from '../worker/src/basketball-props.js';
 import { nflHeadshotUrl } from '../worker/src/football-props.js';
@@ -33,7 +33,7 @@ const INJURIES_ONLY = args.includes('--injuries');
 const CONCURRENCY = 6;
 const TTL_SECONDS = 3 * 86400;
 
-const LEAGUES = {
+export const LEAGUES = {
   nba: {
     sportKey: 'basketball_nba',
     site: 'https://site.api.espn.com/apis/site/v2/sports/basketball/nba',
@@ -48,6 +48,7 @@ const LEAGUES = {
     // The prop markets are passing, rushing, receiving and kicking.
     keep: (pos) => ['QB', 'RB', 'FB', 'WR', 'TE', 'K'].includes(String(pos ?? '').toUpperCase()),
     prior: () => new Date().getUTCFullYear() - 1,
+    lineups: false, // the NFL box score carries no starter flag
   },
   nhl: {
     sportKey: 'icehockey_nhl',
@@ -57,6 +58,7 @@ const LEAGUES = {
     keep: () => true,
     // ESPN keys a hockey season by the year it ends, as it does basketball.
     prior: (log) => priorSeasonKey(log),
+    lineups: false, // the NHL box score carries no starter flag
   },
   // Soccer: the five leagues with player props; rosters by club id (worker/src/soccer-props.js), the season keyed by its first year.
   ...Object.fromEntries(Object.entries(SOCCER_LEAGUES).map(([sportKey, l]) => [l.short.toLowerCase().replace(/\s+/g, ''), {
@@ -69,9 +71,9 @@ const LEAGUES = {
   }])),
 };
 
-const say = (...a) => console.log(...a);
+export const say = (...a) => console.log(...a);
 
-async function getJson(url, tries = 3) {
+export async function getJson(url, tries = 3) {
   for (let i = 0; i < tries; i++) {
     try {
       const res = await fetch(url, { headers: { Accept: 'application/json' } });
@@ -86,7 +88,7 @@ async function getJson(url, tries = 3) {
   return null;
 }
 
-async function pool(items, worker, size = CONCURRENCY) {
+export async function pool(items, worker, size = CONCURRENCY) {
   const out = new Array(items.length);
   let next = 0;
   await Promise.all(Array.from({ length: Math.min(size, items.length) }, async () => {
@@ -126,7 +128,7 @@ function mergeLogs(current, prior) {
  * run, which left four teams out, and the runner pulls thirty teams'
  * logs in seconds anyway. The worker reads only the teams it needs.
  */
-async function leagueTeams(league) {
+export async function leagueTeams(league) {
   const list = await getJson(`${league.site}/teams?limit=40`);
   const teams = new Map();
   for (const entry of list?.sports?.[0]?.leagues?.[0]?.teams ?? []) {
@@ -138,7 +140,7 @@ async function leagueTeams(league) {
 }
 
 /** The roster's athletes, every position. */
-async function rosterOf(league, team) {
+export async function rosterOf(league, team) {
   // Soccer clubs answer by id, not abbreviation.
   const roster = await getJson(`${league.site}/teams/${league.byId ? (soccerTeamId(league.sportKey, team.abbr) ?? team.id) : team.abbr}/roster`);
   const groups = Array.isArray(roster?.athletes) ? roster.athletes : [];
@@ -146,7 +148,7 @@ async function rosterOf(league, team) {
 }
 
 /** The injury report ESPN files on the roster: one entry per listed player, with the status, the detail and when it was filed. */
-function injuryEntries(league, team, items) {
+export function injuryEntries(league, team, items) {
   const out = {};
   for (const a of items) {
     const inj = (a?.injuries ?? [])[0];
@@ -180,7 +182,7 @@ async function buildTeam(league, team, now) {
 }
 
 /** One KV value by key, parsed, or null when it is not there. */
-async function readKv(key) {
+export async function readKv(key) {
   const { namespace, token, account } = kvConfig();
   const res = await fetch(`https://api.cloudflare.com/client/v4/accounts/${account}/storage/kv/namespaces/${namespace}/values/${encodeURIComponent(key)}`, { headers: { Authorization: `Bearer ${token}` } });
   if (res.status === 404) return null;
@@ -188,7 +190,7 @@ async function readKv(key) {
   return res.json();
 }
 
-const etDate = (ms) => new Intl.DateTimeFormat('en-CA', { timeZone: 'America/New_York', year: 'numeric', month: '2-digit', day: '2-digit' }).format(ms);
+export const etDate = (ms) => new Intl.DateTimeFormat('en-CA', { timeZone: 'America/New_York', year: 'numeric', month: '2-digit', day: '2-digit' }).format(ms);
 
 /**
  * The game logs behind the open Pixel's Picks tickets, refreshed so the
@@ -290,15 +292,27 @@ async function gradeTicketBoxes(league, now) {
   await writeKv(entries);
 }
 
+/** ESPN's core API for a league, from its site path: sports/basketball/nba becomes sports/basketball/leagues/nba. */
+const coreBase = (league) => { const m = /\/sports\/([^/]+)\/([^/]+)$/.exec(league.site); return m ? `https://sports.core.api.espn.com/v2/sports/${m[1]}/leagues/${m[2]}` : null; };
+/** How far out a posted lineup is looked for: the NBA posts starters about half an hour before tip, soccer an hour. */
+const LINEUP_LEAD_MS = 2 * 3600e3;
+/** The roles record outlives a quiet week (the All-Star break): two weeks, not the bundle's three days. */
+const ROLES_TTL = 14 * 86400;
+
 /**
- * Who started each team's last game (worker/src/espn-bundle.js's roles
- * record): yesterday's and today's scoreboards, every game in play or
- * final read once, the box score's starter flags laid over the record by
- * athlete, newest game winning. A team that has not played keeps its last
- * entry; games older than a month and players unseen for six weeks fall
- * off. A league whose box carries no flag writes nothing.
+ * Who starts (worker/src/espn-bundle.js's roles record), kept current
+ * through the day (2026-11-08 direction: "ensure the starters are
+ * accurate daily"): yesterday's and today's scoreboards; every game in
+ * play or final read once from its box score (source box); every game
+ * still to come inside two hours read from both sides' core-API rosters
+ * on every pass, which carry the posted lineup before tip (source
+ * lineup). Entries lie over the record by athlete, the newest game
+ * winning, so today's lineup replaces last game's box and the box at tip
+ * replaces the lineup. A team that has not played keeps its last entry;
+ * games older than a month and players unseen for six weeks fall off. A
+ * league whose box carries no flag writes nothing.
  */
-async function recordRoles(league, now) {
+export async function recordRoles(league, now) {
   const key = rolesKey(league.sportKey);
   const existing = (await readKv(key).catch(() => null)) ?? {};
   const games = { ...(existing.games ?? {}) };
@@ -306,29 +320,49 @@ async function recordRoles(league, now) {
   const events = new Map();
   for (const d of [etDate(now - 864e5), etDate(now)]) {
     const sb = await getJson(`${league.site}/scoreboard?dates=${d.replace(/-/g, '')}`);
-    for (const e of sb?.events ?? []) { const st = e?.competitions?.[0]?.status?.type ?? e?.status?.type; if (e?.id && (st?.state === 'in' || st?.completed)) events.set(String(e.id), e); }
+    for (const e of sb?.events ?? []) if (e?.id) events.set(String(e.id), e);
   }
-  const fresh = [...events.values()].filter((e) => !games[String(e.id)]);
+  const stateOf = (e) => { const st = e?.competitions?.[0]?.status?.type ?? e?.status?.type; return st?.completed ? 'post' : st?.state ?? 'pre'; };
+  const lay = (p, e, source) => {
+    const prev = players[p.id];
+    if (prev?.date && e.date && Date.parse(prev.date) > Date.parse(e.date)) return false;
+    players[p.id] = { name: p.name, team: p.team, starter: p.starter, eventId: String(e.id), date: e.date ?? null, source };
+    return true;
+  };
+  // The box score, once per game in play or final.
+  const fresh = [...events.values()].filter((e) => stateOf(e) !== 'pre' && !games[String(e.id)]);
   let read = 0; let tagged = 0;
   for (const e of fresh) {
     const summary = await getJson(`${league.site}/summary?event=${e.id}`);
     const entries = startersFromSummary(summary);
     if (!entries.length) { if (summary) games[String(e.id)] = { at: now, date: e.date ?? null, none: true }; continue; }
     read++;
-    for (const p of entries) {
-      const prev = players[p.id];
-      if (prev?.date && e.date && Date.parse(prev.date) > Date.parse(e.date)) continue;
-      players[p.id] = { name: p.name, team: p.team, starter: p.starter, eventId: String(e.id), date: e.date ?? null };
-      tagged++;
-    }
+    for (const p of entries) if (lay(p, e, 'box')) tagged++;
     games[String(e.id)] = { at: now, date: e.date ?? null };
+  }
+  // The posted lineup, every pass, for each game still to come inside the lead.
+  const soon = [...events.values()].filter((e) => stateOf(e) === 'pre' && e.date && Date.parse(e.date) - now < LINEUP_LEAD_MS && Date.parse(e.date) > now - 3600e3);
+  const core = coreBase(league);
+  let lineups = 0; let posted = 0;
+  for (const e of core && league.lineups !== false ? soon : []) {
+    for (const c of e.competitions?.[0]?.competitors ?? []) {
+      const teamId = c?.team?.id; const abbr = c?.team?.abbreviation ?? null;
+      if (!teamId) continue;
+      const roster = await getJson(`${core}/events/${e.id}/competitions/${e.id}/competitors/${teamId}/roster`);
+      const entries = startersFromRoster(roster);
+      if (!entries.length) continue;
+      lineups++;
+      for (const p of entries) if (lay({ ...p, team: abbr }, e, 'lineup')) posted++;
+    }
   }
   for (const [id, g] of Object.entries(games)) if ((g?.at ?? 0) < now - 30 * 864e5) delete games[id];
   for (const [id, p] of Object.entries(players)) if (p?.date && Date.parse(p.date) < now - 45 * 864e5) delete players[id];
   const starters = Object.values(players).filter((p) => p.starter).length;
-  say(`roles: ${fresh.length} new game${fresh.length === 1 ? '' : 's'}, ${read} with starter flags, ${tagged} players tagged; ${Object.keys(players).length} on record, ${starters} starters`);
-  if (!fresh.length || DRY) return;
-  await writeKv([{ key, value: { sportKey: league.sportKey, builtAt: now, games, players } }]);
+  const summary = { games: fresh.length, boxes: read, tagged, soon: soon.length, lineups, posted, players: Object.keys(players).length, starters };
+  say(`roles: ${fresh.length} new game${fresh.length === 1 ? '' : 's'}, ${read} with starter flags, ${tagged} players tagged; ${soon.length} inside the lead, ${lineups} lineup${lineups === 1 ? '' : 's'} posted, ${posted} players; ${summary.players} on record, ${starters} starters`);
+  if ((!fresh.length && !lineups) || DRY) return summary;
+  await writeKv([{ key, value: { sportKey: league.sportKey, builtAt: now, games, players } }], ROLES_TTL);
+  return summary;
 }
 
 function kvConfig() {
@@ -341,11 +375,11 @@ function kvConfig() {
   return { namespace: block[1], token, account };
 }
 
-async function writeKv(entries) {
+export async function writeKv(entries, ttl = TTL_SECONDS) {
   const { namespace, token, account } = kvConfig();
   const url = `https://api.cloudflare.com/client/v4/accounts/${account}/storage/kv/namespaces/${namespace}/bulk`;
   for (let i = 0; i < entries.length; i += 20) {
-    const batch = entries.slice(i, i + 20).map((e) => ({ key: e.key, value: JSON.stringify(e.value), expiration_ttl: TTL_SECONDS }));
+    const batch = entries.slice(i, i + 20).map((e) => ({ key: e.key, value: JSON.stringify(e.value), expiration_ttl: ttl }));
     const res = await fetch(url, { method: 'PUT', headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' }, body: JSON.stringify(batch) });
     const body = await res.json().catch(() => ({}));
     if (!res.ok || body?.success === false) throw new Error(`KV write failed: HTTP ${res.status} ${JSON.stringify(body?.errors ?? body).slice(0, 300)}`);
@@ -353,6 +387,8 @@ async function writeKv(entries) {
   }
 }
 
+const isMain = process.argv[1] && import.meta.url.endsWith(process.argv[1].split('/').pop());
+if (isMain) {
 const now = Date.now();
 let failed = false;
 for (const [name, league] of Object.entries(LEAGUES)) {
@@ -386,3 +422,4 @@ for (const [name, league] of Object.entries(LEAGUES)) {
   try { await recordRoles(league, now); } catch (e) { say(`  ! roles: ${e.message}`); }
 }
 if (failed) process.exit(1);
+}

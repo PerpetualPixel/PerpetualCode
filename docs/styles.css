@@ -7598,3 +7598,5 @@ a.trend-price:hover { background: rgba(255, 255, 255, 0.06); }
 .role-tag { display: inline-flex; align-items: center; margin-top: 6px; margin-right: 4px; padding: 3px 8px; border-radius: 999px; font-size: 0.72rem; font-weight: 800; letter-spacing: 0.04em; text-transform: uppercase; border: 1px solid var(--line); color: var(--muted); }
 .role-tag.is-starter { color: var(--success); border-color: rgba(94, 224, 122, 0.5); background: rgba(94, 224, 122, 0.1); }
 .role-tag.is-bench { color: #c4b5fd; border-color: rgba(167, 139, 250, 0.5); background: rgba(167, 139, 250, 0.12); }
+.role-tag.is-today { font-weight: 900; }
+.role-tag.is-today.is-starter { background: rgba(94, 224, 122, 0.22); }

@@ -10383,11 +10383,15 @@ const TENNIS_SPORT_KEY = 'tennis';
 const isPropFreeParlay = () => parlayState.sports.size > 0 && [...parlayState.sports].every((k) => k === UFC_SPORT_KEY || k === TENNIS_SPORT_KEY);
 /** The leagues on the board whose rows carry a role (who started his team's last game): the Starters only toggle filters those only. */
 const parlayRoleLeagues = () => new Set(parlayRows().filter((r) => r.role).map((r) => r.sportKey));
-/** The role tag on a leg: started, or came off the bench, in his team's last game. */
+/** The teams whose lineup for today is in (a posted lineup before tip, or the box score once it tips), as sport:team. */
+const parlayLineupTeams = () => new Set(parlayRows().filter((r) => r.role?.today).map((r) => `${r.sportKey}:${r.team}`));
+/** The role tag on a leg: starting (or on the bench) today once the lineup is in, else who started his team's last game. */
 function roleTag(role) {
   if (!role || typeof role.starter !== 'boolean') return '';
   const when = role.date ? ` (${pickDayFmt.format(new Date(role.date))})` : '';
-  return `<span class="role-tag ${role.starter ? 'is-starter' : 'is-bench'}" title="${esc(`${role.starter ? 'Started' : 'Came off the bench in'} ${role.team ? `${role.team}'s` : 'his team\'s'} last game${when}`)}">${role.starter ? 'Starter' : 'Bench'}</span>`;
+  const team = role.team ? `${role.team}'s` : 'his team\'s';
+  if (role.today) return `<span class="role-tag is-today ${role.starter ? 'is-starter' : 'is-bench'}" title="${esc(role.source === 'lineup' ? `${team} posted lineup today: ${role.starter ? 'starting' : 'on the bench'}` : `${team} game today: ${role.starter ? 'started' : 'came off the bench'}`)}">${role.starter ? 'Starting today' : 'Bench today'}</span>`;
+  return `<span class="role-tag ${role.starter ? 'is-starter' : 'is-bench'}" title="${esc(`${role.starter ? 'Started' : 'Came off the bench in'} ${team} last game${when}`)}">${role.starter ? 'Starter' : 'Bench'}</span>`;
 }
 const isTennisOnlyParlay = () => parlayState.sports.size > 0 && [...parlayState.sports].every((k) => k === TENNIS_SPORT_KEY);
 /** The day's tennis legs as builder rows: one row per priced number, the match as the game, the tour as the team. */
@@ -10494,6 +10498,7 @@ function parlayCandidates() {
   const now = Date.now();
   const s = parlayState;
   const roleLeagues = parlayRoleLeagues();
+  const lineupTeams = parlayLineupTeams();
   const rate = (r, k) => (Number.isFinite(r.periods?.[k]?.rate) ? r.periods[k].rate : null);
   const best = new Map();
   for (const r of parlayRows()) {
@@ -10503,8 +10508,8 @@ function parlayCandidates() {
     if (s.games.size && !s.games.has(r.eventId)) continue;
     if (s.side !== 'both' && r.side !== s.side && !r.tennis) continue;
     if (s.team && r.team !== s.team) continue;
-    // Starters only: a player the box score lists as bench is out; a league with no starter flags (the NFL) is not filtered.
-    if (s.starters && roleLeagues.has(r.sportKey) && !r.role?.starter) continue;
+    // Starters only: once a team's lineup for today is in, only its starters pass; until then, who started the team's last game. A league with no starter flags (the NFL) is not filtered.
+    if (s.starters && roleLeagues.has(r.sportKey) && !(lineupTeams.has(`${r.sportKey}:${r.team}`) ? r.role?.today && r.role.starter : r.role?.starter)) continue;
     if (r.ufc && s.ufcProps.size && !s.ufcProps.has(r.ufc.prop)) continue;
     const q = parlayQuote(r);
     if (!q) continue;
@@ -10849,11 +10854,14 @@ function renderParlay() {
   el.parlaySide.value = s.side;
   if (el.parlayStarters) {
     const known = live.filter((r) => r.role).length; const starters = live.filter((r) => r.role?.starter).length;
+    const lineupTeams = parlayLineupTeams();
+    const teamsToday = new Set(live.filter((r) => r.role && !r.ufc && !r.tennis).map((r) => `${r.sportKey}:${r.team}`));
+    const inToday = [...teamsToday].filter((t) => lineupTeams.has(t)).length;
     const none = [...s.sports].filter((k) => k !== UFC_SPORT_KEY && k !== TENNIS_SPORT_KEY && (s.rows[k] ?? []).length && !(s.rows[k] ?? []).some((r) => r.role)).map((k) => PLAYER_LEAGUES.find(([key]) => key === k)?.[1] ?? k);
     el.parlayStarters.classList.toggle('is-active', s.starters); el.parlayStarters.setAttribute('aria-pressed', String(s.starters));
     el.parlayStartersNote.textContent = s.starters
-      ? `On: only players who started their team's last game${known ? ` (${starters} of ${known} lines)` : ''}${none.length ? `; no starter data for ${none.join(', ')} yet, so those lines all stay` : ''}`
-      : `Off: every player with a line${known ? ` (${starters} starters, ${known - starters} bench)` : ''}`;
+      ? `On: today's lineup where it is posted (${inToday} of ${teamsToday.size} teams), else who started the team's last game${known ? ` (${starters} of ${known} lines)` : ''}${none.length ? `; no starter data for ${none.join(', ')} yet, so those lines all stay` : ''}`
+      : `Off: every player with a line${known ? ` (${starters} starters, ${known - starters} bench; lineups in for ${inToday} of ${teamsToday.size} teams today)` : ''}`;
   }
   const teams = [...new Set(live.map((r) => r.team).filter(Boolean))].sort();
   el.parlayTeam.innerHTML = `<option value="">${isTennisOnlyParlay() ? 'Both tours' : 'Any team'}</option>${teams.map((t) => `<option value="${esc(t)}" ${s.team === t ? 'selected' : ''}>${esc(t)}</option>`).join('')}`;

@@ -1,0 +1,46 @@
+# The starters, kept current through the day (2026-11-08: "ensure the
+# starters are accurate daily, as they could change"): a runner that
+# stays up for its hours limit (scripts/lineups-watch.mjs), a pass every
+# ten minutes (the box score of every game in play or final, the posted
+# lineup of every game inside two hours of tip, the injury report every
+# half hour), then starts the next run itself with the default token,
+# the Live watcher's pattern: GitHub delivered five of the injury cron's
+# forty-eight firings on 2026-11-07, so a run cannot count on the next
+# one. The cron here is the backstop that restarts a chain that died; a
+# run that finds another alive (the heartbeat) steps aside.
+name: ESPN lineups
+
+on:
+  schedule:
+    - cron: '*/30 * * * *'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  actions: write # the run at its hours limit starts the next one
+
+concurrency:
+  group: espn-lineups
+  cancel-in-progress: false
+
+jobs:
+  lineups:
+    runs-on: ubuntu-latest
+    timeout-minutes: 345
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Keep the starters current
+        id: watch
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+        run: node scripts/lineups-watch.mjs --hours 5.5 --every 10
+      - name: Start the next run
+        if: steps.watch.outputs.more == 'yes'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        run: gh workflow run espn-lineups.yml --ref main
