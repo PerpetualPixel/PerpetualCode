@@ -36,9 +36,9 @@
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Syne:wght@600;700;800&family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
-<link rel="stylesheet" href="styles.css?v=1.319">
+<link rel="stylesheet" href="styles.css?v=1.320">
 <!-- Before first paint: a desktop reader who chose "Fit screen" gets the wide shell without a flash of the narrow one. -->
-<script src="wide.js?v=1.319"></script>
+<script src="wide.js?v=1.320"></script>
 </head>
 <body>
 
@@ -490,6 +490,7 @@
       <div class="parlay-field"><span id="parlayGamesLabel">Games</span><div id="parlayGames" class="rate-chips parlay-chips-wrap"></div></div>
       <label class="parlay-field" data-ufc-hide><span>Over or under</span><select id="parlaySide"><option value="both">Both</option><option value="over">Over</option><option value="under">Under</option></select></label>
       <label class="parlay-field" data-ufc-hide><span>Team</span><select id="parlayTeam"></select></label>
+      <div class="parlay-field" data-ufc-hide data-parlay-role-field><span>Role</span><div class="parlay-season"><button type="button" id="parlayStarters" class="rate-chip parlay-season-chip" data-parlay-starters aria-pressed="false">Starters only</button><small id="parlayStartersNote">Off: every player with a line</small></div></div>
       <div class="parlay-actions"><button type="button" id="parlayBuild" class="parlay-build" data-parlay-build>Build</button><button type="button" id="parlaySprinkle" class="parlay-sprinkle" data-parlay-sprinkle aria-pressed="false" title="The card's long shots worth a couple of dollars" hidden>✨ Sprinkle</button><button type="button" class="parlay-reset" data-parlay-reset>Reset</button></div>
     </aside>
     <section id="parlayResult" class="parlay-result" aria-live="polite"></section>
@@ -1138,6 +1139,6 @@
   </div>
 </aside>
 
-<script type="module" src="app.js?v=1.319"></script>
+<script type="module" src="app.js?v=1.320"></script>
 </body>
 </html>

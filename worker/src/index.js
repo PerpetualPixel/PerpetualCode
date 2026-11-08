@@ -57,7 +57,7 @@ import { runPotdDaily, runPotdClvSnapshot, runPotdGrading, backfillPotdAnalysis,
 import { runLadderDaily, runLadderGrading, getLadder, getLadderHistory } from './ladder.js';
 import { BUILD_INFO } from '../../docs/version.js';
 import { runTrendsBuild, getTrends, buildLeagueChunk, TREND_ENABLED_SPORTS, TREND_TABS, isTrendKey, trendKeysOf, getTrendsFor } from './trends.js';
-import { loadBundleIndex, loadInjuries, injuryFor, withInjuries } from './espn-bundle.js';
+import { loadBundleIndex, loadInjuries, injuryFor, withInjuries, loadRoles, withRoles } from './espn-bundle.js';
 import { getPlayerIndex, getPlayerLog, playerStats } from './player-search.js';
 import { getUfcEvents, getUfcEvent, nextUfcEvent, getUfcFighter, getUfcFighters } from './ufc-card.js';
 import { runUfcTick, getUfcPicks } from './ufc-picks.js';
@@ -1668,7 +1668,11 @@ export default {
         const reports = Object.fromEntries(await Promise.all(trendKeysOf(found.sportKey).map(async (k) => [k, await loadInjuries(env, k)])));
         const reportOf = (r) => reports[r.sportKey] ?? reports[trendKeysOf(found.sportKey)[0]];
         const injuriesAt = Object.values(reports).reduce((m, r) => (r?.builtAt && (!m || r.builtAt > m) ? r.builtAt : m), null);
-        const trends = { ...found, rows: (found.rows ?? []).map((r) => withInjuries([r], reportOf(r))[0]), injuriesAt };
+        // Who started his team's last game, the same way (the Parlay Builder's Starters only toggle).
+        const roles = Object.fromEntries(await Promise.all(trendKeysOf(found.sportKey).map(async (k) => [k, await loadRoles(env, k)])));
+        const rolesOf = (r) => roles[r.sportKey] ?? roles[trendKeysOf(found.sportKey)[0]];
+        const rolesAt = Object.values(roles).reduce((m, r) => (r?.builtAt && (!m || r.builtAt > m) ? r.builtAt : m), null);
+        const trends = { ...found, rows: (found.rows ?? []).map((r) => withRoles(withInjuries([r], reportOf(r)), rolesOf(r))[0]), injuriesAt, rolesAt };
         // `feed` is the last Odds API call's outcome (odds.js's
         // recordOddsDiag): a tab with no rows can say the feed refused the
         // call rather than look like a build that never ran.

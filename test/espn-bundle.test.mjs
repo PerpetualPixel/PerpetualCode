@@ -77,3 +77,23 @@ test('the injury report: a listed player is tagged out or questionable by his st
   assert.equal((await loadInjuries(env, 'basketball_nba')).builtAt, 5);
   assert.deepEqual(await loadInjuries(env, 'americanfootball_nfl'), { builtAt: null, players: {} });
 });
+
+test('the roles record: starter flags read from an NBA box score and a soccer lineup, a league without flags yields none, the tag rides on rows by athlete id', async () => {
+  const { startersFromSummary, roleFor, withRoles, loadRoles, rolesKey } = await import('../worker/src/espn-bundle.js');
+  const nba = { boxscore: { players: [{ team: { abbreviation: 'BOS' }, statistics: [{ athletes: [
+    { athlete: { id: 1, displayName: 'A' }, starter: true, stats: ['30'] }, { athlete: { id: 2, displayName: 'B' }, starter: false, stats: ['8'] }, { athlete: { id: 3, displayName: 'C' }, starter: false, didNotPlay: true, stats: [] },
+  ] }] }, { team: { abbreviation: 'NYK' }, statistics: [{ athletes: [{ athlete: { id: 4, displayName: 'D' }, starter: true, stats: ['20'] }] }] }] } };
+  assert.deepEqual(startersFromSummary(nba).map((p) => `${p.team}:${p.id}:${p.starter}`), ['BOS:1:true', 'BOS:2:false', 'BOS:3:false', 'NYK:4:true']);
+  const soccer = { rosters: [{ team: { abbreviation: 'ARS' }, roster: [{ athlete: { id: 7, displayName: 'G' }, starter: true }, { athlete: { id: 8, displayName: 'H' }, starter: false, subbedIn: true }] }] };
+  assert.deepEqual(startersFromSummary(soccer).map((p) => `${p.id}:${p.starter}`), ['7:true', '8:false']);
+  const nfl = { boxscore: { players: [{ team: { abbreviation: 'PHI' }, statistics: [{ athletes: [{ athlete: { id: 9, displayName: 'Q' }, stats: ['300'] }] }] }] } };
+  assert.deepEqual(startersFromSummary(nfl), [], 'no flag, no entry: the NFL is not read as all bench');
+  const record = { builtAt: 5, games: {}, players: { 1: { name: 'A', team: 'BOS', starter: true, date: '2026-11-07T00:00Z' }, 2: { name: 'B', team: 'BOS', starter: false, date: '2026-11-07T00:00Z' } } };
+  assert.deepEqual(roleFor(record, 1), { starter: true, team: 'BOS', date: '2026-11-07T00:00Z' });
+  assert.equal(roleFor(record, '2').starter, false); assert.equal(roleFor(record, 99), null);
+  assert.deepEqual(withRoles([{ athleteId: '1' }, { athleteId: '2' }, { athleteId: '9' }], record).map((r) => r.role?.starter ?? null), [true, false, null]);
+  const store = new Map([[rolesKey('basketball_nba'), JSON.stringify(record)]]);
+  const env = { POTD_KV: { async get(k) { return store.get(k) ?? null; } } };
+  assert.equal((await loadRoles(env, 'basketball_nba')).builtAt, 5);
+  assert.deepEqual(await loadRoles(env, 'americanfootball_nfl'), { builtAt: null, games: {}, players: {} });
+});
