@@ -9040,6 +9040,8 @@ const rateTone = (v) => (v >= 0.7 ? 'is-hot' : v >= 0.5 ? 'is-warm' : 'is-cold')
 const pct = (v) => `${Math.round(v * 100)}%`;
 const teamAbbr = (name) => { const a = espnAbbr(trendsState.sport, name); return a ? a.toUpperCase() : String(name ?? '').split(' ').pop(); };
 const sideWord = (side) => (side === 'over' ? 'Over' : 'Under');
+/** A line as the cards print it: "Points Over 24.5", or for a yes-or-no prop the market alone ("Anytime Touchdown", "No First Basket"). */
+const lineText = (r) => (r.yesNo ? `${r.side === 'over' ? '' : 'No '}${r.marketLabel ?? r.statLabel}` : `${r.marketLabel ?? r.statLabel} ${sideWord(r.side)} ${r.point}`);
 
 /**
  * A sportsbook's mark for a price pill (2026-10-27 direction: the book's
@@ -9237,7 +9239,7 @@ function renderTrendCard(row) {
     <div class="trend-main">
       <div>
         <p class="trend-player">${esc(row.playerName)}${row.team ? `<small>${esc(row.team)}</small>` : ''}${String(row.sportKey).startsWith('soccer_') ? `<span class="trend-league">${esc(SPORT_SHORT[row.sportKey] ?? row.sportTitle ?? '')}</span>` : ''}</p>
-        <p class="trend-line">${esc(row.marketLabel ?? row.statLabel)} ${sideWord(row.side)} ${esc(String(row.point))}</p>
+        <p class="trend-line">${esc(lineText(row))}</p>
         ${injuryTag(row.injury)}
       </div>
       ${pricePill(row.bookKey, row.book, row.american, row.link)}
@@ -9491,7 +9493,7 @@ function renderTrendDetail(row) {
       <div>
         <div class="detail-game">${leagueIconSvg(TREND_LEAGUE_ICON[row.sportKey] ?? row.sportKey)}<strong>${esc(teamAbbr(row.away))} @ ${esc(teamAbbr(row.home))}</strong><span>▪</span>${esc(trendTimeFmt.format(new Date(row.commenceMs)))}</div>
         <h2 class="detail-name" id="trendsSheetTitle">${esc(row.playerName)}${row.team ? `<small>${esc(row.team)}</small>` : ''}</h2>
-        <p class="detail-market">${esc(row.marketLabel ?? row.statLabel)} ${sideWord(row.side)} ${esc(String(row.point))}</p>
+        <p class="detail-market">${esc(lineText(row))}</p>
         ${row.athleteId ? `<button type="button" class="detail-stats" data-view-stats>View stats <span aria-hidden="true">↗</span></button>` : ''}
       </div>
       ${avatarHtml(row, 'detail-avatar')}
@@ -9918,7 +9920,7 @@ function renderPickLeg(leg, bet) {
     <div class="trend-main">
       <div>
         <p class="trend-player">${esc(leg.playerName)}${leg.team ? `<small>${esc(leg.team)}</small>` : ''}</p>
-        <p class="trend-line">${esc(leg.marketLabel ?? leg.statLabel)} ${sideWord(leg.side)} ${esc(String(leg.point))}</p>
+        <p class="trend-line">${esc(lineText(leg))}</p>
         ${injuryTag(leg.injury)}
       </div>
       ${bet.type === 'parlay' && !leg.link ? `<span class="pick-leg-price">${esc(formatAmerican(leg.american))}</span>` : pricePill(bet.bookId, bet.book, leg.american, leg.link)}
@@ -10510,6 +10512,8 @@ function parlayCandidates() {
     if (s.team && r.team !== s.team) continue;
     // Starters only: once a team's lineup for today is in, only its starters pass; until then, who started the team's last game. A league with no starter flags (the NFL) is not filtered.
     if (s.starters && roleLeagues.has(r.sportKey) && !(lineupTeams.has(`${r.sportKey}:${r.team}`) ? r.role?.today && r.role.starter : r.role?.starter)) continue;
+    // A first basket goes to the first five: a player the record lists as bench is out of those legs whatever the toggle.
+    if (r.yesNo && Number.isFinite(r.prob) && r.role && !r.role.starter) continue;
     if (r.ufc && s.ufcProps.size && !s.ufcProps.has(r.ufc.prop)) continue;
     const q = parlayQuote(r);
     if (!q) continue;
@@ -10769,8 +10773,8 @@ function renderParlayLeg(leg) {
         <span class="parlay-leg-price">${esc(formatAmerican(q.american))}</span>
         <button type="button" class="parlay-lock ${locked ? 'is-on' : ''}" data-parlay-lock="${esc(r.id)}" aria-pressed="${locked}" title="${locked ? 'Unlock' : 'Lock this leg'}">${locked ? '🔒' : '🔓'}</button>
       </div>
-      <p class="parlay-leg-line">${esc(r.marketLabel ?? r.statLabel)} ${sideWord(r.side)} ${esc(String(r.point))} <small>${esc(teamAbbr(r.away))} @ ${esc(teamAbbr(r.home))} · ${esc(trendTimeFmt.format(new Date(r.commenceMs)))}</small></p>
-      <div class="parlay-chips">${chip('L5', p.l5)}${chip('L10', p.l10)}${chip(`vs ${r.opponent ?? ''}`, p.h2h?.games ? p.h2h : null)}</div>
+      <p class="parlay-leg-line">${esc(lineText(r))} <small>${esc(teamAbbr(r.away))} @ ${esc(teamAbbr(r.home))} · ${esc(trendTimeFmt.format(new Date(r.commenceMs)))}</small></p>
+      <div class="parlay-chips">${r.yesNo && Number.isFinite(r.prob) ? `<span class="parlay-chip">${esc(pct(r.prob))} chance</span><span class="parlay-chip">#${esc(String(r.fieldRank))} of ${esc(String(r.fieldSize))} ${r.statKey === 'firstTeamBasket' ? 'on the team' : 'in the game'}</span>` : `${chip('L5', p.l5)}${chip('L10', p.l10)}${chip(`vs ${r.opponent ?? ''}`, p.h2h?.games ? p.h2h : null)}${r.yesNo && Number.isFinite(q.decimal) && q.decimal > 1 ? `<span class="parlay-chip">priced at ${esc(pct(1 / q.decimal))}</span>` : ''}`}</div>
       <div class="parlay-leg-actions">
         <button type="button" class="parlay-btn" data-parlay-view="${esc(r.id)}">${open ? 'Hide breakdown' : 'Why this leg'}</button>
         <button type="button" class="parlay-btn" data-parlay-stats="${esc(r.id)}">View stats</button>

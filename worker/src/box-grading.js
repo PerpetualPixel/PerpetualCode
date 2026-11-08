@@ -97,6 +97,7 @@ const NFL_BOX = {
   passTds: (s) => num(s.passingTouchdowns) ?? 0,
   rushAttempts: (s) => num(s.rushingAttempts) ?? 0,
   targets: (s) => num(s.receivingTargets ?? s.targets) ?? 0,
+  anyTd: (s) => (num(s.rushingTouchdowns) ?? 0) + (num(s.receivingTouchdowns) ?? 0),
 };
 
 // Skaters sit in the forwards and defenses blocks (shotsTotal is shots on goal; the "SOG"-labelled column is shootout goals),

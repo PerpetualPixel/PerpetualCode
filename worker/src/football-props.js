@@ -29,6 +29,7 @@ import {
   clearsPropGates as sharedClearsPropGates,
   gradePropLeg,
   seasonColumnValues,
+  seasonColumnRows,
 } from '../../docs/prop-legs.js';
 import { UPSTREAM, TREND_BOOKMAKERS } from './odds.js';
 import { searchAthleteId } from './espn-search.js';
@@ -90,6 +91,8 @@ const GAMELOG_NAMES = {
   passTds: ['passingTouchdowns'],
   rushAttempts: ['rushingAttempts'],
   targets: ['receivingTargets', 'targets'],
+  rushTds: ['rushingTouchdowns'],
+  recTds: ['receivingTouchdowns'],
 };
 const GAMELOG_DISPLAY = {
   passYds: /^passing yards$/i,
@@ -101,6 +104,8 @@ const GAMELOG_DISPLAY = {
   passTds: /^passing touchdowns$/i,
   rushAttempts: /^rushing attempts$/i,
   targets: /^(receiving )?targets$/i,
+  rushTds: /^rushing touchdowns$/i,
+  recTds: /^receiving touchdowns$/i,
 };
 const GAMELOG_LABEL = { passYds: 'YDS', rushYds: 'YDS', recYds: 'YDS', receptions: 'REC', passCompletions: 'CMP', passAttempts: 'ATT', passTds: 'TD', rushAttempts: 'CAR', targets: 'TGTS' };
 
@@ -116,7 +121,26 @@ export const NFL_TREND_MARKETS = {
   player_pass_attempts: { stat: 'passAttempts', label: 'Att', marketLabel: 'Pass Attempts' },
   player_pass_tds: { stat: 'passTds', label: 'Pass TD', marketLabel: 'Passing Touchdowns' },
   player_rush_attempts: { stat: 'rushAttempts', label: 'Car', marketLabel: 'Rush Attempts' },
+  // Anytime touchdown (2026-11-08 direction, for the Parlay Builder): a yes-or-no market read as Over 0.5 touchdowns, settled on rushing plus receiving scores.
+  player_anytime_td: { stat: 'anyTd', label: 'TD', marketLabel: 'Anytime Touchdown', yesNo: true },
 };
+/** The market list asked for, then the list without the yes-or-no markets, in case the feed refuses one. */
+export const NFL_TREND_MARKET_PARAMS = [Object.keys(NFL_TREND_MARKETS).join(','), Object.keys(NFL_TREND_MARKETS).filter((k) => !NFL_TREND_MARKETS[k].yesNo).join(',')];
+
+/**
+ * Per-game rows of one Trends stat from a football game log, most recent
+ * first (docs/prop-legs.js's seasonColumnRows shape): a column of the
+ * log, or for the anytime touchdown the rushing and receiving scores
+ * summed game by game (a column the log lacks counts as none).
+ */
+export function nflStatRows(gamelog, statKey, { allSeasons = true } = {}) {
+  if (statKey !== 'anyTd') return seasonColumnRows(gamelog, gamelogStatIndex(gamelog, statKey), { allSeasons });
+  const parts = ['rushTds', 'recTds'].map((k) => seasonColumnRows(gamelog, gamelogStatIndex(gamelog, k), { allSeasons })).filter((rows) => rows.length);
+  if (!parts.length) return [];
+  const byEvent = new Map();
+  for (const rows of parts) for (const r of rows) { const cur = byEvent.get(r.eventId); if (cur) cur.value += r.value; else byEvent.set(r.eventId, { ...r }); }
+  return [...byEvent.values()].sort((x, y) => y.date - x.date);
+}
 
 /**
  * Which column of the game log carries `statKey`. ESPN's common/v3 game

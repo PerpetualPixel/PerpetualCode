@@ -48,10 +48,19 @@ export function extractTrendLines(eventOdds, game, markets, { isRegistryBook = (
       // the feed does not carry, so those are not quoted at all.
       if (book.key === 'prizepicks' && /_alternate$/.test(market.key)) continue;
       for (const outcome of market.outcomes ?? []) {
-        const side = String(outcome.name ?? '').toLowerCase();
-        if (side !== 'over' && side !== 'under') continue;
-        const playerName = outcome.description ?? '';
-        const point = Number(outcome.point);
+        let side; let playerName; let point;
+        if (spec.yesNo) {
+          // A yes-or-no prop (anytime touchdown, first basket): "Yes" on a player reads as Over 0.5, "No" as Under; a feed that names the player as the outcome, with no description, is a Yes.
+          const nm = String(outcome.name ?? '').toLowerCase();
+          if (nm === 'yes' || nm === 'no') { side = nm === 'yes' ? 'over' : 'under'; playerName = outcome.description ?? ''; }
+          else { side = 'over'; playerName = outcome.description ?? outcome.name ?? ''; }
+          point = 0.5;
+        } else {
+          side = String(outcome.name ?? '').toLowerCase();
+          if (side !== 'over' && side !== 'under') continue;
+          playerName = outcome.description ?? '';
+          point = Number(outcome.point);
+        }
         const american = Number(outcome.price);
         if (!playerName || !Number.isFinite(point) || !Number.isFinite(american)) continue;
         const decimal = american > 0 ? 1 + american / 100 : 1 + 100 / -american;
@@ -62,6 +71,7 @@ export function extractTrendLines(eventOdds, game, markets, { isRegistryBook = (
             eventId: game.eventId, sportKey: game.sportKey, sportTitle: game.sportTitle,
             commenceMs: game.commenceMs, home: game.home, away: game.away,
             playerName, statKey: spec.stat, statLabel: spec.label, marketLabel: spec.marketLabel, point,
+            yesNo: Boolean(spec.yesNo), noLog: Boolean(spec.noLog),
             over: [], under: [], books: new Set(),
           });
         }
@@ -176,7 +186,8 @@ export function trendRowsFor(line, rows, { opponent = null } = {}) {
       marketLabel: line.marketLabel,
       point: line.point,
       side,
-      selection: `${line.playerName} ${side === 'over' ? 'Over' : 'Under'} ${line.point} ${line.statLabel}`,
+      yesNo: Boolean(line.yesNo),
+      selection: line.yesNo ? `${line.playerName} ${side === 'over' ? '' : 'No '}${line.marketLabel}` : `${line.playerName} ${side === 'over' ? 'Over' : 'Under'} ${line.point} ${line.statLabel}`,
       american: best.american,
       decimal: best.decimal,
       book: best.book,
@@ -189,6 +200,49 @@ export function trendRowsFor(line, rows, { opponent = null } = {}) {
       periods,
       streak: flags.findIndex((f) => f === 0) < 0 ? flags.filter((f) => f !== null).length : flags.findIndex((f) => f === 0),
       series: recent.map((r, i) => ({ value: r.value, hit: flags[i], date: r.date, season: r.season, opponent: r.opponent, atVs: r.atVs, score: r.score, result: r.result })),
+    });
+  }
+  return out;
+}
+
+/**
+ * Rows for a market with no stat behind it (2026-11-08 direction: first
+ * basket, and the first basket on the team, in the Parlay Builder,
+ * ranked by how likely they are): the chance is the market's own, read
+ * off the best price and normalized across the field, every player
+ * priced in the game for the first basket and every player on the side
+ * for the team's, so the favorite reads as the likeliest and the stars
+ * rank the field (legScore). Over only: no book hangs a "No" on these.
+ */
+export function chanceRowsFor(lines, { byTeam = false } = {}) {
+  const groups = new Map();
+  for (const line of lines ?? []) {
+    if (!line?.over?.length) continue;
+    const k = `${line.eventId}|${line.statKey}|${byTeam ? line.team ?? '?' : ''}`;
+    if (!groups.has(k)) groups.set(k, []);
+    groups.get(k).push(line);
+  }
+  const out = [];
+  for (const group of groups.values()) {
+    const implied = group.map((l) => { const best = sortQuotes(l.over)[0]; return best && best.decimal > 1 ? 1 / best.decimal : 0; });
+    const total = implied.reduce((s, q) => s + q, 0);
+    if (!(total > 0)) continue;
+    const probs = implied.map((q) => q / total);
+    const top = Math.max(...probs);
+    const order = probs.map((p, i) => i).sort((a, b) => probs[b] - probs[a]);
+    const rank = new Map(order.map((i, r) => [i, r + 1]));
+    group.forEach((line, i) => {
+      const quotes = sortQuotes(line.over);
+      const best = quotes[0];
+      out.push({
+        id: `${line.id}:over`, eventId: line.eventId, sportKey: line.sportKey, sportTitle: line.sportTitle, commenceMs: line.commenceMs, home: line.home, away: line.away,
+        playerName: line.playerName, team: line.team ?? null, opponent: line.opponent ?? null, athleteId: line.athleteId ?? null, headshot: line.headshot ?? null,
+        statKey: line.statKey, statLabel: line.statLabel, marketLabel: line.marketLabel, point: 0.5, side: 'over', yesNo: true,
+        selection: `${line.playerName} ${line.marketLabel}`,
+        american: best.american, decimal: best.decimal, book: best.book, bookKey: best.bookKey, quotes, bookCount: line.bookCount ?? quotes.length,
+        games: 0, seasons: [], rates: {}, periods: {}, streak: null, series: [],
+        prob: Math.round(probs[i] * 1000) / 1000, favoriteProb: Math.round(top * 1000) / 1000, fieldRank: rank.get(i), fieldSize: group.length,
+      });
     });
   }
   return out;
@@ -271,7 +325,8 @@ export const bestQuote = (quotes) => sortQuotes(quotes)[0] ?? null;
 
 export function sortTrends(rows, { window = 'l10', by = 'hitRate', dir = 'desc' } = {}) {
   const sign = dir === 'asc' ? -1 : 1;
-  const rate = (r) => (Number.isFinite(r.rates?.[window]) ? r.rates[window] : null);
+  // A chance row (first basket) sorts by its market chance, so it keeps a place on a capped board.
+  const rate = (r) => (Number.isFinite(r.rates?.[window]) ? r.rates[window] : Number.isFinite(r.prob) ? r.prob : null);
   return [...rows].sort((a, b) => {
     if (by === 'odds') return sign * ((b.decimal ?? 0) - (a.decimal ?? 0)) || ((rate(b) ?? -1) - (rate(a) ?? -1));
     if (by === 'date') return sign * ((a.commenceMs ?? 0) - (b.commenceMs ?? 0)) || ((rate(b) ?? -1) - (rate(a) ?? -1));
@@ -293,6 +348,13 @@ export const trendPrice = (row) => (Number.isFinite(row.american) ? row.american
  * less. The same number on the worker and in the app.
  */
 export function legScore(row, injury = row?.injury ?? null) {
+  if (row?.yesNo && Number.isFinite(row?.prob)) {
+    // A chance row (first basket): the stars rank the field, the favorite at five, a player half as likely at two and a half.
+    let score = (5 * row.prob) / (row.favoriteProb || row.prob);
+    if (injury?.level === 'out') score = 0;
+    else if (injury?.level === 'questionable') score -= 1;
+    return Math.max(0, Math.min(5, Math.round(score * 10) / 10));
+  }
   const p = row?.periods ?? {};
   const rate = (k) => (Number.isFinite(p[k]?.rate) ? p[k].rate : null);
   const seasonKey = row?.seasons?.[0] ? `s${row.seasons[0]}` : null;

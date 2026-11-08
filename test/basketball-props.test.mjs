@@ -173,8 +173,9 @@ test('basketballStatRows reads plain columns, the made count of made-attempted c
   assert.deepEqual(basketballStatRows(log, 'stocks').map((r) => r.value), [1, 3]);
   assert.equal(basketballStatRows(log, 'pra')[0].opponent, 'BOS', 'a combined row keeps the game\'s files');
   assert.deepEqual(basketballStatRows({ ...log, names: log.names.filter((n) => n !== 'assists'), labels: log.labels.filter((l) => l !== 'AST') }, 'pa'), [], 'a combo missing a part is empty, never summed short');
-  assert.equal(Object.keys(NBA_TREND_MARKETS).length, 23);
-  assert.equal(NBA_TREND_MARKET_PARAMS.length, 2, 'the full list, then the core eight');
+  assert.equal(Object.keys(NBA_TREND_MARKETS).length, 25);
+  assert.equal(NBA_TREND_MARKET_PARAMS.length, 3, 'the full list, the list without the first-basket markets, then the core eight');
+  assert.ok(NBA_TREND_MARKET_PARAMS[0].includes('player_first_basket') && !NBA_TREND_MARKET_PARAMS[1].includes('player_first_basket'));
   assert.ok(NBA_TREND_MARKET_PARAMS[1].split(',').every((k) => NBA_TREND_MARKETS[k]));
 });
 

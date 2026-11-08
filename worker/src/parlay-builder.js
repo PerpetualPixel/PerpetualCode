@@ -10,7 +10,7 @@
 import { callModel, parseVerdict } from './trend-picks.js';
 import { getTrends } from './trends.js';
 import { attachSeries, legScore } from '../../docs/trends.js';
-import { loadInjuries, injuryFor } from './espn-bundle.js';
+import { loadInjuries, injuryFor, loadRoles, roleFor } from './espn-bundle.js';
 import { fetchContext, hasContext } from './context.js';
 import { etParts } from './potd.js';
 
@@ -23,7 +23,7 @@ export async function findTrendRow(env, sportKey, rowId) {
   const row = (t?.rows ?? []).find((r) => r.id === rowId);
   if (!row) return null;
   const [hydrated] = attachSeries([row], t.logs);
-  return { ...hydrated, injury: injuryFor(await loadInjuries(env, sportKey), hydrated.athleteId) };
+  return { ...hydrated, injury: injuryFor(await loadInjuries(env, sportKey), hydrated.athleteId), role: roleFor(await loadRoles(env, sportKey), hydrated.athleteId) };
 }
 
 /** The model's read of one leg: { verdict: 'good' | 'risky', score, summary, reasons: [] }, cached for the day. */
@@ -55,6 +55,19 @@ export async function legBreakdown(env, sportKey, rowId, ctx, { now = Date.now()
   const row = deps.row ?? await findTrendRow(env, sportKey, rowId);
   if (!row) return null;
   const score = legScore(row);
+  // A chance row (first basket): no record to read, the market's own chance and the player's place in the field, no model call.
+  if (row.yesNo && Number.isFinite(row.prob)) {
+    const field = row.statKey === 'firstTeamBasket' ? 'on the team' : 'in the game';
+    const chance = `${Math.round(row.prob * 100)}%`;
+    const result = {
+      rowId, score, at: now, verdict: score >= 3.5 ? 'good' : 'risky',
+      summary: `The market makes ${row.playerName} a ${chance} shot at the ${String(row.marketLabel ?? '').toLowerCase()}, number ${row.fieldRank} of ${row.fieldSize} ${field}; every first-basket price is a long shot, so this leg is for the payout, not the floor.`,
+      reasons: [`${chance} chance by the market, the vig taken out across the field`, `Number ${row.fieldRank} of ${row.fieldSize} ${field}`, row.role ? (row.role.starter ? `${row.role.today ? 'Starting today' : 'Started his team\'s last game'}: the first basket goes to the first five` : 'Not a starter: the first basket goes to the first five') : 'Starter status unknown', row.injury ? `Injury report: ${row.injury.status}${row.injury.detail ? `, ${row.injury.detail}` : ''}` : 'Not on the injury report'],
+      model: false, capped: false,
+    };
+    await env.POTD_KV.put(key(dateKey, rowId), JSON.stringify(result), { expirationTtl: CACHE_SECONDS }).catch(() => {});
+    return result;
+  }
   const p = row.periods ?? {};
   const pct = (x) => (x && Number.isFinite(x.rate) ? `${Math.round(x.rate * 100)}% (${x.hits} of ${x.games})` : 'no games');
   const context = deps.context ? await deps.context(row) : (hasContext(sportKey) ? await fetchContext({ sportKey, home: row.home, away: row.away }, ctx).catch(() => null) : null);
