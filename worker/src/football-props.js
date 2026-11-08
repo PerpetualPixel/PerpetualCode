@@ -123,6 +123,8 @@ export const NFL_TREND_MARKETS = {
   player_rush_attempts: { stat: 'rushAttempts', label: 'Car', marketLabel: 'Rush Attempts' },
   // Anytime touchdown (2026-11-08 direction, for the Parlay Builder): a yes-or-no market read as Over 0.5 touchdowns, settled on rushing plus receiving scores.
   player_anytime_td: { stat: 'anyTd', label: 'TD', marketLabel: 'Anytime Touchdown', yesNo: true },
+  // First touchdown scorer: no stat behind it; the chance is the market's own, normalized across the game (docs/trends.js's chanceRowsFor).
+  player_1st_td: { stat: 'firstTd', label: 'First TD', marketLabel: 'First Touchdown', yesNo: true, noLog: true },
 };
 /** The market list asked for, then the list without the yes-or-no markets, in case the feed refuses one. */
 export const NFL_TREND_MARKET_PARAMS = [Object.keys(NFL_TREND_MARKETS).join(','), Object.keys(NFL_TREND_MARKETS).filter((k) => !NFL_TREND_MARKETS[k].yesNo).join(',')];
