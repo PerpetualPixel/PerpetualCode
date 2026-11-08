@@ -83,6 +83,11 @@ jobs:
                 const teams = {}; for (const r of t.rows) { teams[r.team || "?"] = (teams[r.team || "?"] || 0) + 1; }
                 console.log("TEAMS", JSON.stringify(teams), "| unknown clubs", t.rows.filter((r) => !r.team || r.team === "?" || !r.opponent || r.opponent === "?").map((r) => r.away + " @ " + r.home).filter((v, i, a) => a.indexOf(v) === i).join("; ") || "none");
                 for (const r of t.rows.slice(0, 12)) console.log("  ROW", r.playerName, r.team, "|", r.marketLabel, r.side, r.point, "|", r.book, r.american, "|", r.bookCount, "books | L5", r.periods.l5 && r.periods.l5.rate, "L10", r.periods.l10 && r.periods.l10.rate, "L20", r.periods.l20 && r.periods.l20.rate, "(" + (r.periods.l20 && r.periods.l20.games) + " games) |", r.away, "@", r.home);
+                // The rows per stat, and the yes-or-no rows (anytime touchdown, first basket): their chance and place in the field, or their hit rates.
+                const stats = {}; for (const r of t.rows) { stats[r.statKey] = (stats[r.statKey] || 0) + 1; }
+                console.log("STATS", JSON.stringify(stats));
+                const yn = t.rows.filter((r) => r.yesNo);
+                for (const r of yn.slice(0, 8)) console.log("  YESNO", r.playerName, r.team, "|", r.selection, "|", r.book, r.american, "|", Number.isFinite(r.prob) ? "chance " + Math.round(r.prob * 100) + "% #" + r.fieldRank + " of " + r.fieldSize : "L5 " + (r.periods.l5 && r.periods.l5.rate) + " L10 " + (r.periods.l10 && r.periods.l10.rate) + " L20 " + (r.periods.l20 && r.periods.l20.rate) + " (" + (r.periods.l20 && r.periods.l20.games) + " games)", "|", r.away, "@", r.home);
                 for (const line of t.diag || []) console.log("  DIAG", line);
                 return;
                 }
