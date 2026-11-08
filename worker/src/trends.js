@@ -366,8 +366,10 @@ export async function buildLeagueChunk(sportKey, events, env, ctx, now = Date.no
   }
   const sorted = sortTrends([...attachSeries(keepRows.filter((r) => !chunkIds.has(r.eventId)), stored.logs), ...built.rows], { window: 'l20' });
   // The cap trims the lowest hit rates, which is where a touchdown scorer or a first basket sits by nature: those rows keep their place, the cap falls on the rest.
-  const kept = sorted.filter((r) => r.yesNo);
-  const merged = sorted.length <= MAX_ROWS ? sorted : [...kept, ...sorted.filter((r) => !r.yesNo).slice(0, Math.max(0, MAX_ROWS - kept.length))];
+  const spared = sorted.filter((r) => r.yesNo).length;
+  const room = Math.max(0, MAX_ROWS - spared);
+  let taken = 0;
+  const merged = sorted.length <= MAX_ROWS ? sorted : sorted.filter((r) => r.yesNo || taken++ < room);
   const { rows, logs } = detachSeries(merged);
   const payload = {
     sportKey, title: built.title, builtAt: now, checkedAt: now,
