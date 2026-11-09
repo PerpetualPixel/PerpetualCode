@@ -357,3 +357,49 @@ test('capperLine: a bout the cappers called only by method still reads the metho
   assert.equal(capperLine({ moneyline: null, methods: [{ selection: 'Seokhyeon Ko by KO/TKO', consensusPct: 53.3, tier: 'lean' }] }), 'No moneyline consensus from the cappers on this bout. Method calls: Seokhyeon Ko by KO/TKO (53.3%, lean).');
   assert.match(capperLine({ moneyline: { pickCount: 55, consensusPct: 76.4, selection: 'Waldo Cortes-Acosta', strength: 7.6, tier: 'strong' }, methods: [{ selection: 'Waldo Cortes-Acosta by KO/TKO', consensusPct: 81.2, tier: 'strong' }] }), /55 picks.*76\.4% back Waldo Cortes-Acosta.*Method calls: Waldo Cortes-Acosta by KO\/TKO \(81\.2%, strong\)\./);
 });
+
+test('manual mode: the tick draws no picks of its own, the owner\'s tickets resolve from fighter names and grade like drawn ones', async () => {
+  const { ownerTicket } = await import('../worker/src/ufc-picks.js');
+  const { env, store } = kv();
+  const fighters = { a1: fighter('a1', 'Ciryl Gane'), b1: fighter('b1', 'Josh Hokit'), a2: fighter('a2', 'Kayla Harrison'), b2: fighter('b2', 'Amanda Nunes') };
+  const event = { id: 'ev', name: 'UFC Test', date: NOW + 30 * 3600e3, status: 'upcoming', changes: [], bouts: [bout('1', f('a1', 'Ciryl Gane'), f('b1', 'Josh Hokit')), bout('2', f('a2', 'Kayla Harrison'), f('b2', 'Amanda Nunes'), { rounds: 5 })] };
+  const odds = [feed('Ciryl Gane', 'Josh Hokit', { h2h: [-200, 170] }), feed('Kayla Harrison', 'Amanda Nunes', { h2h: [-150, 130] })];
+  const reads = { 1: '{"lean":"a","confidence":5,"straight":{"market":"h2h","fighter":"a"},"parlayPiece":true,"summary":"A.","reasons":[]}', 2: '{"lean":"a","confidence":5,"straight":{"market":"h2h","fighter":"a"},"parlayPiece":true,"summary":"B.","reasons":[]}' };
+  const deps = { mode: async () => ({ manual: true }), events: async () => ({ events: [{ id: 'ev', date: event.date, status: event.status }] }), event: async () => event, odds: async () => odds, fighter: async (id) => fighters[id], model: async (prompt) => reads[/Josh Hokit/.test(prompt) ? 1 : 2], board: async () => null };
+  const r = await runUfcTick(env, ctx, NOW, { deps });
+  assert.equal(r.posted, 0, 'manual mode draws nothing');
+  let rec = JSON.parse(store.get('ufc:picks:ev'));
+  assert.equal(rec.manual, true); assert.deepEqual(rec.bets, []); assert.deepEqual(rec.passed, []);
+  assert.equal(Object.keys(rec.breakdowns).length, 2, 'the reads still run');
+  // The owner's tickets: a moneyline by surname, a method, a rounds total, and a parlay priced as a whole.
+  const ml = ownerTicket(event, { fighter: 'Gane', book: 'draftkings', american: -200, units: 2 }, NOW);
+  assert.deepEqual([ml.type, ml.boutId, ml.legs[0].selection, ml.legs[0].market, ml.legs[0].fighterId, ml.american, ml.decimal, ml.units, ml.book, ml.source], ['straight', '1', 'Ciryl Gane to win', 'h2h', 'a1', -200, 1.5, 2, 'DraftKings', 'owner']);
+  const method = ownerTicket(event, { fighter: 'Josh Hokit', method: 'KO/TKO', book: 'fanduel', american: 500 }, NOW);
+  assert.deepEqual([method.legs[0].market, method.legs[0].methods, method.legs[0].selection], ['method', ['ko'], 'Josh Hokit by KO/TKO']);
+  const dc = ownerTicket(event, { fighter: 'Gane', methods: ['ko', 'submission'] }, NOW);
+  assert.deepEqual([dc.legs[0].market, dc.legs[0].methods, dc.priced, dc.book], ['double', ['ko', 'sub'], false, 'any book']);
+  const total = ownerTicket(event, { fighter: 'Nunes', total: 2.5, side: 'under', book: 'fanduel', american: -110 }, NOW);
+  assert.deepEqual([total.legs[0].market, total.legs[0].point, total.legs[0].side, total.legs[0].rounds, total.boutId], ['totals', 2.5, 'under', 5, '2']);
+  const parlay = ownerTicket(event, { legs: [{ fighter: 'Gane', american: -200 }, { fighter: 'Harrison', american: -150 }], book: 'fanduel', american: 150 }, NOW);
+  assert.deepEqual([parlay.type, parlay.boutIds, parlay.american, parlay.legs.length], ['parlay', ['1', '2'], 150, 2]);
+  const byLegs = ownerTicket(event, { legs: [{ fighter: 'Gane', american: -200 }, { fighter: 'Harrison', american: -150 }], book: 'fanduel' }, NOW);
+  assert.ok(Math.abs(byLegs.decimal - 2.5) < 0.001, 'a parlay without a whole price multiplies its legs');
+  assert.throws(() => ownerTicket(event, { fighter: 'Jon Jones', american: -300 }, NOW), /no bout/);
+  assert.throws(() => ownerTicket(event, { fighter: 'Gane', book: 'bookie', american: -300 }, NOW), /unknown book/);
+  // Posted the way the script posts them, the tick follows the price, then grades on the result.
+  rec.bets = [ml, method];
+  store.set('ufc:picks:ev', JSON.stringify(rec));
+  odds[0] = feed('Ciryl Gane', 'Josh Hokit', { h2h: [-210, 175] });
+  store.delete('ufc:odds');
+  const r2 = await runUfcTick(env, ctx, NOW + 60e3, { deps });
+  assert.equal(r2.posted, 0);
+  rec = JSON.parse(store.get('ufc:picks:ev'));
+  assert.equal(rec.bets[0].american, -210, 'the owner\'s moneyline follows the book');
+  event.bouts[0] = { ...event.bouts[0], status: 'final', result: { winnerId: 'a1', method: 'KO/TKO', round: 2, time: '1:10' } };
+  const r3 = await runUfcTick(env, ctx, event.date + 3600e3, { deps });
+  assert.equal(r3.graded, 2);
+  rec = JSON.parse(store.get('ufc:picks:ev'));
+  assert.deepEqual(rec.bets.map((b) => [b.result, b.net]), [['win', 0.95], ['loss', -1]], 'Gane at -210 for 2 units wins 0.95; Hokit by KO loses');
+  const all = await getUfcPicks(env, event.date + 3600e3);
+  assert.equal(all.record.wins, 1); assert.equal(all.record.losses, 1);
+});

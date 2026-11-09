@@ -1,0 +1,56 @@
+# Post the owner's UFC tickets for a card, from a runner that holds the KV
+# secrets (scripts/ufc-picks-set.mjs): the picks as a JSON list of
+# tickets (worker/src/ufc-picks.js's ownerTicket spec), resolved against
+# the card's bouts and written into its picks record; the worker's tick
+# then prices, voids and grades them like its own. Dispatch by hand.
+name: UFC picks set
+
+on:
+  workflow_dispatch:
+    inputs:
+      picks:
+        description: 'JSON list of tickets, e.g. [{"fighter":"Ciryl Gane","book":"fanduel","american":-200,"units":1}]'
+        required: true
+        type: string
+      event_id:
+        description: 'ESPN event id of the card (empty: the card the tab shows)'
+        required: false
+        type: string
+      add:
+        description: 'Keep the tickets already on the record and add these'
+        required: false
+        type: boolean
+        default: false
+      dry_run:
+        description: 'Only resolve and report; write nothing'
+        required: false
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+
+jobs:
+  post:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Post the tickets
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          PICKS: ${{ inputs.picks }}
+          EVENT_ID: ${{ inputs.event_id }}
+          ADD: ${{ inputs.add }}
+          DRY: ${{ inputs.dry_run }}
+        run: |
+          printf '%s' "$PICKS" > /tmp/picks.json
+          set -- --picks-file /tmp/picks.json
+          [ -n "$EVENT_ID" ] && set -- "$@" --event "$EVENT_ID"
+          [ "$ADD" = "true" ] && set -- "$@" --add
+          [ "$DRY" = "true" ] && set -- "$@" --dry-run
+          node scripts/ufc-picks-set.mjs "$@"

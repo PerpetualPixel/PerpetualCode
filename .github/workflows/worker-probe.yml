@@ -117,7 +117,7 @@ jobs:
                 }
                 if (d && d.breakdowns && d.engine !== undefined) {
                   // The UFC picks record (worker/src/ufc-picks.js): the engine feed it read, and per bout whether the cappers paired.
-                  console.log("RECORD", d.eventName, "| generated", d.generatedAt && new Date(d.generatedAt).toISOString(), "| refreshed", d.refreshedAt && new Date(d.refreshedAt).toISOString(), "| bets", (d.bets || []).length, "| passed", (d.passed || []).length);
+                  console.log("RECORD", d.eventId, d.eventName, d.manual ? "| manual" : "| drawn", "| generated", d.generatedAt && new Date(d.generatedAt).toISOString(), "| refreshed", d.refreshedAt && new Date(d.refreshedAt).toISOString(), "| bets", (d.bets || []).length, "| passed", (d.passed || []).length);
                   const e = d.engine || {};
                   console.log("ENGINE", e.event, "| generated", e.generatedAt, "| picks on card", (e.picks || []).length, "| totals", JSON.stringify(e.totals));
                   const bds = Object.values(d.breakdowns || {}).sort((x, y) => (x.order || 0) - (y.order || 0));
