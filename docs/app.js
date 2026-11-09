@@ -11303,7 +11303,7 @@ function renderUfc() {
       <details class="ufc-dog-details" ${ufcState.dogHow ? 'open' : ''}><summary>How ${esc(dog.name)} can win</summary>${ufcDogHowHtml(dog)}</details>
     </section>` : '';
     const picksHtml = `${engineHtml}${underdogHtml}<section class="ufc-picks"><h3>Pixel's Picks for this card <small>${picks.length ? `${picks.length} of up to 6` : ''}</small></h3>
-      ${picks.length ? picks.map(renderUfcPickCard).join('') : `<p class="empty">${rec ? (rec.oddsAt ? 'No pick yet: nothing on this card clears confidence 4 at a usable price. It reads again as odds move.' : 'No odds posted yet; the picks come once the books price the card.') : 'No read of this card yet.'}</p>`}
+      ${picks.length ? picks.map(renderUfcPickCard).join('') : `<p class="empty">${rec?.manual ? 'The picks for this card are posted by hand; none posted yet.' : rec ? (rec.oddsAt ? 'No pick yet: nothing on this card clears confidence 4 at a usable price. It reads again as odds move.' : 'No odds posted yet; the picks come once the books price the card.') : 'No read of this card yet.'}</p>`}
       ${rec?.passed?.length && !picks.length ? `<div class="pick-passed"><p class="row-sub">Read but not picked:</p><ul>${rec.passed.slice(0, 6).map((x) => `<li><strong>${esc(x.selection)}</strong>: ${esc(x.reason)}</li>`).join('')}</ul></div>` : ''}
       ${lockText ? `<p class="row-sub">${lockText}</p>` : ''}
     </section>`;

@@ -1,15 +1,26 @@
-# Take one UFC card's picks out of the record, from a runner that holds the
-# KV secrets (scripts/ufc-wipe.mjs): the picks record goes and the card
-# leaves the ledger's index. Dispatch by hand with the card's ESPN event id
-# (the id in the UFC tab's card list and in the /ufc/picks payload).
+# Take UFC picks out of the record, from a runner that holds the KV
+# secrets (scripts/ufc-wipe.mjs): one card's picks record goes and the
+# card leaves the ledger's index, or every card's with "all" (the record
+# starts over; the old index is archived). "manual" sets whether the
+# worker draws picks of its own (off) or the owner posts them (on,
+# .github/workflows/ufc-picks-set.yml). Dispatch by hand.
 name: UFC wipe
 
 on:
   workflow_dispatch:
     inputs:
       event_id:
-        description: 'ESPN event id of the card whose picks to wipe'
-        required: true
+        description: 'ESPN event id of the card whose picks to wipe (leave empty with "all")'
+        required: false
+        type: string
+      all:
+        description: 'Wipe every card in the ledger: the record starts over'
+        required: false
+        type: boolean
+        default: false
+      manual:
+        description: 'Draw mode: "on" means the owner posts the picks and the worker draws none; "off" the worker draws; empty leaves it'
+        required: false
         type: string
       dry_run:
         description: 'Only read and report; write nothing'
@@ -29,8 +40,18 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: '22'
-      - name: Wipe the card's picks
+      - name: Wipe the picks
         env:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
-        run: node scripts/ufc-wipe.mjs --event "${{ inputs.event_id }}" ${{ inputs.dry_run && '--dry-run' || '' }}
+          EVENT_ID: ${{ inputs.event_id }}
+          ALL: ${{ inputs.all }}
+          MANUAL: ${{ inputs.manual }}
+          DRY: ${{ inputs.dry_run }}
+        run: |
+          set -- 
+          [ -n "$EVENT_ID" ] && set -- "$@" --event "$EVENT_ID"
+          [ "$ALL" = "true" ] && set -- "$@" --all
+          [ -n "$MANUAL" ] && set -- "$@" --manual "$MANUAL"
+          [ "$DRY" = "true" ] && set -- "$@" --dry-run
+          node scripts/ufc-wipe.mjs "$@"
