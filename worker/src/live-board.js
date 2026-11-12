@@ -170,6 +170,7 @@ export function playerLines(tick, league = 'nfl') {
   return (tick?.box ?? []).map((p) => {
     const line = { id: p.id, name: p.name, team: p.team };
     for (const s of stats) { const v = boxValue(p, s); if (v != null) line[s] = v; }
+    if (league === 'nba') { const f = foulTrouble(p, tick, league); if (p.stats?.fouls != null) line.fouls = num(p.stats.fouls); if (f) line.foul = f; }
     if (league === 'nfl') {
       const ca = String(p.stats?.['completions/passingAttempts'] ?? ''); if (ca.includes('/')) line.passing = ca;
       if (p.stats?.rushingAttempts != null) line.carries = num(p.stats.rushingAttempts);
@@ -184,9 +185,36 @@ export function playerLines(tick, league = 'nfl') {
 }
 
 /**
+ * Foul trouble in the NBA (2026-11-12 direction: "for live plays, add
+ * logic to not take players that have potential for foul trouble"). A
+ * coach sits a player at two fouls in the first quarter, three before
+ * the half, four in the third and five in the fourth, so a player at
+ * the limit for the quarter is in trouble, and one with three or more
+ * who is a single foul from it is close enough that his minutes are no
+ * longer his own. Either keeps him off a live play, and says so on a
+ * play he was already on. Returns {fouls, level: 'trouble' | 'watch',
+ * text}, or null (other leagues, no foul count in the box, or clear).
+ */
+export const FOUL_LIMIT = [2, 3, 4, 5];
+export function foulTrouble(p, tick, league = 'nba') {
+  if (league !== 'nba') return null;
+  const fouls = p?.stats?.fouls == null ? null : num(p.stats.fouls);
+  if (fouls == null) return null;
+  const period = Math.max(1, Number(tick?.period) || 1);
+  // At the half the next quarter's limit is the one that matters.
+  const quarter = Math.min(4, isHalftime(tick, league) ? Math.max(period, 3) : period);
+  const limit = FOUL_LIMIT[quarter - 1];
+  const when = ['the first quarter', 'the first half', 'the third quarter', 'the fourth quarter'][quarter - 1];
+  if (fouls >= limit) return { fouls, level: 'trouble', text: `${fouls} fouls in ${when}: in foul trouble` };
+  if (fouls >= 3 && fouls >= limit - 1) return { fouls, level: 'watch', text: `${fouls} fouls: one from foul trouble` };
+  return null;
+}
+
+/**
  * Every Over on the board the box score says is reachable: the player's
  * current number, his projected final, and the margin by which it clears
- * the line. The script and the weather go through projectStat.
+ * the line. The script and the weather go through projectStat. An NBA
+ * player in or near foul trouble is left out (foulTrouble).
  */
 export function liveCandidates(payload, tick, league = 'nfl', { weather = null } = {}) {
   const stats = LIVE_STAT[league] ?? {};
@@ -204,6 +232,7 @@ export function liveCandidates(payload, tick, league = 'nfl', { weather = null }
         const p = box.get(String(o.description ?? '').toLowerCase()); if (!p) continue;
         const cur = boxValue(p, stat); if (cur == null) continue;
         if (cur >= o.point) continue; // already there; a book would not let it through anyway
+        if (foulTrouble(p, tick, league)) continue; // his minutes are no longer his own
         if (!inRange(o.price, LEG_PRICE)) continue;
         if (script.leader && p.team === script.leader && /passing|receiving|receptions/.test(stat)) continue;
         if (script.trailer && p.team === script.trailer && stat === 'rushingYards') continue;
@@ -313,9 +342,63 @@ export function buildLiveSlips(candidates) {
 }
 
 /** The stored plays' legs with the players' current numbers brought up to the tick. */
-function refreshSlips(slips, tick) {
+function refreshSlips(slips, tick, league = 'nfl') {
   const box = new Map((tick?.box ?? []).map((p) => [String(p.name ?? '').toLowerCase(), p]));
-  return (slips ?? []).map((s) => ({ ...s, legs: s.legs.map((l) => { const p = box.get(String(l.player).toLowerCase()); const cur = p ? num(p.stats?.[l.stat]) : null; return cur == null ? l : { ...l, current: cur, cleared: cur >= l.point }; }) }));
+  return (slips ?? []).map((s) => ({ ...s, legs: s.legs.map((l) => {
+    const p = box.get(String(l.player).toLowerCase()); const cur = p ? num(p.stats?.[l.stat]) : null;
+    if (cur == null) return l;
+    const cleared = cur >= l.point;
+    // A player who has picked up fouls since the play was posted: said on the leg, unless it is already home.
+    const foul = cleared ? null : foulTrouble(p, tick, league);
+    return { ...l, current: cur, cleared, foul };
+  }) }));
+}
+
+const legKey = (l) => `${l.bookId}|${String(l.player).toLowerCase()}|${l.stat}|${l.point}`;
+
+/**
+ * The plays carried from one build to the next (2026-11-12 direction: "a
+ * timer on how long ago they were posted ... show the change from 8 to
+ * 10"). A play that still stands keeps its legs, the time it was posted
+ * and each leg's number at that time; only its prices and paces follow
+ * the board. It stands while every leg has either cleared or is still a
+ * line the pace clears with margin, and no player on it is in foul
+ * trouble. A play that no longer stands is replaced by the new build,
+ * posted now; a leg the two share keeps its own first stamp.
+ *
+ *   prev        the stored slips
+ *   next        the slips just built from the board
+ *   candidates  the board's reachable lines (liveCandidates)
+ */
+export function carrySlips(prev, next, candidates, tick, { now = Date.now(), league = 'nfl' } = {}) {
+  const box = new Map((tick?.box ?? []).map((p) => [String(p.name ?? '').toLowerCase(), p]));
+  const board = new Map((candidates ?? []).map((c) => [legKey(c), c]));
+  const prevByBook = new Map((prev ?? []).map((s) => [s.bookId, s]));
+  const stands = (slip) => slip.legs.every((l) => {
+    const p = box.get(String(l.player).toLowerCase());
+    const cur = p ? boxValue(p, l.stat) : null;
+    if (cur != null && cur >= l.point) return true;
+    if (p && foulTrouble(p, tick, league)) return false;
+    return board.has(legKey(l));
+  });
+  const keep = (slip) => {
+    const legs = slip.legs.map((l) => {
+      const c = board.get(legKey(l));
+      const stamped = { ...l, postedAt: l.postedAt ?? slip.postedAt ?? now, postedCurrent: l.postedCurrent ?? l.current, postedPrice: l.postedPrice ?? l.price };
+      return c ? { ...stamped, price: c.price, decimal: c.decimal, pace: c.pace, cushion: c.cushion, current: c.current, link: c.link ?? l.link ?? null } : stamped;
+    });
+    const dec = legs.reduce((d, l) => d * l.decimal, 1);
+    return { ...slip, legs, decimal: Math.round(dec * 10000) / 10000, american: toAmerican(dec), postedAt: slip.postedAt ?? now, postedAmerican: slip.postedAmerican ?? slip.american };
+  };
+  const fresh = (slip, old) => {
+    const stamps = new Map((old?.legs ?? []).map((l) => [legKey(l), l]));
+    return { ...slip, postedAt: now, postedAmerican: slip.american, replaced: old ? true : undefined, legs: slip.legs.map((l) => { const o = stamps.get(legKey(l)); return { ...l, postedAt: o?.postedAt ?? now, postedCurrent: o?.postedCurrent ?? l.current, postedPrice: o?.postedPrice ?? l.price }; }) };
+  };
+  const out = (next ?? []).map((s) => { const old = prevByBook.get(s.bookId); return old && stands(old) ? keep(old) : fresh(s, old); });
+  // A book with no new build this tick keeps the play it has while that play stands.
+  const built = new Set(out.map((s) => s.bookId));
+  for (const old of prev ?? []) if (!built.has(old.bookId) && stands(old)) out.push(keep(old));
+  return out;
 }
 
 /** Slips build once this much of the game is played (a quarter and a bit, enough pace to project from) and stop this far in (books pull ladders late). */
@@ -324,9 +407,11 @@ export const BUILD_UNTIL = 0.9;
 
 
 /**
- * The plays for a game: rebuilt from the ladders on every tick while the
+ * The plays for a game: built from the ladders on every tick while the
  * game is in play between BUILD_FROM and BUILD_UNTIL, and kept under
- * live:play. A tick with no ladders (a book pulling props at a timeout,
+ * live:play. A play that still stands is carried, with the time it was
+ * posted and each leg's number then (carrySlips); one that does not is
+ * replaced. A tick with no ladders (a book pulling props at a timeout,
  * a feed miss) leaves the last build standing, as does any tick outside
  * the window. Null when nothing has been built.
  */
@@ -338,7 +423,8 @@ export async function ensureLivePlays(env, game, payload, tick, { league = 'nfl'
   if (!tick || tick.state !== 'in' || elapsed < BUILD_FROM || elapsed > BUILD_UNTIL || !payload) return stored;
   if (blowoutRisk(tick, league)?.blowout) return stored; // no live bets on a blowout: the starters may sit (the board withholds what stands)
   const candidates = liveCandidates(payload, tick, league, { weather });
-  const slips = buildLiveSlips(candidates);
+  const built = buildLiveSlips(candidates);
+  const slips = carrySlips(stored?.slips, built, candidates, tick, { now, league });
   if (!slips.length) return stored;
   const record = {
     espnEventId: game.id, name: game.name, builtAt: now, firstBuiltAt: stored?.firstBuiltAt ?? now, builds: (stored?.builds ?? 0) + 1,
@@ -432,7 +518,7 @@ export async function getLiveBoard(env, now = Date.now(), { ctx = null } = {}) {
     // A blowout withholds the game's plays: no slips and no game reads while the lead is past the time left.
     const blowout = blowoutRisk(tick, league);
     const withheld = Boolean(blowout?.blowout);
-    const slipList = plays && !withheld ? refreshSlips(plays.slips, tick) : [];
+    const slipList = plays && !withheld ? refreshSlips(plays.slips, tick, league) : [];
     const reads = withheld ? [] : game;
     out.push({
       play: playSummary(slipList, reads),

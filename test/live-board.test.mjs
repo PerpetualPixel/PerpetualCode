@@ -304,3 +304,95 @@ test('ensureLivePlays: a blowout builds no slip', async () => {
   const built = await ensureLivePlays(env, game, payload, close, { league: 'nfl', now: 6 });
   assert.ok(built && built.slips.length, 'a close game builds');
 });
+
+import { foulTrouble, carrySlips, FOUL_LIMIT } from '../worker/src/live-board.js';
+
+test('foulTrouble: two in the first, three by the half, four in the third, five in the fourth; three or more and one away is close enough', () => {
+  const p = (fouls) => ({ stats: { fouls: String(fouls) } });
+  const at = (period, extra = {}) => ({ state: 'in', period, clock: '6:00', detail: `6:00 - ${period}`, ...extra });
+  assert.deepEqual(FOUL_LIMIT, [2, 3, 4, 5]);
+  assert.equal(foulTrouble(p(1), at(1)), null);
+  assert.deepEqual(foulTrouble(p(2), at(1)), { fouls: 2, level: 'trouble', text: '2 fouls in the first quarter: in foul trouble' });
+  assert.equal(foulTrouble(p(2), at(2)), null, 'two in the second is playable');
+  assert.equal(foulTrouble(p(3), at(2)).level, 'trouble');
+  assert.deepEqual(foulTrouble(p(3), at(3)), { fouls: 3, level: 'watch', text: '3 fouls: one from foul trouble' });
+  assert.equal(foulTrouble(p(4), at(3)).level, 'trouble');
+  assert.equal(foulTrouble(p(3), at(4)), null, 'three in the fourth has room');
+  assert.equal(foulTrouble(p(4), at(4)).level, 'watch');
+  assert.equal(foulTrouble(p(5), at(4)).level, 'trouble');
+  assert.equal(foulTrouble(p(5), at(5)).level, 'trouble', 'overtime reads as the fourth');
+  // At the half the third quarter's limit is the one ahead: three fouls is one away.
+  assert.equal(foulTrouble(p(3), at(2, { detail: 'Halftime', clock: '0:00' })).level, 'watch');
+  assert.equal(foulTrouble(p(2), at(2, { detail: 'Halftime', clock: '0:00' })), null);
+  assert.equal(foulTrouble({ stats: { points: '10' } }, at(3)), null, 'no foul count in the box');
+  assert.equal(foulTrouble(p(5), at(4), 'nfl'), null, 'the NBA only');
+});
+
+const nbaTick = (box, over = {}) => ({ at: 1, state: 'in', detail: '6:00 - 2nd', period: 2, clock: '6:00', score: { NY: 48, BOS: 45 }, box, ...over });
+const nbaPayload = (players) => ({ bookmakers: [{ key: 'draftkings', markets: [{ key: 'player_points_alternate', outcomes: players.flatMap(([name, pts, prices]) => ladder(name, pts, prices)) }] }] });
+
+test('live candidates leave out an NBA player in or near foul trouble', () => {
+  const box = [
+    { id: '1', name: 'Jalen Brunson', team: 'NY', stats: { points: '16', fouls: '1' } },
+    { id: '2', name: 'Jayson Tatum', team: 'BOS', stats: { points: '15', fouls: '3' } },
+  ];
+  const pay = nbaPayload([['Jalen Brunson', [19.5, 24.5], [-250, -120]], ['Jayson Tatum', [19.5, 24.5], [-240, -115]]]);
+  const players = (t) => [...new Set(liveCandidates(pay, t, 'nba').map((c) => c.player))];
+  assert.deepEqual(players(nbaTick(box)), ['Jalen Brunson'], 'three fouls in the second quarter: left out');
+  const clean = box.map((p) => ({ ...p, stats: { ...p.stats, fouls: '1' } }));
+  assert.deepEqual(players(nbaTick(clean)).sort(), ['Jalen Brunson', 'Jayson Tatum']);
+});
+
+test('carrySlips keeps a standing play with the time it was posted and each leg\'s number then, and replaces one that no longer stands', () => {
+  const T0 = 1_000_000; const T1 = T0 + 5 * 60e3; const T2 = T1 + 4 * 60e3;
+  const leg = (player, point, current, price = -150) => ({ bookId: 'draftkings', book: 'DraftKings', market: 'player_points_alternate', stat: 'points', label: 'Pts', player, team: 'NY', point, price, decimal: 1 + 100 / -price, current, pace: point * 1.4, cushion: 0.4, link: null });
+  const slip = (legs) => ({ bookId: 'draftkings', book: 'DraftKings', legs, decimal: legs.reduce((d, l) => d * l.decimal, 1), american: 120, score: 1 });
+  const box = (pts, fouls = {}) => ['Jalen Brunson', 'Mikal Bridges', 'Josh Hart', 'OG Anunoby'].map((name, i) => ({ id: String(i), name, team: 'NY', stats: { points: String(pts[i]), fouls: String(fouls[name] ?? 0) } }));
+  // Posted at T0: Brunson 25+ with 8 on the board.
+  const first = carrySlips(null, [slip([leg('Jalen Brunson', 24.5, 8), leg('Mikal Bridges', 14.5, 6), leg('Josh Hart', 9.5, 4)])], [], nbaTick(box([8, 6, 4, 5])), { now: T0, league: 'nba' });
+  assert.deepEqual([first[0].postedAt, first[0].postedAmerican], [T0, 120]);
+  assert.deepEqual(first[0].legs.map((l) => [l.postedAt, l.postedCurrent, l.postedPrice]), [[T0, 8, -150], [T0, 6, -150], [T0, 4, -150]]);
+  // Five minutes on the board still carries all three lines (repriced), and the builder now likes a different slip: the posted one stands.
+  const cands = [leg('Jalen Brunson', 24.5, 10, -175), leg('Mikal Bridges', 14.5, 9, -200), leg('Josh Hart', 9.5, 4, -140), leg('OG Anunoby', 12.5, 7, -130)];
+  const other = slip([leg('OG Anunoby', 12.5, 7, -130), leg('Mikal Bridges', 14.5, 9, -200), leg('Josh Hart', 9.5, 4, -140)]);
+  const second = carrySlips(first, [other], cands, nbaTick(box([10, 9, 4, 7])), { now: T1, league: 'nba' });
+  assert.equal(second.length, 1);
+  assert.equal(second[0].postedAt, T0, 'still the play posted five minutes ago');
+  assert.deepEqual(second[0].legs.map((l) => l.player), ['Jalen Brunson', 'Mikal Bridges', 'Josh Hart']);
+  const brunson = second[0].legs[0];
+  assert.deepEqual([brunson.postedCurrent, brunson.current, brunson.postedPrice, brunson.price], [8, 10, -150, -175], '8 when posted, 10 now; the price follows the board');
+  assert.equal(second[0].postedAmerican, 120);
+  assert.notEqual(second[0].american, 120, 'the slip\'s price is recomputed from the legs as they are priced now');
+  // A cleared leg needs no line on the board to stand.
+  const third = carrySlips(second, [other], cands.filter((c) => c.player !== 'Mikal Bridges'), nbaTick(box([12, 15, 5, 7])), { now: T1 + 60e3, league: 'nba' });
+  assert.equal(third[0].postedAt, T0);
+  // Hart picks up his third foul in the second quarter: the play no longer stands, and the new build is posted now.
+  const fouled = nbaTick(box([14, 15, 5, 8], { 'Josh Hart': 3 }));
+  const withoutHart = slip([leg('Jalen Brunson', 24.5, 14, -200), leg('OG Anunoby', 12.5, 8, -130)]);
+  const fourth = carrySlips(third, [withoutHart], cands.filter((c) => c.player !== 'Josh Hart'), fouled, { now: T2, league: 'nba' });
+  assert.deepEqual([fourth[0].postedAt, fourth[0].replaced], [T2, true]);
+  assert.deepEqual(fourth[0].legs.map((l) => [l.player, l.postedAt, l.postedCurrent]), [['Jalen Brunson', T0, 8], ['OG Anunoby', T2, 8]], 'a leg the two plays share keeps its own first stamp');
+  // A book with no new build keeps the play it has while that play stands; one that does not stand goes.
+  assert.equal(carrySlips(first, [], cands, nbaTick(box([10, 9, 4, 7])), { now: T1, league: 'nba' })[0].postedAt, T0);
+  assert.deepEqual(carrySlips(first, [], [], nbaTick(box([10, 9, 4, 7])), { now: T1, league: 'nba' }), []);
+  // A play stored before the stamps existed gets them on its first carry.
+  const old = [slip([leg('Jalen Brunson', 24.5, 8)])];
+  const stamped = carrySlips(old, [], cands, nbaTick(box([10, 9, 4, 7])), { now: T1, league: 'nba' });
+  assert.deepEqual([stamped[0].postedAt, stamped[0].legs[0].postedAt, stamped[0].legs[0].postedCurrent], [T1, T1, 8]);
+});
+
+test('ensureLivePlays stores the posting stamps, and the board reports a posted leg\'s fouls', async () => {
+  const m = new Map(); const env = { POTD_KV: { get: async (k) => m.get(k) ?? null, put: async (k, v) => { m.set(k, v); } } };
+  const game = { id: 'g-nba', name: 'Boston Celtics at New York Knicks', date: new Date().toISOString() };
+  const box = (pts) => [['Jalen Brunson', 'NY'], ['Mikal Bridges', 'NY'], ['Josh Hart', 'NY'], ['Jayson Tatum', 'BOS']].map(([name, team], i) => ({ id: String(i), name, team, stats: { points: String(pts[i]), fouls: '0' } }));
+  const pay = nbaPayload([['Jalen Brunson', [19.5, 24.5], [-250, -120]], ['Mikal Bridges', [12.5, 14.5], [-230, -125]], ['Josh Hart', [8.5, 9.5], [-220, -130]], ['Jayson Tatum', [19.5, 22.5], [-240, -130]]]);
+  const a = await ensureLivePlays(env, game, pay, nbaTick(box([16, 11, 7, 15])), { league: 'nba', now: 1000 });
+  assert.ok(a.slips.length >= 1);
+  assert.equal(a.slips[0].postedAt, 1000);
+  assert.ok(a.slips[0].legs.every((l) => l.postedAt === 1000 && Number.isFinite(l.postedCurrent)));
+  const b = await ensureLivePlays(env, game, pay, nbaTick(box([18, 12, 7, 17])), { league: 'nba', now: 1000 + 5 * 60e3 });
+  assert.equal(b.slips[0].postedAt, 1000, 'the same play, five minutes on');
+  const moved = b.slips[0].legs.find((l) => l.current !== l.postedCurrent);
+  assert.ok(moved, 'at least one leg has moved since it was posted');
+  assert.ok(moved.current > moved.postedCurrent);
+});
