@@ -157,8 +157,9 @@ const DEPTH_POSITIONS = new Set(['QB', 'RB', 'FB', 'WR', 'TE', 'PK', 'K']);
 
 /**
  * The skill positions of one team's ESPN depth chart: [{id, name, team,
- * pos, rank}], rank 1 the first listed at the position. A player listed
- * twice keeps his better place.
+ * pos, rank}], rank 1 the first listed at his slot. The receivers come
+ * as three slots (wr1, wr2, wr3), each with its own order, so a team has
+ * three receivers at rank 1. A player listed twice keeps his better place.
  */
 export function depthFromChart(chart, team) {
   const out = new Map();
