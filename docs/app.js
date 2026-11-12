@@ -10970,6 +10970,9 @@ function renderParlay() {
   const legs = s.built ?? [];
   const price = parlayPriceOf(legs);
   const all = parlayAllLink(legs);
+  // Some legs with a slip link and some without (a fight prop the book does not list): one link for the ones that have it.
+  const slipLegs = all ? [] : legs.filter((l) => l.quote?.link && l.quote.source !== 'bestfightodds');
+  const some = slipLegs.length >= 2 && slipLegs.length < legs.length ? combinedSlipLink(s.book, slipLegs.map((l) => l.quote.link)) : null;
   const summary = `<div class="parlay-config"><span class="parlay-tag">Score: ${esc(String(s.minScore))}+ stars</span><span class="parlay-tag">Legs: ${esc(String(s.legs))}</span><span class="parlay-tag">Odds: ${esc(formatAmerican(s.odds[0]))} to ${esc(formatAmerican(s.odds[1]))}</span><span class="parlay-tag">${esc(parlayBookName(s.book))}</span>${s.built ? '<button type="button" class="parlay-regen" data-parlay-build>Regenerate</button>' : ''}</div>`;
   const bookLines = linesAt.get(s.book) ?? 0;
   el.parlayResult.innerHTML = `${summary}${legs.length ? `
@@ -10977,7 +10980,7 @@ function renderParlay() {
       <div class="parlay-card-head"><strong>${legs.length}-leg ${s.book === 'prizepicks' ? 'Power Play' : 'parlay'}</strong> ${price ? `<span class="parlay-price">${esc(formatAmerican(price.american))}</span>` : ''}<span class="parlay-card-book">${bookBadge(s.book, parlayBookName(s.book))}${esc(parlayBookName(s.book))}</span></div>
       ${s.note ? `<p class="parlay-note">${esc(s.note)}</p>` : ''}
       ${price?.unpriced ? `<p class="parlay-note">${esc(String(price.unpriced))} leg${price.unpriced === 1 ? ' has' : 's have'} no line yet; the price covers the ${esc(String(price.priced))} priced leg${price.priced === 1 ? '' : 's'}.</p>` : legs.length && !price ? '<p class="parlay-note">No line on any of these legs yet; the price comes once a book posts them.</p>' : ''}
-      <div class="parlay-card-top">${all ? `<a class="parlay-all" href="${esc(all)}" target="_blank" rel="noopener">Add all ${legs.length} legs to your ${esc(parlayBookName(s.book))} slip ↗</a>` : parlaySlipNote(s.book, legs)}</div>
+      <div class="parlay-card-top">${all ? `<a class="parlay-all" href="${esc(all)}" target="_blank" rel="noopener">Add all ${legs.length} legs to your ${esc(parlayBookName(s.book))} slip ↗</a>` : some ? `<a class="parlay-all" href="${esc(some)}" target="_blank" rel="noopener">Add ${slipLegs.length} of ${legs.length} legs to your ${esc(parlayBookName(s.book))} slip ↗</a><p class="row-sub">${esc(parlayBookName(s.book))} has no slip link for the other ${legs.length - slipLegs.length}: add ${legs.length - slipLegs.length === 1 ? 'it' : 'them'} by hand (${legs.filter((l) => !slipLegs.includes(l)).map((l) => esc(l.row?.selection ?? l.selection ?? '')).filter(Boolean).join('; ')}).</p>` : parlaySlipNote(s.book, legs)}</div>
       <div class="parlay-legs">${legs.map(renderParlayLeg).join('')}</div>
       <div class="parlay-card-foot">${all ? `<a class="parlay-all" href="${esc(all)}" target="_blank" rel="noopener">Add all ${legs.length} legs to your ${esc(parlayBookName(s.book))} slip ↗</a>` : parlaySlipNote(s.book, legs)}${playbookBlock({ key: playbookKey(s.book, legs.map((l) => l.row.id)), legs: legs.map((l) => ({ selection: l.row.selection ?? `${l.row.playerName} ${l.row.side} ${l.row.point} ${l.row.marketLabel ?? l.row.statLabel}`, game: l.row.ufc || l.row.tennis ? `${l.row.away} vs ${l.row.home}` : `${l.row.away} @ ${l.row.home}` })), book: s.book, bookName: parlayBookName(s.book) })}</div>
     </div>

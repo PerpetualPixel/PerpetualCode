@@ -21,6 +21,7 @@
  */
 import { americanToDecimal, decimalToAmerican } from '../../docs/engine.js';
 import { priceLegsFromBoard } from './ufc-prop-odds.js';
+import { priceLegsFromFanduel } from './ufc-fanduel.js';
 
 /** Pixel's fair price for a chance: the odds the leg would be worth with no vig, in American form, or null. */
 export const fairAmerican = (p) => (p > 0 && p < 1 ? decimalToAmerican(1 / p) : null);
@@ -350,9 +351,9 @@ export function sprinklePicks(legs, { perBout = 2, max = SPRINKLE_MAX } = {}) {
 }
 
 /** The card's pieces: every bout's legs, with the notes for the props that have no lines or no stats. */
-export function ufcCardProps(bouts, readBy, { now = Date.now(), engine = null, board = null } = {}) {
+export function ufcCardProps(bouts, readBy, { now = Date.now(), engine = null, board = null, fanduel = null } = {}) {
   const legs = [];
-  let cappersRead = 0; let boutsOnBoard = 0; let pricedFromBoard = 0;
+  let cappersRead = 0; let boutsOnBoard = 0; let pricedFromBoard = 0; let boutsAtFanduel = 0; let linkedAtFanduel = 0;
   for (const bout of bouts ?? []) {
     const r = readBy(bout);
     if (!r) continue;
@@ -360,6 +361,8 @@ export function ufcCardProps(bouts, readBy, { now = Date.now(), engine = null, b
     let mine = ufcPropLegs(bout, r);
     // The fight props' prices from the BestFightOdds board the runner writes (worker/src/ufc-prop-odds.js), where it lists the bout.
     if (board) { const priced = priceLegsFromBoard(mine, bout, board); mine = priced.legs; if (priced.matched) { boutsOnBoard++; pricedFromBoard += priced.priced ?? 0; } }
+    // FanDuel's own card (worker/src/ufc-fanduel.js): its price and a link that puts the selection on a FanDuel slip.
+    if (fanduel) { const fd = priceLegsFromFanduel(mine, bout, fanduel); mine = fd.legs; if (fd.matched) { boutsAtFanduel++; linkedAtFanduel += fd.linked; } }
     legs.push(...mine);
   }
   const notes = { strikes: NO_STATS_NOTE, takedowns: NO_STATS_NOTE, knockdowns: NO_STATS_NOTE };
@@ -369,5 +372,6 @@ export function ufcCardProps(bouts, readBy, { now = Date.now(), engine = null, b
   const sprinkles = sprinklePicks(legs);
   sprinkles.forEach((l, i) => { l.sprinkle = true; l.sprinkleRank = i + 1; });
   const boardRead = board ? { at: board.at ?? null, source: board.source ?? 'bestfightodds', events: (board.events ?? []).map((e) => ({ title: e.title, url: e.url })), bouts: boutsOnBoard, priced: pricedFromBoard } : null;
-  return { builtAt: now, legs, notes, cappers, board: boardRead, sprinkles: sprinkles.map((l) => l.id) };
+  const fanduelRead = fanduel ? { at: fanduel.at ?? null, bouts: boutsAtFanduel, linked: linkedAtFanduel } : null;
+  return { builtAt: now, legs, notes, cappers, board: boardRead, fanduel: fanduelRead, sprinkles: sprinkles.map((l) => l.id) };
 }

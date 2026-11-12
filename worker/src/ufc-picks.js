@@ -27,6 +27,7 @@
 import { getUfcEvents, getUfcEvent, nextUfcEvent, getUfcFighter } from './ufc-card.js';
 import { ufcCardProps, UFC_PROPS } from './ufc-props.js';
 import { readPropOdds } from './ufc-prop-odds.js';
+import { readFanduel } from './ufc-fanduel.js';
 import { normalizeName, namesLikelyMatch } from './ufc-events.js';
 import { callModel, STRAIGHT_RANGE, PARLAY_RANGE, PARLAY_TARGET, betRecordOf, TICKET_UNITS } from './trend-picks.js';
 import { bookIdFor, SPORTSBOOKS, americanToDecimal } from '../../docs/engine.js';
@@ -714,7 +715,8 @@ export async function runUfcTick(env, ctx, now = Date.now(), { deps = {} } = {})
     const reads = new Map();
     for (const [id, x] of byBout) reads.set(id, { odds: x.odds, breakdown: x.breakdown, engine: x.engine, profiles: { a: await profile(x.bout.a?.id), b: await profile(x.bout.b?.id) }, against: new Set([x.bout.a?.id, x.bout.b?.id].filter((fid) => fid && pendingIds.has(fid)).map((fid) => (fid === x.bout.a?.id ? x.bout.b?.id : x.bout.a?.id))) });
     const board = deps.board ? await deps.board() : await readPropOdds(env);
-    record.props = { ...ufcCardProps(live, (bout) => reads.get(bout.id) ?? null, { now, engine: record.engine, board }), labels: UFC_PROPS };
+    const fanduel = deps.fanduel ? await deps.fanduel() : deps.board ? null : await readFanduel(env).catch(() => null);
+    record.props = { ...ufcCardProps(live, (bout) => reads.get(bout.id) ?? null, { now, engine: record.engine, board, fanduel }), labels: UFC_PROPS };
     if (record.underdog) {
       // How the underdog wins: the two records, and the cappers' method call on that side when there is one.
       const dogBout = event.bouts.find((b) => b.id === record.underdog.boutId);
