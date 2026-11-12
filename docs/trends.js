@@ -372,6 +372,31 @@ export function legScore(row, injury = row?.injury ?? null) {
   return Math.max(0, Math.min(5, Math.round(score * 10) / 10));
 }
 
+/**
+ * A suggested stake in units from how likely a play is (2026-11-12
+ * direction: "size them by confidence; the higher the confidence or the
+ * likelier the play wins, more units"): by the chance when a model gives
+ * one (tennis, UFC), else by the Pixel score. Half a unit to two.
+ */
+export function suggestedUnits({ score = null, prob = null } = {}) {
+  if (Number.isFinite(prob)) return prob >= 0.8 ? 2 : prob >= 0.7 ? 1.5 : prob >= 0.6 ? 1 : 0.5;
+  if (!Number.isFinite(score)) return 0.5;
+  return score >= 4.7 ? 2 : score >= 4.2 ? 1.5 : score >= 3.5 ? 1 : 0.5;
+}
+
+/**
+ * How likely a league line is to land, for sizing a suggested stake: the
+ * last-20 hit rate pulled toward the price's own chance, as if the price
+ * were five more games. A 12-of-14 line at -105 reads about 77%; a line
+ * with no log reads as its price. Null with neither a log nor a price.
+ */
+export function winLikelihood({ hits = 0, games = 0, american = null } = {}) {
+  const implied = Number.isFinite(american) && american !== 0 ? (american > 0 ? 100 / (american + 100) : -american / (-american + 100)) : null;
+  const n = Number.isFinite(games) && games > 0 ? games : 0;
+  if (implied === null) return n ? hits / n : null;
+  return ((n ? hits : 0) + 5 * implied) / (n + 5);
+}
+
 /** PrizePicks Power Play multipliers by lineup size; a sportsbook parlay multiplies its legs. */
 export const PICKEM_POWER = { 2: 3, 3: 5, 4: 10, 5: 20, 6: 25 };
 export function parlayDecimal(decimals, { pickem = false } = {}) {

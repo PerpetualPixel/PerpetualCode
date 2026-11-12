@@ -460,7 +460,7 @@ export function legRecord(leg, research, now) {
  * The best line on each league's board, ticket or not, so the tab always
  * shows one prop: the highest Pixel score among the lines a listed book
  * prices in range on a game not yet started, with why it is short of a
- * ticket. Shown under an emblem and never tracked.
+ * ticket. Chance rows (first basket, first touchdown) never stand here. Shown under an emblem and never tracked.
  */
 export function bestOnBoard(rows, now, enabled = TREND_ENABLED_SPORTS) {
   const out = {};
@@ -468,6 +468,8 @@ export function bestOnBoard(rows, now, enabled = TREND_ENABLED_SPORTS) {
     let best = null;
     for (const row of rows ?? []) {
       if (row.sportKey !== sportKey || !(row.commenceMs > now) || row.injury?.level === 'out') continue;
+      // A chance row (first basket, first touchdown) scores 5 for being its field's favorite, not for being likely.
+      if (row.noLog || Number.isFinite(row.prob)) continue;
       const quote = pickQuotes(row).find((q) => inRange(q.american, LEG_RANGE));
       if (!quote) continue;
       const score = legScore(row);

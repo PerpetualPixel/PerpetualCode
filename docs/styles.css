@@ -7212,15 +7212,6 @@ a.trend-price:hover { background: rgba(255, 255, 255, 0.06); }
 @media (prefers-reduced-motion: reduce) { .pp-loading-logo { animation: none; } }
 
 /* The user's own ticket on Pixel's Picks (renderMyPicks). */
-.my-picks { margin-top: 22px; }
-.my-picks-head { display: flex; flex-wrap: wrap; align-items: center; gap: 10px; margin-bottom: 10px; }
-.my-picks-head .trend-picks-heading { margin: 0; }
-.my-picks-prefs { color: var(--muted); font-size: 0.82rem; font-weight: 600; }
-.my-picks-actions { margin-left: auto; display: inline-flex; gap: 8px; }
-.my-picks-settings { text-decoration: none; }
-.my-picks-note { margin: 0; padding: 14px 16px; border: 1px dashed var(--line); border-radius: 14px; color: var(--muted); line-height: 1.5; }
-.my-picks-record { font-family: var(--mono); font-size: 1.1rem; font-weight: 800; margin: 10px 0 0; }
-.my-picks-record small { font-family: var(--sans); font-size: 0.78rem; color: var(--muted); margin-left: 8px; font-weight: 600; }
 
 /* The Live tab (renderLive): the watched games, their reads and the play. */
 .live-dot { display: inline-block; width: 8px; height: 8px; border-radius: 50%; background: var(--muted); margin-right: 2px; opacity: 0.5; }
@@ -7617,3 +7608,20 @@ a.trend-price:hover { background: rgba(255, 255, 255, 0.06); }
 .parlay-preset-save, .parlay-preset-clear { flex: none; width: 40px; border-radius: 12px; border: 1px solid var(--line); background: var(--surface); color: var(--text); font: inherit; cursor: pointer; }
 .parlay-preset-clear { color: var(--muted); font-size: 1.1rem; }
 .parlay-preset-load:active, .parlay-preset-save:active, .parlay-preset-clear:active { transform: scale(0.97); }
+
+/* Pixel's Picks: the best play per sport in one card, and the suggestion's stake */
+.pick-board { margin-top: 14px; border: 1px solid var(--line); border-radius: 16px; background: var(--surface); overflow: hidden; }
+.pick-board-head { display: flex; align-items: baseline; justify-content: space-between; gap: 8px; flex-wrap: wrap; padding: 12px 14px; border-bottom: 1px solid var(--line); }
+.pick-board-head h3 { margin: 0; font-size: 0.95rem; }
+.pick-board-head small { color: var(--muted); font-size: 0.72rem; text-transform: uppercase; letter-spacing: 0.05em; font-weight: 700; }
+.pick-board-row { display: flex; align-items: center; gap: 10px; padding: 10px 14px; border-bottom: 1px solid var(--line); cursor: pointer; }
+.pick-board-row:last-child { border-bottom: 0; }
+.pick-board-row:active { background: var(--accent-dim); }
+.pick-board-row.is-solo { border-bottom: 0; }
+.pick-board-league { flex: none; min-width: 52px; text-align: center; padding: 3px 8px; border-radius: 999px; border: 1px solid var(--line); font-size: 0.7rem; font-weight: 800; letter-spacing: 0.05em; text-transform: uppercase; color: var(--muted); }
+.pick-board-main { flex: 1 1 auto; min-width: 0; display: grid; gap: 2px; }
+.pick-board-main strong { font-size: 0.92rem; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.pick-board-main small { color: var(--muted); font-size: 0.76rem; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.pick-board-units { flex: none; font-family: var(--mono); font-weight: 800; font-size: 0.82rem; color: var(--success); }
+.pick-board-row .trend-price { flex: none; }
+.pick-emblem.is-static { cursor: default; }

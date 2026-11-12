@@ -424,3 +424,10 @@ test('the box score grades a leg as soon as the runner writes it, and a no-show 
   assert.deepEqual(bet.legs.map((l) => [l.playerName, l.result, l.actual, l.voidReason ?? null]), [['Collin Sexton', 'win', 12, null], ['LaMelo Ball', 'void', null, 'did not play']]);
   assert.equal(bet.result, 'win');
 });
+
+test('bestOnBoard never stands a chance row as the best line: a first-basket favorite scores 5 for leading its field, not for being likely', () => {
+  const chance = { ...row('fb', { player: 'Victor Wembanyama', books: { fanduel: 150 } }), yesNo: true, noLog: true, prob: 0.33, favoriteProb: 0.33 };
+  const best = bestOnBoard([chance, row('b', { rate: 0.9, player: 'LaMelo Ball', books: { fanduel: -115 } })], NOW);
+  assert.equal(best.basketball_nba.playerName, 'LaMelo Ball');
+  assert.deepEqual(bestOnBoard([chance], NOW), {}, 'a board of chance rows alone has no best line');
+});

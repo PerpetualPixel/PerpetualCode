@@ -127,11 +127,6 @@ async function loadPickSettings() {
     const all = document.getElementById('my-books-all'); if (all) all.checked = Array.isArray(mine) && mine.length === 0;
     const pb = settings?.playbook;
     if (pb) { const ch = document.getElementById('playbook-channel'); const me = document.getElementById('playbook-mention'); if (ch) ch.value = pb.channel ?? ''; if (me) me.value = pb.mention ?? ''; }
-    const picks = settings?.picks;
-    if (!picks) return;
-    document.getElementById('picks-book').value = picks.book;
-    document.getElementById('picks-floor').value = String(picks.minScore);
-    document.getElementById('picks-legs').value = String(picks.legs);
   } catch { /* the form keeps its defaults; a save still works */ }
 }
 
@@ -153,7 +148,6 @@ document.getElementById('my-books-form')?.addEventListener('submit', async (e) =
     // The device copy the app reads before it asks the account, so the next open shows the same books.
     try { localStorage.setItem('pixelpick.myBooks.v1', JSON.stringify(myBooks)); localStorage.setItem('pixelpick.trendBooks.v1', JSON.stringify(data.settings?.trendBooks ?? myBooks)); localStorage.setItem('pixelpick.liveBooks.v1', JSON.stringify(data.settings?.liveBooks ?? [])); } catch { /* storage off */ }
     for (const box of document.querySelectorAll('input[name="liveBook"]')) box.checked = (data.settings?.liveBooks ?? []).includes(box.value);
-    if (data.settings?.picks?.book) document.getElementById('picks-book').value = data.settings.picks.book;
     showMessage('my-books-message', myBooks.length ? `Saved. The app shows ${myBooks.length} book${myBooks.length === 1 ? '' : 's'} only.` : 'Saved. The app shows every book.', false);
   } catch (err) {
     showMessage('my-books-message', err.message, true);
@@ -183,31 +177,6 @@ document.getElementById('live-books-form').addEventListener('submit', async (e) 
   }
 });
 
-document.getElementById('picks-form').addEventListener('submit', async (e) => {
-  e.preventDefault();
-  const btn = e.target.querySelector('button');
-  const original = btn.textContent;
-  const picks = {
-    book: document.getElementById('picks-book').value,
-    minScore: Number(document.getElementById('picks-floor').value),
-    legs: Number(document.getElementById('picks-legs').value),
-  };
-  try {
-    btn.disabled = true;
-    btn.innerHTML = '<span class="spinner"></span> Saving...';
-    const res = await fetch(`${window.API_BASE}/settings`, { method: 'PUT', headers: authHeaders(), body: JSON.stringify({ picks }) });
-    const data = await res.json();
-    if (!res.ok) throw new Error(data.error || 'Save failed');
-    // Today's ticket follows the new settings while none of its games has started.
-    const redraw = await fetch(`${window.API_BASE}/trend-picks/mine`, { method: 'POST', headers: authHeaders() }).then((r) => r.json()).catch(() => null);
-    showMessage('picks-message', redraw?.today ? `Saved. Today's ticket: ${redraw.today.legs.map((l) => l.selection).join(' + ')} at ${redraw.today.book}.` : `Saved.${redraw?.reason ? ` ${redraw.reason}` : ''}`, false);
-  } catch (err) {
-    showMessage('picks-message', err.message, true);
-  } finally {
-    btn.disabled = false;
-    btn.textContent = original;
-  }
-});
 
 document.getElementById('username-form').addEventListener('submit', async (e) => {
   e.preventDefault();

@@ -23,7 +23,7 @@ import { CONFIG } from './config.js';
 import { DEMO_EVENTS } from './demo.js';
 import { teamLogoUrl, espnAbbr, soccerTeamId } from './team-logos.js';
 import { leagueIconSvg } from './league-icons.js';
-import { sortTrends, sortQuotes, bestQuote, attachSeries, hitFlags, nflWeek, legScore, parlayDecimal, isAltLine } from './trends.js';
+import { sortTrends, sortQuotes, bestQuote, attachSeries, hitFlags, nflWeek, legScore, parlayDecimal, isAltLine, suggestedUnits, winLikelihood } from './trends.js';
 import { enhanceSelect } from './custom-select.js';
 import { BUILD_INFO } from './version.js';
 import { summarizePicks, gradePick } from './learning.js';
@@ -861,7 +861,6 @@ const el = {
   trendPicksView: document.getElementById('trendPicksView'),
   trendPicksStatus: document.getElementById('trendPicksStatus'),
   trendPicksBody: document.getElementById('trendPicksBody'),
-  myPicks: document.getElementById('myPicks'),
   trendPicksHistory: document.getElementById('trendPicksHistory'),
   trendPicksFilters: document.getElementById('trendPicksFilters'),
   tabPlayers: document.getElementById('tabPlayers'),
@@ -9791,68 +9790,24 @@ el.trendsSheet?.addEventListener('input', (event) => {
 /* Pixel's Picks: the day's tickets from the Trends rows (worker/src/trend-picks.js) */
 /* ================================================================ */
 
-const trendPicksState = { data: null, loaded: false, filter: 'all', hover: null, emblemOpen: null, mine: null, mineLoading: false, mineError: null };
+const trendPicksState = { data: null, loaded: false, filter: 'all', hover: null, emblemOpen: null, tennisRows: null };
 const pickDayFmt = new Intl.DateTimeFormat(undefined, { weekday: 'short', month: 'short', day: 'numeric' });
 const pickShortFmt = new Intl.DateTimeFormat(undefined, { month: 'numeric', day: 'numeric' });
 const PICK_FILTERS = [['all', 'All'], ['basketball_nba', 'NBA'], ['americanfootball_nfl', 'NFL'], ['icehockey_nhl', 'NHL'], ['soccer', 'Soccer'], ['tennis', 'Tennis']];
 
-/**
- * The user's own ticket (worker/src/my-picks.js): read once per visit,
- * drawn to the account's pick settings the first read of the day; a
- * redraw asks for a new one while no leg has started.
- */
-async function loadMyPicks({ redraw = false, force = false } = {}) {
-  if (!el.myPicks || !CONFIG.WORKER_URL) return;
-  const headers = settingsHeaders();
-  if (!headers) { trendPicksState.mine = null; renderMyPicks(); return; }
-  if (trendPicksState.mine && !force && !redraw) { renderMyPicks(); return; }
-  trendPicksState.mineLoading = true; trendPicksState.mineError = null;
-  renderMyPicks();
+/** The tennis legs for the board card (the Parlay Builder's /tennis/parlay), read once per visit. */
+async function loadPickBoardTennis() {
+  if (trendPicksState.tennisRows || !CONFIG.WORKER_URL) return;
   try {
-    const res = await fetch(new URL('/trend-picks/mine', CONFIG.WORKER_URL), { method: redraw ? 'POST' : 'GET', headers: { ...headers, Accept: 'application/json' } });
-    const body = await res.json();
-    if (!res.ok) throw new Error(body.error ?? `HTTP ${res.status}`);
-    trendPicksState.mine = body;
-  } catch (e) {
-    trendPicksState.mineError = res401(e) ? 'Sign in to draw your own ticket.' : "Couldn't reach the worker for your ticket.";
-  }
-  trendPicksState.mineLoading = false;
-  renderMyPicks();
-}
-const res401 = (e) => /unauthorized|401/.test(String(e?.message ?? ''));
-const starsText = (n) => `${Number(n) % 1 ? Number(n).toFixed(1) : Number(n)}+ stars`;
-
-/** The "Your ticket" block under the house tickets: the settings it was drawn to, the card, a redraw while it can, and the user's own record. */
-function renderMyPicks() {
-  if (!el.myPicks) return;
-  const m = trendPicksState.mine;
-  const signedIn = Boolean(settingsHeaders());
-  if (!signedIn) { el.myPicks.innerHTML = ''; return; }
-  if (trendPicksState.mineLoading && !m) { el.myPicks.innerHTML = `<div class="my-picks-head"><h2 class="trend-picks-heading">Your ticket</h2></div>${loadingHtml('Drawing your ticket…')}`; return; }
-  if (trendPicksState.mineError && !m) { el.myPicks.innerHTML = `<div class="my-picks-head"><h2 class="trend-picks-heading">Your ticket</h2></div><p class="empty">${esc(trendPicksState.mineError)}</p>`; return; }
-  if (!m) { el.myPicks.innerHTML = ''; return; }
-  const prefs = m.prefs;
-  const settingsLink = `<a class="parlay-btn my-picks-settings" href="account.html#picks">${prefs ? 'Settings' : 'Set it up'}</a>`;
-  if (!prefs) {
-    el.myPicks.innerHTML = `<div class="my-picks-head"><h2 class="trend-picks-heading">Your ticket</h2>${settingsLink}</div>
-      <p class="my-picks-note">Pick your book, your Pixel-score floor and how many legs in Account settings, and Pixel draws a ticket to them for you every day, graded like the house tickets and kept to your account.</p>`;
-    return;
-  }
-  const t = m.today;
-  const rec = m.record;
-  const canRedraw = t ? (t.status === 'pending' && t.commenceMs > Date.now()) : true;
-  const redraw = canRedraw ? `<button type="button" class="parlay-btn is-slip" data-my-redraw ${trendPicksState.mineLoading ? 'disabled' : ''}>${t ? 'Redraw' : 'Draw again'}</button>` : '';
-  const settingsLine = `<span class="my-picks-prefs">${esc(parlayBookName(prefs.book))} · ${esc(starsText(prefs.minScore))} · ${prefs.legs === 1 ? 'straight' : `${prefs.legs} legs`}</span>`;
-  const recordLine = `<p class="my-picks-record">${rec.wins}-${rec.losses}${rec.pushes ? `-${rec.pushes}` : ''} <small>${esc(signedUnits(rec.units ?? 0))} units · ${esc(roiText(rec.roi))} on ${rec.risked ?? 0} risked, your tickets only</small></p>`;
-  el.myPicks.innerHTML = `<div class="my-picks-head"><h2 class="trend-picks-heading">Your ticket</h2>${settingsLine}<span class="my-picks-actions">${redraw}${settingsLink}</span></div>
-    ${trendPicksState.mineError ? `<p class="row-sub">${esc(trendPicksState.mineError)}</p>` : ''}
-    ${t ? `${t.short ? `<p class="row-sub">${esc(t.short)}</p>` : ''}${renderBetCard(t)}` : `<p class="empty">${esc(m.reason ?? 'No ticket drawn yet today.')}</p>`}
-    ${recordLine}`;
+    const res = await fetch(new URL('/tennis/parlay', CONFIG.WORKER_URL), { headers: { Accept: 'application/json' } });
+    trendPicksState.tennisRows = res.ok ? tennisParlayRows(await res.json()) : [];
+  } catch { trendPicksState.tennisRows = []; }
+  if (el.trendPicksView && !el.trendPicksView.hidden) renderTrendPicks();
 }
 
 async function loadTrendPicks({ force = false } = {}) {
   if (!el.trendPicksBody || !CONFIG.WORKER_URL) return;
-  loadMyPicks({ force });
+  loadPickBoardTennis();
   if (trendPicksState.loaded && !force) { renderTrendPicks(); return; }
   showLoading(el.trendPicksStatus, 'Loading picks…');
   try {
@@ -9949,29 +9904,95 @@ function legAsRow(leg, bet) {
 const showcaseBet = (leg) => ({ id: `showcase:${leg.sportKey}`, type: 'straight', bookId: leg.bookId, book: leg.book, legs: [leg] });
 const SPORT_SHORT = { basketball_nba: 'NBA', americanfootball_nfl: 'NFL', icehockey_nhl: 'NHL', soccer: 'Soccer', soccer_epl: 'EPL', soccer_spain_la_liga: 'La Liga', soccer_italy_serie_a: 'Serie A', soccer_germany_bundesliga: 'Bundesliga', soccer_france_ligue_one: 'Ligue 1' };
 
+const unitsLabel = (u) => `${u}u`;
+/** How likely a board line is to land: its last-20 rate pulled toward its price. */
+const legLikelihood = (leg) => winLikelihood({ hits: leg.periods?.l20?.hits ?? 0, games: leg.periods?.l20?.games ?? 0, american: leg.american });
+/**
+ * The day's suggestion (2026-11-12 direction: no forced Pixel's Pick, but
+ * "have one non-tracked play at the least if there is not one; a
+ * suggestion"): the best line on the board when no ticket posted, with a
+ * stake sized by confidence. Never on a ticket, never in the record.
+ */
 function renderShowcaseCard(leg) {
   const open = trendPicksState.emblemOpen === leg.sportKey;
   const league = SPORT_SHORT[leg.sportKey] ?? leg.sportTitle ?? '';
-  return `<article class="trend-card pick-bet-card is-showcase" aria-label="Best on the ${esc(league)} board, not tracked">
+  const likely = legLikelihood(leg);
+  const units = suggestedUnits({ prob: likely, score: leg.score });
+  return `<article class="trend-card pick-bet-card is-showcase" aria-label="Today's suggestion, not tracked">
     <div class="pick-bet-head">
-      <button type="button" class="pick-emblem" data-pick-emblem="${esc(leg.sportKey)}" aria-expanded="${open ? 'true' : 'false'}" title="What this card is"><span class="pick-emblem-star">★</span> Best on the ${esc(league)} board <small>not tracked</small></button>
+      <button type="button" class="pick-emblem" data-pick-emblem="${esc(leg.sportKey)}" aria-expanded="${open ? 'true' : 'false'}" title="What this card is"><span class="pick-emblem-star">★</span> Today's suggestion <small>${esc(league)} · not tracked</small></button>
       <span class="pick-bet-book">${bookBadge(leg.bookId, leg.book)}${esc(leg.book)}</span>
       <span class="pick-bet-price">${esc(formatAmerican(leg.american))}</span>
+      <span class="pick-bet-stake" title="Sized by confidence: half a unit to two">${esc(unitsLabel(units))} suggested</span>
     </div>
     ${open ? `<div class="pick-emblem-note" role="note">
-      <p><strong>This is the best overall line on today's ${esc(league)} board</strong> by Pixel's score (${esc(String(leg.score ?? ''))} of 5), shown so the tab never goes empty.</p>
+      <p><strong>No Pixel's Pick cleared the bar today, so this is the likeliest play on the board</strong>${Number.isFinite(likely) ? ` (about ${esc(pct(likely))} to land, from its last 20 games and its price)` : ''}, offered as a suggestion.</p>
       <p>It is not a Pixel's Pick: ${esc((leg.shortOf ?? []).join('; '))}. It is not on a ticket and does not count toward the record, the units or the ROI.</p>
-      <p>Tap the player for the full numbers, or the price to open it at ${esc(leg.book)}.</p>
+      <p>The stake is sized by confidence: ${esc(unitsLabel(units))} here, from half a unit to two; the likelier the play, the more units. Tap the player for the full numbers, or the price to open it at ${esc(leg.book)}.</p>
     </div>` : ''}
     <div class="pick-legs">${renderPickLeg(leg, showcaseBet(leg))}</div>
   </article>`;
 }
 
+/** The suggestion when the board's best is a tennis leg or a fight prop: the same emblem over a plain line. */
+function renderBoardSuggestion(row) {
+  return `<article class="trend-card pick-bet-card is-showcase" aria-label="Today's suggestion, not tracked">
+    <div class="pick-bet-head">
+      <span class="pick-emblem is-static"><span class="pick-emblem-star">★</span> Today's suggestion <small>${esc(row.league)} · not tracked</small></span>
+      <span class="pick-bet-stake">${esc(unitsLabel(row.units))} suggested</span>
+    </div>
+    <div class="pick-board-row is-solo" ${row.go ? `data-board-go="${esc(row.go)}" role="button" tabindex="0"` : ''}><span class="pick-board-main"><strong>${esc(row.title)}</strong><small>${esc(row.sub)}</small></span>${row.price}</div>
+  </article>`;
+}
+
+/**
+ * The best play on the board per sport, in one card (2026-11-12
+ * direction): the league boards' best lines, the best tennis leg and the
+ * card's best fight prop, each with its stake by confidence. Not tracked.
+ */
+function pickBoardRows() {
+  const today = trendPicksState.data?.today ?? null;
+  const now = Date.now();
+  const rows = [];
+  const legs = Object.values(today?.showcase ?? {}).filter((leg) => leg.commenceMs > now);
+  // The soccer leagues share one line: the best of them.
+  const bySport = new Map();
+  for (const leg of legs) { const k = String(leg.sportKey).startsWith('soccer_') ? 'soccer' : leg.sportKey; const cur = bySport.get(k); if (!cur || (leg.score ?? 0) > (cur.score ?? 0)) bySport.set(k, leg); }
+  for (const [k, leg] of bySport) {
+    const l20 = leg.periods?.l20;
+    const likely = legLikelihood(leg);
+    rows.push({ key: k, sportKey: leg.sportKey, league: k === 'soccer' ? 'Soccer' : (SPORT_SHORT[leg.sportKey] ?? leg.sportTitle ?? ''), confidence: likely ?? 0, american: leg.american, units: suggestedUnits({ prob: likely, score: leg.score }), leg,
+      title: leg.playerName, sub: `${lineText(leg)}${l20?.games ? ` · L20 ${l20.hits}/${l20.games}` : ''} · ${teamAbbr(leg.away)} @ ${teamAbbr(leg.home)}`,
+      price: pricePill(leg.bookId, leg.book, leg.american, leg.link) });
+  }
+  const tennis = (trendPicksState.tennisRows ?? []).filter((r) => r.commenceMs > now && Number.isFinite(r.american) && !(r.tennis?.flags ?? []).length)
+    .sort((a, b) => (b.tennis?.score ?? 0) - (a.tennis?.score ?? 0) || (b.tennis?.prob ?? 0) - (a.tennis?.prob ?? 0))[0];
+  if (tennis) rows.push({ key: 'tennis', sportKey: 'tennis', league: 'Tennis', confidence: tennis.tennis?.prob ?? 0, american: tennis.american, units: suggestedUnits({ prob: tennis.tennis?.prob }), go: 'tennis',
+    title: tennis.selection, sub: `${Number.isFinite(tennis.tennis?.prob) ? `${pct(tennis.tennis.prob)} by the model · ` : ''}${tennis.away} vs ${tennis.home}`, price: pricePill(tennis.bookKey, tennis.book, tennis.american, tennis.quotes?.[0]?.link ?? null) });
+  const ufc = (ufcState.picks?.current ? ufcParlayRows(ufcState.picks) : []).filter((r) => r.commenceMs > now && Number.isFinite(r.american) && r.bookKey !== 'engine' && Number.isFinite(r.ufc?.chance))
+    .sort((a, b) => (b.ufc?.score ?? 0) - (a.ufc?.score ?? 0) || (b.ufc?.chance ?? 0) - (a.ufc?.chance ?? 0))[0];
+  if (ufc) rows.push({ key: 'ufc', sportKey: UFC_SPORT_KEY, league: 'UFC', confidence: ufc.ufc?.chance ?? 0, american: ufc.american, units: suggestedUnits({ prob: ufc.ufc?.chance }), go: 'ufc',
+    title: ufc.selection, sub: `${pct(ufc.ufc.chance)} chance · ${ufc.away} vs ${ufc.home}`, price: pricePill(ufc.bookKey, ufc.book, ufc.american, ufc.quotes?.find((q) => q.bookKey === ufc.bookKey)?.link ?? null) });
+  const order = ['basketball_nba', 'americanfootball_nfl', 'icehockey_nhl', 'soccer', 'tennis', 'ufc'];
+  return rows.sort((a, b) => order.indexOf(a.key) - order.indexOf(b.key));
+}
+function renderPickBoard(rows) {
+  if (!rows.length) return '';
+  return `<section class="pick-board" aria-label="Best on the board by sport, not tracked">
+    <div class="pick-board-head"><h3>Best on the board</h3><small>one per sport · not tracked · stake by confidence</small></div>
+    ${rows.map((r) => `<div class="pick-board-row" ${r.leg ? `data-pick-leg="showcase:${esc(r.sportKey)}|0"` : r.go ? `data-board-go="${esc(r.go)}"` : ''} role="button" tabindex="0" aria-label="${esc(`${r.league}: ${r.title}`)}">
+      <span class="pick-board-league">${esc(r.league)}</span>
+      <span class="pick-board-main"><strong>${esc(r.title)}</strong><small>${esc(r.sub)}</small></span>
+      <span class="pick-board-units" title="Suggested stake, sized by confidence">${esc(unitsLabel(r.units))}</span>
+      ${r.price}
+    </div>`).join('')}
+  </section>`;
+}
+
 function openPickLeg(target) {
   const [betId, index] = String(target.dataset.pickLeg).split('|');
   const showcase = betId.startsWith('showcase:') ? trendPicksState.data?.today?.showcase?.[betId.slice('showcase:'.length)] : null;
-  const mine = trendPicksState.mine;
-  const bet = showcase ? showcaseBet(showcase) : [...(trendPicksState.data?.today?.bets ?? []), ...(trendPicksState.data?.history ?? []).flatMap((d) => d.bets ?? []), ...(mine?.today ? [mine.today] : []), ...(mine?.history ?? []).flatMap((d) => d.bets ?? [])].find((b) => b.id === betId);
+  const bet = showcase ? showcaseBet(showcase) : [...(trendPicksState.data?.today?.bets ?? []), ...(trendPicksState.data?.history ?? []).flatMap((d) => d.bets ?? [])].find((b) => b.id === betId);
   const leg = bet?.legs?.[Number(index)];
   if (!leg) return;
   trendsState.detailPeriod = null;
@@ -9990,7 +10011,7 @@ function renderBetCard(bet) {
     </div>
     <div class="pick-legs">${bet.legs.map((leg) => renderPickLeg(leg, bet)).join('')}</div>
     ${betOutcomeWhy(bet) ? `<p class="pick-note pick-why">${esc(betOutcomeWhy(bet))}</p>` : ''}
-    ${!bet.mine && bet.legs.every((l) => !l.note) ? '<p class="pick-note">Nothing worth flagging: minutes steady, no injury listing, no blowout projected.</p>' : ''}
+    ${bet.legs.every((l) => !l.note) ? '<p class="pick-note">Nothing worth flagging: minutes steady, no injury listing, no blowout projected.</p>' : ''}
     ${ticketSlipFoot(bet)}
   </article>`;
 }
@@ -10062,9 +10083,11 @@ function renderTrendPicks() {
   if (trendPicksState.filter === 'tennis') return renderTennisPicksTab();
   const today = d?.today ?? null;
   const bets = (today?.bets ?? []).filter(betMatches);
+  // The board card sits under the pick (or the suggestion) every day: the best play per sport in one place.
+  const board = pickBoardRows().filter((r) => trendPicksState.filter === 'all' || betMatches({ sportKey: r.sportKey }));
   if (bets.length) {
     el.trendPicksStatus.textContent = `${bets.length} ticket${bets.length === 1 ? '' : 's'} today · posted ${trendTimeFmt.format(new Date(bets[0].postedAt))} · one unit each`;
-    el.trendPicksBody.innerHTML = bets.map(renderBetCard).join('');
+    el.trendPicksBody.innerHTML = bets.map(renderBetCard).join('') + renderPickBoard(board);
   } else {
     const checked = today?.checkedAt ? ` Last checked ${trendTimeFmt.format(new Date(today.checkedAt))}; it looks again every hour until the day's games start.` : '';
     el.trendPicksStatus.textContent = today
@@ -10075,9 +10098,12 @@ function renderTrendPicks() {
           : `No ticket today: nothing is at 100% over the last 20 games yet.${checked}`)
       : 'No tickets drawn yet today. The draw runs after each Trends build.';
     const notes = [...(today?.passed ?? []).map((x) => `<li><strong>${esc(x.selection)}</strong>: ${esc((x.reasons ?? []).join('; ') || 'the research came back against it')}</li>`), ...(today?.unused ?? []).map((x) => `<li><strong>${esc(x.selection)}</strong>: passed research, ${esc(x.reason)}</li>`)];
-    // Never an empty tab: the board's best line in the filtered leagues, under its emblem.
-    const showcase = Object.values(today?.showcase ?? {}).filter(betMatches).filter((leg) => leg.commenceMs > Date.now());
-    el.trendPicksBody.innerHTML = showcase.map(renderShowcaseCard).join('') + (notes.length ? `<div class="pick-passed"><p class="row-sub">Qualified today:</p><ul>${notes.join('')}</ul></div>` : '');
+    // No forced pick: the single best play on the board stands in as a suggestion, untracked, with the board card under it.
+    // The likeliest play stands in, but never one priced so short it pays nothing: -300 is the floor while anything else is on the board.
+    const fair = board.filter((r) => !(r.american < -300));
+    const top = [...(fair.length ? fair : board)].sort((a, b) => b.confidence - a.confidence || b.units - a.units)[0] ?? null;
+    if (top) el.trendPicksStatus.textContent = `${el.trendPicksStatus.textContent} The suggestion below is the likeliest play on the board at a fair price, and is not tracked.`;
+    el.trendPicksBody.innerHTML = (top ? (top.leg ? renderShowcaseCard(top.leg) : renderBoardSuggestion(top)) : '') + renderPickBoard(board) + (notes.length ? `<div class="pick-passed"><p class="row-sub">Qualified today:</p><ul>${notes.join('')}</ul></div>` : '');
   }
   const rec = trendPicksState.filter === 'all' ? d?.record : d?.bySport?.[trendPicksState.filter];
   if (el.trendPicksRecord) {
@@ -10107,7 +10133,8 @@ el.trendPicksView?.addEventListener('click', (event) => {
   if (chip) { trendPicksState.filter = chip.dataset.pickFilter; trendPicksState.hover = null; renderTrendPicks(); return; }
   const tennisWhy = event.target.closest('[data-tennis-why]');
   if (tennisWhy) { const id = tennisWhy.dataset.tennisWhy; tennisState.open[id] = !tennisState.open[id]; renderTrendPicks(); return; }
-  if (event.target.closest('[data-my-redraw]')) { loadMyPicks({ redraw: true }); return; }
+  const boardRow = event.target.closest('[data-board-go]');
+  if (boardRow && !event.target.closest('[data-price-link]')) { const go = boardRow.dataset.boardGo; if (go === 'tennis') { trendPicksState.filter = 'tennis'; renderTrendPicks(); } else if (go === 'ufc') setActiveTab('ufc'); return; }
   const dot = event.target.closest('[data-pick-day]');
   if (dot) { const i = Number(dot.dataset.pickDay); trendPicksState.hover = trendPicksState.hover === i ? null : i; renderPickGraph(); return; }
   const ufcDot = event.target.closest('[data-ufc-dot]');
@@ -11081,6 +11108,8 @@ async function loadUfcPicks() {
   } catch { ufcState.picks = null; }
   renderUfc();
   renderUfcLedger();
+  // The Pixel's Picks board card carries the card's best prop.
+  if (el.trendPicksView && !el.trendPicksView.hidden && trendPicksState.loaded) renderTrendPicks();
 }
 
 const ufcRecordFor = (eventId) => (ufcState.picks?.history ?? []).find((r) => r.eventId === eventId) ?? null;
