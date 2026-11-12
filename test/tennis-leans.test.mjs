@@ -100,6 +100,12 @@ test('leanFor names the side and how to play it: the straight play with the most
   assert.equal(leanFor(strong, { read: { pFinal: 0.76 } }).conviction, 'high');
   const thin = leanFor(strong, { read: { pFinal: 0.76, thin: true, thinNames: 'Linda Noskova' } });
   assert.equal(thin.conviction, 'lean'); assert.ok(thin.why.some((w) => /No serve numbers on file for Linda Noskova/.test(w)));
+  assert.equal(thin.units, 0.5, 'a thin read is half a unit at most');
+  // A thin read has a view of the winner alone (form): its spreads, sets and totals are the tour's average fitted to the price, and are never its lean.
+  const shape = [leg('m8', 'games_spread', 'Irene Burillo', 0.61, [q('fanduel', -135)], { point: 4.5 }), leg('m8', 'set_spread', 'Irene Burillo', 0.73, [q('fanduel', -225)], { point: 1.5 }), leg('m8', 'games_total', null, 0.8, [q('fanduel', -230)], { side: null, name: null, sideWord: 'over', point: 18.5 })];
+  assert.equal(leanFor(shape, { read: { thin: true } }), null);
+  assert.ok(leanFor(shape, { read: {} }), 'the same legs on a full read are a lean');
+  assert.deepEqual(sortLeans([thin, leanFor(fritz, { read: {} })]).map((l) => l.name), ['Taylor Fritz', 'Jessica Pegula'], 'the full reads first, however likely the thin one');
   // Only a short price clears: a parlay piece, no units of its own.
   const short = leanFor([leg('m3', 'ml', 'Bianca Andreescu', 0.9, [q('fanduel', -600)])], {});
   assert.equal(short.how, 'parlay'); assert.equal(short.units, null); assert.equal(short.conviction, 'lean'); assert.ok(-600 < STRAIGHT_FLOOR);
@@ -206,6 +212,19 @@ test('runTennisTick reads a week the feed has no board for off FanDuel: the lean
   // The match with no serve numbers on file is still read, off the price and form alone, and says so.
   const thin = picks.current.reads['wta:3'];
   assert.equal(thin.thin, true); assert.ok(thin.pMarket > 0.25 && thin.pMarket < 0.35); assert.match(thin.passed, /no price leaves room/);
+  // A thin match whose form does move the price is a lean on the moneyline, half a unit, shown last and never on the record.
+  {
+    const m2 = new Map(); const env2 = { POTD_KV: { get: async (k) => m2.get(k) ?? null, put: async (k, v) => { m2.set(k, v); } } };
+    const card2 = { ...card, results: [...card.results] };
+    for (let i = 0; i < 6; i++) card2.results.push(res(`t${i}`, 'wta', 'Laura Samson', `Y ${i}`, i * 5 + 3), res(`u${i}`, 'wta', `Z ${i}`, 'Irene Burillo', i * 5 + 3));
+    const fd2 = { ...fd, events: fd.events.map((e) => (e.eventId === 3 ? fdEvent(3, 'Laura Samson', 'Irene Burillo', [-150, 125]) : e)) };
+    await runTennisTick(env2, null, now, { deps: { ...deps, card: async () => card2, fanduel: async () => fd2 } });
+    const cur = (await getTennisPicks(env2, now)).current;
+    const samson = cur.leans.find((l) => l.matchId === 'wta:3');
+    assert.ok(samson && samson.thin && samson.main.market === 'ml' && samson.units === 0.5, 'the form gap makes the thin match a moneyline lean');
+    assert.equal(cur.leans.at(-1), samson, 'listed after the full reads'); assert.equal(samson.posted, null); assert.match(samson.note, /not tracked: a price-and-form read/);
+    assert.ok(!cur.plays.some((p) => p.matchId === 'wta:3'));
+  }
   // The Parlay Builder gets the same legs, FanDuel's set markets among them.
   const builder = await getTennisParlay(env);
   assert.ok(builder.legs.some((l) => l.market === 'set1_ml') && builder.legs.some((l) => l.market === 'set_spread'));
