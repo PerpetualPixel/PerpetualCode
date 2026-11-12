@@ -20,6 +20,8 @@
  * are genuinely single-owner actions rather than per-user settings.
  */
 
+import { cleanParlayStore } from '../../docs/parlay-presets.js';
+
 /** Bumped only on a breaking shape change; readers tolerate older records. */
 const SETTINGS_VERSION = 1;
 
@@ -185,6 +187,8 @@ function normalize(input, existing = null) {
     liveBooks: cleanLiveBooks(input?.liveBooks) ?? (follow ? cleanLiveBooks(myBooks) : null) ?? cleanLiveBooks(existing?.liveBooks) ?? [],
     picks: cleanPicks(picksInput, existing?.picks ?? null),
     playbook: input?.playbook !== undefined ? cleanPlaybook(input.playbook) : (existing?.playbook ?? null),
+    // The Parlay Builder's last settings and three saved slots (docs/parlay-presets.js); null until the user has built once.
+    parlay: input?.parlay !== undefined ? (input.parlay ? cleanParlayStore(input.parlay) : null) : (existing?.parlay ? cleanParlayStore(existing.parlay) : null),
     updatedAt: Date.now(),
   };
 }

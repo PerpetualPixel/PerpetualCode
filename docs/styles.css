@@ -7600,3 +7600,20 @@ a.trend-price:hover { background: rgba(255, 255, 255, 0.06); }
 .role-tag.is-bench { color: #c4b5fd; border-color: rgba(167, 139, 250, 0.5); background: rgba(167, 139, 250, 0.12); }
 .role-tag.is-today { font-weight: 900; }
 .role-tag.is-today.is-starter { background: rgba(94, 224, 122, 0.22); }
+
+/* Parlay Builder: the saved settings (docs/parlay-presets.js), three slots above the filters */
+.parlay-presets { display: grid; gap: 8px; margin: 0 0 14px; padding-bottom: 14px; border-bottom: 1px solid var(--line); }
+.parlay-presets-head { display: flex; align-items: baseline; justify-content: space-between; gap: 8px; flex-wrap: wrap; }
+.parlay-presets-head span { font-size: 0.74rem; font-weight: 700; letter-spacing: 0.06em; text-transform: uppercase; color: var(--muted); }
+.parlay-presets-head small { color: var(--muted); font-size: 0.72rem; }
+.parlay-presets-head .parlay-presets-status { color: var(--success); font-weight: 700; }
+.parlay-presets-row { display: grid; gap: 6px; }
+.parlay-preset { display: flex; align-items: stretch; gap: 6px; }
+.parlay-preset-load { flex: 1 1 auto; min-width: 0; display: flex; align-items: center; gap: 10px; padding: 9px 12px; border-radius: 12px; border: 1px solid var(--line); background: var(--surface); color: var(--text); font: inherit; font-size: 0.86rem; font-weight: 600; text-align: left; cursor: pointer; }
+.parlay-preset-load b { flex: none; display: inline-grid; place-items: center; width: 22px; height: 22px; border-radius: 999px; background: var(--accent-dim); color: var(--accent); font-size: 0.76rem; }
+.parlay-preset-load span { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.parlay-preset-load:disabled { cursor: default; color: var(--muted); border-style: dashed; background: transparent; }
+.parlay-preset.is-active .parlay-preset-load { border-color: var(--success); background: rgba(94, 224, 122, 0.1); }
+.parlay-preset-save, .parlay-preset-clear { flex: none; width: 40px; border-radius: 12px; border: 1px solid var(--line); background: var(--surface); color: var(--text); font: inherit; cursor: pointer; }
+.parlay-preset-clear { color: var(--muted); font-size: 1.1rem; }
+.parlay-preset-load:active, .parlay-preset-save:active, .parlay-preset-clear:active { transform: scale(0.97); }

@@ -54,6 +54,7 @@ import {
   tennisUnderdogBlocked,
 } from './qualitative.js';
 import { parseLeg as parseSlipLeg, parseSlipText, parseAmerican as parseSlipAmerican, checkSlip, CATEGORY_LABEL as SLIP_CATEGORY_LABEL, TICKET_TYPES as SLIP_TICKET_TYPES } from './slip-check.js';
+import { parlaySnapshot, applyParlaySnapshot, cleanParlayStore, withParlaySlot, PARLAY_SLOTS } from './parlay-presets.js';
 import { playbookText, playbookKey, playbookUserId, discordChannelUrl, cleanPlaybookLink, PLAYBOOK_SITE } from './playbook.js';
 import { hitFlags as slipHitFlags } from './trends.js';
 import {
@@ -902,6 +903,7 @@ const el = {
   trendPicksTennis: document.getElementById('trendPicksTennis'),
   parlayView: document.getElementById('parlayView'),
   parlayLeagues: document.getElementById('parlayLeagues'),
+  parlayPresets: document.getElementById('parlayPresets'),
   parlayBook: document.getElementById('parlayBook'),
   parlayLegs: document.getElementById('parlayLegs'),
   parlayL20: document.getElementById('parlayL20'),
@@ -3362,6 +3364,8 @@ async function loadSettings() {
     }
     // The user's sportsbooks (see openBooksOnboard): the account's answer wins over this device's.
     if (Array.isArray(settings?.myBooks)) saveJSON(MY_BOOKS_KEY, settings.myBooks);
+    // The Parlay Builder's last settings and saved slots (see parlayStore): the account's win, unless this visit has already changed them.
+    if (settings?.parlay && typeof settings.parlay === 'object') adoptParlayStore(settings.parlay);
     // The Playbook setup (see playbookBlock): the account's wins over this device's.
     if (settings?.playbook && typeof settings.playbook === 'object') saveJSON(PLAYBOOK_KEY, { channel: settings.playbook.channel ?? '', mention: settings.playbook.mention ?? '' });
     // The user's sportsbooks (see persistTrendBooks): the account's list
@@ -10354,6 +10358,47 @@ const parlayState = {
   ufcProps: new Set(),
   built: null, locked: new Set(), seen: new Set(), breakdowns: {}, open: null, amount: 10, note: '', sprinkle: false,
 };
+/* The saved settings (docs/parlay-presets.js; 2026-11-12): the last settings used come back on open, and three slots save and load in a tap.
+   One store, { last, presets }, under PARLAY_STORE_KEY and on the account (worker/src/settings.js's parlay). */
+const PARLAY_STORE_KEY = 'pixelpick.parlay.v1';
+let parlayStore = cleanParlayStore(loadJSON(PARLAY_STORE_KEY, null));
+let parlayTouched = false;
+let parlaySaveTimer = null;
+if (parlayStore.last) applyParlaySnapshot(parlayState, parlayStore.last);
+function pushParlayStore() {
+  saveJSON(PARLAY_STORE_KEY, parlayStore);
+  const headers = settingsHeaders();
+  if (!headers || !CONFIG.WORKER_URL) return;
+  fetch(new URL('/settings', CONFIG.WORKER_URL), { method: 'PUT', headers: { ...headers, 'Content-Type': 'application/json' }, body: JSON.stringify({ parlay: parlayStore }) }).catch(() => {});
+}
+/** The settings as they stand become "last", a moment after the user stops changing them. */
+function queueParlaySave() {
+  parlayTouched = true;
+  clearTimeout(parlaySaveTimer);
+  parlaySaveTimer = setTimeout(() => { parlayStore = { ...parlayStore, last: parlaySnapshot(parlayState) }; pushParlayStore(); }, 900);
+}
+/** The account's store, taken when it arrives; the builder follows it unless this visit has already changed a setting. */
+function adoptParlayStore(remote) {
+  parlayStore = cleanParlayStore(remote);
+  saveJSON(PARLAY_STORE_KEY, parlayStore);
+  if (!parlayTouched && parlayStore.last) { applyParlaySnapshot(parlayState, parlayStore.last); if (el.parlayView && !el.parlayView.hidden) { renderParlayLeagues(); loadParlay(); } }
+  else if (el.parlayView && !el.parlayView.hidden) renderParlayPresets();
+}
+function renderParlayPresets(status = '') {
+  if (!el.parlayPresets) return;
+  const now = JSON.stringify(parlaySnapshot(parlayState));
+  el.parlayPresets.innerHTML = `<div class="parlay-presets-head"><span>Saved settings</span>${status ? `<small class="parlay-presets-status">${esc(status)}</small>` : '<small>Tap to load · 💾 saves what is set now</small>'}</div>
+    <div class="parlay-presets-row">${Array.from({ length: PARLAY_SLOTS }, (_, i) => { const slot = parlayStore.presets[i]; const on = slot && JSON.stringify(slot.settings) === now; return `<div class="parlay-preset ${slot ? '' : 'is-empty'} ${on ? 'is-active' : ''}">
+      <button type="button" class="parlay-preset-load" data-parlay-preset-load="${i}" ${slot ? '' : 'disabled'} title="${slot ? `Load: ${esc(slot.name)}` : 'Empty slot'}"><b>${i + 1}</b><span>${slot ? esc(slot.name) : 'Empty'}</span></button>
+      <button type="button" class="parlay-preset-save" data-parlay-preset-save="${i}" aria-label="Save the current settings to slot ${i + 1}" title="Save the current settings here">💾</button>
+      ${slot ? `<button type="button" class="parlay-preset-clear" data-parlay-preset-clear="${i}" aria-label="Clear slot ${i + 1}" title="Clear this slot">×</button>` : ''}
+    </div>`; }).join('')}</div>`;
+}
+/** Which slot matches the settings as they stand, marked in place: a field losing focus must not replace the buttons under a tap. */
+function markParlayPresets() {
+  const now = JSON.stringify(parlaySnapshot(parlayState));
+  el.parlayPresets?.querySelectorAll('.parlay-preset').forEach((node, i) => { const slot = parlayStore.presets[i]; node.classList.toggle('is-active', Boolean(slot) && JSON.stringify(slot.settings) === now); });
+}
 /** The UFC prop types in the order the chips show (worker/src/ufc-props.js's UFC_PROPS; the record carries the labels too). */
 const UFC_PROP_ORDER = ['ml', 'method', 'double', 'rounds', 'end_round', 'method_round', 'method_rounds', 'win_round', 'distance', 'round_start', 'end_method', 'method_either', 'win_round_start', 'special', 'spread', 'strikes', 'takedowns', 'knockdowns'];
 const UFC_PROP_LABELS = { ml: 'Moneyline', method: 'Method of victory', double: 'Double chance', rounds: 'Total rounds', end_round: 'Ends in round', method_round: 'Method & round combo', method_rounds: 'Method round combos', win_round: 'Round betting', distance: 'Go the distance?', round_start: 'Fight to start round', end_method: 'How fight will end', method_either: 'Either-fighter specials', win_round_start: 'Win & round to start', special: 'Specials', spread: 'Spread', strikes: 'Strikes', takedowns: 'Takedowns', knockdowns: 'Knockdowns' };
@@ -10825,6 +10870,7 @@ function renderSprinkles(live) {
 function renderParlay() {
   if (!el.parlayView) return;
   const s = parlayState;
+  renderParlayPresets();
   const rows = parlayRows();
   const now = Date.now();
   const live = rows.filter((r) => r.commenceMs > now);
@@ -10932,6 +10978,18 @@ async function loadParlayBreakdown(rowId) {
 el.parlayView?.addEventListener('click', (event) => {
   const s = parlayState;
   const t = event.target;
+  // The saved slots: load one, save the current settings into one, or clear one.
+  const slotLoad = t.closest('[data-parlay-preset-load]');
+  if (slotLoad) {
+    const slot = parlayStore.presets[Number(slotLoad.dataset.parlayPresetLoad)];
+    if (!slot) return;
+    applyParlaySnapshot(s, slot.settings); s.sprinkle = false;
+    renderParlayLeagues(); loadParlay(); queueParlaySave(); return;
+  }
+  const slotSave = t.closest('[data-parlay-preset-save]');
+  if (slotSave) { const i = Number(slotSave.dataset.parlayPresetSave); parlayStore = withParlaySlot({ ...parlayStore, last: parlaySnapshot(s) }, i, parlaySnapshot(s)); parlayTouched = true; pushParlayStore(); renderParlayPresets(`Saved to slot ${i + 1}.`); return; }
+  const slotClear = t.closest('[data-parlay-preset-clear]');
+  if (slotClear) { const i = Number(slotClear.dataset.parlayPresetClear); parlayStore = withParlaySlot(parlayStore, i, null); pushParlayStore(); renderParlayPresets(`Slot ${i + 1} cleared.`); return; }
   const league = t.closest('[data-parlay-league]');
   if (league) {
     // A toggle, never down to none: the last league on stays on. UFC is its own ticket: on, it clears the others; another league on clears it.
@@ -10979,6 +11037,12 @@ el.parlayView?.addEventListener('change', (event) => {
   else if (t === el.parlayOddsMin || t === el.parlayOddsMax) { const lo = Number(el.parlayOddsMin.value); const hi = Number(el.parlayOddsMax.value); s.odds = [Number.isFinite(lo) ? lo : -800, Number.isFinite(hi) ? hi : 800]; }
   else if (t === el.parlaySide) { s.side = t.value; }
   else if (t === el.parlayTeam) { s.team = t.value; }
+});
+
+// Any change to a setting is remembered as the last settings (the slot buttons save themselves); the handlers above have already updated the state.
+for (const type of ['click', 'change', 'input']) el.parlayView?.addEventListener(type, (event) => {
+  if (event.target.closest('#parlayResult') || event.target.closest('[data-parlay-preset-save]') || event.target.closest('[data-parlay-preset-clear]')) return;
+  if (event.target.closest('.parlay-config-col') || event.target.closest('#parlayLeagues')) { queueParlaySave(); markParlayPresets(); }
 });
 
 /* ================================================================ */
