@@ -39,8 +39,13 @@ const NHL = 'icehockey_nhl';
 export const BLOWOUT = { [NBA]: { spread: 10, heavy: 14, margin: 15 }, [NFL]: { spread: 10, heavy: 14, margin: 17 } };
 /** Days without a game, mid-season, after which the next one reads as a return. */
 export const LAYOFF_DAYS = { [NBA]: 9, [NHL]: 9, [NFL]: 20 };
-/** How many deep at a position still reads as a primary player on an NFL depth chart. */
-export const PRIMARY_DEPTH = { QB: 1, RB: 1, TE: 1, FB: 1, PK: 1, K: 1, WR: 3 };
+/**
+ * How many deep at a position still reads as a primary player on an NFL
+ * depth chart. ESPN lists each receiver spot (wr1, wr2, wr3) as its own
+ * slot with its own order, so the first name at any of them is a starter
+ * and the second is that spot's backup.
+ */
+export const PRIMARY_DEPTH = { QB: 1, RB: 1, TE: 1, FB: 1, PK: 1, K: 1, WR: 1 };
 const POSITION_WORD = { QB: 'quarterback', RB: 'running back', TE: 'tight end', WR: 'wide receiver', FB: 'fullback', PK: 'kicker', K: 'kicker' };
 const NFL_PASS = new Set(['passYds', 'passAttempts', 'passCompletions', 'passTds', 'recYds', 'receptions']);
 const NFL_RUSH = new Set(['rushYds', 'rushAttempts']);
@@ -109,9 +114,9 @@ export function viabilityOf(leg, match, { now = Date.now() } = {}) {
     const pos = String(depth.pos).toUpperCase();
     const word = POSITION_WORD[pos] ?? pos;
     const primary = depth.rank <= (PRIMARY_DEPTH[pos] ?? 1);
-    if (primary) add('depth', 'ok', pos === 'WR' ? `Listed ${ordinal(depth.rank)} among the team's wide receivers on the depth chart.` : `Listed as the starting ${word} on the depth chart.`);
+    if (primary) add('depth', 'ok', pos === 'WR' ? 'Listed as a starting wide receiver on the depth chart.' : `Listed as the starting ${word} on the depth chart.`);
     else if (pos === 'QB') add('depth', over ? 'bad' : 'ok', `Listed as the ${ordinal(depth.rank)} quarterback on the depth chart: he plays only if the starter does not.`);
-    else add('depth', over ? 'warn' : 'ok', `Listed ${ordinal(depth.rank)} at ${word} on the depth chart: not the primary player at the position${over ? ', so the volume an over needs is not his by default' : ''}.`);
+    else add('depth', over ? 'warn' : 'ok', `Listed ${ordinal(depth.rank)} at ${pos === 'WR' ? 'his wide receiver spot' : word} on the depth chart: not the primary player there${over ? ', so the volume an over needs is not his by default' : ''}.`);
   }
 
   // The injury report, and any limit its note mentions.

@@ -37,14 +37,16 @@ test('role: out of today\'s posted lineup sinks an over and helps an under; a be
   assert.match(last.checks[0].text, /came off the bench in his last game \(Nov 9\)/);
 });
 
-test('depth chart: a backup quarterback is an avoid on an over, a second running back a risk, a top-three receiver fine', () => {
+test('depth chart: a backup quarterback is an avoid on an over, a second running back a risk, a starting receiver fine and his spot\'s backup a risk', () => {
   const nfl = (depth, stat = { key: 'rushYds', label: 'Rushing yards' }) => viabilityOf(leg('over', 45.5, stat), match({ sportKey: NFL, depth, rows: log([50, 48, 52, 47, 51, 49, 50, 53], { lastAgo: 7 }) }), { now: NOW });
   assert.equal(nfl({ pos: 'QB', rank: 2 }, { key: 'passYds', label: 'Passing yards' }).level, 'avoid');
   const rb2 = nfl({ pos: 'RB', rank: 2 });
   assert.equal(rb2.level, 'risky');
   assert.match(rb2.checks.find((c) => c.key === 'depth').text, /Listed 2nd at running back.*not the primary player/);
-  assert.equal(nfl({ pos: 'WR', rank: 3 }, { key: 'recYds', label: 'Receiving yards' }).level, 'viable');
-  assert.equal(nfl({ pos: 'WR', rank: 4 }, { key: 'recYds', label: 'Receiving yards' }).level, 'risky');
+  assert.equal(nfl({ pos: 'WR', rank: 1 }, { key: 'recYds', label: 'Receiving yards' }).level, 'viable');
+  const wr2 = nfl({ pos: 'WR', rank: 2 }, { key: 'recYds', label: 'Receiving yards' });
+  assert.equal(wr2.level, 'risky');
+  assert.match(wr2.checks.find((c) => c.key === 'depth').text, /Listed 2nd at his wide receiver spot/);
 });
 
 test('a layoff, a minutes cut, a back-to-back and a limit in the injury note each warn an over; the same facts do not warn an under', () => {
@@ -176,12 +178,14 @@ test('depthFromChart lists the skill positions in order, and outByTeam keeps the
     { name: '3WR 1TE', positions: {
       qb: { position: { abbreviation: 'QB' }, athletes: [ath('1', 'Patrick Mahomes'), ath('2', 'Backup Qb')] },
       rb: { position: { abbreviation: 'RB' }, athletes: [ath('3', 'Lead Back'), ath('4', 'Second Back')] },
-      wr: { position: { abbreviation: 'WR' }, athletes: [ath('5', 'Wr One'), ath('6', 'Wr Two'), ath('7', 'Wr Three'), ath('8', 'Wr Four')] },
+      wr1: { position: { abbreviation: 'WR' }, athletes: [ath('5', 'Wr One'), ath('8', 'Wr Four')] },
+      wr2: { position: { abbreviation: 'WR' }, athletes: [ath('6', 'Wr Two')] },
+      wr3: { position: { abbreviation: 'WR' }, athletes: [ath('7', 'Wr Three'), ath('5', 'Wr One')] },
     } },
     { name: 'Special Teams', positions: { pk: { position: { abbreviation: 'PK' }, athletes: [ath('9', 'The Kicker')] }, pr: { position: { abbreviation: 'PR' }, athletes: [ath('8', 'Wr Four')] } } },
   ] };
   const depth = depthFromChart(chart, 'kc');
-  assert.deepEqual(depth.map((p) => `${p.pos}${p.rank}:${p.id}`), ['QB1:1', 'QB2:2', 'RB1:3', 'RB2:4', 'WR1:5', 'WR2:6', 'WR3:7', 'WR4:8', 'PK1:9']);
+  assert.deepEqual(depth.map((p) => `${p.pos}${p.rank}:${p.id}`), ['QB1:1', 'QB2:2', 'RB1:3', 'RB2:4', 'WR1:5', 'WR2:8', 'WR1:6', 'WR1:7', 'PK1:9'], 'each receiver slot has its own first name; a starter listed again as a backup keeps his first place');
   assert.equal(depth[0].team, 'KC');
   assert.deepEqual(depthFromChart(null, 'kc'), []);
   const byId = Object.fromEntries(depth.map((p) => [p.id, p]));
