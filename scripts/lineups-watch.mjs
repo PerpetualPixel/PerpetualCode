@@ -16,23 +16,48 @@
  * with it the game context (recordContext: spreads, totals, the NFL
  * depth charts) the Slip Check reads.
  *
- *   node scripts/lineups-watch.mjs [--hours 5.5] [--every 10] [--leagues nba,epl] [--dry-run]
+ * The tennis runners ride this chain too (2026-11-12): the Tennis tab
+ * prices its leans from FanDuel's board (scripts/tennis-fanduel.mjs) and
+ * reads its matches from the card (scripts/tennis-card.mjs), and their own
+ * half-hourly cron was delivered every five to eight hours, which is no
+ * price to post on. Every TENNIS_EVERY minutes the card, the aces of the
+ * open aces plays and the FanDuel board are read here, each as its own
+ * process so a failure in one stops nothing else.
+ *
+ *   node scripts/lineups-watch.mjs [--hours 5.5] [--every 10] [--leagues nba,epl] [--dry-run] [--force]
+ *
+ * --force skips the stand-aside check below: for the run started by hand
+ * right after the one alive was cancelled, whose heartbeat is still fresh.
  *
  * A heartbeat (espn:lineups:beat) says a chain is alive; a second run
  * that finds a fresh one steps aside so the cron backstop never doubles
  * the chain.
  */
 import { appendFileSync } from 'node:fs';
+import { spawnSync } from 'node:child_process';
+import { fileURLToPath } from 'node:url';
 import { LEAGUES, recordRoles, recordContext, injuryEntries, leagueTeams, rosterOf, pool, readKv, writeKv, say } from './espn-bundle.mjs';
 import { injuriesKey } from '../worker/src/espn-bundle.js';
 
 const args = process.argv.slice(2);
 const opt = (name, fallback) => (args.includes(name) ? args[args.indexOf(name) + 1] : fallback);
 const DRY = args.includes('--dry-run');
+const FORCE = args.includes('--force');
 const hours = Number(opt('--hours', 5.5));
 const every = Math.max(2, Number(opt('--every', 10)));
 const only = String(opt('--leagues', '')).split(',').map((s) => s.trim().toLowerCase()).filter(Boolean);
 const BEAT_KEY = 'espn:lineups:beat';
+/** Minutes between tennis reads: the worker prices the leans every fifteen, so a board is never much older than one of its reads. */
+const TENNIS_EVERY = 20;
+const TENNIS_SCRIPTS = ['tennis-card.mjs', 'tennis-aces.mjs', 'tennis-fanduel.mjs'];
+
+/** The tennis card, the open aces plays' counts and the FanDuel board, each in its own process, the card first (the board reads the card's matches). */
+function tennis() {
+  for (const script of TENNIS_SCRIPTS) {
+    const r = spawnSync(process.execPath, [fileURLToPath(new URL(`./${script}`, import.meta.url))], { stdio: 'inherit', timeout: 4 * 60e3 });
+    if (r.status !== 0) say(`  ! ${script}: ${r.error?.message ?? `exit ${r.status}`}`);
+  }
+}
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
 /** The leagues whose box score flags starters: the NBA and the soccer leagues (the NFL and the NHL carry no flag). */
@@ -65,7 +90,7 @@ const run = `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 6)
 const start = Date.now();
 if (!DRY) {
   const beat = await readKv(BEAT_KEY).catch(() => null);
-  if (beat?.at && Date.now() - beat.at < (every + 3) * 60e3 && beat.run !== run) { say(`another run (${beat.run}) passed ${Math.round((Date.now() - beat.at) / 60e3)} min ago: standing aside`); finish(false); process.exit(0); }
+  if (!FORCE && beat?.at && Date.now() - beat.at < (every + 3) * 60e3 && beat.run !== run) { say(`another run (${beat.run}) passed ${Math.round((Date.now() - beat.at) / 60e3)} min ago: standing aside`); finish(false); process.exit(0); }
 }
 let tick = 0;
 while (Date.now() - start < hours * 3600e3) {
@@ -76,6 +101,7 @@ while (Date.now() - start < hours * 3600e3) {
     try { await recordRoles(league, now); } catch (e) { say(`  ! roles: ${e.message}`); }
   }
   if (tick % Math.max(1, Math.round(30 / every)) === 0) await injuries(now);
+  if (!DRY && !only.length && tick % Math.max(1, Math.round(TENNIS_EVERY / every)) === 0) { say('TENNIS:'); tennis(); }
   if (!DRY) { try { await writeKv([{ key: BEAT_KEY, value: { at: Date.now(), run, pass: tick + 1 } }], 86400); } catch (e) { say(`! beat: ${e.message}`); } }
   tick++;
   const left = start + hours * 3600e3 - Date.now();
