@@ -262,3 +262,16 @@ test('the user\'s Playbook setup: a Discord channel link and the bot\'s user id,
   const bad = await (await worker.fetch(call('/settings', { method: 'PUT', token: TOKEN, body: { playbook: { channel: 'https://evil.com/discord.com', mention: 'Playbook' } } }), env, ctx)).json();
   assert.equal(bad.settings.playbook.channel, ''); assert.equal(bad.settings.playbook.mention, '');
 });
+
+test('the Parlay Builder\'s saved settings: the last settings and three slots, cleaned, kept across other saves', async () => {
+  const env = makeEnv();
+  const first = await (await worker.fetch(call('/settings', { method: 'PUT', token: TOKEN, body: { bankroll: { amount: 100, unit: 5 } } }), env, ctx)).json();
+  assert.equal(first.settings.parlay, null, 'never built');
+  const body = { parlay: { last: { sports: ['americanfootball_nfl'], book: 'fanatics', legs: 10, stats: ['anyTd'], junk: 1 }, presets: [{ name: 'Sunday', settings: { sports: ['americanfootball_nfl'], legs: 4, book: 'fanduel' } }, null, { settings: { sports: ['tennis'], legs: 2 } }, { name: 'fourth', settings: { legs: 3 } }] } };
+  const saved = await (await worker.fetch(call('/settings', { method: 'PUT', token: TOKEN, body }), env, ctx)).json();
+  assert.deepEqual([saved.settings.parlay.last.book, saved.settings.parlay.last.legs, saved.settings.parlay.last.stats, 'junk' in saved.settings.parlay.last], ['fanatics', 10, ['anyTd'], false]);
+  assert.deepEqual(saved.settings.parlay.presets.map((p) => p?.name ?? null), ['Sunday', null, 'Tennis · 2 legs · DraftKings']);
+  await worker.fetch(call('/settings', { method: 'PUT', token: TOKEN, body: { myBooks: ['fanduel'] } }), env, ctx);
+  const kept = await (await worker.fetch(call('/settings', { token: TOKEN }), env, ctx)).json();
+  assert.equal(kept.settings.parlay.presets[0].name, 'Sunday', 'a books save leaves the slots alone');
+});
