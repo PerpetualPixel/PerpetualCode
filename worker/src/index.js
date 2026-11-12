@@ -63,6 +63,7 @@ import { getUfcEvents, getUfcEvent, nextUfcEvent, getUfcFighter, getUfcFighters 
 import { runUfcTick, getUfcPicks } from './ufc-picks.js';
 import { runTennisTick, getTennisPicks, getTennisParlay } from './tennis-picks.js';
 import { getTennisLive } from './tennis-live.js';
+import { runTennisLiveTick, getTennisLivePlays, TENNIS_LIVE_CRON } from './tennis-live-plays.js';
 import { getTennisTrends } from './tennis-trends.js';
 import { sendUfcTicketNotifications, sendUfcChangeNotifications } from './notifications.js';
 import { legBreakdown } from './parlay-builder.js';
@@ -484,6 +485,14 @@ export default {
    */
   async scheduled(event, env, ctx) {
     const now = event.scheduledTime ?? Date.now();
+
+    // The minute schedule is live tennis alone (worker/src/tennis-live-plays.js):
+    // a KV read and nothing else while no match is in play. Nothing below
+    // runs on it.
+    if (event.cron === TENNIS_LIVE_CRON) {
+      ctx.waitUntil(runTennisLiveTick(env, ctx, now).catch((e) => console.error('Tennis live tick failed:', e)));
+      return;
+    }
 
     // The live-props probe (worker/src/live-probe.js): one game, one
     // window, one props call a tick on either schedule.
@@ -1556,8 +1565,9 @@ export default {
     if (pathname === '/live' && request.method === 'GET') {
       // The board, and tennis beside it (worker/src/tennis-live.js: the day's singles from ESPN with the Tennis tab's plays on them).
       const now = Date.now();
-      const [board, tennis] = await Promise.all([getLiveBoard(env, now, { ctx }), getTennisLive(env, now).catch((e) => { console.error('Tennis live failed:', e); return null; })]);
-      return json({ ...board, tennis }, { headers: { ...cors, 'Cache-Control': 'no-store' } });
+      const [board, tennis, tennisLive] = await Promise.all([getLiveBoard(env, now, { ctx }), getTennisLive(env, now).catch((e) => { console.error('Tennis live failed:', e); return null; }), getTennisLivePlays(env, now).catch((e) => { console.error('Tennis live plays failed:', e); return null; })]);
+      // tennisLive: the matches in play read game by game, the live plays and their record (worker/src/tennis-live-plays.js).
+      return json({ ...board, tennis, tennisLive }, { headers: { ...cors, 'Cache-Control': 'no-store' } });
     }
     // Last night's slips graded against the final box scores (worker/src/live-board.js): read-only.
     if (pathname === '/live/recap' && request.method === 'GET') {
@@ -1593,6 +1603,10 @@ export default {
       return json(await getTennisTrends(env), { headers: { ...cors, 'Cache-Control': 'public, max-age=300' } });
     }
     // Tennis in the Parlay Builder (worker/src/tennis-picks.js builderLegs): every priced leg on the matches read, scored.
+    // Live tennis on its own: the reads of the matches in play, the live plays and their record.
+    if (pathname === '/tennis/live' && request.method === 'GET') {
+      return json(await getTennisLivePlays(env), { headers: { ...cors, 'Cache-Control': 'no-store' } });
+    }
     if (pathname === '/tennis/parlay' && request.method === 'GET') {
       return json(await getTennisParlay(env), { headers: { ...cors, 'Cache-Control': 'public, max-age=120' } });
     }

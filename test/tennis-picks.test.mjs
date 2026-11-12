@@ -346,3 +346,20 @@ test('builderLegs prices every number on the board for the Parlay Builder, score
   const again = await runTennisTick(env, null, Date.now(), { deps });
   assert.ok(again.builderLegs >= 6, 'the posted match keeps its legs'); assert.equal(deepCalls.length, 2, 'the deeper markets are read each tick (the KV cache answers for three hours in the worker)');
 });
+
+test('builderLegs also prices the first set\'s winner and the sets played when the deeper markets carry them', () => {
+  const dist = distributions(simulate(0.68, 0.62, { n: 1500, seed: 11 }));
+  assert.ok(dist.aWinsSet1 > 0.55 && dist.aWinsSet1 < 0.85, String(dist.aWinsSet1));
+  assert.ok(dist.setsPlayed.every((n) => n === 2 || n === 3));
+  const deep = { id: 'ev1', bookmakers: [book('fanduel', { h2h_s1: [{ name: 'Jannik Sinner', price: -190 }, { name: 'Ben Shelton', price: 150 }], alternate_set_totals: [{ name: 'Over', point: 2.5, price: 160 }, { name: 'Under', point: 2.5, price: -210 }] })] };
+  const legs = builderLegs(match(), { dist, board: boardEvent(), deep, pFinal: 0.75 });
+  const s1a = legs.find((l) => l.market === 'set1_ml' && l.side === 'a'); const s1b = legs.find((l) => l.market === 'set1_ml' && l.side === 'b');
+  assert.deepEqual([s1a.selection, s1a.label, s1a.quotes[0].american], ['Jannik Sinner to win the 1st set', '1st set winner', -190]);
+  assert.ok(Math.abs(s1a.prob + s1b.prob - 1) < 0.002);
+  const over = legs.find((l) => l.market === 'sets_total' && l.sideWord === 'over'); const under = legs.find((l) => l.market === 'sets_total' && l.sideWord === 'under');
+  assert.deepEqual([over.selection, under.selection, over.label], ['Over 2.5 sets', 'Under 2.5 sets', 'Total sets']);
+  assert.ok(Math.abs(over.prob + under.prob - 1) < 0.002);
+  assert.ok(Math.abs(under.prob - dist.straightSets) < 0.002, 'under 2.5 sets is a straight-sets finish');
+  // No such markets in the feed: no such legs.
+  assert.equal(builderLegs(match(), { dist, board: boardEvent(), deep: deepEvent(), pFinal: 0.75 }).some((l) => l.market === 'set1_ml' || l.market === 'sets_total'), false);
+});

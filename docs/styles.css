@@ -7437,6 +7437,19 @@ a.trend-price:hover { background: rgba(255, 255, 255, 0.06); }
 .live-tennis-row strong { flex: 1 1 auto; min-width: 0; }
 .live-tennis-row strong small { color: var(--muted); font-weight: 600; margin: 0 4px; }
 .live-tennis-match .row-sub { margin: 0; }
+/* The live read of a match in play (worker/src/tennis-live-plays.js): the chance bar, the holds and last games, the live plays. */
+.live-tennis-read { display: grid; gap: 6px; padding-top: 8px; border-top: 1px dashed var(--line); }
+.live-tennis-bar { display: flex; height: 22px; border-radius: 999px; overflow: hidden; background: var(--line); font-size: 0.72rem; font-weight: 800; font-variant-numeric: tabular-nums; }
+.live-tennis-bar span { display: flex; align-items: center; padding: 0 8px; white-space: nowrap; }
+.live-tennis-bar .is-a { background: var(--success); color: #05210f; justify-content: flex-start; }
+.live-tennis-bar .is-b { flex: 1; background: color-mix(in srgb, var(--accent) 55%, var(--surface)); color: var(--text); justify-content: flex-end; }
+.live-tennis-play.is-liveplay { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.live-tennis-play.is-liveplay > span:first-child { flex: 1 1 180px; min-width: 0; display: grid; gap: 1px; }
+.live-tennis-play.is-liveplay small { color: var(--muted); font-size: 0.74rem; }
+.live-tennis-fair { border-style: dashed; }
+.live-tennis-none { font-style: italic; }
+.live-tennis-ledger { display: grid; gap: 6px; }
+.live-tennis-ledger p { margin: 0; }
 .live-tennis-rest { border: 1px solid var(--line); border-radius: 14px; padding: 8px 12px; background: var(--surface); display: grid; gap: 8px; }
 .live-tennis-rest summary { cursor: pointer; font-weight: 700; color: var(--muted); }
 .live-tennis-parlay { display: grid; gap: 6px; }
