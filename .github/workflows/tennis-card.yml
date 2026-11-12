@@ -44,3 +44,11 @@ jobs:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
         run: node scripts/tennis-aces.mjs ${{ inputs.args }}
+      # The tennis board at FanDuel for the card's matches (scripts/tennis-fanduel.mjs): the prices the feed lacks for a small tournament,
+      # the set markets and the aces ladders, each with the ids a slip link needs. After the card step, whose matches it reads.
+      - name: Read the FanDuel tennis board
+        if: always()
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+        run: node scripts/tennis-fanduel.mjs ${{ inputs.args }}
