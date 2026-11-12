@@ -91,16 +91,20 @@ function legView(leg) {
  * `flags: {a, b}`.
  */
 export function leanFor(legs, { read = {} } = {}) {
-  const sides = (legs ?? []).filter((l) => SIDE_MARKETS.includes(l.market) && l.side && clears(l, LEAN_MIN_PROB, LEAN_MIN_EDGE));
-  const extras = (legs ?? []).filter((l) => EXTRA_MARKETS.includes(l.market) && clears(l, EXTRA_MIN_PROB, EXTRA_MIN_EDGE));
+  const thin = Boolean(read.thin);
+  // A thin read (a player with no serve numbers on file) knows one thing of its own, form, and that speaks to the winner alone: its spreads,
+  // set markets and totals are the tour's average serve fitted to the price, no view at all. So only the moneyline can be its lean.
+  // (2026-11-12, the first live read: four of eight leans were such spreads, and they took the day's units ahead of the full reads.)
+  const sides = (legs ?? []).filter((l) => SIDE_MARKETS.includes(l.market) && l.side && (!thin || l.market === 'ml') && clears(l, LEAN_MIN_PROB, LEAN_MIN_EDGE));
+  const extras = thin ? [] : (legs ?? []).filter((l) => EXTRA_MARKETS.includes(l.market) && clears(l, EXTRA_MIN_PROB, EXTRA_MIN_EDGE));
   const straight = (l) => bestQuote(l).american >= STRAIGHT_FLOOR;
   // The side: the straight play with the most room for its chance; failing one, the best parlay piece.
   const main = [...sides.filter(straight)].sort((x, y) => room(y) - room(x))[0] ?? [...sides].sort((x, y) => room(y) - room(x))[0] ?? [...extras].sort((x, y) => room(y) - room(x))[0] ?? null;
   if (!main) return null;
   const q = bestQuote(main);
   const how = q.american >= STRAIGHT_FLOOR ? 'straight' : 'parlay';
-  const units = how === 'straight' ? suggestedUnits({ prob: main.prob }) : null;
-  const thin = Boolean(read.thin);
+  // A thin read is never more than half a unit, and never on the record.
+  const units = how !== 'straight' ? null : thin ? 0.5 : suggestedUnits({ prob: main.prob });
   const conviction = how === 'straight' && !thin && main.prob >= CONVICTION_PROB && main.edge >= CONVICTION_EDGE ? 'high' : 'lean';
   const side = main.side ?? null;
   const share = (p) => (p == null || !side ? null : side === 'a' ? p : 1 - p);
@@ -110,7 +114,7 @@ export function leanFor(legs, { read = {} } = {}) {
   for (const [i, w] of (main.why ?? []).entries()) if (!(i === 0 && main.market === 'ml' && why.length) && !why.includes(w)) why.push(w);
   why.push(`${q.book} has it at ${signed(q.american)}, which asks for ${pct(main.implied)}; the read gives ${pct(main.prob)}, ${Math.round(main.edge * 100)} points of room`);
   if ((main.opponentFlags ?? []).length) why.push(`${main.opponent} is flagged for ${main.opponentFlags.join(' and ')}`);
-  if (thin) why.push(`No serve numbers on file for ${read.thinNames ?? 'one of the players'}: this read is the market's price moved by form alone, so it is sized as a lean, never a high-conviction play`);
+  if (thin) why.push(`No serve numbers on file for ${read.thinNames ?? 'one of the players'}: this read is the market's price moved by form alone, so it is half a unit at most, not tracked, and never a high-conviction play`);
   why.push(how === 'straight'
     ? `Played straight: ${signed(q.american)} pays enough alone, ${units}u at ${pct(main.prob)}`
     : `Too short to take alone at ${signed(q.american)}: use it as a parlay leg`);
@@ -132,8 +136,8 @@ export function propFor(legs) {
   return { ...legView(best), units: suggestedUnits({ prob: best.prob }), why: [...(best.why ?? []), `${q.book} has it at ${signed(q.american)}, which asks for ${pct(best.implied)}; the read gives ${pct(best.prob)}, ${Math.round(best.edge * 100)} points of room`] };
 }
 
-/** The leans in the order the tab shows them: the most likely to land first, the roomier one on a tie. */
-export const sortLeans = (leans) => [...leans].sort((x, y) => y.confidence - x.confidence || y.main.edge - x.main.edge || x.commenceMs - y.commenceMs);
+/** The leans in the order the tab shows them: the full reads first, the most likely to land on top, the roomier one on a tie; the thin reads after them the same way. */
+export const sortLeans = (leans) => [...leans].sort((x, y) => Number(Boolean(x.thin)) - Number(Boolean(y.thin)) || y.confidence - x.confidence || y.main.edge - x.main.edge || x.commenceMs - y.commenceMs);
 
 /** A set of legs priced as one ticket at the book that carries every one of them best; null when no book does. */
 export function priceTogether(legs) {

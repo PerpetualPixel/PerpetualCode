@@ -539,21 +539,22 @@ export async function runTennisTick(env, ctx, now = Date.now(), { deps = {} } = 
     // The feed's deeper markets are one billed call per match: only where FanDuel's page did not already give them, and only when the shape gives the model a case; a match already posted reads the cached copy only.
     const dogSet = dist.pA < 0.5 ? dist.aWinsASet : dist.bWinsASet;
     const shapeCase = dogSet >= MIN_PROB || shareOver(dist.set1, 8.5) >= MIN_PROB || shareOver(dist.games, 20.5) >= MIN_PROB || shareOver(dist.set2, 8.5) >= MIN_PROB;
-    const feedDeep = hit && !fdFeed && (shapeCase || alreadyPosted) ? (deps.eventMarkets ? await deps.eventMarkets(board.sportKey, board.id, { cachedOnly: alreadyPosted && !shapeCase }) : await eventMarkets(env, ctx, board.sportKey, board.id, now, { cachedOnly: alreadyPosted && !shapeCase })) : null;
+    const fdDeep = Boolean(fdFeed?.deep?.bookmakers?.[0]?.markets?.length);
+    const feedDeep = hit && !fdDeep && (shapeCase || alreadyPosted) ? (deps.eventMarkets ? await deps.eventMarkets(board.sportKey, board.id, { cachedOnly: alreadyPosted && !shapeCase }) : await eventMarkets(env, ctx, board.sportKey, board.id, now, { cachedOnly: alreadyPosted && !shapeCase })) : null;
     const deep = withFanduel(feedDeep, fdFeed?.deep ?? null);
     // Every priced number on the match, scored: the Parlay Builder's legs, and what the lean is read from.
     const matchLegs = builderLegs(m, { dist, board, deep, pFinal, flags, context, consistency: (player, market, line) => consistency(player, market, line, m.tour), aces: { a: aceA ? { counts: aceA, rates: ratesA } : null, b: aceB ? { counts: aceB, rates: ratesB } : null } });
     builder.matches.push({ id, tour: m.tour, event: m.eventName, round: m.round, commenceMs: Date.parse(m.date), a: m.a.name, b: m.b.name, pFinal, flags });
     builder.legs.push(...matchLegs);
     const lean = leanFor(matchLegs, { read: { pMarket, pModel, pFinal, thin, thinNames: thinNames.join(' and ') } });
-    const prop = propFor(matchLegs);
+    const prop = thin ? null : propFor(matchLegs);
     // Where no book prices the aces ladder, the old aces leg stands: the number the model clears at ACE_PROB, the price left to the user's book.
     const bareAce = thin || quotesOf(deep, 'player_aces').length ? null
       : readMatch(m, { dist, aceA, aceB, board, deep, ratesA, ratesB, pMarket, pModel, context }).filter((l) => l.market === 'aces' && clearsBar(l) && !flags[l.side].length).sort((x, y) => y.prob - x.prob)[0] ?? null;
-    const closest = matchLegs.filter((l) => l.side && ['ml', 'set_spread', 'set1_ml', 'games_spread'].includes(l.market) && l.prob >= LEAN_MIN_PROB).sort((x, y) => y.edge - x.edge)[0] ?? null;
+    const closest = matchLegs.filter((l) => l.side && (thin ? ['ml'] : ['ml', 'set_spread', 'set1_ml', 'games_spread']).includes(l.market) && l.prob >= LEAN_MIN_PROB).sort((x, y) => y.edge - x.edge)[0] ?? null;
     const passed = lean || prop || bareAce ? null
       : closest && closest.edge >= LEAN_MIN_EDGE && closest.flags.length ? `the one side worth a bet is flagged for ${closest.flags.join(' and ')}`
-        : closest ? `no price leaves room: the closest is ${closest.selection} at ${Math.max(...closest.quotes.map((x) => x.american))}, ${Math.abs(Math.round(closest.edge * 100))} points ${closest.edge < 0 ? 'short of what it asks' : `over what it asks, under the ${Math.round(LEAN_MIN_EDGE * 100)} a lean needs`}`
+        : closest ? `no price leaves room: the closest is ${closest.selection} at ${Math.max(...closest.quotes.map((x) => x.american))}, ${Math.abs(Math.round(closest.edge * 100))} point${Math.abs(Math.round(closest.edge * 100)) === 1 ? '' : 's'} ${closest.edge < 0 ? 'short of what it asks' : `over what it asks, under the ${Math.round(LEAN_MIN_EDGE * 100)} a lean needs`}`
           : 'no side on the board the read makes better than even';
     record.reads[id] = { ...base, serve: { pA: Math.round(fit.pA * 10000) / 10000, pB: Math.round(fit.pB * 10000) / 10000 }, bestOf: m.bestOf, pMarket: pMarket != null ? Math.round(pMarket * 1000) / 1000 : null, pModel, pFinal, pElo: read.pElo, meanGames: Math.round(dist.meanGames * 10) / 10, straightSets: Math.round(dist.straightSets * 100) / 100, dogSet: Math.round(dogSet * 100) / 100, flags, form: { a: formLine(m.a.name, formA), b: formLine(m.b.name, formB) }, style: { a: styleA?.style ?? null, b: styleB?.style ?? null }, reasons: read.reasons, thin, legs: matchLegs.length, clear: lean ? 1 + lean.alternates.length : 0, lean: lean ? lean.main.short : null, passed };
     if (lean) { lean.posted = postedView(lean.main.market === 'aces' ? acePosted : sidePosted); leans.push(lean); }
@@ -563,16 +564,20 @@ export async function runTennisTick(env, ctx, now = Date.now(), { deps = {} } = 
   const tourCount = (tour, aces) => record.plays.filter((p) => p.tour === tour && p.market !== 'ml_parlay' && (p.market === 'aces') === aces).length;
   const playOf = (q, leg, extra) => ({ id: `${q.id}:${leg.market}`, matchId: q.id, tour: q.m.tour, event: q.m.eventName, tier: q.m.tier, round: q.m.round, surface: q.surface, commenceMs: Date.parse(q.m.date), a: q.m.a.name, b: q.m.b.name, aId: q.m.a.id, bId: q.m.b.id, market: leg.market, side: leg.side ?? null, selection: leg.selection, point: leg.point ?? null, sideWord: leg.sideWord ?? null, prob: leg.prob, implied: leg.implied ?? null, edge: leg.edge ?? null, bookId: leg.bookId ?? null, book: leg.book ?? null, american: leg.american ?? null, link: leg.link ?? null, why: leg.why ?? [], flags: { a: q.flags.a, b: q.flags.b }, stars: stars(leg.prob), ...extra, postedAt: now, status: 'pending', result: null, net: null, actual: null });
   // Three passes, so a prop never takes the units a likelier lean needed: the leans by confidence, then the priced aces, then the aces no book prices.
-  const byLean = [...queue].filter((q) => q.lean).sort((x, y) => y.lean.confidence - x.lean.confidence);
+  const order = new Map(sortLeans(leans).map((l, i) => [l, i]));
+  const byLean = [...queue].filter((q) => q.lean).sort((x, y) => order.get(x.lean) - order.get(y.lean));
+  // Once a lean finds the day's units placed, no less likely one is tracked behind it: a half unit never jumps the queue.
+  let capped = false;
   for (const q of byLean) {
     const { lean } = q;
     if (lean.main.market === 'aces' || lean.how !== 'straight' || q.sidePosted) continue;
-    if (tourCount(q.m.tour, false) >= MAX_PER_TOUR) lean.note = `not tracked: ${MAX_PER_TOUR} plays on the tour already today`;
-    else if (!roomFor(lean.main.market, lean.units)) lean.note = `not tracked: the day's ${MAX_UNITS_DAY} units are placed`;
+    if (lean.thin) lean.note = 'not tracked: a price-and-form read, no serve numbers on file';
+    else if (tourCount(q.m.tour, false) >= MAX_PER_TOUR) lean.note = `not tracked: ${MAX_PER_TOUR} plays on the tour already today`;
+    else if (capped || !roomFor(lean.main.market, lean.units)) { capped = true; lean.note = `not tracked: the day's ${MAX_UNITS_DAY} units are placed`; }
     else { const play = playOf(q, { ...lean.main, why: lean.why }, { units: lean.units, conviction: lean.conviction, how: lean.howText }); record.plays.push(play); lean.posted = postedView(play); posted++; }
   }
   const postAce = (q, ace, units) => {
-    if (q.acePosted || tourCount(q.m.tour, true) >= MAX_ACES_PER_TOUR || !roomFor('aces', units)) return;
+    if (capped || q.acePosted || tourCount(q.m.tour, true) >= MAX_ACES_PER_TOUR || !roomFor('aces', units)) return;
     const play = playOf(q, ace, { units, conviction: 'lean' });
     record.plays.push(play); posted++;
     if (q.lean?.main.market === 'aces') q.lean.posted = postedView(play);
