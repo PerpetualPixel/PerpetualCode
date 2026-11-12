@@ -50,4 +50,6 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
           GH_REPO: ${{ github.repository }}
-        run: gh workflow run espn-lineups.yml --ref main
+        # force: this run's own last heartbeat is minutes old, and without it the successor read that as another chain alive and stood
+        # aside, so the chain died at every handoff until a cron firing revived it (2026-11-12: down from 03:50 to 11:32 UTC).
+        run: gh workflow run espn-lineups.yml --ref main -f force=true
