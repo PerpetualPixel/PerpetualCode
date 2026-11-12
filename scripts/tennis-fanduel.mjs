@@ -27,7 +27,7 @@ const API = 'https://sbapi.nj.sportsbook.fanduel.com/api';
 // The key FanDuel's own web page sends with every read of its public page data.
 const AK = 'FhMFpcPWXMeyZxOx';
 const TENNIS = 2;
-const UA = 'PerpetualPicks/1.0 (+https://perpetualpicks.com; reads the public tennis page data twice an hour)';
+const UA = 'PerpetualPicks/1.0 (+https://perpetualpicks.com; reads the public tennis page data three times an hour)';
 const LOOKAHEAD_MS = 36 * 3600e3;
 const MAX_MATCHES = 40;
 // With no card to go by: the tour-level competitions by name, the Challenger and ITF weeks left out.
