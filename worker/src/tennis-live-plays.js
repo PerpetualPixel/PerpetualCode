@@ -230,6 +230,8 @@ export async function runTennisLiveTick(env, ctx, now = Date.now(), { deps = {},
 /** The Live tab's read: the matches in play with their reads and plays, today's plays, the recent days and the record, moneyline and sets apart. */
 export async function getTennisLivePlays(env, now = Date.now(), { days = 30 } = {}) {
   const reads = (await readJson(env, TENNIS_LIVE_READS_KEY)) ?? { at: null, matches: [] };
+  // When the minute tick last ran and when it runs next: the tab (and a probe) can tell a resting tick from a stopped one.
+  const tick = (await readJson(env, TENNIS_LIVE_STATE_KEY)) ?? {};
   const index = (await readJson(env, TENNIS_LIVE_PLAYS_INDEX)) ?? { dates: [] };
   const today = etParts(now).date;
   const dates = [...new Set([today, ...index.dates])].sort().reverse().slice(0, days);
@@ -237,7 +239,7 @@ export async function getTennisLivePlays(env, now = Date.now(), { days = 30 } = 
   for (const d of dates) { const r = await readJson(env, tennisLivePlaysKey(d)); if (r?.plays?.length) history.push({ date: r.date, plays: r.plays }); }
   const all = history.flatMap((r) => r.plays);
   return {
-    at: reads.at, fresh: reads.at != null && now - reads.at < 5 * 60e3, matches: reads.at != null && now - reads.at < 10 * 60e3 ? reads.matches : [],
+    at: reads.at, tickAt: tick.at ?? null, nextTickAt: tick.nextAt ?? null, fresh: reads.at != null && now - reads.at < 5 * 60e3, matches: reads.at != null && now - reads.at < 10 * 60e3 ? reads.matches : [],
     today: history.find((r) => r.date === today)?.plays ?? [], history,
     record: { ml: liveRecordOf(all.filter((p) => p.market === 'live_ml')), sets: liveRecordOf(all.filter((p) => p.market === 'live_set')) },
   };

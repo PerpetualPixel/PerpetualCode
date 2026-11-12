@@ -95,7 +95,7 @@ jobs:
                 }
                 if (d && d.record && d.record.ml && Array.isArray(d.matches) && Array.isArray(d.today)) {
                 // Live tennis (worker/src/tennis-live-plays.js getTennisLivePlays): the matches in play with their reads, the plays posted today, the record.
-                console.log("TENNIS LIVE read at", d.at && new Date(d.at).toISOString(), "| fresh", d.fresh, "| in play", d.matches.length, "| plays today", d.today.length, "| record ml", JSON.stringify(d.record.ml), "sets", JSON.stringify(d.record.sets));
+                console.log("TENNIS LIVE read at", d.at && new Date(d.at).toISOString(), "| tick at", d.tickAt && new Date(d.tickAt).toISOString(), "next", d.nextTickAt && new Date(d.nextTickAt).toISOString(), "| fresh", d.fresh, "| in play", d.matches.length, "| plays today", d.today.length, "| record ml", JSON.stringify(d.record.ml), "sets", JSON.stringify(d.record.sets));
                 for (const m of d.matches) { console.log("  MATCH", m.tour, m.a, "v", m.b, "|", (m.sets || []).map((s) => s.join("-")).join(" "), "| prob", m.prob, "model", JSON.stringify(m.model), "market", m.market, "| games seen", m.games, "| serve first", m.serve && m.serve.first, "sure", m.serve && m.serve.sure, "holds", m.serve && JSON.stringify([m.serve.a, m.serve.b]), "| source", m.serve && m.serve.source, "| quotes", JSON.stringify(m.quotes)); for (const w of m.why || []) console.log("    WHY", w); }
                 for (const p of d.today) console.log("  PLAY", p.market, "|", p.selection, "| prob", p.prob, "edge", p.edge, "| price", p.american, p.book, "playable", p.playable, "| units", p.units, "| at", p.score, "|", p.status, p.result, p.actual, p.profit);
                 return;
@@ -134,6 +134,9 @@ jobs:
                   if (d.props) console.log("PROPS legs", (d.props.legs || []).length, "| cappers read", JSON.stringify(d.props.cappers));
                   if (d.props && d.props.board) { const b = d.props.board; const legs = d.props.legs || []; const fromBoard = legs.filter((l) => (l.quotes || []).some((q) => q.source === "bestfightodds")); console.log("BOARD", b.source, "read", b.at && new Date(b.at).toISOString(), "| events", (b.events || []).map((e) => e.title).join(" / "), "| bouts", b.bouts, "| priced", b.priced, "| legs with a board quote", fromBoard.length, "of", legs.length); for (const l of fromBoard.slice(0, 12)) console.log("  PRICED", l.prop, "|", l.selection, "|", (l.quotes || []).slice(0, 3).map((q) => `${q.bookId} ${q.american > 0 ? "+" : ""}${q.american}`).join(", ")); }
                   else if (d.props) console.log("BOARD none (no board read in the record)");
+                  // FanDuel (worker/src/ufc-fanduel.js): the bouts matched, the legs carrying an add-to-slip link by prop, and a sample of them.
+                  if (d.props && d.props.fanduel) { const legs = d.props.legs || []; const linked = legs.filter((l) => (l.quotes || []).some((q) => q.source === "fanduel")); const by = {}; for (const l of linked) by[l.prop] = (by[l.prop] || 0) + 1; console.log("FANDUEL read at", d.props.fanduel.at && new Date(d.props.fanduel.at).toISOString(), "| bouts", d.props.fanduel.bouts, "| legs linked", linked.length, "of", legs.length, "|", JSON.stringify(by)); for (const l of linked.slice(0, 6)) { const q = l.quotes.find((x) => x.source === "fanduel"); console.log("  FD", l.selection, "|", q.american, "|", q.link); } }
+                  else if (d.props) console.log("FANDUEL none (no FanDuel card read in the record)");
                   if (d.underdog) console.log("UNDERDOG", d.underdog.name, "vs", d.underdog.opponent, d.underdog.american, "chance", d.underdog.chance);
                   return;
                 }
