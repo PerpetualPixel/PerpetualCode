@@ -420,3 +420,23 @@ test('a yes-or-no market reads as Over 0.5 on the player; a first-basket field i
   const sorted = sortTrends([{ rates: { l20: 0.1 }, decimal: 2 }, fav, { rates: {}, decimal: 3 }], { window: 'l20' });
   assert.equal(sorted[0], fav);
 });
+
+test('suggestedUnits sizes a stake by confidence: by the chance when a model gives one, else by the Pixel score, half a unit to two', async () => {
+  const { suggestedUnits } = await import('../docs/trends.js');
+  assert.deepEqual([5, 4.7, 4.5, 4.2, 3.9, 3.5, 3, 0].map((score) => suggestedUnits({ score })), [2, 2, 1.5, 1.5, 1, 1, 0.5, 0.5]);
+  assert.deepEqual([0.9, 0.8, 0.75, 0.7, 0.62, 0.6, 0.55].map((prob) => suggestedUnits({ prob })), [2, 2, 1.5, 1.5, 1, 1, 0.5]);
+  assert.equal(suggestedUnits({ score: 5, prob: 0.55 }), 0.5, 'the chance wins over the score');
+  assert.equal(suggestedUnits(), 0.5);
+});
+
+test('winLikelihood pulls the last-20 hit rate toward the price, as five more games, so a short log or a long price cannot read as a lock', async () => {
+  const { winLikelihood, suggestedUnits } = await import('../docs/trends.js');
+  const near = (a, b) => assert.ok(Math.abs(a - b) < 0.005, `${a} vs ${b}`);
+  near(winLikelihood({ hits: 12, games: 14, american: -105 }), 0.766);
+  near(winLikelihood({ hits: 16, games: 20, american: -270 }), 0.786);
+  near(winLikelihood({ hits: 20, games: 20, american: -200 }), 0.933);
+  near(winLikelihood({ hits: 0, games: 0, american: 150 }), 0.4);
+  assert.equal(winLikelihood({ hits: 9, games: 10 }), 0.9, 'no price: the plain rate');
+  assert.equal(winLikelihood(), null);
+  assert.equal(suggestedUnits({ prob: winLikelihood({ hits: 0, games: 0, american: 150 }) }), 0.5, 'a plus-money line with no log is a half unit');
+});

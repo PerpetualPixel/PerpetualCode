@@ -69,7 +69,6 @@ import { legBreakdown } from './parlay-builder.js';
 import { runTrendPicksDaily, runTrendPicksGrading, getTrendPicks } from './trend-picks.js';
 import { runLiveProbe, getLiveProbe } from './live-probe.js';
 import { getLiveBoard, getLiveRecap } from './live-board.js';
-import { getMyPicks } from './my-picks.js';
 
 /** The Trends build's own cron (must match wrangler.toml's second trigger exactly — Cloudflare hands the string back as written). */
 export const TRENDS_CRON = '7,22,37,52 * * * *';
@@ -1626,20 +1625,8 @@ export default {
 
     // Today's Pixel's Picks and the last 30 days, with the running record
     // (worker/src/trend-picks.js). KV only.
-    // The signed-in user's own ticket (worker/src/my-picks.js): drawn to
-    // the account's pick settings the first read of the day, graded on
-    // read; POST draws it again while no leg has started.
-    if (pathname === '/trend-picks/mine' && (request.method === 'GET' || request.method === 'POST')) {
-      const payload = await authenticateRequest(request, env);
-      if (!payload) return json({ error: 'unauthorized' }, { status: 401, headers: cors });
-      try {
-        const settings = await getSettings(env, payload.userId);
-        const data = await getMyPicks(env, ctx, payload.userId, Date.now(), { prefs: settings?.picks ?? null, redraw: request.method === 'POST' });
-        return json(data, { headers: { ...cors, 'Cache-Control': 'no-store' } });
-      } catch (error) {
-        return json({ error: String(error).slice(0, 120) }, { status: 500, headers: cors });
-      }
-    }
+    // The personal ticket is gone (2026-11-12 direction: every user sees the same Pixel's Pick): the route answers that plainly to an old client.
+    if (pathname === '/trend-picks/mine') return json({ error: 'The personal ticket was retired; everyone sees the same Pixel\'s Pick.', retired: true }, { status: 410, headers: cors });
 
     if (pathname === '/trend-picks' && request.method === 'GET') {
       try {
