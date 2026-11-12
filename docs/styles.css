@@ -7442,6 +7442,8 @@ a.trend-price:hover { background: rgba(255, 255, 255, 0.06); }
 .live-tennis-row strong { flex: 1 1 auto; min-width: 0; }
 .live-tennis-row strong small { color: var(--muted); font-weight: 600; margin: 0 4px; }
 .live-tennis-match .row-sub { margin: 0; }
+/* Player search over every sport (2026-11-12): each result's league tag, set off from the team beside it. */
+.players-meta { display: inline-flex; align-items: center; gap: 6px; }
 /* Live plays as they age (2026-11-12): the count on the game card, how long ago a play was posted, and a leg's number then against now. */
 .live-plays-badge { display: inline-flex; align-items: center; gap: 4px; padding: 3px 10px; border-radius: 999px; background: color-mix(in srgb, var(--success) 18%, transparent); border: 1px solid color-mix(in srgb, var(--success) 55%, transparent); color: var(--success); font-size: 0.72rem; font-weight: 800; white-space: nowrap; }
 .live-plays-badge .live-posted { color: inherit; font-weight: 600; opacity: 0.85; }
