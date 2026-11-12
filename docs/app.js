@@ -10165,45 +10165,78 @@ el.trendPicksView?.addEventListener('keydown', (event) => {
 });
 
 /* ================================================================ */
-/* Players: any NBA or NFL player's game log at a number (worker/src/player-search.js) */
+/* Players: any player's game log at a number (worker/src/player-search.js). One search over every  */
+/* sport (2026-11-12: "have it search all sports, remove the sports to toggle"): the NBA, NFL, NHL   */
+/* and soccer indexes, the tennis players and the UFC fighters, each result tagged with its league.  */
 /* ================================================================ */
 
 const playersState = {
-  sport: 'basketball_nba', index: {}, stats: {}, player: null, stat: '', side: 'over', point: '',
+  sport: 'basketball_nba', index: {}, stats: {}, all: null, matches: [], player: null, stat: '', side: 'over', point: '',
   log: null, loading: false, window: 'all', filters: { opponent: '', venue: 'both', seasons: null, playoffs: 'include' }, focus: -1,
 };
 const PLAYER_LEAGUES = [['basketball_nba', 'NBA'], ['americanfootball_nfl', 'NFL'], ['icehockey_nhl', 'NHL'], ['soccer', 'Soccer']];
 /** The tab a league's rows sit under: the five soccer leagues share the one Soccer tab. */
 const playerTabOf = (sportKey) => (String(sportKey ?? '').startsWith('soccer_') ? 'soccer' : sportKey);
 /** The league a player's log, logos and season names live under: his own on the Soccer tab, the tab's elsewhere. */
-const playerSportOf = (p) => p?.sportKey ?? playersState.sport;
+const playerSportOf = (p) => p?.sportKey ?? p?.tab ?? playersState.sport;
 const foldName = (s) => String(s ?? '').normalize('NFD').replace(/[̀-ͯ]/g, '').toLowerCase().replace(/[^a-z0-9]+/g, ' ').trim();
 
-async function loadPlayers(sport = playersState.sport) {
-  if (!el.playersView || !CONFIG.WORKER_URL) return;
-  if (playersState.index[sport]) { renderPlayers(); return; }
-  showLoading(el.playersStatus, 'Loading players…');
+/** One league's index, read once; a read that fails is tried again the next time the tab opens. */
+async function loadPlayerIndex(sport) {
+  if (playersState.index[sport]) return;
   try {
     const url = new URL('/players', CONFIG.WORKER_URL); url.searchParams.set('sport', sport);
     const res = await fetch(url, { headers: { Accept: 'application/json' } });
     const body = await res.json();
     playersState.index[sport] = body.players ?? [];
     playersState.stats[sport] = body.stats ?? [];
-    el.playersStatus.textContent = body.players?.length ? '' : 'No players yet: the ESPN bundle has not run for this league.';
-  } catch {
-    el.playersStatus.textContent = "Couldn't reach the worker.";
-  }
+    playersState.all = null;
+  } catch { /* left unread */ }
+}
+/** The tennis players (the Trends tab's tennis read) and the UFC fighters (the UFC tab's index), read here when their own tabs have not. */
+async function loadPlayerExtras() {
+  const jobs = [];
+  if (!tennisTrendsState.data) jobs.push(fetch(new URL('/tennis/trends', CONFIG.WORKER_URL), { headers: { Accept: 'application/json' } }).then((r) => (r.ok ? r.json() : null)).then((d) => { if (d && !tennisTrendsState.data) tennisTrendsState.data = d; }).catch(() => {}));
+  if (!ufcState.fighters) jobs.push(fetch(new URL('/ufc/fighters', CONFIG.WORKER_URL), { headers: { Accept: 'application/json' } }).then((r) => r.json()).then((d) => { if (!ufcState.fighters) ufcState.fighters = d.fighters ?? []; }).catch(() => {}));
+  await Promise.all(jobs);
+  playersState.all = null;
+}
+/** Every sport's players, loaded together; with a league named, that one is waited for and the rest follow. */
+async function loadPlayers(sport = null) {
+  if (!el.playersView || !CONFIG.WORKER_URL) return;
+  const have = () => PLAYER_LEAGUES.every(([k]) => playersState.index[k]) && tennisTrendsState.data && ufcState.fighters;
+  if (have()) { renderPlayers(); return; }
+  if (!playersState.player) showLoading(el.playersStatus, 'Loading players…');
+  const landed = () => { renderPlayers(); if (document.activeElement === el.playersQuery) renderPlayerList(); };
+  const everything = Promise.all([...PLAYER_LEAGUES.map(([k]) => loadPlayerIndex(k).then(landed)), loadPlayerExtras().then(landed)]).then(() => {
+    if (playersState.player || playersState.log) return;
+    const n = allPlayers().length;
+    el.playersStatus.textContent = n ? `${n.toLocaleString()} players and fighters across the NBA, NFL, NHL, soccer, tennis and the UFC. Type a name.` : "Couldn't reach the worker.";
+  });
+  await (sport ? loadPlayerIndex(sport) : everything);
   renderPlayers();
 }
 
-/** Players whose name contains the typed words, as the user types; up to twelve. */
+/** Every searchable name in one list, each tagged with where it came from: a league's index (kind team, with its tab), a tennis player, a UFC fighter. */
+function allPlayers() {
+  if (playersState.all) return playersState.all;
+  const out = [];
+  for (const [tab] of PLAYER_LEAGUES) for (const p of playersState.index[tab] ?? []) out.push({ ...p, kind: 'team', tab, tag: SPORT_SHORT[p.sportKey ?? tab] ?? tab });
+  for (const p of tennisTrendsState.data?.players ?? []) out.push({ kind: 'tennis', id: `${p.tour}:${p.key}`, name: p.name, team: '', tag: TENNIS_TOUR_LABEL[p.tour] ?? 'Tennis', meta: p.record ?? '', tennis: p });
+  for (const f of ufcState.fighters ?? []) out.push({ kind: 'ufc', id: f.id, name: f.name, team: '', tag: 'UFC', meta: [f.weightClass, f.record ? recordText(f.record) : null].filter(Boolean).join(' · '), nickname: f.nickname ?? null, fighter: f });
+  for (const p of out) p.folded = foldName(p.nickname ? `${p.name} ${p.nickname}` : p.name);
+  playersState.all = out;
+  return out;
+}
+
+/** Players whose name contains the typed words, as the user types, across every sport; up to twelve. */
 function playerMatches(query) {
   const words = foldName(query).split(' ').filter(Boolean);
   if (!words.length) return [];
-  const list = playersState.index[playersState.sport] ?? [];
+  const list = allPlayers();
   const scored = [];
   for (const p of list) {
-    const name = foldName(p.name);
+    const name = p.folded;
     if (!words.every((w) => name.includes(w))) continue;
     scored.push({ p, rank: name.startsWith(words[0]) ? 0 : name.split(' ').some((part) => part.startsWith(words[0])) ? 1 : 2 });
   }
@@ -10212,15 +10245,20 @@ function playerMatches(query) {
 
 function renderPlayerList() {
   const matches = playerMatches(el.playersQuery.value);
+  playersState.matches = matches;
   el.playersList.hidden = !matches.length;
-  el.playersList.innerHTML = matches.map((p, i) => `<li role="option" class="${i === playersState.focus ? 'is-focus' : ''}" data-player-id="${esc(p.id)}" data-player-team="${esc(p.team)}" aria-selected="${i === playersState.focus}">
-      ${p.headshot ? `<img src="${esc(p.headshot)}" alt="" loading="lazy">` : '<span class="players-initials"></span>'}
-      <span class="players-name">${esc(p.name)}</span><span class="players-meta">${esc(p.team)}${p.position ? ` · ${esc(p.position)}` : ''}</span>
+  el.playersList.innerHTML = matches.map((p, i) => `<li role="option" class="${i === playersState.focus ? 'is-focus' : ''}" data-player-id="${esc(p.id)}" data-player-i="${i}" aria-selected="${i === playersState.focus}">
+      ${p.kind === 'ufc' ? ufcAvatar(p.fighter, 34) : p.headshot ? `<img src="${esc(p.headshot)}" alt="" loading="lazy">` : '<span class="players-initials"></span>'}
+      <span class="players-name">${esc(p.name)}${p.nickname ? ` <small>"${esc(p.nickname)}"</small>` : ''}</span><span class="players-meta"><span class="trend-league">${esc(p.tag)}</span>${p.kind === 'team' ? `${esc(p.team)}${p.position ? ` · ${esc(p.position)}` : ''}` : esc(p.meta ?? '')}</span>
     </li>`).join('');
 }
 
 function pickPlayer(player) {
+  // A fighter has no game log at a number: his sheet (the record, the last five, the methods) opens over the tab.
+  if (player.kind === 'ufc') { el.playersList.hidden = true; el.playersQuery.value = player.name; openUfcFighter(player.id, player.name); return; }
   playersState.player = player;
+  // The league follows the player, so the prop types offered are his league's.
+  if (player.kind !== 'tennis' && player.tab) playersState.sport = player.tab;
   playersState.log = null;
   playersState.filters = { opponent: '', venue: 'both', seasons: null, playoffs: 'include' };
   el.playersQuery.value = player.name;
@@ -10230,16 +10268,22 @@ function pickPlayer(player) {
 
 function renderPlayers() {
   if (!el.playersView) return;
-  el.playersLeagues.innerHTML = PLAYER_LEAGUES.map(([key, label]) => `<button type="button" class="league-chip is-sport ${playersState.sport === key ? 'is-active' : ''}" data-players-league="${esc(key)}" aria-pressed="${playersState.sport === key}">${sportIcon(key)}<span class="league-chip-label">${esc(label)}</span>${chipTick(playersState.sport === key)}</button>`).join('');
-  const stats = playersState.stats[playersState.sport] ?? [];
-  if (!stats.some((s) => s.key === playersState.stat)) playersState.stat = stats[0]?.key ?? '';
-  el.playersStat.innerHTML = stats.map((s) => `<option value="${esc(s.key)}" ${s.key === playersState.stat ? 'selected' : ''}>${esc(s.label)}</option>`).join('');
+  const picked = playersState.player;
+  const tennis = picked?.kind === 'tennis';
+  // The prop types are the picked player's league's; none until a player is picked.
+  const stats = picked && !tennis ? playersState.stats[playersState.sport] ?? [] : [];
+  if (picked && !tennis && !stats.some((s) => s.key === playersState.stat)) playersState.stat = stats[0]?.key ?? '';
+  el.playersStat.innerHTML = stats.length ? stats.map((s) => `<option value="${esc(s.key)}" ${s.key === playersState.stat ? 'selected' : ''}>${esc(s.label)}</option>`).join('') : '<option value="">Pick a player first</option>';
+  el.playersStat.disabled = !stats.length;
+  if (el.playersForm) el.playersForm.hidden = tennis;
   el.playersSide.value = playersState.side;
   if (document.activeElement !== el.playersPoint) el.playersPoint.value = playersState.point;
   const p = playersState.player;
   const injury = playersState.log?.player?.injury ?? null;
-  el.playersPicked.innerHTML = p ? `<div class="players-card">${avatarHtml({ playerName: p.name, team: p.team, sportKey: playerSportOf(p), headshot: p.headshot }, 'trend-avatar')}<div><p class="trend-player">${esc(p.name)}<small>${esc(p.team)}</small>${p.sportKey ? `<span class="trend-league">${esc(SPORT_SHORT[p.sportKey] ?? p.sportKey)}</span>` : ''}</p><p class="trend-line">${esc(p.position ?? '')}</p>${injuryTag(injury)}</div><button type="button" class="players-clear" data-players-clear aria-label="Clear player">✕</button></div>` : '';
-  el.playersSearchBtn.disabled = !(p && playersState.stat && Number.isFinite(Number(playersState.point)) && playersState.point !== '');
+  el.playersPicked.innerHTML = tennis ? `<div class="players-card"><div><p class="trend-player">${esc(p.name)}<span class="trend-league">${esc(p.tag)}</span></p><p class="trend-line">${esc(p.meta ?? '')}</p></div><button type="button" class="players-clear" data-players-clear aria-label="Clear player">×</button></div>` : p ? `<div class="players-card">${avatarHtml({ playerName: p.name, team: p.team, sportKey: playerSportOf(p), headshot: p.headshot }, 'trend-avatar')}<div><p class="trend-player">${esc(p.name)}<small>${esc(p.team)}</small><span class="trend-league">${esc(p.tag ?? SPORT_SHORT[playerSportOf(p)] ?? '')}</span></p><p class="trend-line">${esc(p.position ?? '')}</p>${injuryTag(injury)}</div><button type="button" class="players-clear" data-players-clear aria-label="Clear player">✕</button></div>` : '';
+  el.playersSearchBtn.disabled = !(p && !tennis && playersState.stat && Number.isFinite(Number(playersState.point)) && playersState.point !== '');
+  // A tennis player has no game log at a number here: his card from the Trends tab, every line open.
+  if (tennis) { tennisTrendsState.open[`${p.tennis.tour}:${p.tennis.key}`] = true; el.playersResult.innerHTML = renderTennisTrendPlayer(p.tennis); el.playersStatus.textContent = 'Tennis lines are the highest number the player cleared in most of his recent matches; the full tour is on the Trends tab.'; return; }
   renderPlayerResult();
 }
 
@@ -10339,16 +10383,14 @@ async function openPlayerSearch({ sportKey, id, name, team, headshot, stat, poin
   setActiveTab('players');
   await loadPlayers(playersState.sport);
   const known = (playersState.index[playersState.sport] ?? []).find((x) => String(x.id) === String(id));
-  pickPlayer(known ?? { id, name, team, headshot: headshot ?? null, position: null });
+  pickPlayer(known ? { ...known, kind: 'team', tab: playersState.sport, tag: SPORT_SHORT[known.sportKey ?? playersState.sport] } : { id, name, team, headshot: headshot ?? null, position: null, kind: 'team', tab: playersState.sport, tag: SPORT_SHORT[sportKey] ?? SPORT_SHORT[playersState.sport] });
   if (playersState.player.id && playersState.player.team) await runPlayerSearch();
   else el.playersStatus.textContent = 'This player is not in the ESPN bundle yet.';
 }
 
 el.playersView?.addEventListener('click', (event) => {
-  const chip = event.target.closest('[data-players-league]');
-  if (chip) { playersState.sport = chip.dataset.playersLeague; playersState.player = null; playersState.log = null; el.playersQuery.value = ''; el.playersList.hidden = true; loadPlayers(playersState.sport); return; }
-  const item = event.target.closest('[data-player-id]');
-  if (item) { const p = (playersState.index[playersState.sport] ?? []).find((x) => String(x.id) === item.dataset.playerId && x.team === item.dataset.playerTeam); if (p) pickPlayer(p); return; }
+  const item = event.target.closest('[data-player-i]');
+  if (item) { const p = playersState.matches[Number(item.dataset.playerI)]; if (p) pickPlayer(p); return; }
   if (event.target.closest('[data-players-clear]')) { playersState.player = null; playersState.log = null; el.playersQuery.value = ''; renderPlayers(); el.playersQuery.focus(); return; }
   const filter = event.target.closest('[data-players-filter]');
   if (filter) { playersState.filters[filter.dataset.playersFilter] = filter.dataset.value; renderPlayerResult(); return; }
