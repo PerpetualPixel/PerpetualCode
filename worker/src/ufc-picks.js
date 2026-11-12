@@ -64,6 +64,7 @@ export async function getUfcMode(env) {
 /** Per pairing and per engine run: a new consensus re-reads the bout. */
 export const ufcBreakdownKey = (bout, engineStamp = '') => `ufc:breakdown:v3:${bout.id}:${bout.a?.id ?? '-'}-${bout.b?.id ?? '-'}:${engineStamp}`;
 export const ufcEngineKey = 'ufc:engine';
+import { withTracker } from './ufc-tracker.js';
 export const MMA_ENGINE_URL = 'https://perpetualpixel.github.io/MMA_Engine/picks.json';
 export const MMA_ENGINE_PAGE = 'https://perpetualpixel.github.io/MMA_Engine/';
 const bookName = (id) => SPORTSBOOKS[id]?.name ?? id;
@@ -232,7 +233,7 @@ export function engineForBout(bout, feed) {
   const mine = (feed?.picks ?? []).filter((p) => fightIsBout(p.fight, bout));
   if (!mine.length) return null;
   const sideOf = (selection) => { const n = nameKey(String(selection ?? '').replace(/\s+by\s+.*$/i, '')); const exact = matchSide(n, a, b); if (exact) return exact; const sn = surname(n); return surnamesAlike(sn, sa) && !surnamesAlike(sn, sb) ? 'a' : surnamesAlike(sn, sb) && !surnamesAlike(sn, sa) ? 'b' : null; };
-  const shape = (p) => ({ selection: p.selection, side: sideOf(p.selection), method: /\sby\s/i.test(String(p.selection ?? '')) ? methodClass(String(p.selection).replace(/^.*\sby\s+/i, '')) : null, consensusPct: p.consensusPct, strength: p.strength, tier: p.tier, pickCount: p.pickCount, suggestedUnits: p.suggestedUnits, quotedOdds: Number.isFinite(Number(p.quotedOdds)) ? Number(p.quotedOdds) : null, comments: p.comments ?? [] });
+  const shape = (p) => ({ selection: p.selection, side: sideOf(p.selection), method: /\sby\s/i.test(String(p.selection ?? '')) ? methodClass(String(p.selection).replace(/^.*\sby\s+/i, '')) : null, consensusPct: p.consensusPct, strength: p.strength, tier: p.tier, pickCount: p.pickCount, suggestedUnits: p.suggestedUnits, quotedOdds: Number.isFinite(Number(p.quotedOdds)) ? Number(p.quotedOdds) : null, comments: p.comments ?? [], source: p.source ?? null });
   const ml = mine.find((p) => p.market === 'moneyline');
   return { moneyline: ml ? shape(ml) : null, methods: mine.filter((p) => p.market === 'method_of_victory').map(shape), cancelled: mine.some((p) => p.cardStatus === 'cancelled') };
 }
@@ -377,6 +378,8 @@ export function parseUfcBreakdown(text, bout) {
 export function capperLine(engine) {
   const ml = engine?.moneyline; const methods = engine?.methods ?? [];
   const methodText = methods.length ? `Method calls: ${methods.map((m) => `${m.selection} (${m.consensusPct}%, ${m.tier})`).join('; ')}.` : '';
+  // The tracker's entry says its counts in its own words (the field, the best predictors, the favourite and underdog predictors, the method predictors).
+  if (ml?.source) return `Capper consensus (${ml.source}, ${ml.pickCount} prediction channels): ${ml.consensusPct}% back ${ml.selection} with the field and the best predictors weighed equally, ${ml.tier}. ${(ml.comments ?? []).join('. ')}.${methodText ? ` ${methodText}` : ''}`;
   if (ml) return `Capper consensus (the MMA Engine, ${ml.pickCount} picks): ${ml.consensusPct}% back ${ml.selection}, strength ${ml.strength} of 10, ${ml.tier}.${methodText ? ` ${methodText}` : ''}`;
   if (methodText) return `No moneyline consensus from the cappers on this bout. ${methodText}`;
   return 'No capper consensus on this bout.';
@@ -632,11 +635,13 @@ export async function runUfcTick(env, ctx, now = Date.now(), { deps = {} } = {})
   if (!locked) {
     const odds = await fetchUfcOdds(env, ctx, lock, now, { deps });
     record.oddsAt = odds.at ?? record.oddsAt;
-    const engineFeed = await fetchMmaEngine(env, now, { deps });
+    // The engine's feed, or, while it has nothing on this card, the predictions tracker's entry for it (worker/src/ufc-tracker.js).
+    const engineRaw = await fetchMmaEngine(env, now, { deps });
+    const engineFeed = deps.tracker === false ? engineRaw : withTracker(engineRaw, event, enginePicksForEvent(event, engineRaw).length);
     const engineStamp = engineFeed.generatedAt ? String(engineFeed.generatedAt).replace(/[^0-9]/g, '').slice(0, 12) : '';
     // Only this card's fights: a feed still naming the last card leaves the section empty until the engine's next run.
     const cardPicks = enginePicksForEvent(event, engineFeed);
-    record.engine = { generatedAt: cardPicks.length ? engineFeed.generatedAt : null, event: cardPicks.length ? engineFeed.event : null, totals: cardPicks.length ? engineFeed.totals ?? null : null, page: MMA_ENGINE_PAGE, picks: cardPicks.filter((p) => p.tier !== 'pass').map((p) => ({ fight: p.fight, market: p.market, selection: p.selection, consensusPct: p.consensusPct, strength: p.strength, tier: p.tier, pickCount: p.pickCount, suggestedUnits: p.suggestedUnits })) };
+    record.engine = { generatedAt: cardPicks.length ? engineFeed.generatedAt : null, event: cardPicks.length ? engineFeed.event : null, totals: cardPicks.length ? engineFeed.totals ?? null : null, page: MMA_ENGINE_PAGE, source: cardPicks.length ? engineFeed.source ?? null : null, picks: cardPicks.filter((p) => p.tier !== 'pass').map((p) => ({ fight: p.fight, market: p.market, selection: p.selection, consensusPct: p.consensusPct, strength: p.strength, tier: p.tier, pickCount: p.pickCount, suggestedUnits: p.suggestedUnits, quotedOdds: p.quotedOdds ?? null })) };
     const live = event.bouts.filter((b) => b.status === 'scheduled' && b.a?.id && b.b?.id);
     const byBout = new Map();
     for (const bout of live) {
