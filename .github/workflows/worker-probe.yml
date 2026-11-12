@@ -122,6 +122,9 @@ jobs:
                 console.log("UNITS today", d.unitsToday, "of", d.bar.maxUnits, "| candidates", cur.candidates);
                 for (const p of cur.plays || []) { console.log("  PLAY", p.tour, p.market, "|", p.selection, "|", p.bookId, p.american, "| prob", p.prob, "edge", p.edge, "stars", p.stars, "|", p.status, p.result || "", p.actual || "", "|", p.event, p.round); for (const l of p.legs || []) console.log("    LEG", l.selection, l.american, "| prob", l.prob, "model", l.pModel, "market", l.pMarket, "|", l.a, "v", l.b, "|", l.result || ""); }
                 for (const [id, r] of Object.entries(cur.reads || {})) console.log("  READ", id, r.a, "v", r.b, "|", r.event, r.round, "| market", r.pMarket, "model", r.pModel, "final", r.pFinal, "elo", r.pElo, "| games", r.meanGames, "straight", r.straightSets, "dogSet", r.dogSet, "| flags", JSON.stringify(r.flags || {}), "| legs", r.legs, "clear", r.clear, "|", r.passed || "PLAY", "|", (r.reasons || []).join("; "));
+                // The leans (worker/src/tennis-leans.js): the matches worth a bet in the order the tab shows them, and the parlay suggestions.
+                for (const l of cur.leans || []) console.log("  LEAN", l.confidence, l.conviction, l.how, l.units, "|", l.main.short, l.main.american, l.main.book, "| edge", l.main.edge, "| alts", (l.alternates || []).map((a) => a.short + " " + a.american + " " + a.prob).join("; "), "| also", (l.also || []).map((a) => a.selection + " " + a.american + " " + a.prob).join("; "), "|", l.posted ? "tracked " + l.posted.units + "u" : (l.note || "not tracked"), l.thin ? "| thin" : "", "| link", l.main.link ? "yes" : "no");
+                for (const x of cur.suggestions || []) console.log("  SUGGEST", x.text, "|", x.american, x.book, "| prob", x.prob, "edge", x.edge);
                 return;
                 }
                 if (d && d.breakdowns && d.engine !== undefined) {

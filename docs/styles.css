@@ -7435,6 +7435,43 @@ a.trend-price:hover { background: rgba(255, 255, 255, 0.06); }
 .tennis-read small { color: var(--muted); font-size: 0.78rem; }
 .tennis-read .tennis-form { font-size: 0.76rem; }
 .tennis-flag { display: inline-block; margin-right: 4px; padding: 1px 7px; border-radius: 999px; border: 1px solid var(--line); font-size: 0.68rem; font-weight: 800; letter-spacing: 0.04em; text-transform: uppercase; color: var(--muted); }
+/* The Tennis tab's leans (2026-11-12): only the matches worth a bet, the likeliest first, each with how to play it and why. */
+.tennis-h3 { margin: 22px 0 10px; font-size: 1rem; font-weight: 800; }
+.tennis-h3 small { margin-left: 8px; color: var(--muted); font-weight: 600; font-size: 0.78rem; }
+.tennis-lean.is-high { border-color: rgba(251, 191, 36, 0.55); }
+.tennis-rank { display: inline-grid; place-items: center; min-width: 26px; height: 26px; padding: 0 6px; border-radius: 999px; background: var(--accent, #c084fc); color: var(--on-accent, #12081f); font-family: var(--mono); font-weight: 800; font-size: 0.82rem; }
+.tennis-tag { display: inline-block; padding: 2px 9px; border-radius: 999px; border: 1px solid var(--line); background: var(--surface-2); color: var(--muted); font-size: 0.7rem; font-weight: 800; letter-spacing: 0.03em; white-space: nowrap; vertical-align: 1px; }
+.tennis-tag.is-pick { margin-left: auto; border-color: rgba(251, 191, 36, 0.6); background: rgba(251, 191, 36, 0.12); color: #fbbf24; }
+.tennis-tag.is-tracked { border-color: var(--success); color: var(--success); }
+.pick-bet-head .tennis-tag.is-pick + .pick-result { margin-left: 0; }
+.tennis-conf { display: grid; gap: 6px; margin: 8px 0 10px; }
+.tennis-conf-track { position: relative; display: block; height: 8px; border-radius: 999px; background: var(--surface-2); border: 1px solid var(--line); overflow: visible; }
+.tennis-conf-fill { display: block; height: 100%; border-radius: 999px; background: var(--success); }
+.tennis-conf-ask { position: absolute; top: -4px; width: 2px; height: 14px; margin-left: -1px; border-radius: 1px; background: var(--text); }
+.tennis-conf-text { font-size: 0.9rem; }
+.tennis-conf-text strong { font-family: var(--mono); font-size: 1.02rem; }
+.tennis-conf-text small { color: var(--muted); font-weight: 600; }
+.tennis-how { margin: 6px 0 0; font-size: 0.9rem; line-height: 1.5; }
+.tennis-how b { display: inline-block; margin-right: 6px; color: var(--muted); font-size: 0.7rem; font-weight: 800; letter-spacing: 0.06em; text-transform: uppercase; }
+.tennis-why-list.is-gist { margin-top: 10px; color: var(--text); }
+.tennis-ways { display: grid; gap: 6px; margin-top: 12px; padding: 10px 12px; border-radius: 12px; background: var(--surface-2); border: 1px solid var(--line); }
+.tennis-ways-h { color: var(--muted); font-size: 0.7rem; font-weight: 800; letter-spacing: 0.06em; text-transform: uppercase; }
+.tennis-way { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 10px; font-size: 0.88rem; min-width: 0; }
+.tennis-way strong { flex: 1 1 150px; min-width: 0; }
+.tennis-way small { color: var(--muted); font-weight: 600; white-space: nowrap; }
+.tennis-actions { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 12px; }
+.tennis-actions .tennis-why { margin-top: 0; }
+.tennis-suggest .pick-bet-type { color: var(--success); }
+/* A ticket leg's why and its buttons on Pixel's Picks. */
+.pick-leg-why { margin-top: 10px; padding: 10px 12px; border-radius: 12px; background: var(--surface-2); border: 1px solid var(--line); cursor: default; }
+.pick-leg-why-h { color: var(--muted); font-size: 0.7rem; font-weight: 800; letter-spacing: 0.06em; text-transform: uppercase; }
+.pick-leg-why ul { margin: 6px 0 0; padding-left: 18px; display: grid; gap: 5px; font-size: 0.86rem; line-height: 1.45; }
+.pick-leg-actions { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 10px; }
+@media (max-width: 640px) {
+  .tennis-lean .pick-bet-head, .tennis-suggest .pick-bet-head { gap: 6px 10px; }
+  .tennis-tag.is-pick { margin-left: 0; }
+  .tennis-actions .parlay-btn, .pick-leg-actions .parlay-btn { flex: 1 1 auto; text-align: center; }
+}
 .tennis-flag.is-injury { color: var(--danger, #ff5c7a); border-color: var(--danger, #ff5c7a); }
 .tennis-flag.is-fatigue { color: #f5b942; border-color: #f5b942; }
 .tennis-legs { display: grid; gap: 8px; margin: 8px 0; }

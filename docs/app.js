@@ -9903,8 +9903,52 @@ function renderPickLeg(leg, bet) {
     ${leg.current ? `<p class="pick-move ${leg.current.still ? '' : 'is-out'}"><span class="pick-move-tag">${leg.current.still ? 'Line moved' : 'Line moved · not tracked'}</span> ${esc(leg.warning ?? '')}</p>` : moved ? `<p class="pick-move">Line moved from ${esc(String(moved.from))} to ${esc(String(moved.to))} at ${esc(trendTimeFmt.format(new Date(moved.at)))}${leg.warning ? `. ${esc(leg.warning)}` : ''}</p>` : ''}
     ${leg.injuryWarning ? `<p class="pick-move is-out">${esc(leg.injuryWarning)}</p>` : ''}
     ${leg.note ? `<p class="pick-note">${esc(leg.note)}</p>` : ''}
+    ${renderLegWhy(leg, bet)}
   </div>`;
 }
+
+/**
+ * Why a leg is on the ticket, in the numbers it posted on (2026-11-12:
+ * "the pixel picks legs should have a full breakdown on why it's picked
+ * along with the buttons to see the stats"): the run at the line, the
+ * average against it and the closest call, the meetings with this
+ * opponent, the price and what it asks for, and what the research found.
+ */
+function legWhyLines(leg) {
+  const p = leg.periods ?? {}; const out = [];
+  const under = leg.side === 'under';
+  const stat = String(leg.statLabel ?? 'the stat').toLowerCase();
+  if (p.l20?.games) out.push(`Hit in ${p.l20.hits} of the last ${p.l20.games}${p.l10?.games ? `, ${p.l10.hits} of the last ${p.l10.games}` : ''}${p.l5?.games ? ` and ${p.l5.hits} of the last ${p.l5.games}` : ''}`);
+  const values = (leg.series ?? []).map((g) => g.value).filter(Number.isFinite);
+  if (Number.isFinite(p.l20?.avg) && Number.isFinite(leg.point)) {
+    const close = values.length ? (under ? Math.max(...values) : Math.min(...values)) : null;
+    out.push(`Averages ${Math.round(p.l20.avg * 10) / 10} ${stat} over that run against a line of ${leg.point}${close != null ? `; the closest call was ${close}` : ''}`);
+  }
+  if (leg.opponent) out.push(p.h2h?.games ? `Against ${leg.opponent}: ${p.h2h.hits} of ${p.h2h.games}${Number.isFinite(p.h2h.avg) ? `, ${Math.round(p.h2h.avg * 10) / 10} a game` : ''}` : `No game against ${leg.opponent} on file: the run alone carries it`);
+  if (Number.isFinite(leg.american)) {
+    const likely = legLikelihood(leg);
+    out.push(`${formatAmerican(leg.american)}${leg.book ? ` at ${leg.book}` : ''} asks for ${pct(impliedProb(leg.american))}${Number.isFinite(likely) ? `; the run pulled toward that price makes it about ${pct(likely)} to land` : ''}`);
+  }
+  out.push(leg.note ? `Research before it posted: ${leg.note}` : 'Research before it posted: minutes steady, no injury listing, no blowout projected');
+  return out;
+}
+function renderLegWhy(leg, bet) {
+  const lines = legWhyLines(leg);
+  return `<div class="pick-leg-why"><span class="pick-leg-why-h">Why it's picked</span><ul>${lines.map((w) => `<li>${esc(w)}</li>`).join('')}</ul>
+    <div class="pick-leg-actions">
+      <button type="button" class="parlay-btn" data-pick-leg-stats title="The game log, the splits and every book's price">Game log and splits</button>
+      ${leg.playerName ? `<button type="button" class="parlay-btn" data-open-player="${esc(leg.playerName)}" title="Every line for this player in Player search">${esc(leg.playerName.split(' ').at(-1))} in Player search</button>` : ''}
+      ${leg.link && bet.type === 'parlay' ? `<a class="parlay-btn is-slip" href="${esc(leg.link)}" target="_blank" rel="noopener" data-price-link>Add this leg ↗</a>` : ''}
+    </div></div>`;
+}
+
+/** The tennis Pixel's Picks of the day (2026-11-12: "high conviction ones to be a pixel pick ... there can be more than one"): every tracked tennis play the read marked high conviction, as its lean card with the breakdown open while the match is to come, as its play card after. */
+function tennisPixelPicks() {
+  const cur = tennisState.data?.current; if (!cur) return [];
+  const leans = new Map((cur.leans ?? []).filter((l) => l.posted?.id).map((l) => [l.posted.id, l]));
+  return (cur.plays ?? []).filter((p) => p.conviction === 'high').map((p) => ({ play: p, lean: leans.get(p.id) ?? null }));
+}
+const renderTennisPixelPick = ({ play, lean }) => (lean && lean.commenceMs > Date.now() ? renderTennisLean(lean, 0, { full: true }) : renderTennisPlay(play, { full: true }));
 
 /** A leg as a Trends row, for the Detail sheet. */
 function legAsRow(leg, bet) {
@@ -9978,7 +10022,10 @@ function pickBoardRows() {
   }
   const tennis = (trendPicksState.tennisRows ?? []).filter((r) => r.commenceMs > now && Number.isFinite(r.american) && !(r.tennis?.flags ?? []).length)
     .sort((a, b) => (b.tennis?.score ?? 0) - (a.tennis?.score ?? 0) || (b.tennis?.prob ?? 0) - (a.tennis?.prob ?? 0))[0];
-  if (tennis) rows.push({ key: 'tennis', sportKey: 'tennis', league: 'Tennis', confidence: tennis.tennis?.prob ?? 0, american: tennis.american, units: suggestedUnits({ prob: tennis.tennis?.prob }), go: 'tennis',
+  const lean = (tennisState.data?.current?.leans ?? []).find((l) => l.commenceMs > now && Number.isFinite(l.main?.american));
+  if (lean) rows.push({ key: 'tennis', sportKey: 'tennis', league: 'Tennis', confidence: lean.confidence, american: lean.main.american, units: lean.units ?? suggestedUnits({ prob: lean.confidence }), go: 'tennis',
+    title: lean.main.short, sub: `${pct(lean.confidence)} to land · ${lean.how === 'straight' ? 'straight' : 'a parlay leg'} · ${lean.a} vs ${lean.b}`, price: pricePill(lean.main.bookId, lean.main.book, lean.main.american, lean.main.link) });
+  else if (tennis) rows.push({ key: 'tennis', sportKey: 'tennis', league: 'Tennis', confidence: tennis.tennis?.prob ?? 0, american: tennis.american, units: suggestedUnits({ prob: tennis.tennis?.prob }), go: 'tennis',
     title: tennis.selection, sub: `${Number.isFinite(tennis.tennis?.prob) ? `${pct(tennis.tennis.prob)} by the model · ` : ''}${tennis.away} vs ${tennis.home}`, price: pricePill(tennis.bookKey, tennis.book, tennis.american, tennis.quotes?.[0]?.link ?? null) });
   const ufc = (ufcState.picks?.current ? ufcParlayRows(ufcState.picks) : []).filter((r) => r.commenceMs > now && Number.isFinite(r.american) && r.bookKey !== 'engine' && Number.isFinite(r.ufc?.chance))
     .sort((a, b) => (b.ufc?.score ?? 0) - (a.ufc?.score ?? 0) || (b.ufc?.chance ?? 0) - (a.ufc?.chance ?? 0))[0];
@@ -10022,7 +10069,6 @@ function renderBetCard(bet) {
     </div>
     <div class="pick-legs">${bet.legs.map((leg) => renderPickLeg(leg, bet)).join('')}</div>
     ${betOutcomeWhy(bet) ? `<p class="pick-note pick-why">${esc(betOutcomeWhy(bet))}</p>` : ''}
-    ${bet.legs.every((l) => !l.note) ? '<p class="pick-note">Nothing worth flagging: minutes steady, no injury listing, no blowout projected.</p>' : ''}
     ${ticketSlipFoot(bet)}
   </article>`;
 }
@@ -10096,9 +10142,16 @@ function renderTrendPicks() {
   const bets = (today?.bets ?? []).filter(betMatches);
   // The board card sits under the pick (or the suggestion) every day: the best play per sport in one place.
   const board = pickBoardRows().filter((r) => trendPicksState.filter === 'all' || betMatches({ sportKey: r.sportKey }));
+  // The tennis picks stand beside the tickets: every tennis play the read marked high conviction, however many there are.
+  const tennisPicks = trendPicksState.filter === 'all' ? tennisPixelPicks() : [];
+  const tennisHtml = tennisPicks.length ? `<h3 class="tennis-h3">Tennis Pixel's Picks <small>high conviction · tracked in the tennis record · stake by confidence</small></h3>${tennisPicks.map(renderTennisPixelPick).join('')}` : '';
+  const tennisWord = tennisPicks.length ? `${tennisPicks.length} tennis pick${tennisPicks.length === 1 ? '' : 's'}` : '';
   if (bets.length) {
-    el.trendPicksStatus.textContent = `${bets.length} ticket${bets.length === 1 ? '' : 's'} today · posted ${trendTimeFmt.format(new Date(bets[0].postedAt))} · one unit each`;
-    el.trendPicksBody.innerHTML = bets.map(renderBetCard).join('') + renderPickBoard(board);
+    el.trendPicksStatus.textContent = `${bets.length} ticket${bets.length === 1 ? '' : 's'} today${tennisWord ? ` and ${tennisWord}` : ''} · posted ${trendTimeFmt.format(new Date(bets[0].postedAt))} · one unit a ticket`;
+    el.trendPicksBody.innerHTML = bets.map(renderBetCard).join('') + tennisHtml + renderPickBoard(board);
+  } else if (tennisPicks.length) {
+    el.trendPicksStatus.textContent = `${tennisWord[0].toUpperCase()}${tennisWord.slice(1)} today, no league ticket. Each one shows why it was picked; the buttons open the players' stats.`;
+    el.trendPicksBody.innerHTML = tennisHtml + renderPickBoard(board);
   } else {
     const checked = today?.checkedAt ? ` Last checked ${trendTimeFmt.format(new Date(today.checkedAt))}; it looks again every hour until the day's games start.` : '';
     el.trendPicksStatus.textContent = today
@@ -10136,6 +10189,10 @@ function renderTrendPicks() {
 
 el.trendPicksView?.addEventListener('click', (event) => {
   if (event.target.closest('[data-price-link], .pick-bet-link')) return; // the book's link, not the card
+  const player = event.target.closest('[data-open-player]');
+  if (player) { openPlayerByName(player.dataset.openPlayer, 'team'); return; }
+  const tennisPlayer = event.target.closest('[data-tennis-player]');
+  if (tennisPlayer) { openPlayerByName(tennisPlayer.dataset.tennisPlayer, 'tennis'); return; }
   const leg = event.target.closest('[data-pick-leg]');
   if (leg) return openPickLeg(leg);
   const emblem = event.target.closest('[data-pick-emblem]');
@@ -10143,7 +10200,7 @@ el.trendPicksView?.addEventListener('click', (event) => {
   const chip = event.target.closest('[data-pick-filter]');
   if (chip) { trendPicksState.filter = chip.dataset.pickFilter; trendPicksState.hover = null; renderTrendPicks(); return; }
   const tennisWhy = event.target.closest('[data-tennis-why]');
-  if (tennisWhy) { const id = tennisWhy.dataset.tennisWhy; tennisState.open[id] = !tennisState.open[id]; renderTrendPicks(); return; }
+  if (tennisWhy) { toggleTennisWhy(tennisWhy); renderTrendPicks(); return; }
   const boardRow = event.target.closest('[data-board-go]');
   if (boardRow && !event.target.closest('[data-price-link]')) { const go = boardRow.dataset.boardGo; if (go === 'tennis') { trendPicksState.filter = 'tennis'; renderTrendPicks(); } else if (go === 'ufc') setActiveTab('ufc'); return; }
   const dot = event.target.closest('[data-pick-day]');
@@ -11994,10 +12051,12 @@ function renderTennisParlay(p) {
   </article>`;
 }
 
-function renderTennisPlay(p) {
+function renderTennisPlay(p, opts) {
   if (p.market === 'ml_parlay') return renderTennisParlay(p);
   const market = tennisState.data?.markets?.[p.market] ?? p.market;
-  const open = Boolean(tennisState.open[p.id]);
+  // Pixel's Picks opens the card with its why shown; the Tennis tab on a tap.
+  const full = opts?.full === true;
+  const open = full ? tennisState.open[p.id] !== false : Boolean(tennisState.open[p.id]);
   const start = Number.isFinite(p.commenceMs) ? tennisTimeFmt.format(new Date(p.commenceMs)) : '';
   const price = Number.isFinite(p.american) ? esc(formatAmerican(p.american)) : '<small>price at your book</small>';
   const book = p.bookId ? `${bookBadge(p.bookId, p.book)}${esc(p.book ?? '')}` : 'Your book';
@@ -12007,39 +12066,138 @@ function renderTennisPlay(p) {
       <span class="pick-bet-type">${esc(TENNIS_TOUR_LABEL[p.tour] ?? p.tour)} · ${esc(market)}</span>
       <span class="pick-bet-book">${book}</span>
       <span class="pick-bet-price">${price}</span>
-      <span class="pick-bet-stake">${esc(String(p.units))} unit</span>
+      <span class="pick-bet-stake">${esc(unitsLabel(p.units))}</span>
+      ${p.conviction === 'high' ? '<span class="tennis-tag is-pick">★ Pixel\'s Pick</span>' : ''}
       ${tennisPickBadge(p)}
     </div>
     <div class="ufc-pick-body">
       <p class="ufc-pick-sel"><strong>${esc(p.selection)}</strong><small>${esc(p.a)} vs ${esc(p.b)} · ${esc(p.event ?? '')}${p.round ? ` · ${esc(p.round)}` : ''}${start ? ` · ${esc(start)}` : ''}</small></p>
       <p class="ufc-pick-conf">${confStars(p.stars)} <small>${esc(vs)}${p.edge != null ? ` · ${Math.round(p.edge * 100)} points of edge` : ''}</small></p>
       ${p.side && p.flags?.[p.side === 'a' ? 'b' : 'a']?.length ? `<p class="row-sub">Opponent flagged: ${tennisFlags(p.flags[p.side === 'a' ? 'b' : 'a'])}</p>` : ''}
-      ${p.market === 'aces' ? '<p class="row-sub">The feed carries no aces market: this is the number the model clears at 80%+; take it at your book where the line sits at or under it.</p>' : ''}
+      ${p.market === 'aces' && !Number.isFinite(p.american) ? '<p class="row-sub">No book on the board prices this aces line: it is the number the model clears at 80%+; take it at your book where the line sits at or under it.</p>' : ''}
+      ${p.how ? `<p class="tennis-how"><b>How</b> ${esc(p.how)}</p>` : ''}
       ${p.actual ? `<p class="row-sub">Result: ${esc(p.actual)}</p>` : ''}
-      <button type="button" class="parlay-btn tennis-why" data-tennis-why="${esc(p.id)}">${open ? 'Hide the read' : 'Why this play'}</button>
+      <div class="tennis-actions">
+        <button type="button" class="parlay-btn tennis-why" data-tennis-why="${esc(p.id)}" data-tennis-why-default="${full ? 'open' : 'shut'}" aria-expanded="${open}">${open ? 'Hide the why' : 'Why this play'}</button>
+        ${tennisStatButtons(p.a, p.b)}
+      </div>
       ${open ? `<ul class="tennis-why-list">${(p.why ?? []).map((w) => `<li>${esc(w)}</li>`).join('')}</ul>` : ''}
     </div>
     ${p.link || p.bookId ? ticketSlipFoot({ type: 'straight', bookId: p.bookId, book: p.book, link: p.link, legs: [{ link: p.link }] }) : ''}
   </article>`;
 }
 
+const capFirst = (w) => (w ? w[0].toUpperCase() + w.slice(1) : w);
+/** The two players' stat buttons: each opens Player search on that player (his lines at each number, his form, his matches). */
+const tennisStatButtons = (a, b) => [a, b].filter(Boolean).map((n) => `<button type="button" class="parlay-btn tennis-stats" data-tennis-player="${esc(n)}" title="${esc(`${n}: lines, form and matches in Player search`)}">${esc(n.split(' ').at(-1))} stats</button>`).join('');
+/** How sure a lean is, drawn: the read's chance as the bar, what the price asks for as the tick on it. */
+function tennisConfBar(prob, implied, room = null) {
+  const p = Math.round((prob ?? 0) * 100); const ask = Number.isFinite(implied) ? Math.round(implied * 100) : null;
+  // The room as the read has it (the two rounded shares can differ from it by a point).
+  const edge = ask == null ? null : Number.isFinite(room) ? Math.round(room * 100) : p - ask;
+  return `<div class="tennis-conf" role="img" aria-label="${esc(`${p}% to land${ask != null ? `, the price asks for ${ask}%` : ''}`)}"><span class="tennis-conf-track"><span class="tennis-conf-fill" style="width:${p}%"></span>${ask != null ? `<span class="tennis-conf-ask" style="left:${ask}%"></span>` : ''}</span><span class="tennis-conf-text"><strong>${p}%</strong> to land${ask != null ? `<small> · the price asks ${ask}% · ${edge >= 0 ? '+' : ''}${edge} pts of room</small>` : ''}</span></div>`;
+}
+/** Another way to play a lean, as a line with its price (a slip link where the book gives one), its chance and its room. */
+const tennisWay = (a) => `<span class="tennis-way"><strong>${esc(a.short)}</strong>${Number.isFinite(a.american) ? pricePill(a.bookId, a.book, a.american, a.link) : ''}<small>${pct(a.prob)} to land · ${a.edge >= 0 ? '+' : ''}${Math.round(a.edge * 100)} pts</small></span>`;
+
+/**
+ * A match worth betting (2026-11-12: "who to lean and how, moneyline,
+ * spread, to win a set, take straight or parlay ... add the why as
+ * well"): the side, the play and its price, how sure the read is against
+ * what the price asks, how to play it, the other ways to play the same
+ * side, the why, and the buttons to each player's stats. `full` opens the
+ * whole breakdown (Pixel's Picks); the Tennis tab shows the two lines that
+ * carry it and opens the rest on a tap.
+ */
+function renderTennisLean(l, rank, { full = false } = {}) {
+  const key = `lean:${l.matchId}`;
+  const open = full ? tennisState.open[key] !== false : Boolean(tennisState.open[key]);
+  const main = l.main;
+  const start = Number.isFinite(l.commenceMs) ? tennisTimeFmt.format(new Date(l.commenceMs)) : '';
+  const pair = l.how === 'parlay' ? (tennisState.data?.current?.suggestions ?? []).find((x) => x.legs?.[0]?.matchId === l.matchId) : null;
+  const status = l.posted ? `<span class="tennis-tag is-tracked" title="On the record at the price it posted">Tracked · ${esc(unitsLabel(l.posted.units))}${Number.isFinite(l.posted.american) ? ` at ${esc(formatAmerican(l.posted.american))}` : ''}</span>` : l.note ? `<span class="tennis-tag">${esc(l.note)}</span>` : l.how === 'parlay' ? '<span class="tennis-tag">Parlay piece · not tracked alone</span>' : '';
+  const gist = [l.why?.[0], (l.why ?? []).find((w) => /which asks for/.test(w))].filter(Boolean);
+  const rest = (l.why ?? []).filter((w) => !gist.includes(w));
+  return `<article class="trend-card pick-bet-card tennis-play tennis-lean ${l.conviction === 'high' ? 'is-high' : ''}" aria-label="${esc(`${rank ? `Number ${rank}: ` : ''}${main.short}`)}">
+    <div class="pick-bet-head">
+      ${rank ? `<span class="tennis-rank" title="Ranked by how likely it is to land">${rank}</span>` : ''}
+      <span class="pick-bet-type">${esc(TENNIS_TOUR_LABEL[l.tour] ?? l.tour)} · ${l.side ? `Lean ${esc(l.name)}` : 'No side: the number'}</span>
+      <span class="pick-bet-book">${main.bookId ? `${bookBadge(main.bookId, main.book)}${esc(main.book ?? '')}` : ''}</span>
+      <span class="pick-bet-price">${Number.isFinite(main.american) ? esc(formatAmerican(main.american)) : ''}</span>
+      <span class="pick-bet-stake">${l.how === 'straight' ? `${esc(unitsLabel(l.units))} straight` : 'parlay leg'}</span>
+      ${l.conviction === 'high' ? '<span class="tennis-tag is-pick">★ Pixel\'s Pick</span>' : ''}
+    </div>
+    <div class="ufc-pick-body">
+      <p class="ufc-pick-sel"><strong>${esc(main.short)}</strong><small>${esc(l.a)} vs ${esc(l.b)} · ${esc(l.event ?? '')}${l.round ? ` · ${esc(l.round)}` : ''}${start ? ` · ${esc(start)}` : ''}</small></p>
+      ${tennisConfBar(main.prob, main.implied, main.edge)}
+      <p class="tennis-how"><b>How to play it</b> ${esc(l.howText)} ${status}</p>
+      ${pair ? `<p class="tennis-how"><b>Parlay it</b> with ${esc(pair.legs.slice(1).map((x) => x.short).join(' and '))}: ${esc(formatAmerican(pair.american))} at ${esc(pair.book)}, ${pct(pair.prob)} to land</p>` : ''}
+      ${l.opponentFlags?.length ? `<p class="row-sub">${esc(l.opponent ?? 'Opponent')} flagged: ${tennisFlags(l.opponentFlags)}</p>` : ''}
+      <ul class="tennis-why-list is-gist">${gist.map((w) => `<li>${esc(capFirst(w))}</li>`).join('')}${open ? rest.map((w) => `<li>${esc(capFirst(w))}</li>`).join('') : ''}</ul>
+      ${l.alternates?.length ? `<div class="tennis-ways"><span class="tennis-ways-h">Other ways to play ${esc(l.name ?? 'it')}</span>${l.alternates.map(tennisWay).join('')}</div>` : ''}
+      ${l.also?.length ? `<div class="tennis-ways"><span class="tennis-ways-h">Also on this match</span>${l.also.map(tennisWay).join('')}</div>` : ''}
+      <div class="tennis-actions">
+        ${rest.length ? `<button type="button" class="parlay-btn tennis-why" data-tennis-why="${esc(key)}" data-tennis-why-default="${full ? 'open' : 'shut'}" aria-expanded="${open}">${open ? 'Hide the full read' : 'The full read'}</button>` : ''}
+        ${tennisStatButtons(l.a, l.b)}
+      </div>
+    </div>
+    ${main.link || main.bookId ? ticketSlipFoot({ type: 'straight', bookId: main.bookId, book: main.book, link: main.link, legs: [{ link: main.link }] }) : ''}
+  </article>`;
+}
+
+/** A parlay suggestion in the user's own words for one ("take Taylor Fritz ML and parlay it with Jessica Pegula"): the legs, the price together at one book, the chance, the why, and one link for the slip where the book takes a list. */
+function renderTennisSuggestion(x) {
+  return `<article class="trend-card pick-bet-card tennis-play tennis-suggest" aria-label="${esc(x.text)}">
+    <div class="pick-bet-head">
+      <span class="pick-bet-type">Parlay suggestion</span>
+      <span class="pick-bet-book">${bookBadge(x.bookId, x.book)}${esc(x.book ?? '')}</span>
+      <span class="pick-bet-price">${esc(formatAmerican(x.american))}</span>
+      <span class="pick-bet-stake">not tracked</span>
+    </div>
+    <div class="ufc-pick-body">
+      <p class="ufc-pick-sel"><strong>${esc(x.text)}</strong></p>
+      <div class="tennis-legs">${(x.legs ?? []).map((l) => `<div class="tennis-leg"><span><strong>${esc(l.short)}</strong> <small>${esc(formatAmerican(l.american))} · ${pct(l.prob)} · ${esc(l.a)} vs ${esc(l.b)}</small></span></div>`).join('')}</div>
+      ${tennisConfBar(x.prob, x.implied, x.edge)}
+      <ul class="tennis-why-list is-gist">${(x.why ?? []).map((w) => `<li>${esc(w)}</li>`).join('')}</ul>
+    </div>
+    ${ticketSlipFoot({ type: 'parlay', bookId: x.bookId, book: x.book, link: null, legs: (x.legs ?? []).map((l) => ({ link: l.link })) })}
+  </article>`;
+}
+
+/** Today's leans in the tours shown, the most likely first; and the suggestions whose every leg is among them. */
+function tennisLeansShown() {
+  const cur = tennisState.data?.current;
+  const now = Date.now();
+  const leans = (cur?.leans ?? []).filter((l) => tennisState.tours.has(l.tour) && l.commenceMs > now);
+  const ids = new Set(leans.map((l) => l.matchId));
+  const suggestions = (cur?.suggestions ?? []).filter((x) => (x.legs ?? []).every((l) => ids.has(l.matchId)));
+  return { leans, suggestions };
+}
+
 function renderTennis() {
   if (!el.tennisBody) return;
   const d = tennisState.data;
   if (!d) { el.tennisBody.innerHTML = '<p class="empty">The tennis board has not been read yet.</p>'; return; }
-  const plays = (d.current?.plays ?? []).filter((p) => p.tour === 'both' || tennisState.tours.has(p.tour)).sort((a, b) => (a.market === 'ml_parlay' ? -1 : 0) - (b.market === 'ml_parlay' ? -1 : 0) || (a.commenceMs ?? 0) - (b.commenceMs ?? 0));
+  const { leans, suggestions } = tennisLeansShown();
+  // The plays on the record today that no lean card above already carries: the day's parlay, the aces, and whatever has started or settled.
+  const onCards = new Set(leans.map((l) => l.posted?.id).filter(Boolean));
+  const plays = (d.current?.plays ?? []).filter((p) => (p.tour === 'both' || tennisState.tours.has(p.tour)) && !onCards.has(p.id)).sort((a, b) => (a.market === 'ml_parlay' ? -1 : 0) - (b.market === 'ml_parlay' ? -1 : 0) || (a.commenceMs ?? 0) - (b.commenceMs ?? 0));
   const allPlays = d.current?.plays ?? [];
   const reads = Object.entries(d.current?.reads ?? {}).map(([id, r]) => ({ id, ...r, tour: id.split(':')[0] })).filter((r) => tennisState.tours.has(r.tour)).sort((a, b) => Date.parse(a.start ?? 0) - Date.parse(b.start ?? 0));
   const rec = d.record ?? { wins: 0, losses: 0, pushes: 0, units: 0, roi: null, risked: 0 };
-  const chips = ['atp', 'wta'].map((t) => { const n = allPlays.filter((p) => p.tour === t || p.tour === 'both').length; const on = tennisState.tours.has(t); return `<button type="button" class="league-chip is-sport ${on ? 'is-active' : ''}" data-tennis-tour="${t}" aria-pressed="${on}">${sportIcon(t)}<span class="league-chip-label">${TENNIS_TOUR_LABEL[t]}</span><small class="live-league-n">${n}</small>${chipTick(on)}</button>`; }).join('');
-  const bar = d.bar ?? { minProb: 0.74, minEdge: 0.07, aceProb: 0.8, band: [-250, 250] };
-  const barNote = `Every match is read for form, fatigue, a recent retirement, play style and the surface before the market. A play posts only where the model gives it ${Math.round(bar.minProb * 100)}%+ and the price sits ${Math.round(bar.minEdge * 100)}+ points under that, between ${bar.band[0]} and +${bar.band[1]}, never on a player flagged for injury or fatigue; aces at ${Math.round(bar.aceProb * 100)}%+ with the price left to your book. Once a day the clearest favourites (${Math.round((bar.parlayLegProb ?? 0.78) * 100)}%+ each) go into one moneyline parlay of ${(bar.parlayLegs ?? [2, 4]).join(' to ')} legs. One play a match, ${bar.maxUnits ?? 5} units a day at most.`;
+  const chips = ['atp', 'wta'].map((t) => { const n = (d.current?.leans ?? []).filter((l) => l.tour === t && l.commenceMs > Date.now()).length; const on = tennisState.tours.has(t); return `<button type="button" class="league-chip is-sport ${on ? 'is-active' : ''}" data-tennis-tour="${t}" aria-pressed="${on}">${sportIcon(t)}<span class="league-chip-label">${TENNIS_TOUR_LABEL[t]}</span><small class="live-league-n">${n}</small>${chipTick(on)}</button>`; }).join('');
+  const bar = d.bar ?? {};
+  const barNote = `Only the matches worth a bet are listed, the likeliest play first. Every match on the card is read for form, fatigue, a recent retirement, play style and the surface, then set against the best price on the board. A side is a lean when the read gives it ${Math.round((bar.leanProb ?? 0.55) * 100)}%+ and the price asks for ${Math.round((bar.leanEdge ?? 0.02) * 100)}+ points less, never a player flagged for injury or fatigue. ${bar.straightFloor ?? -250} or longer is played straight and tracked, half a unit to two by its chance; shorter is a parlay piece. ${Math.round((bar.convictionProb ?? 0.74) * 100)}%+ with ${Math.round((bar.convictionEdge ?? 0.07) * 100)}+ points of room is a Pixel's Pick. ${bar.maxUnits ?? 5} units a day at most.`;
   const readWhen = d.current?.refreshedAt ? `read ${ago(d.current.refreshedAt)}` : 'not read today yet';
-  const readsHtml = reads.length ? `<details class="tennis-reads" ${tennisState.reads ? 'open' : ''}><summary>Matches read today <small>${reads.length}, ${reads.filter((r) => !r.passed).length} with a play</small></summary><div class="tennis-reads-list">${reads.map((r) => `<div class="tennis-read ${r.passed ? '' : 'is-play'}"><strong>${esc(r.a)} vs ${esc(r.b)}</strong><small>${esc(TENNIS_TOUR_LABEL[r.tour] ?? r.tour)} · ${esc(r.event ?? '')}${r.round ? ` · ${esc(r.round)}` : ''}${r.start ? ` · ${esc(tennisTimeFmt.format(new Date(r.start)))}` : ''}</small><span class="row-sub">${r.pMarket != null ? `market ${Math.round(Math.max(r.pMarket, 1 - r.pMarket) * 100)}% on the favourite${r.pModel != null ? `, the model ${Math.round(Math.max(r.pModel, 1 - r.pModel) * 100)}% on ${esc(r.pModel >= 0.5 ? r.a : r.b)}` : ''} · ${esc(String(r.meanGames))} games expected · straight sets ${Math.round((r.straightSets ?? 0) * 100)}% · ` : ''}${esc(r.passed ?? 'a play posted')}</span>${r.flags && (r.flags.a?.length || r.flags.b?.length) ? `<span class="row-sub">${r.flags.a?.length ? `${esc(r.a)}: ${tennisFlags(r.flags.a)} ` : ''}${r.flags.b?.length ? `${esc(r.b)}: ${tennisFlags(r.flags.b)}` : ''}</span>` : ''}${r.form ? `<span class="row-sub tennis-form">${esc(r.form.a)} · ${esc(r.form.b)}</span>` : ''}</div>`).join('')}</div></details>` : '';
-  el.tennisBody.innerHTML = `<div class="live-top"><span class="live-count ${plays.length ? 'is-on' : ''}">${plays.length ? `${plays.length} tennis play${plays.length === 1 ? '' : 's'} clear the bar` : 'No tennis play clears the bar today'}</span><span class="row-sub">${esc(tennisDayFmt.format(new Date()))} · ${esc(readWhen)} · ${esc(String(d.unitsToday ?? allPlays.length))} of ${esc(String(bar.maxUnits ?? 5))} units placed · record ${rec.wins}-${rec.losses}${rec.pushes ? `-${rec.pushes}` : ''}, ${esc(signedUnits(rec.units ?? 0))} units</span></div>
+  const worth = reads.filter((r) => !r.passed).length;
+  const readsHtml = reads.length ? `<details class="tennis-reads" ${tennisState.reads ? 'open' : ''}><summary>Every match read today <small>${reads.length}, ${worth} worth a bet</small></summary><div class="tennis-reads-list">${reads.map((r) => `<div class="tennis-read ${r.passed ? '' : 'is-play'}"><strong>${esc(r.a)} vs ${esc(r.b)}</strong><small>${esc(TENNIS_TOUR_LABEL[r.tour] ?? r.tour)} · ${esc(r.event ?? '')}${r.round ? ` · ${esc(r.round)}` : ''}${r.start ? ` · ${esc(tennisTimeFmt.format(new Date(r.start)))}` : ''}</small><span class="row-sub">${r.pMarket != null ? `market ${Math.round(Math.max(r.pMarket, 1 - r.pMarket) * 100)}% on the favourite${r.pModel != null ? `, the model ${Math.round(Math.max(r.pModel, 1 - r.pModel) * 100)}% on ${esc(r.pModel >= 0.5 ? r.a : r.b)}` : ''}${r.thin ? ' (form only: no serve numbers on file)' : ''} · ${esc(String(r.meanGames))} games expected · straight sets ${Math.round((r.straightSets ?? 0) * 100)}% · ` : ''}${esc(r.passed ?? (r.lean ? `the lean: ${r.lean}` : 'a play posted'))}</span>${r.flags && (r.flags.a?.length || r.flags.b?.length) ? `<span class="row-sub">${r.flags.a?.length ? `${esc(r.a)}: ${tennisFlags(r.flags.a)} ` : ''}${r.flags.b?.length ? `${esc(r.b)}: ${tennisFlags(r.flags.b)}` : ''}</span>` : ''}${r.form ? `<span class="row-sub tennis-form">${esc(r.form.a)} · ${esc(r.form.b)}</span>` : ''}</div>`).join('')}</div></details>` : '';
+  const empty = `<p class="empty">${reads.length ? `${reads.length} match${reads.length === 1 ? '' : 'es'} read, none worth a bet at the price right now. The board is read again every quarter hour until the first ball; each match and why it was passed is listed below.` : d.slate?.length ? 'The matches of the day are listed but not read yet: the board is still on its way.' : 'No ATP or WTA singles on the card today.'}</p>`;
+  el.tennisBody.innerHTML = `<div class="live-top"><span class="live-count ${leans.length ? 'is-on' : ''}">${leans.length ? `${leans.length} match${leans.length === 1 ? '' : 'es'} worth betting` : 'No match worth betting right now'}</span><span class="row-sub">${esc(tennisDayFmt.format(new Date()))} · ${esc(readWhen)} · ${esc(String(d.unitsToday ?? allPlays.length))} of ${esc(String(bar.maxUnits ?? 5))} units placed · record ${rec.wins}-${rec.losses}${rec.pushes ? `-${rec.pushes}` : ''}, ${esc(signedUnits(rec.units ?? 0))} units</span></div>
     <div class="live-books-pick live-leagues-pick" role="group" aria-label="Tours">${chips}</div>
     <p class="row-sub tennis-bar">${esc(barNote)}</p>
-    ${plays.length ? plays.map(renderTennisPlay).join('') : `<p class="empty">${reads.length ? `${reads.length} match${reads.length === 1 ? '' : 'es'} read, none with a leg the model likes at the price. The board is read again every quarter hour until the first ball.` : d.slate?.length ? 'The matches of the day are listed but not read yet: the serve profiles or the board are still on their way.' : 'No ATP or WTA singles on the card today.'}</p>`}
+    ${leans.length ? leans.map((l, i) => renderTennisLean(l, i + 1)).join('') : empty}
+    ${suggestions.length ? `<h3 class="tennis-h3">Parlay it <small>the leans together, priced at one book</small></h3>${suggestions.map(renderTennisSuggestion).join('')}` : ''}
+    ${plays.length ? `<h3 class="tennis-h3">On the record today <small>the day's parlay, aces, and plays already under way or settled</small></h3>${plays.map(renderTennisPlay).join('')}` : ''}
     ${readsHtml}`;
 }
 
@@ -12057,10 +12215,12 @@ function renderTennisPicksTab() {
   el.trendPicksStatus.textContent = plays.length
     ? `${plays.length} tennis play${plays.length === 1 ? '' : 's'} today · ${d.unitsToday ?? plays.length} of ${bar.maxUnits ?? 5} units · read ${d.current?.refreshedAt ? ago(d.current.refreshedAt) : 'today'}`
     : `No tennis play today yet: the board is read every quarter hour; a play posts only where the model clears the bar.`;
-  el.trendPicksBody.innerHTML = plays.map(renderTennisPlay).join('') || `<p class="empty">${Object.keys(d.current?.reads ?? {}).length ? `${Object.keys(d.current.reads).length} matches read, none with a leg the model likes at the price yet.` : 'No ATP or WTA singles read yet today.'}</p>`;
+  const picks = tennisPixelPicks(); const pickIds = new Set(picks.map((x) => x.play.id));
+  const others = plays.filter((p) => !pickIds.has(p.id));
+  el.trendPicksBody.innerHTML = `${picks.length ? `<h3 class="tennis-h3">Tennis Pixel's Picks <small>high conviction</small></h3>${picks.map(renderTennisPixelPick).join('')}` : ''}${others.length ? `${picks.length ? '<h3 class="tennis-h3">The other tracked plays <small>leans, the parlay, aces</small></h3>' : ''}${others.map((p) => renderTennisPlay(p)).join('')}` : ''}` || `<p class="empty">${Object.keys(d.current?.reads ?? {}).length ? `${Object.keys(d.current.reads).length} matches read, none with a leg the model likes at the price yet.` : 'No ATP or WTA singles read yet today.'}</p>`;
   const rec = d.record ?? { wins: 0, losses: 0, pushes: 0, units: 0, roi: null, risked: 0 };
   const line = (r) => `${r.wins}-${r.losses}${r.pushes ? `-${r.pushes}` : ''} <small>${esc(signedUnits(r.units ?? 0))}u</small>`;
-  if (el.trendPicksRecord) el.trendPicksRecord.innerHTML = `<p class="pick-record">${rec.wins}-${rec.losses}${rec.pushes ? `-${rec.pushes}` : ''} <small>${esc(signedUnits(rec.units ?? 0))} units · ${esc(roiText(rec.roi))} on ${rec.risked ?? 0} risked, one unit a play · ATP ${line(d.byTour?.atp ?? rec)} · WTA ${line(d.byTour?.wta ?? rec)}</small></p>`;
+  if (el.trendPicksRecord) el.trendPicksRecord.innerHTML = `<p class="pick-record">${rec.wins}-${rec.losses}${rec.pushes ? `-${rec.pushes}` : ''} <small>${esc(signedUnits(rec.units ?? 0))} units · ${esc(roiText(rec.roi))} on ${rec.risked ?? 0} risked, half a unit to two by confidence · ATP ${line(d.byTour?.atp ?? rec)} · WTA ${line(d.byTour?.wta ?? rec)}</small></p>`;
   if (el.trendPicksGraph) el.trendPicksGraph.innerHTML = '';
   const days = (d.history ?? []).filter((r) => (r.plays ?? []).length);
   el.trendPicksHistory.innerHTML = days.length ? days.map((r) => `<div class="pick-day"><h3>${esc(tennisDayFmt.format(new Date(`${r.date}T12:00:00Z`)))}</h3>${r.plays.map((p) => `<div class="pick-hist-row"><span><strong>${esc(p.selection)}</strong> <small>${esc(p.tour === 'both' ? 'ATP + WTA' : TENNIS_TOUR_LABEL[p.tour] ?? p.tour)} · ${p.market === 'ml_parlay' ? `${(p.legs ?? []).length} legs` : `${esc(p.a)} vs ${esc(p.b)}`}${Number.isFinite(p.american) ? ` · ${esc(formatAmerican(p.american))}` : ''}</small></span>${tennisPickBadge(p)}</div>`).join('')}</div>`).join('') : '<p class="empty">No tennis play has posted yet.</p>';
@@ -12069,14 +12229,15 @@ function renderTennisPicksTab() {
 /** The Pixel's Picks tab's tennis section: its own record, by tour and by market, and the plays by day. */
 function renderTennisLedger() {
   if (!el.trendPicksTennis) return;
-  if (trendPicksState.filter === 'tennis') renderTrendPicks();
+  // The All view carries the tennis picks and the board's tennis row, so it is drawn again too once the tennis read lands.
+  if (trendPicksState.filter === 'tennis' || trendPicksState.filter === 'all') renderTrendPicks();
   const d = tennisState.data;
   if (!d) { el.trendPicksTennis.innerHTML = ''; return; }
   const rec = d.record;
   const days = (d.history ?? []).filter((r) => (r.plays ?? []).length);
   const line = (r) => `${r.wins}-${r.losses}${r.pushes ? `-${r.pushes}` : ''} <small>${esc(signedUnits(r.units ?? 0))}u</small>`;
   const byMarket = Object.entries(d.byMarket ?? {}).filter(([, r]) => r.wins + r.losses + r.pushes > 0);
-  el.trendPicksTennis.innerHTML = `<h2 class="pick-h2">Tennis <small>tracked apart, one unit a play</small></h2>
+  el.trendPicksTennis.innerHTML = `<h2 class="pick-h2">Tennis <small>tracked apart, half a unit to two by confidence</small></h2>
     <p class="pick-record">${rec.wins}-${rec.losses}${rec.pushes ? `-${rec.pushes}` : ''} <small>${esc(signedUnits(rec.units ?? 0))} units · ${esc(roiText(rec.roi))} on ${rec.risked ?? 0} risked · ATP ${line(d.byTour?.atp ?? rec)} · WTA ${line(d.byTour?.wta ?? rec)}</small></p>
     ${byMarket.length ? `<p class="row-sub">${byMarket.map(([k, r]) => `${esc(d.markets?.[k] ?? k)} ${r.wins}-${r.losses}`).join(' · ')}</p>` : ''}
     ${days.length ? days.map((r) => `<div class="pick-day"><h3>${esc(tennisDayFmt.format(new Date(`${r.date}T12:00:00Z`)))}</h3>${r.plays.map((p) => `<div class="pick-hist-row"><span><strong>${esc(p.selection)}</strong> <small>${esc(p.tour === 'both' ? 'ATP + WTA' : TENNIS_TOUR_LABEL[p.tour] ?? p.tour)} · ${p.market === 'ml_parlay' ? `${(p.legs ?? []).length} legs` : `${esc(p.a)} vs ${esc(p.b)}`}${Number.isFinite(p.american) ? ` · ${esc(formatAmerican(p.american))}` : ''}</small></span>${tennisPickBadge(p)}</div>`).join('')}</div>`).join('') : '<p class="empty">No tennis play has posted yet.</p>'}`;
@@ -12377,6 +12538,29 @@ el.slipCheckBtn?.addEventListener('click', slipHandleText);
 el.slipClearBtn?.addEventListener('click', () => { slipState.legs = []; slipState.result = null; slipState.combinedAmerican = null; slipState.type = null; slipState.pendingImage = null; renderSlipType(); if (el.slipText) el.slipText.value = ''; if (el.slipPreview) { el.slipPreview.hidden = true; el.slipPreview.innerHTML = ''; } if (el.slipResult) el.slipResult.innerHTML = ''; slipSay(''); });
 el.slipResult?.addEventListener('click', (event) => { const why = event.target.closest('[data-slip-why]'); if (why) { const i = why.dataset.slipWhy; slipState.open[i] = !slipState.open[i]; renderSlipResult(); } });
 
+/** A why button flips its card's breakdown; a card that opens with it shown (Pixel's Picks) starts from open. */
+function toggleTennisWhy(button) {
+  const id = button.dataset.tennisWhy;
+  const shown = button.dataset.tennisWhyDefault === 'open' ? tennisState.open[id] !== false : Boolean(tennisState.open[id]);
+  tennisState.open[id] = !shown;
+}
+/**
+ * Player search opened on a named player (2026-11-12: "the buttons to see
+ * the stats"): his card when the name is on file, the name left typed in
+ * the search when it is not.
+ */
+async function openPlayerByName(name, kind = null) {
+  if (!name) return;
+  setActiveTab('players');
+  if (el.playersQuery) el.playersQuery.value = name;
+  await loadPlayers();
+  const folded = foldName(name);
+  const hit = allPlayers().find((p) => (!kind || p.kind === kind) && p.folded === folded) ?? playerMatches(name).find((p) => !kind || p.kind === kind) ?? playerMatches(name)[0];
+  if (hit) { pickPlayer(hit); return; }
+  if (el.playersQuery) el.playersQuery.value = name;
+  if (el.playersStatus) el.playersStatus.textContent = `No card on file for ${name} yet.`;
+}
+
 el.tennisView?.addEventListener('click', (event) => {
   const tour = event.target.closest('[data-tennis-tour]');
   if (tour) {
@@ -12384,8 +12568,10 @@ el.tennisView?.addEventListener('click', (event) => {
     if (tennisState.tours.has(t)) { if (tennisState.tours.size > 1) tennisState.tours.delete(t); } else tennisState.tours.add(t);
     saveJSON(TENNIS_TOURS_KEY, [...tennisState.tours]); renderTennis(); return;
   }
+  const stats = event.target.closest('[data-tennis-player]');
+  if (stats) { openPlayerByName(stats.dataset.tennisPlayer, 'tennis'); return; }
   const why = event.target.closest('[data-tennis-why]');
-  if (why) { const id = why.dataset.tennisWhy; tennisState.open[id] = !tennisState.open[id]; renderTennis(); return; }
+  if (why) { toggleTennisWhy(why); renderTennis(); return; }
   const reads = event.target.closest('details.tennis-reads');
   if (reads) setTimeout(() => { tennisState.reads = reads.open; }, 0);
 });
