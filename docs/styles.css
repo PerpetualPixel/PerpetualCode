@@ -7482,7 +7482,7 @@ a.trend-price:hover { background: rgba(255, 255, 255, 0.06); }
 .sc-actions { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
 .sc-actions .parlay-build { padding: 10px 18px; }
 .sc-preview img { max-height: 220px; }
-.sc-result { margin-top: 16px; display: grid; gap: 12px; }
+.sc-result { margin-top: 16px; display: grid; grid-template-columns: minmax(0, 1fr); gap: 12px; }
 .sc-result .sc-h { margin-top: 6px; }
 .sc-overall { display: grid; grid-template-columns: auto 1fr; gap: 14px; align-items: center; padding: 14px 16px; border: 1px solid var(--line); border-radius: 18px; background: linear-gradient(rgba(255, 255, 255, 0.035), rgba(255, 255, 255, 0.02)); }
 .sc-overall.is-hot { border-color: rgba(94, 224, 122, 0.5); }
@@ -7508,8 +7508,9 @@ a.trend-price:hover { background: rgba(255, 255, 255, 0.06); }
 .sc-suggestion.is-ok { border-color: rgba(94, 224, 122, 0.5); }
 .sc-sug-icon { flex: 0 0 auto; }
 .sc-legs { display: grid; gap: 10px; }
-.sc-leg { cursor: default; display: grid; gap: 8px; }
-.sc-leg-head { display: flex; align-items: center; gap: 10px; }
+.sc-leg { cursor: default; display: grid; grid-template-columns: minmax(0, 1fr); gap: 8px; }
+.sc-leg-head { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 10px; }
+.sc-leg-who strong { overflow-wrap: anywhere; }
 .sc-leg-who { flex: 1 1 auto; min-width: 0; display: grid; gap: 2px; }
 .sc-leg-who small { color: var(--muted); font-size: 0.78rem; }
 .sc-conf { font-family: var(--mono); font-weight: 900; font-size: 1.5rem; font-variant-numeric: tabular-nums; white-space: nowrap; }
@@ -7529,6 +7530,32 @@ a.trend-price:hover { background: rgba(255, 255, 255, 0.06); }
 .sc-bars .trend-bar { max-width: 22px; }
 .sc-warn { margin: 0; color: var(--danger, #ff5c7a); font-size: 0.82rem; }
 .sc-why { justify-self: start; }
+/* Viability (docs/slip-viability.js): the chip beside the confidence, the checks against the prop, the checks in its favor once the read is open. */
+.sc-via { flex: none; padding: 3px 9px; border-radius: 999px; border: 1px solid currentColor; font-size: 0.68rem; font-weight: 800; letter-spacing: 0.06em; text-transform: uppercase; white-space: nowrap; }
+.sc-via.is-viable { color: var(--success); }
+.sc-via.is-risky { color: var(--warn, #fbbf24); }
+.sc-via.is-avoid { color: var(--danger, #ff5c7a); }
+.sc-via-list { list-style: none; margin: 0; padding: 0; display: grid; gap: 5px; font-size: 0.82rem; line-height: 1.4; }
+.sc-via-list li { display: grid; grid-template-columns: 18px 1fr; gap: 6px; align-items: start; color: var(--muted); }
+.sc-via-list li > span { font-weight: 900; text-align: center; }
+.sc-via-list li.is-bad, .sc-via-list li.is-bad > span { color: var(--danger, #ff5c7a); }
+.sc-via-list li.is-warn > span { color: var(--warn, #fbbf24); }
+.sc-via-list li.is-warn { color: var(--text); }
+.sc-via-list li.is-ok > span { color: var(--success); }
+/* The suggested play: the legs that hold up, each with its price, and the link to the whole slip. */
+.sc-play { display: grid; gap: 10px; margin: 14px 0 4px; padding: 14px 16px; border-color: color-mix(in srgb, var(--success) 45%, var(--line)); }
+.sc-play.is-empty { border-color: var(--line); }
+.sc-play-head { display: flex; flex-wrap: wrap; align-items: baseline; gap: 6px 12px; }
+.sc-play-h { margin: 0; font-size: 1rem; }
+.sc-play-legs { display: grid; }
+.sc-play-leg { display: flex; align-items: center; gap: 10px; padding: 9px 0; border-top: 1px solid var(--line); }
+.sc-play-leg:first-child { border-top: 0; }
+.sc-play-main { flex: 1; min-width: 0; display: grid; gap: 2px; }
+.sc-play-main strong { font-size: 0.92rem; }
+.sc-play-main small { color: var(--muted); font-size: 0.76rem; }
+.sc-play-risk { color: var(--warn, #fbbf24); font-weight: 700; }
+.sc-play-dropped ul { margin: 4px 0 0; padding-left: 18px; font-size: 0.8rem; color: var(--muted); display: grid; gap: 3px; }
+.sc-play-dropped p { margin: 0; }
 /* The ticket type: one of three, none until chosen; the chips pulse when the check waits on one. */
 .sc-type { display: grid; gap: 8px; margin: 0 0 12px; }
 .sc-type-chips { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; }

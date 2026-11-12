@@ -17,7 +17,7 @@
 import { readFileSync } from 'node:fs';
 import { espnAbbr } from '../docs/team-logos.js';
 import { priorSeasonKey } from '../docs/prop-legs.js';
-import { bundleKey, bundleIndexKey, playersIndexKey, injuriesKey, rolesKey, startersFromSummary, startersFromRoster } from '../worker/src/espn-bundle.js';
+import { bundleKey, bundleIndexKey, playersIndexKey, injuriesKey, rolesKey, startersFromSummary, startersFromRoster, contextKey, linesFromScoreboard, depthFromChart } from '../worker/src/espn-bundle.js';
 import { boxKey, boxLegKey, findBoxEvent, eventFinal, boxLine, boxActual } from '../worker/src/box-grading.js';
 import { basketballHeadshotUrl } from '../worker/src/basketball-props.js';
 import { nflHeadshotUrl } from '../worker/src/football-props.js';
@@ -365,6 +365,53 @@ export async function recordRoles(league, now) {
   return summary;
 }
 
+/** The leagues whose spread says something about a prop (a hockey puck line and a soccer handicap do not), and the one with a depth chart. */
+const CONTEXT_LINES = new Set(['basketball_nba', 'americanfootball_nfl']);
+const CONTEXT_DEPTH = new Set(['americanfootball_nfl']);
+const DEPTH_EVERY_MS = 3 * 3600e3;
+const CONTEXT_TTL = 3 * 86400;
+
+/**
+ * The game context for the Slip Check's viability read (2026-11-12
+ * direction: "is there blowout potential for the game ... are they not
+ * the primary player for that position"): each coming game's spread and
+ * total by team from the scoreboard, and the NFL's depth charts, in one
+ * record per league (worker/src/espn-bundle.js contextKey). The lines are
+ * read every call; the depth charts every few hours, a team at a time.
+ */
+export async function recordContext(league, now, { teams = null } = {}) {
+  const wantsLines = CONTEXT_LINES.has(league.sportKey);
+  const wantsDepth = CONTEXT_DEPTH.has(league.sportKey);
+  if (!wantsLines && !wantsDepth) return null;
+  const key = contextKey(league.sportKey);
+  const existing = (await readKv(key).catch(() => null)) ?? {};
+  let lines = {};
+  if (wantsLines) {
+    // The NFL's scoreboard is the week's; the others are read by the day, today and tomorrow in the East.
+    const boards = wantsDepth ? [await getJson(`${league.site}/scoreboard`)] : await Promise.all([etDate(now), etDate(now + 864e5)].map((d) => getJson(`${league.site}/scoreboard?dates=${d.replace(/-/g, '')}`)));
+    // The nearer game wins when a team shows on both days.
+    const abbrOf = (team) => espnAbbr(league.sportKey, team?.displayName) ?? team?.abbreviation ?? null;
+    for (const sb of boards.reverse()) Object.assign(lines, linesFromScoreboard(sb, { abbrOf }));
+  }
+  let depth = existing.depth ?? {};
+  let depthAt = existing.depthAt ?? null;
+  if (wantsDepth && (!depthAt || now - depthAt >= DEPTH_EVERY_MS)) {
+    const list = teams ?? await leagueTeams(league);
+    const next = {};
+    await pool(list.filter((t) => t.id), async (team) => {
+      const chart = await getJson(`${league.site}/teams/${team.id}/depthcharts`);
+      for (const p of depthFromChart(chart, team.abbr)) next[p.id] = { name: p.name, team: p.team, pos: p.pos, rank: p.rank };
+    });
+    // A pass ESPN refused keeps the chart it had.
+    if (Object.keys(next).length) { depth = next; depthAt = now; }
+  }
+  const big = Object.values(lines).filter((l) => Number.isFinite(l.spread) && l.spread <= -10).length;
+  say(`context: ${Object.keys(lines).length / 2} game${Object.keys(lines).length === 2 ? '' : 's'} with a line, ${big} favored by ten or more${wantsDepth ? `; depth chart ${Object.keys(depth).length} players${depthAt === now ? ' (read now)' : ''}` : ''}`);
+  if (DRY) return { lines, depth };
+  await writeKv([{ key, value: { sportKey: league.sportKey, builtAt: now, lines, depth, depthAt } }], CONTEXT_TTL);
+  return { lines, depth };
+}
+
 function kvConfig() {
   const toml = readFileSync(new URL('../worker/wrangler.toml', import.meta.url), 'utf8');
   const block = /\[\[kv_namespaces\]\][\s\S]*?binding\s*=\s*"POTD_KV"[\s\S]*?id\s*=\s*"([0-9a-f]+)"/.exec(toml);
@@ -405,6 +452,7 @@ for (const [name, league] of Object.entries(LEAGUES)) {
     try { await refreshTicketLogs(league, now); } catch (e) { say(`  ! ticket logs: ${e.message}`); }
     try { await gradeTicketBoxes(league, now); } catch (e) { say(`  ! box scores: ${e.message}`); }
     try { await recordRoles(league, now); } catch (e) { say(`  ! roles: ${e.message}`); }
+    try { await recordContext(league, now, { teams }); } catch (e) { say(`  ! context: ${e.message}`); }
     continue;
   }
   const records = [];
@@ -420,6 +468,7 @@ for (const [name, league] of Object.entries(LEAGUES)) {
   if (DRY) continue;
   try { await writeKv(entries); } catch (e) { failed = true; say(`  ! ${e.message}`); }
   try { await recordRoles(league, now); } catch (e) { say(`  ! roles: ${e.message}`); }
+  try { await recordContext(league, now, { teams }); } catch (e) { say(`  ! context: ${e.message}`); }
 }
 if (failed) process.exit(1);
 }

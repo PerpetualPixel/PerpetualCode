@@ -100,6 +100,111 @@ export function withRoles(rows, record, now = Date.now()) {
   return (rows ?? []).map((r) => ({ ...r, role: roleFor(record, r.athleteId ?? r.id, now) }));
 }
 
+/**
+ * The game context a prop is judged against beside its hit rates
+ * (2026-11-12 direction: "check all variables that could hinder the
+ * prop": blowout potential, the primary player at a position). The
+ * runner writes one record per league: the spread and total of each game
+ * to come, by team, and for the NFL the depth chart's skill positions.
+ */
+export const contextKey = (sportKey) => `espn:${sportKey}:context`;
+
+const lineNumber = (v) => {
+  if (Number.isFinite(v)) return v;
+  const text = String(v ?? '').trim();
+  if (/^(pk|pick|even)$/i.test(text)) return 0;
+  const n = Number(text.replace(/^[ou]/i, '').replace('+', ''));
+  return text && Number.isFinite(n) ? n : null;
+};
+
+/**
+ * The lines on an ESPN scoreboard, by team abbreviation: {TEAM: {spread,
+ * total, opp, home, eventId, date}} for each game not yet started that
+ * carries odds. `spread` is the team's own: negative for a favorite.
+ * `abbrOf` maps an ESPN team to the letters the Trends rows use.
+ */
+export function linesFromScoreboard(scoreboard, { abbrOf = (team) => team?.abbreviation ?? null } = {}) {
+  const out = {};
+  for (const e of scoreboard?.events ?? []) {
+    const comp = e?.competitions?.[0];
+    const odds = comp?.odds?.[0];
+    const state = comp?.status?.type?.state ?? e?.status?.type?.state ?? 'pre';
+    if (!odds || state !== 'pre') continue;
+    const side = (homeAway) => (comp.competitors ?? []).find((c) => c?.homeAway === homeAway)?.team ?? null;
+    const homeTeam = side('home'); const awayTeam = side('away');
+    const home = abbrOf(homeTeam); const away = abbrOf(awayTeam);
+    if (!home || !away) continue;
+    const H = String(home).toUpperCase(); const A = String(away).toUpperCase();
+    // ESPN's own letters for the two sides, which its odds line names.
+    const eH = String(homeTeam?.abbreviation ?? home).toUpperCase(); const eA = String(awayTeam?.abbreviation ?? away).toUpperCase();
+    let homeSpread = lineNumber(odds.pointSpread?.home?.close?.line);
+    if (homeSpread === null) { const a = lineNumber(odds.pointSpread?.away?.close?.line); if (a !== null) homeSpread = -a; }
+    if (homeSpread === null) {
+      // "DAL -5.5": the favorite and its number.
+      const m = /^([A-Za-z]{2,4})\s+([+-]?\d+(?:\.\d+)?)/.exec(String(odds.details ?? ''));
+      if (m) homeSpread = m[1].toUpperCase() === eH ? Number(m[2]) : m[1].toUpperCase() === eA ? -Number(m[2]) : null;
+    }
+    const total = Number.isFinite(odds.overUnder) ? odds.overUnder : lineNumber(odds.total?.over?.close?.line);
+    if (homeSpread === null && total === null) continue;
+    const base = { total: total ?? null, eventId: String(e.id ?? ''), date: e.date ?? null };
+    out[H] = { ...base, spread: homeSpread, opp: A, home: true };
+    out[A] = { ...base, spread: homeSpread === null ? null : -homeSpread, opp: H, home: false };
+  }
+  return out;
+}
+
+const DEPTH_POSITIONS = new Set(['QB', 'RB', 'FB', 'WR', 'TE', 'PK', 'K']);
+
+/**
+ * The skill positions of one team's ESPN depth chart: [{id, name, team,
+ * pos, rank}], rank 1 the first listed at the position. A player listed
+ * twice keeps his better place.
+ */
+export function depthFromChart(chart, team) {
+  const out = new Map();
+  for (const formation of chart?.depthchart ?? chart?.items ?? []) {
+    for (const slot of Object.values(formation?.positions ?? {})) {
+      const pos = String(slot?.position?.abbreviation ?? '').toUpperCase();
+      if (!DEPTH_POSITIONS.has(pos)) continue;
+      (slot?.athletes ?? []).forEach((a, i) => {
+        const id = String(a?.id ?? '');
+        if (!id) return;
+        const prev = out.get(id);
+        if (!prev || i + 1 < prev.rank) out.set(id, { id, name: a?.displayName ?? null, team: team ? String(team).toUpperCase() : null, pos, rank: i + 1 });
+      });
+    }
+  }
+  return [...out.values()];
+}
+
+/** The context record as the runner wrote it: { builtAt, lines, depth, depthAt }, or empty. */
+export async function loadContext(env, sportKey) {
+  const raw = await env?.POTD_KV?.get?.(contextKey(sportKey)).catch(() => null);
+  const empty = { builtAt: null, lines: {}, depth: {}, depthAt: null };
+  if (!raw) return empty;
+  try { const v = JSON.parse(raw); return { builtAt: v.builtAt ?? null, lines: v.lines ?? {}, depth: v.depth ?? {}, depthAt: v.depthAt ?? null }; } catch { return empty; }
+}
+
+/**
+ * Who is out, by team, with what makes an absence matter: {TEAM: [{id,
+ * name, starter, pos, rank}]}. `starter` is the roles record's flag (he
+ * started the team's last game); pos and rank the depth chart's.
+ */
+export function outByTeam(report, roles, depth) {
+  const out = {};
+  for (const [id, entry] of Object.entries(report?.players ?? {})) {
+    if (injuryFor(report, id)?.level !== 'out' || !/\bout\b|injured reserve|\bir\b|suspend|inactive/i.test(entry.status ?? '')) continue;
+    const team = String(entry.team ?? depth?.[id]?.team ?? roles?.players?.[id]?.team ?? '').toUpperCase();
+    if (!team) continue;
+    const d = depth?.[id] ?? null;
+    const starter = typeof roles?.players?.[id]?.starter === 'boolean' ? roles.players[id].starter : null;
+    // Only an absence that moves the rest: a starter, or a player the depth chart lists first.
+    if (starter !== true && !(d && d.rank === 1)) continue;
+    (out[team] ??= []).push({ id, name: entry.name ?? d?.name ?? null, starter, pos: d?.pos ?? null, rank: d?.rank ?? null });
+  }
+  return out;
+}
+
 /** The injury report as the runner wrote it: { builtAt, players: { id: { name, team, status, detail, date } } }, or empty. */
 export async function loadInjuries(env, sportKey) {
   const raw = await env?.POTD_KV?.get?.(injuriesKey(sportKey)).catch(() => null);

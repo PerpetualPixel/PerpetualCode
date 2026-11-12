@@ -54,6 +54,7 @@ import {
   tennisUnderdogBlocked,
 } from './qualitative.js';
 import { parseLeg as parseSlipLeg, parseSlipText, parseAmerican as parseSlipAmerican, checkSlip, CATEGORY_LABEL as SLIP_CATEGORY_LABEL, TICKET_TYPES as SLIP_TICKET_TYPES } from './slip-check.js';
+import { VIABILITY_LABEL } from './slip-viability.js';
 import { parlaySnapshot, applyParlaySnapshot, cleanParlayStore, withParlaySlot, PARLAY_SLOTS } from './parlay-presets.js';
 import { playbookText, playbookKey, playbookUserId, discordChannelUrl, cleanPlaybookLink, PLAYBOOK_SITE } from './playbook.js';
 import { hitFlags as slipHitFlags } from './trends.js';
@@ -11978,7 +11979,7 @@ function renderTennisLedger() {
    player is off the board, the tennis legs, and the slate's prices for
    team lines. */
 const SLIP_LEAGUES = ['basketball_nba', 'americanfootball_nfl', 'icehockey_nhl', 'soccer'];
-const slipState = { legs: [], combinedAmerican: null, imageName: null, busy: false, result: null, open: {}, data: { trends: {}, trendsAt: 0, playerIndex: {}, playerLogs: {}, tennisLegs: null, tennisAt: 0 }, quota: null, type: null, pendingImage: null };
+const slipState = { legs: [], combinedAmerican: null, imageName: null, busy: false, result: null, open: {}, data: { trends: {}, context: {}, trendsAt: 0, playerIndex: {}, playerLogs: {}, tennisLegs: null, tennisAt: 0 }, quota: null, type: null, pendingImage: null };
 /** The ticket type: one at a time, none until the user picks (the check waits for it). */
 function renderSlipType() {
   document.querySelectorAll('[data-slip-type]').forEach((b) => { const on = b.dataset.slipType === slipState.type; b.classList.toggle('is-active', on); b.setAttribute('aria-pressed', String(on)); });
@@ -12064,6 +12065,8 @@ async function slipTrendsRows() {
       const body = await res.json();
       const t = body.trends;
       slipState.data.trends[sport] = t?.sportKey === sport ? attachSeries(t.rows ?? [], t.logs) : [];
+      // The game context the viability read needs: spreads, the depth chart, the starters who are out.
+      if (body.context?.[sport]) slipState.data.context[sport] = body.context[sport];
     } catch { slipState.data.trends[sport] = slipState.data.trends[sport] ?? []; }
   }));
   slipState.data.trendsAt = now;
@@ -12122,7 +12125,7 @@ async function slipRun({ note = '' } = {}) {
         if (log) { playerLogs[`${sport}:${leg.stat.key}:${leg.player}`] = log; break; }
       }
     }
-    slipState.result = checkSlip(slipState.legs, { trendsRows, playerLogs, tennisLegs, slateGames: slipSlateGames() }, { combinedAmerican: slipState.combinedAmerican, type: slipState.type, books: [...(trendsState.books ?? [])] });
+    slipState.result = checkSlip(slipState.legs, { trendsRows, playerLogs, tennisLegs, slateGames: slipSlateGames(), context: slipState.data.context }, { combinedAmerican: slipState.combinedAmerican, type: slipState.type, books: [...(trendsState.books ?? [])] });
     slipState.open = {};
     renderSlipResult(note);
   } catch (e) { slipSay(`Could not check the slip: ${e.message}`); }
@@ -12144,6 +12147,12 @@ function renderSlipLeg(s, i) {
   const { leg, match, score } = s;
   const open = Boolean(slipState.open[i]);
   const r = score.parts ?? {};
+  const v = score.viability ?? null;
+  const VIA_ICON = { ok: '✓', info: '•', warn: '!', bad: '✕' };
+  // What could hinder the prop: the checks against it first, then the ones in its favor once the read is open.
+  const against = (v?.checks ?? []).filter((c) => c.level === 'bad' || c.level === 'warn');
+  const rest = (v?.checks ?? []).filter((c) => c.level === 'ok' || c.level === 'info');
+  const viaList = (list) => `<ul class="sc-via-list">${list.map((c) => `<li class="is-${esc(c.level)}"><span aria-hidden="true">${VIA_ICON[c.level]}</span>${esc(c.text)}</li>`).join('')}</ul>`;
   const cell = (label, x, title) => `<span class="sc-rate" title="${esc(title ?? '')}"><small>${esc(label)}</small><b class="${x ? slipTone(x.rate * 100) : ''}">${slipPct(x)}</b>${x ? `<i>${x.hits} of ${x.games}</i>` : '<i>no games</i>'}</span>`;
   const name = match?.name ?? (leg.kind === 'prop' ? leg.player : leg.selection.replace(/\s*[+-]\d{3,5}\s*$/, '')) ?? '';
   const where = match?.source === 'trends' ? `on the board${match.opponent ? ` · vs ${esc(match.opponent)}` : ''}` : match?.source === 'player' ? 'from the game log' : match?.source === 'tennis' ? 'tennis model' : score.source === 'market' ? 'priced, not hit-rated' : 'no data';
@@ -12151,15 +12160,44 @@ function renderSlipLeg(s, i) {
   return `<article class="trend-card sc-leg" data-slip-leg="${i}">
     <div class="sc-leg-head">
       <div class="sc-leg-who"><strong>${esc(leg.selection)}</strong><small>${esc(name)}${leg.stat ? ` · ${esc(leg.stat.label)}` : leg.kind === 'total' ? ' · game total' : leg.kind === 'team' ? ' · team line' : ''} · ${where}${match?.injury ? ` ${injuryTag(match.injury)}` : ''}</small></div>
+      ${v ? `<span class="sc-via is-${esc(v.level)}" title="Whether anything beyond the hit rates could hinder this prop">${esc(VIABILITY_LABEL[v.level])}</span>` : ''}
       <span class="sc-conf ${slipTone(score.confidence)}">${score.confidence != null ? `${score.confidence}<small>%</small>` : '<small>n/a</small>'}</span>
       ${Number.isFinite(leg.american) ? `<span class="parlay-leg-price">${esc(formatAmerican(leg.american))}</span>` : ''}
     </div>
     ${rates}
     ${slipBars(match, leg)}
-    ${score.warnings?.length ? `<p class="sc-warn">${score.warnings.map(esc).join(' ')}</p>` : ''}
+    ${against.length ? viaList(against) : ''}
+    ${(score.warnings ?? []).filter((w) => !against.some((c) => c.text === w)).length ? `<p class="sc-warn">${score.warnings.filter((w) => !against.some((c) => c.text === w)).map(esc).join(' ')}</p>` : ''}
     <button type="button" class="parlay-btn sc-why" data-slip-why="${i}">${open ? 'Hide the read' : 'The read'}</button>
+    ${open && rest.length ? viaList(rest) : ''}
+    ${open && v && !v.checks.length ? '<p class="row-sub">No lineup, minutes, spread or depth-chart data has reached this leg yet, so only the hit rates were read.</p>' : ''}
     ${open ? `<ul class="tennis-why-list">${(score.notes ?? []).map((n) => `<li>${esc(n)}</li>`).join('') || '<li>No notes for this leg.</li>'}</ul>` : ''}
   </article>`;
+}
+/**
+ * The play to make instead (2026-11-12 direction: "a suggested deep link
+ * to play"): the legs that hold up, each with its price and the book's
+ * link, one tap for the whole slip where the book takes one, and the
+ * Playbook block for the books that need it.
+ */
+function renderSlipPlay(play) {
+  if (!play) return '';
+  const droppedList = play.dropped.length ? `<div class="sc-play-dropped"><p class="row-sub">Left off:</p><ul>${play.dropped.map((d) => `<li><strong>${esc(d.selection)}</strong>: ${esc(d.why)}</li>`).join('')}</ul></div>` : '';
+  if (!play.legs.length) return `<section class="trend-card sc-play is-empty"><h3 class="sc-play-h">Suggested play</h3><p class="row-sub">No leg on this slip holds up well enough to suggest: every one is under the bar, flagged, or off today's board.</p>${droppedList}</section>`;
+  const linked = play.legs.filter((l) => !l.manual);
+  const all = play.bookId && linked.length > 1 && linked.length === play.legs.length ? combinedSlipLink(play.bookId, linked.map((l) => l.link)) : null;
+  const single = linked.length === 1 && play.legs.length === 1 ? linked[0].link : null;
+  const href = all ?? single;
+  const bookName = play.book ?? linked[0]?.book ?? '';
+  const pb = linked.length ? playbookBlock({ key: playbookKey(play.bookId ?? linked[0].bookId ?? bookName, linked.map((l) => l.rowId ?? l.selection)), legs: linked.map((l) => ({ selection: l.selection, game: l.game })), book: bookIdFor(play.bookId ?? linked[0].bookId) ?? play.bookId ?? linked[0].bookId ?? bookName, bookName }) : '';
+  const same = play.dropped.length === 0 && play.legs.every((l) => l.change === 'kept');
+  const row = (l) => `<div class="sc-play-leg"><span class="sc-play-main"><strong>${esc(l.selection)}</strong><small>${l.change === 'moved' ? `moved from ${esc(String(l.from))} · ` : ''}${l.confidence != null ? `${esc(String(l.confidence))}% · ` : ''}${l.level === 'risky' ? '<b class="sc-play-risk">risky, see the leg below</b> · ' : ''}${l.manual ? 'no board price: add this one by hand' : esc(l.game)}</small></span>${l.manual ? (Number.isFinite(l.american) ? `<span class="parlay-leg-price">${esc(formatAmerican(l.american))}</span>` : '') : pricePill(l.bookId, l.book, l.american, l.link)}</div>`;
+  return `<section class="trend-card sc-play">
+    <div class="sc-play-head"><h3 class="sc-play-h">Suggested play</h3><span class="row-sub">${same ? 'the slip as it stands' : `${play.legs.length} leg${play.legs.length === 1 ? '' : 's'} that hold up`}${play.priced && play.american != null ? ` · ${esc(formatAmerican(play.american))}` : ''}${bookName ? ` at ${esc(bookName)}` : ''}</span></div>
+    <div class="sc-play-legs">${play.legs.map(row).join('')}</div>
+    ${droppedList}
+    <div class="pick-bet-foot">${href ? `<a class="pick-bet-link" href="${esc(href)}" target="_blank" rel="noopener">${all ? `Add all ${linked.length} legs to your ${esc(bookName)} slip ↗` : `Open on your ${esc(bookName)} slip ↗`}</a>` : linked.length > 1 ? `<p class="row-sub">${play.bookId ? `${esc(bookName)} takes one leg per link: tap each price above, or use Playbook below for one link to the whole slip.` : 'These legs are best priced at different books: tap each price above.'}</p>` : ''}${pb}</div>
+  </section>`;
 }
 const SLIP_SUGGESTION_ICON = { drop: '✂️', move: '↔️', flip: '🔁', injury: '🩹', warn: '⚠️', 'same-game': '🔗', lotto: '🎟️', unmatched: '🔎', ok: '✅', replace: '🔄' };
 /** A replacement leg off the board, with its price and the book's link. */
@@ -12185,6 +12223,7 @@ function renderSlipResult(note = '') {
       </div>
       <p class="row-sub">${slip.known < scored.length ? `${scored.length - slip.known} leg${scored.length - slip.known === 1 ? '' : 's'} without a read are left out of the chance. ` : ''}The chance reads the legs as independent; the strength is the legs' confidence averaged, the grade follows it (A from 75, B from 65, C from 55, D from 45).</p>
     </section>
+    ${renderSlipPlay(res.play)}
     <h3 class="sc-h">What to do</h3>
     <ul class="sc-suggestions">${suggestions.map((x) => `<li class="sc-suggestion is-${esc(x.type)}"><span class="sc-sug-icon" aria-hidden="true">${SLIP_SUGGESTION_ICON[x.type] ?? '•'}</span><span class="sc-sug-body"><span>${esc(x.text)}</span>${x.props?.length ? `<div class="sc-props">${x.props.map(renderSlipProp).join('')}</div>` : ''}</span></li>`).join('')}</ul>
     <h3 class="sc-h">Every leg</h3>
