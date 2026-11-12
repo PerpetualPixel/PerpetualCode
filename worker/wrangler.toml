@@ -126,4 +126,11 @@ id = "15a94259af1c4d4cb4bc19076d0be2d9"
 # sharing the main tick's invocation with the boards, grading and prop
 # scans ran it into the per-invocation subrequest limit. Its own
 # invocation is its own budget.
-crons = ["*/15 * * * *", "7,22,37,52 * * * *"]
+#
+# The third, every minute, is live tennis alone (worker/src/
+# tennis-live-plays.js's TENNIS_LIVE_CRON): one KV read and a return while
+# no match is in play. In play it reads ESPN's scoreboard each minute (no
+# credits) and the tournament's live moneyline every three minutes at
+# most (its own cache, tennis-picks.js's LIVE_BOARD_TTL): about twenty
+# calls an hour per tournament with a match on court, and none otherwise.
+crons = ["*/15 * * * *", "7,22,37,52 * * * *", "* * * * *"]

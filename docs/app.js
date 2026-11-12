@@ -11716,15 +11716,50 @@ function liveNoSlipWhy(g) {
 const TENNIS_STANDING = { won: ['Won', 'is-win'], lost: ['Lost', 'is-loss'], push: ['Push', ''], void: ['Void', ''], on: ['On track', 'is-live'], off: ['Behind', 'is-loss'], wait: ['Waiting', ''] };
 const tennisStanding = (st) => { const [word, cls] = TENNIS_STANDING[st?.state] ?? ['Pending', '']; return `<span class="pick-result ${cls}" title="${esc(st?.text ?? '')}">${word}</span>`; };
 const liveSetScore = (m) => (m.sets?.length ? m.sets.map(([a, b]) => `${a}-${b}`).join(' ') : '');
+/** A live tennis play (worker/src/tennis-live-plays.js): the moneyline with its book's price and link, or a set with the price to take it at or better; the stake by confidence; where it stands. */
+function renderTennisLivePlay(p, { withMatch = false } = {}) {
+  const badge = p.status === 'graded' ? `<span class="pick-result ${p.result === 'win' ? 'is-win' : 'is-loss'}" title="${esc(p.actual ?? '')}">${p.result === 'win' ? 'Won' : 'Lost'}${Number.isFinite(p.profit) ? ` ${esc(signedUnits(p.profit))}u` : ''}</span>` : p.status === 'void' ? `<span class="pick-result" title="${esc(p.actual ?? '')}">Void</span>` : '<span class="pick-result is-live">Live</span>';
+  const price = Number.isFinite(p.american) ? pricePill(p.bookId, p.book, p.american, p.link) : `<span class="trend-price live-tennis-fair" title="No book in the feed prices a set in play: this is the price to take it at or better">${esc(formatAmerican(p.playable))} or better</span>`;
+  return `<div class="live-tennis-play is-liveplay"><span><strong>${esc(p.selection)}</strong> <small>${esc(pct(p.prob))}${Number.isFinite(p.edge) ? ` · ${esc(String(Math.round(p.edge * 100)))} pts over the price` : ''} · posted at ${esc(p.score ?? '')}${withMatch ? ` · ${esc(p.a)} vs ${esc(p.b)}` : ''}</small></span><span class="pick-board-units" title="Stake sized by confidence">${esc(unitsLabel(p.units))}</span>${price}${badge}</div>`;
+}
+/** The live read of a match in play: the chance of the match and of the set, the holds and the last games, the plays, and why. */
+function renderTennisLiveRead(r) {
+  const a = Math.round(r.prob * 100);
+  const setSide = r.model.set >= 0.5 ? 'a' : 'b';
+  const setProb = setSide === 'a' ? r.model.set : 1 - r.model.set;
+  const holds = r.serve?.first ? `Holds: ${esc(lastName(r.a))} ${r.serve.a.held}/${r.serve.a.served} · ${esc(lastName(r.b))} ${r.serve.b.held}/${r.serve.b.served}` : 'Serve order not read yet';
+  const mo = r.momentum?.last?.of >= 4 ? `Last ${r.momentum.last.of} games: ${esc(lastName(r.a))} ${r.momentum.last.a} · ${esc(lastName(r.b))} ${r.momentum.last.b}` : '';
+  const open = Boolean(liveState.open[`tl:${r.id}`]);
+  return `<div class="live-tennis-read">
+    <div class="live-tennis-bar" role="img" aria-label="${esc(r.a)} ${a}% to win, ${esc(r.b)} ${100 - a}%"><span class="is-a" style="width:${a}%">${a >= 12 ? `${a}%` : ''}</span><span class="is-b">${100 - a >= 12 ? `${100 - a}%` : ''}</span></div>
+    <small class="row-sub">To win the match${r.market != null ? ` · model ${esc(pct(r.model.match))}, live price ${esc(pct(r.market))}` : ' · from the score and the serving; no live price'}${r.state?.inSet ? ` · set ${r.state.setNumber}: ${esc(lastName(r[setSide]))} ${esc(pct(setProb))}` : ''}</small>
+    <small class="row-sub">${holds}${mo ? ` · ${mo}` : ''}</small>
+    ${(r.plays ?? []).map((p) => renderTennisLivePlay(p)).join('') || '<small class="row-sub live-tennis-none">No live play: nothing here clears the bar against the price.</small>'}
+    <button type="button" class="parlay-btn sc-why" data-tennis-live-why="${esc(r.id)}">${open ? 'Hide the read' : 'The read'}</button>
+    ${open ? `<ul class="tennis-why-list">${(r.why ?? []).map((w) => `<li>${esc(w)}</li>`).join('')}<li>Serve numbers from ${esc(r.serve?.source ?? 'the tour average')}. ESPN's feed carries the score game by game and no serve statistics, so the holds and breaks are read from the order of the games.</li></ul>` : ''}
+  </div>`;
+}
+const lastName = (name) => String(name ?? '').trim().split(/\s+/).at(-1) ?? '';
 /** One match on the live tennis list: the players, the sets, the state, and the Tennis tab's plays on it with where each stands. */
 function renderLiveTennisMatch(m) {
   const live = m.state === 'in';
+  const read = live ? (liveState.data?.tennisLive?.matches ?? []).find((r) => r.id === m.id) ?? null : null;
   const state = live ? esc(m.detail || 'In play') : m.state === 'pre' ? esc(liveKickFmt.format(new Date(m.date))) : m.winner ? `Final · ${esc(m.winner === 'a' ? m.a : m.b)}` : 'Final';
   return `<div class="live-tennis-match ${live ? 'is-live' : ''} ${m.plays.length ? 'has-play' : ''}">
     <div class="live-tennis-row"><strong>${esc(m.a)} <small>vs</small> ${esc(m.b)}</strong><span class="live-state ${live ? 'is-on' : ''}">${live ? '<i class="live-dot"></i>' : ''}${state}</span><span class="live-score">${esc(liveSetScore(m))}</span></div>
     <small class="row-sub">${esc(TENNIS_TOUR_LABEL[m.tour] ?? m.tour)} · ${esc(m.event ?? '')}${m.round ? ` · ${esc(m.round)}` : ''}</small>
     ${m.plays.map((p) => `<div class="live-tennis-play"><span>${esc(p.selection)}${Number.isFinite(p.american) ? ` <small>${esc(formatAmerican(p.american))}${p.book ? ` · ${esc(p.book)}` : ''}</small>` : ''}<small class="live-tennis-note">${esc(p.standing?.text ?? '')}</small></span>${tennisStanding(p.standing)}</div>`).join('')}
+    ${read ? renderTennisLiveRead(read) : ''}
   </div>`;
+}
+/** The live plays' own line: the record (moneyline at the book's price, sets at the price named), and today's plays on matches no longer in play. */
+function renderTennisLiveLedger(tl, inPlayIds) {
+  if (!tl) return '';
+  const rec = (r, label, note) => (r && r.wins + r.losses > 0 ? `${label} ${r.wins}-${r.losses} <small>${esc(signedUnits(r.units))}u${r.roi != null ? ` · ${esc(roiText(r.roi))}` : ''}${note}</small>` : '');
+  const lines = [rec(tl.record?.ml, 'Moneyline', ''), rec(tl.record?.sets, 'Sets', ' at the book\'s price, or the price named where no book had the set')].filter(Boolean);
+  const done = (tl.today ?? []).filter((p) => !inPlayIds.has(p.matchId));
+  if (!lines.length && !done.length) return '<p class="row-sub live-tennis-ledger">Live plays post here while a match is in play: the moneyline when the read beats the live price, a set when one player is likely to take it. Stakes are sized by confidence. Tracked apart from the pre-match plays.</p>';
+  return `<div class="live-tennis-ledger">${lines.length ? `<p class="row-sub"><strong>Live plays</strong> · ${lines.join(' · ')}</p>` : ''}${done.length ? `<details ${liveState.open['tennis:liveplays'] ? 'open' : ''} class="live-tennis-rest" data-live-details="tennis:liveplays"><summary>${done.length} live play${done.length === 1 ? '' : 's'} today on matches off court</summary>${done.map((p) => renderTennisLivePlay(p, { withMatch: true })).join('')}</details>` : ''}</div>`;
 }
 /** Tennis on the Live tab: the day's parlay with each leg's standing, the matches in play, the matches with a play, the rest folded. */
 function renderLiveTennis(t) {
@@ -11738,6 +11773,7 @@ function renderLiveTennis(t) {
   if (!matches.length) return `<div class="live-tennis"><p class="live-sub">Tennis <small>no ATP or WTA singles on today's scoreboard</small></p>${parlays}</div>`;
   return `<div class="live-tennis">
     <p class="live-sub">Tennis <small>${inPlay.length ? `${inPlay.length} in play · ` : ''}${matches.length} singles today · scoreboard read ${esc(ago(t.at))}</small></p>
+    ${renderTennisLiveLedger(liveState.data?.tennisLive, new Set(inPlay.map((m) => m.id)))}
     ${parlays}
     ${[...inPlay, ...withPlay].map(renderLiveTennisMatch).join('')}
     ${rest.length ? `<details class="live-tennis-rest" ${liveState.open['tennis:rest'] ? 'open' : ''}><summary>${rest.length} more match${rest.length === 1 ? '' : 'es'} today without a play</summary>${rest.map(renderLiveTennisMatch).join('')}</details>` : ''}
@@ -11786,8 +11822,10 @@ el.liveView?.addEventListener('click', (event) => {
     saveJSON(LIVE_LEAGUES_KEY, [...liveState.leagues]); renderLive(); return;
   }
   if (event.target.closest('[data-live-showall]')) { liveState.showAll = true; renderLive(); return; }
+  const tlWhy = event.target.closest('[data-tennis-live-why]');
+  if (tlWhy) { const k = `tl:${tlWhy.dataset.tennisLiveWhy}`; liveState.open[k] = !liveState.open[k]; renderLive(); return; }
   const rest = event.target.closest('details.live-tennis-rest');
-  if (rest) { setTimeout(() => { liveState.open['tennis:rest'] = rest.open; }, 0); return; }
+  if (rest) { const key = rest.dataset.liveDetails ?? 'tennis:rest'; setTimeout(() => { liveState.open[key] = rest.open; }, 0); return; }
   if (event.target.closest('[data-live-expand]')) { liveState.expandAll = !liveState.expandAll; if (!liveState.expandAll) liveState.open = Object.fromEntries(Object.entries(liveState.open).filter(([k]) => !k.startsWith('game:'))); renderLive(); return; }
   const toggle = event.target.closest('[data-live-toggle]');
   if (toggle) { const k = `game:${toggle.dataset.liveToggle}`; if (liveState.expandAll) { liveState.expandAll = false; liveState.data?.games?.forEach((g) => { liveState.open[`game:${g.espnEventId}`] = true; }); } liveState.open[k] = !liveState.open[k]; renderLive(); return; }

@@ -81,7 +81,8 @@ export const TENNIS_MARKETS = {
   games_spread: 'Game spread', games_total: 'Total games', set_spread: 'Set spread', set1_total: '1st set games', set2_total: '2nd set games', aces: 'Aces', ml_parlay: 'Moneyline parlay',
 };
 const BOARD_MARKETS = 'h2h,spreads,totals';
-const EVENT_MARKETS = 'alternate_spreads,alternate_totals,alternate_set_spreads,totals_s1,alternate_totals_s1,alternate_totals_s2';
+// h2h_s1 (the first set's winner) and alternate_set_totals (over or under the sets played) joined 2026-11-12 for the Parlay Builder.
+const EVENT_MARKETS = 'alternate_spreads,alternate_totals,alternate_set_spreads,totals_s1,alternate_totals_s1,alternate_totals_s2,h2h_s1,alternate_set_totals';
 const BOARD_TTL = 30 * 60e3;
 const EVENT_TTL = 3 * 3600e3;
 const SPORTS_TTL = 6 * 3600e3;
@@ -126,6 +127,27 @@ async function tournamentBoard(env, ctx, key, now) {
   const url = `${UPSTREAM}/sports/${key}/odds?bookmakers=${TREND_BOOKMAKERS}&markets=${BOARD_MARKETS}&oddsFormat=american&dateFormat=iso&includeLinks=true`;
   const body = await feedJson(env, ctx, url, `tennis:odds:board:${key}`, BOARD_TTL, { now, sport: key });
   return Array.isArray(body) ? body : [];
+}
+/**
+ * The same board for the matches in play (worker/src/tennis-live-plays.js):
+ * the moneyline alone, a few minutes old at most. `cachedOnly` reads the
+ * pre-match board without a call, to find which tournament key holds a match.
+ */
+export const LIVE_BOARD_TTL = 3 * 60e3;
+export async function liveTournamentBoard(env, ctx, key, now) {
+  const url = `${UPSTREAM}/sports/${key}/odds?bookmakers=${TREND_BOOKMAKERS}&markets=h2h&oddsFormat=american&dateFormat=iso&includeLinks=true`;
+  const body = await feedJson(env, ctx, url, `tennis:odds:live:${key}`, LIVE_BOARD_TTL, { now, sport: key });
+  return Array.isArray(body) ? body : [];
+}
+/** The set winner's price for one match (the feed's h2h_s1 and h2h_s2): asked only when the live read has a set play to price, a few minutes old at most. */
+export async function liveSetMarket(env, ctx, key, eventId, set, now) {
+  if (set !== 1 && set !== 2) return null;
+  const url = `${UPSTREAM}/sports/${key}/events/${eventId}/odds?bookmakers=${TREND_BOOKMAKERS}&markets=h2h_s${set}&oddsFormat=american&dateFormat=iso&includeLinks=true`;
+  return feedJson(env, ctx, url, `tennis:odds:liveset:${eventId}:${set}`, LIVE_BOARD_TTL, { now, sport: key });
+}
+export async function cachedTournamentBoard(env, key) {
+  const cached = await readJson(env, `tennis:odds:board:${key}`);
+  return Array.isArray(cached?.body) ? cached.body : [];
 }
 /** One match's deeper markets (the set spread, the set totals, the alternate games lines): only for a match the model has a case on. */
 async function eventMarkets(env, ctx, key, eventId, now, { cachedOnly = false } = {}) {
@@ -303,7 +325,7 @@ export function buildParlay(candidates, now = Date.now()) {
 
 /** A builder leg's score, 1 to 5: the model's share (50% is 1, 90% is 5), half a star for edge over the price, a star off a flagged side. */
 export const legScoreOf = (prob, edge, flagged = false) => Math.max(1, Math.min(5, Math.round((1 + 4 * Math.max(0, Math.min(1, (prob - 0.5) / 0.4)) + (edge >= 0.05 ? 0.5 : 0) - (flagged ? 1 : 0)) * 10) / 10));
-export const BUILDER_MARKETS = { ml: 'Moneyline', games_spread: 'Game spread', games_total: 'Total games', set_spread: 'Set spread', set1_total: '1st set games' };
+export const BUILDER_MARKETS = { ml: 'Moneyline', games_spread: 'Game spread', games_total: 'Total games', set_spread: 'Set spread', set1_total: '1st set games', set1_ml: '1st set winner', sets_total: 'Total sets' };
 
 /**
  * Every priced leg on one match for the Parlay Builder: each side's
@@ -365,6 +387,21 @@ export function builderLegs(match, { dist, board, deep, pFinal, flags = { a: [],
     const prob = sideWord === 'over' ? shareOver(dist.set1, point) : shareUnder(dist.set1, point);
     const cons = sideWord === 'over' ? [consistency(match.a, 'set1_total', point), consistency(match.b, 'set1_total', point)].filter(Boolean).sort((x, y) => y.rate - x.rate)[0] ?? null : null;
     push('set1_total', null, `1st set ${sideWord} ${point} games`, point, sideWord, quotes, prob, [`${pct(prob)} of simulated first sets ${sideWord === 'over' ? 'run past' : 'stay under'} ${point} games`], cons);
+  }
+  // The first set's winner, both sides (the feed's h2h_s1).
+  for (const side of ['a', 'b']) {
+    const quotes = quotesOf(deep, 'h2h_s1').filter((q) => sameName(q.name, match[side].name));
+    const prob = side === 'a' ? dist.aWinsSet1 : 1 - dist.aWinsSet1;
+    if (Number.isFinite(prob)) push('set1_ml', side, `${match[side].name} to win the 1st set`, null, null, quotes, prob, [`${pct(prob)} of simulations give ${match[side].name} the first set`]);
+  }
+  // The sets played, over and under (2.5 in a best of three: does it go the distance).
+  const setTotals = quotesOf(deep, 'alternate_set_totals').filter((q) => q.point != null);
+  const bySets = new Map();
+  for (const q of setTotals) { const w = /over/i.test(q.name) ? 'over' : /under/i.test(q.name) ? 'under' : null; if (!w) continue; const k = `${w}:${q.point}`; if (!bySets.has(k)) bySets.set(k, { sideWord: w, point: q.point, quotes: [] }); bySets.get(k).quotes.push(q); }
+  for (const { sideWord, point, quotes } of bySets.values()) {
+    if (!Array.isArray(dist.setsPlayed)) continue;
+    const prob = sideWord === 'over' ? shareOver(dist.setsPlayed, point) : shareUnder(dist.setsPlayed, point);
+    push('sets_total', null, `${sideWord === 'over' ? 'Over' : 'Under'} ${point} sets`, point, sideWord, quotes, prob, [`${pct(prob)} of simulations ${sideWord === 'over' ? 'go past' : 'finish inside'} ${point} sets`]);
   }
   void dog;
   return legs;
@@ -462,7 +499,7 @@ export async function runTennisTick(env, ctx, now = Date.now(), { deps = {} } = 
     const sideClear = (l) => !l.side || !flags[l.side].length;
     const clear = legs.filter((l) => clearsBar(l) && sideClear(l));
     const flagged = legs.filter((l) => clearsBar(l) && !sideClear(l));
-    record.reads[id] = { ...base, pMarket: pMarket != null ? Math.round(pMarket * 1000) / 1000 : null, pModel, pFinal, pElo: read.pElo, meanGames: Math.round(dist.meanGames * 10) / 10, straightSets: Math.round(dist.straightSets * 100) / 100, dogSet: Math.round(dogSet * 100) / 100, flags, form: { a: formLine(m.a.name, formA), b: formLine(m.b.name, formB) }, style: { a: styleA.style, b: styleB.style }, reasons: read.reasons, legs: legs.length, clear: clear.length, passed: clear.length ? null : flagged.length ? `the only legs that clear sit on a player flagged for ${[...new Set(flagged.flatMap((l) => flags[l.side]))].join(' and ')}` : legs.length ? 'nothing clears the bar: the best leg is short of the price' : 'no leg the model likes at this price' };
+    record.reads[id] = { ...base, serve: { pA: Math.round(fit.pA * 10000) / 10000, pB: Math.round(fit.pB * 10000) / 10000 }, bestOf: m.bestOf, pMarket: pMarket != null ? Math.round(pMarket * 1000) / 1000 : null, pModel, pFinal, pElo: read.pElo, meanGames: Math.round(dist.meanGames * 10) / 10, straightSets: Math.round(dist.straightSets * 100) / 100, dogSet: Math.round(dogSet * 100) / 100, flags, form: { a: formLine(m.a.name, formA), b: formLine(m.b.name, formB) }, style: { a: styleA.style, b: styleB.style }, reasons: read.reasons, legs: legs.length, clear: clear.length, passed: clear.length ? null : flagged.length ? `the only legs that clear sit on a player flagged for ${[...new Set(flagged.flatMap((l) => flags[l.side]))].join(' and ')}` : legs.length ? 'nothing clears the bar: the best leg is short of the price' : 'no leg the model likes at this price' };
     if (!clear.length) continue;
     // The best priced leg, then the best aces leg, each under its cap for the tour and the day's units.
     const tourCount = (market) => record.plays.filter((p) => p.tour === m.tour && (market === 'aces' ? p.market === 'aces' : p.market !== 'aces' && p.market !== 'ml_parlay')).length;

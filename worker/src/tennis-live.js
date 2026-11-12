@@ -51,13 +51,15 @@ export function playStanding(play, m) {
 }
 
 /**
- * The day's singles with the plays: {at, day, matches: [{id, tour, event, tier, round, date, state, completed, detail,
- * a, b, sets, winner, plays: [{id, market, selection, side, american, bookId, book, standing}]}], inPlay, parlay}.
+ * The day's scoreboard, both tours: {at, sources, matches}. Read from
+ * ESPN when the stored copy is older than `maxAge`, else the stored copy.
+ * The Live tab reads it at two minutes; the live-plays tick (worker/src/
+ * tennis-live-plays.js) at under one, so a game is seen as it lands.
  */
-export async function getTennisLive(env, now = Date.now(), { fetchJson = getJson } = {}) {
+export async function loadTennisScoreboard(env, now = Date.now(), { fetchJson = getJson, maxAge = TENNIS_LIVE_TTL } = {}) {
   const raw = await env.POTD_KV.get(TENNIS_LIVE_KEY).catch(() => null);
   let scoreboard = null;
-  if (raw) { try { const c = JSON.parse(raw); if (now - (c.at ?? 0) < TENNIS_LIVE_TTL) scoreboard = c; } catch { /* read again */ } }
+  if (raw) { try { const c = JSON.parse(raw); if (now - (c.at ?? 0) < maxAge) scoreboard = c; } catch { /* read again */ } }
   if (!scoreboard) {
     const byId = new Map();
     const sources = {};
@@ -82,6 +84,15 @@ export async function getTennisLive(env, now = Date.now(), { fetchJson = getJson
     scoreboard = { at: now, sources, matches: [...byId.values()].filter((m) => !m.qualifying && m.tier !== 'challenger') };
     await env.POTD_KV.put(TENNIS_LIVE_KEY, JSON.stringify(scoreboard), { expirationTtl: 3600 }).catch(() => {});
   }
+  return scoreboard;
+}
+
+/**
+ * The day's singles with the plays: {at, day, matches: [{id, tour, event, tier, round, date, state, completed, detail,
+ * a, b, sets, winner, plays: [{id, market, selection, side, american, bookId, book, standing}]}], inPlay, parlay}.
+ */
+export async function getTennisLive(env, now = Date.now(), { fetchJson = getJson } = {}) {
+  const scoreboard = await loadTennisScoreboard(env, now, { fetchJson });
   const day = etParts(now).date;
   // A scoreboard day answers with the tournament's whole draw: the Live tab wants today's matches (the Eastern day, as the board) and whatever is in play.
   const todays = scoreboard.matches.filter((m) => m.state === 'in' || (Number.isFinite(Date.parse(m.date)) && etParts(Date.parse(m.date)).date === day));

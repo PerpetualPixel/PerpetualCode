@@ -93,6 +93,13 @@ jobs:
                 for (const line of t.diag || []) console.log("  DIAG", line);
                 return;
                 }
+                if (d && d.record && d.record.ml && Array.isArray(d.matches) && Array.isArray(d.today)) {
+                // Live tennis (worker/src/tennis-live-plays.js getTennisLivePlays): the matches in play with their reads, the plays posted today, the record.
+                console.log("TENNIS LIVE read at", d.at && new Date(d.at).toISOString(), "| fresh", d.fresh, "| in play", d.matches.length, "| plays today", d.today.length, "| record ml", JSON.stringify(d.record.ml), "sets", JSON.stringify(d.record.sets));
+                for (const m of d.matches) { console.log("  MATCH", m.tour, m.a, "v", m.b, "|", (m.sets || []).map((s) => s.join("-")).join(" "), "| prob", m.prob, "model", JSON.stringify(m.model), "market", m.market, "| games seen", m.games, "| serve first", m.serve && m.serve.first, "sure", m.serve && m.serve.sure, "holds", m.serve && JSON.stringify([m.serve.a, m.serve.b]), "| source", m.serve && m.serve.source, "| quotes", JSON.stringify(m.quotes)); for (const w of m.why || []) console.log("    WHY", w); }
+                for (const p of d.today) console.log("  PLAY", p.market, "|", p.selection, "| prob", p.prob, "edge", p.edge, "| price", p.american, p.book, "playable", p.playable, "| units", p.units, "| at", p.score, "|", p.status, p.result, p.actual, p.profit);
+                return;
+                }
                 if (d && Array.isArray(d.legs) && Array.isArray(d.matches) && !d.byTour) {
                 // The Parlay Builder tennis legs (worker/src/tennis-picks.js getTennisParlay): the matches read and the best legs by score.
                 console.log("TENNIS PARLAY at", d.at && new Date(d.at).toISOString(), "| matches", d.matches.length, "| legs", d.legs.length);

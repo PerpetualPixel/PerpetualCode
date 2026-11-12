@@ -143,6 +143,9 @@ export function distributions(sims) {
     aWinsASet: sims.filter((s) => s.setsA >= 1).length / sims.length,
     bWinsASet: sims.filter((s) => s.setsB >= 1).length / sims.length,
     straightSets: sims.filter((s) => s.sets.length === 2).length / sims.length,
+    // The first set's winner and the number of sets played: the first-set moneyline and the total sets.
+    aWinsSet1: sims.filter((s) => s.sets[0][0] > s.sets[0][1]).length / sims.length,
+    setsPlayed: sims.map((s) => s.sets.length),
     meanGames: games.reduce((a, b) => a + b, 0) / games.length,
     svptA: sims.map((s) => s.svptA), svptB: sims.map((s) => s.svptB),
   };
