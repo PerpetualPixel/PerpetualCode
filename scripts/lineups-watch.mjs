@@ -12,7 +12,9 @@
  * every game in play or final, once; the posted lineup of every game
  * inside two hours of tip, from ESPN's core API, every pass until it
  * tips. Every half hour the injury report is refreshed too, so a starter
- * ruled out in the afternoon reads out before his lineup is posted.
+ * ruled out in the afternoon reads out before his lineup is posted, and
+ * with it the game context (recordContext: spreads, totals, the NFL
+ * depth charts) the Slip Check reads.
  *
  *   node scripts/lineups-watch.mjs [--hours 5.5] [--every 10] [--leagues nba,epl] [--dry-run]
  *
@@ -21,7 +23,7 @@
  * the chain.
  */
 import { appendFileSync } from 'node:fs';
-import { LEAGUES, recordRoles, injuryEntries, leagueTeams, rosterOf, pool, readKv, writeKv, say } from './espn-bundle.mjs';
+import { LEAGUES, recordRoles, recordContext, injuryEntries, leagueTeams, rosterOf, pool, readKv, writeKv, say } from './espn-bundle.mjs';
 import { injuriesKey } from '../worker/src/espn-bundle.js';
 
 const args = process.argv.slice(2);
@@ -46,6 +48,8 @@ async function injuries(now) {
       await pool(teams, async (team) => Object.assign(players, injuryEntries(league, team, await rosterOf(league, team))));
       say(`${name.toUpperCase()}: ${Object.keys(players).length} players on the injury report`);
       if (!DRY) await writeKv([{ key: injuriesKey(league.sportKey), value: { sportKey: league.sportKey, builtAt: now, players } }]);
+      // The spreads move through the day and a depth chart changes with the week's news: both ride the same half hour.
+      await recordContext(league, now, { teams });
     } catch (e) { say(`  ! ${name} injuries: ${e.message}`); }
   }
 }

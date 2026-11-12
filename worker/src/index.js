@@ -57,7 +57,7 @@ import { runPotdDaily, runPotdClvSnapshot, runPotdGrading, backfillPotdAnalysis,
 import { runLadderDaily, runLadderGrading, getLadder, getLadderHistory } from './ladder.js';
 import { BUILD_INFO } from '../../docs/version.js';
 import { runTrendsBuild, getTrends, buildLeagueChunk, TREND_ENABLED_SPORTS, TREND_TABS, isTrendKey, trendKeysOf, getTrendsFor } from './trends.js';
-import { loadBundleIndex, loadInjuries, injuryFor, withInjuries, loadRoles, withRoles } from './espn-bundle.js';
+import { loadBundleIndex, loadInjuries, injuryFor, withInjuries, loadRoles, withRoles, loadContext, outByTeam } from './espn-bundle.js';
 import { getPlayerIndex, getPlayerLog, playerStats } from './player-search.js';
 import { getUfcEvents, getUfcEvent, nextUfcEvent, getUfcFighter, getUfcFighters } from './ufc-card.js';
 import { runUfcTick, getUfcPicks } from './ufc-picks.js';
@@ -1660,12 +1660,18 @@ export default {
         const rolesOf = (r) => roles[r.sportKey] ?? roles[trendKeysOf(found.sportKey)[0]];
         const rolesAt = Object.values(roles).reduce((m, r) => (r?.builtAt && (!m || r.builtAt > m) ? r.builtAt : m), null);
         const trends = { ...found, rows: (found.rows ?? []).map((r) => withRoles(withInjuries([r], reportOf(r)), rolesOf(r))[0]), injuriesAt, rolesAt };
+        // The game context the Slip Check judges a prop against (docs/slip-viability.js): each game's spread and total by team, the NFL depth chart, and the starters who are out.
+        const context = Object.fromEntries(await Promise.all(trendKeysOf(found.sportKey).map(async (k) => {
+          const c = await loadContext(env, k);
+          return [k, { builtAt: c.builtAt, lines: c.lines, depth: c.depth, out: outByTeam(reports[k], roles[k], c.depth) }];
+        })));
         // `feed` is the last Odds API call's outcome (odds.js's
         // recordOddsDiag): a tab with no rows can say the feed refused the
         // call rather than look like a build that never ran.
         const feedRaw = await env.POTD_KV.get(ODDS_DIAG_KEY).catch(() => null);
         return json({
           trends,
+          context,
           feed: feedRaw ? JSON.parse(feedRaw) : null,
           leagues: TREND_TABS,
           available: await Promise.all(TREND_TABS.map(async (k) => { const t = await getTrendsFor(env, k); return { sportKey: k, title: t.title, rows: t.rows.length, builtAt: t.builtAt }; })),

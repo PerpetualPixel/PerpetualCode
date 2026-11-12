@@ -12,6 +12,7 @@
  * change. No DOM, no network: docs/app.js feeds it and renders it.
  */
 import { hitFlags, hitRate } from './trends.js';
+import { viabilityOf, suggestedPlay } from './slip-viability.js';
 
 /** Lowercase ASCII words. */
 export const fold = (s) => String(s ?? '').normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase().replace(/[−–]/g, '-').replace(/[^a-z0-9+.-]+/g, ' ').replace(/\s+/g, ' ').trim();
@@ -145,10 +146,13 @@ export const americanOf = (decimal) => (!Number.isFinite(decimal) || decimal <= 
  * One leg's confidence, 0 to 100, from its hit rates: the last 20 weighs
  * most, then the last 10, the last 5 and the head-to-head; a thin log
  * counts for less; an injury listing cuts it; the price, when the slip
- * carries one, is a quarter of the read. Returns {confidence, prob, parts,
- * notes, warnings, source}.
+ * carries one, is a quarter of the read. The viability checks
+ * (docs/slip-viability.js: role, depth chart, a return from a layoff,
+ * minutes, blowout risk, a back-to-back) cut it further and name what
+ * could hinder the prop. Returns {confidence, prob, parts, notes,
+ * warnings, source, viability, better}.
  */
-export function scoreLeg(leg, match) {
+export function scoreLeg(leg, match, { now = Date.now() } = {}) {
   const notes = []; const warnings = [];
   const implied = impliedOf(leg.american);
   const vig = implied != null ? Math.min(0.97, implied * 0.96) : null;
@@ -177,13 +181,19 @@ export function scoreLeg(leg, match) {
   if (inj?.level === 'out') { warnings.push(`${match.name} is listed OUT${inj.detail ? ` (${inj.detail})` : ''}: this leg loses or voids.`); base = 0.05; }
   else if (inj?.level === 'doubtful') { warnings.push(`${match.name} is doubtful${inj.detail ? ` (${inj.detail})` : ''}.`); base *= 0.6; }
   else if (inj?.level === 'questionable') { warnings.push(`${match.name} is questionable${inj.detail ? ` (${inj.detail})` : ''}.`); base -= 0.1; }
+  const viability = viabilityOf(leg, match, { now });
+  if (viability) {
+    base = base * viability.penalty.factor - viability.penalty.points;
+    for (const c of viability.checks) if ((c.level === 'bad' || c.level === 'warn') && c.key !== 'injury') warnings.push(c.text);
+  }
   let p = vig != null ? 0.75 * base + 0.25 * vig : base;
   p = Math.max(0.02, Math.min(0.98, p));
   const say = (k, label) => (r[k] ? `${label} ${Math.round(r[k].rate * 100)}% (${r[k].hits} of ${r[k].games})` : null);
   notes.push([say('l5', 'L5'), say('l10', 'L10'), say('l20', 'L20'), r.h2h ? `vs ${match.opponent ?? 'opp'} ${Math.round(r.h2h.rate * 100)}% (${r.h2h.hits} of ${r.h2h.games})` : null].filter(Boolean).join(' · '));
   if (match.avg != null) notes.push(`Averages ${match.avg} over the last ${Math.min(10, games)}; the line sits ${leg.point > match.avg ? 'above' : 'below'} it by ${Math.abs(Math.round((leg.point - match.avg) * 10) / 10)}.`);
-  const fixable = !inj?.level && leg.point != null && leg.side && (r.l20?.rate ?? 0) < 0.8 && betterLines(match.rows ?? [], leg.point, leg.side).length > 0;
-  return { confidence: Math.round(p * 100), prob: p, parts: { l5: r.l5, l10: r.l10, l20: r.l20, h2h: r.h2h, implied }, notes, warnings, source: match.source, fixable };
+  const better = leg.point != null && leg.side && (r.l20?.rate ?? 0) < 0.8 ? betterLines(match.rows ?? [], leg.point, leg.side)[0] ?? null : null;
+  const fixable = !inj?.level && viability?.level !== 'avoid' && Boolean(better);
+  return { confidence: Math.round(p * 100), prob: p, parts: { l5: r.l5, l10: r.l10, l20: r.l20, h2h: r.h2h, implied }, notes, warnings, source: match.source, fixable, viability, better };
 }
 
 /**
@@ -216,7 +226,7 @@ export function verdictFor(type, scored, slip) {
   const spec = TICKET_TYPES[type];
   if (!spec) return null;
   const known = scored.filter((s) => s.score.confidence != null);
-  const weak = known.filter((s) => s.score.confidence < spec.bar);
+  const weak = known.filter((s) => s.score.confidence < spec.bar || s.score.viability?.level === 'avoid');
   const unread = scored.length - known.length;
   const n = scored.length;
   if (type === 'builder') {
@@ -313,9 +323,9 @@ export function suggestions(scored, slip, { data = {}, books = [] } = {}) {
   const spec = TICKET_TYPES[type] ?? null;
   const bar = spec?.bar ?? REGULAR_BAR;
   const known = scored.filter((s) => s.score.confidence != null);
-  for (const s of scored) for (const w of s.score.warnings ?? []) out.push({ type: /OUT|doubtful|questionable|flagged/i.test(w) ? 'injury' : 'warn', text: `${s.leg.selection}: ${w}`, legs: [scored.indexOf(s)] });
+  for (const s of scored) for (const w of s.score.warnings ?? []) out.push({ type: /\bOUT\b|doubtful|questionable|flagged/i.test(w) ? 'injury' : 'warn', text: `${s.leg.selection}: ${w}`, legs: [scored.indexOf(s)] });
   // The legs under the type's bar, weakest first; what each can move to.
-  const weak = known.filter((s) => s.score.confidence < bar).sort((a, b) => a.score.confidence - b.score.confidence);
+  const weak = known.filter((s) => s.score.confidence < bar || s.score.viability?.level === 'avoid').sort((a, b) => a.score.confidence - b.score.confidence);
   const moveFor = (s) => { const m = s.match; if (!m?.rows?.length || s.leg.point == null || !s.leg.side) return null; const here = m.rates?.l20; if (here && here.rate >= 0.8) return null; const better = betterLines(m.rows, s.leg.point, s.leg.side); return better.length ? { ...better[0], here } : null; };
   const flipFor = (s) => { const m = s.match; if (!m?.rows?.length || s.leg.point == null || !s.leg.side) return null; const here = m.rates?.l20; const flip = ratesAt(m.rows, s.leg.point, s.leg.side === 'over' ? 'under' : 'over').l20; return here && flip && flip.rate >= 0.7 && here.rate <= 0.4 ? flip : null; };
   const withoutText = (s) => { const rest = scored.filter((x) => x !== s); if (!rest.length) return 'it is the only leg: a pass, or a smaller stake'; const w = scoreSlip(rest, { combinedAmerican: null }); return `the ticket without it lands ${w.lands != null ? `${Math.round(w.lands * 100)}%` : 'more often'}${w.combined != null ? ` at about ${w.combined > 0 ? '+' : ''}${w.combined}` : ''}${slip.lands != null ? `, from ${Math.round(slip.lands * 100)}%` : ''}`; };
@@ -369,7 +379,7 @@ export function suggestions(scored, slip, { data = {}, books = [] } = {}) {
  *   market: a team line priced on the slate, or the leg's own price
  * Returns {source, name, rows, rates, opponent, injury, avg, gameId, sportKey, ...}.
  */
-export function matchLeg(leg, { trendsRows = {}, playerLogs = {}, tennisLegs = [], slateGames = [] } = {}) {
+export function matchLeg(leg, { trendsRows = {}, playerLogs = {}, tennisLegs = [], slateGames = [], context = {} } = {}) {
   if (leg.kind === 'prop' && leg.stat) {
     if (leg.stat.leagues.includes('tennis') || leg.stat.key === 'aces') {
       const t = tennisLegs.find((l) => l.name && sameName(l.name, leg.player) && (l.market === leg.stat.key || (leg.stat.key === 'games_total' && l.market === 'games_total') || (leg.stat.key === 'set_spread' && l.market === 'set_spread')) && (leg.point == null || l.point === leg.point || l.market === 'ml'));
@@ -382,7 +392,16 @@ export function matchLeg(leg, { trendsRows = {}, playerLogs = {}, tennisLegs = [
         const log = (row.series ?? []).map((g) => ({ value: g.value, opponent: g.opponent ?? null, date: g.date ?? null }));
         const rates = ratesAt(log, leg.point ?? row.point, leg.side ?? row.side, { opponent: row.opponent });
         const last = log.slice(0, 10).map((g) => g.value).filter((v) => Number.isFinite(v));
-        return { source: 'trends', name: row.playerName, rows: log, rates, opponent: row.opponent ?? null, injury: row.injury ?? null, avg: last.length ? Math.round((last.reduce((s, v) => s + v, 0) / last.length) * 10) / 10 : null, gameId: row.eventId ?? null, sportKey, row, team: row.team ?? null };
+        const ctx = context[sportKey] ?? {};
+        const team = row.team ? String(row.team).toUpperCase() : null;
+        // The log's entries keep their score, for the blowout split.
+        const full = (row.series ?? []).map((g) => ({ value: g.value, opponent: g.opponent ?? null, date: g.date ?? null, score: g.score ?? null }));
+        return {
+          source: 'trends', name: row.playerName, rows: full, rates, opponent: row.opponent ?? null, injury: row.injury ?? null, avg: last.length ? Math.round((last.reduce((s, v) => s + v, 0) / last.length) * 10) / 10 : null, gameId: row.eventId ?? null, sportKey, row, team: row.team ?? null,
+          role: row.role ?? null, mins: row.mins ?? null, commenceMs: row.commenceMs ?? null,
+          depth: ctx.depth?.[String(row.athleteId ?? '')] ?? null, line: team ? ctx.lines?.[team] ?? null : null,
+          teammatesOut: team ? (ctx.out?.[team] ?? []).filter((t) => String(t.id) !== String(row.athleteId ?? '') && (sportKey === 'americanfootball_nfl' ? true : t.starter === true)) : [],
+        };
       }
       const pl = playerLogs[`${sportKey}:${leg.stat.key}:${nameFold(leg.player)}`];
       if (pl?.rows?.length) {
@@ -390,7 +409,7 @@ export function matchLeg(leg, { trendsRows = {}, playerLogs = {}, tennisLegs = [
         const rates = ratesAt(log, leg.point, leg.side, { opponent: pl.opponent ?? null });
         const last = log.slice(0, 10).map((g) => g.value).filter((v) => Number.isFinite(v));
         const inj = pl.player?.injury ?? null;
-        return { source: 'player', name: pl.player?.name ?? leg.player, rows: log, rates, opponent: pl.opponent ?? null, injury: inj, avg: last.length ? Math.round((last.reduce((s, v) => s + v, 0) / last.length) * 10) / 10 : null, gameId: pl.gameId ?? null, sportKey, team: pl.player?.team ?? null };
+        return { source: 'player', name: pl.player?.name ?? leg.player, rows: pl.rows.map((g) => ({ value: g.value, opponent: g.opponent ?? null, date: g.date ?? null, score: g.score ?? null })), rates, opponent: pl.opponent ?? null, injury: inj, avg: last.length ? Math.round((last.reduce((s, v) => s + v, 0) / last.length) * 10) / 10 : null, gameId: pl.gameId ?? null, sportKey, team: pl.player?.team ?? null };
       }
     }
     return { source: 'none' };
@@ -419,8 +438,10 @@ export function matchLeg(leg, { trendsRows = {}, playerLogs = {}, tennisLegs = [
 }
 
 /** The whole read: legs matched, scored, the ticket graded, the suggestions. */
-export function checkSlip(legs, data, { combinedAmerican = null, type = null, books = [] } = {}) {
-  const scored = legs.map((leg) => { const match = matchLeg(leg, data); return { leg, match, score: scoreLeg(leg, match) }; });
+export function checkSlip(legs, data, { combinedAmerican = null, type = null, books = [], now = Date.now() } = {}) {
+  const scored = legs.map((leg) => { const match = matchLeg(leg, data); return { leg, match, score: scoreLeg(leg, match, { now }) }; });
   const slip = scoreSlip(scored, { combinedAmerican, type });
-  return { scored, slip, suggestions: suggestions(scored, slip, { data, books }) };
+  // The play to make instead: the legs that hold up, at numbers that clear, priced at one book with its link.
+  const play = suggestedPlay(scored, { rows: data.trendsRows ?? {}, books, bar: (TICKET_TYPES[type] ?? TICKET_TYPES.regular).bar, now });
+  return { scored, slip, suggestions: suggestions(scored, slip, { data, books }), play };
 }

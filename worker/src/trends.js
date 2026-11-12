@@ -89,8 +89,8 @@ export const RETRY_EMPTY_MINUTES = 30;
  * find. Bumped 2026-10-27: builds that failed on the spent key, and on
  * the refused roster path, had stamped their games as tried for hours.
  */
-// 6 (2026-11-08): the anytime touchdown and first-basket markets joined the feeds, so every stored game is rebuilt to carry them; 7 the same day for rushing plus receiving yards.
-export const STAMPS_VERSION = 7;
+// 6 (2026-11-08): the anytime touchdown and first-basket markets joined the feeds, so every stored game is rebuilt to carry them; 7 the same day for rushing plus receiving yards; 8 (2026-11-12) so every NBA row carries the player's minutes for the Slip Check.
+export const STAMPS_VERSION = 8;
 /** How many diagnostic lines a build keeps for /trends to show. */
 const MAX_DIAG = 60;
 /**
@@ -144,6 +144,7 @@ export const TREND_SPORTS = {
     // log: basketballStatRows reads the made count of a "made-attempted"
     // column and sums a combo's parts game by game.
     statRows: (log, statKey) => basketballStatRows(log, statKey, { allSeasons: true }),
+    minutes: (log) => basketballStatRows(log, 'minutes', { allSeasons: true }),
     resolve: (name, abbrs, ctx) => resolveAthleteId(NBA_KEY, name, abbrs, ctx),
     gamelog: (athleteId, ctx) => fetchBasketballGamelog(NBA_KEY, athleteId, ctx),
     // ESPN keys a basketball season by the year it ENDS (2025-26 is
@@ -221,6 +222,17 @@ export async function trendGamesFor(sportKey, events, env, ctx, now) {
   let games = (events ?? []).filter((g) => g?.sport_key === sportKey && inWindow(g));
   if (!games.length) games = (await listLeagueGames(sportKey, env, ctx)).filter(inWindow);
   return games.sort((a, b) => Date.parse(a.commence_time) - Date.parse(b.commence_time));
+}
+
+/**
+ * A player's minutes lately from his log's minutes rows (newest first):
+ * {l3, l10, last}, or null with fewer than three games.
+ */
+export function minutesUsage(rows) {
+  const vals = (rows ?? []).map((r) => Number(r?.value)).filter((v) => Number.isFinite(v));
+  if (vals.length < 3) return null;
+  const mean = (xs) => Math.round((xs.reduce((s, x) => s + x, 0) / xs.length) * 10) / 10;
+  return { l3: mean(vals.slice(0, 3)), l10: mean(vals.slice(0, 10)), last: vals[0] };
 }
 
 /**
@@ -304,6 +316,8 @@ export async function buildTrends(sportKey, games, env, ctx, now = Date.now(), d
         : null;
       const headshot = spec.headshot ? spec.headshot(athleteId) : null;
       const rowsByStat = new Map();
+      // Minutes over the last 3 and the last 10 (the NBA): the Slip Check reads a cut in them as a risk to an over.
+      const mins = spec.minutes ? minutesUsage(spec.minutes(merged)) : null;
       for (const line of playerLines) {
         if (line.noLog) { chance.push({ ...line, team, athleteId, headshot, opponent }); continue; }
         if (!rowsByStat.has(line.statKey)) {
@@ -316,7 +330,7 @@ export async function buildTrends(sportKey, games, env, ctx, now = Date.now(), d
           if (shortLogged++ < 3) note(`${name}: ${line.statKey} has ${statRows.length} logged games; column ${spec.statIndex(merged, line.statKey)}; log keys ${keysOf(merged)}; names [${(merged.names ?? []).slice(0, 10).join(',')}]; seasons [${(merged.seasonTypes ?? []).map((s) => s?.displayName).join(' / ')}]`);
           continue;
         }
-        rows.push(...trendRowsFor({ ...line, team, athleteId, headshot }, statRows, { opponent }));
+        rows.push(...trendRowsFor({ ...line, team, athleteId, headshot }, statRows, { opponent }).map((r) => (mins ? { ...r, mins } : r)));
       }
     }
     for (const stat of new Set(chance.map((l) => l.statKey))) {
