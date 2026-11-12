@@ -531,22 +531,30 @@ export async function runTennisTick(env, ctx, now = Date.now(), { deps = {} } = 
   const results = new Map((card.results ?? []).map((r) => [`${r.tour}:${r.id}`, r]));
   for (const s of card.slate ?? []) if (s.completed) results.set(`${s.tour}:${s.id}`, s);
   const aceLogs = {};
-  for (const p of record.plays) {
-    if (p.status !== 'pending') continue;
-    if (p.market === 'ml_parlay') { const g = gradeParlay(p, results); if (g) { Object.assign(p, g); graded++; } continue; }
-    const r = results.get(p.matchId);
-    if (p.market === 'aces') {
-      if (!aceLogs[p.tour]) aceLogs[p.tour] = (deps.aceLog ? await deps.aceLog(p.tour) : await readJson(env, TENNIS_ACELOG_KEY(p.tour))) ?? {};
-      const g = gradeAces(p, aceLogs[p.tour], now);
-      if (g) { Object.assign(p, g); graded++; }
-      continue;
+  const aceLogFor = async (tour) => { if (!aceLogs[tour]) aceLogs[tour] = (deps.aceLog ? await deps.aceLog(tour) : await readJson(env, TENNIS_ACELOG_KEY(tour))) ?? {}; return aceLogs[tour]; };
+  const gradeRecord = async (rec) => {
+    let n = 0;
+    for (const p of rec.plays ?? []) {
+      if (p.status !== 'pending') continue;
+      const g = p.market === 'ml_parlay' ? gradeParlay(p, results)
+        : p.market === 'aces' ? gradeAces(p, await aceLogFor(p.tour), now)
+          : results.get(p.matchId) ? gradePlay(p, results.get(p.matchId)) : null;
+      if (g) { Object.assign(p, g, { gradedAt: now }); n++; }
     }
-    if (!r) continue;
-    const g = gradePlay(p, r);
-    if (g) { Object.assign(p, g); graded++; }
-  }
+    return n;
+  };
+  graded += await gradeRecord(record);
   await env.POTD_KV.put(key, JSON.stringify(record), { expirationTtl: KV_TTL });
   const index = (await readJson(env, TENNIS_PICKS_INDEX)) ?? { dates: [] };
+  // The earlier days too (2026-11-12: plays sat at "awaiting" for a week): a play still open when its day ended was never
+  // looked at again, because only today's record was graded. Every record of the last 45 days with a play open is read
+  // and graded on each tick; the card's results reach back six weeks.
+  for (const d of index.dates.filter((x) => x !== date).slice(0, 45)) {
+    const old = await readJson(env, tennisPicksKey(d));
+    if (!old?.plays?.some((p) => p.status === 'pending')) continue;
+    const n = await gradeRecord(old);
+    if (n) { graded += n; await env.POTD_KV.put(tennisPicksKey(d), JSON.stringify(old), { expirationTtl: KV_TTL }).catch(() => {}); }
+  }
   if (!index.dates.includes(date)) { index.dates = [date, ...index.dates].slice(0, 120); await env.POTD_KV.put(TENNIS_PICKS_INDEX, JSON.stringify(index), { expirationTtl: KV_TTL }).catch(() => {}); }
   return { skipped: false, date, considered, candidates: candidates.length, posted, parlay: parlay ? parlay.legs.length : 0, graded, plays: record.plays.length, units: unitsPosted(record.plays), trendsBuilt: Boolean(trends.built), builderLegs: builder.legs.length, keys: Object.fromEntries(TOURS.map((t) => [t, (keys[t] ?? []).map((k) => k.key)])) };
 }
@@ -629,7 +637,7 @@ export function gradePlay(play, r) {
   }
 }
 
-/** An aces play against the data runner's ace log ({'date|winner key|loser key': {wAces, lAces}}); void after 45 days unsettled. */
+/** An aces play against the ace log the aces runner writes (scripts/tennis-aces.mjs: {'date|player key|other key': {wAces, lAces}}, the first-named player's count in wAces); void after 45 days unsettled. */
 export function gradeAces(play, log, now = Date.now()) {
   const day = new Date(play.commenceMs);
   const me = nameKey(play.side === 'a' ? play.a : play.b); const other = nameKey(play.side === 'a' ? play.b : play.a);
@@ -638,7 +646,8 @@ export function gradeAces(play, log, now = Date.now()) {
     const w = log?.[`${date}|${me}|${other}`]; const l = log?.[`${date}|${other}|${me}`];
     const aces = w ? w.wAces : l ? l.lAces : null;
     if (aces == null) continue;
-    return settle(play, aces > play.point, `${aces} aces (${w ? 'won' : 'lost'} the match)`);
+    // An entry written both ways round (worker/src/tennis-aces.js) says nothing of who won; the older shape did.
+    return settle(play, aces > play.point, `${aces} aces${(w ?? l).mirrored ? '' : ` (${w ? 'won' : 'lost'} the match)`}`);
   }
   if (now - play.commenceMs > 45 * 864e5) return settle(play, false, 'the serve stats never came through', { voided: true });
   return null;
