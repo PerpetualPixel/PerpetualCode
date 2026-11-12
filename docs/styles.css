@@ -3022,14 +3022,19 @@ button, [role="tab"], .league-chip, .parlay-btn, .trend-price { touch-action: ma
   box-shadow: var(--glow-magenta);
 }
 .league-chip.is-active .league-chip-icon { opacity: 1; }
-/* On reads as filled and ticked, off as an outline, at once (2026-11-04: "hard to tell if it's on or off, slow to respond"). */
-#parlayLeagues .league-chip, #playersLeagues .league-chip { transition: color 60ms ease, border-color 60ms ease, background 60ms ease, transform 60ms ease; }
-#parlayLeagues .league-chip.is-active, #playersLeagues .league-chip.is-active {
+/* On reads as filled and ticked, off as an outline, at once (2026-11-04: "hard to tell if it's on or off, slow to respond").
+   Every sport toggle carries is-sport (2026-11-12: "add this selection highlighting to all tabs that have sport toggles"):
+   the Slate, Trends and its tennis tours, Pixel's Picks, Players, the Parlay Builder, Live and the Tennis tab. */
+.league-chip.is-sport { transition: color 60ms ease, border-color 60ms ease, background 60ms ease, transform 60ms ease; }
+.league-chip.is-sport.is-active {
   color: #fff; font-weight: 800; border-color: rgba(217, 70, 239, 0.9);
   background: linear-gradient(135deg, rgba(217, 70, 239, 0.42), rgba(157, 78, 221, 0.42)) padding-box, var(--card-border-gradient) border-box;
   box-shadow: 0 0 0 1px rgba(217, 70, 239, 0.35), var(--glow-magenta);
 }
-#parlayLeagues .league-chip:not(.is-active), #playersLeagues .league-chip:not(.is-active) { color: var(--muted); background: transparent; box-shadow: none; }
+.league-chip.is-sport:not(.is-active) { color: var(--muted); background: transparent; box-shadow: none; }
+/* An off-season league that is the one chosen still reads as chosen. */
+.league-chip.is-sport.is-active.is-off-season { opacity: 1; }
+.live-books-pick .league-chip.is-sport .league-chip-icon { width: 15px; height: 15px; }
 .league-chip-on { font-size: 0.7rem; font-weight: 900; margin-left: 2px; color: #fff; }
 #parlayLeagues, #playersLeagues { gap: 12px; row-gap: 12px; padding: 4px 2px; }
 

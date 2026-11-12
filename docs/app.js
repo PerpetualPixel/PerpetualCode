@@ -4662,10 +4662,10 @@ function renderSlateLeagueOptions() {
        tooltip is no help on touch, where most of this gets used. */
     el.slateLeagueTokens.innerHTML = groups
       .map((group) => `
-        <button type="button" class="league-chip ${group.id === state.slateLeague ? 'is-active' : ''} ${group.offSeason ? 'is-off-season' : ''}"
+        <button type="button" class="league-chip is-sport ${group.id === state.slateLeague ? 'is-active' : ''} ${group.offSeason ? 'is-off-season' : ''}"
                 data-league-token="${esc(group.id)}"
                 aria-pressed="${group.id === state.slateLeague ? 'true' : 'false'}">
-          ${leagueIconSvg(group.id)}<span class="league-chip-label">${esc(group.label)}</span>
+          ${leagueIconSvg(group.id)}<span class="league-chip-label">${esc(group.label)}</span>${chipTick(group.id === state.slateLeague)}
         </button>`)
       .join('');
   }
@@ -8971,6 +8971,16 @@ const trendsState = {
   detailPeriod: null,
   betMore: false,
 };
+/**
+ * Every sport toggle reads the same way (2026-11-12 direction: "add this
+ * selection highlighting to all tabs that have sport toggles"): the
+ * league's icon, its name, and when it is on a filled chip with a tick.
+ * sportIcon finds the icon whatever key a tab uses for the league; a
+ * chip takes the class is-sport and chipTick when it is on.
+ */
+const SOCCER_LIVE_IDS = new Set(['ucl', 'epl', 'laliga', 'seriea', 'bundesliga', 'ligue1']);
+const sportIcon = (key) => { const k = String(key ?? ''); return leagueIconSvg(k === 'tennis' || k === 'atp' || k === 'wta' ? 'atp' : k.startsWith('mma') || k === 'ufc' ? 'mma' : k.startsWith('soccer') || SOCCER_LIVE_IDS.has(k) ? 'soccer' : TREND_LEAGUE_ICON[k] ?? k); };
+const chipTick = (on) => (on ? '<span class="league-chip-on" aria-hidden="true">✓</span>' : '');
 const TREND_LEAGUE_ICON = { americanfootball_nfl: 'nfl', basketball_nba: 'nba', icehockey_nhl: 'nhl', soccer: 'soccer', soccer_epl: 'soccer', soccer_spain_la_liga: 'soccer', soccer_italy_serie_a: 'soccer', soccer_germany_bundesliga: 'soccer', soccer_france_ligue_one: 'soccer', soccer_uefa_champs_league: 'soccer' };
 const SOCCER_TREND_KEYS = ['soccer_epl', 'soccer_spain_la_liga', 'soccer_italy_serie_a', 'soccer_germany_bundesliga', 'soccer_france_ligue_one'];
 const TREND_LOGO_PATH = { americanfootball_nfl: 'nfl', basketball_nba: 'nba', icehockey_nhl: 'nhl' };
@@ -9113,10 +9123,10 @@ function renderTrendLeagues() {
   // Tennis (2026-11-06: "under trends, I'd like to be able to find lines for aces, games won etc.") sits with the leagues; its lines come from /tennis/trends.
   const leagues = [...(trendsState.available.length ? trendsState.available : TREND_DEFAULT_LEAGUES), { sportKey: 'tennis', title: 'Tennis', rows: tennisTrendsState.data?.players?.length ?? null }];
   el.trendsLeagues.innerHTML = leagues.map((a) => `
-    <button type="button" class="league-chip ${a.sportKey === trendsState.sport ? 'is-active' : ''} ${a.rows ? '' : 'is-off-season'}"
+    <button type="button" class="league-chip is-sport ${a.sportKey === trendsState.sport ? 'is-active' : ''} ${a.rows ? '' : 'is-off-season'}"
             data-trends-league="${esc(a.sportKey)}" aria-pressed="${a.sportKey === trendsState.sport ? 'true' : 'false'}"
             title="${a.rows ? `${a.rows} ${a.sportKey === 'tennis' ? 'players' : 'lines'}` : a.sportKey === 'tennis' ? 'Every player on both tours' : 'No lines yet'}">
-      ${leagueIconSvg(a.sportKey === 'tennis' ? 'atp' : TREND_LEAGUE_ICON[a.sportKey] ?? a.sportKey)}<span class="league-chip-label">${esc(a.title)}</span>
+      ${sportIcon(a.sportKey)}<span class="league-chip-label">${esc(a.title)}</span>${chipTick(a.sportKey === trendsState.sport)}
     </button>`).join('');
 }
 
@@ -9609,7 +9619,7 @@ function renderTennisTrends() {
   const q = trendsState.search.trim().toLowerCase();
   let players = d.players.filter((p) => (tennisTrendsState.tour === 'all' || p.tour === tennisTrendsState.tour) && (!tennisTrendsState.today || p.today) && (!q || p.name.toLowerCase().includes(q)));
   if (tennisTrendsState.market !== 'all') players = players.filter((p) => p.props.some((x) => x.market === tennisTrendsState.market && x.line != null)).sort((a, b) => (b.today ? 1 : 0) - (a.today ? 1 : 0) || (b.props.find((x) => x.market === tennisTrendsState.market)?.rate ?? 0) - (a.props.find((x) => x.market === tennisTrendsState.market)?.rate ?? 0));
-  const chip = (attr, value, label, on, n = null) => `<button type="button" class="league-chip ${on ? 'is-active' : ''}" data-${attr}="${esc(value)}" aria-pressed="${on}"><span class="league-chip-label">${esc(label)}</span>${n != null ? `<small class="live-league-n">${n}</small>` : ''}</button>`;
+  const chip = (attr, value, label, on, n = null) => { const sport = attr === 'tt-tour'; return `<button type="button" class="league-chip ${sport ? 'is-sport' : ''} ${on ? 'is-active' : ''}" data-${attr}="${esc(value)}" aria-pressed="${on}">${sport ? sportIcon('tennis') : ''}<span class="league-chip-label">${esc(label)}</span>${n != null ? `<small class="live-league-n">${n}</small>` : ''}${sport ? chipTick(on) : ''}</button>`; };
   const tours = `<div class="live-books-pick live-leagues-pick" role="group" aria-label="Tour">${chip('tt-tour', 'all', 'Both', tennisTrendsState.tour === 'all')}${chip('tt-tour', 'atp', 'ATP', tennisTrendsState.tour === 'atp', d.counts?.atp)}${chip('tt-tour', 'wta', 'WTA', tennisTrendsState.tour === 'wta', d.counts?.wta)}${chip('tt-today', '1', 'Playing today', tennisTrendsState.today, d.counts?.today)}</div>`;
   const markets = `<div class="live-books-pick" role="group" aria-label="Prop">${chip('tt-market', 'all', 'All props', tennisTrendsState.market === 'all')}${TENNIS_TREND_MARKET_ORDER.map((k) => chip('tt-market', k, d.markets?.[k] ?? k, tennisTrendsState.market === k)).join('')}</div>`;
   el.trendsStatus.innerHTML = `${players.length} of ${d.players.length} players · ${d.counts?.today ?? 0} playing today · lines as of ${esc(trendTimeFmt.format(new Date(d.at)))}`;
@@ -10076,7 +10086,7 @@ function renderTrendPicks() {
   if (!el.trendPicksBody) return;
   const d = trendPicksState.data;
   if (el.trendPicksFilters) {
-    el.trendPicksFilters.innerHTML = PICK_FILTERS.map(([key, label]) => `<button type="button" class="league-chip ${trendPicksState.filter === key ? 'is-active' : ''}" data-pick-filter="${esc(key)}" aria-pressed="${trendPicksState.filter === key ? 'true' : 'false'}"><span class="league-chip-label">${esc(label)}</span></button>`).join('');
+    el.trendPicksFilters.innerHTML = PICK_FILTERS.map(([key, label]) => `<button type="button" class="league-chip is-sport ${trendPicksState.filter === key ? 'is-active' : ''}" data-pick-filter="${esc(key)}" aria-pressed="${trendPicksState.filter === key ? 'true' : 'false'}">${key === 'all' ? '' : sportIcon(key)}<span class="league-chip-label">${esc(label)}</span>${chipTick(trendPicksState.filter === key)}</button>`).join('');
   }
   // Tennis (2026-11-06: "I don't see tennis tabs in Pixel's Picks"): its own plays, record and days under the Tennis chip.
   if (el.trendPicksUfc) el.trendPicksUfc.hidden = trendPicksState.filter === 'tennis';
@@ -10220,7 +10230,7 @@ function pickPlayer(player) {
 
 function renderPlayers() {
   if (!el.playersView) return;
-  el.playersLeagues.innerHTML = PLAYER_LEAGUES.map(([key, label]) => `<button type="button" class="league-chip ${playersState.sport === key ? 'is-active' : ''}" data-players-league="${esc(key)}" aria-pressed="${playersState.sport === key}">${leagueIconSvg(TREND_LEAGUE_ICON[key] ?? key)}<span class="league-chip-label">${esc(label)}</span></button>`).join('');
+  el.playersLeagues.innerHTML = PLAYER_LEAGUES.map(([key, label]) => `<button type="button" class="league-chip is-sport ${playersState.sport === key ? 'is-active' : ''}" data-players-league="${esc(key)}" aria-pressed="${playersState.sport === key}">${sportIcon(key)}<span class="league-chip-label">${esc(label)}</span>${chipTick(playersState.sport === key)}</button>`).join('');
   const stats = playersState.stats[playersState.sport] ?? [];
   if (!stats.some((s) => s.key === playersState.stat)) playersState.stat = stats[0]?.key ?? '';
   el.playersStat.innerHTML = stats.map((s) => `<option value="${esc(s.key)}" ${s.key === playersState.stat ? 'selected' : ''}>${esc(s.label)}</option>`).join('');
@@ -10861,7 +10871,7 @@ function renderParlayLeg(leg) {
 /** The league chips: on reads as filled, off as outlined. A ticket mixes NBA, NFL, NHL and soccer; UFC is its own ticket (2026-11-04: "it will be ONLY ufc"). */
 function renderParlayLeagues() {
   const s = parlayState;
-  el.parlayLeagues.innerHTML = [...PLAYER_LEAGUES, [TENNIS_SPORT_KEY, 'Tennis'], [UFC_SPORT_KEY, 'UFC']].map(([key, label]) => `<button type="button" class="league-chip ${s.sports.has(key) ? 'is-active' : ''}" data-parlay-league="${esc(key)}" aria-pressed="${s.sports.has(key)}" title="${key === UFC_SPORT_KEY ? 'UFC tickets stand alone' : 'Toggle; a ticket can mix leagues'}">${leagueIconSvg(key === TENNIS_SPORT_KEY ? 'atp' : TREND_LEAGUE_ICON[key] ?? key)}<span class="league-chip-label">${esc(label)}</span>${s.sports.has(key) ? '<span class="league-chip-on" aria-hidden="true">✓</span>' : ''}</button>`).join('');
+  el.parlayLeagues.innerHTML = [...PLAYER_LEAGUES, [TENNIS_SPORT_KEY, 'Tennis'], [UFC_SPORT_KEY, 'UFC']].map(([key, label]) => `<button type="button" class="league-chip is-sport ${s.sports.has(key) ? 'is-active' : ''}" data-parlay-league="${esc(key)}" aria-pressed="${s.sports.has(key)}" title="${key === UFC_SPORT_KEY ? 'UFC tickets stand alone' : 'Toggle; a ticket can mix leagues'}">${sportIcon(key)}<span class="league-chip-label">${esc(label)}</span>${chipTick(s.sports.has(key))}</button>`).join('');
 }
 
 /**
@@ -11538,7 +11548,7 @@ const liveSlipsFor = (g) => { const all = g.slips?.list ?? []; return liveState.
 /** The league toggles (2026-11-06): NBA, NFL and tennis, each on or off; the last one on stays on. */
 function liveLeaguePicker(all) {
   const leagues = [...(liveState.data?.leagues ?? LIVE_LEAGUES_DEFAULT.filter((k) => k !== 'tennis')), 'tennis'];
-  return `<div class="live-books-pick live-leagues-pick" role="group" aria-label="Leagues on the board">${leagues.map((k) => { const n = k === 'tennis' ? (liveState.data?.tennis?.matches?.length ?? 0) : all.filter((g) => g.league === k).length; const on = liveState.leagues.has(k); return `<button type="button" class="league-chip ${on ? 'is-active' : ''}" data-live-league="${esc(k)}" aria-pressed="${on}"><span class="league-chip-label">${esc(league(k))}</span><small class="live-league-n">${n}</small></button>`; }).join('')}</div>`;
+  return `<div class="live-books-pick live-leagues-pick" role="group" aria-label="Leagues on the board">${leagues.map((k) => { const n = k === 'tennis' ? (liveState.data?.tennis?.matches?.length ?? 0) : all.filter((g) => g.league === k).length; const on = liveState.leagues.has(k); return `<button type="button" class="league-chip is-sport ${on ? 'is-active' : ''}" data-live-league="${esc(k)}" aria-pressed="${on}">${sportIcon(k)}<span class="league-chip-label">${esc(league(k))}</span><small class="live-league-n">${n}</small>${chipTick(on)}</button>`; }).join('')}</div>`;
 }
 function liveBooksPicker() {
   const none = !liveState.books.size;
@@ -11977,7 +11987,7 @@ function renderTennis() {
   const allPlays = d.current?.plays ?? [];
   const reads = Object.entries(d.current?.reads ?? {}).map(([id, r]) => ({ id, ...r, tour: id.split(':')[0] })).filter((r) => tennisState.tours.has(r.tour)).sort((a, b) => Date.parse(a.start ?? 0) - Date.parse(b.start ?? 0));
   const rec = d.record ?? { wins: 0, losses: 0, pushes: 0, units: 0, roi: null, risked: 0 };
-  const chips = ['atp', 'wta'].map((t) => { const n = allPlays.filter((p) => p.tour === t || p.tour === 'both').length; const on = tennisState.tours.has(t); return `<button type="button" class="league-chip ${on ? 'is-active' : ''}" data-tennis-tour="${t}" aria-pressed="${on}"><span class="league-chip-label">${TENNIS_TOUR_LABEL[t]}</span><small class="live-league-n">${n}</small></button>`; }).join('');
+  const chips = ['atp', 'wta'].map((t) => { const n = allPlays.filter((p) => p.tour === t || p.tour === 'both').length; const on = tennisState.tours.has(t); return `<button type="button" class="league-chip is-sport ${on ? 'is-active' : ''}" data-tennis-tour="${t}" aria-pressed="${on}">${sportIcon(t)}<span class="league-chip-label">${TENNIS_TOUR_LABEL[t]}</span><small class="live-league-n">${n}</small>${chipTick(on)}</button>`; }).join('');
   const bar = d.bar ?? { minProb: 0.74, minEdge: 0.07, aceProb: 0.8, band: [-250, 250] };
   const barNote = `Every match is read for form, fatigue, a recent retirement, play style and the surface before the market. A play posts only where the model gives it ${Math.round(bar.minProb * 100)}%+ and the price sits ${Math.round(bar.minEdge * 100)}+ points under that, between ${bar.band[0]} and +${bar.band[1]}, never on a player flagged for injury or fatigue; aces at ${Math.round(bar.aceProb * 100)}%+ with the price left to your book. Once a day the clearest favourites (${Math.round((bar.parlayLegProb ?? 0.78) * 100)}%+ each) go into one moneyline parlay of ${(bar.parlayLegs ?? [2, 4]).join(' to ')} legs. One play a match, ${bar.maxUnits ?? 5} units a day at most.`;
   const readWhen = d.current?.refreshedAt ? `read ${ago(d.current.refreshedAt)}` : 'not read today yet';
