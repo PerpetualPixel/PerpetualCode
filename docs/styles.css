@@ -7065,9 +7065,19 @@ a.trend-price:hover { background: rgba(255, 255, 255, 0.06); }
 .ufc-res.is-loss { color: var(--danger); }
 .ufc-opp { border: 0; background: transparent; color: var(--text); font: inherit; font-weight: 700; padding: 0; cursor: pointer; text-decoration: underline; text-decoration-color: var(--line); }
 .ufc-hist-event { color: var(--muted); }
+.ufc-side-price { display: none; }
 @media (max-width: 640px) {
   .ufc-bout-body { grid-template-columns: 1fr; }
   .ufc-side-b { flex-direction: row; text-align: left; }
+  /* Stacked fighters: each price at the right of its fighter's row, and the foot keeps only the lean and the tags, centred. */
+  .ufc-side-text { flex: 1 1 auto; }
+  .ufc-side-price { display: inline-flex; flex: none; margin-left: auto; }
+  .ufc-side-price .ufc-price { font-size: 1.02rem; }
+  .ufc-side-price .ufc-price .book-badge, .ufc-side-price .ufc-price .book-badge img { width: 22px; height: 22px; }
+  .ufc-bout .ufc-bout-foot > .ufc-price { display: none; }
+  .ufc-bout .ufc-bout-foot { grid-template-columns: 1fr; }
+  .ufc-bout .ufc-bout-foot > .ufc-foot-mid { justify-self: center; }
+  .ufc-bout .ufc-bout-foot:not(:has(.ufc-foot-mid > *)) { display: none; }
   .ufc-side-b .ufc-more { margin-left: 0; }
   .ufc-vs { text-align: center; }
   .ufc-methods-wrap { grid-template-columns: 1fr; }

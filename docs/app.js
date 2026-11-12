@@ -11307,9 +11307,11 @@ function renderUfcBout(b, ev) {
   const rec = ufcRecordFor(ev.id);
   const bd = rec?.breakdowns?.[b.id] ?? null;
   const pick = (rec?.bets ?? []).find((p) => (p.boutIds ?? [p.boutId]).includes(b.id) && p.status !== 'void') ?? null;
+  // On a phone the fighters stack, so each one's price rides at the right of his own row (2026-11-12: "on mobile the odds aren't to the right of the fighter"); on a wide screen the two prices sit in the foot, under each corner.
   const side = (f, who) => (f ? `<div class="ufc-side ufc-side-${who} ${b.result?.winnerId && b.result.winnerId === f.id ? 'is-winner' : b.result && b.result.winnerId && b.result.winnerId !== f.id ? 'is-loser' : ''}">
       ${ufcAvatar(f, 48)}
       <div class="ufc-side-text"><span class="ufc-name">${esc(f.name)}</span><span class="ufc-record">${esc(recordText(f.record))}${f.country ? ` · ${esc(f.country)}` : ''}</span></div>
+      ${bd ? `<span class="ufc-side-price">${price(who === 'a' ? bd.bestA : bd.bestB)}</span>` : ''}
     </div>` : '<div class="ufc-side"><span class="row-sub">TBA</span></div>');
   // The pick itself sits at the foot of the card (2026-11-05: "leave the updates off the cards, I'd rather see the pick
   // at the bottom"); card changes stay in the matchup sheet and the card-changes panel, and an off bout says so in its head.
