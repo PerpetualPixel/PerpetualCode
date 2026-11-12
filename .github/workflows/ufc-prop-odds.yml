@@ -36,3 +36,10 @@ jobs:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
         run: node scripts/ufc-prop-odds.mjs ${{ inputs.args }}
+      # FanDuel's own card, for the ids a slip link needs (scripts/ufc-fanduel.mjs). Its own step, so a read that fails leaves the board above written.
+      - name: Read the FanDuel card and write KV
+        if: always()
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+        run: node scripts/ufc-fanduel.mjs ${{ inputs.args }}
