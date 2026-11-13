@@ -7495,6 +7495,21 @@ a.trend-price:hover { background: rgba(255, 255, 255, 0.06); }
 .live-plays-badge { display: inline-flex; align-items: center; gap: 4px; padding: 3px 10px; border-radius: 999px; background: color-mix(in srgb, var(--success) 18%, transparent); border: 1px solid color-mix(in srgb, var(--success) 55%, transparent); color: var(--success); font-size: 0.72rem; font-weight: 800; white-space: nowrap; }
 .live-plays-badge .live-posted { color: inherit; font-weight: 600; opacity: 0.85; }
 .live-posted { color: var(--muted); font-size: 0.74rem; font-weight: 600; white-space: nowrap; }
+/* A live line's pace (2026-11-13), PrizePicks' three tiles: current, target pace, pace %. */
+.live-pace { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 8px; margin: 8px 0 4px; }
+.live-pace-tile { display: grid; gap: 1px; padding: 8px 10px; border-radius: 10px; background: var(--surface-2); border: 1px solid var(--line); min-width: 0; }
+.live-pace-tile b { font-family: var(--mono); font-size: 1.05rem; font-variant-numeric: tabular-nums; line-height: 1.2; }
+.live-pace-tile small { color: var(--muted); font-size: 0.68rem; font-weight: 700; letter-spacing: 0.04em; text-transform: uppercase; line-height: 1.25; }
+@media (max-width: 480px) { .live-pace { gap: 6px; } .live-pace-tile { padding: 7px 8px; } .live-pace-tile small { font-size: 0.6rem; letter-spacing: 0.02em; } }
+.live-pace.is-ahead .is-pct, .live-pace.is-cleared .is-pct { border-color: var(--success); background: linear-gradient(180deg, var(--surface-2), rgba(16, 185, 129, 0.14)); }
+.live-pace.is-ahead .is-pct b, .live-pace.is-cleared .is-pct b { color: var(--success); }
+.live-pace.is-near .is-pct { border-color: rgba(251, 191, 36, 0.6); }
+.live-pace.is-near .is-pct b { color: var(--warn, #fbbf24); }
+.live-pace.is-behind .is-pct { border-color: var(--danger, #ff5c7a); }
+.live-pace.is-behind .is-pct b { color: var(--danger, #ff5c7a); }
+.live-watch-pace.is-ahead b { color: var(--success); }
+.live-watch-pace.is-near b { color: var(--warn, #fbbf24); }
+.live-watch-pace.is-behind b { color: var(--danger, #ff5c7a); }
 .live-move { font-variant-numeric: tabular-nums; white-space: nowrap; }
 .live-move s { color: var(--muted); text-decoration-thickness: 1px; }
 .live-move b { color: var(--warn, #fbbf24); }

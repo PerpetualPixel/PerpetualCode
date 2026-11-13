@@ -373,6 +373,23 @@ export function legScore(row, injury = row?.injury ?? null) {
 }
 
 /**
+ * A live line's pace the way PrizePicks' Pulse shows it (2026-11-13: "for
+ * live plays have the lines calculate pace % like PrizePicks does"): the
+ * target pace is the line times the share of the game played, what the
+ * player should have by now to land exactly on his number, and the pace
+ * is what he has over that. 12.5 a third of the way in is a target of 4.2,
+ * and 5 on the board is 119%. `level` is ahead at 100%+, near from 85%,
+ * behind under it. Null before the game has a clock or without a line.
+ */
+export const PACE_NEAR = 85;
+export function livePace(current, point, elapsed) {
+  if (![current, point, elapsed].every(Number.isFinite) || point <= 0 || elapsed <= 0) return null;
+  const target = point * Math.min(1, elapsed);
+  const pct = Math.round((current / target) * 100);
+  return { target: Math.round(target * 10) / 10, pct, level: pct >= 100 ? 'ahead' : pct >= PACE_NEAR ? 'near' : 'behind' };
+}
+
+/**
  * A suggested stake in units from how likely a play is (2026-11-12
  * direction: "size them by confidence; the higher the confidence or the
  * likelier the play wins, more units"): by the chance when a model gives
