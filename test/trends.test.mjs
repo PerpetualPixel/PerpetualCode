@@ -440,3 +440,15 @@ test('winLikelihood pulls the last-20 hit rate toward the price, as five more ga
   assert.equal(winLikelihood(), null);
   assert.equal(suggestedUnits({ prob: winLikelihood({ hits: 0, games: 0, american: 150 }) }), 0.5, 'a plus-money line with no log is a half unit');
 });
+
+import { livePace, PACE_NEAR } from '../docs/trends.js';
+test('livePace is PrizePicks\' pace: the line times the share of the game played is the target, the number over it the pace', () => {
+  // The owner's own screenshot: 12.5 aces, 5 on the board, a target pace of 4.2, 119%.
+  assert.deepEqual(livePace(5, 12.5, 0.336), { target: 4.2, pct: 119, level: 'ahead' });
+  assert.deepEqual(livePace(8, 25, 0.5), { target: 12.5, pct: 64, level: 'behind' }, '8 of 25 at the half is well behind');
+  assert.equal(livePace(11, 25, 0.5).level, 'near'); assert.ok(livePace(11, 25, 0.5).pct >= PACE_NEAR);
+  assert.equal(livePace(12.5, 25, 0.5).pct, 100); assert.equal(livePace(12.5, 25, 0.5).level, 'ahead', 'dead on pace counts as on it');
+  assert.equal(livePace(26, 25, 1.4).target, 25, 'overtime never asks for more than the line');
+  assert.equal(livePace(3, 10, 0), null, 'no clock yet, no pace'); assert.equal(livePace(3, 0, 0.5), null); assert.equal(livePace(null, 10, 0.5), null);
+  assert.equal(livePace(0, 10, 0.25).pct, 0);
+});
