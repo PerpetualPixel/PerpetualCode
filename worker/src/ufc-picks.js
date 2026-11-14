@@ -504,7 +504,12 @@ function pickRecord(event, bout, breakdown, q, now) {
  *   { fighter: 'Ciryl Gane', method: 'ko', book: 'fanduel', american: 135 }         a method of victory (ko, sub, dec; a list for a double chance)
  *   { fighter: 'Ciryl Gane', methods: ['ko', 'sub'], ... }                           the fighter inside the distance
  *   { total: 2.5, side: 'under', fighter: 'Ciryl Gane', book: 'fanduel', american: -225 }  the rounds total on his bout
+ *   { fighter: 'Bilal Hasan', method: 'ko', rounds: [1, 2], american: -145 }        a method inside named rounds ("by KO/TKO in Rounds 1 or 2")
+ *   { fighter: 'Uros Medic', startRound: 3, side: 'no', american: -209 }            whether his bout's Round 3 starts (yes or no)
  *   { legs: [spec, spec, ...], book: 'fanduel', american: 260 }                     a parlay of the above, priced as a whole (or by its legs)
+ * `placed: true` marks a bet the owner has already placed at the price
+ * given: it keeps that price however the board moves (priceLocked) and
+ * pays at it. Without it the price follows the book, as a drawn pick's.
  * The bout comes from the fighter's name (ESPN's spelling or close to it);
  * an unknown fighter or book throws, so a typo never posts a ticket. The
  * record is the same shape the tick draws, so the price follows, a card
@@ -528,6 +533,19 @@ export function ownerTicket(event, spec, now = Date.now()) {
       if (sideWord !== 'over' && sideWord !== 'under') throw new Error(`a rounds total needs over or under (${s.fighter})`);
       return { bout, leg: { id: `${bout.id}:totals:${sideWord}:${s.total}`, boutId: bout.id, selection: `${sideWord === 'over' ? 'Over' : 'Under'} ${s.total} rounds, ${bout.a?.name} vs ${bout.b?.name}`, market: 'totals', fighterId: null, methods: null, point: Number(s.total), side: sideWord, rounds: bout.rounds ?? 3, ...price, link: s.link ?? null, a: bout.a?.name ?? null, b: bout.b?.name ?? null, result: null, actual: null, warning: null } };
     }
+    // Whether a round starts (2026-11-14, the owner's own slip: "Fight to start Round 3: No"): the bout's leg, no fighter's.
+    if (Number.isFinite(Number(s.startRound))) {
+      const sideWord = String(s.side ?? '').toLowerCase();
+      if (sideWord !== 'yes' && sideWord !== 'no') throw new Error(`a round to start needs yes or no (${s.fighter})`);
+      const round = Number(s.startRound);
+      if (!(round >= 2 && round <= (bout.rounds ?? 3))) throw new Error(`${bout.a?.name} vs ${bout.b?.name} has no Round ${round} to start`);
+      return { bout, leg: { id: `${bout.id}:round_start:${round}:${sideWord}`, boutId: bout.id, selection: `Round ${round} to start: ${sideWord === 'yes' ? 'Yes' : 'No'}, ${bout.a?.name} vs ${bout.b?.name}`, market: 'round_start', fighterId: null, methods: null, point: round, side: sideWord, rounds: bout.rounds ?? 3, ...price, link: s.link ?? null, a: bout.a?.name ?? null, b: bout.b?.name ?? null, result: null, actual: null, warning: null } };
+    }
+    // A method inside named rounds ("by KO/TKO in Rounds 1 or 2").
+    const inRounds = (Array.isArray(s.rounds) ? s.rounds : s.rounds != null ? [s.rounds] : []).map(Number).filter((n) => Number.isInteger(n) && n >= 1 && n <= (bout.rounds ?? 3)).sort((x, y) => x - y);
+    if (methods.length && inRounds.length) {
+      return { bout, leg: { id: `${bout.id}:method_round:${side}:${methods.join('')}:${inRounds.join('')}`, boutId: bout.id, selection: `${f?.name} by ${methodsText(methods)} in Round${inRounds.length > 1 ? 's' : ''} ${inRounds.join(' or ')}`, market: 'method_round', fighterId: f?.id ?? null, methods, inRounds, point: null, side: null, ...price, link: s.link ?? null, a: bout.a?.name ?? null, b: bout.b?.name ?? null, result: null, actual: null, warning: null } };
+    }
     if (methods.length) {
       const market = methods.length > 1 ? 'double' : 'method';
       return { bout, leg: { id: `${bout.id}:${market}:${side}`, boutId: bout.id, selection: `${f?.name} by ${methodsText(methods)}`, market, fighterId: f?.id ?? null, methods, point: null, side: null, ...price, link: s.link ?? null, a: bout.a?.name ?? null, b: bout.b?.name ?? null, result: null, actual: null, warning: null } };
@@ -544,11 +562,11 @@ export function ownerTicket(event, spec, now = Date.now()) {
     const priced = legs.every((l) => Number.isFinite(l.leg.decimal));
     const whole = Number(spec.american);
     const decimal = Number.isFinite(whole) && whole !== 0 ? americanToDecimal(whole) : priced ? legs.reduce((d, l) => d * l.leg.decimal, 1) : null;
-    return { ...base, id: `${event.id}:owner:parlay:${legs.map((l) => l.bout.id).join('+')}`, type: 'parlay', boutId: legs[0].bout.id, boutIds: legs.map((l) => l.bout.id), link: spec.link ?? null,
+    return { ...base, priceLocked: spec.placed === true && decimal != null, id: `${event.id}:owner:parlay:${legs.map((l) => l.bout.id).join('+')}`, type: 'parlay', boutId: legs[0].bout.id, boutIds: legs.map((l) => l.bout.id), link: spec.link ?? null,
       american: decimal == null ? null : toAmerican(decimal), decimal: decimal == null ? null : Math.round(decimal * 10000) / 10000, priced: decimal != null, commenceMs: Math.min(...legs.map((l) => l.bout.date ?? event.date)), legs: legs.map((l) => l.leg) };
   }
   const one = legSpec(Array.isArray(spec.legs) ? { book: spec.book, ...spec.legs[0] } : spec);
-  return { ...base, id: `${event.id}:owner:${one.leg.id}`, type: 'straight', boutId: one.bout.id, link: one.leg.link ?? spec.link ?? null,
+  return { ...base, priceLocked: spec.placed === true && Number.isFinite(one.leg.decimal), id: `${event.id}:owner:${one.leg.id}`, type: 'straight', boutId: one.bout.id, link: one.leg.link ?? spec.link ?? null,
     american: one.leg.american, decimal: one.leg.decimal, priced: Number.isFinite(one.leg.decimal), commenceMs: one.bout.date ?? event.date, legs: [one.leg] };
 }
 
@@ -569,6 +587,20 @@ export function settleUfcLeg(leg, bout) {
     const cls = methodClass(r.method);
     if (!cls) return { result: 'void', actual: `${actual} (not a method the market settles)` };
     return { result: (leg.methods ?? []).includes(cls) ? 'win' : 'loss', actual };
+  }
+  if (leg.market === 'method_round') {
+    // The fighter, the way he won, and the round it ended in; a decision ends in no round, so it loses.
+    if (r.draw || !r.winnerId) return { result: 'void', actual: 'draw or no contest' };
+    if (r.winnerId !== leg.fighterId) return { result: 'loss', actual };
+    const cls = methodClass(r.method);
+    if (!cls) return { result: 'void', actual: `${actual} (not a method the market settles)` };
+    return { result: (leg.methods ?? []).includes(cls) && cls !== 'dec' && (leg.inRounds ?? []).includes(Number(r.round)) ? 'win' : 'loss', actual };
+  }
+  if (leg.market === 'round_start') {
+    // Round N starts when the fight is still on at its bell: a finish in an earlier round means it never did. A no contest settles nothing.
+    if (/no contest/i.test(r.method ?? '') || (!r.winnerId && !r.draw)) return { result: 'void', actual: 'no contest' };
+    const started = Number.isFinite(Number(r.round)) && Number(r.round) > 0 ? Number(r.round) >= leg.point : true;
+    return { result: (leg.side === 'yes') === started ? 'win' : 'loss', actual: started ? `${actual}: Round ${leg.point} started` : `${actual}: over before Round ${leg.point}` };
   }
   // The rounds total: a finish's elapsed time against the number; a decision is the distance.
   const rounds = leg.rounds ?? bout.rounds ?? 3;
@@ -596,7 +628,8 @@ export function settleUfcTicket(pick) {
   const live = legs.filter((l) => l.result === 'win');
   if (!live.length) return { result: legs.every((l) => l.result === 'void') ? 'void' : 'push', net: 0 };
   if (unpriced) return { result: 'win', net: null };
-  const decimal = live.reduce((d, l) => d * (l.decimal ?? americanToDecimal(l.american)), 1);
+  // A bet the owner placed pays at the price it was placed at (a boost included) when every leg is in; with a leg void it pays at the legs left.
+  const decimal = pick.priceLocked && live.length === legs.length && Number.isFinite(pick.decimal) ? pick.decimal : live.reduce((d, l) => d * (l.decimal ?? americanToDecimal(l.american)), 1);
   return { result: 'win', net: Math.round((decimal - 1) * units * 100) / 100 };
 }
 
@@ -677,7 +710,8 @@ export async function runUfcTick(env, ctx, now = Date.now(), { deps = {} } = {})
           ? (leg.fighterId === bout.b?.id ? bo.b : bo.a).find((x) => x.bookId === pick.bookId) ?? null
           : leg.market === 'totals' ? bo.totals.find((t) => t.point === leg.point)?.[leg.side]?.find((x) => x.bookId === pick.bookId) ?? null : null;
         if (same) {
-          if (same.american !== leg.american) { leg.american = same.american; leg.decimal = Math.round(same.decimal * 10000) / 10000; leg.link = same.link ?? leg.link; touched = true; }
+          // A bet the owner placed keeps the price it was placed at.
+          if (!pick.priceLocked && same.american !== leg.american) { leg.american = same.american; leg.decimal = Math.round(same.decimal * 10000) / 10000; leg.link = same.link ?? leg.link; touched = true; }
           if (leg.warning) { leg.warning = null; touched = true; }
         } else if (bo && leg.market === 'totals') {
           const posted = bo.totals.map((t) => t.point).filter((p) => p !== leg.point);
@@ -690,7 +724,7 @@ export async function runUfcTick(env, ctx, now = Date.now(), { deps = {} } = {})
       const live = pick.legs.filter((l) => l.result == null);
       if (!live.length) { pick.status = 'void'; pick.result = 'void'; pick.net = 0; pick.settledAt = now; pick.voidReason = pick.legs[0].actual; voided.push(pick); continue; }
       if (pick.type === 'parlay' && live.length < pick.legs.length) voided.push({ ...pick, voidReason: `${pick.legs.filter((l) => l.result === 'void').map((l) => l.selection).join(', ')}: ${pick.legs.find((l) => l.result === 'void')?.actual}; the ticket rides on ${live.map((l) => l.selection).join(' + ')}` });
-      if (live.every((l) => Number.isFinite(l.decimal) || Number.isFinite(l.american))) {
+      if (live.every((l) => Number.isFinite(l.decimal) || Number.isFinite(l.american)) && !(pick.priceLocked && live.length === pick.legs.length)) {
         const decimal = live.reduce((d, l) => d * (l.decimal ?? americanToDecimal(l.american)), 1);
         pick.decimal = Math.round(decimal * 10000) / 10000; pick.american = toAmerican(decimal);
       }
