@@ -9,8 +9,12 @@ on:
   workflow_dispatch:
     inputs:
       picks:
-        description: 'JSON list of tickets, e.g. [{"fighter":"Ciryl Gane","book":"fanduel","american":-200,"units":1}]'
-        required: true
+        description: 'JSON list of tickets, e.g. [{"fighter":"Ciryl Gane","book":"fanduel","american":-200,"units":1}] (empty with an underdog alone)'
+        required: false
+        type: string
+      underdog:
+        description: 'Name the underdog of the week (a fighter on the card), or "none" to hand it back'
+        required: false
         type: string
       event_id:
         description: 'ESPN event id of the card (empty: the card the tab shows)'
@@ -45,11 +49,13 @@ jobs:
           CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
           PICKS: ${{ inputs.picks }}
           EVENT_ID: ${{ inputs.event_id }}
+          UNDERDOG: ${{ inputs.underdog }}
           ADD: ${{ inputs.add }}
           DRY: ${{ inputs.dry_run }}
         run: |
-          printf '%s' "$PICKS" > /tmp/picks.json
-          set -- --picks-file /tmp/picks.json
+          set --
+          if [ -n "$PICKS" ]; then printf '%s' "$PICKS" > /tmp/picks.json; set -- --picks-file /tmp/picks.json; fi
+          [ -n "$UNDERDOG" ] && set -- "$@" --underdog "$UNDERDOG"
           [ -n "$EVENT_ID" ] && set -- "$@" --event "$EVENT_ID"
           [ "$ADD" = "true" ] && set -- "$@" --add
           [ "$DRY" = "true" ] && set -- "$@" --dry-run

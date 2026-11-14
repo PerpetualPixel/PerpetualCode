@@ -323,6 +323,14 @@ test('underdogOfTheWeek: the plus-money side with the best chance, never against
   assert.ok(agrees.pickAgrees && agrees.reasons.some((r) => /cappers 70% on J Ten/.test(r)) && agrees.reasons.some((r) => /Pixel's Pick backs/.test(r)));
   assert.equal(underdogOfTheWeek({}, [read('5', 'I Nine', 'J Ten', -200, 170, { lean: 'b', confidence: 4 })], [{ status: 'pending', legs: [{ fighterId: 'a5', result: null }] }]), null, 'the only dog bout is against a pick');
   assert.equal(underdogOfTheWeek({}, [read('5', 'I Nine', 'J Ten', -200, 170, { lean: 'b', confidence: 4 })], [{ status: 'graded', legs: [{ fighterId: 'a5', result: 'win' }] }])?.name, 'J Ten', 'a settled pick does not bind');
+  // The owner's own choice (2026-11-14: "Underdog of the week to Amanda Nunes"): that fighter, whatever the other bouts read.
+  const named = underdogOfTheWeek({}, reads, pickOnA1, { only: 'b2' });
+  assert.deepEqual([named.boutId, named.name, named.side, named.american, named.owner], ['2', 'D Four', 'b', 300, true], 'D Four is named, though F Six reads likelier');
+  assert.equal(named.reasons[0], "Pixel's own choice for underdog of the week"); assert.ok(named.chance > 0 && named.chance < 0.5);
+  assert.equal(underdogOfTheWeek({}, reads, pickOnA1, { only: 'b1' }).name, 'B Two', 'the owner may name a fighter a pick is against');
+  assert.equal(underdogOfTheWeek({}, reads, pickOnA1, { only: 'a4' }).american, -110, 'or one who is no underdog by price: the owner chose');
+  assert.equal(underdogOfTheWeek({}, reads, pickOnA1, { only: 'zz' }), null, 'a fighter not on the card names nobody');
+  assert.equal(underdogOfTheWeek({}, reads, pickOnA1).owner, false);
   // Settling.
   const b3 = reads[2].bout;
   assert.equal(settleUnderdog(dog, b3).result, null, 'not in yet');
