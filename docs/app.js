@@ -10197,7 +10197,7 @@ el.trendPicksView?.addEventListener('click', (event) => {
   const player = event.target.closest('[data-open-player]');
   if (player) { openPlayerByName(player.dataset.openPlayer, 'team'); return; }
   // A UFC ticket here opens the UFC tab, where its bouts and their breakdowns are.
-  if (event.target.closest('.ufc-pick[data-bout-link]')) { setActiveTab('ufc'); return; }
+  if (event.target.closest('.ufc-pick[data-bout-link]') && !event.target.closest('a, button, .pb-block')) { setActiveTab('ufc'); return; }
   const tennisPlayer = event.target.closest('[data-tennis-player]');
   if (tennisPlayer) { openPlayerByName(tennisPlayer.dataset.tennisPlayer, 'tennis'); return; }
   const leg = event.target.closest('[data-pick-leg]');
@@ -11241,31 +11241,48 @@ const ufcPickBadge = (pick) => {
 
 const UFC_MARKET_LABEL = { h2h: 'Moneyline', totals: 'Rounds total', method: 'Method of victory', double: 'Double chance', method_round: 'Method and round', round_start: 'Round to start' };
 const unitsWord = (u) => `${u} unit${Number(u) === 1 ? '' : 's'}`;
-function renderUfcPickCard(pick) {
+/**
+ * A UFC ticket, condensed (2026-11-14: "too much clutter and text ... make
+ * it simple to see the plays and in a condensed format. Number them and
+ * the units placed ... just have the link to copy to Playbook"): its
+ * number, the book, the price and the units on one line; one line a leg
+ * with its price; and one button that copies the Playbook message. A slip
+ * link shows only where the book gives a real one.
+ */
+function renderUfcPickCard(pick, index = null) {
   const parlay = pick.type === 'parlay' && pick.legs.length > 1;
   const first = pick.legs[0];
-  const legHtml = (leg) => `<div class="ufc-pick-leg">
-      <p class="ufc-pick-sel"><strong>${esc(leg.selection)}</strong> ${parlay && leg.link ? pricePill(pick.bookId, pick.book, leg.american, leg.link) : parlay ? `<span class="pick-leg-price">${esc(formatAmerican(leg.american))}</span>` : ''}<small>${esc(leg.a)} vs ${esc(leg.b)}${leg.weightClass ? ` · ${esc(leg.weightClass)}` : ''}</small></p>
-      ${Number.isFinite(leg.confidence) ? `<p class="ufc-pick-conf">${confStars(leg.confidence)} <small>confidence ${esc(String(leg.confidence))} of 5</small></p>` : `<p class="row-sub">${esc(UFC_MARKET_LABEL[leg.market] ?? leg.market ?? '')}</p>`}
-      ${leg.warning ? `<p class="pick-move is-out"><span class="pick-move-tag">Line moved · not tracked</span> ${esc(leg.warning)}</p>` : ''}
-      ${leg.note ? `<p class="pick-note">${esc(leg.note)}</p>` : ''}
-      ${leg.actual ? `<p class="row-sub">Result: ${esc(leg.actual)}</p>` : ''}
-    </div>`;
+  const n = Number.isInteger(index) ? index + 1 : null;
+  const mark = (leg) => (leg.result === 'win' ? '<span class="ufc-leg-mark is-win" aria-label="Won">✓</span>' : leg.result === 'loss' ? '<span class="ufc-leg-mark is-loss" aria-label="Lost">✕</span>' : leg.result === 'void' ? '<span class="ufc-leg-mark" aria-label="Void">–</span>' : '');
+  // The opponent's surname, for a leg on one fighter; a leg on the bout already names both.
+  const versus = (leg) => { if (!leg.fighterId || !leg.a || !leg.b) return ''; const opp = String(leg.selection ?? '').startsWith(leg.a) ? leg.b : leg.a; return String(opp).split(' ').at(-1); };
+  const legRow = (leg) => `<li class="ufc-leg ${leg.result ? `is-${esc(leg.result)}` : ''}">
+      <span class="ufc-leg-sel">${mark(leg)}<strong>${esc(leg.selection)}</strong>${versus(leg) ? ` <small>vs ${esc(versus(leg))}</small>` : ''}${Number.isFinite(leg.confidence) ? ` ${confStars(leg.confidence)}` : ''}</span>
+      ${!parlay ? '' : leg.link ? pricePill(pick.bookId, pick.book, leg.american, leg.link) : Number.isFinite(leg.american) ? `<span class="pick-leg-price">${esc(formatAmerican(leg.american))}</span>` : ''}
+      ${leg.warning ? `<small class="ufc-leg-note is-warn">Line moved: ${esc(leg.warning)}</small>` : ''}${leg.actual ? `<small class="ufc-leg-note">${esc(leg.actual)}</small>` : ''}
+    </li>`;
+  const slip = parlay ? combinedSlipLink(pick.bookId, pick.legs.map((l) => l.link)) : pick.link ?? first.link ?? null;
+  const bookKey = bookIdFor(pick.bookId) ?? pick.bookId ?? pick.book;
+  const text = playbookText({ legs: pick.legs.filter((l) => l.selection).map((l) => ({ selection: l.selection, game: l.a && l.b ? `${l.a} vs ${l.b}` : '' })), book: bookKey, mention: playbookSettings().mention });
+  const done = pick.status === 'graded' || pick.status === 'void';
   return `<article class="trend-card pick-bet-card ufc-pick" data-bout-link="${esc(pick.boutId)}">
     <div class="pick-bet-head">
+      ${n ? `<span class="tennis-rank" aria-label="Pick ${n}">${n}</span>` : ''}
       <span class="pick-bet-type">${parlay ? `${pick.legs.length}-leg parlay` : UFC_MARKET_LABEL[first.market] ?? 'Moneyline'}</span>
       <span class="pick-bet-book">${pick.bookId ? `${bookBadge(pick.bookId, pick.book)}${esc(pick.book)}` : 'Any book'}</span>
-      <span class="pick-bet-price">${Number.isFinite(pick.american) ? esc(formatAmerican(pick.american)) : '<small>price at your book</small>'}</span>
-      <span class="pick-bet-stake">${esc(unitsWord(pick.units))}</span>
-      ${pick.priceLocked ? '<span class="tennis-tag is-tracked" title="A bet placed at this price: it stays at it however the board moves">Placed</span>' : ''}
+      <span class="pick-bet-price">${Number.isFinite(pick.american) ? esc(formatAmerican(pick.american)) : '<small>your price</small>'}</span>
+      <span class="pick-bet-stake ufc-pick-units" title="${esc(unitsWord(pick.units))}${pick.priceLocked ? ', placed at this price' : ''}">${esc(unitsLabel(pick.units))}</span>
       ${ufcPickBadge(pick)}
     </div>
     <div class="ufc-pick-body">
-      ${pick.note ? `<p class="pick-note">${esc(pick.note)}</p>` : ''}
-      ${pick.warning && !pick.legs.some((l) => l.warning) ? `<p class="pick-move is-out"><span class="pick-move-tag">Line moved · not tracked</span> ${esc(pick.warning)}</p>` : ''}
-      ${pick.legs.map(legHtml).join('')}
+      <ol class="ufc-legs">${pick.legs.map(legRow).join('')}</ol>
+      ${pick.note ? `<p class="ufc-pick-note">${esc(pick.note)}</p>` : ''}
+      ${pick.warning && !pick.legs.some((l) => l.warning) ? `<p class="ufc-pick-note is-warn">Line moved: ${esc(pick.warning)}</p>` : ''}
     </div>
-    ${ticketSlipFoot(pick)}
+    ${done ? '' : `<div class="ufc-pick-foot">
+      ${text ? `<div class="pb-block is-compact" data-pb-key="${esc(playbookKey(pick.bookId ?? pick.book, pick.legs.map((l) => l.id ?? l.selection)))}" data-pb-text="${esc(text)}" data-pb-book="${esc(pick.book ?? '')}"><button type="button" class="pb-btn is-main" data-pb-copy>Copy for Playbook</button><span class="pb-status" data-pb-status hidden></span></div>` : ''}
+      ${slip ? `<a class="pb-btn" href="${esc(slip)}" target="_blank" rel="noopener">Add to ${esc(pick.book)} slip ↗</a>` : ''}
+    </div>`}
   </article>`;
 }
 
@@ -11584,7 +11601,7 @@ el.ufcView?.addEventListener('click', (event) => {
   const row = t.closest('[data-ufc-bout]');
   if (row && !t.closest('a')) { openUfcBout(row.dataset.ufcBout); return; }
   const jump = t.closest('[data-bout-link]');
-  if (jump && !t.closest('a')) { openUfcBout(jump.dataset.boutLink); }
+  if (jump && !t.closest('a, button, .pb-block')) { openUfcBout(jump.dataset.boutLink); }
 });
 el.ufcView?.addEventListener('keydown', (event) => {
   const row = event.target.closest('[data-ufc-bout]');

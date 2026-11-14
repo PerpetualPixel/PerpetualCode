@@ -7213,6 +7213,26 @@ a.trend-price:hover { background: rgba(255, 255, 255, 0.06); }
 .ufc-h2h-engine p { margin: 0; }
 .ufc-h2h-engine ul { margin: 6px 0 0; padding-left: 18px; }
 .ufc-h2h-quotes { color: var(--muted); font-style: italic; }
+/* A UFC ticket, condensed (2026-11-14): its number and units on the head, one line a leg, one Playbook button. */
+.ufc-pick .pick-bet-head { padding: 10px 14px; gap: 6px 10px; }
+.ufc-pick .ufc-pick-body { padding: 10px 14px; }
+.ufc-pick-units { font-family: var(--mono); font-weight: 800; color: var(--text); padding: 2px 8px; border-radius: 999px; border: 1px solid var(--line); background: var(--surface); }
+.ufc-legs { list-style: none; margin: 0; padding: 0; display: grid; gap: 8px; }
+.ufc-leg { display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: baseline; gap: 2px 10px; font-size: 0.94rem; line-height: 1.35; }
+.ufc-leg-sel small { color: var(--muted); font-weight: 600; white-space: nowrap; }
+.ufc-leg .pick-leg-price, .ufc-leg .trend-price { align-self: start; }
+.ufc-leg-note { grid-column: 1 / -1; color: var(--muted); font-size: 0.76rem; }
+.ufc-leg-note.is-warn, .ufc-pick-note.is-warn { color: #eab308; }
+.ufc-leg-mark { display: inline-block; width: 1.1em; margin-right: 4px; font-weight: 800; color: var(--muted); }
+.ufc-leg-mark.is-win { color: var(--success); }
+.ufc-leg-mark.is-loss { color: var(--danger, #ff5c7a); }
+.ufc-leg.is-loss strong { text-decoration: line-through; text-decoration-thickness: 1px; color: var(--muted); }
+.ufc-pick-note { margin: 8px 0 0; color: var(--muted); font-size: 0.78rem; }
+.ufc-pick-foot { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; padding: 0 14px 12px; }
+.ufc-pick-foot .pb-btn { flex: 0 1 auto; min-height: 36px; padding: 6px 14px; font-size: 0.86rem; text-decoration: none; }
+.pb-block.is-compact { display: inline-flex; flex-wrap: wrap; align-items: center; gap: 8px; margin: 0; padding: 0; border: 0; background: none; }
+.pb-block.is-compact .pb-status { color: var(--muted); font-size: 0.78rem; }
+.pb-block.is-compact .pb-text { flex-basis: 100%; }
 .ufc-pick-leg + .ufc-pick-leg { margin-top: 12px; padding-top: 12px; border-top: 1px solid var(--line); }
 .ufc-pick-sel .trend-price, .ufc-pick-sel .pick-leg-price { float: right; margin-left: 8px; }
 .pick-bet-foot .row-sub { margin: 0 0 8px; }
