@@ -403,3 +403,41 @@ test('manual mode: the tick draws no picks of its own, the owner\'s tickets reso
   const all = await getUfcPicks(env, event.date + 3600e3);
   assert.equal(all.record.wins, 1); assert.equal(all.record.losses, 1);
 });
+
+import { ownerTicket as ownerTicket2, settleUfcLeg as settleLeg2, settleUfcTicket as settleTicket2 } from '../worker/src/ufc-picks.js';
+test('an owner ticket takes a method inside named rounds and a round to start, keeps the price it was placed at, and grades both', () => {
+  const b = (id, a, bName, rounds = 3) => ({ id, status: 'scheduled', rounds, date: 1e12, a: { id: `${id}a`, name: a }, b: { id: `${id}b`, name: bName } });
+  const event = { id: 600061400, name: 'UFC 334: Gane vs. Hokit', date: 1e12, bouts: [b('5', 'Luis Gurule', 'Bilal Hasan'), b('4', 'Kevin Holland', 'Uroš Medić')] };
+  // The owner's own slip (2026-11-14): Hasan by KO/TKO in Rounds 1 or 2, and Medić v Holland not to start Round 3, boosted to +150.
+  const t = ownerTicket2(event, { book: 'fanduel', american: 150, units: 2, placed: true, note: '50% profit boost', legs: [{ fighter: 'Bilal Hasan', method: 'ko', rounds: [1, 2], american: -145 }, { fighter: 'Uros Medic', startRound: 3, side: 'no', american: -209 }] });
+  assert.equal(t.type, 'parlay'); assert.equal(t.units, 2); assert.equal(t.american, 150); assert.equal(t.priceLocked, true); assert.equal(t.source, 'owner');
+  const [ko, start] = t.legs;
+  assert.equal(ko.market, 'method_round'); assert.equal(ko.selection, 'Bilal Hasan by KO/TKO in Rounds 1 or 2'); assert.deepEqual(ko.inRounds, [1, 2]); assert.equal(ko.fighterId, '5b');
+  assert.equal(start.market, 'round_start'); assert.equal(start.selection, 'Round 3 to start: No, Kevin Holland vs Uroš Medić'); assert.equal(start.point, 3); assert.equal(start.side, 'no'); assert.equal(start.fighterId, null);
+  assert.equal(ownerTicket2(event, { fighter: 'Bilal Hasan', book: 'fanduel', american: -1000 }).priceLocked, false, 'without placed, the price follows the book');
+  assert.throws(() => ownerTicket2(event, { fighter: 'Uros Medic', startRound: 3, side: 'maybe' }), /yes or no/);
+  assert.throws(() => ownerTicket2(event, { fighter: 'Uros Medic', startRound: 5, side: 'no' }), /no Round 5/);
+  const fin = (bout, winner, method, round, time = '2:10') => ({ ...bout, status: 'final', result: { winnerId: winner, method, round, time } });
+  const hasan = event.bouts[0]; const medic = event.bouts[1];
+  // The method and the round both have to be right.
+  assert.equal(settleLeg2(ko, fin(hasan, '5b', 'KO/TKO', 2)).result, 'win');
+  assert.equal(settleLeg2(ko, fin(hasan, '5b', 'KO/TKO', 3)).result, 'loss', 'the right method a round late');
+  assert.equal(settleLeg2(ko, fin(hasan, '5b', 'Submission', 1)).result, 'loss');
+  assert.equal(settleLeg2(ko, fin(hasan, '5b', 'Decision - Unanimous', 3, '5:00')).result, 'loss');
+  assert.equal(settleLeg2(ko, fin(hasan, '5a', 'KO/TKO', 1)).result, 'loss', 'the other man');
+  assert.equal(settleLeg2(ko, { ...hasan, status: 'final', result: { winnerId: null, draw: false, method: 'No Contest', round: 1 } }).result, 'void');
+  // Round 3 starts only if the fight is still on at its bell, whoever wins.
+  assert.equal(settleLeg2(start, fin(medic, '4b', 'KO/TKO', 1)).result, 'win'); assert.match(settleLeg2(start, fin(medic, '4b', 'KO/TKO', 1)).actual, /over before Round 3/);
+  assert.equal(settleLeg2(start, fin(medic, '4a', 'Submission', 2, '4:59')).result, 'win', 'Holland finishing it in two is the same No');
+  assert.equal(settleLeg2(start, fin(medic, '4b', 'KO/TKO', 3, '0:20')).result, 'loss');
+  assert.equal(settleLeg2(start, fin(medic, '4b', 'Decision - Split', 3, '5:00')).result, 'loss');
+  assert.equal(settleLeg2({ ...start, side: 'yes' }, fin(medic, '4b', 'Decision - Split', 3, '5:00')).result, 'win');
+  assert.equal(settleLeg2(start, { ...medic, status: 'final', result: { winnerId: null, method: 'No Contest', round: 1 } }).result, 'void');
+  assert.equal(settleLeg2(start, medic), null, 'not in yet');
+  // The ticket pays at the price it was placed at when both legs win (two units at +150), and at the leg left when one is void.
+  const won = settleTicket2({ ...t, legs: [{ ...ko, result: 'win' }, { ...start, result: 'win' }] });
+  assert.deepEqual(won, { result: 'win', net: 3 });
+  const oneLeft = settleTicket2({ ...t, legs: [{ ...ko, result: 'win' }, { ...start, result: 'void' }] });
+  assert.equal(oneLeft.net, Math.round((100 / 145) * 2 * 100) / 100);
+  assert.deepEqual(settleTicket2({ ...t, legs: [{ ...ko, result: 'win' }, { ...start, result: 'loss' }] }), { result: 'loss', net: -2 });
+});

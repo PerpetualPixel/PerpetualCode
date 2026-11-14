@@ -10146,12 +10146,17 @@ function renderTrendPicks() {
   const tennisPicks = trendPicksState.filter === 'all' ? tennisPixelPicks() : [];
   const tennisHtml = tennisPicks.length ? `<h3 class="tennis-h3">Tennis Pixel's Picks <small>high conviction · tracked in the tennis record · stake by confidence</small></h3>${tennisPicks.map(renderTennisPixelPick).join('')}` : '';
   const tennisWord = tennisPicks.length ? `${tennisPicks.length} tennis pick${tennisPicks.length === 1 ? '' : 's'}` : '';
+  // The UFC card's tickets (2026-11-14: "add these to the pixel picks ... have them on the ufc tab as well"): the same cards the UFC tab shows, while the card is the next one up.
+  const ufcPicks = trendPicksState.filter === 'all' ? ((ufcState.picks?.current?.bets ?? []).filter((p) => p.status !== 'void')) : [];
+  const ufcHtml = ufcPicks.length ? `<h3 class="tennis-h3">UFC Pixel's Picks <small>${esc(ufcState.picks.current.eventName ?? '')} · tracked in the UFC record</small></h3>${ufcPicks.map(renderUfcPickCard).join('')}` : '';
+  const ufcWord = ufcPicks.length ? `${ufcPicks.length} UFC pick${ufcPicks.length === 1 ? '' : 's'}` : '';
+  const extraWord = [ufcWord, tennisWord].filter(Boolean).join(' and ');
   if (bets.length) {
-    el.trendPicksStatus.textContent = `${bets.length} ticket${bets.length === 1 ? '' : 's'} today${tennisWord ? ` and ${tennisWord}` : ''} · posted ${trendTimeFmt.format(new Date(bets[0].postedAt))} · one unit a ticket`;
-    el.trendPicksBody.innerHTML = bets.map(renderBetCard).join('') + tennisHtml + renderPickBoard(board);
-  } else if (tennisPicks.length) {
-    el.trendPicksStatus.textContent = `${tennisWord[0].toUpperCase()}${tennisWord.slice(1)} today, no league ticket. Each one shows why it was picked; the buttons open the players' stats.`;
-    el.trendPicksBody.innerHTML = tennisHtml + renderPickBoard(board);
+    el.trendPicksStatus.textContent = `${bets.length} ticket${bets.length === 1 ? '' : 's'} today${extraWord ? ` and ${extraWord}` : ''} · posted ${trendTimeFmt.format(new Date(bets[0].postedAt))} · one unit a ticket`;
+    el.trendPicksBody.innerHTML = bets.map(renderBetCard).join('') + ufcHtml + tennisHtml + renderPickBoard(board);
+  } else if (tennisPicks.length || ufcPicks.length) {
+    el.trendPicksStatus.textContent = `${extraWord[0].toUpperCase()}${extraWord.slice(1)} today, no league ticket.`;
+    el.trendPicksBody.innerHTML = ufcHtml + tennisHtml + renderPickBoard(board);
   } else {
     const checked = today?.checkedAt ? ` Last checked ${trendTimeFmt.format(new Date(today.checkedAt))}; it looks again every hour until the day's games start.` : '';
     el.trendPicksStatus.textContent = today
@@ -10191,6 +10196,8 @@ el.trendPicksView?.addEventListener('click', (event) => {
   if (event.target.closest('[data-price-link], .pick-bet-link')) return; // the book's link, not the card
   const player = event.target.closest('[data-open-player]');
   if (player) { openPlayerByName(player.dataset.openPlayer, 'team'); return; }
+  // A UFC ticket here opens the UFC tab, where its bouts and their breakdowns are.
+  if (event.target.closest('.ufc-pick[data-bout-link]')) { setActiveTab('ufc'); return; }
   const tennisPlayer = event.target.closest('[data-tennis-player]');
   if (tennisPlayer) { openPlayerByName(tennisPlayer.dataset.tennisPlayer, 'tennis'); return; }
   const leg = event.target.closest('[data-pick-leg]');
@@ -11232,13 +11239,14 @@ const ufcPickBadge = (pick) => {
   return pick.commenceMs <= Date.now() ? '<span class="pick-result is-live">In play</span>' : '<span class="pick-result">Pending</span>';
 };
 
-const UFC_MARKET_LABEL = { h2h: 'Moneyline', totals: 'Rounds total', method: 'Method of victory', double: 'Double chance' };
+const UFC_MARKET_LABEL = { h2h: 'Moneyline', totals: 'Rounds total', method: 'Method of victory', double: 'Double chance', method_round: 'Method and round', round_start: 'Round to start' };
+const unitsWord = (u) => `${u} unit${Number(u) === 1 ? '' : 's'}`;
 function renderUfcPickCard(pick) {
   const parlay = pick.type === 'parlay' && pick.legs.length > 1;
   const first = pick.legs[0];
   const legHtml = (leg) => `<div class="ufc-pick-leg">
-      <p class="ufc-pick-sel"><strong>${esc(leg.selection)}</strong> ${parlay && leg.link ? pricePill(pick.bookId, pick.book, leg.american, leg.link) : parlay ? `<span class="pick-leg-price">${esc(formatAmerican(leg.american))}</span>` : ''}<small>${esc(leg.a)} vs ${esc(leg.b)} · ${esc(leg.weightClass ?? '')}</small></p>
-      <p class="ufc-pick-conf">${confStars(leg.confidence)} <small>confidence ${esc(String(leg.confidence))} of 5</small></p>
+      <p class="ufc-pick-sel"><strong>${esc(leg.selection)}</strong> ${parlay && leg.link ? pricePill(pick.bookId, pick.book, leg.american, leg.link) : parlay ? `<span class="pick-leg-price">${esc(formatAmerican(leg.american))}</span>` : ''}<small>${esc(leg.a)} vs ${esc(leg.b)}${leg.weightClass ? ` · ${esc(leg.weightClass)}` : ''}</small></p>
+      ${Number.isFinite(leg.confidence) ? `<p class="ufc-pick-conf">${confStars(leg.confidence)} <small>confidence ${esc(String(leg.confidence))} of 5</small></p>` : `<p class="row-sub">${esc(UFC_MARKET_LABEL[leg.market] ?? leg.market ?? '')}</p>`}
       ${leg.warning ? `<p class="pick-move is-out"><span class="pick-move-tag">Line moved · not tracked</span> ${esc(leg.warning)}</p>` : ''}
       ${leg.note ? `<p class="pick-note">${esc(leg.note)}</p>` : ''}
       ${leg.actual ? `<p class="row-sub">Result: ${esc(leg.actual)}</p>` : ''}
@@ -11248,10 +11256,12 @@ function renderUfcPickCard(pick) {
       <span class="pick-bet-type">${parlay ? `${pick.legs.length}-leg parlay` : UFC_MARKET_LABEL[first.market] ?? 'Moneyline'}</span>
       <span class="pick-bet-book">${pick.bookId ? `${bookBadge(pick.bookId, pick.book)}${esc(pick.book)}` : 'Any book'}</span>
       <span class="pick-bet-price">${Number.isFinite(pick.american) ? esc(formatAmerican(pick.american)) : '<small>price at your book</small>'}</span>
-      <span class="pick-bet-stake">${esc(String(pick.units))} unit</span>
+      <span class="pick-bet-stake">${esc(unitsWord(pick.units))}</span>
+      ${pick.priceLocked ? '<span class="tennis-tag is-tracked" title="A bet placed at this price: it stays at it however the board moves">Placed</span>' : ''}
       ${ufcPickBadge(pick)}
     </div>
     <div class="ufc-pick-body">
+      ${pick.note ? `<p class="pick-note">${esc(pick.note)}</p>` : ''}
       ${pick.warning && !pick.legs.some((l) => l.warning) ? `<p class="pick-move is-out"><span class="pick-move-tag">Line moved · not tracked</span> ${esc(pick.warning)}</p>` : ''}
       ${pick.legs.map(legHtml).join('')}
     </div>
@@ -11296,9 +11306,9 @@ function renderUfcLedger() {
   const rec = d.record;
   const cards = (d.history ?? []).filter((r) => (r.bets ?? []).length);
   el.trendPicksUfc.innerHTML = `<h2 class="pick-h2">UFC <small>tracked apart from NBA and NFL</small></h2>
-    <p class="pick-record">${rec.wins}-${rec.losses}${rec.pushes ? `-${rec.pushes}` : ''} <small>${esc(signedUnits(rec.units))} units · ${esc(roiText(rec.roi))} on ${rec.risked ?? 0} risked, one unit a pick</small></p>
+    <p class="pick-record">${rec.wins}-${rec.losses}${rec.pushes ? `-${rec.pushes}` : ''} <small>${esc(signedUnits(rec.units))} units · ${esc(roiText(rec.roi))} on ${rec.risked ?? 0} risked, each pick at its own stake</small></p>
     <div class="pick-graph">${renderUfcGraph(cards)}</div>
-    ${cards.length ? cards.map((r) => `<div class="pick-day"><h3>${esc(r.eventName)} <small>${esc(ufcDayFmt.format(new Date(r.eventDate ?? 0)))}</small></h3>${r.bets.map((b) => `<div class="pick-hist-row"><span><strong>${esc(b.legs[0].selection)}</strong>${Number.isFinite(b.american) ? ` at ${esc(b.book)} ${esc(formatAmerican(b.american))}` : ` · ${esc(UFC_MARKET_LABEL[b.legs[0].market] ?? b.legs[0].market)}`}<br><small>${esc(b.legs[0].a)} vs ${esc(b.legs[0].b)}</small></span>${ufcPickBadge(b)}</div>`).join('')}</div>`).join('') : '<p class="empty">No UFC picks yet. They post once the next card has odds and a read.</p>'}`;
+    ${cards.length ? cards.map((r) => `<div class="pick-day"><h3>${esc(r.eventName)} <small>${esc(ufcDayFmt.format(new Date(r.eventDate ?? 0)))}</small></h3>${r.bets.map((b) => `<div class="pick-hist-row"><span><strong>${esc(b.legs.map((l) => l.selection).join(' + '))}</strong>${Number.isFinite(b.american) ? ` at ${esc(b.book)} ${esc(formatAmerican(b.american))}` : ` · ${esc(UFC_MARKET_LABEL[b.legs[0].market] ?? b.legs[0].market)}`}<br><small>${b.legs.length > 1 ? `${b.legs.length}-leg parlay` : `${esc(b.legs[0].a)} vs ${esc(b.legs[0].b)}`} · ${esc(unitsWord(b.units ?? 1))}</small></span>${ufcPickBadge(b)}</div>`).join('')}</div>`).join('') : '<p class="empty">No UFC picks yet. They post once the next card has odds and a read.</p>'}`;
 }
 
 async function loadUfcFighters() {
