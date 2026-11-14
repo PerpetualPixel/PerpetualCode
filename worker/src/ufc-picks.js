@@ -506,6 +506,7 @@ function pickRecord(event, bout, breakdown, q, now) {
  *   { total: 2.5, side: 'under', fighter: 'Ciryl Gane', book: 'fanduel', american: -225 }  the rounds total on his bout
  *   { fighter: 'Bilal Hasan', method: 'ko', rounds: [1, 2], american: -145 }        a method inside named rounds ("by KO/TKO in Rounds 1 or 2")
  *   { fighter: 'Uros Medic', startRound: 3, side: 'no', american: -209 }            whether his bout's Round 3 starts (yes or no)
+ *   { fighter: 'Drew Dober', spread: 3.5, american: -105 }                          the fight spread: his points on the judges' cards, plus or minus the number
  *   { legs: [spec, spec, ...], book: 'fanduel', american: 260 }                     a parlay of the above, priced as a whole (or by its legs)
  * `placed: true` marks a bet the owner has already placed at the price
  * given: it keeps that price however the board moves (priceLocked) and
@@ -540,6 +541,11 @@ export function ownerTicket(event, spec, now = Date.now()) {
       const round = Number(s.startRound);
       if (!(round >= 2 && round <= (bout.rounds ?? 3))) throw new Error(`${bout.a?.name} vs ${bout.b?.name} has no Round ${round} to start`);
       return { bout, leg: { id: `${bout.id}:round_start:${round}:${sideWord}`, boutId: bout.id, selection: `Round ${round} to start: ${sideWord === 'yes' ? 'Yes' : 'No'}, ${bout.a?.name} vs ${bout.b?.name}`, market: 'round_start', fighterId: null, methods: null, point: round, side: sideWord, rounds: bout.rounds ?? 3, ...price, link: s.link ?? null, a: bout.a?.name ?? null, b: bout.b?.name ?? null, result: null, actual: null, warning: null } };
+    }
+    // The fight spread (2026-11-14, the owner's own slip: "Drew Dober +3.5", "Juan Diaz -3.5").
+    if (s.spread != null && Number.isFinite(Number(s.spread)) && Number(s.spread) !== 0) {
+      const point = Number(s.spread);
+      return { bout, leg: { id: `${bout.id}:spread:${side}:${point}`, boutId: bout.id, selection: `${f?.name} ${point > 0 ? '+' : ''}${point}`, market: 'spread', fighterId: f?.id ?? null, methods: null, point, side: null, ...price, link: s.link ?? null, a: bout.a?.name ?? null, b: bout.b?.name ?? null, result: null, actual: null, warning: null } };
     }
     // A method inside named rounds ("by KO/TKO in Rounds 1 or 2").
     const inRounds = (Array.isArray(s.rounds) ? s.rounds : s.rounds != null ? [s.rounds] : []).map(Number).filter((n) => Number.isInteger(n) && n >= 1 && n <= (bout.rounds ?? 3)).sort((x, y) => x - y);
@@ -595,6 +601,24 @@ export function settleUfcLeg(leg, bout) {
     const cls = methodClass(r.method);
     if (!cls) return { result: 'void', actual: `${actual} (not a method the market settles)` };
     return { result: (leg.methods ?? []).includes(cls) && cls !== 'dec' && (leg.inRounds ?? []).includes(Number(r.round)) ? 'win' : 'loss', actual };
+  }
+  if (leg.market === 'spread') {
+    // The books' rule: a fight that ends inside the distance gives the spread to its winner, whatever the number; one that goes to the
+    // cards is the three judges' scores added up, the number added to the fighter's side. The cards come with the result (scripts/ufc-card.mjs);
+    // a decision whose cards are not in yet waits for them.
+    if (/no contest/i.test(r.method ?? '')) return { result: 'void', actual: 'no contest' };
+    const mine = leg.fighterId === bout.a?.id ? 'a' : leg.fighterId === bout.b?.id ? 'b' : null;
+    if (!mine) return { result: 'void', actual: 'the fighter is not on this bout' };
+    const cls = methodClass(r.method);
+    if (cls && cls !== 'dec') {
+      if (!r.winnerId) return { result: 'void', actual: 'no winner listed' };
+      return { result: r.winnerId === leg.fighterId ? 'win' : 'loss', actual: `${actual}: a finish gives the spread to the winner` };
+    }
+    const cards = r.cards;
+    if (!cards || !Number.isFinite(cards.a) || !Number.isFinite(cards.b)) return null;
+    const margin = cards[mine] - cards[mine === 'a' ? 'b' : 'a'] + leg.point;
+    const line = `${cards[mine]} to ${cards[mine === 'a' ? 'b' : 'a']} on the cards`;
+    return { result: margin > 0 ? 'win' : margin < 0 ? 'loss' : 'push', actual: `${actual}: ${line}` };
   }
   if (leg.market === 'round_start') {
     // Round N starts when the fight is still on at its bell: a finish in an earlier round means it never did. A no contest settles nothing.

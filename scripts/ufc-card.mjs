@@ -100,6 +100,9 @@ function parseEvent(e) {
     const status = boutStatus(c.status);
     const a = side(x); const b = side(y);
     const winner = status === 'final' ? (a?.winner ? a.id : b?.winner ? b.id : null) : null;
+    // The judges' cards, each fighter's three scores added up (89 to 82): ESPN lists them on a bout that went the distance, and a fight spread settles on them.
+    const cardTotal = (p) => { const v = Number(p?.linescores?.[0]?.value); return Number.isFinite(v) && v > 0 ? v : null; };
+    const cards = status === 'final' && cardTotal(x) != null && cardTotal(y) != null ? { a: cardTotal(x), b: cardTotal(y) } : null;
     return {
       id: String(c.id), order: i + 1,
       segment: c.cardSegment?.description ? SEGMENT(c.cardSegment.description) : segmentOf(c),
@@ -108,7 +111,7 @@ function parseEvent(e) {
       rounds: c.format?.regulation?.periods ?? null,
       date: c.date ? Date.parse(c.date) : null,
       status, a, b,
-      result: status === 'final' ? { winnerId: winner, method: finishMethod(c), round: Number(c.status?.period) > 0 ? Number(c.status.period) : null, time: c.status?.displayClock ?? null, draw: !winner } : null,
+      result: status === 'final' ? { winnerId: winner, method: finishMethod(c), round: Number(c.status?.period) > 0 ? Number(c.status.period) : null, time: c.status?.displayClock ?? null, draw: !winner, cards } : null,
     };
   });
   bouts.reverse().forEach((b, i) => { b.order = i + 1; });

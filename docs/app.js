@@ -11239,7 +11239,7 @@ const ufcPickBadge = (pick) => {
   return pick.commenceMs <= Date.now() ? '<span class="pick-result is-live">In play</span>' : '<span class="pick-result">Pending</span>';
 };
 
-const UFC_MARKET_LABEL = { h2h: 'Moneyline', totals: 'Rounds total', method: 'Method of victory', double: 'Double chance', method_round: 'Method and round', round_start: 'Round to start' };
+const UFC_MARKET_LABEL = { h2h: 'Moneyline', totals: 'Rounds total', method: 'Method of victory', double: 'Double chance', method_round: 'Method and round', round_start: 'Round to start', spread: 'Fight spread' };
 const unitsWord = (u) => `${u} unit${Number(u) === 1 ? '' : 's'}`;
 /**
  * A UFC ticket, condensed (2026-11-14: "too much clutter and text ... make

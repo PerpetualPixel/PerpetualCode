@@ -441,3 +441,33 @@ test('an owner ticket takes a method inside named rounds and a round to start, k
   assert.equal(oneLeft.net, Math.round((100 / 145) * 2 * 100) / 100);
   assert.deepEqual(settleTicket2({ ...t, legs: [{ ...ko, result: 'win' }, { ...start, result: 'loss' }] }), { result: 'loss', net: -2 });
 });
+
+test('an owner ticket takes a fight spread: a finish gives it to the winner, the cards settle a decision, and it waits for cards that are not in', () => {
+  const b = (id, a, bName) => ({ id, status: 'scheduled', rounds: 3, date: 1e12, a: { id: `${id}a`, name: a }, b: { id: `${id}b`, name: bName } });
+  const event = { id: 600061400, name: 'UFC 334: Gane vs. Hokit', date: 1e12, bouts: [b('7', 'Drew Dober', 'Chris Duncan'), b('12', 'Alatengheili', 'Juan Diaz')] };
+  // The owner's own slip (2026-11-14): Dober +3.5 and Diaz -3.5, one unit.
+  const t = ownerTicket2(event, { book: 'bet365', american: 221, units: 1, placed: true, legs: [{ fighter: 'Drew Dober', spread: 3.5, american: -105 }, { fighter: 'Juan Diaz', spread: -3.5, american: -155 }] });
+  assert.equal(t.type, 'parlay'); assert.equal(t.american, 221); assert.equal(t.units, 1); assert.equal(t.priceLocked, true);
+  const [dober, diaz] = t.legs;
+  assert.equal(dober.market, 'spread'); assert.equal(dober.selection, 'Drew Dober +3.5'); assert.equal(dober.point, 3.5); assert.equal(dober.fighterId, '7a');
+  assert.equal(diaz.selection, 'Juan Diaz -3.5'); assert.equal(diaz.point, -3.5); assert.equal(diaz.fighterId, '12b');
+  const fin = (bout, winner, method, round, cards = null) => ({ ...bout, status: 'final', result: { winnerId: winner, method, round, time: '5:00', draw: !winner, cards } });
+  const [d, z] = event.bouts;
+  // Inside the distance: the winner has the spread, whatever the number.
+  assert.equal(settleLeg2(dober, fin(d, '7a', 'KO/TKO', 2)).result, 'win');
+  assert.equal(settleLeg2(dober, fin(d, '7b', 'Submission', 1)).result, 'loss');
+  assert.equal(settleLeg2(diaz, fin(z, '12b', 'KO/TKO', 1)).result, 'win'); assert.match(settleLeg2(diaz, fin(z, '12b', 'KO/TKO', 1)).actual, /a finish gives the spread to the winner/);
+  // On the cards: the three judges added up, the number added to his side.
+  assert.equal(settleLeg2(dober, fin(d, '7b', 'Decision - Unanimous', 3, { a: 84, b: 87 })).result, 'win', 'lost 29-28 three times: three points, inside +3.5');
+  assert.equal(settleLeg2(dober, fin(d, '7b', 'Decision - Unanimous', 3, { a: 81, b: 90 })).result, 'loss', 'lost 30-27 three times: nine points');
+  assert.equal(settleLeg2(dober, fin(d, '7a', 'Decision - Split', 3, { a: 86, b: 85 })).result, 'win');
+  assert.equal(settleLeg2(diaz, fin(z, '12b', 'Decision - Unanimous', 3, { a: 81, b: 90 })).result, 'win', 'won by nine: past -3.5');
+  assert.equal(settleLeg2(diaz, fin(z, '12b', 'Decision - Unanimous', 3, { a: 84, b: 87 })).result, 'loss', 'won by three: short of -3.5');
+  assert.match(settleLeg2(diaz, fin(z, '12b', 'Decision - Unanimous', 3, { a: 81, b: 90 })).actual, /90 to 81 on the cards/);
+  assert.equal(settleLeg2({ ...diaz, point: -3 }, fin(z, '12b', 'Decision - Unanimous', 3, { a: 84, b: 87 })).result, 'push', 'a whole number can land on it');
+  // A decision whose cards have not come through waits; a no contest settles nothing.
+  assert.equal(settleLeg2(diaz, fin(z, '12b', 'Decision - Unanimous', 3, null)), null);
+  assert.equal(settleLeg2(diaz, fin(z, null, 'No Contest', 1)).result, 'void');
+  // Both in: the ticket pays at the price it was placed at.
+  assert.deepEqual(settleTicket2({ ...t, legs: [{ ...dober, result: 'win' }, { ...diaz, result: 'win' }] }), { result: 'win', net: 2.21 });
+});
