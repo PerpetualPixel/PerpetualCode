@@ -14,7 +14,7 @@ import assert from 'node:assert/strict';
 
 import worker from '../worker/src/index.js';
 
-const ORIGIN = 'https://miguelsgarcia4.github.io';
+const ORIGIN = 'https://perpetualpicks.com';
 const PASS = 'test-owner-passphrase';
 const DATE = '2026-08-21';
 // 5am ET — after the 2am batch hour, which is the whole situation this

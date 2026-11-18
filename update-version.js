@@ -90,7 +90,7 @@ console.log(`✅ Updated version.js: v${currentVersion} (${commit}) @ ${builtAt}
 // Content-Security-Policy that forbids inline script), those files are
 // separately cacheable and need the same treatment or a returning visitor
 // keeps yesterday's copy.
-const CACHE_BUSTED_PAGES = ['app.html', 'login.html', 'account.html', 'index.html'];
+const CACHE_BUSTED_PAGES = ['app.html', 'login.html', 'account.html', 'index.html', 'privacy.html', 'terms.html'];
 
 for (const page of CACHE_BUSTED_PAGES) {
   const pagePath = path.join(__dirname, 'docs', page);

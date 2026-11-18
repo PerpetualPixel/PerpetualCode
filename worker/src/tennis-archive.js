@@ -17,7 +17,7 @@
 
 import { isTennis } from '../../docs/insights.js';
 
-const TENNIS_ARCHIVE_BASE = 'https://perpetualpicks.com/data'; // canonical URL directly — the miguelsgarcia4.github.io host 301-redirects here anyway (GitHub Pages' own custom-domain redirect), an extra hop worth skipping
+const TENNIS_ARCHIVE_BASE = 'https://perpetualpicks.com/data'; // canonical URL directly — the site's old github.io address 301-redirects here anyway (GitHub Pages' own custom-domain redirect), an extra hop worth skipping
 
 let tennisArchiveCache = null;
 

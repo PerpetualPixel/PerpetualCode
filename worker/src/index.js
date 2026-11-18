@@ -165,6 +165,20 @@ const MAX_SPORTS_PER_REQUEST = 3;
 // already on file is served without counting.
 const ANALYSIS_DAILY_PER_VISITOR = 20;
 const ANALYSIS_DAILY_SITE = 300;
+
+/**
+ * The last odds call's outcome as anyone may read it: whether it worked,
+ * when, and the feed's own words if it refused. The credit balance (how
+ * many calls are left this month, how many are spent, what the last one
+ * cost) is left out: it was on two public routes and in a file published
+ * with the site, a running gauge for anyone thinking of draining it. The
+ * owner key shows it on /version.
+ */
+export function publicOddsDiag(diag) {
+  if (!diag || typeof diag !== 'object') return diag ?? null;
+  const { remaining, used, lastCost, ...rest } = diag;
+  return rest;
+}
 const FREE_TIER_DAILY_LIMIT = 3;
 
 function corsHeaders(request, env) {
@@ -1510,7 +1524,8 @@ export default {
         // and why) — the shapes ESPN and the alternate markets return can't
         // be verified anywhere but live, so the trace IS the debugger.
         const url = new URL(request.url);
-        const debug = url.searchParams.get('debug') === '1';
+        // The trace re-runs the day's selection, so it takes the owner key; without it ?debug=1 is an ordinary read.
+        const debug = url.searchParams.get('debug') === '1' && request.headers.has('X-Owner-Key') && authorizeSettings(request, env).ok;
         const date = url.searchParams.get('date');
         if (date && /^\d{4}-\d{2}-\d{2}$/.test(date)) {
           const raw = await env.POTD_KV.get(`propplay:${date}`);
@@ -1595,7 +1610,10 @@ export default {
     // The live-props probe's logs (worker/src/live-probe.js): read-only.
     if (pathname === '/live/probe' && request.method === 'GET') {
       const q = new URL(request.url).searchParams;
-      return json(await getLiveProbe(env, { eventId: q.get('event'), espnEventId: q.get('espn') }), { headers: { ...cors, 'Cache-Control': 'no-store' } });
+      // The two ids become the ends of KV keys, so they are held to what an id is: an unchecked one read any key under those prefixes.
+      const [event, espn] = [q.get('event'), q.get('espn')];
+      if ([event, espn].some((v) => v != null && !/^[A-Za-z0-9_-]{1,64}$/.test(v))) return json({ error: 'event and espn are ids' }, { status: 400, headers: cors });
+      return json(await getLiveProbe(env, { eventId: event, espnEventId: espn }), { headers: { ...cors, 'Cache-Control': 'no-store' } });
     }
 
     if (pathname === '/ufc/events' && request.method === 'GET') {
@@ -1705,7 +1723,7 @@ export default {
         return json({
           trends,
           context,
-          feed: feedRaw ? JSON.parse(feedRaw) : null,
+          feed: feedRaw ? publicOddsDiag(JSON.parse(feedRaw)) : null,
           leagues: TREND_TABS,
           available: await Promise.all(TREND_TABS.map(async (k) => { const t = await getTrendsFor(env, k); return { sportKey: k, title: t.title, rows: t.rows.length, builtAt: t.builtAt }; })),
         }, { headers: { ...cors, 'Cache-Control': 'public, max-age=300' } });
@@ -2038,7 +2056,10 @@ export default {
       // run, and the Trends build has no players to match.
       const oddsDiagRaw = await env.POTD_KV.get(ODDS_DIAG_KEY).catch(() => null);
       const espn = Object.fromEntries(await Promise.all(TREND_ENABLED_SPORTS.map(async (k) => [k, await loadBundleIndex(env, k)])));
-      return json({ ...BUILD_INFO, worker: env.CF_VERSION_METADATA?.id ?? null, mmaSchedule: mmaScheduleDiag, odds: oddsDiagRaw ? JSON.parse(oddsDiagRaw) : null, espn }, { headers: cors });
+      // The credit balance only with the owner key (see publicOddsDiag).
+      const oddsDiag = oddsDiagRaw ? JSON.parse(oddsDiagRaw) : null;
+      const owner = request.headers.has('X-Owner-Key') && authorizeSettings(request, env).ok;
+      return json({ ...BUILD_INFO, worker: env.CF_VERSION_METADATA?.id ?? null, mmaSchedule: mmaScheduleDiag, odds: owner ? oddsDiag : publicOddsDiag(oddsDiag), espn }, { headers: { ...cors, 'Cache-Control': 'no-store' } });
     }
 
     if (pathname === '/algo-health' && request.method === 'GET') {
