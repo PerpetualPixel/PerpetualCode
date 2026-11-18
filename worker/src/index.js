@@ -85,7 +85,8 @@ export const TRENDS_CRON = '7,22,37,52 * * * *';
  * of the plan.
  */
 export const TRENDS_ONLY = true;
-import { getOrGenerateAnalysis, getOrGeneratePropAnalysis } from './analysis.js';
+import { getOrGenerateAnalysis, getOrGeneratePropAnalysis, publicAnalysisCandidate } from './analysis.js';
+import { overLimit, clientBucket } from './rate-limit.js';
 import { repairMissingPayouts } from './repair-payouts.js';
 import {
   UPSTREAM,
@@ -157,6 +158,11 @@ import {
 // Three is the ceiling the app's league picker enforces, repeated here because
 // the browser is not where a spend limit belongs.
 const MAX_SPORTS_PER_REQUEST = 3;
+// New AI write-ups the public /analysis route will pay for in a day: per
+// visitor (an IPv6 visitor is their /64), and for the whole site. A write-up
+// already on file is served without counting.
+const ANALYSIS_DAILY_PER_VISITOR = 20;
+const ANALYSIS_DAILY_SITE = 300;
 const FREE_TIER_DAILY_LIMIT = 3;
 
 function corsHeaders(request, env) {
@@ -1043,59 +1049,38 @@ export default {
     // binding didn't actually work for this. Fails open if the DO call
     // errors — a rate-limiter outage should degrade to "no throttle,"
     // never to "nobody can log in."
-    const rateLimited = async (key) => {
-      try {
-        const id = env.QUOTA_MANAGER.idFromName(`ratelimit:${key}`);
-        const obj = env.QUOTA_MANAGER.get(id);
-        const res = await obj.fetch(
-          new Request('http://quota/ratelimit', {
-            method: 'POST',
-            body: JSON.stringify({ key, limit: 10 }),
-          }),
-        );
-        const { allowed } = await res.json();
-        return !allowed;
-      } catch (e) {
-        console.error('Rate limiter error (failing open):', e);
-        return false;
-      }
-    };
+    const rateLimited = (key, opts) => overLimit(env, key, opts);
     const AUTH_LIMITED_PATHS = new Set([
       '/api/auth/register',
       '/api/auth/login',
       '/api/auth/forgot-password',
       '/api/auth/reset-password',
       '/api/auth/verify-email',
+      '/api/account/email',
+      '/api/account/email/confirm',
     ]);
-    // Same X-Owner-Key-gated routes as authorizeSettings (worker/src/
-    // settings.js) — those were previously throttled only by the passphrase
-    // itself matching or not, with no cap on how many guesses a request
-    // could make per minute. Own key prefix so a burst of owner-route
-    // traffic can never eat into the auth/bug-report budgets or vice versa.
-    const OWNER_LIMITED_PATHS = new Set([
-      '/algo-health/resume',
-      '/algo-health/reset',
-      '/admin/onboarding-report',
-      '/admin/retract-wta',
-      '/admin/grade-now',
-      '/admin/regrade-tennis',
-      '/admin/backfill-mma-detail',
-      '/admin/manual-mma-result',
-      '/admin/audit-mma-totals',
-      '/admin/regrade-mma-totals',
-      '/admin/repair-payouts',
-      '/admin/redraw-today',
-    ]);
+    // Every guess at the owner passphrase is counted, whatever route or
+    // method carries it. This used to be a list of the owner-gated POST
+    // routes, and a list goes stale: four routes added later were never on
+    // it, and GET /tail-fade/quota (which answers `exempt: true` to the
+    // right key) was no POST at all, so the passphrase could be guessed
+    // there without limit. Now: any request that carries X-Owner-Key, and
+    // any POST to an owner-gated route by prefix. Own key prefix so a burst
+    // here can never eat into the auth/bug-report budgets or vice versa.
+    const ownerRoute = pathname.startsWith('/admin/') || pathname === '/algo-health/resume'
+      || pathname === '/algo-health/reset' || pathname === '/trends/build';
+    const ownerAttempt = request.headers.has('X-Owner-Key') || (request.method === 'POST' && ownerRoute);
     // Bet-slip extraction spends real model credits on every call, and the
     // request body is an image, so an unthrottled endpoint is both a cost
     // and a bandwidth exposure. Its own key prefix, same as the others, so a
     // burst here can never eat the auth or bug-report budgets.
     const VISION_LIMITED_PATHS = new Set(['/tail-fade/extract']);
-    if (request.method === 'POST' && (AUTH_LIMITED_PATHS.has(pathname) || pathname === '/api/report-bug' || OWNER_LIMITED_PATHS.has(pathname) || VISION_LIMITED_PATHS.has(pathname))) {
-      const ip = request.headers.get('CF-Connecting-IP') ?? 'unknown';
-      const prefix = pathname === '/api/report-bug' ? 'bug'
-        : VISION_LIMITED_PATHS.has(pathname) ? 'vision'
-        : OWNER_LIMITED_PATHS.has(pathname) ? 'owner' : 'auth';
+    if (ownerAttempt || (request.method === 'POST' && (AUTH_LIMITED_PATHS.has(pathname) || pathname === '/api/report-bug' || VISION_LIMITED_PATHS.has(pathname)))) {
+      // An IPv6 visitor is counted by their /64, not by one of its endless addresses (see rate-limit.js).
+      const ip = clientBucket(request);
+      const prefix = ownerAttempt ? 'owner'
+        : pathname === '/api/report-bug' ? 'bug'
+        : VISION_LIMITED_PATHS.has(pathname) ? 'vision' : 'auth';
       if (await rateLimited(`${prefix}:${ip}`)) {
         return json({ error: 'Too many attempts — try again in a minute.' }, { status: 429, headers: cors });
       }
@@ -1289,35 +1274,50 @@ export default {
         return json({ error: 'Method not allowed' }, { status: 405, headers: cors });
       }
       const { searchParams } = new URL(request.url);
-      const candidate = {
-        eventId: searchParams.get('eventId') ?? '',
-        sportKey: searchParams.get('sportKey') ?? '',
-        sportTitle: searchParams.get('sportTitle') ?? '',
-        home: searchParams.get('home') ?? '',
-        away: searchParams.get('away') ?? '',
-        // The side this app's own pricing already picked — the model builds
-        // its case around this rather than independently guessing (see
-        // worker/src/analysis.js), so the write-up can never disagree with
-        // the pick shown next to it.
-        outcomeName: searchParams.get('outcomeName') ?? '',
-      };
-      if (!candidate.eventId || !candidate.sportKey || !candidate.home || !candidate.away || !candidate.outcomeName) {
-        return json({ analysis: null, reason: 'missing eventId/sportKey/home/away/outcomeName' }, { headers: cors });
+      // The fields come from the browser and go into a model prompt, and the
+      // route is open to anyone, so they are held to the shape a real pick's
+      // fields have (see publicAnalysisCandidate). outcomeName is the side
+      // this app's own pricing already picked — the model builds its case
+      // around it rather than independently guessing (see analysis.js), so
+      // the write-up can never disagree with the pick shown next to it.
+      const candidate = publicAnalysisCandidate(searchParams);
+      if (!candidate) {
+        return json({ analysis: null, reason: 'missing or malformed eventId/sportKey/home/away/outcomeName' }, { headers: cors });
       }
       try {
-        // &isPotd=true exercises getOrGenerateAnalysis's POTD variant
-        // (longer prompt, higher maxTokens, separate cache namespace)
-        // directly rather than the regular per-game one — useful for
-        // reproducing a POTD-specific write-up failure without waiting for
-        // the 2am batch. &isAudit=true is Tail or Fade's per-leg "why" —
-        // same depth as POTD, its own cache namespace, but framed as the
-        // user's own bet rather than this app's pick (see analysis.js).
-        const isPotd = searchParams.get('isPotd') === 'true';
+        // The owner key lifts every limit below and alone unlocks
+        // &isPotd=true (getOrGenerateAnalysis's POTD variant: longer prompt,
+        // higher maxTokens, its own cache namespace), for reproducing a
+        // write-up failure by hand. &isAudit=true is Tail or Fade's per-leg
+        // "why" — same depth as POTD, its own cache namespace, but framed as
+        // the user's own bet rather than this app's pick (see analysis.js).
+        const owner = request.headers.has('X-Owner-Key') && authorizeSettings(request, env).ok;
+        const isPotd = owner && searchParams.get('isPotd') === 'true';
         const isAudit = searchParams.get('isAudit') === 'true';
-        const analysis = await getOrGenerateAnalysis(candidate, env, ctx, Date.now(), { isPotd, isAudit });
+        const now = Date.now();
+        // A write-up already on file costs nothing to serve.
+        let analysis = await getOrGenerateAnalysis(candidate, env, ctx, now, { isPotd, isAudit, cacheOnly: true });
+        let reason;
+        if (!analysis) {
+          // Writing a new one is a paid model call, and this used to make
+          // one for anyone, for any text, without limit. Now: none at all
+          // while the boards are not drawn (TRENDS_ONLY: nothing the app
+          // shows asks for one, so every such request is somebody else's),
+          // and otherwise a daily allowance per visitor and for the site.
+          if (owner) {
+            analysis = await getOrGenerateAnalysis(candidate, env, ctx, now, { isPotd, isAudit });
+          } else if (TRENDS_ONLY) {
+            reason = 'write-ups are not being generated on request right now';
+          } else if (await rateLimited(`analysis:${clientBucket(request)}`, { limit: ANALYSIS_DAILY_PER_VISITOR, windowSeconds: 86400 })
+            || await rateLimited('analysis:site', { limit: ANALYSIS_DAILY_SITE, windowSeconds: 86400 })) {
+            reason = 'the daily allowance of new write-ups is used up';
+          } else {
+            analysis = await getOrGenerateAnalysis(candidate, env, ctx, now, { isPotd, isAudit });
+          }
+        }
         return json(
-          { analysis },
-          { headers: { ...cors, 'Cache-Control': 'public, max-age=3600' } },
+          reason ? { analysis: null, reason } : { analysis },
+          { headers: { ...cors, 'Cache-Control': analysis ? 'public, max-age=3600' : 'no-store' } },
         );
       } catch (error) {
         return json({ analysis: null, reason: String(error).slice(0, 120) }, { headers: cors });

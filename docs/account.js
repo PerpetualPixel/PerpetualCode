@@ -207,19 +207,22 @@ document.getElementById('email-form').addEventListener('submit', async (e) => {
   const btn = e.target.querySelector('button');
   const original = btn.textContent;
   const newEmail = document.getElementById('email-new').value;
+  // The server asks for the current password before it moves an account's email (a session alone is not enough).
+  const currentPassword = document.getElementById('email-password').value;
   try {
     btn.disabled = true;
     btn.innerHTML = '<span class="spinner"></span> Sending...';
     const res = await fetch(`${window.API_BASE}/api/account/email`, {
       method: 'POST',
       headers: authHeaders(),
-      body: JSON.stringify({ newEmail }),
+      body: JSON.stringify({ newEmail, currentPassword }),
     });
     const data = await res.json();
     if (!res.ok) { showMessage('email-message', data.error, true); return; }
     showMessage('email-message', data.message, false);
-    renderPendingEmailBanner(newEmail);
+    renderPendingEmailBanner(newEmail.trim().toLowerCase());
     document.getElementById('email-new').value = '';
+    document.getElementById('email-password').value = '';
   } catch (err) {
     showMessage('email-message', 'Connection failed: ' + err.message, true);
   } finally {

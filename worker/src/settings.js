@@ -40,7 +40,7 @@ function settingsKey(identity = 'owner') {
  * first mismatch is, and folds the length difference into the result rather
  * than returning early on it. An empty string never matches.
  */
-function safeEqual(a, b) {
+export function safeEqual(a, b) {
   const aStr = String(a ?? '');
   const bStr = String(b ?? '');
   if (!aStr.length || !bStr.length) return false;

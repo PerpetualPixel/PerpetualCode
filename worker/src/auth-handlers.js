@@ -412,9 +412,14 @@ export async function handleResetPassword(request, env) {
     // password may be compromised — every outstanding session dies with
     // it, not just the password (see authenticateRequest).
     const newHash = await hashPassword(newPassword);
+    // An email change still waiting for its confirmation link is cancelled
+    // in the same statement: whoever had the old password may have asked
+    // for it (see account-handlers.js's CANCEL_PENDING, spelled out here
+    // because that file imports this one).
     await env.DB.prepare(
       `UPDATE users SET password_hash = ?, password_reset_token = NULL,
        password_reset_token_expires = NULL,
+       pending_email = NULL, pending_email_token = NULL, pending_email_token_expires = NULL,
        session_epoch = COALESCE(session_epoch, 0) + 1, updated_at = ? WHERE id = ?`,
     )
       .bind(newHash, Date.now(), user.id)

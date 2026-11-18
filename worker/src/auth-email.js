@@ -1,6 +1,27 @@
 import { Buffer } from 'node:buffer';
 import crypto from 'node:crypto';
 
+/**
+ * An email address as this app stores it: trimmed and lower-cased, or null
+ * when it is not the shape of an address. Deliberately loose about what a
+ * mailbox may be called (providers differ), strict about what could never
+ * be one: no spaces, no angle brackets or double quotes (the address is
+ * written into emails), one @, a dot in the domain, at most 254 characters.
+ */
+export function normalizeEmail(value) {
+  if (typeof value !== 'string') return null;
+  const email = value.trim().toLowerCase();
+  if (email.length < 6 || email.length > 254) return null;
+  return /^[^\s@<>"]+@[^\s@<>"]+\.[^\s@<>".]{2,}$/.test(email) ? email : null;
+}
+
+/** An address with its mailbox mostly hidden, for telling someone where a message went without printing it: jo***@example.com. */
+export function maskEmail(email) {
+  const [box, domain] = String(email ?? '').split('@');
+  if (!box || !domain) return 'another address';
+  return `${box.slice(0, 2)}***@${domain}`;
+}
+
 // Generate secure random token for email verification
 export function generateVerificationToken() {
   return crypto.randomBytes(32).toString('hex');

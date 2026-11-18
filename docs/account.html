@@ -345,7 +345,11 @@
           </div>
           <div class="form-group">
             <label for="email-new">New Email</label>
-            <input type="email" id="email-new" placeholder="new@example.com" required>
+            <input type="email" id="email-new" placeholder="new@example.com" autocomplete="email" required>
+          </div>
+          <div class="form-group">
+            <label for="email-password">Current Password</label>
+            <input type="password" id="email-password" placeholder="••••••••" autocomplete="current-password" required>
           </div>
           <button type="submit" class="button">Request Email Change</button>
         </form>
@@ -495,6 +499,6 @@
     </div>
   </div>
 
-  <script src="account.js?v=1.342" defer></script>
+  <script src="account.js?v=1.343" defer></script>
 </body>
 </html>

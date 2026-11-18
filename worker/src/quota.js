@@ -33,20 +33,36 @@ export class QuotaManager {
    * one IP never tripped a 10/min limit, while 15 calls inside a single
    * request tripped it at 12), which defeats the whole point for
    * brute-force protection. The single stored record self-resets each
-   * minute rather than accreting one key per window.
+   * window rather than accreting one key per window.
+   *
+   * `windowSeconds` is the length of the window (a minute unless given: a
+   * day for the daily caps, a quarter of an hour for the sign-in lockout).
+   * `peek` only looks: nothing is counted, and the answer is whether the
+   * limit has already been reached (a lockout that must not be extended by
+   * the very request it refuses). `clear` forgets the count.
    */
   async handleRateLimit(request) {
-    const { key, limit = 10 } = await request.json();
-    const win = Math.floor(Date.now() / 60000);
+    const { key, limit = 10, windowSeconds = 60, peek = false, clear = false } = await request.json();
     const storageKey = `rl:${key}`;
+    if (clear) {
+      await this.state.storage.delete(storageKey);
+      return new Response(JSON.stringify({ allowed: true, count: 0 }), { headers: { 'Content-Type': 'application/json' } });
+    }
+    const span = Math.max(1, Number(windowSeconds) || 60) * 1000;
+    const win = Math.floor(Date.now() / span);
     const rec = (await this.state.storage.get(storageKey)) || { win: 0, count: 0 };
     if (rec.win !== win) {
       rec.win = win;
       rec.count = 0;
     }
+    if (peek) {
+      return new Response(JSON.stringify({ allowed: rec.count < limit, count: rec.count }), {
+        headers: { 'Content-Type': 'application/json' },
+      });
+    }
     rec.count += 1;
     await this.state.storage.put(storageKey, rec);
-    return new Response(JSON.stringify({ allowed: rec.count <= limit }), {
+    return new Response(JSON.stringify({ allowed: rec.count <= limit, count: rec.count }), {
       headers: { 'Content-Type': 'application/json' },
     });
   }
