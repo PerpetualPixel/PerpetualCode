@@ -42,9 +42,12 @@ jobs:
     steps:
       - name: Skip a league left out of a manual run
         id: gate
+        env:
+          # A dispatch input reaches the shell as a variable, never as text pasted into the script (which the shell would then run as code).
+          WANTED: ${{ inputs.leagues || 'nba,nfl' }}
+          LEAGUE: ${{ matrix.league }}
         run: |
-          wanted="${{ inputs.leagues || 'nba,nfl' }}"
-          case ",$wanted," in *",${{ matrix.league }},"*) echo "run=yes" >> "$GITHUB_OUTPUT";; *) echo "run=no" >> "$GITHUB_OUTPUT";; esac
+          case ",$WANTED," in *",$LEAGUE,"*) echo "run=yes" >> "$GITHUB_OUTPUT";; *) echo "run=no" >> "$GITHUB_OUTPUT";; esac
       - uses: actions/checkout@v4
         if: steps.gate.outputs.run == 'yes'
       - uses: actions/setup-node@v4

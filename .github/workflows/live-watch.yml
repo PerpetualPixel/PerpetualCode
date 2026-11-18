@@ -44,4 +44,9 @@ jobs:
         env:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
-        run: node scripts/live-watch.mjs --league "${{ inputs.league }}" --team "${{ inputs.team }}" --hours "${{ inputs.hours }}" --every "${{ inputs.every }}"
+          # A dispatch input reaches the shell as a variable, never as text pasted into the script (which the shell would then run as code).
+          LEAGUE: ${{ inputs.league }}
+          TEAM: ${{ inputs.team }}
+          HOURS: ${{ inputs.hours }}
+          EVERY: ${{ inputs.every }}
+        run: node scripts/live-watch.mjs --league "$LEAGUE" --team "$TEAM" --hours "$HOURS" --every "$EVERY"

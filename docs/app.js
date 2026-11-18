@@ -26,6 +26,7 @@ import { leagueIconSvg } from './league-icons.js';
 import { sortTrends, sortQuotes, bestQuote, attachSeries, hitFlags, nflWeek, legScore, parlayDecimal, isAltLine, suggestedUnits, winLikelihood, livePace } from './trends.js';
 import { enhanceSelect } from './custom-select.js';
 import { BUILD_INFO } from './version.js';
+import { safeUrl } from './safe-url.js';
 import { summarizePicks, gradePick } from './learning.js';
 import { liveSetsLabel } from './tennis-results.js';
 import {
@@ -1244,6 +1245,12 @@ function relativeTime(ms) {
 }
 
 /** Escape anything that came from the API before it touches innerHTML. */
+/**
+ * A link that came from data, for an href: held to https or a path on this
+ * site (docs/safe-url.js says why), then escaped like any other value.
+ */
+const escUrl = (value) => esc(safeUrl(value));
+
 function esc(value) {
   return String(value).replace(/[&<>"']/g, (c) => (
     { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]
@@ -1826,7 +1833,7 @@ function renderBooks(leg) {
 
       return `
         <a class="book-btn" style="--book:${esc(meta.color)}"
-           href="${esc(href)}" target="_blank" rel="noopener">
+           href="${escUrl(href)}" target="_blank" rel="noopener">
           <span>${esc(meta.name)}</span>
           <span class="book-price">${esc(formatAmerican(offer.american))}</span>
           ${best ? '<span class="book-best">best</span>' : ''}
@@ -2149,7 +2156,7 @@ function renderPriceTable(leg) {
     // registry entry for) still shows its price, just as plain text.
     const registryUrl = SPORTSBOOKS[bookIdFor(q.bookKey)]?.url;
     const bookCell = registryUrl
-      ? `<a href="${esc(registryUrl)}" target="_blank" rel="noopener noreferrer">${esc(q.book)}</a>`
+      ? `<a href="${escUrl(registryUrl)}" target="_blank" rel="noopener noreferrer">${esc(q.book)}</a>`
       : esc(q.book);
     return `
     <tr class="${i === 0 ? 'is-best' : ''}">
@@ -2993,7 +3000,7 @@ function gridironSectionHtml(leg) {
     : '';
 
   const link = gr.url
-    ? `<p class="gridiron-meta"><a href="${esc(gr.url)}" target="_blank" rel="noopener">Full breakdown on the
+    ? `<p class="gridiron-meta"><a href="${escUrl(gr.url)}" target="_blank" rel="noopener">Full breakdown on the
        Gridiron Engine${gr.weekLabel ? ` — ${esc(gr.weekLabel)}` : ''}</a>` +
       `${gr.generatedAt ? ` · built ${esc(dateFmt.format(new Date(gr.generatedAt)))}` : ''}</p>`
     : '';
@@ -9092,7 +9099,7 @@ function pricePill(bookKey, bookName, american, link) {
   const href = link ?? (id ? SPORTSBOOKS[id]?.url : null);
   const inner = `${bookBadge(bookKey, bookName)}${esc(formatAmerican(american))}`;
   if (!href) return `<span class="trend-price" title="${esc(bookName ?? '')}">${inner}</span>`;
-  return `<a class="trend-price ${link ? 'is-slip' : ''}" href="${esc(href)}" target="_blank" rel="noopener" title="${esc(link ? `Open this line on your ${bookName} slip` : `Open ${bookName}`)}" data-price-link>${inner}</a>`;
+  return `<a class="trend-price ${link ? 'is-slip' : ''}" href="${escUrl(href)}" target="_blank" rel="noopener" title="${esc(link ? `Open this line on your ${bookName} slip` : `Open ${bookName}`)}" data-price-link>${inner}</a>`;
 }
 
 function bookBadge(bookKey, bookName, cls = 'book-badge') {
@@ -9551,10 +9558,10 @@ function renderTrendDetail(row) {
     ${quote ? `<div class="detail-bet">
       <div class="bet-row">
         <span class="bet-book">${bookPill(quote)}${esc(formatAmerican(quote.american))}</span>
-        <a class="bet-btn" href="${esc(quote.link ?? bookMeta(quote.bookKey)?.url ?? '#')}" target="_blank" rel="noopener" title="${esc(quote.link ? `Open this line on your ${quote.book} slip` : `Open ${quote.book}`)}">${quote.link ? 'Add to slip' : 'Bet'} <span aria-hidden="true">↗</span></a>
+        <a class="bet-btn" href="${escUrl(quote.link ?? bookMeta(quote.bookKey)?.url ?? '#')}" target="_blank" rel="noopener" title="${esc(quote.link ? `Open this line on your ${quote.book} slip` : `Open ${quote.book}`)}">${quote.link ? 'Add to slip' : 'Bet'} <span aria-hidden="true">↗</span></a>
         ${quotes.length > 1 ? `<button type="button" class="bet-more" data-bet-more>${trendsState.betMore ? 'Less' : `+${quotes.length - 1} more`} ${trendsState.betMore ? '▴' : '▾'}</button>` : ''}
       </div>
-      ${trendsState.betMore ? `<div class="bet-list">${quotes.filter((q) => q !== quote).map((q) => `<a href="${esc(q.link ?? bookMeta(q.bookKey)?.url ?? '#')}" target="_blank" rel="noopener"><span>${bookPill(q)} ${esc(q.book)}</span><b>${esc(formatAmerican(q.american))}</b></a>`).join('')}</div>` : ''}
+      ${trendsState.betMore ? `<div class="bet-list">${quotes.filter((q) => q !== quote).map((q) => `<a href="${escUrl(q.link ?? bookMeta(q.bookKey)?.url ?? '#')}" target="_blank" rel="noopener"><span>${bookPill(q)} ${esc(q.book)}</span><b>${esc(formatAmerican(q.american))}</b></a>`).join('')}</div>` : ''}
     </div>` : ''}`;
 }
 
@@ -9954,7 +9961,7 @@ function renderLegWhy(leg, bet) {
     <div class="pick-leg-actions">
       <button type="button" class="parlay-btn" data-pick-leg-stats title="The game log, the splits and every book's price">Game log and splits</button>
       ${leg.playerName ? `<button type="button" class="parlay-btn" data-open-player="${esc(leg.playerName)}" title="Every line for this player in Player search">${esc(leg.playerName.split(' ').at(-1))} in Player search</button>` : ''}
-      ${leg.link && bet.type === 'parlay' ? `<a class="parlay-btn is-slip" href="${esc(leg.link)}" target="_blank" rel="noopener" data-price-link>Add this leg ↗</a>` : ''}
+      ${leg.link && bet.type === 'parlay' ? `<a class="parlay-btn is-slip" href="${escUrl(leg.link)}" target="_blank" rel="noopener" data-price-link>Add this leg ↗</a>` : ''}
     </div></div>`;
 }
 
@@ -10816,7 +10823,7 @@ function parlaySlipNote(book, legs) {
   if (legs.length && legs.every((l) => l.quote?.unpriced)) return `<p class="row-sub">No line at ${esc(name)} for ${legs.length === 1 ? 'this leg' : 'these legs'} yet; add ${legs.length === 1 ? 'it' : 'them'} by hand once ${esc(name)} posts.</p>`;
   const url = SPORTSBOOKS[book]?.url ?? (book === 'prizepicks' ? 'https://app.prizepicks.com/' : null);
   const priced = legs.filter((l) => !l.quote?.unpriced).length;
-  return `<p class="row-sub">${esc(name)} gives out no slip links: ${url ? `<a href="${esc(url)}" target="_blank" rel="noopener">open ${esc(name)} ↗</a>` : `open ${esc(name)}`} and add ${priced === 1 ? 'the leg' : `the ${priced} legs`} by hand${priced < legs.length ? `; ${legs.length - priced} more wait on a line` : ''}.</p>`;
+  return `<p class="row-sub">${esc(name)} gives out no slip links: ${url ? `<a href="${escUrl(url)}" target="_blank" rel="noopener">open ${esc(name)} ↗</a>` : `open ${esc(name)}`} and add ${priced === 1 ? 'the leg' : `the ${priced} legs`} by hand${priced < legs.length ? `; ${legs.length - priced} more wait on a line` : ''}.</p>`;
 }
 
 /** The footer of a posted ticket: one link that fills the whole slip where the book takes a list, else the single line's link, else the book; then Playbook for the books that take no slip at all. */
@@ -10828,7 +10835,7 @@ function ticketSlipFoot(bet) {
   if (!href) return pb ? `<div class="pick-bet-foot">${pb}</div>` : '';
   const label = all ? `Add all ${bet.legs.length} legs to your ${esc(bet.book)} slip ↗` : bet.link ? `Open on your ${esc(bet.book)} slip ↗` : `Open ${esc(bet.book)}`;
   const perLeg = !all && bet.type === 'parlay' ? (bet.legs.some((l) => l.link) ? `<p class="row-sub">${esc(bet.book)} takes legs one at a time: tap each leg's price to add it.</p>` : `<p class="row-sub">${esc(bet.book)} gives out no slip links: add the legs by hand.</p>`) : '';
-  return `<div class="pick-bet-foot">${perLeg}<a class="pick-bet-link" href="${esc(href)}" target="_blank" rel="noopener">${label}</a>${pb}</div>`;
+  return `<div class="pick-bet-foot">${perLeg}<a class="pick-bet-link" href="${escUrl(href)}" target="_blank" rel="noopener">${label}</a>${pb}</div>`;
 }
 
 /* ---------------------------------------------------------------- */
@@ -10866,10 +10873,10 @@ function playbookBlockHtml({ key, text, bookName, status = '' }) {
     ? `Playbook's slip for ${esc(bookName)}. A rebuilt ticket asks for a new one.`
     : `${playbookCanShare() ? 'Send the message to your Discord' : 'Paste the message in your Discord'} and tag Playbook; it replies with a ${esc(bookName)} slip. Paste that link here and it becomes the Bet now button.${tagged ? '' : ` Pasted text does not ping the bot: pick @Playbook from Discord's autocomplete, or save its user id in ${setup} for a real tag.`}${channel ? '' : ` Keep your channel link in ${setup} to open it in one tap.`}`;
   return `<div class="pb-block" data-pb-key="${esc(key)}" data-pb-text="${esc(text)}" data-pb-book="${esc(bookName)}">
-    <div class="pb-head"><span class="pb-mark" aria-hidden="true">P</span><strong>Playbook</strong><small>${link ? 'slip attached' : `a ${esc(bookName)} slip from the Discord bot`}</small><a class="pb-site" href="${esc(PLAYBOOK_SITE)}" target="_blank" rel="noopener">playbookbot.com ↗</a></div>
-    ${link ? `<a class="pb-open" href="${esc(link)}" target="_blank" rel="noopener">Bet now on Playbook · ${esc(bookName)} ↗</a>
+    <div class="pb-head"><span class="pb-mark" aria-hidden="true">P</span><strong>Playbook</strong><small>${link ? 'slip attached' : `a ${esc(bookName)} slip from the Discord bot`}</small><a class="pb-site" href="${escUrl(PLAYBOOK_SITE)}" target="_blank" rel="noopener">playbookbot.com ↗</a></div>
+    ${link ? `<a class="pb-open" href="${escUrl(link)}" target="_blank" rel="noopener">Bet now on Playbook · ${esc(bookName)} ↗</a>
     <div class="pb-row"><button type="button" class="pb-btn" data-pb-send>${playbookCanShare() ? 'Send again' : 'Copy again'}</button><button type="button" class="pb-btn" data-pb-clear>Remove link</button></div>`
-    : `<div class="pb-row"><button type="button" class="pb-btn is-main" data-pb-send>${playbookCanShare() ? 'Send to Discord' : 'Copy for Discord'}</button><button type="button" class="pb-btn" data-pb-copy>Copy text</button>${channel ? `<a class="pb-btn" href="${esc(channel)}" target="_blank" rel="noopener">Open channel ↗</a>` : ''}</div>
+    : `<div class="pb-row"><button type="button" class="pb-btn is-main" data-pb-send>${playbookCanShare() ? 'Send to Discord' : 'Copy for Discord'}</button><button type="button" class="pb-btn" data-pb-copy>Copy text</button>${channel ? `<a class="pb-btn" href="${escUrl(channel)}" target="_blank" rel="noopener">Open channel ↗</a>` : ''}</div>
     <form class="pb-form" data-pb-form><input type="url" inputmode="url" autocomplete="off" placeholder="Paste the playbookbot.com link Playbook replies with" aria-label="Playbook slip link" required><button type="submit" class="pb-btn">Attach</button></form>`}
     <p class="row-sub pb-status" data-pb-status ${status ? '' : 'hidden'}>${esc(status)}</p>
     <p class="row-sub pb-note">${note}</p>
@@ -10938,7 +10945,7 @@ function renderParlayLeg(leg) {
       <div class="parlay-leg-actions">
         <button type="button" class="parlay-btn" data-parlay-view="${esc(r.id)}">${open ? 'Hide breakdown' : 'Why this leg'}</button>
         ${!t.matchLevel ? `<button type="button" class="parlay-btn" data-parlay-tennis-lines="${esc(r.playerName)}">Player lines</button>` : ''}
-        ${q.link ? `<a class="parlay-btn is-slip" href="${esc(q.link)}" target="_blank" rel="noopener">Add to slip ↗</a>` : ''}
+        ${q.link ? `<a class="parlay-btn is-slip" href="${escUrl(q.link)}" target="_blank" rel="noopener">Add to slip ↗</a>` : ''}
       </div>
       ${open ? `<div class="parlay-breakdown ${leg.score >= 3.5 ? 'is-good' : 'is-risky'}"><ul>${t.why.map((x) => `<li>${esc(x)}</li>`).join('')}</ul></div>` : ''}
     </div>
@@ -10959,11 +10966,11 @@ function renderParlayLeg(leg) {
       </div>
       <p class="parlay-leg-line">${esc(r.selection)} <small>${esc(u.weightClass ?? '')} · ${esc(trendTimeFmt.format(new Date(r.commenceMs)))}</small></p>
       <div class="parlay-chips"><span class="parlay-chip">${esc(UFC_PROP_LABELS[u.prop] ?? r.marketLabel ?? '')}</span>${Number.isFinite(u.chance) ? `<span class="parlay-chip">${esc(pct(u.chance))} chance</span>` : ''}${leanChip}${u.parlayPiece ? '<span class="parlay-chip">Parlay piece</span>' : ''}</div>
-      ${q.unpriced ? `<p class="parlay-leg-note">${esc(u.note ?? 'Lines for this prop are not out yet; the leg rides unpriced.')}${(() => { const at = (u.books ?? []).find((b) => b.bookId === parlayState.book) ?? (u.books ?? [])[0]; return at ? ` <a href="${esc(at.link)}" target="_blank" rel="noopener">Open the fight at ${esc(at.book)} ↗</a>` : ''; })()}</p>` : ''}
+      ${q.unpriced ? `<p class="parlay-leg-note">${esc(u.note ?? 'Lines for this prop are not out yet; the leg rides unpriced.')}${(() => { const at = (u.books ?? []).find((b) => b.bookId === parlayState.book) ?? (u.books ?? [])[0]; return at ? ` <a href="${escUrl(at.link)}" target="_blank" rel="noopener">Open the fight at ${esc(at.book)} ↗</a>` : ''; })()}</p>` : ''}
       <div class="parlay-leg-actions">
         <button type="button" class="parlay-btn" data-parlay-view="${esc(r.id)}">${open ? 'Hide breakdown' : 'Why this leg'}</button>
         ${r.athleteId ? `<button type="button" class="parlay-btn" data-parlay-stats="${esc(r.id)}">Fighter info</button>` : ''}
-        ${q.link ? `<a class="parlay-btn is-slip" href="${esc(q.link)}" target="_blank" rel="noopener">${q.source === 'bestfightodds' ? 'See the board ↗' : 'Add to slip ↗'}</a>` : ''}
+        ${q.link ? `<a class="parlay-btn is-slip" href="${escUrl(q.link)}" target="_blank" rel="noopener">${q.source === 'bestfightodds' ? 'See the board ↗' : 'Add to slip ↗'}</a>` : ''}
       </div>
       ${open ? `<div class="parlay-breakdown ${leg.score >= 4 ? 'is-good' : 'is-risky'}">${(u.why ?? []).length ? `<ul>${u.why.map((x) => `<li>${esc(x)}</li>`).join('')}</ul>` : ''}${u.summary ? `<p><strong>${u.lean === null ? "Pixel's read of the fight." : u.lean ? 'With the lean.' : 'Against the lean.'}</strong> ${esc(u.summary)}</p>` : ''}${(u.reasons ?? []).length ? `<ul>${u.reasons.map((x) => `<li>${esc(x)}</li>`).join('')}</ul>` : ''}</div>` : ''}
     </div>
@@ -10983,7 +10990,7 @@ function renderParlayLeg(leg) {
       <div class="parlay-leg-actions">
         <button type="button" class="parlay-btn" data-parlay-view="${esc(r.id)}">${open ? 'Hide breakdown' : 'Why this leg'}</button>
         <button type="button" class="parlay-btn" data-parlay-stats="${esc(r.id)}">View stats</button>
-        ${q.link ? `<a class="parlay-btn is-slip" href="${esc(q.link)}" target="_blank" rel="noopener">${q.source === 'bestfightodds' ? 'See the board ↗' : 'Add to slip ↗'}</a>` : ''}
+        ${q.link ? `<a class="parlay-btn is-slip" href="${escUrl(q.link)}" target="_blank" rel="noopener">${q.source === 'bestfightodds' ? 'See the board ↗' : 'Add to slip ↗'}</a>` : ''}
       </div>
       ${open ? `<div class="parlay-breakdown ${b?.verdict === 'risky' ? 'is-risky' : 'is-good'}">${b ? `<p><strong>${b.verdict === 'good' ? 'Good leg' : 'Risky leg'}.</strong> ${esc(b.summary)}</p><ul>${(b.reasons ?? []).map((x) => `<li>${esc(x)}</li>`).join('')}</ul>${b.model ? '' : b.capped ? '<p class="row-sub">Today\'s model reads are used up (a free service keeps a daily budget); this is the record alone. The reads come back tomorrow.</p>' : '<p class="row-sub">The model read was unavailable; this is the record alone.</p>'}` : '<p class="row-sub">Reading the leg…</p>'}</div>` : ''}
     </div>
@@ -11015,7 +11022,7 @@ function renderSprinkles(live) {
           <p class="parlay-leg-line">${esc(r.selection)}</p>
           <div class="parlay-chips"><span class="parlay-chip">${esc(UFC_PROP_LABELS[u.prop] ?? '')}</span>${Number.isFinite(u.chance) ? `<span class="parlay-chip">${esc(pct(u.chance))} chance</span>` : ''}${fair != null ? `<span class="parlay-chip">$${stake} pays about $${esc((stake * (1 + fair / 100)).toFixed(0))} at fair</span>` : ''}</div>
           ${u.why?.length ? `<ul class="parlay-why">${u.why.map((w) => `<li>${esc(w)}</li>`).join('')}</ul>` : ''}
-          <div class="parlay-leg-actions">${at ? `<a class="parlay-btn is-slip" href="${esc(at.link)}" target="_blank" rel="noopener">Open the fight at ${esc(at.book)} ↗</a>` : ''}${r.athleteId ? `<button type="button" class="parlay-btn" data-parlay-stats="${esc(r.id)}">Fighter info</button>` : ''}</div>
+          <div class="parlay-leg-actions">${at ? `<a class="parlay-btn is-slip" href="${escUrl(at.link)}" target="_blank" rel="noopener">Open the fight at ${esc(at.book)} ↗</a>` : ''}${r.athleteId ? `<button type="button" class="parlay-btn" data-parlay-stats="${esc(r.id)}">Fighter info</button>` : ''}</div>
         </div>
       </div>`;
   };
@@ -11112,9 +11119,9 @@ function renderParlay() {
       <div class="parlay-card-head"><strong>${legs.length}-leg ${s.book === 'prizepicks' ? 'Power Play' : 'parlay'}</strong> ${price ? `<span class="parlay-price">${esc(formatAmerican(price.american))}</span>` : ''}<span class="parlay-card-book">${bookBadge(s.book, parlayBookName(s.book))}${esc(parlayBookName(s.book))}</span></div>
       ${s.note ? `<p class="parlay-note">${esc(s.note)}</p>` : ''}
       ${price?.unpriced ? `<p class="parlay-note">${esc(String(price.unpriced))} leg${price.unpriced === 1 ? ' has' : 's have'} no line yet; the price covers the ${esc(String(price.priced))} priced leg${price.priced === 1 ? '' : 's'}.</p>` : legs.length && !price ? '<p class="parlay-note">No line on any of these legs yet; the price comes once a book posts them.</p>' : ''}
-      <div class="parlay-card-top">${all ? `<a class="parlay-all" href="${esc(all)}" target="_blank" rel="noopener">Add all ${legs.length} legs to your ${esc(parlayBookName(s.book))} slip ↗</a>` : some ? `<a class="parlay-all" href="${esc(some)}" target="_blank" rel="noopener">Add ${slipLegs.length} of ${legs.length} legs to your ${esc(parlayBookName(s.book))} slip ↗</a><p class="row-sub">${esc(parlayBookName(s.book))} has no slip link for the other ${legs.length - slipLegs.length}: add ${legs.length - slipLegs.length === 1 ? 'it' : 'them'} by hand (${legs.filter((l) => !slipLegs.includes(l)).map((l) => esc(l.row?.selection ?? l.selection ?? '')).filter(Boolean).join('; ')}).</p>` : parlaySlipNote(s.book, legs)}</div>
+      <div class="parlay-card-top">${all ? `<a class="parlay-all" href="${escUrl(all)}" target="_blank" rel="noopener">Add all ${legs.length} legs to your ${esc(parlayBookName(s.book))} slip ↗</a>` : some ? `<a class="parlay-all" href="${escUrl(some)}" target="_blank" rel="noopener">Add ${slipLegs.length} of ${legs.length} legs to your ${esc(parlayBookName(s.book))} slip ↗</a><p class="row-sub">${esc(parlayBookName(s.book))} has no slip link for the other ${legs.length - slipLegs.length}: add ${legs.length - slipLegs.length === 1 ? 'it' : 'them'} by hand (${legs.filter((l) => !slipLegs.includes(l)).map((l) => esc(l.row?.selection ?? l.selection ?? '')).filter(Boolean).join('; ')}).</p>` : parlaySlipNote(s.book, legs)}</div>
       <div class="parlay-legs">${legs.map(renderParlayLeg).join('')}</div>
-      <div class="parlay-card-foot">${all ? `<a class="parlay-all" href="${esc(all)}" target="_blank" rel="noopener">Add all ${legs.length} legs to your ${esc(parlayBookName(s.book))} slip ↗</a>` : parlaySlipNote(s.book, legs)}${playbookBlock({ key: playbookKey(s.book, legs.map((l) => l.row.id)), legs: legs.map((l) => ({ selection: l.row.selection ?? `${l.row.playerName} ${l.row.side} ${l.row.point} ${l.row.marketLabel ?? l.row.statLabel}`, game: l.row.ufc || l.row.tennis ? `${l.row.away} vs ${l.row.home}` : `${l.row.away} @ ${l.row.home}` })), book: s.book, bookName: parlayBookName(s.book) })}</div>
+      <div class="parlay-card-foot">${all ? `<a class="parlay-all" href="${escUrl(all)}" target="_blank" rel="noopener">Add all ${legs.length} legs to your ${esc(parlayBookName(s.book))} slip ↗</a>` : parlaySlipNote(s.book, legs)}${playbookBlock({ key: playbookKey(s.book, legs.map((l) => l.row.id)), legs: legs.map((l) => ({ selection: l.row.selection ?? `${l.row.playerName} ${l.row.side} ${l.row.point} ${l.row.marketLabel ?? l.row.statLabel}`, game: l.row.ufc || l.row.tennis ? `${l.row.away} vs ${l.row.home}` : `${l.row.away} @ ${l.row.home}` })), book: s.book, bookName: parlayBookName(s.book) })}</div>
     </div>
     <div class="parlay-payout">
       <h3>Potential payout</h3>
@@ -11297,7 +11304,7 @@ function renderUfcPickCard(pick, index = null) {
     </div>
     ${done ? '' : `<div class="ufc-pick-foot">
       ${text ? `<div class="pb-block is-compact" data-pb-key="${esc(playbookKey(pick.bookId ?? pick.book, pick.legs.map((l) => l.id ?? l.selection)))}" data-pb-text="${esc(text)}" data-pb-book="${esc(pick.book ?? '')}"><button type="button" class="pb-btn is-main" data-pb-copy>Copy for Playbook</button><span class="pb-status" data-pb-status hidden></span></div>` : ''}
-      ${slip ? `<a class="pb-btn" href="${esc(slip)}" target="_blank" rel="noopener">Add to ${esc(pick.book)} slip ↗</a>` : ''}
+      ${slip ? `<a class="pb-btn" href="${escUrl(slip)}" target="_blank" rel="noopener">Add to ${esc(pick.book)} slip ↗</a>` : ''}
     </div>`}
   </article>`;
 }
@@ -11393,7 +11400,7 @@ function ufcSprinkleHtml(legs) {
   return `<div class="ufc-sprinkle"><strong>Sprinkle · a couple of dollars each</strong>${legs.map((l) => {
     const fair = Number.isFinite(l.fairAmerican) ? l.fairAmerican : null;
     const at = (l.books ?? []).find((x) => x.bookId === 'fanduel') ?? (l.books ?? [])[0] ?? null;
-    return `<div class="ufc-sprinkle-leg"><b>${esc(l.selection)}</b><small>${esc(pct(l.chance))} chance${fair != null ? ` · fair ${esc(formatAmerican(fair))} · $${stake} pays about $${esc((stake * (1 + fair / 100)).toFixed(0))}` : ''}</small>${at ? `<a href="${esc(at.link)}" target="_blank" rel="noopener">Open the fight at ${esc(at.book)} ↗</a>` : ''}</div>`;
+    return `<div class="ufc-sprinkle-leg"><b>${esc(l.selection)}</b><small>${esc(pct(l.chance))} chance${fair != null ? ` · fair ${esc(formatAmerican(fair))} · $${stake} pays about $${esc((stake * (1 + fair / 100)).toFixed(0))}` : ''}</small>${at ? `<a href="${escUrl(at.link)}" target="_blank" rel="noopener">Open the fight at ${esc(at.book)} ↗</a>` : ''}</div>`;
   }).join('')}<p class="row-sub">Pixel's fair price, no vig; the book's own number is on the fight page. Our odds feed carries no fight props for MMA.</p></div>`;
 }
 
@@ -11480,14 +11487,14 @@ function renderUfcBoutSheet(sheet) {
   const books = new Map();
   for (const q of bd?.quotesA ?? []) books.set(q.bookId, { ...books.get(q.bookId), a: q });
   for (const q of bd?.quotesB ?? []) books.set(q.bookId, { ...books.get(q.bookId), b: q });
-  const oddsRows = [...books.entries()].map(([id, x]) => `<tr><td>${bookBadge(id, x.a?.book ?? x.b?.book ?? id)}${esc(x.a?.book ?? x.b?.book ?? id)}</td><td>${x.a ? `<a href="${esc(x.a.link ?? '')}" ${x.a.link ? 'target="_blank" rel="noopener"' : ''}>${esc(formatAmerican(x.a.american))}</a>` : '—'}</td><td>${x.b ? `<a href="${esc(x.b.link ?? '')}" ${x.b.link ? 'target="_blank" rel="noopener"' : ''}>${esc(formatAmerican(x.b.american))}</a>` : '—'}</td></tr>`).join('');
+  const oddsRows = [...books.entries()].map(([id, x]) => `<tr><td>${bookBadge(id, x.a?.book ?? x.b?.book ?? id)}${esc(x.a?.book ?? x.b?.book ?? id)}</td><td>${x.a ? `<a href="${escUrl(x.a.link ?? '')}" ${x.a.link ? 'target="_blank" rel="noopener"' : ''}>${esc(formatAmerican(x.a.american))}</a>` : '—'}</td><td>${x.b ? `<a href="${escUrl(x.b.link ?? '')}" ${x.b.link ? 'target="_blank" rel="noopener"' : ''}>${esc(formatAmerican(x.b.american))}</a>` : '—'}</td></tr>`).join('');
   const totals = (bd?.totals ?? []).map((t) => `<li>Over ${esc(String(t.point))} ${t.over ? esc(formatAmerican(t.over.american)) : '—'} · Under ${esc(String(t.point))} ${t.under ? esc(formatAmerican(t.under.american)) : '—'}</li>`).join('');
   const changes = (ev.changes ?? []).filter((c) => c.boutId === b.id).map((c) => `<li><span class="ufc-tag is-${esc(c.type)}">${esc(c.type)}</span> ${esc(c.detail)} <small>${esc(ufcDateFmt.format(new Date(c.at)))}</small></li>`).join('');
   return `${sheetHead('ufc', `${b.a?.name ?? 'TBA'} vs ${b.b?.name ?? 'TBA'}`)}
     <p class="ufc-h2h-meta">${esc(b.weightClass ?? '')}${b.title ? ' · <b>Title fight</b>' : ''}${b.rounds ? ` · ${esc(String(b.rounds))} rounds` : ''} · ${esc(UFC_SEGMENT_LABEL[b.segment] ?? '')}${b.date ? ` · ${esc(ufcDateFmt.format(new Date(b.date)))} ET` : ''}</p>
     ${b.status === 'final' && b.result ? `<p class="ufc-result">${b.result.draw ? 'Draw' : `${esc((b.result.winnerId === b.a?.id ? b.a : b.b)?.name ?? '')} wins`}${b.result.method ? ` · ${esc(b.result.method)}` : ''}${b.result.round ? ` · R${esc(String(b.result.round))}${b.result.time ? ` ${esc(b.result.time)}` : ''}` : ''}</p>` : b.status === 'cancelled' ? '<p class="ufc-result is-off">Off the card</p>' : ''}
     <div class="ufc-h2h">${col(b.a, fa, 'a')}<span class="ufc-h2h-vs">vs</span>${col(b.b, fb, 'b')}</div>
-    ${pick ? `<div class="ufc-h2h-pick"><span class="ufc-pick-tag">Pixel's Pick</span> <strong>${esc(pick.type === 'parlay' ? pick.legs.map((l) => l.selection).join(' + ') : pick.legs[0].selection)}</strong>${Number.isFinite(pick.american) ? ` at ${esc(pick.book)} ${esc(formatAmerican(pick.american))}` : ' at your book'}${pick.type === 'parlay' ? ' (parlay)' : ''} ${ufcPickBadge(pick)}${pick.warning ? `<p class="pick-move is-out"><span class="pick-move-tag">Line moved · not tracked</span> ${esc(pick.warning)}</p>` : ''}${pick.link || pick.bookUrl ? `<a class="pick-bet-link" href="${esc(pick.link ?? pick.bookUrl)}" target="_blank" rel="noopener">Open ${esc(pick.book)}</a>` : ''}</div>` : ''}
+    ${pick ? `<div class="ufc-h2h-pick"><span class="ufc-pick-tag">Pixel's Pick</span> <strong>${esc(pick.type === 'parlay' ? pick.legs.map((l) => l.selection).join(' + ') : pick.legs[0].selection)}</strong>${Number.isFinite(pick.american) ? ` at ${esc(pick.book)} ${esc(formatAmerican(pick.american))}` : ' at your book'}${pick.type === 'parlay' ? ' (parlay)' : ''} ${ufcPickBadge(pick)}${pick.warning ? `<p class="pick-move is-out"><span class="pick-move-tag">Line moved · not tracked</span> ${esc(pick.warning)}</p>` : ''}${pick.link || pick.bookUrl ? `<a class="pick-bet-link" href="${escUrl(pick.link ?? pick.bookUrl)}" target="_blank" rel="noopener">Open ${esc(pick.book)}</a>` : ''}</div>` : ''}
     ${bd ? `<h4 class="ufc-h4">Pixel's read</h4><div class="parlay-breakdown ${bd.confidence >= 4 ? 'is-good' : 'is-risky'}">
       <p><strong>${bd.leanName ? `${esc(bd.leanName)} ${confStars(bd.confidence)}` : 'No read yet.'}</strong> ${esc(bd.summary ?? '')}</p>
       ${(bd.reasons ?? []).length ? `<ul>${bd.reasons.map((x) => `<li>${esc(x)}</li>`).join('')}</ul>` : ''}
@@ -11534,7 +11541,7 @@ function renderUfc() {
     const engineHtml = eng ? `<section class="ufc-engine"><h3>Capper consensus <small>${esc(eng.source ?? 'the MMA Engine')}${eng.generatedAt && onCard.length ? `, ${eng.source ? 'counted' : 'run'} ${esc(ufcDayFmt.format(new Date(eng.generatedAt)))}` : ''}</small></h3>
       ${favs.length ? `<p class="row-sub">${eng.source ? 'Who the prediction channels and the tracker\'s best predictors back, strongest first. A tap opens the matchup and its counts.' : 'The favourites the tracked cappers back, strongest first. A tap opens the matchup.'}</p>${favs.map(favRow).join('')}` : '<p class="empty">No consensus on this card yet; the engine runs before the week\'s card.</p>'}
       ${methods.length ? `<details class="ufc-engine-more"><summary>Method calls (${methods.length})</summary>${methods.map(favRow).join('')}</details>` : ''}
-      <p class="row-sub"><a href="${esc(eng.page ?? 'https://perpetualpixel.github.io/MMA_Engine/')}" target="_blank" rel="noopener">Open the MMA Engine ↗</a></p>
+      <p class="row-sub"><a href="${escUrl(eng.page ?? 'https://perpetualpixel.github.io/MMA_Engine/')}" target="_blank" rel="noopener">Open the MMA Engine ↗</a></p>
     </section>` : '';
     const dog = rec?.underdog ?? null;
     const dogBout = dog ? ev.bouts.find((b) => b.id === dog.boutId) : null;
@@ -11547,7 +11554,7 @@ function renderUfc() {
         <span class="ufc-dog-num">${esc(String(Math.round(dog.chance * 100)))}%<small>to win</small></span>
       </div>
       <div class="ufc-dog-foot">
-        ${dogHref ? `<a class="ufc-price" href="${esc(dogHref)}" target="_blank" rel="noopener" title="${esc(dog.link ? `Open this line on your ${dog.book} slip` : `Open ${dog.book}`)}">${bookBadge(dog.bookId, dog.book)}${esc(formatAmerican(dog.american))} ↗</a>` : `<span class="ufc-price">${bookBadge(dog.bookId, dog.book)}${esc(formatAmerican(dog.american))}</span>`}
+        ${dogHref ? `<a class="ufc-price" href="${escUrl(dogHref)}" target="_blank" rel="noopener" title="${esc(dog.link ? `Open this line on your ${dog.book} slip` : `Open ${dog.book}`)}">${bookBadge(dog.bookId, dog.book)}${esc(formatAmerican(dog.american))} ↗</a>` : `<span class="ufc-price">${bookBadge(dog.bookId, dog.book)}${esc(formatAmerican(dog.american))}</span>`}
         ${dog.pickAgrees ? `<span class="ufc-pick-tag">Also a Pixel's Pick</span>` : ''}
       </div>
       <p class="row-sub">${esc(((dog.reasons ?? []).join('; ') || '').replace(/^./, (c) => c.toUpperCase()))}. Shown for the card, not tracked in the ledger; it never goes against a Pixel's Pick.</p>
@@ -11783,7 +11790,7 @@ function liveLeg(l, { showBook = false, elapsed = null } = {}) {
     <div class="live-leg-head"><strong>${esc(l.player)}</strong> <small>${esc(l.team ?? '')}</small>${l.onSlips > 1 ? `<span class="live-shared" title="This player rides on more than one slip">on ${esc(String(l.onSlips))} slips</span>` : ''}<span class="live-leg-line">${esc(String(l.point))}+ ${esc(l.label)}</span><span class="live-leg-price">${showBook ? `${bookBadge(l.bookId, l.book)} ` : ''}${esc(formatAmerican(l.price))}</span></div>
     ${liveBar(l.current, l.point, l.postedCurrent)}
     ${livePaceTiles(l.current, l.point, elapsed, { cleared: l.cleared })}
-    <p class="live-leg-sub">${liveLegMove(l)}${l.cleared ? ' · Cleared' : ` · proj ${esc(String(l.pace))} · +${esc(String(Math.round(l.cushion * 100)))}%`}${Number.isFinite(l.postedPrice) && l.postedPrice !== l.price ? ` · <span class="live-move" title="The price when the play was posted, and now">${esc(formatAmerican(l.postedPrice))} → <b>${esc(formatAmerican(l.price))}</b></span>` : ''}${l.link ? ` · <a href="${esc(l.link)}" target="_blank" rel="noopener">add ↗</a>` : ''}</p>
+    <p class="live-leg-sub">${liveLegMove(l)}${l.cleared ? ' · Cleared' : ` · proj ${esc(String(l.pace))} · +${esc(String(Math.round(l.cushion * 100)))}%`}${Number.isFinite(l.postedPrice) && l.postedPrice !== l.price ? ` · <span class="live-move" title="The price when the play was posted, and now">${esc(formatAmerican(l.postedPrice))} → <b>${esc(formatAmerican(l.price))}</b></span>` : ''}${l.link ? ` · <a href="${escUrl(l.link)}" target="_blank" rel="noopener">add ↗</a>` : ''}</p>
     ${l.foul ? `<p class="live-foul is-${esc(l.foul.level)}">${esc(l.foul.text)}. His minutes are at risk, so this play is replaced on the next build.</p>` : ''}
   </div>`;
 }
@@ -11813,7 +11820,7 @@ function liveGameReads(g) {
   return `<p class="live-sub">Game lines with an edge <small>the model's chance to the whistle against the book's price; only where the model is ahead</small></p>
     <div class="live-watch-list">${shown.map((r) => `<div class="live-watch live-read">
       <div class="live-watch-head"><strong>${esc(r.selection)}</strong><span class="live-watch-stat">${esc(r.label)}</span></div>
-      <div class="live-watch-nums"><span><small>ours</small><b>${esc(String(Math.round(r.model * 100)))}%</b></span><span class="live-arrow">vs</span><span><small>the price</small><b>${esc(String(Math.round(r.line.implied * 100)))}%</b></span><span class="live-watch-line">${bookBadge(r.line.bookId, r.line.book)} ${esc(formatAmerican(r.line.price))}<small class="live-edge">+${esc(String(Math.round(r.line.edge * 100)))}</small>${r.line.link ? ` <a href="${esc(r.line.link)}" target="_blank" rel="noopener">add ↗</a>` : ''}</span></div>
+      <div class="live-watch-nums"><span><small>ours</small><b>${esc(String(Math.round(r.model * 100)))}%</b></span><span class="live-arrow">vs</span><span><small>the price</small><b>${esc(String(Math.round(r.line.implied * 100)))}%</b></span><span class="live-watch-line">${bookBadge(r.line.bookId, r.line.book)} ${esc(formatAmerican(r.line.price))}<small class="live-edge">+${esc(String(Math.round(r.line.edge * 100)))}</small>${r.line.link ? ` <a href="${escUrl(r.line.link)}" target="_blank" rel="noopener">add ↗</a>` : ''}</span></div>
       <p class="row-sub">${esc(r.why)}${r.elsewhere ? ` · ${r.elsewhere} more book${r.elsewhere === 1 ? '' : 's'}` : ''}</p>
     </div>`).join('')}</div>
     ${hidden ? `<p class="row-sub">${hidden} more at books you have not chosen. <button type="button" class="link-button" data-live-showall="1">Show all books</button></p>` : ''}`;
@@ -11831,7 +11838,7 @@ function liveWatchRow(w, elapsed = null) {
   const pace = line ? livePace(w.current, line.point, elapsed) : null;
   return `<div class="live-watch">
     <div class="live-watch-head"><strong>${esc(w.player)}</strong> <small>${esc(w.team ?? '')}</small><span class="live-watch-stat">${esc(w.label)}</span></div>
-    <div class="live-watch-nums"><span><small>now</small><b>${esc(String(w.current))}</b></span><span class="live-arrow">→</span><span><small>projected</small><b>${esc(String(w.projected))}</b></span>${pace ? `<span class="live-watch-pace is-${pace.level}" title="${esc(`On pace for ${line.point} he would have ${pace.target} by now`)}"><small>pace</small><b>${esc(String(pace.pct))}%</b></span>` : ''}${line ? `<span class="live-watch-line">${bookBadge(line.bookId, line.book)} ${esc(String(line.point))}+ ${esc(formatAmerican(line.price))}${line.link ? ` <a href="${esc(line.link)}" target="_blank" rel="noopener">add ↗</a>` : ''}</span>` : `<span class="live-watch-line is-none">${none && mine ? 'no line clears at your books yet' : 'no line clears yet'}</span>`}</div>
+    <div class="live-watch-nums"><span><small>now</small><b>${esc(String(w.current))}</b></span><span class="live-arrow">→</span><span><small>projected</small><b>${esc(String(w.projected))}</b></span>${pace ? `<span class="live-watch-pace is-${pace.level}" title="${esc(`On pace for ${line.point} he would have ${pace.target} by now`)}"><small>pace</small><b>${esc(String(pace.pct))}%</b></span>` : ''}${line ? `<span class="live-watch-line">${bookBadge(line.bookId, line.book)} ${esc(String(line.point))}+ ${esc(formatAmerican(line.price))}${line.link ? ` <a href="${escUrl(line.link)}" target="_blank" rel="noopener">add ↗</a>` : ''}</span>` : `<span class="live-watch-line is-none">${none && mine ? 'no line clears at your books yet' : 'no line clears yet'}</span>`}</div>
     ${w.why ? `<p class="row-sub">${esc(w.why)}</p>` : ''}
   </div>`;
 }
@@ -11845,7 +11852,7 @@ function liveSlip(s, i, elapsed = null) {
   return `<div class="live-play ${i === 0 ? 'is-best' : ''}">
     <div class="pick-bet-head"><span class="pick-bet-type">${i === 0 ? 'Best slip' : s.diversified ? 'Slip · different players' : 'Slip'} · ${s.legs.length} legs</span><span class="pick-bet-book">${bookBadge(s.bookId, s.book)}${esc(s.book)}${mine ? '<small class="live-mine">your book</small>' : ''}</span><span class="pick-bet-price">${esc(formatAmerican(s.american))}</span>${postedTag(s.postedAt)}${Number.isFinite(s.postedAmerican) && s.postedAmerican !== s.american ? `<span class="live-move" title="The slip's price when it was posted, and now">${esc(formatAmerican(s.postedAmerican))} → <b>${esc(formatAmerican(s.american))}</b></span>` : ''}${done ? `<span class="pick-result is-win">${done} of ${s.legs.length} cleared</span>` : ''}${shared ? `<span class="live-shared" title="${esc(s.shared.join(', '))}">${shared === s.legs.length ? 'same players as another slip' : `${shared} shared with another slip`}</span>` : ''}</div>
     <div class="live-legs">${s.legs.map((l) => liveLeg(l, { elapsed })).join('')}</div>
-    <div class="pick-bet-foot">${all ? `<a class="pick-bet-link" href="${esc(all)}" target="_blank" rel="noopener">Add all ${s.legs.length} legs to your ${esc(s.book)} slip ↗</a>` : bookUrl ? `<a class="pick-bet-link" href="${esc(bookUrl)}" target="_blank" rel="noopener">Open ${esc(s.book)} (legs one at a time above)</a>` : ''}</div>
+    <div class="pick-bet-foot">${all ? `<a class="pick-bet-link" href="${escUrl(all)}" target="_blank" rel="noopener">Add all ${s.legs.length} legs to your ${esc(s.book)} slip ↗</a>` : bookUrl ? `<a class="pick-bet-link" href="${escUrl(bookUrl)}" target="_blank" rel="noopener">Open ${esc(s.book)} (legs one at a time above)</a>` : ''}</div>
   </div>`;
 }
 
@@ -12539,12 +12546,12 @@ function renderSlipPlay(play) {
     <div class="sc-play-head"><h3 class="sc-play-h">Suggested play</h3><span class="row-sub">${same ? 'the slip as it stands' : `${play.legs.length} leg${play.legs.length === 1 ? '' : 's'} that hold up`}${play.priced && play.american != null ? ` · ${esc(formatAmerican(play.american))}` : ''}${bookName ? ` at ${esc(bookName)}` : ''}</span></div>
     <div class="sc-play-legs">${play.legs.map(row).join('')}</div>
     ${droppedList}
-    <div class="pick-bet-foot">${href ? `<a class="pick-bet-link" href="${esc(href)}" target="_blank" rel="noopener">${all ? `Add all ${linked.length} legs to your ${esc(bookName)} slip ↗` : `Open on your ${esc(bookName)} slip ↗`}</a>` : linked.length > 1 ? `<p class="row-sub">${play.bookId ? `${esc(bookName)} takes one leg per link: tap each price above, or use Playbook below for one link to the whole slip.` : 'These legs are best priced at different books: tap each price above.'}</p>` : ''}${pb}</div>
+    <div class="pick-bet-foot">${href ? `<a class="pick-bet-link" href="${escUrl(href)}" target="_blank" rel="noopener">${all ? `Add all ${linked.length} legs to your ${esc(bookName)} slip ↗` : `Open on your ${esc(bookName)} slip ↗`}</a>` : linked.length > 1 ? `<p class="row-sub">${play.bookId ? `${esc(bookName)} takes one leg per link: tap each price above, or use Playbook below for one link to the whole slip.` : 'These legs are best priced at different books: tap each price above.'}</p>` : ''}${pb}</div>
   </section>`;
 }
 const SLIP_SUGGESTION_ICON = { drop: '✂️', move: '↔️', flip: '🔁', injury: '🩹', warn: '⚠️', 'same-game': '🔗', lotto: '🎟️', unmatched: '🔎', ok: '✅', replace: '🔄' };
 /** A replacement leg off the board, with its price and the book's link. */
-const renderSlipProp = (p) => `<div class="sc-prop"><span class="sc-prop-main"><strong>${esc(p.selection)}</strong><small>${esc(p.game)} · L20 ${Math.round(p.rate * 100)}%${p.l10 != null ? ` · L10 ${Math.round(p.l10 * 100)}%` : ''}</small></span>${p.link ? `<a class="parlay-btn is-slip" href="${esc(p.link)}" target="_blank" rel="noopener">${p.bookId ? bookBadge(p.bookId, p.book) : ''}${esc(formatAmerican(p.american))} · Add to slip ↗</a>` : `<span class="parlay-leg-price">${p.bookId ? bookBadge(p.bookId, p.book) : ''}${esc(formatAmerican(p.american))}</span>`}</div>`;
+const renderSlipProp = (p) => `<div class="sc-prop"><span class="sc-prop-main"><strong>${esc(p.selection)}</strong><small>${esc(p.game)} · L20 ${Math.round(p.rate * 100)}%${p.l10 != null ? ` · L10 ${Math.round(p.l10 * 100)}%` : ''}</small></span>${p.link ? `<a class="parlay-btn is-slip" href="${escUrl(p.link)}" target="_blank" rel="noopener">${p.bookId ? bookBadge(p.bookId, p.book) : ''}${esc(formatAmerican(p.american))} · Add to slip ↗</a>` : `<span class="parlay-leg-price">${p.bookId ? bookBadge(p.bookId, p.book) : ''}${esc(formatAmerican(p.american))}</span>`}</div>`;
 function renderSlipResult(note = '') {
   const res = slipState.result;
   if (!res || !el.slipResult) return;

@@ -17,7 +17,7 @@ Repo **Settings → Pages → Source: Deploy from a branch**, branch `main`,
 folder **`/docs`**. Wait a minute, then open:
 
 ```
-https://miguelsgarcia4.github.io/PerpetualCode/
+https://perpetualpicks.com/
 ```
 
 It works immediately on demo data. On your iPhone, tap **Share → Add to Home

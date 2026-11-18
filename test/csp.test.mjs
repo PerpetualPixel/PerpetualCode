@@ -66,3 +66,34 @@ test('every page keeps the load-bearing script-src, and none re-opens inline scr
     assert.equal(p.get('object-src')?.has("'none'"), true, `${page} must set object-src 'none'`);
   }
 });
+
+test('every page loads the frame guard first, before any other script', () => {
+  // The guard is what stands in for the frame-ancestors header GitHub Pages
+  // cannot send: a page without it, or with a script ahead of it, can be
+  // framed by another site and clicked on (docs/frame-guard.js).
+  for (const page of PAGES) {
+    const scripts = [...read(page).matchAll(/<script\b[^>]*\bsrc="([^"]+)"[^>]*>/g)];
+    assert.ok(scripts.length, `${page} must load the frame guard`);
+    assert.match(scripts[0][1], /^frame-guard\.js(\?v=[\w.]+)?$/, `${page}: the first script must be frame-guard.js`);
+    assert.doesNotMatch(scripts[0][0], /\b(async|defer)\b|type="module"/, `${page}: the guard must run before the page renders, not after`);
+    assert.ok(read(page).indexOf(scripts[0][0]) < read(page).indexOf('<body'), `${page}: the guard belongs in the head`);
+  }
+});
+
+test('a link from data is https or a path on this site, or nothing', async () => {
+  const { safeUrl } = await import('../docs/safe-url.js');
+  for (const ok of [
+    'https://sportsbook.fanduel.com/addToBetslip?marketId=42.1&selectionId=7',
+    'https://sportsbook.caesars.com/us/{state}/bet?selectionIds=d35cad85&dl=betslip',
+    'HTTPS://Example.com/x', 'account.html', './app.html?tab=ufc', '#', '/data/x.json',
+  ]) assert.equal(safeUrl(ok), ok, ok);
+  assert.equal(safeUrl('  https://example.com/a  '), 'https://example.com/a');
+  for (const bad of [
+    'javascript:alert(1)', 'JavaScript:alert(1)', ' javascript:alert(1)', 'java\tscript:alert(1)', 'java\nscript:alert(1)',
+    'data:text/html,<script>alert(1)</script>', 'vbscript:x', 'http://example.com/', '//evil.example/x', '\\\\evil.example/x',
+    'ftp://example.com', 'intent://x', '', null, undefined,
+  ]) assert.equal(safeUrl(bad), '#', JSON.stringify(bad));
+  // And every data-driven href in the app goes through it.
+  const app = read('app.js');
+  assert.equal([...app.matchAll(/href="\$\{(?!escUrl\()/g)].length, 0, 'an href built from data must use escUrl()');
+});

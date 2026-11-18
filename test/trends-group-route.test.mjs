@@ -8,7 +8,7 @@ import worker from '../worker/src/index.js';
  * side by side, each tagged with its own league's injury report, and a
  * player index that says which league each player's log lives under.
  */
-const ORIGIN = 'https://miguelsgarcia4.github.io';
+const ORIGIN = 'https://perpetualpicks.com';
 const ctx = { waitUntil() {}, passThroughOnException() {} };
 const makeEnv = (store) => ({
   ALLOWED_ORIGINS: ORIGIN,

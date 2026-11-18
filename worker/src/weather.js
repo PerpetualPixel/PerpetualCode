@@ -25,7 +25,7 @@
  * updated by hand. Last checked current as of the 2025 season.
  */
 
-const NWS_UA = 'PixelPick/1.0 (github.com/miguelsgarcia4/PerpetualCode; contact via repo issues)';
+const NWS_UA = 'PixelPick/1.0 (github.com/PerpetualPixel/PerpetualCode; contact via repo issues)';
 const POINTS_TTL = 3600 * 24 * 7; // a venue's forecast grid location never changes
 const FORECAST_TTL = 3600; // NWS refreshes its hourly forecast roughly hourly
 

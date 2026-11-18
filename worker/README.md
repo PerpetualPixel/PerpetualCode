@@ -27,7 +27,7 @@ wrangler login
 **3. Set your GitHub Pages origin** in `wrangler.toml`. No trailing slash:
 
 ```toml
-ALLOWED_ORIGINS = "https://miguelsgarcia4.github.io"
+ALLOWED_ORIGINS = "https://perpetualpicks.com"
 ```
 
 Only origins listed here may call the proxy, so a stranger who finds the URL

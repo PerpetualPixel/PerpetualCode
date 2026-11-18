@@ -31,7 +31,22 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
+  # A push to main is a deploy to production, so the test suite stands in
+  # front of it: a red test stops the worker going out. (It did not run
+  # anywhere before; whatever was pushed was deployed.)
+  test:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Run the tests
+        run: node --test test/*.test.mjs
+
   deploy:
+    needs: test
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -47,7 +62,10 @@ jobs:
             echo "::error::CLOUDFLARE_API_TOKEN and CLOUDFLARE_ACCOUNT_ID are not both set — see the comment at the top of this workflow."
             exit 1
           fi
-      - uses: cloudflare/wrangler-action@v3
+      # Pinned to a commit, not the moving v3 tag: this step is handed the
+      # token that can replace the worker, so the code it runs must not be
+      # able to change without a change to this file. v3.15.0.
+      - uses: cloudflare/wrangler-action@9acf94ace14e7dc412b076f2c5c20b8ce93c79cd
         with:
           apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           accountId: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}

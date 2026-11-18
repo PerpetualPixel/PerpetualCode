@@ -208,3 +208,26 @@ test('the write-up route serves what is on file and pays for nothing new while t
     globalThis.fetch = realFetch;
   }
 });
+
+test('the odds credit balance is the owner\'s to see, and the probe route takes only ids', async () => {
+  const env = makeEnv({ OWNER_PASSPHRASE: 'the-real-owner-passphrase' });
+  const { publicOddsDiag } = await import('../worker/src/index.js');
+  const diag = { at: 1, sport: 'americanfootball_nfl', ok: false, status: 401, detail: 'quota spent', remaining: '54967', used: '45033', lastCost: '3' };
+  assert.deepEqual(publicOddsDiag(diag), { at: 1, sport: 'americanfootball_nfl', ok: false, status: 401, detail: 'quota spent' });
+  assert.equal(publicOddsDiag(null), null);
+
+  env.POTD_KV.store.set('odds:diag', JSON.stringify(diag));
+  const anyone = await call(env, '/version', { method: 'GET' });
+  assert.equal(anyone.status, 200);
+  assert.ok(anyone.body.version, 'the deploy check still reads the version here');
+  assert.deepEqual(anyone.body.odds, { at: 1, sport: 'americanfootball_nfl', ok: false, status: 401, detail: 'quota spent' });
+  const owner = await call(env, '/version', { method: 'GET', headers: { 'X-Owner-Key': 'the-real-owner-passphrase' } });
+  assert.equal(owner.body.odds.remaining, '54967');
+  assert.equal((await call(env, '/version', { method: 'GET', ip: '198.51.100.3', headers: { 'X-Owner-Key': 'wrong' } })).body.odds.remaining, undefined);
+
+  assert.equal((await call(env, '/live/probe', { method: 'GET' })).status, 200);
+  assert.equal((await call(env, '/live/probe?event=abc123&espn=401547', { method: 'GET' })).status, 200);
+  for (const bad of ['event=abc:latest', 'espn=for:1', 'event=a%2Fb', `event=${'x'.repeat(65)}`]) {
+    assert.equal((await call(env, `/live/probe?${bad}`, { method: 'GET' })).status, 400, bad);
+  }
+});
