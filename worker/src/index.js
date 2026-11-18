@@ -5,6 +5,8 @@ import {
   handleMe,
   handleForgotPassword,
   handleResetPassword,
+  handleResendVerification,
+  handleLogout,
   authenticateRequest,
 } from './auth-handlers.js';
 import {
@@ -50,7 +52,7 @@ import { runMlbPropsGrading, getAllMlbPropsTracked } from './mlb-props.js';
 import { runNflPropsScan, runNflPropsGrading, getAllNflPropsTracked } from './nfl-props.js';
 import { runWnbaPropsGrading, getAllWnbaPropsTracked } from './wnba-props.js';
 import { runPropPlayDaily, runPropPlayGrading, getAllPropPlays } from './prop-play.js';
-import { extractSlipFromImage } from './slip-vision.js';
+import { extractSlipFromImage, MAX_IMAGE_BASE64_BYTES } from './slip-vision.js';
 import { consumeQuota, getQuotaUsage } from './tail-fade-quota.js';
 import { runNhlPropsScan, runNhlPropsGrading, getAllNhlPropsTracked } from './nhl-props.js';
 import { runPotdDaily, runPotdClvSnapshot, runPotdGrading, backfillPotdAnalysis, getPotd, getPotdNext, getPotdHold, getPotdLeaning, getPotdHistory, retractPotd, regradePotdTennisVoids, etParts } from './potd.js';
@@ -1056,6 +1058,7 @@ export default {
       '/api/auth/forgot-password',
       '/api/auth/reset-password',
       '/api/auth/verify-email',
+      '/api/auth/resend-verification',
       '/api/account/email',
       '/api/account/email/confirm',
     ]);
@@ -1087,7 +1090,7 @@ export default {
     }
 
     if (pathname === '/api/auth/register' && request.method === 'POST') {
-      const res = await handleRegister(request, env);
+      const res = await handleRegister(request, env, ctx);
       return new Response(res.body, { status: res.status, headers: { ...cors, ...Object.fromEntries(res.headers) } });
     }
 
@@ -1102,12 +1105,22 @@ export default {
     }
 
     if (pathname === '/api/auth/forgot-password' && request.method === 'POST') {
-      const res = await handleForgotPassword(request, env);
+      const res = await handleForgotPassword(request, env, ctx);
       return new Response(res.body, { status: res.status, headers: { ...cors, ...Object.fromEntries(res.headers) } });
     }
 
     if (pathname === '/api/auth/reset-password' && request.method === 'POST') {
       const res = await handleResetPassword(request, env);
+      return new Response(res.body, { status: res.status, headers: { ...cors, ...Object.fromEntries(res.headers) } });
+    }
+
+    if (pathname === '/api/auth/resend-verification' && request.method === 'POST') {
+      const res = await handleResendVerification(request, env, ctx);
+      return new Response(res.body, { status: res.status, headers: { ...cors, ...Object.fromEntries(res.headers) } });
+    }
+
+    if (pathname === '/api/auth/logout' && request.method === 'POST') {
+      const res = await handleLogout(request, env);
       return new Response(res.body, { status: res.status, headers: { ...cors, ...Object.fromEntries(res.headers) } });
     }
 
@@ -1432,7 +1445,8 @@ export default {
       try {
         return json(await getQuotaUsage(request, env, { authenticate: authenticateRequest }), { headers: cors });
       } catch (error) {
-        return json({ error: error.message }, { status: 500, headers: cors });
+        console.error('Tail or Fade quota read failed:', error);
+        return json({ error: 'The allowance could not be read just now.' }, { status: 500, headers: cors });
       }
     }
 
@@ -1445,6 +1459,11 @@ export default {
       // the owner is exempt so a debugging session can't be stopped by the
       // feature it is debugging. Consumed BEFORE the paid call: a request
       // that fails upstream has already cost the spend.
+      // A body far past the largest image the reader takes is refused on
+      // its declared length, before any of it is read or a unit is spent.
+      if (Number(request.headers.get('Content-Length')) > MAX_IMAGE_BASE64_BYTES + 64 * 1024) {
+        return json({ error: 'That image is too large — please crop it to the slip itself or reduce its size.', legs: [] }, { status: 413, headers: cors });
+      }
       const quota = await consumeQuota(request, env, { authenticate: authenticateRequest });
       if (!quota.allowed) {
         return json(

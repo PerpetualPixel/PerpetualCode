@@ -39,17 +39,19 @@ export class QuotaManager {
    * day for the daily caps, a quarter of an hour for the sign-in lockout).
    * `peek` only looks: nothing is counted, and the answer is whether the
    * limit has already been reached (a lockout that must not be extended by
-   * the very request it refuses). `clear` forgets the count.
+   * the very request it refuses). `clear` forgets the count. `window`
+   * names the window outright instead of deriving it from the clock: the
+   * slip reader counts per ET calendar day and passes that date.
    */
   async handleRateLimit(request) {
-    const { key, limit = 10, windowSeconds = 60, peek = false, clear = false } = await request.json();
+    const { key, limit = 10, windowSeconds = 60, peek = false, clear = false, window = null } = await request.json();
     const storageKey = `rl:${key}`;
     if (clear) {
       await this.state.storage.delete(storageKey);
       return new Response(JSON.stringify({ allowed: true, count: 0 }), { headers: { 'Content-Type': 'application/json' } });
     }
     const span = Math.max(1, Number(windowSeconds) || 60) * 1000;
-    const win = Math.floor(Date.now() / span);
+    const win = window ?? Math.floor(Date.now() / span);
     const rec = (await this.state.storage.get(storageKey)) || { win: 0, count: 0 };
     if (rec.win !== win) {
       rec.win = win;

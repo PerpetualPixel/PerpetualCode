@@ -1,3 +1,4 @@
+import crypto from 'node:crypto';
 import {
   generateVerificationToken,
   hashPassword,
@@ -6,8 +7,63 @@ import {
   generateId,
   generateJWT,
   verifyJWT,
+  normalizeEmail,
 } from './auth-email.js';
 import { validateUsername } from './username-policy.js';
+import { overLimit, clearLimit } from './rate-limit.js';
+
+/**
+ * What a route says when something broke on this side. The exception's own
+ * text used to be sent ("D1_ERROR: UNIQUE constraint failed: users.email",
+ * "JWT_SECRET is not configured — run: wrangler secret put ..."): detail for
+ * whoever is probing, of no use to whoever is signing in. It goes to the
+ * log, where it always went as well.
+ */
+export const SERVER_ERROR = 'Something went wrong on our side. Please try again in a moment.';
+
+const sha = (text) => crypto.createHash('sha256').update(String(text)).digest('hex');
+
+/** A password as the routes take one: a string of 8 to 200 characters. */
+export const passwordProblem = (password, name = 'password') => (
+  typeof password !== 'string' || password.length < 8 ? `${name} must be at least 8 characters`
+    : password.length > 200 ? `${name} must be at most 200 characters` : null
+);
+
+/**
+ * Failed sign-ins are counted per account as well as per address: eight
+ * wrong passwords for one email or username inside a quarter of an hour and
+ * that name is refused until the window turns over, whatever address the
+ * next guess comes from. The per-address throttle alone let a guesser with
+ * many addresses (or one IPv6 line) keep going at ten a minute each.
+ *
+ * Counted by what was typed, not by the account it matched, so a name that
+ * belongs to nobody locks the same way and the lock says nothing about who
+ * is registered.
+ */
+export const LOGIN_MAX_FAILURES = 8;
+export const LOGIN_WINDOW_SECONDS = 15 * 60;
+export const loginKey = (identifier) => `login:${sha(String(identifier ?? '').trim().toLowerCase()).slice(0, 32)}`;
+const LOGIN_LOCKED = 'Too many failed sign-in attempts for this account. Try again in 15 minutes, or reset your password.';
+
+// A real hash of nothing anybody knows, checked when the name typed matches
+// no account, so "no such account" takes as long to answer as "wrong
+// password" does (the answer is the same; the wait used to give it away).
+let dummyHash = null;
+const dummyPasswordHash = () => (dummyHash ??= hashPassword(crypto.randomBytes(24).toString('hex')));
+
+/** How many emails one address may be sent in an hour by the routes anyone can call. */
+const MAIL_PER_HOUR = 4;
+const mailAllowed = async (env, kind, email) => !(await overLimit(env, `mail:${kind}:${sha(email).slice(0, 32)}`, { limit: MAIL_PER_HOUR, windowSeconds: 3600 }));
+
+/** Run after the response where the platform allows it (ctx.waitUntil), so a send does not show in how long the answer took. */
+const later = (ctx, work) => {
+  const p = Promise.resolve().then(work).catch((e) => console.error('Deferred work failed:', e));
+  if (ctx?.waitUntil) ctx.waitUntil(p); else return p;
+  return undefined;
+};
+
+/** Where a signed-out session's token is remembered until it would have expired anyway. */
+const revokedKey = (token) => `revoked:${sha(token).slice(0, 40)}`;
 
 function json(body, { status = 200, headers = {} } = {}) {
   return new Response(JSON.stringify(body), {
@@ -47,8 +103,18 @@ export function jwtSecret(env) {
  */
 export async function authenticateRequest(request, env) {
   const auth = request.headers.get('Authorization') || '';
-  const payload = verifyJWT(auth.replace('Bearer ', ''), jwtSecret(env));
+  const token = auth.replace('Bearer ', '');
+  const payload = verifyJWT(token, jwtSecret(env));
   if (!payload) return null;
+
+  // "Sign out" on one device: that one token is on the signed-out list
+  // until its own expiry (see handleLogout). A list that cannot be read
+  // does not sign anybody out.
+  try {
+    if (await env.POTD_KV?.get(revokedKey(token))) return null;
+  } catch (e) {
+    console.error('Signed-out list read failed:', e);
+  }
 
   const row = await env.DB.prepare('SELECT session_epoch FROM users WHERE id = ?')
     .bind(payload.userId)
@@ -142,75 +208,182 @@ async function verifyTurnstile(env, token, remoteip) {
   }
 }
 
-export async function handleRegister(request, env) {
+/** The note to an address that already has an account, when somebody signs up with it again. */
+async function sendAlreadyRegisteredEmail(env, email, username) {
+  if (!env.EMAIL) throw new Error('Email service not configured');
+  await env.EMAIL.send({
+    to: email,
+    from: { email: 'verify@perpetualpicks.com', name: 'PerpetualPicks' },
+    subject: 'You already have a PerpetualPicks account',
+    html: `
+      <div style="font-family: Arial, sans-serif; background: #05050A; color: #e0e0ff; padding: 20px;">
+        <div style="max-width: 600px; margin: 0 auto; border: 1px solid #9d4edd; border-radius: 8px; padding: 30px; background: #0a0515;">
+          ${EMAIL_LOGO_HTML}
+          <h2 style="color: #d946ef; margin-bottom: 20px;">You already have an account</h2>
+          <p style="margin-bottom: 16px;">Hi ${username}, someone just tried to sign up to PerpetualPicks with this email address, and it already has an account. Nothing was changed.</p>
+          <p style="margin-bottom: 0;">If that was you, sign in at <a href="https://perpetualpicks.com/login.html" style="color: #d946ef;">perpetualpicks.com/login.html</a> (there is a "Forgot password?" link if you need it). If it was not, there is nothing to do.</p>
+        </div>
+      </div>
+    `,
+    text: `Hi ${username}, someone just tried to sign up to PerpetualPicks with this email address, and it already has an account. Nothing was changed.\n\nIf that was you, sign in at https://perpetualpicks.com/login.html (there is a "Forgot password?" link if you need it). If it was not, there is nothing to do.`,
+  });
+}
+
+export async function handleRegister(request, env, ctx) {
   try {
-    const { email, password, username, notifyEmail, turnstileToken } = await request.json();
+    const body = await request.json();
+    const { password, username, notifyEmail, turnstileToken } = body;
 
     const human = await verifyTurnstile(env, turnstileToken, request.headers.get('CF-Connecting-IP'));
     if (!human) {
       return json({ error: 'verification challenge failed — refresh the page and try again' }, { status: 403 });
     }
 
-    if (!email || !password || !username) {
+    if (!body.email || !password || !username) {
       return json({ error: 'email, password, and username required' }, { status: 400 });
     }
+    const email = normalizeEmail(body.email);
+    if (!email) return json({ error: 'enter a valid email address' }, { status: 400 });
 
-    if (password.length < 8) {
-      return json({ error: 'password must be at least 8 characters' }, { status: 400 });
-    }
+    const pwProblem = passwordProblem(password);
+    if (pwProblem) return json({ error: pwProblem }, { status: 400 });
 
     const usernameCheck = validateUsername(username);
     if (!usernameCheck.ok) {
       return json({ error: usernameCheck.error }, { status: 400 });
     }
 
-    // Check if email or username already registered
-    const existing = await env.DB.prepare('SELECT id FROM users WHERE email = ? OR username = ?')
-      .bind(email, username)
+    const now = Date.now();
+    // An account nobody verified, whose link has run out, holds nothing: its
+    // email and its username are free again. These rows used to stay for
+    // good, so signing up once with somebody else's address (or the
+    // username they wanted) shut them out of it permanently.
+    await env.DB.prepare(
+      `DELETE FROM users WHERE email_verified = 0 AND COALESCE(verification_token_expires, 0) < ?
+       AND (email = ? COLLATE NOCASE OR username = ?)`,
+    ).bind(now, email, username).run();
+
+    // Hashed before anything is looked up, so every answer below has cost the same.
+    const passwordHash = await hashPassword(password);
+
+    const byEmail = await env.DB.prepare('SELECT id, email_verified, username FROM users WHERE email = ? COLLATE NOCASE')
+      .bind(email)
       .first();
-    if (existing) {
-      return json({ error: 'email or username already registered' }, { status: 409 });
+    const byName = await env.DB.prepare('SELECT id FROM users WHERE username = ?').bind(username).first();
+    if (byName && byName.id !== byEmail?.id) {
+      return json({ error: 'username already taken' }, { status: 409 });
     }
 
-    // Create new user. The single "email me" signup checkbox covers both
-    // POTD and Pixel's Picks alerts together — Settings lets a user split
-    // them apart later. There is no SMS signup checkbox yet (disabled in the
-    // UI — see docs/login.html), so the *_sms columns stay at their DEFAULT
-    // 0 and are never set here.
-    const id = generateId();
-    const passwordHash = await hashPassword(password);
+    // The one answer for every email, registered or not: this route no
+    // longer says which addresses have accounts.
+    const accepted = json({ message: 'Registration successful. Check your email to verify.' }, { status: 201 });
+
+    if (byEmail?.email_verified) {
+      // The address has an account. Its owner is told (once in a while, not
+      // on every attempt), and the caller is told what everyone is told.
+      if (await mailAllowed(env, 'registered', email)) {
+        await later(ctx, () => sendAlreadyRegisteredEmail(env, email, byEmail.username ?? 'there'));
+      }
+      return accepted;
+    }
+
     const verificationToken = generateVerificationToken();
-    const tokenExpires = Date.now() + 24 * 60 * 60 * 1000; // 24 hours
+    const tokenExpires = now + 24 * 60 * 60 * 1000; // 24 hours
     const notifyFlag = notifyEmail ? 1 : 0;
 
-    await env.DB.prepare(
-      `INSERT INTO users (
-        id, email, password_hash, username, email_verified,
-        verification_token, verification_token_expires,
-        notify_potd_email, notify_picks_email,
-        created_at, updated_at
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-    )
-      .bind(
-        id, email, passwordHash, username, 0,
-        verificationToken, tokenExpires,
-        notifyFlag, notifyFlag,
-        Date.now(), Date.now(),
+    if (byEmail) {
+      // Signed up before and never verified, link still alive: the newest
+      // sign-up takes the row. Only the mailbox's owner can open the link,
+      // so the newest details are the ones they chose if it was them, and
+      // an earlier stranger's password is gone either way.
+      await env.DB.prepare(
+        `UPDATE users SET password_hash = ?, username = ?, verification_token = ?, verification_token_expires = ?,
+         notify_potd_email = ?, notify_picks_email = ?, updated_at = ? WHERE id = ?`,
+      ).bind(passwordHash, username, verificationToken, tokenExpires, notifyFlag, notifyFlag, now, byEmail.id).run();
+    } else {
+      // Create new user. The single "email me" signup checkbox covers both
+      // POTD and Pixel's Picks alerts together — Settings lets a user split
+      // them apart later. There is no SMS signup checkbox yet (disabled in the
+      // UI — see docs/login.html), so the *_sms columns stay at their DEFAULT
+      // 0 and are never set here.
+      await env.DB.prepare(
+        `INSERT INTO users (
+          id, email, password_hash, username, email_verified,
+          verification_token, verification_token_expires,
+          notify_potd_email, notify_picks_email,
+          created_at, updated_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       )
-      .run();
-
-    // Send verification email
-    try {
-      await sendVerificationEmail(env, email, username, verificationToken);
-    } catch (emailErr) {
-      console.error('Email send failed:', emailErr);
-      // Don't fail registration if email fails — user can request resend
+        .bind(
+          generateId(), email, passwordHash, username, 0,
+          verificationToken, tokenExpires,
+          notifyFlag, notifyFlag,
+          now, now,
+        )
+        .run();
     }
 
-    return json({ message: 'Registration successful. Check your email to verify.' }, { status: 201 });
+    // Send verification email (a handful an hour to one address at most; the link can be asked for again, see handleResendVerification).
+    if (await mailAllowed(env, 'verify', email)) {
+      await later(ctx, () => sendVerificationEmail(env, email, username, verificationToken));
+    }
+
+    return accepted;
   } catch (e) {
     console.error('Register error:', e);
-    return json({ error: e.message }, { status: 500 });
+    return json({ error: SERVER_ERROR }, { status: 500 });
+  }
+}
+
+/**
+ * A fresh verification link for an account that has not been verified yet.
+ * There was no way to get one: a link that ran out, or an email that never
+ * arrived, left the account (and its address and username) stuck. One
+ * answer whatever the name typed matches.
+ */
+export async function handleResendVerification(request, env, ctx) {
+  try {
+    const { identifier } = await request.json();
+    if (typeof identifier !== 'string' || !identifier.trim() || identifier.length > 254) {
+      return json({ error: 'email or username required' }, { status: 400 });
+    }
+    const answer = json({ message: 'If that account still needs verifying, a new link is on its way.' });
+    const id = identifier.trim();
+    const user = await env.DB.prepare(
+      'SELECT id, email, username, email_verified FROM users WHERE email = ? COLLATE NOCASE OR username = ?',
+    ).bind(id, id).first();
+    if (!user || user.email_verified) return answer;
+    if (!(await mailAllowed(env, 'verify', String(user.email).toLowerCase()))) return answer;
+
+    const token = generateVerificationToken();
+    await env.DB.prepare('UPDATE users SET verification_token = ?, verification_token_expires = ?, updated_at = ? WHERE id = ?')
+      .bind(token, Date.now() + 24 * 60 * 60 * 1000, Date.now(), user.id).run();
+    await later(ctx, () => sendVerificationEmail(env, user.email, user.username ?? 'there', token));
+    return answer;
+  } catch (e) {
+    console.error('Resend verification error:', e);
+    return json({ error: SERVER_ERROR }, { status: 500 });
+  }
+}
+
+/**
+ * "Sign out" on this device. The token is put on a signed-out list until it
+ * would have expired, so it is dead on the server too; clearing the
+ * browser's copy alone left it good for up to thirty days to anyone who had
+ * taken a copy. Answers the same whether or not the token was still alive.
+ */
+export async function handleLogout(request, env) {
+  try {
+    const token = (request.headers.get('Authorization') || '').replace('Bearer ', '');
+    const payload = token ? verifyJWT(token, jwtSecret(env)) : null;
+    if (payload) {
+      const ttl = Math.max(60, Math.ceil((payload.exp ?? 0) - Date.now() / 1000));
+      await env.POTD_KV.put(revokedKey(token), '1', { expirationTtl: ttl });
+    }
+    return json({ message: 'signed out' });
+  } catch (e) {
+    console.error('Logout error:', e);
+    return json({ error: SERVER_ERROR }, { status: 500 });
   }
 }
 
@@ -250,7 +423,7 @@ export async function handleVerifyEmail(request, env) {
     return json({ message: 'email verified successfully' });
   } catch (e) {
     console.error('Verify email error:', e);
-    return json({ error: e.message }, { status: 500 });
+    return json({ error: SERVER_ERROR }, { status: 500 });
   }
 }
 
@@ -261,24 +434,36 @@ export async function handleLogin(request, env) {
     // columns rather than trying to guess which one it is client-side (an
     // "is this shaped like an email" check would have to be kept in sync
     // with whatever the username format allows, for no real benefit).
-    const { identifier, password } = await request.json();
+    const body = await request.json();
+    const password = body.password;
+    const identifier = typeof body.identifier === 'string' ? body.identifier.trim() : '';
 
     if (!identifier || !password) {
       return json({ error: 'email/username and password required' }, { status: 400 });
     }
+    if (identifier.length > 254 || typeof password !== 'string' || password.length > 200) {
+      return json({ error: 'invalid credentials' }, { status: 401 });
+    }
 
+    // Too many wrong passwords for this name already: refused before the
+    // password is even looked at, and without adding to the count (the
+    // lock ends when its window does, however often it is knocked on).
+    const failures = { limit: LOGIN_MAX_FAILURES, windowSeconds: LOGIN_WINDOW_SECONDS };
+    if (await overLimit(env, loginKey(identifier), { ...failures, peek: true })) {
+      return json({ error: LOGIN_LOCKED }, { status: 429 });
+    }
+
+    // An email matches whatever its capitals (addresses are stored
+    // lower-cased now; older rows may not be). A username is exact.
     const user = await env.DB.prepare(
-      'SELECT id, email, password_hash, email_verified, username, session_epoch FROM users WHERE email = ? OR username = ?',
+      'SELECT id, email, password_hash, email_verified, username, session_epoch FROM users WHERE email = ? COLLATE NOCASE OR username = ?',
     )
       .bind(identifier, identifier)
       .first();
 
-    if (!user) {
-      return json({ error: 'invalid credentials' }, { status: 401 });
-    }
-
-    const pwValid = await verifyPassword(password, user.password_hash);
-    if (!pwValid) {
+    const pwValid = await verifyPassword(password, user ? user.password_hash : await dummyPasswordHash());
+    if (!user || !pwValid) {
+      await overLimit(env, loginKey(identifier), failures);
       return json({ error: 'invalid credentials' }, { status: 401 });
     }
 
@@ -309,10 +494,13 @@ export async function handleLogin(request, env) {
       jwtSecret(env),
     );
 
+    // A right password wipes the count of wrong ones.
+    await clearLimit(env, loginKey(identifier));
+
     return json({ token, userId: user.id, email: user.email, username: user.username });
   } catch (e) {
     console.error('Login error:', e);
-    return json({ error: e.message }, { status: 500 });
+    return json({ error: SERVER_ERROR }, { status: 500 });
   }
 }
 
@@ -345,12 +533,22 @@ async function sendPasswordResetEmail(env, email, username, token) {
   });
 }
 
-export async function handleForgotPassword(request, env) {
-  try {
-    const { identifier } = await request.json();
-    if (!identifier) return json({ error: 'email or username required' }, { status: 400 });
+/** A reset link is good for an hour, and is not replaced while it still has this long to run. */
+const RESET_TTL_MS = 60 * 60 * 1000;
+const RESET_KEEP_MS = 15 * 60 * 1000;
+/** Reset emails one account may be sent in an hour. */
+const RESET_MAILS_PER_HOUR = 3;
 
-    const user = await env.DB.prepare('SELECT id, email, username FROM users WHERE email = ? OR username = ?')
+export async function handleForgotPassword(request, env, ctx) {
+  try {
+    const body = await request.json();
+    const identifier = typeof body.identifier === 'string' ? body.identifier.trim() : '';
+    if (!identifier || identifier.length > 254) return json({ error: 'email or username required' }, { status: 400 });
+
+    const user = await env.DB.prepare(
+      `SELECT id, email, username, password_reset_token, password_reset_token_expires
+       FROM users WHERE email = ? COLLATE NOCASE OR username = ?`,
+    )
       .bind(identifier, identifier)
       .first();
 
@@ -361,29 +559,38 @@ export async function handleForgotPassword(request, env) {
     const genericResponse = { message: 'If an account exists, a password reset link has been sent.' };
     if (!user) return json(genericResponse);
 
-    const token = generateVerificationToken();
-    const expires = Date.now() + 60 * 60 * 1000; // 1 hour — shorter than the 24h email-verification/email-change tokens, since a leaked reset link is a direct account takeover
-
-    await env.DB.prepare(
-      'UPDATE users SET password_reset_token = ?, password_reset_token_expires = ?, updated_at = ? WHERE id = ?',
-    )
-      .bind(token, expires, Date.now(), user.id)
-      .run();
-
-    try {
-      await sendPasswordResetEmail(env, user.email, user.username, token);
-    } catch (emailErr) {
-      console.error('Password reset email send failed:', emailErr);
-      // Matches the rest of this file's send-failure handling: the token
-      // row is already saved, so a transport hiccup shouldn't surface
-      // differently to the client than a normal success — resending is
-      // just calling this endpoint again.
+    // A few an hour to one account, whoever is asking and from wherever:
+    // this route is open to anyone who knows an email or a username, and
+    // was a way to fill somebody's inbox.
+    if (await overLimit(env, `mail:reset:${user.id}`, { limit: RESET_MAILS_PER_HOUR, windowSeconds: 3600 })) {
+      return json(genericResponse);
     }
+
+    // A link that is still good is sent again rather than replaced. Every
+    // call used to write a new token over the last, so anyone could keep
+    // an account's owner from ever using the link in their inbox by asking
+    // for another one every few minutes.
+    const now = Date.now();
+    let token = user.password_reset_token;
+    if (!token || (user.password_reset_token_expires ?? 0) - now < RESET_KEEP_MS) {
+      token = generateVerificationToken();
+      // 1 hour — shorter than the 24h email-verification/email-change tokens, since a leaked reset link is a direct account takeover
+      await env.DB.prepare(
+        'UPDATE users SET password_reset_token = ?, password_reset_token_expires = ?, updated_at = ? WHERE id = ?',
+      )
+        .bind(token, now + RESET_TTL_MS, now, user.id)
+        .run();
+    }
+
+    // Sent after the answer, so an account that exists does not take
+    // visibly longer to answer than one that does not. A send that fails is
+    // logged; asking again sends the same link.
+    await later(ctx, () => sendPasswordResetEmail(env, user.email, user.username, token));
 
     return json(genericResponse);
   } catch (e) {
     console.error('Forgot password error:', e);
-    return json({ error: e.message }, { status: 500 });
+    return json({ error: SERVER_ERROR }, { status: 500 });
   }
 }
 
@@ -393,12 +600,12 @@ export async function handleResetPassword(request, env) {
     if (!token || !newPassword) {
       return json({ error: 'token and newPassword required' }, { status: 400 });
     }
-    if (newPassword.length < 8) {
-      return json({ error: 'newPassword must be at least 8 characters' }, { status: 400 });
-    }
+    const pwProblem = passwordProblem(newPassword, 'newPassword');
+    if (pwProblem) return json({ error: pwProblem }, { status: 400 });
+    if (typeof token !== 'string') return json({ error: 'invalid or already-used token' }, { status: 404 });
 
     const user = await env.DB.prepare(
-      'SELECT id, password_reset_token_expires FROM users WHERE password_reset_token = ?',
+      'SELECT id, email, username, password_reset_token_expires FROM users WHERE password_reset_token = ?',
     )
       .bind(token)
       .first();
@@ -416,19 +623,28 @@ export async function handleResetPassword(request, env) {
     // in the same statement: whoever had the old password may have asked
     // for it (see account-handlers.js's CANCEL_PENDING, spelled out here
     // because that file imports this one).
+    // And the account counts as verified: the link came out of its inbox,
+    // which is all the verification link ever proved. Without this, an
+    // address somebody else had signed up with stayed "please verify your
+    // email first" for its real owner even after they reset the password.
     await env.DB.prepare(
       `UPDATE users SET password_hash = ?, password_reset_token = NULL,
        password_reset_token_expires = NULL,
        pending_email = NULL, pending_email_token = NULL, pending_email_token_expires = NULL,
+       email_verified = 1, verification_token = NULL, verification_token_expires = NULL,
        session_epoch = COALESCE(session_epoch, 0) + 1, updated_at = ? WHERE id = ?`,
     )
       .bind(newHash, Date.now(), user.id)
       .run();
 
+    // The owner is back in: any lock from wrong guesses at their name is lifted.
+    await clearLimit(env, loginKey(user.email));
+    if (user.username) await clearLimit(env, loginKey(user.username));
+
     return json({ message: 'password updated — you can now sign in with your new password' });
   } catch (e) {
     console.error('Reset password error:', e);
-    return json({ error: e.message }, { status: 500 });
+    return json({ error: SERVER_ERROR }, { status: 500 });
   }
 }
 
@@ -470,7 +686,7 @@ export async function handleMe(request, env) {
     });
   } catch (e) {
     console.error('Me error:', e);
-    return json({ error: e.message }, { status: 500 });
+    return json({ error: SERVER_ERROR }, { status: 500 });
   }
 }
 

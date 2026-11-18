@@ -87,6 +87,6 @@ export async function handleReportBug(request, env) {
     return json({ ticketId }, { status: 201 });
   } catch (e) {
     console.error('Report bug error:', e);
-    return json({ error: e.message }, { status: 500 });
+    return json({ error: 'Something went wrong on our side. Please try again in a moment.' }, { status: 500 });
   }
 }

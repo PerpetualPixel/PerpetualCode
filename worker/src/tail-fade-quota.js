@@ -31,6 +31,7 @@
  */
 
 import { safeEqual } from './settings.js';
+import { limitState, ipBucket } from './rate-limit.js';
 
 const ET_TZ = 'America/New_York';
 
@@ -38,6 +39,13 @@ const ET_TZ = 'America/New_York';
 export const DAILY_LIMIT_AUTHENTICATED = 10;
 /** Anonymous allowance — see the header for why it is lower, not equal. */
 export const DAILY_LIMIT_ANONYMOUS = 3;
+/**
+ * Every visitor together, per ET calendar day. The per-visitor allowances
+ * above are per address and per account, and addresses are cheap: without a
+ * ceiling on the whole site, the day's bill is the allowance times however
+ * many addresses somebody cares to use. The owner is not counted.
+ */
+export const DAILY_LIMIT_SITE = 200;
 
 // A day plus a margin. The key is already date-scoped, so the TTL exists
 // only to stop KV accumulating dead counters — the margin covers the gap
@@ -87,7 +95,8 @@ export async function resolveQuotaIdentity(request, env, { authenticate } = {}) 
     }
   }
 
-  const ip = request.headers.get('CF-Connecting-IP') ?? 'unknown';
+  // An IPv6 visitor is counted by their /64, not by one of its endless addresses (see rate-limit.js).
+  const ip = ipBucket(request.headers.get('CF-Connecting-IP'));
   return { kind: 'anonymous', id: `ip:${ip}`, limit: DAILY_LIMIT_ANONYMOUS, exempt: false };
 }
 
@@ -103,8 +112,13 @@ export async function getQuotaUsage(request, env, { now = Date.now(), authentica
     return { kind: identity.kind, used: 0, limit: null, remaining: null, exempt: true };
   }
   const dateKey = etDate(now);
-  const raw = await env.POTD_KV.get(counterKey(identity, dateKey));
-  const used = Number(raw) || 0;
+  let used = 0;
+  if (env.QUOTA_MANAGER) {
+    const state = await limitState(env, `tfquota:${identity.id}`, { limit: identity.limit, window: dateKey, peek: true });
+    used = Math.min(state?.count ?? 0, identity.limit);
+  } else {
+    used = Number(await env.POTD_KV.get(counterKey(identity, dateKey))) || 0;
+  }
   return {
     kind: identity.kind,
     used,
@@ -138,6 +152,41 @@ export async function consumeQuota(request, env, { now = Date.now(), authenticat
   }
 
   const dateKey = etDate(now);
+  const spent = {
+    allowed: false,
+    kind: identity.kind,
+    used: identity.limit,
+    limit: identity.limit,
+    remaining: 0,
+    message: identity.kind === 'anonymous'
+      ? `You've used all ${identity.limit} bet slip reads for today. Sign in for ${DAILY_LIMIT_AUTHENTICATED} a day, or type the bet in instead — that has no limit.`
+      : `You've used all ${identity.limit} bet slip reads for today. They reset at midnight ET. Typing a bet in or picking it off the slate has no limit.`,
+  };
+
+  // The count is kept in the limiter's Durable Object, where taking one is
+  // a single atomic step. It used to be a read and a write of a KV key, and
+  // twenty requests sent at once all read the same number before any of
+  // them wrote it back: the daily allowance held for a patient visitor and
+  // not for a script.
+  if (env.QUOTA_MANAGER) {
+    const mine = await limitState(env, `tfquota:${identity.id}`, { limit: identity.limit, window: dateKey });
+    if (!mine) return { allowed: true, kind: identity.kind, used: 0, limit: identity.limit, remaining: null, degraded: true };
+    if (!mine.allowed) return spent;
+    const site = await limitState(env, 'tfquota:site', { limit: DAILY_LIMIT_SITE, window: dateKey });
+    if (site && !site.allowed) {
+      return {
+        allowed: false,
+        kind: identity.kind,
+        used: mine.count,
+        limit: identity.limit,
+        remaining: Math.max(0, identity.limit - mine.count),
+        message: 'The bet slip reader has done all the reads it is allowed today across every visitor. It resets at midnight ET. Typing a bet in or picking it off the slate has no limit.',
+      };
+    }
+    return { allowed: true, kind: identity.kind, used: mine.count, limit: identity.limit, remaining: Math.max(0, identity.limit - mine.count) };
+  }
+
+  // No limiter bound (a deployment without the Durable Object): the KV count, as before.
   const key = counterKey(identity, dateKey);
 
   let used = 0;
@@ -148,18 +197,7 @@ export async function consumeQuota(request, env, { now = Date.now(), authenticat
     return { allowed: true, kind: identity.kind, used: 0, limit: identity.limit, remaining: null, degraded: true };
   }
 
-  if (used >= identity.limit) {
-    return {
-      allowed: false,
-      kind: identity.kind,
-      used,
-      limit: identity.limit,
-      remaining: 0,
-      message: identity.kind === 'anonymous'
-        ? `You've used all ${identity.limit} bet slip reads for today. Sign in for ${DAILY_LIMIT_AUTHENTICATED} a day, or type the bet in instead — that has no limit.`
-        : `You've used all ${identity.limit} bet slip reads for today. They reset at midnight ET. Typing a bet in or picking it off the slate has no limit.`,
-    };
-  }
+  if (used >= identity.limit) return { ...spent, used };
 
   try {
     await env.POTD_KV.put(key, String(used + 1), { expirationTtl: COUNTER_TTL_SECONDS });
