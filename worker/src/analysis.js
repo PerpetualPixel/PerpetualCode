@@ -20,6 +20,7 @@
  * reason a real sports column previews the game once, not once per bet type.
  */
 
+import { createHash } from 'node:crypto';
 import { fetchContext, hasContext } from './context.js';
 import { fetchMmaContext } from './mma.js';
 import {
@@ -608,16 +609,55 @@ export function quickTakeCap(isPotd, isAudit) {
  * each surface always gets back the text shaped for it. Exported and pure
  * for the same reason as quickTakeCap above.
  */
-export function analysisCacheKey({ isPotd, isAudit, dateKey, eventId, outcomeName }) {
+export function analysisCacheKey({ isPotd, isAudit, dateKey, eventId, outcomeName, sportKey = '', home = '', away = '' }) {
   // v3/v2/v9: the MLB fact sheet went from two lines (starter line, W-L
   // record) to the full ranked stat sheet the View Stats panel already had,
   // and the default variant's persona moved to the same sharp-bettor voice
   // POTD uses, with every bullet now required to carry a real number. Both
   // change the text materially for every sport, so all three namespaces bump
   // together rather than serving yesterday's thinner write-up for its TTL.
-  if (isPotd) return `potd-analysis:v3:${dateKey}:${eventId}:${outcomeName}`;
-  if (isAudit) return `audit-analysis:v2:${dateKey}:${eventId}:${outcomeName}`;
-  return `analysis:v9:${dateKey}:${eventId}:${outcomeName}`;
+  // v4/v3/v10: the key now ends with a fingerprint of the sport and the two
+  // names, because those go into the prompt too. Without it, whoever asked
+  // first for a real event and pick, with other text in the name fields,
+  // had THEIR write-up stored under the key every later reader of that pick
+  // was served from (the public /analysis route takes its fields from the
+  // browser). With it, a write-up can only be served to a request whose
+  // prompt would have been the same.
+  const fp = createHash('sha256')
+    .update([sportKey, home, away].map((v) => String(v ?? '').trim().toLowerCase()).join('|'))
+    .digest('hex').slice(0, 12);
+  if (isPotd) return `potd-analysis:v4:${dateKey}:${eventId}:${outcomeName}:${fp}`;
+  if (isAudit) return `audit-analysis:v3:${dateKey}:${eventId}:${outcomeName}:${fp}`;
+  return `analysis:v10:${dateKey}:${eventId}:${outcomeName}:${fp}`;
+}
+
+const SPORT_TITLES = {
+  americanfootball_nfl: 'NFL', americanfootball_ncaaf: 'NCAAF',
+  basketball_nba: 'NBA', basketball_wnba: 'WNBA', basketball_ncaab: 'NCAAB',
+  baseball_mlb: 'MLB', icehockey_nhl: 'NHL', mma_mixed_martial_arts: 'MMA',
+};
+const ANALYSIS_ID = /^[A-Za-z0-9_:.-]{1,80}$/;
+const ANALYSIS_SPORT = /^[a-z0-9_]{3,60}$/;
+// A team, player or fighter name, or "Over" / "Under 8.5": letters of any
+// alphabet, digits, spaces and the punctuation real names carry. No line
+// breaks, quotes, brackets or anything else a sentence of instructions needs.
+const ANALYSIS_NAME = /^[\p{L}\p{M}\p{N} .,'’&()/+-]{1,80}$/u;
+
+/**
+ * The candidate the public /analysis route may ask about, from its query
+ * string, or null when any field is not the shape a real pick has.
+ *
+ * The route is open to anyone and its fields go into a model prompt, so
+ * they are held to what a pick's fields look like: short ids, a sport key,
+ * names of at most 80 characters in a name's alphabet. The sport's title is
+ * never taken from the caller: it is worked out from the sport key.
+ */
+export function publicAnalysisCandidate(searchParams) {
+  const get = (k) => String(searchParams.get(k) ?? '').trim();
+  const c = { eventId: get('eventId'), sportKey: get('sportKey'), home: get('home'), away: get('away'), outcomeName: get('outcomeName') };
+  if (!ANALYSIS_ID.test(c.eventId) || !ANALYSIS_SPORT.test(c.sportKey)) return null;
+  if (![c.home, c.away, c.outcomeName].every((v) => ANALYSIS_NAME.test(v))) return null;
+  return { ...c, sportTitle: SPORT_TITLES[c.sportKey] ?? c.sportKey.replace(/_/g, ' ') };
 }
 
 /**
@@ -670,7 +710,7 @@ function sanitizeVictoryMethods(raw) {
  * than one surface must never silently swap one write-up in for another
  * depending on which code path asked first.
  */
-export async function getOrGenerateAnalysis(candidate, env, ctx, now = Date.now(), { isPotd = false, isAudit = false } = {}) {
+export async function getOrGenerateAnalysis(candidate, env, ctx, now = Date.now(), { isPotd = false, isAudit = false, cacheOnly = false } = {}) {
   if (!env.ANTHROPIC_API_KEY) return null;
 
   const dateKey = etDate(now);
@@ -698,9 +738,14 @@ export async function getOrGenerateAnalysis(candidate, env, ctx, now = Date.now(
   // git history) onto mlb-stats.js's already-working ESPN calls. Bumped so
   // a null result cached under the old, broken path doesn't shadow the fix
   // for the rest of its TTL.
-  const kvKey = analysisCacheKey({ isPotd, isAudit, dateKey, eventId: candidate.eventId, outcomeName: candidate.outcomeName });
+  const kvKey = analysisCacheKey({
+    isPotd, isAudit, dateKey, eventId: candidate.eventId, outcomeName: candidate.outcomeName,
+    sportKey: candidate.sportKey, home: candidate.home, away: candidate.away,
+  });
   const cached = await env.POTD_KV.get(kvKey);
   if (cached) return cached;
+  // cacheOnly: read what is already written, never spend a model call (the public route's first look, see index.js).
+  if (cacheOnly) return null;
 
   let factSheet = null;
   let isBaseball = false;

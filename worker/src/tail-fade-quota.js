@@ -30,6 +30,8 @@
  * someone out tomorrow because of what they did today.
  */
 
+import { safeEqual } from './settings.js';
+
 const ET_TZ = 'America/New_York';
 
 /** Signed-in allowance per ET calendar day. */
@@ -64,7 +66,7 @@ export async function resolveQuotaIdentity(request, env, { authenticate } = {}) 
   // — which is exactly when they need to be debugging.
   const configured = String(env?.OWNER_PASSPHRASE ?? '').trim();
   const supplied = String(request.headers.get('X-Owner-Key') ?? '').trim();
-  if (configured && supplied && supplied === configured) {
+  if (configured && supplied && safeEqual(supplied, configured)) {
     return { kind: 'owner', id: 'owner', limit: Infinity, exempt: true };
   }
 

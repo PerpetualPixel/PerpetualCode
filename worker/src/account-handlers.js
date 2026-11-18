@@ -1,4 +1,4 @@
-import { hashPassword, verifyPassword, generateVerificationToken, generateJWT } from './auth-email.js';
+import { hashPassword, verifyPassword, generateVerificationToken, generateJWT, normalizeEmail, maskEmail } from './auth-email.js';
 import { authenticateRequest, jwtSecret, EMAIL_LOGO_HTML } from './auth-handlers.js';
 import { validateUsername } from './username-policy.js';
 
@@ -13,6 +13,18 @@ function json(body, { status = 200, headers = {} } = {}) {
 // epoch-checked helper (see auth-handlers.js's authenticateRequest) so
 // "Sign Out Everywhere" and password changes revoke access here too.
 const authenticate = authenticateRequest;
+
+/**
+ * The columns that hold something still in motion on an account: an email
+ * change waiting for its confirmation link, and a password reset link. A
+ * password change, a password reset and "Sign Out Everywhere" all clear
+ * them. They did not, and a stolen session could ask for the email to be
+ * moved to the thief's address, sit through the owner resetting the
+ * password and signing out everywhere, and then click its confirmation
+ * link: the account's email was theirs, and so was the next reset.
+ */
+export const CANCEL_PENDING = `pending_email = NULL, pending_email_token = NULL, pending_email_token_expires = NULL,
+       password_reset_token = NULL, password_reset_token_expires = NULL`;
 
 export async function handleUpdateUsername(request, env) {
   try {
@@ -74,7 +86,12 @@ export async function handleUpdatePassword(request, env) {
     // swaps it into storage (see account.html's password form handler).
     const newEpoch = (user.session_epoch ?? 0) + 1;
     const newHash = await hashPassword(newPassword);
-    await env.DB.prepare('UPDATE users SET password_hash = ?, session_epoch = ?, updated_at = ? WHERE id = ?')
+    // The same statement cancels an email change waiting to be confirmed and
+    // any reset link still out: "someone may have had my old password" has
+    // to end whatever that someone set in motion, not only their sessions.
+    await env.DB.prepare(
+      `UPDATE users SET password_hash = ?, session_epoch = ?, ${CANCEL_PENDING}, updated_at = ? WHERE id = ?`,
+    )
       .bind(newHash, newEpoch, Date.now(), payload.userId)
       .run();
 
@@ -101,8 +118,10 @@ export async function handleLogoutAll(request, env) {
     const payload = await authenticate(request, env);
     if (!payload) return json({ error: 'unauthorized' }, { status: 401 });
 
+    // Signing out everywhere also cancels an email change waiting to be
+    // confirmed and any reset link still out (see CANCEL_PENDING).
     await env.DB.prepare(
-      'UPDATE users SET session_epoch = COALESCE(session_epoch, 0) + 1, updated_at = ? WHERE id = ?',
+      `UPDATE users SET session_epoch = COALESCE(session_epoch, 0) + 1, ${CANCEL_PENDING}, updated_at = ? WHERE id = ?`,
     )
       .bind(Date.now(), payload.userId)
       .run();
@@ -141,22 +160,63 @@ async function sendEmailChangeVerification(env, newEmail, username, token) {
   });
 }
 
+/**
+ * The note that goes to the address an account HAS when a change of email
+ * is asked for: the one place the owner would otherwise never hear of it.
+ */
+async function sendEmailChangeNotice(env, currentEmail, username, newEmail) {
+  if (!env.EMAIL) throw new Error('Email service not configured');
+  const to = maskEmail(newEmail);
+  await env.EMAIL.send({
+    to: currentEmail,
+    from: { email: 'verify@perpetualpicks.com', name: 'PerpetualPicks' },
+    subject: 'A change of email was requested - PerpetualPicks',
+    html: `
+      <div style="font-family: Arial, sans-serif; background: #05050A; color: #e0e0ff; padding: 20px;">
+        <div style="max-width: 600px; margin: 0 auto; border: 1px solid #9d4edd; border-radius: 8px; padding: 30px; background: #0a0515;">
+          ${EMAIL_LOGO_HTML}
+          <h2 style="color: #d946ef; margin-bottom: 20px;">Email change requested</h2>
+          <p style="margin-bottom: 16px;">Hi ${username}, someone signed in to your PerpetualPicks account asked to move it to ${to}. Nothing changes until the link sent to that address is opened.</p>
+          <p style="margin-bottom: 16px;">If that was you, there is nothing to do here.</p>
+          <p style="margin-bottom: 0;">If it was not, change your password now at <a href="https://perpetualpicks.com/account.html" style="color: #d946ef;">perpetualpicks.com/account.html</a>: that cancels the request and signs every other device out.</p>
+        </div>
+      </div>
+    `,
+    text: `Hi ${username}, someone signed in to your PerpetualPicks account asked to move it to ${to}. Nothing changes until the link sent to that address is opened.\n\nIf that was you, there is nothing to do. If it was not, change your password now at https://perpetualpicks.com/account.html: that cancels the request and signs every other device out.`,
+  });
+}
+
 export async function handleRequestEmailChange(request, env) {
   try {
     const payload = await authenticate(request, env);
     if (!payload) return json({ error: 'unauthorized' }, { status: 401 });
 
-    const { newEmail } = await request.json();
-    if (!newEmail) return json({ error: 'newEmail required' }, { status: 400 });
+    const body = await request.json();
+    const newEmail = normalizeEmail(body.newEmail);
+    if (!newEmail) return json({ error: 'enter a valid email address' }, { status: 400 });
+    // The current password, like deleting the account asks for. A session
+    // alone used to be enough, which made a stolen or left-open session a
+    // permanent takeover: move the email, confirm it, reset the password.
+    const currentPassword = body.currentPassword;
+    if (typeof currentPassword !== 'string' || !currentPassword) {
+      return json({ error: 'currentPassword required to change your email' }, { status: 400 });
+    }
 
-    const taken = await env.DB.prepare('SELECT id FROM users WHERE email = ? AND id != ?')
+    const self = await env.DB.prepare('SELECT username, email, password_hash FROM users WHERE id = ?')
+      .bind(payload.userId)
+      .first();
+    if (!self) return json({ error: 'user not found' }, { status: 404 });
+    if (!(await verifyPassword(currentPassword, self.password_hash))) {
+      return json({ error: 'current password is incorrect' }, { status: 401 });
+    }
+    if (newEmail === String(self.email ?? '').toLowerCase()) {
+      return json({ error: 'that is already your email address' }, { status: 400 });
+    }
+
+    const taken = await env.DB.prepare('SELECT id FROM users WHERE email = ? COLLATE NOCASE AND id != ?')
       .bind(newEmail, payload.userId)
       .first();
     if (taken) return json({ error: 'email already in use' }, { status: 409 });
-
-    const self = await env.DB.prepare('SELECT username FROM users WHERE id = ?')
-      .bind(payload.userId)
-      .first();
 
     const token = generateVerificationToken();
     const expires = Date.now() + 24 * 60 * 60 * 1000;
@@ -173,9 +233,16 @@ export async function handleRequestEmailChange(request, env) {
     // surface as a raw 500 — the row stays there either way, so resending is
     // just calling this endpoint again with the same newEmail.
     try {
-      await sendEmailChangeVerification(env, newEmail, self?.username ?? 'there', token);
+      await sendEmailChangeVerification(env, newEmail, self.username ?? 'there', token);
     } catch (emailErr) {
       console.error('Email change verification send failed:', emailErr);
+    }
+    // And a word to the address the account has now, so a change its owner
+    // did not ask for cannot go through unseen.
+    try {
+      await sendEmailChangeNotice(env, self.email, self.username ?? 'there', newEmail);
+    } catch (emailErr) {
+      console.error('Email change notice send failed:', emailErr);
     }
 
     return json({ message: 'Check your new email to confirm the change.' });
