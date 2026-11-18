@@ -29,6 +29,7 @@ import { ufcCardProps, UFC_PROPS } from './ufc-props.js';
 import { readPropOdds } from './ufc-prop-odds.js';
 import { readFanduel, quoteSharpPlays } from './ufc-fanduel.js';
 import { sharpRead } from './ufc-sharp.js';
+import { recommendedParlays } from './ufc-recommended.js';
 import { normalizeName, namesLikelyMatch } from './ufc-events.js';
 import { callModel, STRAIGHT_RANGE, PARLAY_RANGE, PARLAY_TARGET, betRecordOf, TICKET_UNITS } from './trend-picks.js';
 import { bookIdFor, SPORTSBOOKS, americanToDecimal } from '../../docs/engine.js';
@@ -801,6 +802,8 @@ export async function runUfcTick(env, ctx, now = Date.now(), { deps = {} } = {})
       record.breakdowns[id].sharp = sharp;
     }
     record.props = { ...ufcCardProps(live, (bout) => reads.get(bout.id) ?? null, { now, engine: record.engine, board, fanduel }), labels: UFC_PROPS };
+    // The Recommended page (worker/src/ufc-recommended.js): builders, parlays and lottos put together from those pieces and the Sharp plays.
+    record.recommended = recommendedParlays({ legs: record.props.legs, breakdowns: record.breakdowns, now });
     if (record.underdog) {
       // How the underdog wins: the two records, and the cappers' method call on that side when there is one.
       const dogBout = event.bouts.find((b) => b.id === record.underdog.boutId);

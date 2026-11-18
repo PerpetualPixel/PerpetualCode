@@ -928,6 +928,7 @@ const el = {
   parlayTeam: document.getElementById('parlayTeam'),
   parlayBuild: document.getElementById('parlayBuild'),
   parlayStatus: document.getElementById('parlayStatus'),
+  parlayRecommended: document.getElementById('parlayRecommended'),
   parlayResult: document.getElementById('parlayResult'),
   playersView: document.getElementById('playersView'),
   playersLeagues: document.getElementById('playersLeagues'),
@@ -9488,6 +9489,9 @@ function renderTrendsSheet() {
   } else if (sheet.type === 'ufcFighter') {
     full = true;
     html = renderUfcFighterSheet(sheet);
+  } else if (sheet.type === 'ufcRecommended') {
+    full = true;
+    html = renderUfcRecommendedSheet(sheet);
   } else if (sheet.type === 'detail') {
     // A Trends row by id, or the row the opener handed over (a Pixel's
     // Picks leg carries its own copy, since the Trends rows may be
@@ -9702,6 +9706,7 @@ el.trendsSheet?.addEventListener('click', (event) => {
   let node;
   if (hit('[data-sheet-close]')) return closeTrendsSheet();
   if (hit('[data-sheet-back]')) { const prev = (trendsState.sheetStack ?? []).pop(); if (prev) { trendsState.sheet = prev; renderTrendsSheet(); } else closeTrendsSheet(); return; }
+  if (trendsState.sheet?.type === 'ufcRecommended' && handleUfcRecClick(t)) return;
   if (hit('[data-view-stats]')) {
     const sheet = trendsState.sheet;
     const row = (trendsState.data?.rows ?? []).find((r) => r.id === sheet?.rowId) ?? sheet?.row;
@@ -10624,6 +10629,7 @@ function ufcParlayRows(picks) {
     parlayState.ufcNotes = rec.props.notes ?? {};
     parlayState.ufcCappers = rec.props.cappers ?? null;
     parlayState.ufcBoard = rec.props.board ?? null;
+    parlayState.ufcRecommended = rec.recommended?.tickets?.length ? { ...rec.recommended, eventName: rec.eventName ?? '', lockMs: rec.lockMs ?? null } : null;
     return rec.props.legs.map((l) => {
       const bd = rec.breakdowns?.[l.boutId] ?? {};
       const quotes = (l.quotes ?? []).map((q) => ({ ...q, bookKey: q.bookId }));
@@ -11088,6 +11094,7 @@ function renderParlay() {
   // A UFC ticket has its own prop types; the hit rates, stat chips and sides belong to the player props. A tennis-only ticket keeps the prop chips and the tour, loses the hit-rate bars and the over/under.
   el.parlayView.querySelectorAll('[data-ufc-hide]').forEach((node) => { node.hidden = isUfcParlay() || (isTennisOnlyParlay() && !node.contains(el.parlayStats) && !node.contains(el.parlayTeam)); });
   el.parlayView.querySelectorAll('[data-ufc-only]').forEach((node) => { node.hidden = !isUfcParlay(); });
+  if (el.parlayRecommended) { const recHtml = s.sports.has(UFC_SPORT_KEY) ? ufcRecEntryHtml(ufcRecommendedFor('parlay'), 'parlay') : ''; el.parlayRecommended.innerHTML = recHtml; el.parlayRecommended.hidden = !recHtml; }
   if (isTennisOnlyParlay() && s.tennisAt) el.parlayStatus.textContent = parlayRows().length ? `Tennis legs read ${ago(s.tennisAt)}; every priced number on the matches the model has read today, scored by its share and the player's consistency at the line.` : el.parlayStatus.textContent;
   if (el.parlayUfcProps) {
     const have = new Map();
@@ -11455,6 +11462,128 @@ function openUfcBout(boutId) {
   Promise.all([b.a?.id ? ufcFighter(b.a.id) : null, b.b?.id ? ufcFighter(b.b.id) : null]).then(() => { if (trendsState.sheet?.type === 'ufcBout' && trendsState.sheet.boutId === boutId) renderTrendsSheet(); });
 }
 
+/* ---------------------------------------------------------------- */
+/* UFC recommended parlays (worker/src/ufc-recommended.js; 2026-11-18) */
+/* ---------------------------------------------------------------- */
+/* "Have a section on top that allows the user to click the recommended
+   button and that opens a whole other page on top with builders, lottos,
+   or regular parlays. Display odds of each leg ... sort and filter
+   parlays by confidence, payout, favorites, underdogs, type ... a leg
+   breakdown, at least one bullet point per leg and why it was picked."
+   The worker puts the tickets together each tick; this is the page: the
+   entry card on the Parlay tab (UFC on) and the UFC card, and the sheet
+   with the types, the filters, the sort and each ticket leg by leg. */
+const REC_TYPE_LABEL = { builder: 'Builders', parlay: 'Parlays', lotto: 'Lottos', stat: 'Stat plays' };
+const REC_TYPE_ONE = { builder: 'Builder', parlay: 'Parlay', lotto: 'Lotto', stat: 'Stat plays' };
+const REC_TYPE_NOTE = {
+  all: 'Every ready-made ticket for the card, one leg a fight.',
+  builder: 'Builders pay under about +160: a few likely legs, the bankroll builder.',
+  parlay: 'Parlays pay +160 to +800: the regular ticket.',
+  lotto: 'Lottos pay past +800: long shots, sprinkle size only.',
+  stat: 'Stat plays come from the Sharp analysis (strikes, takedowns, knockdowns). Most books price them in fight week only, so a price shows once one book has every leg.',
+};
+const REC_STYLE_LABEL = { ml: 'Moneyline', method: 'Method', props: 'Fight props', mixed: 'Mixed', stat: 'Stats' };
+const REC_SORTS = [['confidence', 'Confidence'], ['chance', 'Chance to hit'], ['payout', 'Payout'], ['value', 'Value'], ['legs', 'Fewest legs']];
+const ufcRecState = { type: 'all', style: 'all', sides: 'all', legs: 'all', sort: 'confidence' };
+/** The card's recommended tickets by where the page was opened from: the Parlay tab's copy of the next card, or the card on the UFC tab. */
+function ufcRecommendedFor(source) {
+  if (source === 'parlay') return parlayState.ufcRecommended ?? null;
+  const rec = ufcRecordFor(source);
+  return rec?.recommended?.tickets?.length ? { ...rec.recommended, eventName: rec.eventName ?? ufcState.event?.name ?? '', lockMs: rec.lockMs ?? null } : null;
+}
+/** The entry card: what is ready, and the button that opens the page. */
+function ufcRecEntryHtml(data, source) {
+  if (!data?.tickets?.length) return '';
+  const c = data.counts ?? {};
+  const parts = ['builder', 'parlay', 'lotto', 'stat'].filter((k) => c[k]).map((k) => `${c[k]} ${(c[k] === 1 ? REC_TYPE_ONE[k] : REC_TYPE_LABEL[k]).toLowerCase()}`);
+  return `<section class="rec-entry"><div class="rec-entry-text"><h3>Recommended parlays</h3><p class="row-sub">${data.tickets.length} ready-made tickets${data.eventName ? ` for ${esc(data.eventName)}` : ''}: ${esc(parts.join(', '))}. Every leg with its price and why it is there.</p></div><button type="button" class="rec-open" data-ufc-rec-open="${esc(source)}">Recommended <span aria-hidden="true">›</span></button></section>`;
+}
+function openUfcRecommended(source) {
+  if (!ufcRecommendedFor(source)) return;
+  trendsState.sheetStack = [];
+  trendsState.sheet = { type: 'ufcRecommended', source };
+  renderTrendsSheet();
+}
+/** Stars in halves: the gold row laid over the grey one, as wide as the grade. */
+const recStars = (n) => `<span class="rec-stars" role="img" aria-label="${esc(`confidence ${n} of 5`)}"><span style="width:${Math.max(0, Math.min(5, n)) * 20}%">★★★★★</span>★★★★★</span>`;
+/** A link worth following from a leg: a slip link, not the odds board's page or a link with a blank left in it. */
+const recLink = (u) => (u && !/bestfightodds\.com/i.test(u) && !/[{}]/.test(u) ? u : null);
+const recMatches = (t, s = ufcRecState) => (s.type === 'all' || t.type === s.type) && (s.style === 'all' || t.style === s.style) && (s.sides === 'all' || t.sides === s.sides) && (s.legs === 'all' || (s.legs === '4' ? t.n >= 4 : t.n === Number(s.legs)));
+const REC_SORT_FN = {
+  confidence: (x, y) => y.confidence - x.confidence || (y.chance ?? -1) - (x.chance ?? -1) || (x.decimal ?? 1e9) - (y.decimal ?? 1e9),
+  chance: (x, y) => (y.chance ?? -1) - (x.chance ?? -1) || y.confidence - x.confidence,
+  payout: (x, y) => (y.decimal ?? -1) - (x.decimal ?? -1) || y.confidence - x.confidence,
+  value: (x, y) => (y.edge ?? -9) - (x.edge ?? -9) || y.confidence - x.confidence,
+  legs: (x, y) => x.n - y.n || y.confidence - x.confidence || (y.chance ?? -1) - (x.chance ?? -1),
+};
+function renderUfcRecTicket(t, rank) {
+  const priced = Number.isFinite(t.american);
+  const legHtml = (l) => {
+    const tag = l.role === 'fav' ? '<span class="rec-role is-fav">Favourite</span>' : l.role === 'dog' ? '<span class="rec-role is-dog">Underdog</span>' : '';
+    const price = Number.isFinite(l.american) ? pricePill(l.bookId, l.book, l.american, recLink(l.link)) : '<span class="trend-price rec-noprice" title="No book in the feed prices this yet">at your book</span>';
+    return `<li class="rec-leg"><div class="rec-leg-top"><span class="rec-leg-main"><strong>${esc(l.selection)}</strong><small>${esc(l.fight ?? '')}${l.label ? ` · ${esc(l.label)}` : ''}</small></span>${tag}${price}</div><ul class="rec-why">${(l.why ?? []).map((w) => `<li>${esc(w)}</li>`).join('')}</ul></li>`;
+  };
+  const facts = [
+    t.chance != null ? `<span><b>${esc(pct(t.chance))}</b> to hit</span>` : '',
+    priced ? `<span><b>$10</b> wins <b>$${esc(((t.decimal - 1) * 10).toFixed(2))}</b></span>` : '',
+    `<span>${t.n} legs</span>`,
+    t.edge != null ? `<span title="The chance to hit less what the price asks for">${t.edge >= 0 ? '+' : ''}${Math.round(t.edge * 100)} pts of room</span>` : '',
+  ].filter(Boolean).join('');
+  const where = t.oneBook ? '' : priced ? '<p class="row-sub rec-note">No one book in the feed has every leg: priced leg by leg at each leg\'s best price. Check the legs at your book before you build it.</p>' : '<p class="row-sub rec-note">Not priced yet: look for these on the fight pages at your book.</p>';
+  return `<article class="rec-ticket is-${esc(t.type)}" aria-label="${esc(`${rank}: ${t.title}`)}">
+    <header class="rec-head"><span class="rec-type is-${esc(t.type)}">${esc(REC_TYPE_ONE[t.type] ?? t.type)}</span><span class="rec-style">${esc(REC_STYLE_LABEL[t.style] ?? t.style)}</span><span class="rec-price">${priced ? esc(formatAmerican(t.american)) : '<small>price at your book</small>'}</span></header>
+    <h3 class="rec-title">${esc(t.title)} ${t.book ? `<small>${bookBadge(t.bookId, t.book)}${esc(t.book)}</small>` : ''}</h3>
+    <p class="rec-meta">${recStars(t.confidence)}<span class="rec-facts">${facts}</span></p>
+    <p class="row-sub">${esc(t.blurb ?? '')}</p>
+    <ol class="rec-legs">${t.legs.map(legHtml).join('')}</ol>
+    ${t.books?.length > 1 ? tennisBookPrices(t.books, 'The ticket at every book with all of its legs') : ''}
+    ${where}
+    ${t.oneBook ? ticketSlipFoot({ type: 'parlay', bookId: t.bookId, book: t.book, link: null, legs: t.legs.map((l) => ({ id: l.id, selection: l.selection, link: recLink(l.link) })) }) : ''}
+  </article>`;
+}
+function renderUfcRecommendedSheet(sheet) {
+  const data = ufcRecommendedFor(sheet.source);
+  if (!data) return `${sheetHead('ufcRecommended', 'Recommended parlays')}<p class="empty">No recommended parlays for this card yet; they are built once the books price it.</p>${sheetClose()}`;
+  const s = ufcRecState; const all = data.tickets;
+  const chip = (attr, value, label, on, n = null) => `<button type="button" class="rate-chip ${on ? 'is-active' : ''}" ${attr}="${esc(value)}" aria-pressed="${on}">${esc(label)}${n != null ? ` <small>${n}</small>` : ''}</button>`;
+  const count = (over) => all.filter((t) => recMatches(t, { ...s, ...over })).length;
+  const types = ['all', 'builder', 'parlay', 'lotto', 'stat'].filter((k) => k === 'all' || all.some((t) => t.type === k));
+  const styles = ['all', 'ml', 'method', 'props', 'mixed', 'stat'].filter((k) => k === 'all' || all.some((t) => t.style === k));
+  const shown = all.filter((t) => recMatches(t)).sort(REC_SORT_FN[s.sort] ?? REC_SORT_FN.confidence);
+  const quick = [['ml-confidence', 'Highest-confidence ML parlay'], ['builder-chance', 'Safest builder'], ['lotto-payout', 'Biggest lotto'], ['dog-payout', 'Best underdog ticket']];
+  return `${sheetHead('ufcRecommended', 'Recommended parlays')}
+    <p class="row-sub">${esc(data.eventName ?? '')}${data.at ? ` · built ${esc(trendTimeFmt.format(new Date(data.at)))}` : ''} · rebuilt as the odds move</p>
+    <div class="rec-quick" role="group" aria-label="Jump to">${quick.map(([k, label]) => `<button type="button" class="parlay-btn" data-rec-quick="${k}">${esc(label)}</button>`).join('')}</div>
+    <div class="rec-filter"><span>Type</span><div class="rate-chips rec-chips">${types.map((k) => chip('data-rec-type', k, k === 'all' ? 'All' : REC_TYPE_LABEL[k], s.type === k, count({ type: k }))).join('')}</div></div>
+    <p class="row-sub rec-type-note">${esc(REC_TYPE_NOTE[s.type] ?? '')}</p>
+    <div class="rec-filter"><span>Market</span><div class="rate-chips rec-chips">${styles.map((k) => chip('data-rec-style', k, k === 'all' ? 'All' : REC_STYLE_LABEL[k], s.style === k)).join('')}</div></div>
+    <div class="rec-filter"><span>Sides</span><div class="rate-chips rec-chips">${[['all', 'Any'], ['favorites', 'Favourites only'], ['underdogs', 'With an underdog']].map(([k, label]) => chip('data-rec-sides', k, label, s.sides === k)).join('')}</div></div>
+    <div class="rec-filter"><span>Legs</span><div class="rate-chips rec-chips">${[['all', 'Any'], ['2', '2'], ['3', '3'], ['4', '4 or more']].map(([k, label]) => chip('data-rec-legs', k, label, s.legs === k)).join('')}</div></div>
+    <div class="rec-filter"><span>Sort by</span><div class="rate-chips rec-chips">${REC_SORTS.map(([k, label]) => chip('data-rec-sort', k, label, s.sort === k)).join('')}</div></div>
+    <p class="rec-count" role="status">${shown.length} of ${all.length} tickets${shown.length ? `, ${esc((REC_SORTS.find(([k]) => k === s.sort)?.[1] ?? '').toLowerCase())} first` : ''}${s.type !== 'all' || s.style !== 'all' || s.sides !== 'all' || s.legs !== 'all' ? ' · <button type="button" class="link-button" data-rec-reset>Clear filters</button>' : ''}</p>
+    ${shown.length ? shown.map((t, i) => renderUfcRecTicket(t, i + 1)).join('') : '<p class="empty">No ticket matches those filters. Clear one to see more.</p>'}
+    <p class="row-sub rec-foot">A ticket's chance to hit is its legs' chances multiplied (one leg a fight). A moneyline's chance is the market's price blended with Pixel's lean; a prop's sits halfway between the two fighters' records and the book's price. Confidence is the legs' stars, less a quarter star for each leg past the second. These are ideas for the card, not tracked picks.</p>
+    ${sheetClose()}`;
+}
+/** A tap on the Recommended page: a filter, the sort, a quick jump, or clearing the filters. True when it was one of those. */
+function handleUfcRecClick(target) {
+  const s = ufcRecState; let node;
+  if ((node = target.closest('[data-rec-type]'))) s.type = node.dataset.recType;
+  else if ((node = target.closest('[data-rec-style]'))) s.style = node.dataset.recStyle;
+  else if ((node = target.closest('[data-rec-sides]'))) s.sides = node.dataset.recSides;
+  else if ((node = target.closest('[data-rec-legs]'))) s.legs = node.dataset.recLegs;
+  else if ((node = target.closest('[data-rec-sort]'))) s.sort = node.dataset.recSort;
+  else if (target.closest('[data-rec-reset]')) Object.assign(s, { type: 'all', style: 'all', sides: 'all', legs: 'all' });
+  else if ((node = target.closest('[data-rec-quick]'))) {
+    const q = node.dataset.recQuick;
+    Object.assign(s, { type: 'all', style: 'all', sides: 'all', legs: 'all' },
+      q === 'ml-confidence' ? { style: 'ml', sort: 'confidence' } : q === 'builder-chance' ? { type: 'builder', sort: 'chance' } : q === 'lotto-payout' ? { type: 'lotto', sort: 'payout' } : { sides: 'underdogs', sort: 'payout' });
+  } else return false;
+  renderTrendsSheet();
+  return true;
+}
+document.addEventListener('click', (event) => { const b = event.target.closest?.('[data-ufc-rec-open]'); if (b) openUfcRecommended(b.dataset.ufcRecOpen); });
+
 /**
  * The Sharp analysis that ends a fight's write-up (worker/src/ufc-sharp.js):
  * the stat and prop angles beyond the moneyline, each with the numbers it
@@ -11588,7 +11717,7 @@ function renderUfc() {
       <p class="row-sub">${esc(((dog.reasons ?? []).join('; ') || '').replace(/^./, (c) => c.toUpperCase()))}. Shown for the card, not tracked in the ledger; it never goes against a Pixel's Pick.</p>
       <details class="ufc-dog-details" ${ufcState.dogHow ? 'open' : ''}><summary>How ${esc(dog.name)} can win</summary>${ufcDogHowHtml(dog)}</details>
     </section>` : '';
-    const picksHtml = `${engineHtml}${underdogHtml}<section class="ufc-picks"><h3>Pixel's Picks for this card <small>${picks.length ? `${picks.length} of up to 6` : ''}</small></h3>
+    const picksHtml = `${ufcRecEntryHtml(ufcRecommendedFor(ev.id), ev.id)}${engineHtml}${underdogHtml}<section class="ufc-picks"><h3>Pixel's Picks for this card <small>${picks.length ? `${picks.length} of up to 6` : ''}</small></h3>
       ${picks.length ? picks.map(renderUfcPickCard).join('') : `<p class="empty">${rec?.manual ? 'The picks for this card are posted by hand; none posted yet.' : rec ? (rec.oddsAt ? 'No pick yet: nothing on this card clears confidence 4 at a usable price. It reads again as odds move.' : 'No odds posted yet; the picks come once the books price the card.') : 'No read of this card yet.'}</p>`}
       ${rec?.passed?.length && !picks.length ? `<div class="pick-passed"><p class="row-sub">Read but not picked:</p><ul>${rec.passed.slice(0, 6).map((x) => `<li><strong>${esc(x.selection)}</strong>: ${esc(x.reason)}</li>`).join('')}</ul></div>` : ''}
       ${lockText ? `<p class="row-sub">${lockText}</p>` : ''}
