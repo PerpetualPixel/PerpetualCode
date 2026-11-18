@@ -1,7 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { ufcComSlug, parseUfcComStats, parseEspnStats, mergeFighterStats } from '../worker/src/ufc-stats.js';
-import { sharpRead, alternatePlay, endings, SHARP_MIN } from '../worker/src/ufc-sharp.js';
+import { sharpRead, alternatePlay, endings, thinLine, SHARP_MIN } from '../worker/src/ufc-sharp.js';
 import { fanduelSharpRunner, quoteSharpPlays, FANDUEL_TABS } from '../worker/src/ufc-fanduel.js';
 
 // UFC.com's athlete page as it is laid out (read 2026-11-18, Ciryl Gane): the number in the element before its label.
@@ -170,4 +170,26 @@ test('FanDuel\'s price and slip link go on the plays it lists, found by the mark
   quoteSharpPlays(lone, bout('Nobody Here', 'Someone Else'), card);
   assert.equal(lone[0].quote, undefined);
   assert.equal(fanduelSharpRunner({ key: 'strikes', family: 'strikes', side: null }, card.events[0], { a: 'x', b: 'y' }), null);
+});
+
+test('a stat line off very little cage time is marked down, and a lead short of the bar is the nearest thing', () => {
+  const ufc = (n) => Array.from({ length: n }, (_, i) => ({ category: 'dec', event: `UFC Fight Night ${i}` }));
+  const settled = { ...f({ slpm: 5.19, sapm: 2.81, tdAvg: 0.5, tdDef: 60, kdAvg: 0.4, avgFightSec: 700 }, {}, {}), history: ufc(6) };
+  // One short UFC fight: 9.71 landed and 10.4 absorbed a minute (the first live card's debutant).
+  const green = { ...f({ slpm: 9.71, sapm: 10.4, tdAvg: 0, tdDef: 50, avgFightSec: 140 }, {}, {}), history: [{ category: 'ko', round: 1, event: 'UFC Fight Night 1' }, { category: 'ko', round: 1, event: 'Regional Show 12' }] };
+  assert.equal(thinLine(settled), false); assert.equal(thinLine(green), true);
+  assert.equal(thinLine(f(null, {}, {})), false, 'no stat line is not a thin one');
+  assert.equal(thinLine(f({ slpm: 4, sapm: 4, avgFightSec: 700 }, {}, {})), false, 'a history with no event names says nothing about cage time');
+  const vsGreen = sharpRead({ bout: bout('S Settled', 'G Green'), a: settled, b: green });
+  const vsTwin = sharpRead({ bout: bout('S Settled', 'T Twin'), a: settled, b: { ...green, history: ufc(6), stats: { ...green.stats, slpm: 8.5, sapm: 8.9, avgFightSec: 600 } } });
+  const strikes = (r) => [...r.plays, r.near].filter(Boolean).find((p) => /most significant strikes/.test(p.selection));
+  assert.ok(strikes(vsTwin).strength - (strikes(vsGreen)?.strength ?? 0) >= 5, 'the same lead scores lower off a thin line');
+  const marked = vsGreen.plays.find((p) => p.key === 'strikes');
+  if (marked) assert.match(marked.why.at(-1), /Green's UFC numbers come from very little cage time/);
+
+  // A lead that is real but short of the bar: no play, and it is the fight's nearest thing.
+  const near = sharpRead({ bout: bout('B Ortega', 'D Hooker'), a: f({ slpm: 3.84, sapm: 6.38, tdAvg: 0.93, tdDef: 55, avgFightSec: 829 }, {}, {}), b: f({ slpm: 4.82, sapm: 4.94, tdAvg: 0.67, tdDef: 77, avgFightSec: 590 }, {}, {}), breakdown: { lean: 'a', straight: { market: 'h2h' } } });
+  assert.equal(near.none, true);
+  assert.equal(near.near.selection, 'D Hooker most significant strikes');
+  assert.ok(near.near.strength < SHARP_MIN);
 });

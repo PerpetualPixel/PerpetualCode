@@ -28,8 +28,16 @@
 export const SHARP_MIN = 62;
 export const SHARP_MAX_PLAYS = 3;
 
-/** The share of significant strikes that makes one fighter the clear leader. */
-const STRIKE_SHARE = 0.57;
+/** The share of significant strikes below which there is nothing to say (a lead this side of it and the bar is the fight's "nearest thing"). */
+const STRIKE_SHARE = 0.53;
+/**
+ * Fights in the UFC (or on the Contender Series) below which a stat line is
+ * thin: per-minute rates off one or two short fights swing wildly (the
+ * first live card had a debutant "landing 9.7 a minute and absorbing
+ * 10.4"). A play resting on a thin line loses THIN_COST and says so.
+ */
+const THIN_FIGHTS = 3;
+const THIN_COST = 12;
 /** The UFC's long-run share of takedown attempts that are stopped, the yardstick a takedown average was earned against. */
 const AVG_TD_DEFENSE = 60;
 const METHOD_WORD = { ko: 'KO/TKO', sub: 'submission', dec: 'decision' };
@@ -39,6 +47,15 @@ const round1 = (v) => Math.round(v * 10) / 10;
 const pct = (v) => `${Math.round(v * 100)}%`;
 const last = (name) => String(name ?? '').trim().split(/\s+/).at(-1) ?? '';
 const has = (v) => Number.isFinite(v);
+
+/** Whether a fighter's stat line rests on too few UFC fights to lean on: fewer than THIN_FIGHTS on the history, or rates no settled fighter posts. */
+export function thinLine(f) {
+  if (!f?.stats) return false;
+  const inUfc = (f.history ?? []).filter((x) => /\bUFC\b|contender series/i.test(String(x.event ?? ''))).length;
+  const known = (f.history ?? []).some((x) => x.event);
+  return (known && inUfc < THIN_FIGHTS) || f.stats.slpm > 9 || f.stats.sapm > 9 || (has(f.stats.avgFightSec) && f.stats.avgFightSec < 150);
+}
+const thinNote = (fighters) => { const names = fighters.filter(([, f]) => thinLine(f)).map(([n]) => last(n.name)); return names.length ? `${names.join(' and ')}'s UFC numbers come from very little cage time, so this one is marked down` : null; };
 
 /** How a fighter's fights have ended: the share by decision, the share over inside round one, and how many fights that rests on. */
 export function endings(f) {
@@ -98,9 +115,11 @@ function strikesPlay(bout, a, b) {
     `Each fighter's output against what the other lets through: about ${round1(xw)} to ${round1(xl)} a minute, ${pct(leadShare)} of the strikes to ${last(w.name)}`,
     dragL >= 0.1 ? `${last(w.name)}'s takedowns put ${last(l.name)} on the mat for part of it, which is counted in` : null,
     dragW >= 0.1 ? `${last(l.name)}'s takedowns cost ${last(w.name)} some of that volume, which is counted in` : null,
+    thinNote([[bout.a, a], [bout.b, b]]),
   ].filter(Boolean);
   let strength = 45 + (leadShare - 0.5) * 250;
   if (!bothAbsorb) strength -= 8;
+  if (thinLine(a) || thinLine(b)) strength -= THIN_COST;
   return {
     key: 'strikes', family: 'strikes', side: lead,
     market: 'Most significant strikes',
@@ -121,6 +140,7 @@ function takedownPlays(bout, a, b, minutes) {
     let strength = 56 + (expected - line - 1) * 12;
     if (has(opp?.stats?.tdDef) && opp.stats.tdDef >= 75) strength -= 8;
     if (!has(opp?.stats?.tdDef)) strength -= 6;
+    if (thinLine(f) || thinLine(opp)) strength -= THIN_COST;
     return {
       key: `takedowns_${side}`, family: 'takedowns', side,
       market: 'Fighter takedowns',
@@ -131,7 +151,8 @@ function takedownPlays(bout, a, b, minutes) {
         `${me.name} lands ${f.stats.tdAvg} takedowns per 15 minutes${has(f.stats.tdAcc) && f.stats.tdAcc > 0 ? `, ${Math.round(f.stats.tdAcc)}% of the attempts` : ''}`,
         has(opp?.stats?.tdDef) ? `${last(them.name)} stops ${Math.round(opp.stats.tdDef)}% of takedown attempts (the UFC average is about ${AVG_TD_DEFENSE}%)` : `No takedown defence figure on file for ${last(them.name)}, so the UFC average stands in`,
         `Over a fight of about ${Math.round(minutes)} minutes that is roughly ${round1(expected)} takedowns`,
-      ],
+        thinNote([[me, f], [them, opp]]),
+      ].filter(Boolean),
       note: `Take the highest number the price still makes sense at; ${line} is the one the projection clears with room.`,
     };
   };
@@ -198,8 +219,8 @@ function knockdownPlays(bout, a, b) {
     if (koShare < 0.4) return null;
     return {
       key: `knockdown_${side}`, family: 'knockdown', side, market: 'Fighter to score a knockdown', selection: `${me.name} to score a knockdown`,
-      strength: Math.round(clamp(48 + (kd - 0.8) * 22 + (koShare - 0.4) * 30, 0, 85)),
-      why: [`${me.name} scores ${kd} knockdowns per 15 minutes`, `${last(them.name)} has been stopped by strikes in ${e.koLosses} of ${e.losses} losses`],
+      strength: Math.round(clamp(48 + (kd - 0.8) * 22 + (koShare - 0.4) * 30 - (thinLine(f) ? THIN_COST : 0), 0, 85)),
+      why: [`${me.name} scores ${kd} knockdowns per 15 minutes`, `${last(them.name)} has been stopped by strikes in ${e.koLosses} of ${e.losses} losses`, thinNote([[me, f]])].filter(Boolean),
       note: `Not every book lists it; where none does, the price on ${last(me.name)} by KO/TKO is the nearest thing.`,
     };
   };
