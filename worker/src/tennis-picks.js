@@ -229,6 +229,18 @@ export function ratesFor(profile, surface) {
 const stars = (p) => (p >= 0.86 ? 5 : p >= 0.8 ? 4 : 3);
 const pct = (x) => `${Math.round(x * 100)}%`;
 const best = (quotes) => [...quotes].sort((x, y) => y.american - x.american)[0] ?? null;
+/**
+ * Each book's price for one play, best first, as a posted play keeps it
+ * (2026-11-18: "show the books pricing for plays ... so I can see what
+ * odds each book has for, let's say, a moneyline"). One price a book (its
+ * best), and no slip links: these are the prices at the moment of posting,
+ * read beside the play long after the links have gone stale.
+ */
+export function bookPrices(quotes) {
+  const by = new Map();
+  for (const q of quotes ?? []) if (q?.bookId && Number.isFinite(q.american) && (!by.has(q.bookId) || q.american > by.get(q.bookId).american)) by.set(q.bookId, q);
+  return [...by.values()].sort((x, y) => y.american - x.american).map((q) => ({ bookId: q.bookId, book: q.book ?? null, american: q.american }));
+}
 
 /**
  * The legs the model has a case on for one match, each with its share, and
@@ -333,11 +345,13 @@ export function buildParlay(candidates, now = Date.now()) {
   const dec = chosen.reduce((d, l) => d * americanToDecimal(pick.legs.get(l.matchId).american), 1);
   const american = americanOfDecimal(dec);
   const implied = 1 / dec;
-  const legList = chosen.map((l) => { const q = pick.legs.get(l.matchId); return { matchId: l.matchId, tour: l.tour, event: l.event, round: l.round, commenceMs: l.commenceMs, a: l.a, b: l.b, side: l.side, selection: `${l.name} to win`, american: q.american, link: q.link ?? null, prob: l.prob, pModel: l.pModel, pMarket: l.pMarket, opponentFlags: l.opponentFlags ?? [], why: l.why ?? [] }; });
+  // The same legs at every book that carries all of them, best first; each leg with its price at every book.
+  const prices = ranked.filter((b) => chosen.every((l) => b.legs.has(l.matchId))).map((b) => ({ bookId: b.bookId, book: b.book ?? null, american: americanOfDecimal(chosen.reduce((d, l) => d * americanToDecimal(b.legs.get(l.matchId).american), 1)) })).sort((x, y) => y.american - x.american);
+  const legList = chosen.map((l) => { const q = pick.legs.get(l.matchId); return { quotes: bookPrices(l.quotes), matchId: l.matchId, tour: l.tour, event: l.event, round: l.round, commenceMs: l.commenceMs, a: l.a, b: l.b, side: l.side, selection: `${l.name} to win`, american: q.american, link: q.link ?? null, prob: l.prob, pModel: l.pModel, pMarket: l.pMarket, opponentFlags: l.opponentFlags ?? [], why: l.why ?? [] }; });
   return {
     market: 'ml_parlay', side: null, point: null, selection: `${legList.length}-leg moneyline parlay: ${legList.map((l) => l.selection.replace(' to win', '')).join(' + ')}`,
     prob: Math.round(prob * 1000) / 1000, implied: Math.round(implied * 1000) / 1000, edge: Math.round((prob - implied) * 1000) / 1000, bookId: pick.bookId, book: pick.book, american, link: legList.find((l) => l.link)?.link ?? null,
-    legs: legList, commenceMs: Math.min(...legList.map((l) => l.commenceMs)), lastMs: Math.max(...legList.map((l) => l.commenceMs)),
+    quotes: prices, legs: legList, commenceMs: Math.min(...legList.map((l) => l.commenceMs)), lastMs: Math.max(...legList.map((l) => l.commenceMs)),
     why: [`${legList.length} favourites with a clear advantage, none flagged for injury, fatigue or rust; together ${pct(prob)} by the model against the price's ${pct(implied)}`, ...legList.map((l) => `${l.selection} (${pct(l.prob)} blended: model ${pct(l.pModel)}, market ${pct(l.pMarket)})${l.opponentFlags.length ? `, opponent flagged for ${l.opponentFlags.join(' and ')}` : ''}`)],
   };
 }
@@ -562,7 +576,7 @@ export async function runTennisTick(env, ctx, now = Date.now(), { deps = {} } = 
   }
   // The plays: the most confident lean first. A straight lean is one tracked play sized by its chance, a priced aces line one more, each under the tour's cap and the day's units; a parlay piece is tracked only inside the parlay.
   const tourCount = (tour, aces) => record.plays.filter((p) => p.tour === tour && p.market !== 'ml_parlay' && (p.market === 'aces') === aces).length;
-  const playOf = (q, leg, extra) => ({ id: `${q.id}:${leg.market}`, matchId: q.id, tour: q.m.tour, event: q.m.eventName, tier: q.m.tier, round: q.m.round, surface: q.surface, commenceMs: Date.parse(q.m.date), a: q.m.a.name, b: q.m.b.name, aId: q.m.a.id, bId: q.m.b.id, market: leg.market, side: leg.side ?? null, selection: leg.selection, point: leg.point ?? null, sideWord: leg.sideWord ?? null, prob: leg.prob, implied: leg.implied ?? null, edge: leg.edge ?? null, bookId: leg.bookId ?? null, book: leg.book ?? null, american: leg.american ?? null, link: leg.link ?? null, why: leg.why ?? [], flags: { a: q.flags.a, b: q.flags.b }, stars: stars(leg.prob), ...extra, postedAt: now, status: 'pending', result: null, net: null, actual: null });
+  const playOf = (q, leg, extra) => ({ id: `${q.id}:${leg.market}`, matchId: q.id, tour: q.m.tour, event: q.m.eventName, tier: q.m.tier, round: q.m.round, surface: q.surface, commenceMs: Date.parse(q.m.date), a: q.m.a.name, b: q.m.b.name, aId: q.m.a.id, bId: q.m.b.id, market: leg.market, side: leg.side ?? null, selection: leg.selection, point: leg.point ?? null, sideWord: leg.sideWord ?? null, prob: leg.prob, implied: leg.implied ?? null, edge: leg.edge ?? null, bookId: leg.bookId ?? null, book: leg.book ?? null, american: leg.american ?? null, link: leg.link ?? null, quotes: bookPrices(leg.quotes), why: leg.why ?? [], flags: { a: q.flags.a, b: q.flags.b }, stars: stars(leg.prob), ...extra, postedAt: now, status: 'pending', result: null, net: null, actual: null });
   // Three passes, so a prop never takes the units a likelier lean needed: the leans by confidence, then the priced aces, then the aces no book prices.
   const order = new Map(sortLeans(leans).map((l, i) => [l, i]));
   const byLean = [...queue].filter((q) => q.lean).sort((x, y) => order.get(x.lean) - order.get(y.lean));

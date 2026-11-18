@@ -100,6 +100,11 @@ test('runTennisTick posts the best leg per match under the caps, grades from the
   const picks = await getTennisPicks(env);
   assert.equal(picks.current.plays.length, r.posted);
   assert.ok(Object.keys(picks.current.reads).length === 1);
+  // A priced play keeps every book's price from the moment it posted: its own book's among them, best first, no links.
+  for (const p of picks.current.plays.filter((x) => Number.isFinite(x.american))) {
+    assert.ok(p.quotes.length >= 1 && p.quotes[0].american === p.american && p.quotes[0].bookId === p.bookId, JSON.stringify(p.quotes));
+    assert.ok(p.quotes.every((x, i) => Object.keys(x).join() === 'bookId,book,american' && (i === 0 || p.quotes[i - 1].american >= x.american)));
+  }
   // The match finishes 6-4 7-6: the priced leg grades.
   card.slate[0] = match({ date: card.slate[0].date, state: 'post', completed: true, statusName: 'STATUS_FINAL', sets: [[6, 4], [7, 6]], winner: 'a' });
   const graded = await runTennisTick(env, null, Date.now(), { deps });
@@ -122,7 +127,7 @@ test('the data runner parses the stats table: a row per player and surface, with
 });
 
 import { formOf, styleOf, matchupProb, eloShare } from '../worker/src/tennis-form.js';
-import { buildParlay, gradeParlay, unitsPosted, MAX_UNITS_DAY, PARLAY_LEG_PROB } from '../worker/src/tennis-picks.js';
+import { buildParlay, gradeParlay, unitsPosted, MAX_UNITS_DAY, PARLAY_LEG_PROB, bookPrices } from '../worker/src/tennis-picks.js';
 import { getTennisLive, playStanding, legStanding } from '../worker/src/tennis-live.js';
 
 const result = (id, a, b, sets, daysAgo, over = {}) => ({ id, tour: 'atp', completed: true, statusName: 'STATUS_FINAL', date: new Date(Date.now() - daysAgo * 864e5).toISOString(), a: { id: a.toLowerCase(), key: a.toLowerCase(), name: a }, b: { id: b.toLowerCase(), key: b.toLowerCase(), name: b }, sets, winner: sets.filter(([x, y]) => x > y).length > sets.filter(([x, y]) => y > x).length ? 'a' : 'b', ...over });
@@ -176,12 +181,17 @@ test('buildParlay takes the clearest unflagged favourites, two to four legs, at 
   assert.ok(p.legs.length >= 2 && p.legs.length <= 4, `legs ${p.legs.length}`);
   assert.ok(p.prob >= 0.58, `prob ${p.prob}`); assert.equal(p.bookId, 'draftkings', 'the better combined price'); assert.ok(p.american > 0 || p.american <= -100);
   assert.ok(p.legs.every((l) => l.selection.endsWith('to win') && l.american === -280));
+  // The same ticket at every book that has all of its legs, best first; each leg with every book's price.
+  assert.deepEqual(p.quotes.map((x) => x.bookId), ['draftkings', 'fanduel']);
+  assert.deepEqual([p.quotes[0].american, p.quotes[0].american > p.quotes[1].american], [p.american, true]);
+  assert.ok(p.legs.every((l) => JSON.stringify(l.quotes) === JSON.stringify([{ bookId: 'draftkings', book: 'draftkings', american: -280 }, { bookId: 'fanduel', book: 'fanduel', american: -300 }])));
   assert.equal(buildParlay([cand('m1', 0.9, ['fatigue']), cand('m2', 0.85, ['injury']), cand('m3', 0.8)], now), null, 'flagged favourites never go in; one leg is no parlay');
   const relaxed = buildParlay([cand('m1', 0.9), cand('m2', 0.74)], now);
   assert.ok(relaxed && relaxed.legs.length === 2, 'the second leg from the relaxed bar');
   assert.equal(buildParlay([cand('m1', 0.9), cand('m2', 0.7)], now), null, 'below the relaxed bar: no second leg');
   const split = buildParlay([cand('m1', 0.9, [], [q('fanduel', -300)]), cand('m2', 0.85, [], [q('draftkings', -200)]), cand('m3', 0.8, [], [q('fanduel', -150)])], now);
   assert.equal(split.bookId, 'fanduel'); assert.equal(split.legs.length, 2, 'the legs the book carries');
+  assert.deepEqual(split.quotes.map((x) => x.bookId), ['fanduel'], 'a book missing a leg has no price for the ticket');
   assert.equal(buildParlay([cand('m1', 0.9, [], [], { }), cand('m2', 0.85, [], [])], now), null, 'no quotes, no parlay');
   const started = buildParlay([{ ...cand('m1', 0.9), commenceMs: now - 1000 }, cand('m2', 0.85)], now);
   assert.equal(started, null, 'a match under way is not a leg');
@@ -362,4 +372,12 @@ test('builderLegs also prices the first set\'s winner and the sets played when t
   assert.ok(Math.abs(under.prob - dist.straightSets) < 0.002, 'under 2.5 sets is a straight-sets finish');
   // No such markets in the feed: no such legs.
   assert.equal(builderLegs(match(), { dist, board: boardEvent(), deep: deepEvent(), pFinal: 0.75 }).some((l) => l.market === 'set1_ml' || l.market === 'sets_total'), false);
+});
+
+test('bookPrices keeps one price a book, its best, best first, and drops the links', () => {
+  const q = (bookId, american, link = 'https://x/y') => ({ bookId, book: bookId.toUpperCase(), american, link, decimal: 2 });
+  assert.deepEqual(bookPrices([q('fanduel', -144), q('hardrock', -135), q('fanduel', -150), q('caesars', -150), { bookId: 'bad', american: null }, { american: -110 }]), [
+    { bookId: 'hardrock', book: 'HARDROCK', american: -135 }, { bookId: 'fanduel', book: 'FANDUEL', american: -144 }, { bookId: 'caesars', book: 'CAESARS', american: -150 },
+  ]);
+  assert.deepEqual([bookPrices(null), bookPrices([])], [[], []]);
 });
