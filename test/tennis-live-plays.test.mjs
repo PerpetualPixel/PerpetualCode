@@ -235,3 +235,34 @@ test('a set play takes the book\'s set price when it is good enough, is passed w
   const none = await run(async () => ({ id: 'e1', bookmakers: [] }));
   assert.deepEqual([none.american ?? null, none.bookId ?? null, none.playable < 0], [null, null, true], 'no book on the set: the price to take it at');
 });
+
+test('a set play on the player who won the last set, with no break in this one, is held to the follow-on cap', async () => {
+  const { FOLLOW_ON_CAP, LIVE_SET_MARGIN } = await import('../worker/src/tennis-live-model.js');
+  // The review of 2026-11-18: Shelton and Fritz each won a first set 6-2 and lost the second from 1-1, laid at -273 and -353.
+  const readAt = (sets, set) => ({ state: scoreState(sets), model: { match: 0.9, set }, prob: 0.9, market: null, apart: false, why: [] });
+  const play = (sets, set) => livePlays(readAt(sets, set), { quotes: { a: [], b: [] }, names: NAMES, gamesSeen: 10, sets }).find((p) => p.market === 'live_set');
+  const american = (p) => Math.round(-100 * p / (1 - p));
+
+  const held = play([[6, 2], [1, 1]], 0.82);
+  assert.deepEqual([held.side, held.set, held.prob, held.units, held.held], ['a', 2, FOLLOW_ON_CAP, 1, 0.82]);
+  near(held.playable, american(FOLLOW_ON_CAP - LIVE_SET_MARGIN), 1);
+  assert.match(held.note, /Jannik Sinner won the last set but has no break in this one yet, and a new set starts level: the read of 82% is held to 69%, a one-unit play\./);
+  // A game up is a hold, not a break: still held.
+  assert.equal(play([[6, 2], [2, 1]], 0.8).prob, FOLLOW_ON_CAP);
+  // The other side of the net reads the same way.
+  const b = play([[2, 6], [1, 1]], 0.2);
+  assert.deepEqual([b.side, b.prob, b.units, b.held], ['b', FOLLOW_ON_CAP, 1, 0.8]);
+
+  // Two games up is a break in hand: the read stands.
+  const broke = play([[6, 2], [3, 1]], 0.86);
+  assert.deepEqual([broke.prob, broke.units, broke.held, broke.note], [0.86, 2, undefined, undefined]);
+  // The player lost the last set: the read is not a follow-on, and stands.
+  assert.deepEqual([play([[3, 6], [1, 1]], 0.74).prob, play([[3, 6], [1, 1]], 0.74).units], [0.74, 1.5]);
+  // Set one has no set before it.
+  assert.equal(play([[1, 1]], 0.78).prob, 0.78);
+  // A read already under the cap is left alone and says nothing about being held.
+  const under = play([[6, 2], [1, 1]], 0.67);
+  assert.deepEqual([under.prob, under.units, under.held, under.note], [0.67, 1, undefined, undefined]);
+  // Without the set scores (an older caller) nothing is held.
+  assert.equal(livePlays(readAt([[6, 2], [1, 1]], 0.82), { quotes: { a: [], b: [] }, names: NAMES, gamesSeen: 10 }).find((p) => p.market === 'live_set').prob, 0.82);
+});

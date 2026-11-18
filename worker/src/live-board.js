@@ -58,9 +58,45 @@ export function boxValue(p, stat) {
 /** The intermission a hockey tick sits in (1 or 2), or null. */
 export const intermissionOf = (tick, league = 'nfl') => (league === 'nhl' && tick?.state === 'in' && /end of (1st|2nd)/i.test(String(tick.detail ?? '')) ? (/1st/i.test(tick.detail) ? 1 : 2) : null);
 export const LEG_PRICE = [-300, 150];
+/**
+ * A leg's price in the NBA and the NFL: no shorter than -300, no longer
+ * than -130. (Hockey and soccer keep the wide range: their shot lines are
+ * priced near even as a matter of course, and the review had none of them.)
+ *
+ * The long end was +150 for every league. The slips of 2026-11-15 to 11-18, reviewed
+ * 2026-11-18 (89 settled, 27 won, 0.98 units down; 182 distinct legs):
+ * the 14 legs priced longer than -130 hit 5 times (36%) where their
+ * prices said 51%, and the 168 at -130 or shorter hit 70%, as priced. A
+ * book that prices an over near even while the player's pace clears it is
+ * not offering a gift; it knows something the pace does not (his minutes,
+ * the matchup, a lead that sits him).
+ */
+export const LEG_PRICE_TIGHT = [-300, -130];
+export const legPriceFor = (league) => (league === 'nba' || league === 'nfl' ? LEG_PRICE_TIGHT : LEG_PRICE);
 export const PLAY_PRICE = [-160, 300]; // wide enough at the top for a book whose rungs are priced near even (FanDuel), where three legs land past +200; the score still pulls the play to PLAY_TARGET
 export const PLAY_TARGET = 100;
 const MARGIN = 1.25;
+/**
+ * The cushion an NBA rebound or assist leg needs: more than a points leg,
+ * and more again above 5.5.
+ *
+ * The same review: points legs hit 44 of 56 (79%, priced as 70%), while
+ * rebounds hit 28 of 46 (61%, priced as 69%) and assists 24 of 37 (65%,
+ * priced as 69%). The ones on a line above 5.5 hit 11 of 21 (52%, priced
+ * as 70%), and of the 59 missed legs 34 missed by a tenth of the line or
+ * less: one rebound, one assist. Scoring runs at the pace it has run at;
+ * rebounds and assists come in ones, off minutes and a role that change
+ * late, and a pace that says "six by the end" off four in three quarters
+ * is not a number to lay -250 on. Slips with no rebound or assist leg
+ * built in the third quarter went 18 of 51 (35%), up 7.32 units.
+ */
+export const COUNT_MARGIN = 1.45;
+export const COUNT_MARGIN_HIGH = 1.6;
+export const COUNT_HIGH_LINE = 5.5;
+/** The cushion a leg needs: the pace must clear the line by this multiple. */
+export const marginFor = (stat, point, league = 'nfl') => (
+  league === 'nba' && (stat === 'rebounds' || stat === 'assists') ? (point > COUNT_HIGH_LINE ? COUNT_MARGIN_HIGH : COUNT_MARGIN) : MARGIN
+);
 const BLOWOUT = 17;
 export const livePlayKey = (espnEventId) => `live:play:${espnEventId}`;
 
@@ -233,12 +269,12 @@ export function liveCandidates(payload, tick, league = 'nfl', { weather = null }
         const cur = boxValue(p, stat); if (cur == null) continue;
         if (cur >= o.point) continue; // already there; a book would not let it through anyway
         if (foulTrouble(p, tick, league)) continue; // his minutes are no longer his own
-        if (!inRange(o.price, LEG_PRICE)) continue;
+        if (!inRange(o.price, legPriceFor(league))) continue;
         if (script.leader && p.team === script.leader && /passing|receiving|receptions/.test(stat)) continue;
         if (script.trailer && p.team === script.trailer && stat === 'rushingYards') continue;
         if (stat === 'passingYards' && roughWeather(weather)) continue;
         const proj = projectStat(cur, elapsed, stat, { team: p.team, script, weather, league, prior: o.point });
-        if (proj < o.point * MARGIN) continue;
+        if (proj < o.point * marginFor(stat, o.point, league)) continue;
         out.push({ bookId, book: SPORTSBOOKS[bookId]?.name ?? b.key, market: m.key, stat, label: LIVE_LABEL[stat] ?? stat, player: o.description, team: p.team ?? null, athleteId: p.id ?? null, point: o.point, price: o.price, decimal: americanToDecimal(o.price), current: cur, pace: proj, cushion: Math.round(((proj - o.point) / o.point) * 100) / 100, link: o.link ?? null });
       }
     }
@@ -452,7 +488,11 @@ export async function getLiveRecap(env, now = Date.now()) {
     const fin = watch?.ticks?.[watch.ticks.length - 1] ?? null;
     const box = new Map((fin?.box ?? []).map((p) => [String(p.name ?? '').toLowerCase(), p]));
     const slips = (play?.slips ?? []).map((s) => {
-      const legs = s.legs.map((l) => { const p = box.get(String(l.player).toLowerCase()); const final = p ? num(p.stats?.[l.stat]) : null; return { player: l.player, team: l.team ?? null, stat: l.stat, label: l.label ?? l.stat, point: l.point, price: l.price, final, hit: final == null ? null : final >= l.point }; });
+      const legs = s.legs.map((l) => {
+        const p = box.get(String(l.player).toLowerCase()); const final = p ? num(p.stats?.[l.stat]) : null;
+        // Where the player stood and what the pace said when the slip was built, kept with the result: the next review can ask what cushion the misses had.
+        return { player: l.player, team: l.team ?? null, stat: l.stat, label: l.label ?? l.stat, point: l.point, price: l.price, current: l.current ?? null, pace: l.pace ?? null, cushion: l.cushion ?? null, final, hit: final == null ? null : final >= l.point };
+      });
       const result = legs.every((l) => l.hit === true) ? 'win' : legs.some((l) => l.hit === false) ? 'loss' : 'open';
       const decimal = Number(s.decimal) || americanToDecimal(s.american);
       return { bookId: s.bookId, book: s.book, american: s.american, decimal, diversified: Boolean(s.diversified), result, units: result === 'win' ? Math.round((decimal - 1) * 100) / 100 : result === 'loss' ? -1 : 0, legs };

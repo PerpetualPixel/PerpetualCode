@@ -37,10 +37,10 @@ test('the clock reads as a fraction of the game, and the half is the half', () =
 test('candidates are the Overs the pace clears with margin, in range, with the game script applied: the side up big leans on the run', () => {
   const c = liveCandidates(payload, tick());
   const sel = (p) => c.filter((x) => x.player === p).map((x) => [x.bookId, x.point, x.price]);
-  assert.deepEqual(sel('Saquon Barkley'), [['fanduel', 79.5, -230], ['draftkings', 79.5, -250], ['fanduel', 89.5, -125], ['draftkings', 89.5, -140], ['draftkings', 99.5, 110]], 'on pace for 136: 79.5 to 99.5 clear by a quarter; 119.5 does not, and -500 is outside the leg price range');
+  assert.deepEqual(sel('Saquon Barkley'), [['fanduel', 79.5, -230], ['draftkings', 79.5, -250], ['draftkings', 89.5, -140]], 'on pace for 136: 79.5 to 99.5 clear by a quarter and 119.5 does not; -500 is too short for a leg, and the two priced longer than -130 (FanDuel 89.5 at -125, DraftKings 99.5 at +110) are left out since the 2026-11-18 review');
   assert.deepEqual(sel('Jalen Hurts'), [], 'the side up 21 sits its passing game');
   assert.deepEqual(sel('Jacory Croskey-Merritt'), [], 'the side down 21 throws: its rushing lines are passed over');
-  assert.deepEqual(sel('Terry McLaurin'), [['draftkings', 69.5, -280], ['draftkings', 79.5, -150], ['draftkings', 99.5, 130]], 'on pace for 116, lifted to 133 by the side down big throwing: 99.5 clears too');
+  assert.deepEqual(sel('Terry McLaurin'), [['draftkings', 69.5, -280], ['draftkings', 79.5, -150]], 'on pace for 116, lifted to 133 by the side down big throwing: 99.5 clears too, but at +130 it is not a leg');
   assert.equal(c[0].current, 68); assert.equal(c[0].pace, 156, 'up big: 136 on pace, lifted a sixth for the run game');
   const close = liveCandidates(payload, tick({ score: { PHI: 14, WSH: 10 } }));
   assert.ok(close.some((x) => x.player === 'Jalen Hurts'), 'a close game: the passing lines are in');
@@ -74,8 +74,8 @@ test('the projection follows pace, script and weather; who to watch lists the bi
   const w = whoToWatch(t, c);
   assert.equal(w[0].player, 'Jalen Hurts'); assert.equal(w[0].projected, 300); assert.equal(w[0].line.point, 224.5, 'his highest clearing number');
   const saquon = w.find((x) => x.player === 'Saquon Barkley' && x.stat === 'rushingYards');
-  assert.deepEqual([saquon.current, saquon.projected, saquon.line.bookId, saquon.line.point], [68, 136, 'draftkings', 99.5]);
-  assert.deepEqual(saquon.lines.map((l) => [l.bookId, l.point]), [['draftkings', 99.5], ['fanduel', 89.5]], 'the best clearing line at each book, for a user who plays at one');
+  assert.deepEqual([saquon.current, saquon.projected, saquon.line.bookId, saquon.line.point], [68, 136, 'draftkings', 89.5]);
+  assert.deepEqual(saquon.lines.map((l) => [l.bookId, l.point]), [['draftkings', 89.5], ['fanduel', 79.5]], 'the best clearing line at each book, for a user who plays at one (among the numbers priced -130 or shorter)');
   const slips = buildLiveSlips(c);
   assert.deepEqual(slips.map((s) => s.bookId), ['draftkings'], 'FanDuel prices only one player: no slip there');
   const m = new Map(); const env = { POTD_KV: { get: async (k) => m.get(k) ?? null, put: async (k, v) => { m.set(k, v); } } };
@@ -264,7 +264,7 @@ test('getLiveRecap grades each stored slip against the final box at one unit', a
     { name: 'Landry Shamet', team: 'NY', stats: { points: '12' } }, { name: 'Josh Giddey', team: 'CHI', stats: { points: '8' } }, { name: 'OG Anunoby', team: 'NY', stats: { points: '20' } },
   ] }] }));
   m.set('live:play:9', JSON.stringify({ builtAt: 5, firstBuiltAt: 1, builds: 3, period: 3, clock: '4:00', elapsed: 0.6, score: { NY: 80, CHI: 70 }, slips: [
-    { bookId: 'fanduel', book: 'FanDuel', american: 152, decimal: 2.52, legs: [{ player: 'Landry Shamet', stat: 'points', point: 9.5, price: -270 }, { player: 'OG Anunoby', stat: 'points', point: 14.5, price: -280 }] },
+    { bookId: 'fanduel', book: 'FanDuel', american: 152, decimal: 2.52, legs: [{ player: 'Landry Shamet', stat: 'points', point: 9.5, price: -270, current: 8, pace: 13, cushion: 0.37 }, { player: 'OG Anunoby', stat: 'points', point: 14.5, price: -280 }] },
     { bookId: 'draftkings', book: 'DraftKings', american: 142, decimal: 2.42, legs: [{ player: 'Josh Giddey', stat: 'points', point: 9.5, price: -280 }, { player: 'OG Anunoby', stat: 'points', point: 14.5, price: -280 }] },
     { bookId: 'caesars', book: 'Caesars', american: 150, legs: [{ player: 'Nobody Here', stat: 'points', point: 9.5, price: -280 }] },
   ] }));
@@ -276,6 +276,8 @@ test('getLiveRecap grades each stored slip against the final box at one unit', a
   assert.deepEqual(g.slips.map((s) => [s.result, s.units]), [['win', 1.52], ['loss', -1], ['open', 0]]);
   assert.deepEqual(g.slips[1].legs.map((l) => [l.final, l.hit]), [[8, false], [20, true]]);
   assert.equal(g.slips[2].legs[0].hit, null);
+  // What the leg was built on stays with its result; a leg stored before that was kept reads null.
+  assert.deepEqual(g.slips[0].legs.map((l) => [l.current, l.pace, l.cushion]), [[8, 13, 0.37], [null, null, null]]);
   assert.equal(none.built, null); assert.deepEqual(none.slips, []); assert.equal(none.state, null);
   assert.deepEqual(r.totals, { slips: 2, wins: 1, units: 0.52 });
 });
@@ -395,4 +397,41 @@ test('ensureLivePlays stores the posting stamps, and the board reports a posted 
   const moved = b.slips[0].legs.find((l) => l.current !== l.postedCurrent);
   assert.ok(moved, 'at least one leg has moved since it was posted');
   assert.ok(moved.current > moved.postedCurrent);
+});
+
+test('NBA rebound and assist legs need more cushion than points, more again above 5.5; NBA and NFL legs are priced -130 or shorter', async () => {
+  const { marginFor, legPriceFor, LEG_PRICE, LEG_PRICE_TIGHT, COUNT_MARGIN, COUNT_MARGIN_HIGH } = await import('../worker/src/live-board.js');
+  // The review of 2026-11-18: points 79% against a 70% price; rebounds 61% and assists 65% against 69%; above 5.5, 52% against 70%.
+  assert.equal(marginFor('points', 24.5, 'nba'), 1.25);
+  assert.equal(marginFor('rebounds', 4.5, 'nba'), COUNT_MARGIN);
+  assert.equal(marginFor('assists', 5.5, 'nba'), COUNT_MARGIN);
+  assert.equal(marginFor('rebounds', 6.5, 'nba'), COUNT_MARGIN_HIGH);
+  assert.equal(marginFor('assists', 8.5, 'nba'), COUNT_MARGIN_HIGH);
+  assert.equal(marginFor('assists', 8.5, 'nhl'), 1.25, 'a hockey assist is not an NBA assist');
+  assert.equal(marginFor('receptions', 4.5, 'nfl'), 1.25);
+  assert.deepEqual([legPriceFor('nba'), legPriceFor('nfl'), legPriceFor('nhl'), legPriceFor('epl')], [LEG_PRICE_TIGHT, LEG_PRICE_TIGHT, LEG_PRICE, LEG_PRICE]);
+
+  // Third quarter, 6:00 left: 62.5% of the game in. Each player's pace is his number over 0.625.
+  const t = { at: 1, state: 'in', detail: '6:00 - 3rd Quarter', period: 3, clock: '6:00', score: { AAA: 70, BBB: 68 }, box: [
+    { id: '1', name: 'P Scorer', team: 'AAA', stats: { points: '15', rebounds: '3', assists: '2', fouls: '1' } },      // pace 24 points
+    { id: '2', name: 'R Boarder', team: 'AAA', stats: { points: '8', rebounds: '5', assists: '1', fouls: '1' } },      // pace 8 rebounds
+    { id: '3', name: 'A Passer', team: 'BBB', stats: { points: '9', rebounds: '2', assists: '6', fouls: '2' } },       // pace 9.6 assists -> 10
+  ] };
+  const book = (markets) => ({ bookmakers: [{ key: 'draftkings', markets }] });
+  const over = (player, point, price) => ({ name: 'Over', description: player, point, price });
+  const c = liveCandidates(book([
+    { key: 'player_points_alternate', outcomes: [over('P Scorer', 18.5, -220), over('P Scorer', 19.5, -150), over('P Scorer', 17.5, -120)] },
+    { key: 'player_rebounds_alternate', outcomes: [over('R Boarder', 5.5, -230), over('R Boarder', 6.5, -160)] },
+    { key: 'player_assists_alternate', outcomes: [over('A Passer', 6.5, -260), over('A Passer', 7.5, -170)] },
+  ]), t, 'nba');
+  const got = c.map((x) => [x.player, x.point, x.price]);
+  // Points: 24 on pace clears 18.5 by 30%: in at 1.25. 19.5 is cleared by 23%: out. 17.5 clears but is priced -120: out on price.
+  assert.deepEqual(got.filter((x) => x[0] === 'P Scorer'), [['P Scorer', 18.5, -220]]);
+  // Rebounds: 8 on pace clears 5.5 by 45%: in, just. It clears 6.5 by 23%: a points leg with that cushion would be out too, and a rebound leg above 5.5 needs 60%.
+  assert.deepEqual(got.filter((x) => x[0] === 'R Boarder'), [['R Boarder', 5.5, -230]]);
+  // Assists: 10 on pace clears 6.5 by 54%, short of the 60% a line above 5.5 needs: out, though it would have been a leg before (25%).
+  assert.deepEqual(got.filter((x) => x[0] === 'A Passer'), []);
+  // The same numbers as a hockey stat line keep the old bar and the wide price range.
+  const nhl = liveCandidates(book([{ key: 'player_shots_on_goal_alternate', outcomes: [over('P Scorer', 2.5, -115)] }]), { ...t, detail: '10:00 - 2nd', period: 2, clock: '10:00', box: [{ id: '1', name: 'P Scorer', team: 'AAA', stats: { shotsTotal: '2' } }] }, 'nhl');
+  assert.deepEqual(nhl.map((x) => [x.point, x.price]), [[2.5, -115]]);
 });
