@@ -7044,6 +7044,21 @@ a.trend-price:hover { background: rgba(255, 255, 255, 0.06); }
 .ufc-bio-cell span { font-size: 0.68rem; text-transform: uppercase; letter-spacing: 0.06em; color: var(--muted); font-weight: 700; }
 .ufc-h4 { margin: 16px 0 8px; font-size: 0.82rem; text-transform: uppercase; letter-spacing: 0.08em; color: var(--muted); }
 .ufc-h4 small { margin-left: 6px; }
+/* The Sharp analysis that ends a fight's write-up: the plays in order, each with its grade, its price where a book lists it, and the numbers behind it. */
+.ufc-sharp { padding: 12px; border-radius: 12px; border: 1px solid var(--line); background: var(--surface-2); font-size: 0.88rem; line-height: 1.5; }
+.ufc-sharp p { margin: 0; }
+.ufc-sharp-plays { margin: 0; padding: 0; list-style: none; display: grid; gap: 12px; }
+.ufc-sharp-plays > li + li { padding-top: 12px; border-top: 1px solid var(--line); }
+.ufc-sharp-sel { display: flex; flex-wrap: wrap; align-items: baseline; gap: 6px 8px; }
+.ufc-sharp-plays ul { margin: 6px 0 0; padding-left: 18px; }
+.ufc-sharp-plays .row-sub { margin-top: 6px; }
+.ufc-sharp-grade { font-size: 0.68rem; font-weight: 800; letter-spacing: 0.06em; text-transform: uppercase; padding: 2px 7px; border-radius: 999px; border: 1px solid var(--line); color: var(--muted); white-space: nowrap; }
+.ufc-sharp-grade.is-strong { color: var(--success); border-color: var(--success); }
+.ufc-sharp-grade.is-solid { color: var(--accent, #9d4edd); border-color: var(--accent, #9d4edd); }
+.ufc-sharp-price { margin-left: auto; font-weight: 700; white-space: nowrap; color: var(--success); text-decoration: none; }
+.ufc-sharp-price.is-none { font-weight: 400; font-size: 0.78rem; color: var(--muted); }
+.ufc-sharp-alt { margin-top: 8px !important; }
+.ufc-sharp > .row-sub { margin-top: 8px; }
 .ufc-five-row { display: flex; gap: 6px; }
 .ufc-five { width: 36px; height: 36px; border-radius: 10px; display: inline-grid; place-items: center; font-weight: 800; background: var(--surface-2); border: 1px solid var(--line); }
 .ufc-five.is-win { background: rgba(94, 224, 122, 0.18); color: var(--success); border-color: rgba(94, 224, 122, 0.5); }

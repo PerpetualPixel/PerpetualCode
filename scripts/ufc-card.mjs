@@ -12,6 +12,7 @@
  *   node scripts/ufc-card.mjs --index        # also rebuild the year-long fighter index (weekly)
  */
 import { readKv, writeKv } from './lib/kv.mjs';
+import { UFC_STATS_KEY, UFC_COM_ATHLETE, ESPN_CORE_ATHLETE, ufcComSlug, parseUfcComStats, parseEspnStats, mergeFighterStats } from '../worker/src/ufc-stats.js';
 
 const args = process.argv.slice(2);
 const DRY = args.includes('--dry-run');
@@ -32,6 +33,21 @@ async function getJson(url, tries = 3) {
     } catch (e) {
       if (i === tries - 1) { say(`  ! ${url}: ${e.message}`); return null; }
       await new Promise((r) => setTimeout(r, 800 * (i + 1)));
+    }
+  }
+  return null;
+}
+/** A page's HTML, or null when it is not there or will not answer. */
+async function getText(url, tries = 2) {
+  for (let i = 0; i < tries; i++) {
+    try {
+      const res = await fetch(url, { headers: { Accept: 'text/html', 'User-Agent': 'Mozilla/5.0' } });
+      if (res.status === 404) return null;
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      return await res.text();
+    } catch (e) {
+      if (i === tries - 1) { say(`  ! ${url}: ${e.message}`); return null; }
+      await new Promise((r) => setTimeout(r, 1200 * (i + 1)));
     }
   }
   return null;
@@ -194,11 +210,35 @@ if (INDEX) {
 }
 const fighters = (await pool([...indexIds.keys()], async (id) => parseFighter(await getJson(`${ATHLETE}/${id}?enable=history`)))).filter(Boolean);
 say(`${fighters.length} fighter profiles (${ids.size} on the next two cards)`);
+// Stat lines for everyone on the next two cards (worker/src/ufc-stats.js): UFC.com's athlete page for the whole
+// line, ESPN's core statistics for the landed half where UFC.com has no page under the fighter's name. A line is
+// kept most of a day (the numbers move only when a fighter fights), so a run reads a page only for a line gone stale.
+const STATS_KEEP_MS = 20 * 3600e3;
+const storedStats = DRY ? {} : ((await readKv(UFC_STATS_KEY).catch(() => null))?.fighters ?? {});
+const statLines = {};
+let statReads = 0;
+await pool([...ids.entries()], async ([id, name]) => {
+  const had = storedStats[id];
+  if (had && now - (had.at ?? 0) < STATS_KEEP_MS) { statLines[id] = had; return; }
+  statReads += 1;
+  const ufcCom = parseUfcComStats(await getText(`${UFC_COM_ATHLETE}/${ufcComSlug(name)}`), { name });
+  const espn = parseEspnStats(await getJson(`${ESPN_CORE_ATHLETE}/${id}/statistics`));
+  const line = mergeFighterStats(ufcCom, espn, now) ?? had ?? null;
+  if (line) statLines[id] = line;
+}, 3);
+for (const f of fighters) if (statLines[f.id]) f.stats = statLines[f.id];
+{
+  const lines = Object.values(statLines);
+  const noLine = [...ids.entries()].filter(([id]) => !statLines[id]).map(([, name]) => name);
+  say(`${lines.length} stat lines for ${ids.size} fighters on the next two cards (${lines.filter((l) => l.sources?.includes('ufc.com')).length} with UFC.com's, ${lines.filter((l) => !l.sources?.includes('ufc.com')).length} on ESPN's alone; ${statReads} read this run)${noLine.length ? `; none for ${noLine.join(', ')}` : ''}`);
+  if (DRY) for (const [id, name] of [...ids.entries()].slice(0, 8)) say(`  ${name}: ${JSON.stringify(statLines[id] ?? null)}`);
+}
 const headshotOf = new Map(fighters.map((f) => [f.id, f.headshot]));
 for (const r of records) for (const b of r.bouts) for (const k of ['a', 'b']) if (b[k]?.id && headshotOf.get(b[k].id)) b[k].headshot = headshotOf.get(b[k].id);
 
 const entries = [
   { key: 'ufc:events', value: index },
+  { key: UFC_STATS_KEY, value: { builtAt: now, fighters: statLines } },
   ...records.map((r) => ({ key: `ufc:event:${r.id}`, value: r })),
   ...fighters.map((f) => ({ key: `ufc:fighter:${f.id}`, value: f })),
 ];

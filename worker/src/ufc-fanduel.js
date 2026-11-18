@@ -9,8 +9,14 @@ import { matchupFor } from './ufc-prop-odds.js';
 
 export const UFC_FANDUEL_KEY = 'ufc:fanduel';
 
-/** The tabs of a fight's page worth reading beside the default one: the method and the round markets. The minute specials are not legs the builder makes. */
-export const FANDUEL_TABS = [/method/i, /round/i];
+/**
+ * The tabs of a fight's page worth reading beside the default one: the
+ * method and the round markets, and the fight-stat ones the Sharp analysis
+ * prices (most significant strikes, takedowns), under whatever heading
+ * FanDuel files them that week. The minute specials are not legs the
+ * builder makes.
+ */
+export const FANDUEL_TABS = [/method/i, /round/i, /strike/i, /takedown/i, /stat/i, /fight(er)? prop/i];
 
 /** A tab's title as the page's own address for it: "Method of Victory" is method-of-victory. */
 export const fanduelTabSlug = (title) => String(title ?? '').toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '');
@@ -74,6 +80,59 @@ export function fanduelRunnerFor(leg, fight, fighter) {
     case 'win_round': return fighter && round ? pick('ROUND_BETTING', `${fighter} to Win in Round ${round}`) : null;
     default: return null;
   }
+}
+
+/** FanDuel's fight for a bout and its two names for the fighters, or null when the card has no such fight. */
+export function fanduelFightFor(bout, card) {
+  const board = { events: [{ matchups: (card?.events ?? []).map((e) => ({ fighters: String(e.name ?? '').split(/\s+v\s+/i), fight: e })) }] };
+  const hit = matchupFor(bout, board);
+  if (!hit || hit.matchup.fighters.length !== 2) return null;
+  return { fight: hit.matchup.fight, names: { a: hit.matchup.fighters[hit.aIndex], b: hit.matchup.fighters[1 - hit.aIndex] } };
+}
+
+/**
+ * FanDuel's market and runner for one Sharp play (worker/src/ufc-sharp.js),
+ * or null when it does not list the bet:
+ *
+ *   strikes     a market named "Most Significant Strikes"     "<fighter>"
+ *   takedowns   a market naming the fighter and "Takedowns"   "Over" at the play's number
+ *   distance, round_start   as fanduelRunnerFor has them
+ *
+ * The two stat markets are found by name, not by type: FanDuel posts them
+ * in fight week only, and their type codes were not on any page read when
+ * this was written.
+ */
+export function fanduelSharpRunner(play, fight, names) {
+  if (play.prop === 'distance' || play.prop === 'round_start') return fanduelRunnerFor(play, fight, null);
+  const fighter = play.side ? names[play.side] : null;
+  if (!fighter) return null;
+  const surname = norm(fighter).split(' ').at(-1);
+  const markets = fight.markets ?? [];
+  if (play.key === 'strikes') {
+    const market = markets.find((m) => /most significant strikes/i.test(m.marketName) && !/round/i.test(m.marketName));
+    const runner = runnerOf(market, fighter) ?? (market?.runners ?? []).find((r) => norm(r.runnerName).split(' ').at(-1) === surname) ?? null;
+    return market && runner ? { market, runner } : null;
+  }
+  if (play.family === 'takedowns' && Number.isFinite(play.line)) {
+    const market = markets.find((m) => /takedown/i.test(m.marketName) && norm(m.marketName).includes(surname));
+    const runner = (market?.runners ?? []).find((r) => /^over\b/i.test(r.runnerName) && (r.handicap === play.line || r.runnerName.includes(String(play.line)))) ?? null;
+    return market && runner ? { market, runner } : null;
+  }
+  return null;
+}
+
+/** The plays with FanDuel's price and slip link on those it lists (`quote`), and none on the rest. Changes the plays in place. */
+export function quoteSharpPlays(plays, bout, card) {
+  const hit = fanduelFightFor(bout, card);
+  for (const play of plays ?? []) {
+    const found = hit ? fanduelSharpRunner(play, hit.fight, hit.names) : null;
+    if (found && Number.isFinite(found.runner.american)) {
+      play.quote = { bookId: 'fanduel', book: 'FanDuel', american: found.runner.american, link: fanduelSlipLink(found.market.marketId, found.runner.selectionId) };
+    } else {
+      delete play.quote;
+    }
+  }
+  return plays;
 }
 
 /**

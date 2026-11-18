@@ -27,7 +27,8 @@
 import { getUfcEvents, getUfcEvent, nextUfcEvent, getUfcFighter } from './ufc-card.js';
 import { ufcCardProps, UFC_PROPS } from './ufc-props.js';
 import { readPropOdds } from './ufc-prop-odds.js';
-import { readFanduel } from './ufc-fanduel.js';
+import { readFanduel, quoteSharpPlays } from './ufc-fanduel.js';
+import { sharpRead } from './ufc-sharp.js';
 import { normalizeName, namesLikelyMatch } from './ufc-events.js';
 import { callModel, STRAIGHT_RANGE, PARLAY_RANGE, PARLAY_TARGET, betRecordOf, TICKET_UNITS } from './trend-picks.js';
 import { bookIdFor, SPORTSBOOKS, americanToDecimal } from '../../docs/engine.js';
@@ -789,6 +790,16 @@ export async function runUfcTick(env, ctx, now = Date.now(), { deps = {} } = {})
     for (const [id, x] of byBout) reads.set(id, { odds: x.odds, breakdown: x.breakdown, engine: x.engine, profiles: { a: await profile(x.bout.a?.id), b: await profile(x.bout.b?.id) }, against: new Set([x.bout.a?.id, x.bout.b?.id].filter((fid) => fid && pendingIds.has(fid)).map((fid) => (fid === x.bout.a?.id ? x.bout.b?.id : x.bout.a?.id))) });
     const board = deps.board ? await deps.board() : await readPropOdds(env);
     const fanduel = deps.fanduel ? await deps.fanduel() : deps.board ? null : await readFanduel(env).catch(() => null);
+    // The Sharp analysis at the end of each write-up (worker/src/ufc-sharp.js): the stat and prop angles off the two
+    // stat lines and histories, or the plain statement that there is none and an alternate to the main pick. Worked
+    // out afresh each tick from the profiles just read, then given FanDuel's price and slip link where it lists the bet.
+    for (const [id, x] of byBout) {
+      if (!record.breakdowns[id]) continue;
+      const profiles = reads.get(id)?.profiles ?? {};
+      const sharp = sharpRead({ bout: x.bout, a: profiles.a, b: profiles.b, breakdown: x.breakdown, now });
+      if (fanduel) quoteSharpPlays(sharp.plays, x.bout, fanduel);
+      record.breakdowns[id].sharp = sharp;
+    }
     record.props = { ...ufcCardProps(live, (bout) => reads.get(bout.id) ?? null, { now, engine: record.engine, board, fanduel }), labels: UFC_PROPS };
     if (record.underdog) {
       // How the underdog wins: the two records, and the cappers' method call on that side when there is one.

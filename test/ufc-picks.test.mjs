@@ -109,6 +109,13 @@ test('runUfcTick: picks post at confidence 4 or better inside the price range, a
   let which = 0;
   const deps = { events: async () => ({ events: [{ id: 'ev', date: event.date, status: event.status }] }), event: async () => event, odds: async () => odds, fighter: async (id) => fighters[id], model: async (prompt) => reads[/UFC Test: Lightweight/.test(prompt) ? (++which) : 1] };
   const r = await runUfcTick(env, ctx, NOW, { deps });
+  // Every scheduled bout's write-up ends with a Sharp analysis (worker/src/ufc-sharp.js): plays, or the plain statement that there is none.
+  {
+    const rec = JSON.parse(store.get('ufc:picks:ev'));
+    const sharps = Object.values(rec.breakdowns).map((b) => b.sharp);
+    assert.ok(sharps.length && sharps.every((x) => x && Array.isArray(x.plays) && typeof x.none === 'boolean' && x.none === (x.plays.length === 0)));
+    assert.ok(sharps.every((x) => !x.none || x.alternate || x.alternate === null));
+  }
   assert.equal(r.posted, 1, 'A One at -150 posts; C Three at -400 is outside the range; E Five reads 3');
   let rec = JSON.parse(store.get('ufc:picks:ev'));
   assert.deepEqual(rec.bets.map((b) => [b.boutId, b.legs[0].selection, b.american, b.book]), [['1', 'A One to win', -150, 'DraftKings']]);
