@@ -181,7 +181,7 @@ export async function runTennisLiveTick(env, ctx, now = Date.now(), { deps = {},
       const base = (TOUR_AVG[m.tour] ?? TOUR_AVG.atp).serve;
       const read = liveRead({ sets: m.sets, games: timeline.games, serve: serve ?? { pA: base, pB: base }, market: odds?.market ?? null, bestOf: m.bestOf, names });
       // No serve numbers and no price: the score alone is not a play.
-      const plays = thin ? [] : livePlays(read, { quotes: odds?.quotes ?? { a: [], b: [] }, names, gamesSeen: timeline.games.length });
+      const plays = thin ? [] : livePlays(read, { quotes: odds?.quotes ?? { a: [], b: [] }, names, gamesSeen: timeline.games.length, sets: m.sets });
       for (const play of plays) {
         const playId = play.market === 'live_ml' ? `${id}:live_ml` : `${id}:live_set:${play.set}`;
         if (postedIds.has(playId)) continue;
@@ -192,7 +192,9 @@ export async function runTennisLiveTick(env, ctx, now = Date.now(), { deps = {},
           if (priced) Object.assign(play, priced);
         }
         postedIds.add(playId);
-        records[today].plays.push({ id: playId, matchId: id, tour: m.tour, event: m.eventName, round: m.round, a: m.a.name, b: m.b.name, ...play, score: scoreLine(m.sets), why: read.why, postedAt: now, status: 'pending', result: null, profit: null });
+        // A play the model was held back on says so among its reasons (livePlays' note).
+        const { note, ...shown } = play;
+        records[today].plays.push({ id: playId, matchId: id, tour: m.tour, event: m.eventName, round: m.round, a: m.a.name, b: m.b.name, ...shown, score: scoreLine(m.sets), why: note ? [...read.why, note] : read.why, postedAt: now, status: 'pending', result: null, profit: null });
         posted++; dirty.add(today);
       }
       state.matches[id] = { ...timeline, serve, firstAt: prev.firstAt ?? now, lastAt: now };

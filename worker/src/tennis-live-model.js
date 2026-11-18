@@ -303,6 +303,22 @@ export const LIVE_MIN_GAMES = 4;
  */
 export const LIVE_MAX_GAP = 0.2;
 
+/**
+ * The most a set play is believed when its player won the set before and
+ * has no break in this one yet (ahead by fewer than two games).
+ *
+ * The first week of live plays, reviewed 2026-11-18 (36 graded, 30 won):
+ * twelve set plays were of this kind and eight won, a loss of 1.11 units,
+ * against 22 of 24 for everything else. The model reads a lopsided set as
+ * a reason to expect the next one the same way, and the three it was
+ * surest of (77% to 84%, laid at -273 to -397 for 1.5 and 2 units) went
+ * one for three: Shelton and Fritz each took a first set 6-2 and lost the
+ * second from 1-1. A new set starts level until somebody breaks. So the
+ * read is held to this, which makes it a one-unit play at about -185 or
+ * better, and where a book prices the set shorter than that it is no play.
+ */
+export const FOLLOW_ON_CAP = 0.69;
+
 /** Units by confidence: the likelier the play, the more units (docs/trends.js suggestedUnits, kept in step). */
 export const liveUnits = (prob) => (prob >= 0.8 ? 2 : prob >= 0.7 ? 1.5 : prob >= 0.6 ? 1 : 0.5);
 
@@ -318,7 +334,7 @@ export const liveUnits = (prob) => (prob >= 0.8 ? 2 : prob >= 0.7 ? 1.5 : prob >
  * moneyline. Returns [{market: 'live_ml' | 'live_set', side, set?, prob,
  * edge?, american?, bookId?, book?, link?, playable?, units, selection}].
  */
-export function livePlays(read, { quotes = { a: [], b: [] }, names = { a: 'A', b: 'B' }, gamesSeen = 0 } = {}) {
+export function livePlays(read, { quotes = { a: [], b: [] }, names = { a: 'A', b: 'B' }, gamesSeen = 0, sets = null } = {}) {
   const out = [];
   const { state } = read;
   if (state.tiebreak || gamesSeen < LIVE_MIN_GAMES) return out;
@@ -331,9 +347,18 @@ export function livePlays(read, { quotes = { a: [], b: [] }, names = { a: 'A', b
   }
   if (state.inSet && state.gA + state.gB >= 2) {
     const setSide = read.model.set >= 0.5 ? 'a' : 'b';
-    const setProb = setSide === 'a' ? read.model.set : 1 - read.model.set;
-    if (setProb >= LIVE_SET_PROB[0] && setProb <= LIVE_SET_PROB[1]) {
-      out.push({ market: 'live_set', side: setSide, set: state.setNumber, prob: Math.round(setProb * 1000) / 1000, playable: americanOf(setProb - LIVE_SET_MARGIN), units: liveUnits(setProb), selection: `${names[setSide]} to win set ${state.setNumber}` });
+    const modelProb = setSide === 'a' ? read.model.set : 1 - read.model.set;
+    // `sets` is the match's set scores, the one in play last: the set before it says who won it.
+    const before = Array.isArray(sets) && sets.length >= 2 ? sets[sets.length - 2] : null;
+    const wonLast = before ? (setSide === 'a' ? before[0] > before[1] : before[1] > before[0]) : false;
+    const lead = setSide === 'a' ? state.gA - state.gB : state.gB - state.gA;
+    const followOn = state.setNumber >= 2 && wonLast && lead < 2;
+    const setProb = followOn ? Math.min(modelProb, FOLLOW_ON_CAP) : modelProb;
+    if (modelProb >= LIVE_SET_PROB[0] && modelProb <= LIVE_SET_PROB[1]) {
+      out.push({
+        market: 'live_set', side: setSide, set: state.setNumber, prob: Math.round(setProb * 1000) / 1000, playable: americanOf(setProb - LIVE_SET_MARGIN), units: liveUnits(setProb), selection: `${names[setSide]} to win set ${state.setNumber}`,
+        ...(followOn && modelProb > FOLLOW_ON_CAP ? { held: Math.round(modelProb * 1000) / 1000, note: `${names[setSide]} won the last set but has no break in this one yet, and a new set starts level: the read of ${Math.round(modelProb * 100)}% is held to ${Math.round(FOLLOW_ON_CAP * 100)}%, a one-unit play.` } : {}),
+      });
     }
   }
   return out;
