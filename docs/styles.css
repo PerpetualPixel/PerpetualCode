@@ -7494,6 +7494,23 @@ a.trend-price:hover { background: rgba(255, 255, 255, 0.06); }
 .tennis-way { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 10px; font-size: 0.88rem; min-width: 0; }
 .tennis-way strong { flex: 1 1 150px; min-width: 0; }
 .tennis-way small { color: var(--muted); font-weight: 600; white-space: nowrap; }
+/* One play's price at every book: a row of named chips, the best price marked, the user's own books in bold. */
+.tennis-books { display: grid; gap: 6px; margin-top: 10px; min-width: 0; }
+.tennis-books .tennis-ways-h small { font-weight: 600; letter-spacing: 0; text-transform: none; opacity: 0.85; margin-left: 4px; }
+.tennis-books-row { display: flex; flex-wrap: wrap; gap: 6px; min-width: 0; }
+.tennis-book {
+  display: inline-flex; align-items: center; gap: 6px; padding: 4px 9px 4px 5px; border: 1px solid var(--line); border-radius: 10px;
+  color: var(--text); font-size: 0.8rem; text-decoration: none; white-space: nowrap;
+}
+.tennis-book-name { color: var(--muted); font-weight: 600; }
+.tennis-book b { font-family: var(--mono); font-weight: 800; font-variant-numeric: tabular-nums; }
+.tennis-book.is-mine .tennis-book-name { color: var(--text); font-weight: 800; }
+.tennis-book.is-best { border-color: var(--success); }
+.tennis-book.is-best b { color: var(--success); }
+a.tennis-book:hover { background: rgba(255, 255, 255, 0.06); }
+#liveView a.tennis-book { color: var(--text); text-decoration: none; }
+.tennis-ways .tennis-books { margin: 0 0 6px; }
+.live-tennis-read .tennis-books { margin-top: 8px; }
 .tennis-actions { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 12px; }
 .tennis-actions .tennis-why { margin-top: 0; }
 .tennis-suggest .pick-bet-type { color: var(--success); }

@@ -26,7 +26,7 @@
  */
 import { etParts } from './potd.js';
 import { loadTennisScoreboard } from './tennis-live.js';
-import { tennisPicksKey, tennisSportKeys, feedEventFor, quotesOf, marketWinShare, liveTournamentBoard, cachedTournamentBoard, liveSetMarket } from './tennis-picks.js';
+import { tennisPicksKey, tennisSportKeys, feedEventFor, quotesOf, marketWinShare, liveTournamentBoard, cachedTournamentBoard, liveSetMarket, bookPrices } from './tennis-picks.js';
 import { advanceTimeline, liveRead, livePlays, serveFromMarket, scoreState, LIVE_SET_PRICE } from './tennis-live-model.js';
 import { TOUR_AVG } from './tennis-model.js';
 import { setDone } from './tennis-card-parse.js';
@@ -109,7 +109,7 @@ async function liveOddsFor(env, ctx, m, keys, now, deps) {
 }
 
 /**
- * The book's price for a set play: {american, bookId, book, link} when a
+ * The book's price for a set play: {american, bookId, book, link, quotes} (the best, and every book's) when a
  * book has the set at the price the read needs or better, null when the
  * books price it and none is good enough, undefined when no book carries
  * the set at all (the play then posts at the price to take it at).
@@ -129,7 +129,7 @@ async function setPriceFor(env, ctx, m, play, odds, read, now, deps) {
   if (!quotes || !quotes.length) return undefined;
   const best = [...quotes].filter((q) => Number.isFinite(q.american) && q.american >= LIVE_SET_PRICE[0] && q.american <= LIVE_SET_PRICE[1]).sort((x, y) => y.american - x.american)[0] ?? null;
   if (!best || best.american < play.playable) return null;
-  return { american: best.american, bookId: best.bookId, book: best.book, link: best.link ?? null };
+  return { american: best.american, bookId: best.bookId, book: best.book, link: best.link ?? null, quotes: bookPrices(quotes) };
 }
 
 /**
@@ -192,6 +192,8 @@ export async function runTennisLiveTick(env, ctx, now = Date.now(), { deps = {},
           if (priced) Object.assign(play, priced);
         }
         postedIds.add(playId);
+        // The moneyline at every book when the play posted (a set play's come with its price, above).
+        if (play.market === 'live_ml') play.quotes = bookPrices(odds?.quotes?.[play.side]);
         // A play the model was held back on says so among its reasons (livePlays' note).
         const { note, ...shown } = play;
         records[today].plays.push({ id: playId, matchId: id, tour: m.tour, event: m.eventName, round: m.round, a: m.a.name, b: m.b.name, ...shown, score: scoreLine(m.sets), why: note ? [...read.why, note] : read.why, postedAt: now, status: 'pending', result: null, profit: null });
@@ -204,7 +206,7 @@ export async function runTennisLiveTick(env, ctx, now = Date.now(), { deps = {},
         prob: Math.round(read.prob * 1000) / 1000, model: { match: Math.round(read.model.match * 1000) / 1000, set: Math.round(read.model.set * 1000) / 1000, nextSet: Math.round(read.model.nextSet * 1000) / 1000 },
         market: read.market != null ? Math.round(read.market * 1000) / 1000 : null, fair: read.fair, state: read.state, momentum: read.momentum,
         serve: { first: read.serve.first, sure: read.serve.sure, aServesNext: read.serve.aServesNext, a: read.serve.a, b: read.serve.b, breaks: read.serve.breaks, source: serve?.source ?? 'the tour average: no pre-match read and no live price' },
-        why: read.why, quotes: { a: best('a'), b: best('b') }, games: timeline.games.length,
+        why: read.why, quotes: { a: best('a'), b: best('b') }, books: { a: bookPrices(odds?.quotes?.a), b: bookPrices(odds?.quotes?.b) }, games: timeline.games.length,
         plays: [...records[today].plays, ...records[yesterday].plays].filter((p) => p.matchId === id),
       });
     }

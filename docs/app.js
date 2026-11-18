@@ -11968,7 +11968,7 @@ function renderTennisLiveRead(r) {
     <small class="row-sub">${holds}${mo ? ` · ${mo}` : ''}</small>
     ${(r.plays ?? []).map((p) => renderTennisLivePlay({ ...p, nowScore: (r.sets ?? []).map(([x, y]) => `${x}-${y}`).join(' ') })).join('') || '<small class="row-sub live-tennis-none">No live play: nothing here clears the bar against the price.</small>'}
     <button type="button" class="parlay-btn sc-why" data-tennis-live-why="${esc(r.id)}">${open ? 'Hide the read' : 'The read'}</button>
-    ${open ? `<ul class="tennis-why-list">${(r.why ?? []).map((w) => `<li>${esc(w)}</li>`).join('')}<li>Serve numbers from ${esc(r.serve?.source ?? 'the tour average')}. ESPN's feed carries the score game by game and no serve statistics, so the holds and breaks are read from the order of the games.</li></ul>` : ''}
+    ${open ? `<ul class="tennis-why-list">${(r.why ?? []).map((w) => `<li>${esc(w)}</li>`).join('')}<li>Serve numbers from ${esc(r.serve?.source ?? 'the tour average')}. ESPN's feed carries the score game by game and no serve statistics, so the holds and breaks are read from the order of the games.</li></ul>${tennisBookPrices(r.books?.a, `${r.a} to win, live`)}${tennisBookPrices(r.books?.b, `${r.b} to win, live`)}${(r.plays ?? []).map((p) => tennisBookPrices(p.quotes, `${p.selection}, when it posted`)).join('')}` : ''}
   </div>`;
 }
 const lastName = (name) => String(name ?? '').trim().split(/\s+/).at(-1) ?? '';
@@ -12139,9 +12139,10 @@ function renderTennisParlay(p) {
       <p class="ufc-pick-sel"><strong>${(p.legs ?? []).length} legs, the clearest favourites of the day</strong><small>${start ? `first ball ${esc(start)}` : ''}</small></p>
       <div class="tennis-legs">${(p.legs ?? []).map((l) => `<div class="tennis-leg"><span><strong>${esc(l.selection)}</strong> <small>${esc(formatAmerican(l.american))} · vs ${esc(l.side === 'a' ? l.b : l.a)} · ${esc(l.event ?? '')}${l.round ? ` · ${esc(l.round)}` : ''}</small><small class="row-sub">${Math.round((l.prob ?? 0) * 100)}% blended: model ${Math.round((l.pModel ?? 0) * 100)}%, market ${Math.round((l.pMarket ?? 0) * 100)}%${l.opponentFlags?.length ? ` · opponent: ${tennisFlags(l.opponentFlags)}` : ''}${l.actual ? ` · ${esc(l.actual)}` : ''}</small></span>${legResult(l)}</div>`).join('')}</div>
       <p class="ufc-pick-conf">${confStars(p.stars)} <small>model ${Math.round(p.prob * 100)}% for the parlay vs the price's ${Math.round((p.implied ?? 0) * 100)}%${p.edge != null ? ` · ${Math.round(p.edge * 100)} points of edge` : ''}</small></p>
+      ${tennisBookPrices(p.quotes, 'The parlay at every book when it posted')}
       ${p.actual ? `<p class="row-sub">Result: ${esc(p.actual)}</p>` : ''}
       <button type="button" class="parlay-btn tennis-why" data-tennis-why="${esc(p.id)}">${open ? 'Hide the read' : 'Why these legs'}</button>
-      ${open ? `<ul class="tennis-why-list">${(p.why ?? []).map((w) => `<li>${esc(w)}</li>`).join('')}${(p.legs ?? []).flatMap((l) => (l.why ?? []).map((w) => `<li>${esc(w)}</li>`)).join('')}</ul>` : ''}
+      ${open ? `<ul class="tennis-why-list">${(p.why ?? []).map((w) => `<li>${esc(w)}</li>`).join('')}${(p.legs ?? []).flatMap((l) => (l.why ?? []).map((w) => `<li>${esc(w)}</li>`)).join('')}</ul>${(p.legs ?? []).map((l) => tennisBookPrices(l.quotes, `${l.selection}, when it posted`)).join('')}` : ''}
     </div>
     ${p.link || p.bookId ? ticketSlipFoot({ type: 'parlay', bookId: p.bookId, book: p.book, link: p.link, legs: (p.legs ?? []).map((l) => ({ link: l.link })) }) : ''}
   </article>`;
@@ -12172,6 +12173,7 @@ function renderTennisPlay(p, opts) {
       ${p.side && p.flags?.[p.side === 'a' ? 'b' : 'a']?.length ? `<p class="row-sub">Opponent flagged: ${tennisFlags(p.flags[p.side === 'a' ? 'b' : 'a'])}</p>` : ''}
       ${p.market === 'aces' && !Number.isFinite(p.american) ? '<p class="row-sub">No book on the board prices this aces line: it is the number the model clears at 80%+; take it at your book where the line sits at or under it.</p>' : ''}
       ${p.how ? `<p class="tennis-how"><b>How</b> ${esc(p.how)}</p>` : ''}
+      ${tennisBookPrices(p.quotes, 'Every book when it posted')}
       ${p.actual ? `<p class="row-sub">Result: ${esc(p.actual)}</p>` : ''}
       <div class="tennis-actions">
         <button type="button" class="parlay-btn tennis-why" data-tennis-why="${esc(p.id)}" data-tennis-why-default="${full ? 'open' : 'shut'}" aria-expanded="${open}">${open ? 'Hide the why' : 'Why this play'}</button>
@@ -12193,8 +12195,33 @@ function tennisConfBar(prob, implied, room = null) {
   const edge = ask == null ? null : Number.isFinite(room) ? Math.round(room * 100) : p - ask;
   return `<div class="tennis-conf" role="img" aria-label="${esc(`${p}% to land${ask != null ? `, the price asks for ${ask}%` : ''}`)}"><span class="tennis-conf-track"><span class="tennis-conf-fill" style="width:${p}%"></span>${ask != null ? `<span class="tennis-conf-ask" style="left:${ask}%"></span>` : ''}</span><span class="tennis-conf-text"><strong>${p}%</strong> to land${ask != null ? `<small> · the price asks ${ask}% · ${edge >= 0 ? '+' : ''}${edge} pts of room</small>` : ''}</span></div>`;
 }
-/** Another way to play a lean, as a line with its price (a slip link where the book gives one), its chance and its room. */
-const tennisWay = (a) => `<span class="tennis-way"><strong>${esc(a.short)}</strong>${Number.isFinite(a.american) ? pricePill(a.bookId, a.book, a.american, a.link) : ''}<small>${pct(a.prob)} to land · ${a.edge >= 0 ? '+' : ''}${Math.round(a.edge * 100)} pts</small></span>`;
+/**
+ * One play's price at every book that has it, best first (2026-11-18:
+ * "show the books pricing for plays ... so I can see what odds each book
+ * has for, let's say, a moneyline"). Each book is named, the best price is
+ * marked, and the user's own books stand out. A chip opens the line on the
+ * book's slip where the feed gave a link for it, the book otherwise.
+ */
+function tennisBookPrices(quotes, label = 'Price at every book') {
+  const list = [...(quotes ?? [])].filter((q) => q && Number.isFinite(q.american)).sort((x, y) => y.american - x.american);
+  if (!list.length) return '';
+  const mine = myBooks() ?? [];
+  const chip = (q, i) => {
+    const id = bookIdFor(q.bookId); const name = (id ? SPORTSBOOKS[id]?.name : null) ?? q.book ?? q.bookId ?? '';
+    // A link with a blank left in it (a state, a stake) is not one to follow as it stands.
+    const slip = q.link && !/[{}]/.test(q.link) ? q.link : null;
+    const href = slip ?? (id ? SPORTSBOOKS[id]?.url : null);
+    const own = mine.includes(q.bookId);
+    const cls = `tennis-book${i === 0 && list.length > 1 ? ' is-best' : ''}${own ? ' is-mine' : ''}`;
+    const title = `${name} ${formatAmerican(q.american)}${i === 0 && list.length > 1 ? ', the best price' : ''}${own ? ', one of your books' : ''}`;
+    const inner = `${bookBadge(q.bookId, q.book)}<span class="tennis-book-name">${esc(name)}</span><b>${esc(formatAmerican(q.american))}</b>`;
+    return href ? `<a class="${cls}" href="${escUrl(href)}" target="_blank" rel="noopener" title="${esc(title)}" data-price-link>${inner}</a>` : `<span class="${cls}" title="${esc(title)}">${inner}</span>`;
+  };
+  const count = list.length === 1 ? 'one book prices this' : `${list.length} books, best first${mine.some((b) => list.some((q) => q.bookId === b)) ? ', yours in bold' : ''}`;
+  return `<div class="tennis-books"><span class="tennis-ways-h">${esc(label)} <small>${esc(count)}</small></span><div class="tennis-books-row">${list.map(chip).join('')}</div></div>`;
+}
+/** Another way to play a lean, as a line with its price (a slip link where the book gives one), its chance and its room; with `books`, its price at every book under it. */
+const tennisWay = (a, books = false) => `<span class="tennis-way"><strong>${esc(a.short)}</strong>${Number.isFinite(a.american) ? pricePill(a.bookId, a.book, a.american, a.link) : ''}<small>${pct(a.prob)} to land · ${a.edge >= 0 ? '+' : ''}${Math.round(a.edge * 100)} pts</small></span>${books ? tennisBookPrices(a.quotes, 'At every book') : ''}`;
 
 /**
  * A match worth betting (2026-11-12: "who to lean and how, moneyline,
@@ -12217,6 +12244,10 @@ function renderTennisLean(l, rank, { full = false } = {}) {
   const own = mine?.length && main.bookId && !mine.includes(main.bookId) ? [...(main.quotes ?? [])].filter((x) => mine.includes(x.bookId) && Number.isFinite(x.american)).sort((x, y) => y.american - x.american)[0] ?? null : null;
   const gist = [l.why?.[0], (l.why ?? []).find((w) => /which asks for/.test(w))].filter(Boolean);
   const rest = (l.why ?? []).filter((w) => !gist.includes(w));
+  // The main play's price at every book is always on the card; the other plays' open on a tap.
+  const booksKey = `books:${key}`;
+  const booksOpen = Boolean(tennisState.open[booksKey]);
+  const otherBooks = [...(l.alternates ?? []), ...(l.also ?? [])].some((a) => a.quotes?.length);
   return `<article class="trend-card pick-bet-card tennis-play tennis-lean ${l.conviction === 'high' ? 'is-high' : ''}" aria-label="${esc(`${rank ? `Number ${rank}: ` : ''}${main.short}`)}">
     <div class="pick-bet-head">
       ${rank ? `<span class="tennis-rank" title="Ranked by how likely it is to land">${rank}</span>` : ''}
@@ -12231,13 +12262,15 @@ function renderTennisLean(l, rank, { full = false } = {}) {
       ${tennisConfBar(main.prob, main.implied, main.edge)}
       <p class="tennis-how"><b>How to play it</b> ${esc(l.howText)} ${status}</p>
       ${own ? `<p class="tennis-how"><b>At your book</b> ${pricePill(own.bookId, own.book, own.american, own.link)} <small class="row-sub">asks ${pct(impliedProb(own.american))}, ${main.prob - impliedProb(own.american) >= 0 ? '+' : ''}${Math.round((main.prob - impliedProb(own.american)) * 100)} pts of room</small></p>` : ''}
+      ${tennisBookPrices(main.quotes, `${main.short} at every book`)}
       ${pair ? `<p class="tennis-how"><b>Parlay it</b> with ${esc(pair.legs.slice(1).map((x) => x.short).join(' and '))}: ${esc(formatAmerican(pair.american))} at ${esc(pair.book)}, ${pct(pair.prob)} to land</p>` : ''}
       ${l.opponentFlags?.length ? `<p class="row-sub">${esc(l.opponent ?? 'Opponent')} flagged: ${tennisFlags(l.opponentFlags)}</p>` : ''}
       <ul class="tennis-why-list is-gist">${gist.map((w) => `<li>${esc(capFirst(w))}</li>`).join('')}${open ? rest.map((w) => `<li>${esc(capFirst(w))}</li>`).join('') : ''}</ul>
-      ${l.alternates?.length ? `<div class="tennis-ways"><span class="tennis-ways-h">Other ways to play ${esc(l.name ?? 'it')}</span>${l.alternates.map(tennisWay).join('')}</div>` : ''}
-      ${l.also?.length ? `<div class="tennis-ways"><span class="tennis-ways-h">Also on this match</span>${l.also.map(tennisWay).join('')}</div>` : ''}
+      ${l.alternates?.length ? `<div class="tennis-ways"><span class="tennis-ways-h">Other ways to play ${esc(l.name ?? 'it')}</span>${l.alternates.map((a) => tennisWay(a, booksOpen)).join('')}</div>` : ''}
+      ${l.also?.length ? `<div class="tennis-ways"><span class="tennis-ways-h">Also on this match</span>${l.also.map((a) => tennisWay(a, booksOpen)).join('')}</div>` : ''}
       <div class="tennis-actions">
         ${rest.length ? `<button type="button" class="parlay-btn tennis-why" data-tennis-why="${esc(key)}" data-tennis-why-default="${full ? 'open' : 'shut'}" aria-expanded="${open}">${open ? 'Hide the full read' : 'The full read'}</button>` : ''}
+        ${otherBooks ? `<button type="button" class="parlay-btn tennis-why" data-tennis-why="${esc(booksKey)}" data-tennis-why-default="shut" aria-expanded="${booksOpen}">${booksOpen ? 'Hide the other plays\' books' : 'Every book on the other plays'}</button>` : ''}
         ${tennisStatButtons(l.a, l.b)}
       </div>
     </div>
