@@ -116,6 +116,14 @@ test('runUfcTick: picks post at confidence 4 or better inside the price range, a
     assert.ok(sharps.length && sharps.every((x) => x && Array.isArray(x.plays) && typeof x.none === 'boolean' && x.none === (x.plays.length === 0)));
     assert.ok(sharps.every((x) => !x.none || x.alternate || x.alternate === null));
   }
+  // And the card carries its Recommended page (worker/src/ufc-recommended.js), built from the same tick's pieces.
+  {
+    const rec = JSON.parse(store.get('ufc:picks:ev'));
+    assert.ok(rec.recommended && Array.isArray(rec.recommended.tickets) && rec.recommended.at === NOW, JSON.stringify(Object.keys(rec)));
+    assert.equal(Object.values(rec.recommended.counts).reduce((x, y) => x + y, 0), rec.recommended.tickets.length);
+    const ids = new Set(rec.props.legs.map((l) => l.id));
+    assert.ok(rec.recommended.tickets.filter((t) => t.type !== 'stat').every((t) => t.legs.every((l) => ids.has(l.id))), 'every leg is one of the card\'s pieces');
+  }
   assert.equal(r.posted, 1, 'A One at -150 posts; C Three at -400 is outside the range; E Five reads 3');
   let rec = JSON.parse(store.get('ufc:picks:ev'));
   assert.deepEqual(rec.bets.map((b) => [b.boutId, b.legs[0].selection, b.american, b.book]), [['1', 'A One to win', -150, 'DraftKings']]);

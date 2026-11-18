@@ -130,13 +130,16 @@ const ordinal = (r) => `${r}${r === 1 ? 'st' : r === 2 ? 'nd' : r === 3 ? 'rd' :
  * Every candidate leg for one bout, by prop. `bout` carries a and b;
  * `odds` is boutOdds (or null); `breakdown` the read; `engine` the
  * cappers' read (engineForBout); `profiles` { a, b } the fighter records;
- * `against` the fighter ids a pending Pixel's Pick is against.
+ * `against` the fighter ids a pending Pixel's Pick is against. `market`
+ * is a moneyline to read the chances from when the feed's odds carry none
+ * ({a: [quote], b: [quote]}, best first): the board's or FanDuel's, which
+ * ufcCardProps hands back on a second pass.
  */
-export function ufcPropLegs(bout, { odds = null, breakdown = null, engine = null, profiles = {}, against = new Set(), rounds = bout?.rounds ?? 3 } = {}) {
+export function ufcPropLegs(bout, { odds = null, breakdown = null, engine = null, profiles = {}, against = new Set(), rounds = bout?.rounds ?? 3, market = null } = {}) {
   const legs = [];
   if (!bout?.a?.name || !bout?.b?.name) return legs;
   const read = { a: recordRead(profiles.a), b: recordRead(profiles.b) };
-  const chance = winChance(odds, breakdown);
+  const chance = winChance(odds?.a?.length && odds?.b?.length ? odds : market ?? odds, breakdown);
   const name = { a: bout.a.name, b: bout.b.name };
   const other = (s) => (s === 'a' ? 'b' : 'a');
   const lean = breakdown?.lean ?? null; const conf = Number(breakdown?.confidence) || 0;
@@ -358,11 +361,22 @@ export function ufcCardProps(bouts, readBy, { now = Date.now(), engine = null, b
     const r = readBy(bout);
     if (!r) continue;
     if (r.engine?.moneyline || r.engine?.methods?.length) cappersRead++;
-    let mine = ufcPropLegs(bout, r);
-    // The fight props' prices from the BestFightOdds board the runner writes (worker/src/ufc-prop-odds.js), where it lists the bout.
-    if (board) { const priced = priceLegsFromBoard(mine, bout, board); mine = priced.legs; if (priced.matched) { boutsOnBoard++; pricedFromBoard += priced.priced ?? 0; } }
-    // FanDuel's own card (worker/src/ufc-fanduel.js): its price and a link that puts the selection on a FanDuel slip.
-    if (fanduel) { const fd = priceLegsFromFanduel(mine, bout, fanduel); mine = fd.legs; if (fd.matched) { boutsAtFanduel++; linkedAtFanduel += fd.linked; } }
+    const priceAll = (list, count) => {
+      let out = list;
+      // The fight props' prices from the BestFightOdds board the runner writes (worker/src/ufc-prop-odds.js), where it lists the bout.
+      if (board) { const priced = priceLegsFromBoard(out, bout, board); out = priced.legs; if (count && priced.matched) { boutsOnBoard++; pricedFromBoard += priced.priced ?? 0; } }
+      // FanDuel's own card (worker/src/ufc-fanduel.js): its price and a link that puts the selection on a FanDuel slip.
+      if (fanduel) { const fd = priceLegsFromFanduel(out, bout, fanduel); out = fd.legs; if (count && fd.matched) { boutsAtFanduel++; linkedAtFanduel += fd.linked; } }
+      return out;
+    };
+    let mine = priceAll(ufcPropLegs(bout, r), true);
+    // A bout the odds feed does not list is read off the lean alone, which made a +175 underdog "74% to win" on the
+    // card of 2026-11-22. Where the board or FanDuel prices its moneyline, the legs are worked out again from that price.
+    if (!(r.odds?.a?.length && r.odds?.b?.length)) {
+      const mlQuotes = (side) => (mine.find((l) => l.prop === 'ml' && l.side === side)?.quotes ?? []).filter((q) => q.bookId !== 'engine' && Number.isFinite(q.american)).sort((x, y) => y.american - x.american);
+      const market = { a: mlQuotes('a'), b: mlQuotes('b') };
+      if (market.a.length && market.b.length) mine = priceAll(ufcPropLegs(bout, { ...r, market }), false);
+    }
     legs.push(...mine);
   }
   const notes = { strikes: NO_STATS_NOTE, takedowns: NO_STATS_NOTE, knockdowns: NO_STATS_NOTE };

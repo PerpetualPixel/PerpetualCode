@@ -109,4 +109,15 @@ test('priceLegsFromBoard prices the legs the board lists, best book first, linki
   const card = ufcCardProps([b], () => ({ odds: null, breakdown: { lean: 'b', confidence: 3 }, profiles }), { now: 9, board });
   assert.deepEqual([card.board.bouts, card.board.source, card.board.events[0].title], [1, 'bestfightodds', 'UFC Vegas 124']);
   assert.ok(card.board.priced >= 6);
+  // The feed has no line for this bout and the board does: the chances come off the board's moneyline, blended with the
+  // lean, not off the lean alone (which would call the leaned side 74% whatever its price).
+  const ml = (side) => card.legs.find((l) => l.prop === 'ml' && l.side === side);
+  const alone = legs.find((l) => l.prop === 'ml' && l.side === 'b').chance;
+  assert.equal(alone, 0.74);
+  assert.match(ml('b').why[0], /to win on the market$/);
+  const dec = (a) => (a > 0 ? a / 100 + 1 : 100 / -a + 1); const qa = dec(ml('a').quotes[0].american); const qb = dec(ml('b').quotes[0].american);
+  const market = (1 / qb) / (1 / qa + 1 / qb);
+  assert.ok(Math.abs(ml('b').chance - (0.65 * market + 0.35 * 0.74)) < 0.002, `${ml('b').chance} vs market ${market}`);
+  assert.ok(Math.abs(ml('a').chance + ml('b').chance - 1) < 0.002);
+  assert.equal(card.board.bouts, 1, 'the second pass does not count the bout twice');
 });
