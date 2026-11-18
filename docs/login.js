@@ -118,7 +118,9 @@ async function handleLogin(e) {
 
     if (!res.ok) {
       if (res.status === 403 && data.needsVerification) {
-        showMessage('login-message', 'Please verify your email first', true);
+        showMessage('login-message', 'Please verify your email first. The link is in the email we sent when you signed up.', true);
+        // The way to get another one: the link runs out after a day, and an email can go astray.
+        document.getElementById('resend-row').classList.remove('hidden');
       } else {
         showMessage('login-message', data.error, true);
       }
@@ -142,6 +144,30 @@ async function handleLogin(e) {
   } finally {
     btn.disabled = false;
     btn.textContent = originalText;
+  }
+}
+
+/** A fresh verification link for the name in the sign-in field. The answer is the same whatever that name matches. */
+async function handleResendVerification(e) {
+  const btn = e.currentTarget;
+  const identifier = document.getElementById('login-email').value.trim();
+  if (!identifier) {
+    showMessage('login-message', 'Enter your email or username first.', true);
+    return;
+  }
+  try {
+    btn.disabled = true;
+    const res = await fetch(`${window.API_BASE}/api/auth/resend-verification`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ identifier }),
+    });
+    const data = await res.json();
+    showMessage('login-message', res.ok ? data.message : data.error, !res.ok);
+  } catch (err) {
+    showMessage('login-message', 'Connection failed: ' + err.message, true);
+  } finally {
+    btn.disabled = false;
   }
 }
 
@@ -283,12 +309,13 @@ window.addEventListener('load', async () => {
       });
 
       if (res.ok) {
-        showMessage('verify-message', 'Email verified! Redirecting to login...', false);
-        setTimeout(() => {
-          toggleForms('login');
-          // Clear the token from URL
-          window.history.replaceState({}, document.title, 'login.html');
-        }, 2000);
+        // Said on the sign-in form, which is the one showing: the verify
+        // form's own message area is hidden here, so "verified" was written
+        // where nobody could read it. The token leaves the address bar at
+        // once rather than two seconds later.
+        showMessage('login-message', 'Email verified! You can sign in now.', false);
+        toggleForms('login');
+        window.history.replaceState({}, document.title, 'login.html');
       } else {
         const data = await res.json();
         showMessage('verify-message', data.error, true);
@@ -322,6 +349,12 @@ window.addEventListener('load', async () => {
 // Add logout handler (called from app.js)
 window.logout = function() {
   if (confirm('Are you sure you want to sign out?')) {
+    const token = localStorage.getItem(window.AUTH_TOKEN_KEY);
+    if (token) {
+      try {
+        fetch(`${window.API_BASE}/api/auth/logout`, { method: 'POST', headers: { Authorization: `Bearer ${token}` }, keepalive: true }).catch(() => {});
+      } catch { /* signing out never waits on this */ }
+    }
     localStorage.removeItem(window.AUTH_TOKEN_KEY);
     localStorage.removeItem(window.AUTH_USER_KEY);
     window.location.href = 'login.html';
@@ -352,4 +385,6 @@ document.addEventListener('click', (event) => {
   const nav = event.target.closest('[data-auth-nav]');
   if (nav) toggleForms(nav.dataset.authNav);
 });
+
+document.getElementById('resend-verification')?.addEventListener('click', handleResendVerification);
 

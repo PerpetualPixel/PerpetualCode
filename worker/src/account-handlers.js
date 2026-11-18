@@ -1,5 +1,6 @@
 import { hashPassword, verifyPassword, generateVerificationToken, generateJWT, normalizeEmail, maskEmail } from './auth-email.js';
-import { authenticateRequest, jwtSecret, EMAIL_LOGO_HTML } from './auth-handlers.js';
+import { authenticateRequest, jwtSecret, EMAIL_LOGO_HTML, SERVER_ERROR, passwordProblem } from './auth-handlers.js';
+import { overLimit } from './rate-limit.js';
 import { validateUsername } from './username-policy.js';
 
 function json(body, { status = 200, headers = {} } = {}) {
@@ -26,6 +27,21 @@ const authenticate = authenticateRequest;
 export const CANCEL_PENDING = `pending_email = NULL, pending_email_token = NULL, pending_email_token_expires = NULL,
        password_reset_token = NULL, password_reset_token_expires = NULL`;
 
+/**
+ * Three routes here ask for the current password (changing it, changing the
+ * email, deleting the account), and each one is a way to guess it for
+ * whoever holds a session. Wrong ones are counted per account: eight inside
+ * a quarter of an hour and all three refuse until the window turns over.
+ */
+const PASSWORD_CHECK = { limit: 8, windowSeconds: 15 * 60 };
+const passwordCheckKey = (userId) => `acctpw:${userId}`;
+const TOO_MANY_PASSWORDS = 'Too many wrong passwords. Try again in 15 minutes.';
+const passwordLocked = (env, userId) => overLimit(env, passwordCheckKey(userId), { ...PASSWORD_CHECK, peek: true });
+const passwordMissed = (env, userId) => overLimit(env, passwordCheckKey(userId), PASSWORD_CHECK);
+
+/** Email changes one account may ask for in a day (each one sends two emails, one of them to an address of the caller's choosing). */
+const EMAIL_CHANGES_PER_DAY = 5;
+
 export async function handleUpdateUsername(request, env) {
   try {
     const payload = await authenticate(request, env);
@@ -51,7 +67,7 @@ export async function handleUpdateUsername(request, env) {
     return json({ username });
   } catch (e) {
     console.error('Update username error:', e);
-    return json({ error: e.message }, { status: 500 });
+    return json({ error: SERVER_ERROR }, { status: 500 });
   }
 }
 
@@ -64,9 +80,10 @@ export async function handleUpdatePassword(request, env) {
     if (!currentPassword || !newPassword) {
       return json({ error: 'currentPassword and newPassword required' }, { status: 400 });
     }
-    if (newPassword.length < 8) {
-      return json({ error: 'newPassword must be at least 8 characters' }, { status: 400 });
-    }
+    const pwProblem = passwordProblem(newPassword, 'newPassword');
+    if (pwProblem) return json({ error: pwProblem }, { status: 400 });
+    if (typeof currentPassword !== 'string') return json({ error: 'current password is incorrect' }, { status: 401 });
+    if (await passwordLocked(env, payload.userId)) return json({ error: TOO_MANY_PASSWORDS }, { status: 429 });
 
     const user = await env.DB.prepare('SELECT password_hash, email, session_epoch FROM users WHERE id = ?')
       .bind(payload.userId)
@@ -75,6 +92,7 @@ export async function handleUpdatePassword(request, env) {
 
     const currentValid = await verifyPassword(currentPassword, user.password_hash);
     if (!currentValid) {
+      await passwordMissed(env, payload.userId);
       return json({ error: 'current password is incorrect' }, { status: 401 });
     }
 
@@ -103,7 +121,7 @@ export async function handleUpdatePassword(request, env) {
     return json({ message: 'password updated — other devices have been signed out', token: freshToken });
   } catch (e) {
     console.error('Update password error:', e);
-    return json({ error: e.message }, { status: 500 });
+    return json({ error: SERVER_ERROR }, { status: 500 });
   }
 }
 
@@ -129,7 +147,7 @@ export async function handleLogoutAll(request, env) {
     return json({ message: 'signed out everywhere' });
   } catch (e) {
     console.error('Logout-all error:', e);
-    return json({ error: e.message }, { status: 500 });
+    return json({ error: SERVER_ERROR }, { status: 500 });
   }
 }
 
@@ -202,12 +220,18 @@ export async function handleRequestEmailChange(request, env) {
       return json({ error: 'currentPassword required to change your email' }, { status: 400 });
     }
 
+    if (await passwordLocked(env, payload.userId)) return json({ error: TOO_MANY_PASSWORDS }, { status: 429 });
+
     const self = await env.DB.prepare('SELECT username, email, password_hash FROM users WHERE id = ?')
       .bind(payload.userId)
       .first();
     if (!self) return json({ error: 'user not found' }, { status: 404 });
     if (!(await verifyPassword(currentPassword, self.password_hash))) {
+      await passwordMissed(env, payload.userId);
       return json({ error: 'current password is incorrect' }, { status: 401 });
+    }
+    if (await overLimit(env, `emailchange:${payload.userId}`, { limit: EMAIL_CHANGES_PER_DAY, windowSeconds: 86400 })) {
+      return json({ error: 'That is as many email changes as an account can ask for in a day. Try again tomorrow.' }, { status: 429 });
     }
     if (newEmail === String(self.email ?? '').toLowerCase()) {
       return json({ error: 'that is already your email address' }, { status: 400 });
@@ -248,7 +272,7 @@ export async function handleRequestEmailChange(request, env) {
     return json({ message: 'Check your new email to confirm the change.' });
   } catch (e) {
     console.error('Request email change error:', e);
-    return json({ error: e.message }, { status: 500 });
+    return json({ error: SERVER_ERROR }, { status: 500 });
   }
 }
 
@@ -278,7 +302,7 @@ export async function handleConfirmEmailChange(request, env) {
     return json({ message: 'email updated', email: user.pending_email });
   } catch (e) {
     console.error('Confirm email change error:', e);
-    return json({ error: e.message }, { status: 500 });
+    return json({ error: SERVER_ERROR }, { status: 500 });
   }
 }
 
@@ -312,7 +336,7 @@ export async function handleUpdateNotifications(request, env) {
     return json({ message: 'notification preferences updated' });
   } catch (e) {
     console.error('Update notifications error:', e);
-    return json({ error: e.message }, { status: 500 });
+    return json({ error: SERVER_ERROR }, { status: 500 });
   }
 }
 
@@ -330,9 +354,10 @@ export async function handleDeleteAccount(request, env) {
     if (!payload) return json({ error: 'unauthorized' }, { status: 401 });
 
     const { currentPassword } = await request.json();
-    if (!currentPassword) {
+    if (typeof currentPassword !== 'string' || !currentPassword) {
       return json({ error: 'currentPassword required to delete your account' }, { status: 400 });
     }
+    if (await passwordLocked(env, payload.userId)) return json({ error: TOO_MANY_PASSWORDS }, { status: 429 });
 
     const user = await env.DB.prepare('SELECT password_hash FROM users WHERE id = ?')
       .bind(payload.userId)
@@ -340,7 +365,10 @@ export async function handleDeleteAccount(request, env) {
     if (!user) return json({ error: 'user not found' }, { status: 404 });
 
     const valid = await verifyPassword(currentPassword, user.password_hash);
-    if (!valid) return json({ error: 'password is incorrect' }, { status: 401 });
+    if (!valid) {
+      await passwordMissed(env, payload.userId);
+      return json({ error: 'password is incorrect' }, { status: 401 });
+    }
 
     await env.DB.prepare('DELETE FROM bug_reports WHERE user_id = ?').bind(payload.userId).run();
     await env.DB.prepare('DELETE FROM users WHERE id = ?').bind(payload.userId).run();
@@ -358,6 +386,6 @@ export async function handleDeleteAccount(request, env) {
     return json({ message: 'account deleted' });
   } catch (e) {
     console.error('Delete account error:', e);
-    return json({ error: e.message }, { status: 500 });
+    return json({ error: SERVER_ERROR }, { status: 500 });
   }
 }

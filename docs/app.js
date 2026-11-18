@@ -1192,8 +1192,23 @@ function getToken() {
   return localStorage.getItem('pp_auth_token');
 }
 
+/** The sign-in header when there is a session, for the routes that count a signed-in visitor differently. */
+function authHeader() {
+  const token = getToken();
+  return token ? { Authorization: `Bearer ${token}` } : {};
+}
+
 function signOut() {
   if (!confirm('Are you sure you want to sign out?')) return;
+  // The server is told, so the session is dead there too and not only
+  // forgotten here (keepalive: the request outlives this page). Signing
+  // out goes ahead whether or not it gets through.
+  const token = getToken();
+  if (token && CONFIG.WORKER_URL) {
+    try {
+      fetch(new URL('/api/auth/logout', CONFIG.WORKER_URL), { method: 'POST', headers: { Authorization: `Bearer ${token}` }, keepalive: true }).catch(() => {});
+    } catch { /* signing out never waits on this */ }
+  }
   localStorage.removeItem('pp_auth_token');
   localStorage.removeItem('pp_auth_user');
   window.location.href = 'login.html';
@@ -8183,7 +8198,8 @@ async function extractLegsFromImage(file) {
   const image = await fileToBase64(file);
   const response = await fetch(new URL('/tail-fade/extract', CONFIG.WORKER_URL), {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json', Accept: 'application/json' },
+    // The sign-in goes with it: the reader allows a signed-in account more reads a day than an address (it never used to be sent, so everyone was counted as a stranger).
+    headers: { 'Content-Type': 'application/json', Accept: 'application/json', ...authHeader() },
     body: JSON.stringify({ image, mediaType: file.type }),
   });
 
@@ -8228,7 +8244,7 @@ async function loadTailFadeQuota() {
   if (!CONFIG.WORKER_URL) return;
   try {
     const res = await fetch(new URL('/tail-fade/quota', CONFIG.WORKER_URL), {
-      headers: { Accept: 'application/json' },
+      headers: { Accept: 'application/json', ...authHeader() },
     });
     if (res.ok) renderTailFadeQuota(await res.json());
   } catch { /* the allowance is a courtesy, never a blocker */ }
@@ -12338,7 +12354,7 @@ function renderSlipQuota(q) {
 }
 async function loadSlipQuota() {
   if (!CONFIG.WORKER_URL || !el.slipQuota) return;
-  try { const res = await fetch(new URL('/tail-fade/quota', CONFIG.WORKER_URL), { headers: { Accept: 'application/json' } }); if (res.ok) renderSlipQuota(await res.json()); } catch { /* the allowance is a courtesy */ }
+  try { const res = await fetch(new URL('/tail-fade/quota', CONFIG.WORKER_URL), { headers: { Accept: 'application/json', ...authHeader() } }); if (res.ok) renderSlipQuota(await res.json()); } catch { /* the allowance is a courtesy */ }
 }
 const slipSay = (text) => { if (el.slipStatus) el.slipStatus.textContent = text; };
 
@@ -12353,7 +12369,7 @@ async function slipHandleImage(file) {
   showLoading(el.slipStatus, 'Reading the slip…');
   try {
     const image = await fileToBase64(file);
-    const res = await fetch(new URL('/tail-fade/extract', CONFIG.WORKER_URL), { method: 'POST', headers: { 'Content-Type': 'application/json', Accept: 'application/json' }, body: JSON.stringify({ image, mediaType: file.type }) });
+    const res = await fetch(new URL('/tail-fade/extract', CONFIG.WORKER_URL), { method: 'POST', headers: { 'Content-Type': 'application/json', Accept: 'application/json', ...authHeader() }, body: JSON.stringify({ image, mediaType: file.type }) });
     let body = null; try { body = await res.json(); } catch { /* below */ }
     if (body?.quota) renderSlipQuota(body.quota);
     if (!res.ok) throw new Error(body?.error || `The slip reader answered ${res.status}.`);

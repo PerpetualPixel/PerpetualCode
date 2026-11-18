@@ -48,20 +48,32 @@ export const clientBucket = (request) => ipBucket(request.headers.get('CF-Connec
  * Windows are fixed, not sliding: every `windowSeconds` the count starts
  * again from nothing.
  */
-export async function overLimit(env, key, { limit = 10, windowSeconds = 60, peek = false } = {}) {
+export async function overLimit(env, key, opts = {}) {
+  const state = await limitState(env, key, opts);
+  return state ? !state.allowed : false;
+}
+
+/**
+ * The same count, with the number: `{ allowed, count }`, or null when the
+ * limiter could not be reached (the caller decides what failing open means
+ * for it). `window` names the window outright (an ET calendar date, for a
+ * count that turns over at midnight ET rather than on the clock's own
+ * multiples).
+ */
+export async function limitState(env, key, { limit = 10, windowSeconds = 60, peek = false, window = null } = {}) {
   try {
     const id = env.QUOTA_MANAGER.idFromName(`ratelimit:${key}`);
     const res = await env.QUOTA_MANAGER.get(id).fetch(
       new Request('http://quota/ratelimit', {
         method: 'POST',
-        body: JSON.stringify({ key, limit, windowSeconds, peek }),
+        body: JSON.stringify({ key, limit, windowSeconds, peek, window }),
       }),
     );
-    const { allowed } = await res.json();
-    return !allowed;
+    const { allowed, count } = await res.json();
+    return { allowed: Boolean(allowed), count: Number(count) || 0 };
   } catch (e) {
     console.error('Rate limiter error (failing open):', e);
-    return false;
+    return null;
   }
 }
 

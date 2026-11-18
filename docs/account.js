@@ -338,6 +338,11 @@ document.getElementById('signout-all-btn').addEventListener('click', async () =>
 
 document.getElementById('signout-btn').addEventListener('click', () => {
   if (!confirm('Are you sure you want to sign out?')) return;
+  // The server is told, so this session is dead there too (keepalive: the
+  // request outlives the page). Signing out goes ahead either way.
+  try {
+    fetch(`${window.API_BASE}/api/auth/logout`, { method: 'POST', headers: authHeaders(), keepalive: true }).catch(() => {});
+  } catch { /* signing out never waits on this */ }
   localStorage.removeItem(window.AUTH_TOKEN_KEY);
   localStorage.removeItem(window.AUTH_USER_KEY);
   window.location.href = 'login.html';

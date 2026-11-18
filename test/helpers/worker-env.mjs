@@ -36,7 +36,12 @@ export function makeQuotaManager() {
       if (!instances.has(name)) {
         const store = new Map();
         const state = { storage: { async get(k) { return store.get(k); }, async put(k, v) { store.set(k, v); }, async delete(k) { store.delete(k); } } };
-        instances.set(name, new QuotaManager(state, {}));
+        const object = new QuotaManager(state, {});
+        // A Durable Object takes one request's storage work at a time (its
+        // input gate): a read followed by a write is never interleaved with
+        // another request's. Modelled here by running each fetch after the last.
+        let queue = Promise.resolve();
+        instances.set(name, { fetch: (request) => { const run = queue.then(() => object.fetch(request)); queue = run.catch(() => {}); return run; } });
       }
       return instances.get(name);
     },
