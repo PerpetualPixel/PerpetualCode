@@ -43,6 +43,11 @@ jobs:
         with:
           node-version: '22'
       - name: Run the tests
+        # The suite never reaches the network (test/helpers/no-network.mjs):
+        # a few tests count on outbound calls failing, and a runner can reach
+        # hosts the machines they were written on cannot.
+        env:
+          NODE_OPTIONS: --import=./test/helpers/no-network.mjs
         run: node --test test/*.test.mjs
 
   deploy:
