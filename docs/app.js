@@ -11455,6 +11455,33 @@ function openUfcBout(boutId) {
   Promise.all([b.a?.id ? ufcFighter(b.a.id) : null, b.b?.id ? ufcFighter(b.b.id) : null]).then(() => { if (trendsState.sheet?.type === 'ufcBout' && trendsState.sheet.boutId === boutId) renderTrendsSheet(); });
 }
 
+/**
+ * The Sharp analysis that ends a fight's write-up (worker/src/ufc-sharp.js):
+ * the stat and prop angles beyond the moneyline, each with the numbers it
+ * rests on and FanDuel's price where it lists the bet; or, when nothing
+ * stands out, saying so and naming an alternate to the main pick.
+ */
+function renderUfcSharp(sharp) {
+  if (!sharp) return '';
+  const plays = sharp.plays ?? [];
+  const grade = (n) => (n >= 80 ? ['Strong', 'is-strong'] : n >= 70 ? ['Solid', 'is-solid'] : ['Lean', 'is-lean']);
+  const price = (p) => (p.quote && Number.isFinite(p.quote.american)
+    ? `<a class="ufc-sharp-price" href="${escUrl(p.quote.link)}" target="_blank" rel="noopener">${esc(p.quote.book)} ${esc(formatAmerican(p.quote.american))} ↗</a>`
+    : '<span class="ufc-sharp-price is-none">look for it at your book</span>');
+  const body = plays.length
+    ? `<ol class="ufc-sharp-plays">${plays.map((p) => { const [word, cls] = grade(p.strength); return `<li>
+        <p class="ufc-sharp-sel"><span class="ufc-sharp-grade ${cls}">${word}</span> <strong>${esc(p.selection)}</strong> ${price(p)}</p>
+        <ul>${(p.why ?? []).map((x) => `<li>${esc(x)}</li>`).join('')}</ul>
+        ${p.note ? `<p class="row-sub">${esc(p.note)}</p>` : ''}
+      </li>`; }).join('')}</ol>`
+    : `<p><strong>Nothing stands out on this fight beyond the main pick.</strong> ${sharp.near ? `The nearest thing is ${esc(sharp.near.selection)} (${esc(sharp.near.why)}), and it falls short of an edge worth naming.` : 'Neither the stat lines nor the two records point at a prop.'}</p>
+       ${sharp.alternate ? `<p class="ufc-sharp-alt"><strong>Alternate play:</strong> ${esc(sharp.alternate.selection)}. ${esc(sharp.alternate.why)}</p>` : ''}`;
+  const missing = (sharp.missing ?? []).length
+    ? `<p class="row-sub">No UFC stat line on file for ${esc(sharp.missing.join(' or '))}, so the strikes and takedown reads could not be made for this fight; what is here comes from the two records.</p>`
+    : '';
+  return `<h4 class="ufc-h4">Sharp analysis <small>beyond the moneyline</small></h4><div class="ufc-sharp ${plays.length ? '' : 'is-none'}">${body}${missing}</div>`;
+}
+
 function renderUfcBoutSheet(sheet) {
   const ev = ufcState.event;
   const b = ev?.bouts.find((x) => x.id === sheet.boutId);
@@ -11500,6 +11527,7 @@ function renderUfcBoutSheet(sheet) {
       ${(bd.reasons ?? []).length ? `<ul>${bd.reasons.map((x) => `<li>${esc(x)}</li>`).join('')}</ul>` : ''}
       <p class="row-sub">${bd.straight ? `Straight it likes: ${bd.straight.market === 'totals' ? `${bd.straight.side === 'under' ? 'Under' : 'Over'} ${esc(String(bd.straight.point ?? ''))} rounds` : `${esc((bd.straight.fighter === 'b' ? b.b : b.a)?.name ?? '')} to win`}. ` : ''}${bd.parlayPiece ? 'A sound parlay piece.' : ''}${bd.model ? '' : ' The model read was unavailable.'}</p>
     </div>` : '<p class="row-sub">No odds posted for this bout yet; the read comes with them.</p>'}
+    ${renderUfcSharp(bd?.sharp)}
     ${bd?.engine ? `<h4 class="ufc-h4">Capper consensus <small>${esc(bd.engine.moneyline?.source ?? bd.engine.methods?.[0]?.source ?? 'the MMA Engine')}</small></h4><div class="ufc-h2h-engine">
       ${bd.engine.moneyline ? `<p><strong>${esc(bd.engine.moneyline.selection)}</strong> · ${esc(String(Math.round(bd.engine.moneyline.consensusPct)))}% ${bd.engine.moneyline.source ? `across ${esc(String(bd.engine.moneyline.pickCount))} channels and the best predictors` : `of ${esc(String(bd.engine.moneyline.pickCount))} picks`} · strength ${esc(String(bd.engine.moneyline.strength))} of 10 · <span class="ufc-fav-tier is-${esc(bd.engine.moneyline.tier)}">${esc(bd.engine.moneyline.tier)}</span>${bd.engine.moneyline.suggestedUnits ? ` · ${esc(String(bd.engine.moneyline.suggestedUnits))}u` : ''}</p>` : '<p class="row-sub">No moneyline consensus on this bout.</p>'}
       ${bd.engine.methods?.length ? `<ul>${bd.engine.methods.map((m) => `<li>${esc(m.selection)} · ${esc(String(Math.round(m.consensusPct)))}% · ${esc(m.tier)}</li>`).join('')}</ul>` : ''}
