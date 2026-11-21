@@ -21,7 +21,7 @@
      only page that reads the feed; the other pages' connect-src stays the
      worker alone. -->
 <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src 'self' https://fonts.gstatic.com; img-src 'self' data: https:; connect-src 'self' https://pixel-pick-odds.mgbouldering.workers.dev https://perpetualpixel.github.io; object-src 'none'; base-uri 'self'; form-action 'self'">
-<script src="frame-guard.js?v=1.350"></script>
+<script src="frame-guard.js?v=1.351"></script>
 <title>Perpetual Picks - App</title>
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <meta name="theme-color" content="#05050A">
@@ -37,9 +37,9 @@
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Syne:wght@600;700;800&family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
-<link rel="stylesheet" href="styles.css?v=1.350">
+<link rel="stylesheet" href="styles.css?v=1.351">
 <!-- Before first paint: a desktop reader who chose "Fit screen" gets the wide shell without a flash of the narrow one. -->
-<script src="wide.js?v=1.350"></script>
+<script src="wide.js?v=1.351"></script>
 </head>
 <body>
 
@@ -482,7 +482,8 @@
       <h2 class="parlay-h">Configure by</h2>
       <label class="parlay-field"><span>Sportsbook</span><select id="parlayBook"></select></label>
       <label class="parlay-field"><span>Parlay legs</span><select id="parlayLegs"></select></label>
-      <div class="parlay-field" data-ufc-hide><span>Hits in last 20 <strong id="parlayL20Label">Any</strong></span><input id="parlayL20" type="range" min="0" max="20" step="1" value="0" aria-label="Hits in the last 20 games, at least"><div class="parlay-season"><button type="button" id="parlaySeason" class="rate-chip parlay-season-chip" data-parlay-season aria-pressed="false">2026/2027</button><small id="parlaySeasonNote">Off: the last 20 games, last season included</small></div></div>
+      <div class="parlay-field" data-ufc-hide><span>Hits in last 5 <strong id="parlayL5Label">Any</strong></span><input id="parlayL5" type="range" min="0" max="5" step="1" value="0" aria-label="Hits in the last 5 games, at least"></div>
+      <div class="parlay-field" data-ufc-hide><span>Hits in last 10 <strong id="parlayL10Label">Any</strong></span><input id="parlayL10" type="range" min="0" max="10" step="1" value="0" aria-label="Hits in the last 10 games, at least"><div class="parlay-season"><button type="button" id="parlayL20" class="rate-chip parlay-season-chip" data-parlay-l20 aria-pressed="false">Last 20</button><button type="button" id="parlaySeason" class="rate-chip parlay-season-chip" data-parlay-season aria-pressed="false">2026/2027</button><small id="parlaySeasonNote"></small></div></div>
       <div class="parlay-field" data-ufc-hide><span>Vs. opponent hit rate <strong id="parlayH2HLabel">Any</strong></span><input id="parlayH2H" type="range" min="0" max="100" step="10" value="0" aria-label="Head to head hit rate at least"></div>
       <div class="parlay-field"><span>Score</span><div id="parlayScore" class="parlay-score"></div></div>
       <div class="parlay-field" data-ufc-hide><span>Prop type</span><div id="parlayStats" class="rate-chips parlay-chips-wrap"></div></div>
@@ -1139,6 +1140,6 @@
   </div>
 </aside>
 
-<script type="module" src="app.js?v=1.350"></script>
+<script type="module" src="app.js?v=1.351"></script>
 </body>
 </html>
