@@ -56,7 +56,7 @@ import {
 } from './qualitative.js';
 import { parseLeg as parseSlipLeg, parseSlipText, parseAmerican as parseSlipAmerican, checkSlip, CATEGORY_LABEL as SLIP_CATEGORY_LABEL, TICKET_TYPES as SLIP_TICKET_TYPES } from './slip-check.js';
 import { VIABILITY_LABEL } from './slip-viability.js';
-import { parlaySnapshot, applyParlaySnapshot, cleanParlayStore, withParlaySlot, PARLAY_SLOTS } from './parlay-presets.js';
+import { parlaySnapshot, applyParlaySnapshot, cleanParlayStore, withParlaySlot, PARLAY_SLOTS, passesHitBars, l20Floor, hitBarText } from './parlay-presets.js';
 import { playbookText, playbookKey, playbookUserId, discordChannelUrl, cleanPlaybookLink, PLAYBOOK_SITE } from './playbook.js';
 import { hitFlags as slipHitFlags } from './trends.js';
 import {
@@ -907,8 +907,11 @@ const el = {
   parlayPresets: document.getElementById('parlayPresets'),
   parlayBook: document.getElementById('parlayBook'),
   parlayLegs: document.getElementById('parlayLegs'),
+  parlayL5: document.getElementById('parlayL5'),
+  parlayL5Label: document.getElementById('parlayL5Label'),
+  parlayL10: document.getElementById('parlayL10'),
+  parlayL10Label: document.getElementById('parlayL10Label'),
   parlayL20: document.getElementById('parlayL20'),
-  parlayL20Label: document.getElementById('parlayL20Label'),
   parlaySeason: document.getElementById('parlaySeason'),
   parlaySeasonNote: document.getElementById('parlaySeasonNote'),
   parlayH2H: document.getElementById('parlayH2H'),
@@ -10525,7 +10528,7 @@ el.playersForm?.addEventListener('submit', (event) => { event.preventDefault(); 
 const parlayState = {
   // The leagues toggled on; a ticket can mix legs from all of them.
   sports: new Set(['basketball_nba']), rows: {}, loading: false,
-  book: (() => { try { const v = JSON.parse(localStorage.getItem('pixelpick.myBooks.v1') ?? 'null'); const first = Array.isArray(v) ? v.find((b) => ['draftkings', 'fanduel', 'caesars', 'fanatics', 'betmgm', 'prizepicks', 'hardrock', 'bet365', 'betrivers'].includes(b)) : null; return first ?? 'draftkings'; } catch { return 'draftkings'; } })(), legs: 4, minL20: 0, season: false, minH2H: 0, minScore: 2, stats: new Set(), odds: [-800, 800], games: new Set(), side: 'both', team: '', starters: false,
+  book: (() => { try { const v = JSON.parse(localStorage.getItem('pixelpick.myBooks.v1') ?? 'null'); const first = Array.isArray(v) ? v.find((b) => ['draftkings', 'fanduel', 'caesars', 'fanatics', 'betmgm', 'prizepicks', 'hardrock', 'bet365', 'betrivers'].includes(b)) : null; return first ?? 'draftkings'; } catch { return 'draftkings'; } })(), legs: 4, minL5: 0, minL10: 0, l20: false, season: false, minH2H: 0, minScore: 2, stats: new Set(), odds: [-800, 800], games: new Set(), side: 'both', team: '', starters: false,
   // UFC only: the prop types the pieces come from (none chosen = every type).
   ufcProps: new Set(),
   built: null, locked: new Set(), seen: new Set(), breakdowns: {}, open: null, amount: 10, note: '', sprinkle: false,
@@ -10693,8 +10696,6 @@ async function loadParlay() {
 }
 
 /** The legs the configuration allows, best first: one per player, at the chosen book, inside the odds range, over the hit rate floors and the score. */
-/** The bar's label: "Any", or the floor as hits of 20 with its rate. */
-const parlayL20Text = (n) => (n ? `${n}+ of 20 (${Math.round((n / 20) * 100)}%)` : 'Any');
 /** The season under way across the parlay rows (the newest season they carry), else the calendar's. */
 function parlaySeasonYear() {
   let y = 0;
@@ -10702,17 +10703,24 @@ function parlaySeasonYear() {
   return y || defaultSeasons()[0];
 }
 /**
- * The window the "hits in last 20" bar judges a row on: the stored last
- * 20 (which reaches into last season early in the year), or, with the
- * season toggle on, only the season under way: its last 20 games, fewer
- * when the season is young, and the bar's floor then reads as a rate
- * (14+ of 20 is 70%, so 6 of 8 this season passes).
+ * The window a hit bar judges a row on (docs/parlay-presets.js
+ * passesHitBars): the stored last 5, 10 or 20 (which reach into last
+ * season early in the year), or, with the season toggle on, only the
+ * season under way: its last `n` games, fewer when the season is young,
+ * and the bar's floor then reads as a rate (4+ of 5 is 80%, so 3 of 3
+ * this season passes).
  */
-function parlayWindow(row, seasonOnly) {
-  if (!seasonOnly) return { hits: row.periods?.l20?.hits ?? 0, games: row.periods?.l20?.games ?? 0 };
+function parlayWindow(row, n, seasonOnly) {
+  if (!seasonOnly) { const p = row.periods?.[`l${n}`]; return { hits: p?.hits ?? 0, games: p?.games ?? 0 }; }
   const y = parlaySeasonYear();
-  const flags = (row.series ?? []).filter((g) => Number(g.season) === y).slice(0, 20).map((g) => g.hit).filter((f) => f !== null && f !== undefined);
+  const flags = (row.series ?? []).filter((g) => Number(g.season) === y).slice(0, n).map((g) => g.hit).filter((f) => f !== null && f !== undefined);
   return { hits: flags.filter(Boolean).length, games: flags.length };
+}
+/** What the two buttons under the bars are doing, in a line: the Last 20 floor when it is on, and which games count. */
+function parlayBarsNote(s, sy) {
+  const need = Math.ceil(l20Floor(s) * 20 - 1e-9);
+  const l20 = s.l20 ? `Last 20 on: ${need}+ of the last 20 too (${Math.round(l20Floor(s) * 100)}%)` : 'Last 20 off';
+  return `${l20} · ${s.season ? `only ${sy}/${sy + 1} games count` : 'last season\'s games count too'}`;
 }
 function parlayCandidates() {
   const now = Date.now();
@@ -10737,7 +10745,7 @@ function parlayCandidates() {
     if (!q) continue;
     if (!q.unpriced && (q.american < s.odds[0] || q.american > s.odds[1])) continue;
     if (!r.ufc && !r.tennis) {
-      if (s.minL20 > 0) { const w = parlayWindow(r, s.season); if (!(w.games > 0 && w.hits / w.games >= s.minL20 / 20 - 1e-9)) continue; }
+      if (!passesHitBars(s, (n) => parlayWindow(r, n, s.season))) continue;
       if (s.minH2H > 0 && !((r.periods?.h2h?.games ?? 0) > 0 && rate(r, 'h2h') >= s.minH2H - 1e-9)) continue;
     }
     const score = r.ufc ? r.ufc.score : r.tennis ? r.tennis.score : legScore(r);
@@ -11057,10 +11065,12 @@ function renderParlay() {
   if (s.legs > maxLegs) s.legs = maxLegs;
   el.parlayLegs.innerHTML = Array.from({ length: maxLegs - 1 }, (_, i) => i + 2).map((n) => `<option value="${n}" ${s.legs === n ? 'selected' : ''}>${n}${n === maxLegs ? ` (${esc(parlayBookName(s.book))} max)` : ''}</option>`).join('');
   el.parlayLegs.value = String(s.legs);
-  el.parlayL20.value = String(s.minL20); el.parlayL20Label.textContent = parlayL20Text(s.minL20);
+  el.parlayL5.value = String(s.minL5); el.parlayL5Label.textContent = hitBarText(s.minL5, 5);
+  el.parlayL10.value = String(s.minL10); el.parlayL10Label.textContent = hitBarText(s.minL10, 10);
+  el.parlayL20.classList.toggle('is-active', s.l20); el.parlayL20.setAttribute('aria-pressed', String(s.l20));
   const sy = parlaySeasonYear();
   el.parlaySeason.textContent = `${sy}/${sy + 1}`; el.parlaySeason.classList.toggle('is-active', s.season); el.parlaySeason.setAttribute('aria-pressed', String(s.season));
-  el.parlaySeasonNote.textContent = s.season ? `On: only ${sy}/${sy + 1} games count` : 'Off: the last 20 games, last season included';
+  el.parlaySeasonNote.textContent = parlayBarsNote(s, sy);
   el.parlayH2H.value = String(Math.round(s.minH2H * 100)); el.parlayH2HLabel.textContent = s.minH2H ? `${Math.round(s.minH2H * 100)}%+` : 'Any';
   el.parlayScore.innerHTML = [1, 2, 3, 4, 5].map((n) => `<button type="button" class="parlay-star ${n <= s.minScore ? 'is-on' : ''}" data-parlay-score="${n}" aria-label="${n} star${n === 1 ? '' : 's'} and up" aria-pressed="${n === s.minScore}">★</button>`).join('') + `<small>${esc(String(s.minScore))}+ stars</small>`;
   const statsHere = new Map();
@@ -11181,6 +11191,7 @@ el.parlayView?.addEventListener('click', (event) => {
   const star = t.closest('[data-parlay-score]');
   if (star) { s.minScore = Number(star.dataset.parlayScore); renderParlay(); return; }
   if (t.closest('[data-parlay-season]')) { s.season = !s.season; renderParlay(); return; }
+  if (t.closest('[data-parlay-l20]')) { s.l20 = !s.l20; renderParlay(); return; }
   if (t.closest('[data-parlay-starters]')) { s.starters = !s.starters; renderParlay(); return; }
   const stat = t.closest('[data-parlay-stat]');
   if (stat) { const k = stat.dataset.parlayStat; if (s.stats.has(k)) s.stats.delete(k); else s.stats.add(k); renderParlay(); return; }
@@ -11190,7 +11201,7 @@ el.parlayView?.addEventListener('click', (event) => {
   if (game) { const k = game.dataset.parlayGame; if (s.games.has(k)) s.games.delete(k); else s.games.add(k); renderParlay(); return; }
   if (t.closest('[data-parlay-build]')) { s.sprinkle = false; buildParlay({ regenerate: Boolean(s.built) }); return; }
   if (t.closest('[data-parlay-sprinkle]')) { s.sprinkle = !s.sprinkle; renderParlay(); if (s.sprinkle && window.innerWidth <= 820) el.parlayResult?.scrollIntoView({ behavior: 'smooth', block: 'start' }); return; }
-  if (t.closest('[data-parlay-reset]')) { Object.assign(s, { legs: 4, minL20: 0, season: false, minH2H: 0, minScore: 2, stats: new Set(), odds: [-800, 800], games: new Set(), side: 'both', team: '', starters: false, ufcProps: new Set(), built: null, locked: new Set(), seen: new Set(), open: null, note: '' }); renderParlay(); return; }
+  if (t.closest('[data-parlay-reset]')) { Object.assign(s, { legs: 4, minL5: 0, minL10: 0, l20: false, season: false, minH2H: 0, minScore: 2, stats: new Set(), odds: [-800, 800], games: new Set(), side: 'both', team: '', starters: false, ufcProps: new Set(), built: null, locked: new Set(), seen: new Set(), open: null, note: '' }); renderParlay(); return; }
   const lock = t.closest('[data-parlay-lock]');
   if (lock) { const id = lock.dataset.parlayLock; if (s.locked.has(id)) s.locked.delete(id); else s.locked.add(id); renderParlay(); return; }
   const view = t.closest('[data-parlay-view]');
@@ -11203,7 +11214,8 @@ el.parlayView?.addEventListener('click', (event) => {
 });
 el.parlayView?.addEventListener('input', (event) => {
   const s = parlayState; const t = event.target;
-  if (t === el.parlayL20) { s.minL20 = Math.max(0, Math.min(20, Math.round(Number(t.value) || 0))); el.parlayL20Label.textContent = parlayL20Text(s.minL20); }
+  if (t === el.parlayL5) { s.minL5 = Math.max(0, Math.min(5, Math.round(Number(t.value) || 0))); el.parlayL5Label.textContent = hitBarText(s.minL5, 5); }
+  else if (t === el.parlayL10) { s.minL10 = Math.max(0, Math.min(10, Math.round(Number(t.value) || 0))); el.parlayL10Label.textContent = hitBarText(s.minL10, 10); el.parlaySeasonNote.textContent = parlayBarsNote(s, parlaySeasonYear()); }
   else if (t === el.parlayH2H) { s.minH2H = Math.round(Number(t.value) / 10) / 10; el.parlayH2HLabel.textContent = s.minH2H ? `${Math.round(s.minH2H * 100)}%+` : 'Any'; }
   else if (t.id === 'parlayAmount') { s.amount = Math.max(0, Number(t.value) || 0); const strong = el.parlayResult.querySelector('.parlay-payout-value strong'); const price = parlayPriceOf(s.built ?? []); if (strong) strong.textContent = price ? `$${(s.amount * price.decimal).toFixed(2)}` : '—'; }
 });
