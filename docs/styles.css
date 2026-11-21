@@ -7345,6 +7345,8 @@ a.trend-price:hover { background: rgba(255, 255, 255, 0.06); }
 .live-bar.is-cleared .live-bar-now { background: #fff; color: var(--success); border-color: var(--success); }
 .live-books-wrap { margin-top: 12px; }
 .live-books-wrap summary { cursor: pointer; color: var(--muted); font-size: 0.82rem; font-weight: 700; }
+.live-box-wrap summary small { font-weight: 600; margin-left: 6px; opacity: 0.8; }
+.live-box-wrap[open] summary { margin-bottom: 8px; }
 
 /* Condensed Live cards: tighter rows, no dead space. */
 .live-game { padding: 10px 12px; }
