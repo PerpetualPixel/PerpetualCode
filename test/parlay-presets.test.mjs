@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { cleanParlaySettings, parlaySnapshot, applyParlaySnapshot, parlaySlotName, cleanParlayStore, withParlaySlot, PARLAY_SLOTS, passesHitBars, l20Floor, hitBarText } from '../docs/parlay-presets.js';
+import { cleanParlaySettings, parlaySnapshot, applyParlaySnapshot, parlaySlotName, cleanParlayStore, withParlaySlot, PARLAY_SLOTS, passesHitBars, l20Floor, hitBarText, nextMinScore } from '../docs/parlay-presets.js';
 
 test('a snapshot keeps the settings a user means and drops the day\'s choices; junk falls back to the defaults', () => {
   const state = { sports: new Set(['basketball_nba', 'americanfootball_nfl']), book: 'fanduel', legs: 6, minL5: 4, minL10: 7, l20: true, season: true, minH2H: 0.7, minScore: 4, stats: new Set(['points', 'anyTd']), odds: [-400, 250], games: new Set(['g1']), side: 'over', team: 'BOS', starters: true, ufcProps: new Set(), amount: 25, built: [{}], rows: { x: [] } };
@@ -65,4 +65,15 @@ test('passesHitBars: each bar is a floor on its own window, judged as a rate; th
   // A young season: the floor is a rate, so 4+ of 5 passes at 3 of 3 and fails at 2 of 3; no games at all never passes a set bar.
   assert.deepEqual([passesHitBars(bars(4, 0, false), windows(w(3, 3))), passesHitBars(bars(4, 0, false), windows(w(2, 3))), passesHitBars(bars(1, 0, false), windows(w(0, 0)))], [true, false, false]);
   assert.deepEqual([hitBarText(0, 5), hitBarText(4, 5), hitBarText(7, 10)], ['Any', '4+ of 5 (80%)', '7+ of 10 (70%)']);
+});
+
+test('the score stars take halves: a second tap on a star adds the half, a third takes it off, and a saved half is kept', () => {
+  assert.equal(nextMinScore(2, 4), 4, 'a tap on another star sets that many');
+  assert.equal(nextMinScore(4, 4), 4.5, 'a second tap on the same star adds the half');
+  assert.equal(nextMinScore(4.5, 4), 4, 'a third takes it off');
+  assert.equal(nextMinScore(4.5, 5), 5);
+  assert.equal(nextMinScore(5, 5), 5, 'five is the top: no 5.5');
+  assert.deepEqual([nextMinScore(1, 1), nextMinScore(1.5, 2), nextMinScore(3.5, 3), nextMinScore(3, '3'), nextMinScore(2, 9), nextMinScore(2, 'x')], [1.5, 2, 3, 3.5, 5, 1]);
+  // Saved settings keep a half and round anything else to the nearest one.
+  assert.deepEqual([4.5, 4, 4.3, 4.74, 0, 9, undefined].map((v) => cleanParlaySettings({ minScore: v }).minScore), [4.5, 4, 4.5, 4.5, 1, 5, 2]);
 });

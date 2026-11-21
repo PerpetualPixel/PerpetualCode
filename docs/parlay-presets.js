@@ -44,7 +44,7 @@ export function cleanParlaySettings(value) {
     ...hitBars(value),
     season: value.season === true,
     minH2H: Math.round(num(value.minH2H, 0, 1, 0) * 10) / 10,
-    minScore: Math.round(num(value.minScore, 1, 5, 2)),
+    minScore: Math.round(num(value.minScore, 1, 5, 2) * 2) / 2,
     stats: list(value.stats, STAT_RE, 40),
     odds,
     side: ['both', 'over', 'under'].includes(value.side) ? value.side : 'both',
@@ -79,6 +79,19 @@ export function passesHitBars(s, windowOf) {
   if (s.minL10 > 0 && !clears(10, s.minL10 / 10)) return false;
   if (s.l20 && !clears(20, l20Floor(s))) return false;
   return true;
+}
+
+/**
+ * The score floor after a tap on star `n` (2026-11-21: "the stars should
+ * have half stars too, so if I click 4 stars twice it will go to 4.5
+ * stars"). A tap on another star sets that many; a second tap on the same
+ * star adds the half; a third takes it off again. Five is the top: there
+ * is no 5.5.
+ */
+export function nextMinScore(current, n) {
+  const star = Math.min(5, Math.max(1, Math.round(Number(n) || 1)));
+  if (Number(current) === star && star < 5) return star + 0.5;
+  return star;
 }
 
 /** The builder's state as a snapshot. */
