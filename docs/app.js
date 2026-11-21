@@ -11821,7 +11821,7 @@ el.trendsSheet?.addEventListener('click', (event) => {
 
 
 /* ================================================================ */
-/* Live: the watched games, their reads, the players, who to watch and the slips (worker/src/live-board.js) */
+/* Live: the watched games and, on a tap, the bets on each: the slips and the game lines (worker/src/live-board.js) */
 /* ================================================================ */
 
 const LIVE_BOOKS_KEY = 'pixelpick.liveBooks.v1';
@@ -12001,22 +12001,6 @@ function liveGameReads(g) {
     ${hidden ? `<p class="row-sub">${hidden} more at books you have not chosen. <button type="button" class="link-button" data-live-showall="1">Show all books</button></p>` : ''}`;
 }
 
-/** The line a watch row shows: at the user's books when chosen (the best of them), else the best anywhere. */
-function liveWatchLine(w) {
-  if (!liveState.books.size || liveState.showAll) return { line: w.line, mine: false, none: !w.line };
-  const at = (w.lines ?? []).filter((l) => liveState.books.has(l.bookId)).sort((a, b) => b.point - a.point || b.price - a.price);
-  return { line: at[0] ?? null, mine: true, none: !at.length };
-}
-function liveWatchRow(w, elapsed = null) {
-  const { line, mine, none } = liveWatchLine(w);
-  // The pace against the line shown: what he has over what he should have by now to land on it.
-  const pace = line ? livePace(w.current, line.point, elapsed) : null;
-  return `<div class="live-watch">
-    <div class="live-watch-head"><strong>${esc(w.player)}</strong> <small>${esc(w.team ?? '')}</small><span class="live-watch-stat">${esc(w.label)}</span></div>
-    <div class="live-watch-nums"><span><small>now</small><b>${esc(String(w.current))}</b></span><span class="live-arrow">→</span><span><small>projected</small><b>${esc(String(w.projected))}</b></span>${pace ? `<span class="live-watch-pace is-${pace.level}" title="${esc(`On pace for ${line.point} he would have ${pace.target} by now`)}"><small>pace</small><b>${esc(String(pace.pct))}%</b></span>` : ''}${line ? `<span class="live-watch-line">${bookBadge(line.bookId, line.book)} ${esc(String(line.point))}+ ${esc(formatAmerican(line.price))}${line.link ? ` <a href="${escUrl(line.link)}" target="_blank" rel="noopener">add ↗</a>` : ''}</span>` : `<span class="live-watch-line is-none">${none && mine ? 'no line clears at your books yet' : 'no line clears yet'}</span>`}</div>
-    ${w.why ? `<p class="row-sub">${esc(w.why)}</p>` : ''}
-  </div>`;
-}
 
 function liveSlip(s, i, elapsed = null) {
   const all = combinedSlipLink(s.bookId, s.legs.map((l) => l.link));
@@ -12066,13 +12050,12 @@ function renderLiveGame(g) {
       <span class="live-read ${g.probe && Date.now() - g.probe.at < 10 * 60e3 ? 'is-fresh' : ''}">Odds ${g.probe ? `${esc(ago(g.probe.at))} · ${books.length} book${books.length === 1 ? '' : 's'} posting` : 'not read yet'}</span>
       ${g.blowout?.blowout ? `<span class="live-tag is-blowout">${esc(g.blowout.leader)} up ${esc(String(g.blowout.margin))} with ${esc(String(g.blowout.minutesLeft))} min left: no live bets, the starters may sit</span>` : ''}${script}${weather}
     </div>
-    ${g.players?.length ? `<p class="live-sub">Box score <small>as of ${t ? esc(liveTimeFmt.format(new Date(t.at))) : ''}</small></p>${livePlayersTable(g)}` : live ? '<p class="row-sub">No box lines yet.</p>' : ''}
-    ${liveGameReads(g)}
-    ${g.watch?.length ? `<p class="live-sub">Who to watch <small>projected to the whistle from pace${nhl ? ' and the score' : ', the score and the weather'}</small></p><div class="live-watch-list">${g.watch.map((w) => liveWatchRow(w, g.elapsed)).join('')}</div>` : ''}
-    ${slips.length ? `<p class="live-sub">Slips <small>built ${esc(liveBuiltWhen(g.slips))}${g.slips.builtAt ? `, ${esc(liveTimeFmt.format(new Date(g.slips.builtAt)))}` : ''}; a slip stays as posted while it stands, and is replaced when a leg stops clearing or a player gets into foul trouble. Pace % is what he has over what he should have by now to land on the number</small></p>${slips.map((x, i) => liveSlip(x, i, g.elapsed)).join('')}${hidden ? `<p class="row-sub">${hidden} more at books you have not chosen. <button type="button" class="link-button" data-live-showall="1">Show all books</button></p>` : ''}<p class="row-sub">Shown, not tracked: a first cut that works the ladders against the box score and the pace; the model's read and the ledger come next.</p>`
+    ${slips.length ? `<p class="live-sub">Slips <small>built ${esc(liveBuiltWhen(g.slips))}${g.slips.builtAt ? `, ${esc(liveTimeFmt.format(new Date(g.slips.builtAt)))}` : ''}</small></p>${slips.map((x, i) => liveSlip(x, i, g.elapsed)).join('')}${hidden ? `<p class="row-sub">${hidden} more at books you have not chosen. <button type="button" class="link-button" data-live-showall="1">Show all books</button></p>` : ''}<p class="row-sub">A slip stays as posted while it stands, and is replaced when a leg stops clearing or a player gets into foul trouble. Pace % is what the player has over what it takes by now to land on the number. Shown, not tracked.</p>`
       : hidden ? `<p class="row-sub">No slip at your books right now: nothing there clears the pace with margin at a usable price. ${hidden} at other books. <button type="button" class="link-button" data-live-showall="1">Show all books</button></p>`
       : live ? `<p class="row-sub">${esc(liveNoSlipWhy(g))}</p>` : ''}
-    ${books.length ? `<details class="live-books-wrap"><summary>Books posting player props now</summary><div class="live-books">${books.map((b) => `<span class="live-book">${bookBadge(b.bookId, b.key)}${esc(SPORTSBOOKS[b.bookId]?.name ?? b.key)} <small>${b.markets.map((m) => `${esc(m.key.replace('player_', '').replace('_alternate', ' alt').replace(/_/g, ' '))} ${esc(String(m.players))}p`).join(' · ')}</small></span>`).join('')}</div></details>` : ''}
+    ${liveGameReads(g)}
+    ${g.players?.length ? `<details class="live-books-wrap live-box-wrap" data-live-details="box:${esc(g.espnEventId)}" ${liveState.open[`box:${g.espnEventId}`] ? 'open' : ''}><summary>Box score <small>as of ${t ? esc(liveTimeFmt.format(new Date(t.at))) : ''}</small></summary>${livePlayersTable(g)}</details>` : ''}
+    ${books.length ? `<details class="live-books-wrap" data-live-details="books:${esc(g.espnEventId)}" ${liveState.open[`books:${g.espnEventId}`] ? 'open' : ''}><summary>Books posting player props now</summary><div class="live-books">${books.map((b) => `<span class="live-book">${bookBadge(b.bookId, b.key)}${esc(SPORTSBOOKS[b.bookId]?.name ?? b.key)} <small>${b.markets.map((m) => `${esc(m.key.replace('player_', '').replace('_alternate', ' alt').replace(/_/g, ' '))} ${esc(String(m.players))}p`).join(' · ')}</small></span>`).join('')}</div></details>` : ''}
     </div>` : ''}
   </article>`;
 }
@@ -12203,6 +12186,9 @@ el.liveView?.addEventListener('click', (event) => {
   if (event.target.closest('[data-live-showall]')) { liveState.showAll = true; renderLive(); return; }
   const tlWhy = event.target.closest('[data-tennis-live-why]');
   if (tlWhy) { const k = `tl:${tlWhy.dataset.tennisLiveWhy}`; liveState.open[k] = !liveState.open[k]; renderLive(); return; }
+  // A folded section on a game card (the box score, the books posting): remembered, so the next refresh draws it the same way.
+  const fold = event.target.closest('details[data-live-details] > summary');
+  if (fold && !fold.parentElement.classList.contains('live-tennis-rest')) { const d = fold.parentElement; setTimeout(() => { liveState.open[d.dataset.liveDetails] = d.open; }, 0); return; }
   const rest = event.target.closest('details.live-tennis-rest');
   if (rest) { const key = rest.dataset.liveDetails ?? 'tennis:rest'; setTimeout(() => { liveState.open[key] = rest.open; }, 0); return; }
   if (event.target.closest('[data-live-expand]')) { liveState.expandAll = !liveState.expandAll; if (!liveState.expandAll) liveState.open = Object.fromEntries(Object.entries(liveState.open).filter(([k]) => !k.startsWith('game:'))); renderLive(); return; }
