@@ -56,7 +56,7 @@ import {
 } from './qualitative.js';
 import { parseLeg as parseSlipLeg, parseSlipText, parseAmerican as parseSlipAmerican, checkSlip, CATEGORY_LABEL as SLIP_CATEGORY_LABEL, TICKET_TYPES as SLIP_TICKET_TYPES } from './slip-check.js';
 import { VIABILITY_LABEL } from './slip-viability.js';
-import { parlaySnapshot, applyParlaySnapshot, cleanParlayStore, withParlaySlot, PARLAY_SLOTS, passesHitBars, l20Floor, hitBarText } from './parlay-presets.js';
+import { parlaySnapshot, applyParlaySnapshot, cleanParlayStore, withParlaySlot, PARLAY_SLOTS, passesHitBars, l20Floor, hitBarText, nextMinScore } from './parlay-presets.js';
 import { playbookText, playbookKey, playbookUserId, discordChannelUrl, cleanPlaybookLink, PLAYBOOK_SITE } from './playbook.js';
 import { hitFlags as slipHitFlags } from './trends.js';
 import {
@@ -11072,7 +11072,8 @@ function renderParlay() {
   el.parlaySeason.textContent = `${sy}/${sy + 1}`; el.parlaySeason.classList.toggle('is-active', s.season); el.parlaySeason.setAttribute('aria-pressed', String(s.season));
   el.parlaySeasonNote.textContent = parlayBarsNote(s, sy);
   el.parlayH2H.value = String(Math.round(s.minH2H * 100)); el.parlayH2HLabel.textContent = s.minH2H ? `${Math.round(s.minH2H * 100)}%+` : 'Any';
-  el.parlayScore.innerHTML = [1, 2, 3, 4, 5].map((n) => `<button type="button" class="parlay-star ${n <= s.minScore ? 'is-on' : ''}" data-parlay-score="${n}" aria-label="${n} star${n === 1 ? '' : 's'} and up" aria-pressed="${n === s.minScore}">★</button>`).join('') + `<small>${esc(String(s.minScore))}+ stars</small>`;
+  // Whole stars lit up to the floor, and the next one half lit when the floor carries a half (a second tap on a star adds it).
+  el.parlayScore.innerHTML = [1, 2, 3, 4, 5].map((n) => `<button type="button" class="parlay-star ${n <= s.minScore ? 'is-on' : n - 0.5 === s.minScore ? 'is-half' : ''}" data-parlay-score="${n}" aria-label="${n} star${n === 1 ? '' : 's'} and up${n < 5 ? `; tap again for ${n}.5` : ''}" aria-pressed="${n === Math.floor(s.minScore)}">★</button>`).join('') + `<small>${esc(String(s.minScore))}+ stars</small>`;
   const statsHere = new Map();
   for (const r of live) if (!statsHere.has(r.statKey)) statsHere.set(r.statKey, (r.marketLabel ?? r.statLabel).replace(/\s*\(alt\)$/i, ''));
   el.parlayStats.innerHTML = [...statsHere.entries()].sort((a, b) => a[1].localeCompare(b[1])).map(([k, label]) => `<button type="button" class="rate-chip ${s.stats.has(k) ? 'is-active' : ''}" data-parlay-stat="${esc(k)}">${esc(label)}</button>`).join('') || '<span class="row-sub">No lines yet.</span>';
@@ -11189,7 +11190,7 @@ el.parlayView?.addEventListener('click', (event) => {
     loadParlay(); return;
   }
   const star = t.closest('[data-parlay-score]');
-  if (star) { s.minScore = Number(star.dataset.parlayScore); renderParlay(); return; }
+  if (star) { s.minScore = nextMinScore(s.minScore, star.dataset.parlayScore); renderParlay(); return; }
   if (t.closest('[data-parlay-season]')) { s.season = !s.season; renderParlay(); return; }
   if (t.closest('[data-parlay-l20]')) { s.l20 = !s.l20; renderParlay(); return; }
   if (t.closest('[data-parlay-starters]')) { s.starters = !s.starters; renderParlay(); return; }
@@ -11229,9 +11230,14 @@ el.parlayView?.addEventListener('change', (event) => {
 });
 
 // Any change to a setting is remembered as the last settings (the slot buttons save themselves); the handlers above have already updated the state.
+// Where the tap landed is read off the event's own path: a star or a chip is drawn again by the handler above, so by
+// now the button that was tapped is out of the page and has no ancestors to ask (which left a change of stars, of a
+// prop type or of a league unsaved until some other setting was touched).
 for (const type of ['click', 'change', 'input']) el.parlayView?.addEventListener(type, (event) => {
-  if (event.target.closest('#parlayResult') || event.target.closest('[data-parlay-preset-save]') || event.target.closest('[data-parlay-preset-clear]')) return;
-  if (event.target.closest('.parlay-config-col') || event.target.closest('#parlayLeagues')) { queueParlaySave(); markParlayPresets(); }
+  const path = event.composedPath();
+  const within = (selector) => path.some((node) => node instanceof Element && node.matches(selector));
+  if (within('#parlayResult') || within('[data-parlay-preset-save]') || within('[data-parlay-preset-clear]')) return;
+  if (within('.parlay-config-col') || within('#parlayLeagues')) { queueParlaySave(); markParlayPresets(); }
 });
 
 /* ================================================================ */

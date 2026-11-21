@@ -6918,6 +6918,8 @@ a.trend-price:hover { background: rgba(255, 255, 255, 0.06); }
 .parlay-score { display: flex; align-items: center; gap: 2px; }
 .parlay-star { border: 0; background: transparent; color: rgba(255, 255, 255, 0.25); font-size: 1.6rem; line-height: 1; cursor: pointer; padding: 0 2px; }
 .parlay-star.is-on { color: #fbbf24; }
+/* A half star: the left half of the glyph in gold, the right half as an unlit star. */
+.parlay-star.is-half { background: linear-gradient(90deg, #fbbf24 50%, rgba(255, 255, 255, 0.25) 50%); -webkit-background-clip: text; background-clip: text; color: transparent; -webkit-text-fill-color: transparent; }
 .parlay-score small { margin-left: 8px; color: var(--muted); }
 .parlay-chips-wrap { justify-content: flex-start; }
 .parlay-chips-wrap .rate-chip { padding: 7px 11px; font-size: 0.8rem; }
