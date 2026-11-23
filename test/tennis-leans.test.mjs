@@ -41,6 +41,9 @@ test('fanduelFeedEvent turns a FanDuel match page into the feed\'s markets, each
   assert.deepEqual(quotesOf(deep, 'totals_s1').map((q) => q.american), [-150, -105], 'the first set\'s total');
   assert.deepEqual(quotesOf(deep, 'alternate_totals_s2').map((q) => q.american), [-125, -130], 'the second set\'s; the third is left out');
   assert.deepEqual(quotesOf(deep, 'h2h_s1').map((q) => q.american), [-106, -116]);
+  assert.deepEqual(quotesOf(deep, 'h2h_s2').map((q) => [q.name, q.american]), [['Jessica Pegula', -102], ['Linda Noskova', -118]], 'the second set\'s winner');
+  // Set betting: the player, and the score in sets as the point's two digits.
+  assert.deepEqual(quotesOf(deep, 'set_betting').map((q) => [q.name, q.point, q.american]), [['Jessica Pegula', 20, 220], ['Jessica Pegula', 21, 340], ['Linda Noskova', 20, 185], ['Linda Noskova', 21, 330]]);
   // "To win at least one set": Yes is the player +1.5 sets, No is the other player in straight sets.
   const sets = quotesOf(deep, 'alternate_set_spreads').map((q) => `${q.name} ${q.point} ${q.american}`);
   assert.deepEqual(sets, ['Jessica Pegula 1.5 -260', 'Linda Noskova -1.5 188', 'Linda Noskova 1.5 -320', 'Jessica Pegula -1.5 220']);
@@ -237,4 +240,40 @@ test('runTennisTick reads a week the feed has no board for off FanDuel: the lean
   assert.equal(graded.graded, 1);
   const fritz = (await getTennisPicks(env, now)).current.plays.find((p) => p.id === 'atp:1:ml');
   assert.equal(fritz.result, 'win'); assert.equal(fritz.net, Math.round((100 / 184) * fritz.units * 100) / 100);
+});
+
+test('a lean carries set betting on its side: each score a book prices with the read\'s share, the ones with room marked; the second set is a way to play the side', () => {
+  const sb = (point, prob, american) => leg('m9', 'set_betting', 'Jessica Pegula', prob, [q('fanduel', american)], { point });
+  const legs = [leg('m9', 'ml', 'Jessica Pegula', 0.66, [q('fanduel', -135)]), leg('m9', 'set2_ml', 'Jessica Pegula', 0.63, [q('fanduel', -120)]), sb(20, 0.42, 220), sb(21, 0.24, 340), leg('m9', 'set_betting', 'Linda Noskova', 0.2, [q('fanduel', 185)], { point: 20, side: 'b' })];
+  const lean = leanFor(legs, { read: { pFinal: 0.66 } });
+  assert.equal(lean.main.market, 'ml');
+  assert.ok(lean.alternates.some((a) => a.short === 'Jessica Pegula 2nd set'), 'the second set rides as another way to play the side');
+  // Her scores only, the likeliest first: 2-0 at +220 asks 31% against a read of 42% (room), 2-1 at +340 asks 23% against 24% (none to speak of).
+  assert.deepEqual(lean.setBetting.map((x) => [x.short, x.american, x.value]), [['Jessica Pegula 2-0', 220, true], ['Jessica Pegula 2-1', 340, false]]);
+  // A thin read has no view of the score in sets.
+  assert.deepEqual(leanFor(legs, { read: { pFinal: 0.66, thin: true, thinNames: 'Linda Noskova' } }).setBetting, []);
+  // A second set with more room than the moneyline can be the lean itself.
+  const second = leanFor([leg('m10', 'ml', 'Jessica Pegula', 0.6, [q('fanduel', -150)]), leg('m10', 'set2_ml', 'Jessica Pegula', 0.62, [q('fanduel', -110)])], { read: { pFinal: 0.6 } });
+  assert.equal(second.main.market, 'set2_ml'); assert.match(second.howText, /Second set winner, straight/);
+  assert.equal(shortSelection({ market: 'set_betting', name: 'A', point: 21 }), 'A 2-1');
+});
+
+test('gradePlay settles the second set\'s winner and a score in sets, the score as soon as the sets played rule it out', () => {
+  const play = (market, over = {}) => ({ market, side: 'a', a: 'Taylor Fritz', b: 'Holger Rune', point: null, american: 220, units: 1, ...over });
+  const three = { completed: true, statusName: 'STATUS_FINAL', sets: [[6, 4], [3, 6], [6, 3]], winner: 'a' };
+  const two = { completed: true, statusName: 'STATUS_FINAL', sets: [[6, 4], [6, 3]], winner: 'a' };
+  assert.equal(gradePlay(play('set2_ml'), three).result, 'loss');
+  assert.equal(gradePlay(play('set2_ml', { side: 'b' }), three).result, 'win');
+  assert.equal(gradePlay(play('set2_ml'), { completed: false, sets: [[6, 4], [6, 3]] }).result, 'win', 'settled when the set is in');
+  assert.equal(gradePlay(play('set2_ml'), { completed: false, sets: [[6, 4], [2, 1]] }), null);
+  assert.equal(gradePlay(play('set2_ml'), { completed: true, statusName: 'STATUS_RETIRED', sets: [[6, 4], [2, 1]], winner: 'a' }).result, 'void');
+  assert.equal(gradePlay(play('set_betting', { point: 20 }), two).result, 'win'); assert.equal(gradePlay(play('set_betting', { point: 20 }), two).net, 2.2);
+  assert.equal(gradePlay(play('set_betting', { point: 21 }), two).result, 'loss');
+  assert.equal(gradePlay(play('set_betting', { point: 21 }), three).result, 'win');
+  assert.equal(gradePlay(play('set_betting', { point: 20 }), three).result, 'loss');
+  assert.equal(gradePlay(play('set_betting', { point: 20, side: 'b' }), three).result, 'loss');
+  // In play: 2-0 is gone the moment a set is dropped; 2-1 waits.
+  assert.equal(gradePlay(play('set_betting', { point: 20 }), { completed: false, sets: [[6, 4], [3, 6], [1, 0]] }).result, 'loss');
+  assert.equal(gradePlay(play('set_betting', { point: 21 }), { completed: false, sets: [[6, 4], [3, 6], [1, 0]] }), null);
+  assert.equal(gradePlay(play('set_betting', { point: 20 }), { completed: false, sets: [[6, 4], [1, 0]] }), null);
 });

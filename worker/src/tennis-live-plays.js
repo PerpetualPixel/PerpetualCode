@@ -23,11 +23,18 @@
  * (h2h_s1, h2h_s2; a deciding set is the moneyline) and posts only when
  * that price is at or better than the one the read needs. With no book
  * on the set it posts at the price to take it at or better, marked so.
+ *
+ * The games in a set (2026-11-23: "over under games in a set"): one play
+ * a set, over or under a line, from the score and today's holds. Priced
+ * the same way: the book's line when the feed has that set's games at the
+ * line and the price is good enough; no play when a book prices the set's
+ * games and not that line or not well enough; the price to take it at
+ * when no book carries the set's games at all.
  */
 import { etParts } from './potd.js';
 import { loadTennisScoreboard } from './tennis-live.js';
-import { tennisPicksKey, tennisSportKeys, feedEventFor, quotesOf, marketWinShare, liveTournamentBoard, cachedTournamentBoard, liveSetMarket, bookPrices } from './tennis-picks.js';
-import { advanceTimeline, liveRead, livePlays, serveFromMarket, scoreState, LIVE_SET_PRICE } from './tennis-live-model.js';
+import { tennisPicksKey, tennisSportKeys, feedEventFor, quotesOf, marketWinShare, liveTournamentBoard, cachedTournamentBoard, liveSetMarket, liveSetTotals, liveSetTotalKeys, bookPrices } from './tennis-picks.js';
+import { advanceTimeline, liveRead, livePlays, serveFromMarket, scoreState, LIVE_SET_PRICE, LIVE_SET_TOTAL_PRICE } from './tennis-live-model.js';
 import { TOUR_AVG } from './tennis-model.js';
 import { setDone } from './tennis-card-parse.js';
 
@@ -41,6 +48,8 @@ export const TENNIS_LIVE_CRON = '* * * * *';
 export const IDLE_MS = 5 * 60e3;
 /** The scoreboard is read again when the stored copy is older than this. */
 const SCORE_MAX_AGE = 45e3;
+/** How long the books are asked for a set's games once a play on them is ready: past it the set has no play (each ask is a billed call when the cache has lapsed). */
+export const SET_TOTAL_ASK_MS = 10 * 60e3;
 const KV_TTL = 60 * 86400;
 
 const readJson = async (env, key) => { const raw = await env.POTD_KV.get(key).catch(() => null); if (!raw) return null; try { return JSON.parse(raw); } catch { return null; } };
@@ -52,8 +61,9 @@ const RETIRED = /\bret\b|retire|walkover|w\/o|default/i;
 /**
  * A live play against the match as it stands: {status, result, actual,
  * profit} once it can be settled, else null. The moneyline settles on
- * the winner; the set on that set; a retirement voids whatever had not
- * finished.
+ * the winner; the set on that set; the set's games on that set's count
+ * (an over as soon as the count is past the line); a retirement voids
+ * whatever had not finished.
  */
 export function gradeLivePlay(play, m) {
   if (!m) return null;
@@ -65,6 +75,14 @@ export function gradeLivePlay(play, m) {
   if (play.market === 'live_set') {
     const s = sets[play.set - 1];
     if (s && setDone(s)) return settle((s[0] > s[1]) === (play.side === 'a'));
+    return m.completed ? voided('the set was not finished') : null;
+  }
+  if (play.market === 'live_set_total') {
+    const s = sets[play.set - 1];
+    const total = s ? s[0] + s[1] : 0;
+    // Past the line already: the over has landed and the under cannot.
+    if (total > play.point) return settle(play.sideWord === 'over');
+    if (s && setDone(s)) return settle(play.sideWord === 'under');
     return m.completed ? voided('the set was not finished') : null;
   }
   if (!m.completed) return null;
@@ -133,6 +151,23 @@ async function setPriceFor(env, ctx, m, play, odds, read, now, deps) {
 }
 
 /**
+ * The book's price for a set's games, over or under the play's line: the
+ * same three answers as setPriceFor. A book that prices the set's games
+ * and not at this line is a line that has moved on: no play.
+ */
+async function setTotalPriceFor(env, ctx, play, odds, now, deps) {
+  if (!odds || play.set > 2) return undefined;
+  const body = deps.setTotals ? await deps.setTotals(odds.key, odds.eventId, play.set) : await liveSetTotals(env, ctx, odds.key, odds.eventId, play.set, now);
+  const all = liveSetTotalKeys(play.set).flatMap((k) => quotesOf(body, k));
+  if (!all.length) return undefined;
+  const word = new RegExp(play.sideWord, 'i');
+  const quotes = all.filter((q) => q.point === play.point && word.test(q.name));
+  const best = [...quotes].filter((q) => Number.isFinite(q.american) && q.american >= LIVE_SET_TOTAL_PRICE[0] && q.american <= LIVE_SET_TOTAL_PRICE[1]).sort((x, y) => y.american - x.american)[0] ?? null;
+  if (!best || best.american < play.playable) return null;
+  return { american: best.american, bookId: best.bookId, book: best.book, link: best.link ?? null, quotes: bookPrices(quotes) };
+}
+
+/**
  * One tick. Returns what it did: {skipped} when resting, else {inPlay,
  * posted, graded}. `deps` lets the tests stand in for the scoreboard,
  * the tournament keys and the boards.
@@ -172,6 +207,8 @@ export async function runTennisLiveTick(env, ctx, now = Date.now(), { deps = {},
       const names = { a: m.a.name, b: m.b.name };
       const prev = state.matches[id] ?? { firstAt: now, sets: [], games: [] };
       const timeline = advanceTimeline(prev, m.sets);
+      // When each set's games were first asked of the books.
+      const asked = { ...(prev.asked ?? {}) };
       const odds = await liveOddsFor(env, ctx, m, keys, now, deps).catch(() => null);
       // The serve numbers: the pre-match read's, else solved from the live price once and kept.
       let serve = prev.serve ?? null;
@@ -183,7 +220,7 @@ export async function runTennisLiveTick(env, ctx, now = Date.now(), { deps = {},
       // No serve numbers and no price: the score alone is not a play.
       const plays = thin ? [] : livePlays(read, { quotes: odds?.quotes ?? { a: [], b: [] }, names, gamesSeen: timeline.games.length, sets: m.sets });
       for (const play of plays) {
-        const playId = play.market === 'live_ml' ? `${id}:live_ml` : `${id}:live_set:${play.set}`;
+        const playId = play.market === 'live_ml' ? `${id}:live_ml` : `${id}:${play.market}:${play.set}`;
         if (postedIds.has(playId)) continue;
         if (play.market === 'live_set') {
           // The book's price on the set: the deciding set is the match, the first two have their own market.
@@ -191,19 +228,26 @@ export async function runTennisLiveTick(env, ctx, now = Date.now(), { deps = {},
           if (priced === null) continue; // a book prices the set, and not well enough: no play
           if (priced) Object.assign(play, priced);
         }
+        if (play.market === 'live_set_total') {
+          if (asked[play.set] && now - asked[play.set] > SET_TOTAL_ASK_MS) continue;
+          asked[play.set] ??= now;
+          const priced = await setTotalPriceFor(env, ctx, play, odds, now, deps).catch(() => undefined);
+          if (priced === null) continue; // a book prices the set's games, and not this line or not well enough: no play
+          if (priced) Object.assign(play, priced);
+        }
         postedIds.add(playId);
         // The moneyline at every book when the play posted (a set play's come with its price, above).
         if (play.market === 'live_ml') play.quotes = bookPrices(odds?.quotes?.[play.side]);
         // A play the model was held back on says so among its reasons (livePlays' note).
         const { note, ...shown } = play;
-        records[today].plays.push({ id: playId, matchId: id, tour: m.tour, event: m.eventName, round: m.round, a: m.a.name, b: m.b.name, ...shown, score: scoreLine(m.sets), why: note ? [...read.why, note] : read.why, postedAt: now, status: 'pending', result: null, profit: null });
+        records[today].plays.push({ id: playId, matchId: id, tour: m.tour, event: m.eventName, round: m.round, a: m.a.name, b: m.b.name, ...shown, ...(note ? { reason: note } : {}), score: scoreLine(m.sets), why: note ? [...read.why, note] : read.why, postedAt: now, status: 'pending', result: null, profit: null });
         posted++; dirty.add(today);
       }
-      state.matches[id] = { ...timeline, serve, firstAt: prev.firstAt ?? now, lastAt: now };
+      state.matches[id] = { ...timeline, serve, asked, firstAt: prev.firstAt ?? now, lastAt: now };
       const best = (side) => [...(odds?.quotes?.[side] ?? [])].sort((x, y) => y.american - x.american)[0] ?? null;
       reads.push({
         id, tour: m.tour, event: m.eventName, round: m.round, a: m.a.name, b: m.b.name, sets: m.sets, bestOf: m.bestOf, detail: m.detail ?? null,
-        prob: Math.round(read.prob * 1000) / 1000, model: { match: Math.round(read.model.match * 1000) / 1000, set: Math.round(read.model.set * 1000) / 1000, nextSet: Math.round(read.model.nextSet * 1000) / 1000 },
+        prob: Math.round(read.prob * 1000) / 1000, model: { match: Math.round(read.model.match * 1000) / 1000, set: Math.round(read.model.set * 1000) / 1000, nextSet: Math.round(read.model.nextSet * 1000) / 1000, setGames: read.model.setGames && read.serve.first ? { mean: Math.round(read.model.setGames.mean * 10) / 10, over: Object.fromEntries(Object.entries(read.model.setGames.over).map(([k, v]) => [k, Math.round(v * 1000) / 1000])) } : null },
         market: read.market != null ? Math.round(read.market * 1000) / 1000 : null, fair: read.fair, state: read.state, momentum: read.momentum,
         serve: { first: read.serve.first, sure: read.serve.sure, aServesNext: read.serve.aServesNext, a: read.serve.a, b: read.serve.b, breaks: read.serve.breaks, source: serve?.source ?? 'the tour average: no pre-match read and no live price' },
         why: read.why, quotes: { a: best('a'), b: best('b') }, books: { a: bookPrices(odds?.quotes?.a), b: bookPrices(odds?.quotes?.b) }, games: timeline.games.length,
@@ -245,6 +289,6 @@ export async function getTennisLivePlays(env, now = Date.now(), { days = 30 } = 
   return {
     at: reads.at, tickAt: tick.at ?? null, nextTickAt: tick.nextAt ?? null, fresh: reads.at != null && now - reads.at < 5 * 60e3, matches: reads.at != null && now - reads.at < 10 * 60e3 ? reads.matches : [],
     today: history.find((r) => r.date === today)?.plays ?? [], history,
-    record: { ml: liveRecordOf(all.filter((p) => p.market === 'live_ml')), sets: liveRecordOf(all.filter((p) => p.market === 'live_set')) },
+    record: { ml: liveRecordOf(all.filter((p) => p.market === 'live_ml')), sets: liveRecordOf(all.filter((p) => p.market === 'live_set')), setGames: liveRecordOf(all.filter((p) => p.market === 'live_set_total')) },
   };
 }

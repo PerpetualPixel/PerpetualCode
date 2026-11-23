@@ -19,6 +19,7 @@
  *   ALTERNATIVE_MATCH_TOTAL_GAMES       alternate_totals      total games, every number
  *   MAIN_SET_TOTAL_GAMES (Set 1, 2)     totals_s1, alternate_totals_s2
  *   SET_1_WINNER, SET_2_WINNER          h2h_s1, h2h_s2        set winner
+ *   SET_BETTING                         set_betting           "Pegula 2-1": the player, the point the score (21)
  *   PLAYER_x_TO_WIN_AT_LEAST_1_SET      alternate_set_spreads Yes is the player +1.5 sets, No the other -1.5
  *   EXACT_NUMBER_OF_SETS                alternate_set_totals  "3 Sets" is over 2.5, "2 Sets" under
  *   PLAYER_x_ACES                       player_aces           "7+" is over 6.5 aces
@@ -97,6 +98,12 @@ export function fanduelFeedEvent(e, { bestOf = 3 } = {}) {
       }
       case 'SET_1_WINNER': deep.push({ key: 'h2h_s1', outcomes: rs.map((r) => out(m, r, r.runnerName)) }); break;
       case 'SET_2_WINNER': deep.push({ key: 'h2h_s2', outcomes: rs.map((r) => out(m, r, r.runnerName)) }); break;
+      case 'SET_BETTING': {
+        // "Jessica Pegula 2-1": the winner, then the score in sets. The outcome's point is the two digits (2-1 is 21).
+        const outcomes = rs.map((r) => { const x = /^(.*?)\s+(\d)\s*-\s*(\d)$/.exec(String(r.runnerName).trim()); return x && Number(x[2]) > Number(x[3]) ? out(m, r, x[1].trim(), Number(x[2]) * 10 + Number(x[3])) : null; }).filter(Boolean);
+        if (outcomes.length) deep.push({ key: 'set_betting', outcomes });
+        break;
+      }
       case 'PLAYER_A_TO_WIN_AT_LEAST_1_SET': case 'PLAYER_B_TO_WIN_AT_LEAST_1_SET': {
         if (five) break;
         const me = m.marketType.startsWith('PLAYER_A') ? pa : pb; const other = me === pa ? pb : pa;
