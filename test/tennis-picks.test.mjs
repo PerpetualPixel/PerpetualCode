@@ -381,3 +381,51 @@ test('bookPrices keeps one price a book, its best, best first, and drops the lin
   ]);
   assert.deepEqual([bookPrices(null), bookPrices([])], [[], []]);
 });
+
+test('a match posted on its eve is not posted again on its day, and the day\'s parlay leaves a match still on yesterday\'s alone', async () => {
+  const { tennisPicksKey } = await import('../worker/src/tennis-picks.js');
+  const m = new Map(); const env = { POTD_KV: { get: async (k) => m.get(k) ?? null, put: async (k, v) => { m.set(k, v); } } };
+  // 11 PM Eastern on the eve; the match is at 9 AM Eastern the next day.
+  const eve = Date.parse('2026-11-09T04:00:00Z'); const start = '2026-11-09T14:00:00Z';
+  const card = { at: 1, slate: [match({ date: start })], results: [] };
+  const profiles = { players: { 'jannik sinner': profile('Jannik Sinner', 60, 0.72, 0.43, 0.11), 'ben shelton': profile('Ben Shelton', 45, 0.66, 0.36, 0.12) } };
+  const deps = { card: async () => card, profiles: async () => profiles, sportKeys: async () => ({ atp: [{ key: 'tennis_atp_finals', title: 'ATP Finals' }], wta: [] }), board: async () => [{ ...boardEvent(), commence_time: start }], eventMarkets: async () => deepEvent(), aceLog: async () => ({}) };
+  const first = await runTennisTick(env, null, eve, { deps });
+  assert.ok(first.posted >= 1, `posted ${first.posted} on the eve`);
+  const eveRecord = JSON.parse(m.get(tennisPicksKey('2026-11-08')));
+  assert.equal(eveRecord.plays.length, first.posted);
+  // Two hours on it is the 9th in New York: a new day's record, the same match on the card.
+  const next = await runTennisTick(env, null, eve + 2 * 3600e3, { deps });
+  assert.equal(next.posted, 0, 'the play posted on the eve stands; nothing is posted twice');
+  const dayRecord = JSON.parse(m.get(tennisPicksKey('2026-11-09')));
+  assert.deepEqual(dayRecord.plays, []);
+  // The tab still shows the lean as tracked, at the price it was posted at the night before.
+  const lean = (dayRecord.leans ?? [])[0];
+  if (lean && lean.main.market !== 'aces') assert.equal(lean.posted?.id, eveRecord.plays.find((p) => p.market !== 'aces')?.id);
+  // Once the eve's play is settled it no longer holds the match: only a pending play does.
+  eveRecord.plays.forEach((p) => { p.status = 'graded'; p.result = 'win'; });
+  m.set(tennisPicksKey('2026-11-08'), JSON.stringify(eveRecord));
+  m.delete(tennisPicksKey('2026-11-09'));
+  const again = await runTennisTick(env, null, eve + 2 * 3600e3, { deps });
+  assert.ok(again.posted >= 1, 'a settled play from yesterday does not block today');
+});
+
+test('an underdog with a head start is tracked only from 70% and six points of room; a priced aces line only from 80%', async () => {
+  const { isDogHandicap, DOG_HANDICAP_PROB, DOG_HANDICAP_EDGE, ACE_PROB } = await import('../worker/src/tennis-picks.js');
+  assert.deepEqual([DOG_HANDICAP_PROB, DOG_HANDICAP_EDGE, ACE_PROB], [0.7, 0.06, 0.8]);
+  assert.deepEqual([isDogHandicap({ market: 'set_spread', point: 1.5 }), isDogHandicap({ market: 'games_spread', point: 4.5 }), isDogHandicap({ market: 'set_spread', point: -1.5 }), isDogHandicap({ market: 'games_spread', point: -3.5 }), isDogHandicap({ market: 'ml', point: null }), isDogHandicap({ market: 'games_total', point: 21.5 })], [true, true, false, false, false, false]);
+  // In a tick: every tracked play that is an underdog handicap clears the bar, and a lean under it says why it is not tracked.
+  const m = new Map(); const env = { POTD_KV: { get: async (k) => m.get(k) ?? null, put: async (k, v) => { m.set(k, v); } } };
+  const card = { at: 1, slate: [match({ date: new Date(Date.now() + 6 * 3600e3).toISOString() })], results: [] };
+  const profiles = { players: { 'jannik sinner': profile('Jannik Sinner', 60, 0.72, 0.43, 0.11), 'ben shelton': profile('Ben Shelton', 45, 0.66, 0.36, 0.12) } };
+  const deps = { card: async () => card, profiles: async () => profiles, sportKeys: async () => ({ atp: [{ key: 'tennis_atp_finals', title: 'ATP Finals' }], wta: [] }), board: async () => [boardEvent()], eventMarkets: async () => deepEvent(), aceLog: async () => ({}) };
+  await runTennisTick(env, null, Date.now(), { deps });
+  const picks = await getTennisPicks(env);
+  for (const p of picks.current.plays) {
+    if (isDogHandicap(p)) assert.ok(p.prob >= DOG_HANDICAP_PROB && p.edge >= DOG_HANDICAP_EDGE, `${p.selection} ${p.prob} ${p.edge}`);
+    if (p.market === 'aces' && Number.isFinite(p.american)) assert.ok(p.prob >= ACE_PROB, `${p.selection} ${p.prob}`);
+  }
+  for (const l of picks.current.leans ?? []) {
+    if (l.how === 'straight' && isDogHandicap(l.main) && !(l.main.prob >= DOG_HANDICAP_PROB && l.main.edge >= DOG_HANDICAP_EDGE)) { assert.equal(l.posted, null); assert.match(l.note, /an underdog with a head start needs 70% and 6 points of room/); }
+  }
+});

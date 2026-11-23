@@ -431,3 +431,35 @@ test('bestOnBoard never stands a chance row as the best line: a first-basket fav
   assert.equal(best.basketball_nba.playerName, 'LaMelo Ball');
   assert.deepEqual(bestOnBoard([chance], NOW), {}, 'a board of chance rows alone has no best line');
 });
+
+test('a player is on one bet a day: a second line on the same player does not become a second ticket', () => {
+  const q = (rows) => qualifyingRows(rows, '2026-10-27', NOW);
+  // 2026-11-12: Aldama over 6.5 points and Aldama over 9.5 points and rebounds went up as two straights; he scored three.
+  // Each line alone is a straight (-150 and -180); together on one book they would not be a ticket (the same player).
+  let bets = buildBets(q([row('a', { american: -150, statKey: 'points' }), row('b', { american: -180, statKey: 'pointsRebounds', point: 9.5 })]));
+  assert.equal(bets.length, 1, 'one player, one bet');
+  assert.equal(bets[0].legs[0].group.playerName, 'Collin Sexton');
+  // With another player on the board the second bet is that player, not the first one again.
+  bets = buildBets(q([row('a', { american: -150, statKey: 'points' }), row('b', { american: -180, statKey: 'pointsRebounds', point: 9.5 }), row('c', { american: -160, player: 'LaMelo Ball', eventId: 'e-2', books: { fanduel: -160 } })]));
+  const players = bets.flatMap((b) => b.legs.map((l) => l.group.playerName));
+  assert.equal(new Set(players).size, players.length, `each player once across the day's bets: ${players.join(', ')}`);
+  assert.ok(players.includes('LaMelo Ball'));
+});
+
+test('a day with nothing posted keeps what its last real look found; a late look at an empty board does not write over it', async () => {
+  const { env, store } = makeKvStore();
+  // One line qualifies but nothing can be built from it (-1100: outside the range a ticket takes).
+  const rows = [row('a', { american: -1100 })];
+  const deps = { rowsFor: async () => rows, minutes: async () => Array(20).fill(32), context: async () => null, model: async () => '{"verdict":"post","reason":"ok","note":"none"}' };
+  const first = await runTrendPicksDaily(env, ctx, NOW, { deps, enabled: ['basketball_nba'] });
+  assert.deepEqual([first.posted, first.considered], [0, 1]);
+  const key = [...store.keys()].find((k) => k.startsWith('trendpicks:'));
+  const seen = JSON.parse(store.get(key));
+  assert.deepEqual([seen.considered, seen.final], [1, false]);
+  // Ten hours on every game has started: there is nothing to draw from.
+  const late = await runTrendPicksDaily(env, ctx, NOW + 10 * 3.6e6, { deps, enabled: ['basketball_nba'] });
+  assert.equal(late.reason, 'nothing left to draw');
+  const kept = JSON.parse(store.get(key));
+  assert.deepEqual([kept.considered, kept.usable, kept.final, kept.checkedAt, kept.closedAt], [1, seen.usable, false, NOW + 10 * 3.6e6, NOW + 10 * 3.6e6]);
+  assert.deepEqual(kept.unused, seen.unused);
+});

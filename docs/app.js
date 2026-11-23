@@ -11514,7 +11514,7 @@ function ufcRecEntryHtml(data, source) {
   if (!data?.tickets?.length) return '';
   const c = data.counts ?? {};
   const parts = ['builder', 'parlay', 'lotto', 'stat'].filter((k) => c[k]).map((k) => `${c[k]} ${(c[k] === 1 ? REC_TYPE_ONE[k] : REC_TYPE_LABEL[k]).toLowerCase()}`);
-  return `<section class="rec-entry"><div class="rec-entry-text"><h3>Recommended parlays</h3><p class="row-sub">${data.tickets.length} ready-made tickets${data.eventName ? ` for ${esc(data.eventName)}` : ''}: ${esc(parts.join(', '))}. Every leg with its price and why it is there.</p></div><button type="button" class="rec-open" data-ufc-rec-open="${esc(source)}">Recommended <span aria-hidden="true">›</span></button></section>`;
+  return `<section class="rec-entry"><div class="rec-entry-text"><h3>Recommended parlays</h3><p class="row-sub">${data.tickets.length} ready-made tickets${data.eventName ? ` for ${esc(data.eventName)}` : ''}: ${esc(parts.join(', '))}. Every leg with its price and why it is there.${data.results ? ` <strong>${data.results.wins} of ${data.results.graded} landed.</strong>` : ''}</p></div><button type="button" class="rec-open" data-ufc-rec-open="${esc(source)}">Recommended <span aria-hidden="true">›</span></button></section>`;
 }
 function openUfcRecommended(source) {
   if (!ufcRecommendedFor(source)) return;
@@ -11539,7 +11539,8 @@ function renderUfcRecTicket(t, rank) {
   const legHtml = (l) => {
     const tag = l.role === 'fav' ? '<span class="rec-role is-fav">Favourite</span>' : l.role === 'dog' ? '<span class="rec-role is-dog">Underdog</span>' : '';
     const price = Number.isFinite(l.american) ? pricePill(l.bookId, l.book, l.american, recLink(l.link)) : '<span class="trend-price rec-noprice" title="No book in the feed prices this yet">at your book</span>';
-    return `<li class="rec-leg"><div class="rec-leg-top"><span class="rec-leg-main"><strong>${esc(l.selection)}</strong><small>${esc(l.fight ?? '')}${l.label ? ` · ${esc(l.label)}` : ''}</small></span>${tag}${price}</div><ul class="rec-why">${(l.why ?? []).map((w) => `<li>${esc(w)}</li>`).join('')}</ul></li>`;
+    const mark = l.hit === true ? '<span class="pick-result is-win">Hit</span>' : l.hit === false ? '<span class="pick-result is-loss">Missed</span>' : '';
+    return `<li class="rec-leg ${l.hit === true ? 'is-hit' : l.hit === false ? 'is-miss' : ''}"><div class="rec-leg-top"><span class="rec-leg-main"><strong>${esc(l.selection)}</strong><small>${esc(l.fight ?? '')}${l.label ? ` · ${esc(l.label)}` : ''}</small></span>${tag}${mark}${price}</div><ul class="rec-why">${(l.why ?? []).map((w) => `<li>${esc(w)}</li>`).join('')}</ul></li>`;
   };
   const facts = [
     t.chance != null ? `<span><b>${esc(pct(t.chance))}</b> to hit</span>` : '',
@@ -11549,7 +11550,7 @@ function renderUfcRecTicket(t, rank) {
   ].filter(Boolean).join('');
   const where = t.oneBook ? '' : priced ? '<p class="row-sub rec-note">No one book in the feed has every leg: priced leg by leg at each leg\'s best price. Check the legs at your book before you build it.</p>' : '<p class="row-sub rec-note">Not priced yet: look for these on the fight pages at your book.</p>';
   return `<article class="rec-ticket is-${esc(t.type)}" aria-label="${esc(`${rank}: ${t.title}`)}">
-    <header class="rec-head"><span class="rec-type is-${esc(t.type)}">${esc(REC_TYPE_ONE[t.type] ?? t.type)}</span><span class="rec-style">${esc(REC_STYLE_LABEL[t.style] ?? t.style)}</span><span class="rec-price">${priced ? esc(formatAmerican(t.american)) : '<small>price at your book</small>'}</span></header>
+    <header class="rec-head"><span class="rec-type is-${esc(t.type)}">${esc(REC_TYPE_ONE[t.type] ?? t.type)}</span><span class="rec-style">${esc(REC_STYLE_LABEL[t.style] ?? t.style)}</span>${t.result ? `<span class="pick-result ${t.result === 'win' ? 'is-win' : 'is-loss'}">${t.result === 'win' ? 'Landed' : 'Lost'}</span>` : ''}<span class="rec-price">${priced ? esc(formatAmerican(t.american)) : '<small>price at your book</small>'}</span></header>
     <h3 class="rec-title">${esc(t.title)} ${t.book ? `<small>${bookBadge(t.bookId, t.book)}${esc(t.book)}</small>` : ''}</h3>
     <p class="rec-meta">${recStars(t.confidence)}<span class="rec-facts">${facts}</span></p>
     <p class="row-sub">${esc(t.blurb ?? '')}</p>
@@ -11571,6 +11572,7 @@ function renderUfcRecommendedSheet(sheet) {
   const quick = [['ml-confidence', 'Highest-confidence ML parlay'], ['builder-chance', 'Safest builder'], ['lotto-payout', 'Biggest lotto'], ['dog-payout', 'Best underdog ticket']];
   return `${sheetHead('ufcRecommended', 'Recommended parlays')}
     <p class="row-sub">${esc(data.eventName ?? '')}${data.at ? ` · built ${esc(trendTimeFmt.format(new Date(data.at)))}` : ''} · rebuilt as the odds move</p>
+    ${data.results ? `<p class="rec-results"><strong>${data.results.wins} of ${data.results.graded} tickets landed</strong>${Object.entries(data.results.byType ?? {}).map(([k, v]) => ` · ${esc((REC_TYPE_LABEL[k] ?? k).toLowerCase())} ${v.wins} of ${v.graded}`).join('')}${all.length > data.results.graded ? ` · ${all.length - data.results.graded} not settled by the result alone` : ''}</p>` : ''}
     <div class="rec-quick" role="group" aria-label="Jump to">${quick.map(([k, label]) => `<button type="button" class="parlay-btn" data-rec-quick="${k}">${esc(label)}</button>`).join('')}</div>
     <div class="rec-filter"><span>Type</span><div class="rate-chips rec-chips">${types.map((k) => chip('data-rec-type', k, k === 'all' ? 'All' : REC_TYPE_LABEL[k], s.type === k, count({ type: k }))).join('')}</div></div>
     <p class="row-sub rec-type-note">${esc(REC_TYPE_NOTE[s.type] ?? '')}</p>

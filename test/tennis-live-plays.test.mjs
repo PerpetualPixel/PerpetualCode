@@ -129,10 +129,14 @@ test('liveRead blends the model with the live price and says why; livePlays post
   assert.match(far.why.at(-1), /more than 20 points apart, so there is no moneyline play/);
   assert.equal(livePlays(far, { quotes: { a: [{ bookId: 'draftkings', american: -150 }], b: [] }, names: NAMES, gamesSeen: 12 }).some((p) => p.market === 'live_ml'), false);
   // A break up in the set: the set play, with the price to take it at or better.
-  const up = liveRead({ sets: [[3, 1]], games: [...'abaa'].map((w) => ({ s: 0, w })), serve: { pA: 0.64, pB: 0.64 }, market: 0.62, names: NAMES });
+  const up = liveRead({ sets: [[3, 1]], games: [...'abaa'].map((w) => ({ s: 0, w })), serve: { pA: 0.6, pB: 0.66 }, market: 0.62, names: NAMES });
   const set = livePlays(up, { quotes: { a: [], b: [] }, names: NAMES, gamesSeen: 4 }).find((p) => p.market === 'live_set');
   assert.deepEqual([set.side, set.set, set.selection], ['a', 1, 'Jannik Sinner to win set 1']);
-  assert.ok(set.prob >= 0.66 && set.prob <= 0.9 && set.playable < 0, JSON.stringify(set));
+  assert.ok(set.prob >= 0.66 && set.prob <= 0.8 && set.playable < 0, JSON.stringify(set));
+  // The same break with the better server in front reads 89%: past the band, no set play (the review of 2026-11-23: at 80% and up they won 9 of 12 and lost money).
+  const far2 = liveRead({ sets: [[3, 1]], games: [...'abaa'].map((w) => ({ s: 0, w })), serve: { pA: 0.64, pB: 0.64 }, market: 0.62, names: NAMES });
+  assert.ok(far2.model.set > 0.8);
+  assert.equal(livePlays(far2, { quotes: { a: [], b: [] }, names: NAMES, gamesSeen: 4 }).some((p) => p.market === 'live_set'), false);
   assert.deepEqual([0.85, 0.72, 0.61, 0.5].map(liveUnits), [2, 1.5, 1, 0.5]);
 });
 
@@ -223,7 +227,7 @@ test('a set play takes the book\'s set price when it is good enough, is passed w
   const setFeed = (aPrice, bPrice) => ({ id: 'e1', bookmakers: [{ key: 'fanduel', title: 'FanDuel', markets: [{ key: 'h2h_s1', outcomes: [{ name: 'Jannik Sinner', price: aPrice, link: 'https://sportsbook.fanduel.com/s1' }, { name: 'Taylor Fritz', price: bPrice }] }] }] });
   const run = async (setMarket) => {
     const m = new Map(); const env = { POTD_KV: { get: async (k) => m.get(k) ?? null, put: async (k, v) => { m.set(k, v); } } };
-    m.set(tennisPicksKey('2026-11-12'), JSON.stringify({ plays: [], reads: { 'atp:77': { serve: { pA: 0.64, pB: 0.64 }, bestOf: 3 } } }));
+    m.set(tennisPicksKey('2026-11-12'), JSON.stringify({ plays: [], reads: { 'atp:77': { serve: { pA: 0.6, pB: 0.66 }, bestOf: 3 } } }));
     let sets = [[1, 0]];
     const deps = { scoreboard: async () => ({ at: 0, matches: [match(sets)] }), sportKeys: async () => ({ atp: [{ key: 'k' }], wta: [] }), liveBoard: async () => feed(-135, 110), cachedBoard: async () => [], setMarket };
     let now = T0;
@@ -259,8 +263,12 @@ test('a set play on the player who won the last set, with no break in this one, 
   assert.deepEqual([b.side, b.prob, b.units, b.held], ['b', FOLLOW_ON_CAP, 1, 0.8]);
 
   // Two games up is a break in hand: the read stands.
-  const broke = play([[6, 2], [3, 1]], 0.86);
-  assert.deepEqual([broke.prob, broke.units, broke.held, broke.note], [0.86, 2, undefined, undefined]);
+  const broke = play([[6, 2], [3, 1]], 0.78);
+  assert.deepEqual([broke.prob, broke.units, broke.held, broke.note], [0.78, 1.5, undefined, undefined]);
+  // Past 80% with the break in hand there is no play; held to the cap with no break, the same read still posts at one unit.
+  assert.equal(play([[6, 2], [3, 1]], 0.86), undefined);
+  assert.deepEqual([play([[6, 2], [1, 1]], 0.86).prob, play([[6, 2], [1, 1]], 0.86).units], [FOLLOW_ON_CAP, 1]);
+  assert.equal(play([[6, 2], [1, 1]], 0.93), undefined, 'and past 90% not even held');
   // The player lost the last set: the read is not a follow-on, and stands.
   assert.deepEqual([play([[3, 6], [1, 1]], 0.74).prob, play([[3, 6], [1, 1]], 0.74).units], [0.74, 1.5]);
   // Set one has no set before it.
@@ -269,5 +277,5 @@ test('a set play on the player who won the last set, with no break in this one, 
   const under = play([[6, 2], [1, 1]], 0.67);
   assert.deepEqual([under.prob, under.units, under.held, under.note], [0.67, 1, undefined, undefined]);
   // Without the set scores (an older caller) nothing is held.
-  assert.equal(livePlays(readAt([[6, 2], [1, 1]], 0.82), { quotes: { a: [], b: [] }, names: NAMES, gamesSeen: 10 }).find((p) => p.market === 'live_set').prob, 0.82);
+  assert.equal(livePlays(readAt([[6, 2], [1, 1]], 0.78), { quotes: { a: [], b: [] }, names: NAMES, gamesSeen: 10 }).find((p) => p.market === 'live_set').prob, 0.78);
 });

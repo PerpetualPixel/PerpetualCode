@@ -7554,6 +7554,12 @@ a.trend-price:hover { background: rgba(255, 255, 255, 0.06); }
 .rec-why { margin: 8px 0 0; padding-left: 18px; display: grid; gap: 3px; color: var(--muted); font-size: 0.82rem; line-height: 1.45; }
 .rec-why li:first-child { color: var(--text); }
 .rec-note { margin: 10px 0 0; }
+.rec-results { margin: 8px 0 0; padding: 8px 12px; border-radius: 10px; background: var(--surface-2); border: 1px solid var(--line); font-size: 0.88rem; color: var(--muted); }
+.rec-results strong { color: var(--text); }
+.rec-leg.is-miss { border-color: rgba(248, 113, 113, 0.45); }
+.rec-leg.is-hit { border-color: rgba(16, 185, 129, 0.4); }
+.rec-head .pick-result { margin-left: auto; }
+.rec-head .pick-result + .rec-price { margin-left: 8px; }
 .rec-foot { margin: 6px 0 14px; }
 .rec-ticket .pick-bet-foot { margin-top: 12px; }
 /* On a phone each filter is one row that slides sideways, so the tickets start on the first screen. */

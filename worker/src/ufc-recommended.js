@@ -38,6 +38,7 @@
  * ticket of good legs does not outrank a short one.
  */
 import { americanToDecimal, decimalToAmerican } from '../../docs/engine.js';
+import { methodKind, clockSeconds } from './ufc-props.js';
 
 export const REC_TYPES = { builder: 'Builder', parlay: 'Parlay', lotto: 'Lotto', stat: 'Stat plays' };
 export const REC_STYLES = { ml: 'Moneyline', method: 'Method of victory', props: 'Fight props', mixed: 'Mixed', stat: 'Stats' };
@@ -48,6 +49,20 @@ export const REC_LOTTO_MIN = 9;
 export const REC_LEG_FLOOR = -600;
 /** The most a leg's price may ask over its chance (the book's cut on a favourite is about two points). */
 export const REC_MIN_ROOM = -0.04;
+/**
+ * The most tickets one leg rides on, so the page is a spread of ideas and
+ * not one bet many ways.
+ *
+ * The card of 2026-11-21, reviewed 2026-11-23: none of the 21 priced
+ * tickets landed. Three favourites of -190 to -275 lost on the cards, and
+ * the same few legs sat under most of the page: one favourite's moneyline
+ * was on eight tickets, another's on six, one "under 1.5 rounds" on six.
+ * Two results took out sixteen tickets. Past this many uses a recipe
+ * takes the next leg down its list (a recipe that names every favourite
+ * still takes them all, and a short list is used again before a ticket
+ * is dropped).
+ */
+export const REC_LEG_USES = 4;
 /** The most tickets a card carries. */
 export const REC_MAX = 40;
 /** A venue that is not a sportsbook takes no parlay: it prices a leg, never a ticket. */
@@ -89,7 +104,18 @@ export function recommendedParlays({ legs = [], breakdowns = {}, now = Date.now(
     const q = bestQuote(l); const rank = q ? impliedOf(q.american) : l.chance; const cur = favOf.get(l.boutId);
     if (!cur || rank > cur.rank) favOf.set(l.boutId, { side: l.side, rank, chance: l.chance });
   }
-  const role = (l) => (!l.side || !favOf.has(l.boutId) ? null : favOf.get(l.boutId).side === l.side ? 'fav' : 'dog');
+  // An underdog is priced at plus money and the favourite is the fighter across from one; where both sides are laid
+  // (-104 against -105 on the card of 2026-11-21) the fight is a pick'em and neither is called anything.
+  const bestMl = new Map();
+  for (const l of live) { if (l.prop !== 'ml' || !l.side) continue; const q = bestQuote(l); if (q) bestMl.set(`${l.boutId}:${l.side}`, q.american); }
+  const role = (l) => {
+    if (!l.side || !favOf.has(l.boutId)) return null;
+    const mine = bestMl.get(`${l.boutId}:${l.side}`); const theirs = bestMl.get(`${l.boutId}:${l.side === 'a' ? 'b' : 'a'}`);
+    if (mine == null || theirs == null) return favOf.get(l.boutId).side === l.side ? 'fav' : 'dog';
+    if (mine >= 100 && theirs < mine) return 'dog';
+    if (theirs >= 100 && mine < theirs) return 'fav';
+    return null;
+  };
   const sideChance = (l) => live.find((x) => x.prop === 'ml' && x.boutId === l.boutId && x.side === l.side)?.chance ?? null;
   const bd = (l) => breakdowns?.[l.boutId] ?? {};
   const onLean = (l) => Boolean(l.side && bd(l).lean === l.side);
@@ -111,10 +137,15 @@ export function recommendedParlays({ legs = [], breakdowns = {}, now = Date.now(
     .reduce((m, l) => { const cur = m.get(l.boutId); if (!cur || l.score > cur.score || (l.score === cur.score && room(l) > room(cur))) m.set(l.boutId, l); return m; }, new Map()).values()].sort((x, y) => y.score - x.score || byChance(x, y));
 
   /** The first `n` of a pool, one a fight, skipping the fights `not` already holds; null when the pool runs short. */
-  const take = (pool, n, not = []) => {
+  const uses = new Map();
+  const take = (pool, n, not = [], { all = false } = {}) => {
     const used = new Set(not.map((l) => l.boutId)); const out = [];
-    for (const l of pool) { if (out.length >= n) break; if (used.has(l.boutId)) continue; used.add(l.boutId); out.push(l); }
-    return out.length === n ? out : null;
+    const pass = (fresh) => { for (const l of pool) { if (out.length >= n) break; if (used.has(l.boutId)) continue; if (fresh && !all && (uses.get(l.id) ?? 0) >= REC_LEG_USES) continue; used.add(l.boutId); out.push(l); } };
+    // The legs with uses left first; a pool that runs short is filled from the ones already well used.
+    pass(true); if (out.length < n) pass(false);
+    if (out.length !== n) return null;
+    // In the pool's own order, so "the likeliest" still leads the ticket.
+    return out.sort((x, y) => pool.indexOf(x) - pool.indexOf(y));
   };
 
   /** A leg as a ticket shows it: the selection, its price, and why it is there. */
@@ -127,7 +158,7 @@ export function recommendedParlays({ legs = [], breakdowns = {}, now = Date.now(
     for (const w of (l.why ?? []).filter((x) => !/^\d+% to (win|pass|end)\b/i.test(x)).slice(0, 3)) why.push(w.replace(/^./, (c) => c.toUpperCase()));
     const reason = onLean(l) ? (bd(l).reasons ?? [])[0] : null;
     if (reason) why.push(reason.length > 220 ? `${reason.slice(0, 217).replace(/\s+\S*$/, '')}…` : reason);
-    return { id: l.id, boutId: l.boutId, fight: l.fight, order: l.order ?? null, prop: l.prop, label: l.label, selection: l.selection, side: l.side ?? null, name: l.name ?? null, role: role(l), chance: l.chance, read: l.read, score: l.score, american: q.american, bookId: q.bookId, book: q.book ?? null, link: q.link ?? null, fairAmerican: l.fairAmerican ?? null, why };
+    return { id: l.id, boutId: l.boutId, fight: l.fight, order: l.order ?? null, prop: l.prop, label: l.label, selection: l.selection, side: l.side ?? null, name: l.name ?? null, role: role(l), fighterId: l.fighterId ?? null, method: l.method ?? null, round: l.round ?? null, point: l.point ?? null, sideWord: l.sideWord ?? null, chance: l.chance, read: l.read, score: l.score, american: q.american, bookId: q.bookId, book: q.book ?? null, link: q.link ?? null, fairAmerican: l.fairAmerican ?? null, why };
   };
 
   /** The ticket's price: at the one book with every leg where there is one, else leg by leg at each leg's best. */
@@ -148,6 +179,7 @@ export function recommendedParlays({ legs = [], breakdowns = {}, now = Date.now(
     if (!chosen || chosen.length < 2) return;
     const key = chosen.map((l) => l.id).sort().join('|');
     if (seen.has(key)) return; seen.add(key);
+    for (const l of chosen) uses.set(l.id, (uses.get(l.id) ?? 0) + 1);
     const p = price(chosen);
     const legsOut = chosen.map((l, i) => legView(l, typeof picked === 'function' ? picked(l, i) : picked, p.quotes[i]));
     const chance = chosen.reduce((x, l) => x * l.chance, 1);
@@ -189,7 +221,7 @@ export function recommendedParlays({ legs = [], breakdowns = {}, now = Date.now(
   add('mixed', 'The best leg of three fights', 'The highest-graded leg of each of three fights, whatever the market.', take(bestPerBout, 3), (l) => `The highest-graded leg of ${l.fight}: ${l.score} of 5 stars`);
   add('mixed', 'The best leg of four fights', 'The highest-graded leg of each of four fights, whatever the market.', take(bestPerBout, 4), (l) => `The highest-graded leg of ${l.fight}: ${l.score} of 5 stars`);
   // ---- the long ones
-  if (favML.length >= 5) add('ml', 'Every favourite on the card', `All ${favML.length} favourites to win: one upset ends it.`, take(favML, favML.length), nth(favML, 'favourite'));
+  if (favML.length >= 5) add('ml', 'Every favourite on the card', `All ${favML.length} favourites to win: one upset ends it.`, take(favML, favML.length, [], { all: true }), nth(favML, 'favourite'));
   add('ml', 'Two underdogs', 'The two underdogs with the best chance to win.', take(dogML, 2), nth(dogML, 'underdog'));
   add('ml', 'Three underdogs', 'The three underdogs with the best chance to win.', take(dogML, 3), nth(dogML, 'underdog'));
   add('method', 'Four methods of victory', 'Four fighters to win the way their wins most often come.', take(methods, 4), methodLine);
@@ -235,4 +267,63 @@ export function recommendedParlays({ legs = [], breakdowns = {}, now = Date.now(
   const counts = { builder: 0, parlay: 0, lotto: 0, stat: 0 };
   for (const t of out) counts[t.type]++;
   return { at: now, tickets: out, counts, types: REC_TYPES, styles: REC_STYLES };
+}
+
+/**
+ * How a leg landed, from the bout's result: true, false, or null where
+ * the result does not say (a stat play needs the fight's statistics; a
+ * draw or a no contest settles nothing; a prop this does not read).
+ * `bout` is the card's bout: {status, a, b, result: {winnerId, method,
+ * round, time, draw}}.
+ */
+export function gradeRecLeg(leg, bout) {
+  const r = bout?.result;
+  if (!r || bout.status !== 'final' || r.draw || !r.winnerId) return null;
+  const winner = String(r.winnerId) === String(bout.a?.id) ? 'a' : String(r.winnerId) === String(bout.b?.id) ? 'b' : null;
+  const kind = methodKind(r.method); const round = Number(r.round);
+  if (!winner || !kind) return null;
+  const distance = kind === 'dec';
+  switch (leg.prop) {
+    case 'ml': return winner === leg.side;
+    case 'method': return leg.method ? winner === leg.side && kind === leg.method : null;
+    case 'distance': return /does not go/i.test(leg.selection) ? !distance : distance;
+    case 'rounds': {
+      if (!Number.isFinite(leg.point) || !leg.sideWord) return null;
+      if (distance) return leg.sideWord === 'over';
+      // Rounds fought as a number: a stoppage at 2:30 of the second is exactly 1.5, which settles neither side.
+      const secs = clockSeconds(r.time); if (secs == null || !Number.isFinite(round)) return null;
+      const fought = round - 1 + secs / 300;
+      if (fought === leg.point) return null;
+      return leg.sideWord === 'over' ? fought > leg.point : fought < leg.point;
+    }
+    case 'win_round': return winner === leg.side && !distance && round === leg.round;
+    case 'method_round': return leg.method ? winner === leg.side && kind === leg.method && round === leg.round : null;
+    case 'end_round': return !distance && round === leg.round;
+    default: return null;
+  }
+}
+
+/**
+ * The page's tickets against the card's results, once every bout on a
+ * ticket has one: each leg's `hit`, each ticket's `result` ('win', 'loss',
+ * or null while a leg cannot be told), and the count by type. Returns the
+ * record's `recommended` with those set, or null while the card is not
+ * final. Kept so the next review reads how the page did, not just what it
+ * said.
+ */
+export function gradeRecommended(recommended, event, now = Date.now()) {
+  if (!recommended?.tickets?.length || event?.status !== 'final') return null;
+  const bouts = new Map((event.bouts ?? []).map((b) => [String(b.id), b]));
+  const results = { at: now, graded: 0, wins: 0, byType: {} };
+  const tickets = recommended.tickets.map((t) => {
+    const legs = t.legs.map((l) => ({ ...l, hit: gradeRecLeg(l, bouts.get(String(l.boutId))) }));
+    const result = legs.some((l) => l.hit === false) ? 'loss' : legs.every((l) => l.hit === true) ? 'win' : null;
+    if (result) {
+      const by = (results.byType[t.type] ??= { graded: 0, wins: 0 });
+      results.graded++; by.graded++;
+      if (result === 'win') { results.wins++; by.wins++; }
+    }
+    return { ...t, legs, result };
+  });
+  return { ...recommended, tickets, results };
 }

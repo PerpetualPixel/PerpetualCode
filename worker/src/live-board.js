@@ -93,6 +93,34 @@ const MARGIN = 1.25;
 export const COUNT_MARGIN = 1.45;
 export const COUNT_MARGIN_HIGH = 1.6;
 export const COUNT_HIGH_LINE = 5.5;
+/**
+ * The chance a receiver makes the catches a line still needs, at the rate
+ * caught so far over the time left (a Poisson count).
+ *
+ * A catch comes whole, and the pace hides that: one catch after 64% of a
+ * game is "on pace for 2", which read as 33% of cushion over a 1.5 line.
+ * What the leg needs is one more catch in the last third from a player
+ * who has made one all day, and that is about 42%.
+ *
+ * The NFL slips of 2026-11-22, reviewed 2026-11-23 (55 distinct legs, 56%
+ * where their prices said 66%): reception legs hit 10 of 22 (45%, priced
+ * as 66%), and the seven on a player with one catch hit once. Receiving
+ * yards hit 13 of 23, and seven of the ten misses were players who needed
+ * a few yards and did not catch another ball. Rushing yards (7 of 9) and
+ * the NBA's legs (72%, priced as 69%) were fine. So a reception leg needs
+ * RECEPTION_MIN_CHANCE of the catches still to come, and a receiving-yards
+ * leg needs YARDS_MIN_CATCH_CHANCE of at least one more catch.
+ */
+export const RECEPTION_MIN_CHANCE = 0.85;
+export const YARDS_MIN_CATCH_CHANCE = 0.8;
+export function catchChance(catches, point, elapsed) {
+  if (!(elapsed > 0) || elapsed >= 1) return 0;
+  const need = Math.max(1, Math.floor(point) + 1 - catches);
+  const rate = (catches * (1 - elapsed)) / elapsed;
+  let below = 0; let term = Math.exp(-rate);
+  for (let i = 0; i < need; i++) { below += term; term *= rate / (i + 1); }
+  return Math.max(0, 1 - below);
+}
 /** The cushion a leg needs: the pace must clear the line by this multiple. */
 export const marginFor = (stat, point, league = 'nfl') => (
   league === 'nba' && (stat === 'rebounds' || stat === 'assists') ? (point > COUNT_HIGH_LINE ? COUNT_MARGIN_HIGH : COUNT_MARGIN) : MARGIN
@@ -275,6 +303,10 @@ export function liveCandidates(payload, tick, league = 'nfl', { weather = null }
         if (stat === 'passingYards' && roughWeather(weather)) continue;
         const proj = projectStat(cur, elapsed, stat, { team: p.team, script, weather, league, prior: o.point });
         if (proj < o.point * marginFor(stat, o.point, league)) continue;
+        // A catch comes whole (catchChance): the catches a reception line still needs must be likely, and a receiving-yards
+        // line must be on a player likely to catch another ball at all.
+        if (league === 'nfl' && stat === 'receptions' && catchChance(cur, o.point, elapsed) < RECEPTION_MIN_CHANCE) continue;
+        if (league === 'nfl' && stat === 'receivingYards') { const caught = boxValue(p, 'receptions'); if (caught != null && catchChance(caught, caught + 0.5, elapsed) < YARDS_MIN_CATCH_CHANCE) continue; }
         out.push({ bookId, book: SPORTSBOOKS[bookId]?.name ?? b.key, market: m.key, stat, label: LIVE_LABEL[stat] ?? stat, player: o.description, team: p.team ?? null, athleteId: p.id ?? null, point: o.point, price: o.price, decimal: americanToDecimal(o.price), current: cur, pace: proj, cushion: Math.round(((proj - o.point) / o.point) * 100) / 100, link: o.link ?? null });
       }
     }
