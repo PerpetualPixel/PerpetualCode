@@ -18,6 +18,7 @@
  *   node scripts/tennis-fanduel.mjs            read and write
  *   node scripts/tennis-fanduel.mjs --dry-run  read and print, write nothing
  *   node scripts/tennis-fanduel.mjs --dump     print every market and runner name read
+ *   node scripts/tennis-fanduel.mjs --list     print every singles match on FanDuel's page and whether the card has it
  */
 import { readKv, writeKv } from './lib/kv.mjs';
 import { trimFanduelMarket } from '../worker/src/ufc-fanduel.js';
@@ -58,6 +59,13 @@ async function main() {
   const wanted = (slate.length ? singles.filter(onCard) : singles.filter((e) => TOUR_LEVEL.test(String(comps[e.competitionId]?.name ?? ''))))
     .sort((a, b) => Date.parse(a.openDate) - Date.parse(b.openDate)).slice(0, MAX_MATCHES);
   say(`FanDuel tennis page: ${singles.length} singles inside the lookahead, ${slate.length} matches to come on the card, ${wanted.length} to read`);
+  // --list: every singles match on FanDuel's page with its competition and whether the card has it, and the card's own
+  // matches, for seeing why a week reads nothing (a tournament FanDuel does not list, or names that do not pair).
+  if (args.includes('--list')) {
+    for (const e of [...singles].sort((x, y) => String(comps[x.competitionId]?.name ?? '').localeCompare(String(comps[y.competitionId]?.name ?? '')) || Date.parse(x.openDate) - Date.parse(y.openDate))) console.log(`    ${onCard(e) ? 'CARD' : '    '} ${comps[e.competitionId]?.name ?? '?'} | ${e.name} | ${e.openDate}`);
+    for (const m of slate) console.log(`    card: ${m.tour} ${m.eventName} [${m.tier}] ${m.round} | ${m.a.name} v ${m.b.name} | ${m.date}`);
+    const all = Object.values(att.events ?? {}); console.log(`    events on the page: ${all.length}; competitions: ${[...new Set(all.map((e) => comps[e.competitionId]?.name ?? '?'))].join(' | ')}`);
+  }
   const events = [];
   for (const f of wanted) {
     const markets = new Map();
