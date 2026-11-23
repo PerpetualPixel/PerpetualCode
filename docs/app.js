@@ -7875,7 +7875,7 @@ function showWelcomeToastIfFresh() {
 // Versioned so a future, meaningfully different change can show its own
 // hint again even to someone who already dismissed this one — bump the
 // suffix, don't reuse the key.
-const WHATS_NEW_LEAN_FINAL_KEY = 'pp_seen_hint_trends_v1'; // bumped for the 2026-10-27 Trends-only site so the notice shows once more
+const WHATS_NEW_LEAN_FINAL_KEY = 'pp_seen_hint_2026_11_23'; // bumped for the 2026-11-23 notes (UFC Recommended, tennis set betting, the Live tab) so the notice shows once more
 
 /** One-time explainer for the 2026-08-21 fresh-slate reset (tracking
  * archived, boards drawn once daily at 2am ET) — localStorage, not
@@ -9315,7 +9315,7 @@ function renderTrends() {
     el.trendsStatus.textContent = feedDown
       ?? (data?.lastError
         ? `The last Trends build failed — ${data.lastError}`
-        : 'No lines scanned yet for this league — the worker builds Trends on its next 15-minute tick.');
+        : 'No lines for this league yet. They show up once the books post them.');
     el.trendsBody.innerHTML = '';
     return;
   }
@@ -9599,7 +9599,7 @@ async function loadTennisTrends({ force = false } = {}) {
   try {
     const res = await fetch(new URL('/tennis/trends', CONFIG.WORKER_URL), { headers: { Accept: 'application/json' } });
     if (res.ok) tennisTrendsState.data = await res.json();
-  } catch { el.trendsStatus.textContent = "Couldn't reach the worker."; }
+  } catch { el.trendsStatus.textContent = "Couldn't load this right now. Try again in a moment."; }
   tennisTrendsState.loading = false;
   renderTrendLeagues();
   renderTrends();
@@ -9645,7 +9645,7 @@ function renderTennisTrendPlayer(player) {
 function renderTennisTrends() {
   const d = tennisTrendsState.data;
   if (!d) { if (!tennisTrendsState.loading) { el.trendsStatus.textContent = 'The tennis lines have not been built yet.'; el.trendsBody.innerHTML = ''; } return; }
-  if (!d.players?.length) { el.trendsStatus.textContent = 'No tennis lines yet: the worker builds them once an hour from the card and the serve profiles.'; el.trendsBody.innerHTML = ''; return; }
+  if (!d.players?.length) { el.trendsStatus.textContent = 'No tennis lines yet. They show up once the day\'s matches are read.'; el.trendsBody.innerHTML = ''; return; }
   const q = trendsState.search.trim().toLowerCase();
   let players = d.players.filter((p) => (tennisTrendsState.tour === 'all' || p.tour === tennisTrendsState.tour) && (!tennisTrendsState.today || p.today) && (!q || p.name.toLowerCase().includes(q)));
   if (tennisTrendsState.market !== 'all') players = players.filter((p) => p.props.some((x) => x.market === tennisTrendsState.market && x.line != null)).sort((a, b) => (b.today ? 1 : 0) - (a.today ? 1 : 0) || (b.props.find((x) => x.market === tennisTrendsState.market)?.rate ?? 0) - (a.props.find((x) => x.market === tennisTrendsState.market)?.rate ?? 0));
@@ -9858,7 +9858,7 @@ async function loadTrendPicks({ force = false } = {}) {
     trendPicksState.loaded = true;
     renderTrendPicks();
   } catch {
-    el.trendPicksStatus.textContent = "Couldn't reach the worker.";
+    el.trendPicksStatus.textContent = "Couldn't load this right now. Try again in a moment.";
   }
 }
 
@@ -10306,7 +10306,7 @@ async function loadPlayers(sport = null) {
   const everything = Promise.all([...PLAYER_LEAGUES.map(([k]) => loadPlayerIndex(k).then(landed)), loadPlayerExtras().then(landed)]).then(() => {
     if (playersState.player || playersState.log) return;
     const n = allPlayers().length;
-    el.playersStatus.textContent = n ? `${n.toLocaleString()} players and fighters across the NBA, NFL, NHL, soccer, tennis and the UFC. Type a name.` : "Couldn't reach the worker.";
+    el.playersStatus.textContent = n ? `${n.toLocaleString()} players and fighters across the NBA, NFL, NHL, soccer, tennis and the UFC. Type a name.` : "Couldn't load this right now. Try again in a moment.";
   });
   await (sport ? loadPlayerIndex(sport) : everything);
   renderPlayers();
@@ -10461,7 +10461,7 @@ async function runPlayerSearch() {
     if (!res.ok || !body.rows) { el.playersStatus.textContent = body.error ? `No luck: ${body.error}.` : "Couldn't load that game log."; playersState.log = null; }
     else { playersState.log = body; el.playersStatus.textContent = `${body.rows.length} games logged across ${new Set(body.rows.map((r) => r.season)).size} season${new Set(body.rows.map((r) => r.season)).size === 1 ? '' : 's'}.`; }
   } catch {
-    el.playersStatus.textContent = "Couldn't reach the worker.";
+    el.playersStatus.textContent = "Couldn't load this right now. Try again in a moment.";
   }
   playersState.loading = false;
   renderPlayers();
@@ -10480,7 +10480,7 @@ async function openPlayerSearch({ sportKey, id, name, team, headshot, stat, poin
   const known = (playersState.index[playersState.sport] ?? []).find((x) => String(x.id) === String(id));
   pickPlayer(known ? { ...known, kind: 'team', tab: playersState.sport, tag: SPORT_SHORT[known.sportKey ?? playersState.sport] } : { id, name, team, headshot: headshot ?? null, position: null, kind: 'team', tab: playersState.sport, tag: SPORT_SHORT[sportKey] ?? SPORT_SHORT[playersState.sport] });
   if (playersState.player.id && playersState.player.team) await runPlayerSearch();
-  else el.playersStatus.textContent = 'This player is not in the ESPN bundle yet.';
+  else el.playersStatus.textContent = 'No stats on file for this player yet.';
 }
 
 el.playersView?.addEventListener('click', (event) => {
@@ -10687,9 +10687,9 @@ async function loadParlay() {
   showLoading(el.parlayStatus, 'Loading the board…');
   try {
     await Promise.all(missing.map(loadParlaySport));
-    el.parlayStatus.textContent = parlayRows().length ? '' : (isUfcParlay() ? 'No odds on the next card yet.' : isTennisOnlyParlay() ? 'No tennis legs yet: the worker reads the day\'s matches every quarter hour once the card and the serve profiles are in.' : 'No lines on this board yet.');
+    el.parlayStatus.textContent = parlayRows().length ? '' : (isUfcParlay() ? 'No odds on the next card yet.' : isTennisOnlyParlay() ? 'No tennis legs yet. They show up once the day\'s matches are read.' : 'No lines on this board yet.');
   } catch {
-    el.parlayStatus.textContent = "Couldn't reach the worker.";
+    el.parlayStatus.textContent = "Couldn't load this right now. Try again in a moment.";
   }
   parlayState.loading = false;
   renderParlay();
@@ -11158,7 +11158,7 @@ async function loadParlayBreakdown(rowId) {
     if (res.ok && body.verdict) parlayState.breakdowns[rowId] = body;
     else parlayState.breakdowns[rowId] = { verdict: 'risky', summary: body.error ? `No read: ${body.error}.` : 'No read available.', reasons: [], model: false };
   } catch {
-    parlayState.breakdowns[rowId] = { verdict: 'risky', summary: "Couldn't reach the worker.", reasons: [], model: false };
+    parlayState.breakdowns[rowId] = { verdict: 'risky', summary: "Couldn't load this right now. Try again in a moment.", reasons: [], model: false };
   }
   if (parlayState.open === rowId) renderParlay();
 }
@@ -11261,7 +11261,7 @@ async function loadUfc(eventId = ufcState.eventId) {
     const body = await res.json();
     if (!res.ok) { ufcState.event = null; el.ufcStatus.textContent = body.error === 'no card yet' ? 'No card on the board yet; the runner fills it within the quarter hour.' : `Couldn't load the card: ${body.error ?? res.status}.`; }
     else { ufcState.event = body.event; ufcState.eventId = body.event.id; ufcState.events = body.events ?? []; ufcState.builtAt = body.builtAt ?? null; el.ufcStatus.textContent = ''; }
-  } catch { el.ufcStatus.textContent = "Couldn't reach the worker."; }
+  } catch { el.ufcStatus.textContent = "Couldn't load this right now. Try again in a moment."; }
   ufcState.loading = false;
   renderUfc();
   loadUfcPicks();
@@ -11394,7 +11394,7 @@ async function ufcFighter(id) {
     const res = await fetch(url, { headers: { Accept: 'application/json' } });
     const body = await res.json();
     ufcState.fightersById[id] = res.ok ? body : { id, missing: true, error: body.error };
-  } catch { ufcState.fightersById[id] = { id, missing: true, error: "Couldn't reach the worker." }; }
+  } catch { ufcState.fightersById[id] = { id, missing: true, error: "Couldn't load this right now. Try again in a moment." }; }
   return ufcState.fightersById[id];
 }
 
@@ -11903,7 +11903,7 @@ async function loadLive({ force = false } = {}) {
     liveState.data = await res.json();
     el.liveStatus.textContent = '';
   } catch {
-    el.liveStatus.textContent = "Couldn't reach the worker.";
+    el.liveStatus.textContent = "Couldn't load this right now. Try again in a moment.";
   }
   liveState.loading = false;
   renderLive();
@@ -12104,7 +12104,7 @@ function renderTennisLiveRead(r) {
     ${sgOpen.length ? `<small class="row-sub">Set ${r.state.setNumber} games: about ${esc(String(sg.mean))} expected at today's holds · ${sgOpen.map((k) => (k === 12.5 ? `a tiebreak ${esc(pct(sg.over[k]))}` : `past ${k}: ${esc(pct(sg.over[k]))}`)).join(' · ')}</small>` : ''}
     ${(r.plays ?? []).map((p) => renderTennisLivePlay({ ...p, nowScore: (r.sets ?? []).map(([x, y]) => `${x}-${y}`).join(' ') })).join('') || `<small class="row-sub live-tennis-none">${r.already?.length ? `No live play: ${esc(r.already.join(', '))} is already on the record from before the match, and the same bet is not posted twice.` : 'No live play: nothing here clears the bar against the price.'}</small>`}
     <button type="button" class="parlay-btn sc-why" data-tennis-live-why="${esc(r.id)}">${open ? 'Hide the read' : 'The read'}</button>
-    ${open ? `<ul class="tennis-why-list">${(r.why ?? []).map((w) => `<li>${esc(w)}</li>`).join('')}<li>Serve numbers from ${esc(r.serve?.source ?? 'the tour average')}. ESPN's feed carries the score game by game and no serve statistics, so the holds and breaks are read from the order of the games.</li></ul>${tennisBookPrices(r.books?.a, `${r.a} to win, live`)}${tennisBookPrices(r.books?.b, `${r.b} to win, live`)}${(r.plays ?? []).map((p) => tennisBookPrices(p.quotes, `${p.selection}, when it posted`)).join('')}` : ''}
+    ${open ? `<ul class="tennis-why-list">${(r.why ?? []).map((w) => `<li>${esc(w)}</li>`).join('')}<li>Serve numbers from ${esc(r.serve?.source ?? 'the tour average')}. The scoreboard gives the score game by game and no serve statistics, so the holds and breaks are read from the order of the games.</li></ul>${tennisBookPrices(r.books?.a, `${r.a} to win, live`)}${tennisBookPrices(r.books?.b, `${r.b} to win, live`)}${(r.plays ?? []).map((p) => tennisBookPrices(p.quotes, `${p.selection}, when it posted`)).join('')}` : ''}
   </div>`;
 }
 const lastName = (name) => String(name ?? '').trim().split(/\s+/).at(-1) ?? '';
@@ -12251,7 +12251,7 @@ async function loadTennis({ force = false } = {}) {
     if (res.ok) tennisState.data = await res.json();
     if (el.tennisStatus) el.tennisStatus.textContent = '';
   } catch {
-    if (el.tennisStatus) el.tennisStatus.textContent = "Couldn't reach the worker.";
+    if (el.tennisStatus) el.tennisStatus.textContent = "Couldn't load this right now. Try again in a moment.";
   }
   tennisState.loading = false;
   renderTennis();
