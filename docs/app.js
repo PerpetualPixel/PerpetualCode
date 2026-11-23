@@ -12126,26 +12126,30 @@ function renderTennisLiveLedger(tl, inPlayIds) {
 /** Tennis on the Live tab: the day's parlay with each leg's standing, the matches in play, the matches with a play, the rest folded. */
 function renderLiveTennis(t) {
   if (!t) return '<p class="row-sub">The tennis scoreboard did not come through.</p>';
-  const matches = t.matches ?? [];
+  // In play or still to start: a finished match comes off the list like a finished game (the Tennis tab keeps how its plays landed).
+  const matches = (t.matches ?? []).filter((m) => m.state === 'in' || m.state === 'pre');
+  const finished = (t.matches ?? []).length - matches.length;
+  const settled = new Set(['won', 'lost', 'push', 'void']);
   const inPlay = matches.filter((m) => m.state === 'in');
   const withPlay = matches.filter((m) => m.state !== 'in' && m.plays.length);
   const rest = matches.filter((m) => m.state !== 'in' && !m.plays.length);
-  const parlays = (t.parlays ?? []).map((p) => `<article class="trend-card live-tennis-parlay"><div class="pick-bet-head"><span class="pick-bet-type">Tennis · Moneyline parlay</span><span class="pick-bet-book">${p.bookId ? `${bookBadge(p.bookId, p.book)}${esc(p.book ?? '')}` : ''}</span><span class="pick-bet-price">${Number.isFinite(p.american) ? esc(formatAmerican(p.american)) : ''}</span></div>
+  const parlays = (t.parlays ?? []).filter((p) => !(p.legs ?? []).every((l) => settled.has(l.standing?.state ?? ''))).map((p) => `<article class="trend-card live-tennis-parlay"><div class="pick-bet-head"><span class="pick-bet-type">Tennis · Moneyline parlay</span><span class="pick-bet-book">${p.bookId ? `${bookBadge(p.bookId, p.book)}${esc(p.book ?? '')}` : ''}</span><span class="pick-bet-price">${Number.isFinite(p.american) ? esc(formatAmerican(p.american)) : ''}</span></div>
     <div class="tennis-legs">${p.legs.map((l) => `<div class="live-tennis-play"><span>${esc(l.selection)} <small>${esc(formatAmerican(l.american))} · ${esc(l.a)} vs ${esc(l.b)}</small><small class="live-tennis-note">${esc(l.standing?.text ?? '')}</small></span>${tennisStanding(l.standing)}</div>`).join('')}</div></article>`).join('');
-  if (!matches.length) return `<div class="live-tennis"><p class="live-sub">Tennis <small>no ATP or WTA singles on today's scoreboard</small></p>${parlays}</div>`;
+  if (!matches.length) return `<div class="live-tennis"><p class="live-sub">Tennis <small>${finished ? 'today\'s singles are over' : 'no ATP or WTA singles on today\'s scoreboard'}</small></p>${renderTennisLiveLedger(liveState.data?.tennisLive, new Set())}${parlays}</div>`;
   return `<div class="live-tennis">
-    <p class="live-sub">Tennis <small>${inPlay.length ? `${inPlay.length} in play · ` : ''}${matches.length} singles today · scoreboard read ${esc(ago(t.at))}</small></p>
+    <p class="live-sub">Tennis <small>${inPlay.length ? `${inPlay.length} in play · ` : ''}${matches.length - inPlay.length} still to start · scoreboard read ${esc(ago(t.at))}</small></p>
     ${renderTennisLiveLedger(liveState.data?.tennisLive, new Set(inPlay.map((m) => m.id)))}
     ${parlays}
     ${[...inPlay, ...withPlay].map(renderLiveTennisMatch).join('')}
-    ${rest.length ? `<details class="live-tennis-rest" ${liveState.open['tennis:rest'] ? 'open' : ''}><summary>${rest.length} more match${rest.length === 1 ? '' : 'es'} today without a play</summary>${rest.map(renderLiveTennisMatch).join('')}</details>` : ''}
+    ${rest.length ? `<details class="live-tennis-rest" ${liveState.open['tennis:rest'] ? 'open' : ''}><summary>${rest.length} more match${rest.length === 1 ? '' : 'es'} still to start without a play</summary>${rest.map(renderLiveTennisMatch).join('')}</details>` : ''}
   </div>`;
 }
 
 function renderLive() {
   if (!el.liveBody) return;
   const d = liveState.data;
-  const all = d?.games ?? [];
+  // A finished game is not listed (2026-11-23: "when the games are over, remove the game cards from the live section").
+  const all = (d?.games ?? []).filter((g) => g.tick?.state !== 'post');
   const games = all.filter((g) => liveState.leagues.has(g.league));
   const tennisOn = liveState.leagues.has('tennis');
   const tennis = tennisOn ? (d?.tennis ?? null) : null;
@@ -12155,8 +12159,9 @@ function renderLive() {
   const watcherNote = lastBeat ? (Date.now() - lastBeat < 12 * 60e3 ? `Watcher on, looked ${esc(ago(lastBeat))}` : `Watcher quiet since ${esc(ago(lastBeat))}`) : 'Watcher not started today';
   if (!games.length) {
     const chosen = [...liveState.leagues].filter((k) => k !== 'tennis').map(league).join(' or ');
-    const note = all.length ? `No ${esc(chosen)} game on today's board. ${all.length} ${esc([...new Set(all.map((g) => league(g.league)))].join(' and '))} game${all.length === 1 ? '' : 's'} today: turn the league on above.` : chosen ? `No ${esc(chosen)} game on today's board yet. The watcher lists the day's games as it starts and reads each one from tip-off to the final.` : '';
-    el.liveBody.innerHTML = `${liveLeaguePicker(all)}${tennis?.matches?.length ? '' : `<p class="empty">${note || 'Nothing on today\'s board.'}</p>`}${tennisHtml}<p class="row-sub">${watcherNote}.</p>`;
+    const over = (d?.games ?? []).length - all.length;
+    const note = all.length ? `No ${esc(chosen)} game still to play on today's board. ${all.length} ${esc([...new Set(all.map((g) => league(g.league)))].join(' and '))} game${all.length === 1 ? '' : 's'} left today: turn the league on above.` : over ? 'Today\'s games are over. A game comes off this list when it ends.' : chosen ? `No ${esc(chosen)} game in play or still to start today. The watcher lists the day's games as it starts, reads each one from tip-off, and a game comes off the list when it ends.` : '';
+    el.liveBody.innerHTML = `${liveLeaguePicker(all)}${(tennis?.matches ?? []).some((x) => x.state === 'in' || x.state === 'pre') ? '' : `<p class="empty">${note || 'Nothing on today\'s board.'}</p>`}${tennisHtml}<p class="row-sub">${watcherNote}.</p>`;
     return;
   }
   const slips = games.reduce((n, g) => n + liveSlipsFor(g).length, 0);
@@ -12166,7 +12171,7 @@ function renderLive() {
   const reads = games.reduce((n, g) => n + (g.game ?? []).filter((r) => !liveState.books.size || liveState.showAll || r.lines.some((l) => liveState.books.has(l.bookId))).length, 0);
   const ordered = liveOrder(games);
   const playable = ordered.filter((g) => g.tick?.state === 'in' && g.play?.playable).length;
-  el.liveBody.innerHTML = `<div class="live-top"><span class="live-count ${slips || reads ? 'is-on' : ''}">${slips ? `${slips} live slip${slips === 1 ? '' : 's'} ready${where}` : elsewhere ? `No live slip${where}` : inPlay ? 'No live slip yet: they build from the first minutes and rebuild as the game moves' : 'No live slip'}${reads ? ` · ${reads} game line${reads === 1 ? '' : 's'} with an edge` : ''}</span><span class="row-sub">Today's games · board read ${esc(liveTimeFmt.format(new Date(d.at)))}, re-read every minute while open · ${watcherNote}</span></div>${liveLeaguePicker(all)}${liveBooksPicker()}<div class="live-list-head"><span class="row-sub">${playable ? `${playable} playable now, most confident first` : inPlay ? `${inPlay} in play, nothing playable yet` : `${games.length} game${games.length === 1 ? '' : 's'} on the slate`} · ${games.length} listed. Tap a game to open it.</span><button type="button" class="link-button" data-live-expand="1">${liveState.expandAll ? 'Collapse all' : 'Expand all'}</button></div>${ordered.map(renderLiveGame).join('')}${tennisHtml}`;
+  el.liveBody.innerHTML = `<div class="live-top"><span class="live-count ${slips || reads ? 'is-on' : ''}">${slips ? `${slips} live slip${slips === 1 ? '' : 's'} ready${where}` : elsewhere ? `No live slip${where}` : inPlay ? 'No live slip yet: they build from the first minutes and rebuild as the game moves' : 'No live slip'}${reads ? ` · ${reads} game line${reads === 1 ? '' : 's'} with an edge` : ''}</span><span class="row-sub">Today's games still to play · board read ${esc(liveTimeFmt.format(new Date(d.at)))}, re-read every minute while open · ${watcherNote}</span></div>${liveLeaguePicker(all)}${liveBooksPicker()}<div class="live-list-head"><span class="row-sub">${playable ? `${playable} playable now, most confident first` : inPlay ? `${inPlay} in play, nothing playable yet` : `${games.length} game${games.length === 1 ? '' : 's'} on the slate`} · ${games.length} listed. Tap a game to open it.</span><button type="button" class="link-button" data-live-expand="1">${liveState.expandAll ? 'Collapse all' : 'Expand all'}</button></div>${ordered.map(renderLiveGame).join('')}${tennisHtml}`;
 }
 
 el.liveView?.addEventListener('click', (event) => {

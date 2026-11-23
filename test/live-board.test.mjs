@@ -135,7 +135,7 @@ test('the board drops a game once it is final, and a stale watch six hours past 
   assert.deepEqual([board.day, board.leagues], ['2026-11-02', ['nba', 'nfl']]);
 });
 
-test('the board is today only, Eastern: a final from today stays, a late game in play past midnight stays, yesterday and the rest of the week go, and a league not on is left off', async () => {
+test('the board is today only, Eastern, and only what is still to play: a game that has ended comes off, a late game in play past midnight stays, the rest of the week goes, and a league not on is left off', async () => {
   const { getLiveBoard } = await import('../worker/src/live-board.js');
   const now = Date.UTC(2026, 10, 6, 5, 30); // Fri 00:30 ET: still Thursday night's late game
   const m = new Map(); const env = { POTD_KV: { get: async (k) => m.get(k) ?? null, put: async (k, v) => { m.set(k, v); } } };
@@ -160,7 +160,11 @@ test('the board is today only, Eastern: a final from today stays, a late game in
   assert.deepEqual(board.games.map((g) => g.espnEventId).sort(), ['late', 'tomorrow'], 'past midnight: the game still in play crosses with the new day\'s slate; the finals of the day before and the rest of the week are off');
   assert.equal(board.watcher.nba.inPlay, 1);
   const evening = await getLiveBoard(env, Date.UTC(2026, 10, 6, 4, 0)); // Thu 11 PM ET
-  assert.deepEqual(evening.games.map((g) => g.espnEventId).sort(), ['early', 'late', 'tnf'], 'Thursday evening: the finals of the day stay with the game in play; Sunday and Friday are not listed; the NHL game is off');
+  // 2026-11-23: "when the games are over, remove the game cards from the live section".
+  assert.deepEqual(evening.games.map((g) => g.espnEventId).sort(), ['late'], 'Thursday evening: the game in play is listed; the two finals of the day are off it; Sunday and Friday are not listed; the NHL game is off');
+  // The same evening before the Suns game ended: it is on the board until its final whistle.
+  m.set('live:watch:early', tick('in', { PHX: 104, ORL: 99 }));
+  assert.deepEqual((await getLiveBoard(env, Date.UTC(2026, 10, 6, 4, 0))).games.map((g) => g.espnEventId).sort(), ['early', 'late']);
 });
 
 test('a deep ladder is read from its cheap end too: the three-leg at +100 comes from the low rungs, not the plus-money ones alone', async () => {

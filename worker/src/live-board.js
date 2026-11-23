@@ -528,7 +528,7 @@ export async function getLiveBoard(env, now = Date.now(), { ctx = null } = {}) {
   const out = [];
   const today = liveDay(now);
   // The whole slate (2026-11-05: "I only see two games, should be way more"), today only (2026-11-06: "only show the games on
-  // the current day"): the current Eastern day's games in the leagues on, finals included until the day turns, a game in play
+  // the current day"): the current Eastern day's games in the leagues on that are still to start or in play, a game in play
   // past midnight with them; up to forty.
   let seen = 0;
   for (const g of games) {
@@ -540,6 +540,9 @@ export async function getLiveBoard(env, now = Date.now(), { ctx = null } = {}) {
     const onToday = liveDay(Date.parse(g.date) || 0) === today;
     if (!onToday && tick?.state !== 'in') continue;
     if (!tick && liveGameOver(g, null, now)) continue; // listed, never read, long past its start
+    // A game that has ended comes off the board (2026-11-23: "when the games are over, remove the game cards from the
+    // live section. It just cluttered the section up"). Its slips and how they landed stay in the recap (getLiveRecap).
+    if (tick?.state === 'post') continue;
     seen++;
     const probeId = await env.POTD_KV.get(`live:probe:for:${g.id}`).catch(() => null);
     const probe = probeId ? JSON.parse((await env.POTD_KV.get(liveProbeKey(probeId)).catch(() => null)) ?? 'null') : null;
