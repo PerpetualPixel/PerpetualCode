@@ -430,36 +430,23 @@ test('an underdog with a head start is tracked only from 70% and six points of r
   }
 });
 
-test('builderLegs prices the second set\'s winner, its games and the score in sets off the simulation', () => {
-  const sims = simulate(0.68, 0.62, { n: 2000, seed: 11 });
-  const dist = distributions(sims);
-  // The scores in sets add to one, and agree with the rest of the read.
-  const scores = dist.setScores;
-  assert.deepEqual(Object.keys(scores).sort(), ['0-2', '1-2', '2-0', '2-1']);
-  assert.ok(Math.abs(Object.values(scores).reduce((x, y) => x + y, 0) - 1) < 1e-9);
-  assert.ok(Math.abs(scores['2-0'] + scores['2-1'] - dist.pA) < 1e-9, 'the winner\'s two scores are the moneyline');
-  assert.ok(Math.abs(scores['2-0'] + scores['0-2'] - dist.straightSets) < 1e-9);
+test('builderLegs prices the second set\'s winner and its games off the simulation', () => {
+  const dist = distributions(simulate(0.68, 0.62, { n: 2000, seed: 11 }));
   assert.ok(dist.aWinsSet2 > 0.55 && dist.aWinsSet2 < 0.85, String(dist.aWinsSet2));
   const deep = { id: 'ev1', bookmakers: [book('fanduel', {
     h2h_s2: [{ name: 'Jannik Sinner', price: -180 }, { name: 'Ben Shelton', price: 140 }],
-    set_betting: [{ name: 'Jannik Sinner', point: 20, price: 110 }, { name: 'Jannik Sinner', point: 21, price: 300 }, { name: 'Ben Shelton', point: 20, price: 600 }, { name: 'Ben Shelton', point: 21, price: 550 }],
     alternate_totals_s2: [{ name: 'Over', point: 9.5, price: -140 }, { name: 'Under', point: 9.5, price: 110 }],
   })] };
   const legs = builderLegs(match(), { dist, board: boardEvent(), deep, pFinal: 0.75 });
   const s2a = legs.find((l) => l.market === 'set2_ml' && l.side === 'a'); const s2b = legs.find((l) => l.market === 'set2_ml' && l.side === 'b');
   assert.deepEqual([s2a.selection, s2a.label, s2a.quotes[0].american], ['Jannik Sinner to win the 2nd set', '2nd set winner', -180]);
   assert.ok(Math.abs(s2a.prob + s2b.prob - 1) < 0.002);
-  const sb = legs.filter((l) => l.market === 'set_betting');
-  assert.deepEqual(sb.map((l) => [l.selection, l.point, l.side, l.quotes[0].american]), [['Jannik Sinner 2-0 in sets', 20, 'a', 110], ['Jannik Sinner 2-1 in sets', 21, 'a', 300], ['Ben Shelton 2-0 in sets', 20, 'b', 600], ['Ben Shelton 2-1 in sets', 21, 'b', 550]]);
-  assert.ok(Math.abs(sb.reduce((x, l) => x + l.prob, 0) - 1) < 0.003, 'the four scores are the whole match');
-  assert.ok(Math.abs(sb[0].prob - scores['2-0']) < 0.001 && Math.abs(sb[2].prob - scores['0-2']) < 0.001, 'B\'s 2-0 is the simulation\'s 0-2');
-  assert.equal(sb[0].label, 'Set betting');
   const over = legs.find((l) => l.market === 'set2_total' && l.sideWord === 'over'); const under = legs.find((l) => l.market === 'set2_total' && l.sideWord === 'under');
   assert.deepEqual([over.selection, under.selection, over.label, over.point], ['2nd set over 9.5 games', '2nd set under 9.5 games', '2nd set games', 9.5]);
   assert.ok(Math.abs(over.prob + under.prob - 1) < 0.002);
-  // A set play of the new kinds stands where the match does while it is in play.
+  assert.equal(legs.some((l) => l.market === 'set_betting'), false, 'no exact score in sets');
+  // A second-set play stands where the set does while the match is in play.
   const live = { state: 'in', completed: false, sets: [[6, 4], [2, 3]] };
   assert.deepEqual(playStanding({ market: 'set2_ml', side: 'a', status: 'pending' }, live), { state: 'off', text: '6-4 2-3: down 1 in the second' });
   assert.equal(playStanding({ market: 'set2_ml', side: 'b', status: 'pending' }, live).state, 'on');
-  assert.match(playStanding({ market: 'set_betting', side: 'a', point: 20, status: 'pending' }, live).text, /needs 2-0 in sets/);
 });

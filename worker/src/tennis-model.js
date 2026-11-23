@@ -145,9 +145,8 @@ export function distributions(sims) {
     straightSets: sims.filter((s) => s.sets.length === 2).length / sims.length,
     // The first set's winner and the number of sets played: the first-set moneyline and the total sets.
     aWinsSet1: sims.filter((s) => s.sets[0][0] > s.sets[0][1]).length / sims.length,
-    // The second set's winner (every match has one), and the score in sets as A's sets to B's ("2-1": A in three).
+    // The second set's winner (every match has one).
     aWinsSet2: sims.filter((s) => s.sets[1] && s.sets[1][0] > s.sets[1][1]).length / sims.length,
-    setScores: sims.reduce((m, s) => { const k = `${s.setsA}-${s.setsB}`; m[k] = (m[k] ?? 0) + 1 / sims.length; return m; }, {}),
     setsPlayed: sims.map((s) => s.sets.length),
     meanGames: games.reduce((a, b) => a + b, 0) / games.length,
     svptA: sims.map((s) => s.svptA), svptB: sims.map((s) => s.svptB),
