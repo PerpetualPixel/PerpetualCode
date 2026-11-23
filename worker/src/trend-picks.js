@@ -225,8 +225,10 @@ export function buildBets(groups, { maxBets = PICK_MAX_BETS } = {}) {
     const bet = parlay ?? bestStraight(pool);
     if (!bet) break;
     bets.push({ type: bet.legs.length > 1 ? 'parlay' : 'straight', shape: bet.shape ?? null, legs: bet.legs, american: bet.american, decimal: bet.decimal });
-    const used = new Set(bet.legs.map((l) => l.group.key));
-    pool = pool.filter((g) => !used.has(g.key));
+    // A player is on one bet a day: the next bet draws from everyone else. (2026-11-12: two straights went up on one
+    // player, his points and his points and rebounds; he scored three and both lost. One bad night is one unit.)
+    const used = new Set(bet.legs.map((l) => fold(l.group.playerName)));
+    pool = pool.filter((g) => !used.has(fold(g.playerName)));
   }
   return bets;
 }
@@ -673,6 +675,13 @@ export async function runTrendPicksDaily(env, ctx, now = Date.now(), { deps = {}
 
   const rows = await loadRows();
   const groups = qualifyingRows(rows, dateKey, now);
+  // Nothing left to draw from and an earlier look found something: the day's games have started. The record keeps
+  // what that look found (how many lines qualified, who was researched and why nothing posted), where a late empty
+  // look used to write over it and leave a day that read "considered 0".
+  if (!groups.length && existing && (existing.considered ?? 0) > 0) {
+    await env.POTD_KV.put(key(dateKey), JSON.stringify({ ...existing, checkedAt: now, closedAt: existing.closedAt ?? now }), { expirationTtl: KV_TTL_SECONDS });
+    return { skipped: true, reason: 'nothing left to draw', dateKey };
+  }
   // Only a line some listed book prices inside LEG_RANGE can sit on a
   // ticket, so a line priced -1100 everywhere is not worth a research
   // call: the day's calls go to the lines that could post.

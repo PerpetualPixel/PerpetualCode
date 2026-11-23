@@ -290,7 +290,20 @@ export function liveRead({ sets, games, serve, market = null, bestOf = 3, modelW
 export const LIVE_ML_PROB = 0.6;
 export const LIVE_ML_EDGE = 0.05;
 export const LIVE_ML_PRICE = [-350, 250];
-export const LIVE_SET_PROB = [0.66, 0.9];
+/**
+ * A set play is read between these. The top was 90%.
+ *
+ * The live record to 2026-11-23, reviewed that day (37 set plays, 31
+ * won): the twelve read at 80% and up, two units each, won nine: 75%
+ * where the read said 84%, and half a unit down on 24 staked, since a
+ * set at 85% is laid at -450 or worse and one loss takes five wins back.
+ * The plays under 80% went 22 of 25 for 10.7 units. A set a player is
+ * that likely to win is mostly won already; there is nothing left in the
+ * price. A follow-on held to FOLLOW_ON_CAP is one unit at about -185
+ * whatever the model said, so it keeps the old top (LIVE_SET_HELD_MAX).
+ */
+export const LIVE_SET_PROB = [0.66, 0.8];
+export const LIVE_SET_HELD_MAX = 0.9;
 export const LIVE_SET_MARGIN = 0.04;
 /** The prices a book's set winner is taken at. */
 export const LIVE_SET_PRICE = [-450, 250];
@@ -354,7 +367,7 @@ export function livePlays(read, { quotes = { a: [], b: [] }, names = { a: 'A', b
     const lead = setSide === 'a' ? state.gA - state.gB : state.gB - state.gA;
     const followOn = state.setNumber >= 2 && wonLast && lead < 2;
     const setProb = followOn ? Math.min(modelProb, FOLLOW_ON_CAP) : modelProb;
-    if (modelProb >= LIVE_SET_PROB[0] && modelProb <= LIVE_SET_PROB[1]) {
+    if (modelProb >= LIVE_SET_PROB[0] && modelProb <= (followOn ? LIVE_SET_HELD_MAX : LIVE_SET_PROB[1])) {
       out.push({
         market: 'live_set', side: setSide, set: state.setNumber, prob: Math.round(setProb * 1000) / 1000, playable: americanOf(setProb - LIVE_SET_MARGIN), units: liveUnits(setProb), selection: `${names[setSide]} to win set ${state.setNumber}`,
         ...(followOn && modelProb > FOLLOW_ON_CAP ? { held: Math.round(modelProb * 1000) / 1000, note: `${names[setSide]} won the last set but has no break in this one yet, and a new set starts level: the read of ${Math.round(modelProb * 100)}% is held to ${Math.round(FOLLOW_ON_CAP * 100)}%, a one-unit play.` } : {}),

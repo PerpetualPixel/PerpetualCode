@@ -139,3 +139,79 @@ test('confidenceOf: the weakest leg and the average, evenly, less a quarter star
   assert.equal(confidenceOf([5, 5, 5, 5, 5, 5]), 4);
   assert.equal(confidenceOf([1, 1, 1, 1]), 1);
 });
+
+test('a leg rides on four tickets at most, and a fight both sides are laid in has no favourite or underdog', async () => {
+  const { REC_LEG_USES } = await import('../worker/src/ufc-recommended.js');
+  const { legs, breakdowns } = card();
+  const r = recommendedParlays({ legs, breakdowns, now: NOW });
+  const uses = new Map();
+  for (const t of r.tickets) { if (t.title === 'Every favourite on the card') continue; for (const l of t.legs) uses.set(l.id, (uses.get(l.id) ?? 0) + 1); }
+  // Six fights make a short list, so a pool that runs out is used again; with room to choose, no leg passes the cap.
+  const over = [...uses.values()].filter((n) => n > REC_LEG_USES).length;
+  assert.ok(Math.max(...uses.values()) <= REC_LEG_USES + 2 && over <= 4, `${Math.max(...uses.values())} uses at most, ${over} legs past the cap`);
+  // The likeliest favourite is not on every moneyline ticket any more: the three-leg one starts further down the list.
+  const three = r.tickets.find((t) => t.title === 'Four favourites');
+  assert.ok(three && three.legs.length === 4);
+  assert.ok(r.tickets.filter((t) => t.legs.some((l) => l.selection === 'b1A to win')).length <= REC_LEG_USES + 1);
+  // A pick'em: -104 against -105. Neither side is the underdog, and neither goes on a ticket as one.
+  const a = legs.find((l) => l.selection === 'b6A to win'); const b = legs.find((l) => l.selection === 'b6B to win');
+  a.quotes = [q('fanduel', -105)]; b.quotes = [q('fanduel', -104)]; a.chance = 0.5; b.chance = 0.5;
+  const pick = recommendedParlays({ legs, breakdowns, now: NOW });
+  const seen = pick.tickets.flatMap((t) => t.legs).filter((l) => l.boutId === 'b6' && l.prop === 'ml');
+  assert.ok(seen.every((l) => l.role === null), JSON.stringify(seen.map((l) => [l.selection, l.role])));
+  assert.ok(!pick.tickets.filter((t) => /underdog|dog/i.test(t.title)).some((t) => t.legs.some((l) => l.boutId === 'b6' && l.prop === 'ml')));
+});
+
+test('gradeRecLeg reads each prop off the bout\'s result; gradeRecommended settles the tickets and counts them by type', async () => {
+  const { gradeRecLeg, gradeRecommended } = await import('../worker/src/ufc-recommended.js');
+  const bout = (result) => ({ id: 'x', status: 'final', a: { id: '10' }, b: { id: '20' }, result });
+  const ko2 = bout({ winnerId: '20', method: 'KO/TKO', round: 2, time: '0:24', draw: false });
+  const dec = bout({ winnerId: '10', method: 'Decision', round: 3, time: '5:00', draw: false });
+  const sub3 = bout({ winnerId: '10', method: 'Submission', round: 3, time: '4:34', draw: false });
+  const g = (leg, b) => gradeRecLeg(leg, b);
+  assert.deepEqual([g({ prop: 'ml', side: 'b' }, ko2), g({ prop: 'ml', side: 'a' }, ko2)], [true, false]);
+  assert.deepEqual([g({ prop: 'method', side: 'b', method: 'ko' }, ko2), g({ prop: 'method', side: 'b', method: 'dec' }, ko2), g({ prop: 'method', side: 'a', method: 'ko' }, ko2), g({ prop: 'method', side: 'a', method: 'sub' }, sub3)], [true, false, false, true]);
+  assert.deepEqual([g({ prop: 'distance', selection: 'Fight does not go the distance' }, ko2), g({ prop: 'distance', selection: 'Fight goes the distance' }, ko2), g({ prop: 'distance', selection: 'Fight does not go the distance' }, dec), g({ prop: 'distance', selection: 'Fight goes the distance' }, dec)], [true, false, false, true]);
+  // A stoppage 24 seconds into the second is 1.08 rounds: under 1.5, over 0.5. A decision is over every number. 2:30 of the second is exactly 1.5.
+  assert.deepEqual([g({ prop: 'rounds', point: 1.5, sideWord: 'under' }, ko2), g({ prop: 'rounds', point: 1.5, sideWord: 'over' }, ko2), g({ prop: 'rounds', point: 0.5, sideWord: 'over' }, ko2), g({ prop: 'rounds', point: 2.5, sideWord: 'over' }, dec), g({ prop: 'rounds', point: 2.5, sideWord: 'under' }, sub3)], [true, false, true, true, false]);
+  assert.equal(g({ prop: 'rounds', point: 1.5, sideWord: 'under' }, bout({ winnerId: '20', method: 'KO/TKO', round: 2, time: '2:30', draw: false })), null);
+  assert.deepEqual([g({ prop: 'win_round', side: 'b', round: 2 }, ko2), g({ prop: 'win_round', side: 'b', round: 1 }, ko2), g({ prop: 'method_round', side: 'b', method: 'ko', round: 2 }, ko2), g({ prop: 'method_round', side: 'b', method: 'sub', round: 2 }, ko2), g({ prop: 'end_round', round: 2 }, ko2), g({ prop: 'end_round', round: 3 }, dec)], [true, false, true, false, true, false]);
+  // What the result cannot say: a stat play, a draw, a bout not finished, a method leg stored before its method was kept.
+  assert.deepEqual([g({ prop: 'strikes', side: 'a' }, ko2), g({ prop: 'ml', side: 'a' }, bout({ winnerId: null, draw: true })), g({ prop: 'ml', side: 'a' }, { ...ko2, status: 'scheduled' }), g({ prop: 'method', side: 'b' }, ko2), g({ prop: 'ml', side: 'a' }, null)], [null, null, null, null, null]);
+
+  const { legs, breakdowns } = card();
+  const rec = recommendedParlays({ legs, breakdowns, now: NOW });
+  // Every favourite wins by knockout in the first but the one in fight two, who loses a decision.
+  const event = { status: 'final', bouts: Object.keys(breakdowns).map((id) => ({ id, status: 'final', a: { id: `${id}A` }, b: { id: `${id}B` }, result: id === 'b2' ? { winnerId: `${id}B`, method: 'Decision', round: 3, time: '5:00', draw: false } : { winnerId: `${id}A`, method: 'KO/TKO', round: 1, time: '2:00', draw: false } })) };
+  for (const l of legs) if (l.side) l.fighterId = `${l.boutId}${l.side.toUpperCase()}`;
+  assert.equal(gradeRecommended(rec, { ...event, status: 'live' }), null, 'nothing is graded until the card is final');
+  const graded = gradeRecommended(rec, event, 7);
+  assert.equal(graded.results.at, 7);
+  const settled = graded.tickets.filter((t) => t.result);
+  assert.equal(graded.results.graded, settled.length);
+  assert.equal(graded.results.wins, settled.filter((t) => t.result === 'win').length);
+  assert.equal(Object.values(graded.results.byType).reduce((n, x) => n + x.graded, 0), settled.length);
+  for (const t of settled) assert.equal(t.result, t.legs.some((l) => l.hit === false) ? 'loss' : 'win');
+  assert.ok(graded.tickets.filter((t) => t.legs.some((l) => l.selection === 'b2A to win')).every((t) => t.result === 'loss'), 'every ticket with the beaten favourite lost');
+  assert.ok(graded.results.wins >= 1, 'and the tickets without him landed');
+  assert.ok(rec.tickets.every((t) => t.result === undefined), 'the page handed in is left as it was');
+});
+
+test('the tick grades the Recommended page of the card before, once that card is final', async () => {
+  const { gradeFinishedRecommended, ufcPicksKey } = await import('../worker/src/ufc-picks.js');
+  const { legs, breakdowns } = card();
+  const m = new Map(); const env = { POTD_KV: { get: async (k) => m.get(k) ?? null, put: async (k, v) => { m.set(k, v); } } };
+  m.set(ufcPicksKey('old'), JSON.stringify({ eventId: 'old', recommended: recommendedParlays({ legs, breakdowns, now: NOW }) }));
+  m.set(ufcPicksKey('next'), JSON.stringify({ eventId: 'next', recommended: recommendedParlays({ legs, breakdowns, now: NOW }) }));
+  const bouts = Object.keys(breakdowns).map((id) => ({ id, status: 'final', a: { id: `${id}A` }, b: { id: `${id}B` }, result: { winnerId: `${id}A`, method: 'KO/TKO', round: 1, time: '2:00', draw: false } }));
+  const cards = [{ id: 'next' }, { id: 'old' }];
+  let status = 'live';
+  const deps = { event: async (id) => ({ id, status, bouts }) };
+  assert.equal(await gradeFinishedRecommended(env, cards, 'next', 5, { deps }), null, 'still in progress: left alone');
+  status = 'final';
+  assert.equal(await gradeFinishedRecommended(env, cards, 'next', 5, { deps }), 'old');
+  const stored = JSON.parse(m.get(ufcPicksKey('old')));
+  assert.ok(stored.recommended.results.graded > 0 && stored.recommended.tickets.some((t) => t.result === 'win'));
+  assert.equal(JSON.parse(m.get(ufcPicksKey('next'))).recommended.results, undefined, 'the card being worked is not graded');
+  assert.equal(await gradeFinishedRecommended(env, cards, 'next', 6, { deps }), null, 'graded once');
+});

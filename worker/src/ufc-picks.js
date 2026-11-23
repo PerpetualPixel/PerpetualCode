@@ -29,7 +29,7 @@ import { ufcCardProps, UFC_PROPS } from './ufc-props.js';
 import { readPropOdds } from './ufc-prop-odds.js';
 import { readFanduel, quoteSharpPlays } from './ufc-fanduel.js';
 import { sharpRead } from './ufc-sharp.js';
-import { recommendedParlays } from './ufc-recommended.js';
+import { recommendedParlays, gradeRecommended } from './ufc-recommended.js';
 import { normalizeName, namesLikelyMatch } from './ufc-events.js';
 import { callModel, STRAIGHT_RANGE, PARLAY_RANGE, PARLAY_TARGET, betRecordOf, TICKET_UNITS } from './trend-picks.js';
 import { bookIdFor, SPORTSBOOKS, americanToDecimal } from '../../docs/engine.js';
@@ -839,7 +839,30 @@ export async function runUfcTick(env, ctx, now = Date.now(), { deps = {} } = {})
     idx.cards = [{ id: event.id, name: event.name, date: event.date }, ...idx.cards].slice(0, 40);
     await env.POTD_KV.put(ufcPicksIndexKey, JSON.stringify(idx), { expirationTtl: KV_TTL }).catch(() => {});
   }
-  return { skipped: false, eventId: event.id, eventName: event.name, posted, graded, locked, picks: record.bets.length, voided };
+  // The Recommended page of a card that has finished (the tick has moved on to the next one by then): graded once.
+  const recGraded = await gradeFinishedRecommended(env, idx.cards, event.id, now, { deps }).catch((e) => { console.error('Recommended grading failed:', e); return null; });
+  return { skipped: false, eventId: event.id, eventName: event.name, posted, graded, locked, picks: record.bets.length, voided, recGraded };
+}
+
+/**
+ * The last cards' Recommended pages against their results: the first
+ * listed card other than the one being worked whose page has no results
+ * yet and whose event is final gets them (one card a tick). Returns the
+ * card's id when one was graded.
+ */
+export async function gradeFinishedRecommended(env, cards, currentId, now = Date.now(), { deps = {} } = {}) {
+  for (const c of (cards ?? []).filter((x) => x.id !== currentId).slice(0, 3)) {
+    const raw = await env.POTD_KV.get(ufcPicksKey(c.id)).catch(() => null);
+    const rec = raw ? JSON.parse(raw) : null;
+    if (!rec?.recommended?.tickets?.length || rec.recommended.results) continue;
+    const ev = deps.event ? await deps.event(c.id) : await getUfcEvent(env, c.id);
+    const graded = gradeRecommended(rec.recommended, ev, now);
+    if (!graded) continue;
+    rec.recommended = graded;
+    await env.POTD_KV.put(ufcPicksKey(c.id), JSON.stringify(rec), { expirationTtl: KV_TTL });
+    return c.id;
+  }
+  return null;
 }
 
 /** The card's picks and the ledger across the last cards, for the tab. */

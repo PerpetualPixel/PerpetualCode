@@ -86,6 +86,21 @@ export const MAX_ACES_PER_TOUR = 3;
 export const MIN_MATCHES = 10;
 export const MIN_ACE_MATCHES = 15;
 export const MIN_SURFACE_MATCHES = 8;
+/**
+ * An underdog taken with a head start (+1.5 sets, +games) is tracked only
+ * from here: 70% by the read and six points over its price.
+ *
+ * The record to 2026-11-23, reviewed that day: ten such plays, two won.
+ * +1.5 sets went 2 of 7 (read at 61% to 73%, priced near 60%) and plus
+ * games 0 of 3. The simulation gives an outclassed player a set, or a
+ * close loss, more often than the court does. Every other tracked play
+ * stood 25 and 7. Under this bar the lean still shows on the tab, marked
+ * as not tracked.
+ */
+export const DOG_HANDICAP_PROB = 0.7;
+export const DOG_HANDICAP_EDGE = 0.06;
+/** Whether a leg is an underdog with a head start: a set or games handicap on the plus side. */
+export const isDogHandicap = (leg) => ['set_spread', 'games_spread'].includes(leg?.market) && Number(leg?.point) > 0;
 /** The day's plays stop here (2026-11-06: "Max 5U in plays a day"), one unit each; one unit is kept for the parlay until it posts. */
 export const MAX_UNITS_DAY = 5;
 /** The moneyline parlay: a leg needs the blended share here (relaxed to fill the second leg), the parlay's own share at least PARLAY_MIN_PROB, two to four legs. */
@@ -477,6 +492,11 @@ export async function runTennisTick(env, ctx, now = Date.now(), { deps = {} } = 
   const key = tennisPicksKey(date);
   const record = (await readJson(env, key)) ?? { version: TENNIS_RECORD_VERSION, date, generatedAt: now, plays: [], reads: {}, oddsAt: null };
   record.refreshedAt = now;
+  // Yesterday's plays that have not been settled: a match on the card on its eve and again on its day was posted on
+  // both (six plays and two parlays to 2026-11-23, each counted twice in the record). A play posted then stands; it is
+  // not posted again.
+  const earlier = ((await readJson(env, tennisPicksKey(etParts(now - 864e5).date)))?.plays ?? []).filter((p) => p.status === 'pending');
+  const earlierParlayMatches = new Set(earlier.filter((p) => p.market === 'ml_parlay').flatMap((p) => (p.legs ?? []).map((l) => l.matchId)));
   const keys = deps.sportKeys ? await deps.sportKeys() : await tennisSportKeys(env, ctx, now);
   const boards = new Map();
   const boardFor = async (tour) => {
@@ -540,8 +560,8 @@ export async function runTennisTick(env, ctx, now = Date.now(), { deps = {} } = 
     const favName = m[favSide].name;
     // The tracked parlay takes full reads only.
     if (pMarket != null && !thin) candidates.push({ matchId: id, tour: m.tour, event: m.eventName, round: m.round, commenceMs: Date.parse(m.date), a: m.a.name, b: m.b.name, side: favSide, name: favName, prob: favSide === 'a' ? pFinal : Math.round((1 - pFinal) * 1000) / 1000, pModel: favSide === 'a' ? pModel : Math.round((1 - pModel) * 1000) / 1000, pMarket: favSide === 'a' ? pMarket : 1 - pMarket, flags: flags[favSide], opponentFlags: flags[favSide === 'a' ? 'b' : 'a'], quotes: h2hQuotesFor(board, favName), why: context });
-    const sidePosted = record.plays.find((p) => p.matchId === id && p.market !== 'aces') ?? null; // posted once; the price stands as drawn
-    const acePosted = record.plays.find((p) => p.matchId === id && p.market === 'aces') ?? null;
+    const sidePosted = [...record.plays, ...earlier].find((p) => p.matchId === id && p.market !== 'aces') ?? null; // posted once, today or on the match's eve; the price stands as drawn
+    const acePosted = [...record.plays, ...earlier].find((p) => p.matchId === id && p.market === 'aces') ?? null;
     const alreadyPosted = Boolean(sidePosted || acePosted);
     if (!sidePosted) considered++;
     const fit = fitToTarget(pA, pB, pFinal, { bestOf: m.bestOf, seed: 7 });
@@ -586,6 +606,7 @@ export async function runTennisTick(env, ctx, now = Date.now(), { deps = {} } = 
     const { lean } = q;
     if (lean.main.market === 'aces' || lean.how !== 'straight' || q.sidePosted) continue;
     if (lean.thin) lean.note = 'not tracked: a price-and-form read, no serve numbers on file';
+    else if (isDogHandicap(lean.main) && !(lean.main.prob >= DOG_HANDICAP_PROB && lean.main.edge >= DOG_HANDICAP_EDGE)) lean.note = `not tracked: an underdog with a head start needs ${Math.round(DOG_HANDICAP_PROB * 100)}% and ${Math.round(DOG_HANDICAP_EDGE * 100)} points of room`;
     else if (tourCount(q.m.tour, false) >= MAX_PER_TOUR) lean.note = `not tracked: ${MAX_PER_TOUR} plays on the tour already today`;
     else if (capped || !roomFor(lean.main.market, lean.units)) { capped = true; lean.note = `not tracked: the day's ${MAX_UNITS_DAY} units are placed`; }
     else { const play = playOf(q, { ...lean.main, why: lean.why }, { units: lean.units, conviction: lean.conviction, how: lean.howText }); record.plays.push(play); lean.posted = postedView(play); posted++; }
@@ -596,14 +617,16 @@ export async function runTennisTick(env, ctx, now = Date.now(), { deps = {} } = 
     record.plays.push(play); posted++;
     if (q.lean?.main.market === 'aces') q.lean.posted = postedView(play);
   };
-  for (const q of [...queue].filter((x) => x.prop).sort((x, y) => y.prop.prob - x.prop.prob)) postAce(q, q.prop, q.prop.units);
+  // A priced aces line is tracked from ACE_PROB, the bar the unpriced one has always had: to 2026-11-23 the priced ones
+  // read under 80% went 1 of 5 (the book's number on aces is sharper than a lean's two points of room allow for).
+  for (const q of [...queue].filter((x) => x.prop && x.prop.prob >= ACE_PROB).sort((x, y) => y.prop.prob - x.prop.prob)) postAce(q, q.prop, q.prop.units);
   for (const q of [...queue].filter((x) => !x.prop && x.bareAce).sort((x, y) => y.bareAce.prob - x.bareAce.prob)) postAce(q, q.bareAce, 1);
   record.leans = sortLeans(leans);
   record.suggestions = pairSuggestions(record.leans, now);
   // The day's moneyline parlay (2026-11-06: "at least one play for tennis posted ... a 2 leg parlay or a 4 leg moneyline parlay"), once.
   let parlay = null;
   if (!parlayPosted() && roomFor('ml_parlay')) {
-    parlay = buildParlay(candidates, now);
+    parlay = buildParlay(candidates.filter((c) => !earlierParlayMatches.has(c.matchId)), now);
     if (parlay) {
       const tours = [...new Set(parlay.legs.map((l) => l.tour))];
       record.plays.push({ id: `parlay:${date}`, matchId: null, tour: tours.length === 1 ? tours[0] : 'both', event: tours.length === 1 ? parlay.legs[0].event : 'ATP and WTA', tier: null, round: null, surface: null, a: null, b: null, ...parlay, stars: stars(parlay.prob + 0.2), units: 1, postedAt: now, status: 'pending', result: null, net: null, actual: null });

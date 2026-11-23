@@ -439,3 +439,34 @@ test('NBA rebound and assist legs need more cushion than points, more again abov
   const nhl = liveCandidates(book([{ key: 'player_shots_on_goal_alternate', outcomes: [over('P Scorer', 2.5, -115)] }]), { ...t, detail: '10:00 - 2nd', period: 2, clock: '10:00', box: [{ id: '1', name: 'P Scorer', team: 'AAA', stats: { shotsTotal: '2' } }] }, 'nhl');
   assert.deepEqual(nhl.map((x) => [x.point, x.price]), [[2.5, -115]]);
 });
+
+test('a catch comes whole: an NFL reception leg needs the catches still to come to be likely, and a receiving-yards leg a player likely to catch again', async () => {
+  const { catchChance, RECEPTION_MIN_CHANCE, YARDS_MIN_CATCH_CHANCE } = await import('../worker/src/live-board.js');
+  assert.deepEqual([RECEPTION_MIN_CHANCE, YARDS_MIN_CATCH_CHANCE], [0.85, 0.8]);
+  // One catch after 64% of the game, needing a second: about 43%, whatever the pace says. (2026-11-22: seven such legs, one hit.)
+  assert.ok(Math.abs(catchChance(1, 1.5, 0.64) - (1 - Math.exp(-0.5625))) < 1e-9);
+  assert.ok(catchChance(1, 1.5, 0.64) < 0.45);
+  // Seven catches after 68%, needing an eighth: about 96%. Four after 69%, needing a fifth: about 83%.
+  assert.ok(catchChance(7, 7.5, 0.68) > 0.95 && catchChance(4, 4.5, 0.69) > 0.8 && catchChance(4, 4.5, 0.69) < RECEPTION_MIN_CHANCE);
+  // Two more needed is harder than one; nothing is left at the whistle or before the kick.
+  assert.ok(catchChance(4, 5.5, 0.5) < catchChance(4, 4.5, 0.5));
+  assert.deepEqual([catchChance(3, 3.5, 1), catchChance(3, 3.5, 0), catchChance(0, 0.5, 0.5)], [0, 0, 0]);
+
+  // Third quarter, 6:00 left: 60% of the game in. The pace clears every line below by 25% and more.
+  const t = { at: 1, state: 'in', detail: '6:00 - 3rd Quarter', period: 3, clock: '6:00', score: { PHI: 17, WSH: 17 }, box: [
+    { id: '1', name: 'One Catch', team: 'PHI', stats: { receptions: '1', receivingYards: '9' } },
+    { id: '2', name: 'Busy Hands', team: 'PHI', stats: { receptions: '7', receivingYards: '79' } },
+    { id: '3', name: 'Two Deep', team: 'WSH', stats: { receptions: '2', receivingYards: '58' } },
+    { id: '4', name: 'Ground Game', team: 'WSH', stats: { rushingYards: '58', receptions: '1', receivingYards: '4' } },
+  ] };
+  const over = (player, point, price) => ({ name: 'Over', description: player, point, price });
+  const c = liveCandidates({ bookmakers: [{ key: 'draftkings', markets: [
+    { key: 'player_receptions_alternate', outcomes: [over('One Catch', 1.5, -200), over('Busy Hands', 7.5, -180)] },
+    { key: 'player_reception_yds_alternate', outcomes: [over('One Catch', 9.5, -210), over('Busy Hands', 89.5, -160), over('Two Deep', 69.5, -150)] },
+    { key: 'player_rush_yds_alternate', outcomes: [over('Ground Game', 69.5, -170)] },
+  ] }] }, t, 'nfl');
+  const got = c.map((x) => `${x.player} ${x.stat} ${x.point}`).sort();
+  // One catch all day: no reception leg and no yards leg on him. Seven catches: both. Two catches (74% to catch again): no yards leg.
+  // A rushing line does not hang on a catch.
+  assert.deepEqual(got, ['Busy Hands receivingYards 89.5', 'Busy Hands receptions 7.5', 'Ground Game rushingYards 69.5']);
+});
