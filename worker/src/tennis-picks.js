@@ -112,7 +112,7 @@ export const PARLAY_LEGS = [2, 4];
 export const MODEL_WEIGHT = 0.5;
 export const TOURS = ['atp', 'wta'];
 export const TENNIS_MARKETS = {
-  ml: 'Moneyline', set_spread: 'Set spread', set1_ml: '1st set winner', set2_ml: '2nd set winner', set_betting: 'Set betting', games_spread: 'Game spread', games_total: 'Total games', sets_total: 'Total sets', set1_total: '1st set games', set2_total: '2nd set games', aces: 'Aces', ml_parlay: 'Moneyline parlay',
+  ml: 'Moneyline', set_spread: 'Set spread', set1_ml: '1st set winner', set2_ml: '2nd set winner', games_spread: 'Game spread', games_total: 'Total games', sets_total: 'Total sets', set1_total: '1st set games', set2_total: '2nd set games', aces: 'Aces', ml_parlay: 'Moneyline parlay',
 };
 const BOARD_MARKETS = 'h2h,spreads,totals';
 // h2h_s1 (the first set's winner) and alternate_set_totals (over or under the sets played) joined 2026-11-12 for the Parlay Builder.
@@ -381,7 +381,7 @@ export function buildParlay(candidates, now = Date.now()) {
 
 /** A builder leg's score, 1 to 5: the model's share (50% is 1, 90% is 5), half a star for edge over the price, a star off a flagged side. */
 export const legScoreOf = (prob, edge, flagged = false) => Math.max(1, Math.min(5, Math.round((1 + 4 * Math.max(0, Math.min(1, (prob - 0.5) / 0.4)) + (edge >= 0.05 ? 0.5 : 0) - (flagged ? 1 : 0)) * 10) / 10));
-export const BUILDER_MARKETS = { ml: 'Moneyline', games_spread: 'Game spread', games_total: 'Total games', set_spread: 'Set spread', set1_total: '1st set games', set2_total: '2nd set games', set1_ml: '1st set winner', set2_ml: '2nd set winner', set_betting: 'Set betting', sets_total: 'Total sets', aces: 'Aces' };
+export const BUILDER_MARKETS = { ml: 'Moneyline', games_spread: 'Game spread', games_total: 'Total games', set_spread: 'Set spread', set1_total: '1st set games', set2_total: '2nd set games', set1_ml: '1st set winner', set2_ml: '2nd set winner', sets_total: 'Total sets', aces: 'Aces' };
 
 /**
  * Every priced leg on one match for the Parlay Builder: each side's
@@ -463,17 +463,6 @@ export function builderLegs(match, { dist, board, deep, pFinal, flags = { a: [],
     const quotes = quotesOf(deep, 'h2h_s2').filter((q) => sameName(q.name, match[side].name));
     const prob = side === 'a' ? dist.aWinsSet2 : 1 - dist.aWinsSet2;
     if (Number.isFinite(prob)) push('set2_ml', side, `${match[side].name} to win the 2nd set`, null, null, quotes, prob, [`${pct(prob)} of simulations give ${match[side].name} the second set`]);
-  }
-  // Set betting ("set betting, set spreads, moneylines"): the score in sets, each player's. The point is the score's two digits (2-1 is 21).
-  const bySetScore = new Map();
-  for (const q of quotesOf(deep, 'set_betting')) {
-    const side = sameName(q.name, match.a.name) ? 'a' : sameName(q.name, match.b.name) ? 'b' : null; if (!side || q.point == null) continue;
-    const k = `${side}:${q.point}`; if (!bySetScore.has(k)) bySetScore.set(k, { side, point: q.point, quotes: [] }); bySetScore.get(k).quotes.push(q);
-  }
-  for (const { side, point, quotes } of bySetScore.values()) {
-    const won = Math.floor(point / 10); const lost = point % 10;
-    const prob = dist.setScores?.[side === 'a' ? `${won}-${lost}` : `${lost}-${won}`] ?? 0;
-    if (dist.setScores) push('set_betting', side, `${match[side].name} ${won}-${lost} in sets`, point, null, quotes, prob, [`${pct(prob)} of simulations end ${won}-${lost} to ${match[side].name}`]);
   }
   // The sets played, over and under (2.5 in a best of three: does it go the distance).
   const setTotals = quotesOf(deep, 'alternate_set_totals').filter((q) => q.point != null);
@@ -765,16 +754,6 @@ export function gradePlay(play, r) {
       const s = sets[1]; const done = s && setDone(s);
       if (!done) return r.completed ? settle(play, false, `${line}: the second set was not completed`, { voided: true }) : null;
       return settle(play, play.side === 'a' ? s[0] > s[1] : s[1] > s[0], `${line}: ${s[0]}-${s[1]} in the second set`);
-    }
-    case 'set_betting': {
-      // The score in sets, the picked player's first: 21 is "wins 2-1". Lost as soon as the sets already played rule it out.
-      const won = Math.floor(play.point / 10); const lost = play.point % 10;
-      const mine = sets.filter((x) => setDone(x) && (play.side === 'a' ? x[0] > x[1] : x[1] > x[0])).length;
-      const theirs = sets.filter((x) => setDone(x) && (play.side === 'a' ? x[1] > x[0] : x[0] > x[1])).length;
-      if (theirs > lost || (mine === won && theirs < lost)) return settle(play, false, `${line}: ${mine}-${theirs} in sets`);
-      if (live) return null;
-      if (!final) return settle(play, false, `${line}: not played to a finish`, { voided: true });
-      return settle(play, mine === won && theirs === lost, `${line}: ${mine}-${theirs} in sets`);
     }
     case 'games_spread': {
       if (live) return null;

@@ -12367,8 +12367,11 @@ function tennisBookPrices(quotes, label = 'Price at every book') {
 /** Another way to play a lean, as a line with its price (a slip link where the book gives one), its chance and its room; with `books`, its price at every book under it. */
 const tennisWay = (a, books = false) => `<span class="tennis-way"><strong>${esc(a.short)}</strong>${Number.isFinite(a.american) ? pricePill(a.bookId, a.book, a.american, a.link) : ''}<small>${pct(a.prob)} to land · ${a.edge >= 0 ? '+' : ''}${Math.round(a.edge * 100)} pts</small></span>${books ? tennisBookPrices(a.quotes, 'At every book') : ''}`;
 
-/** A score in sets on a lean's side (2026-11-23: "set betting"): the price, the read's share against what the price asks, and a mark where that leaves room. */
-const tennisSetScore = (a) => `<span class="tennis-way"><strong>${esc(a.short)}${a.value ? ' <span class="tennis-tag is-tracked" title="The read gives this score more than the price asks for">Room</span>' : ''}</strong>${Number.isFinite(a.american) ? pricePill(a.bookId, a.book, a.american, a.link) : ''}<small>${pct(a.prob)} by the read · the price asks ${pct(a.implied)}</small></span>`;
+/** A set line on a lean's side (2026-11-23: "set betting like winning 2-0 sets or -1.5 sets or +1.5 sets"): the line in a bettor's words, the price, the read's share against what the price asks, and a mark where that leaves room. */
+const tennisSetLine = (a, books = false) => {
+  const what = a.point === -1.5 ? 'to win 2-0' : a.point === 1.5 ? 'to win a set' : '';
+  return `<span class="tennis-way"><strong>${esc(lastName(a.name))} ${a.point > 0 ? '+' : ''}${esc(String(a.point))} sets${what ? ` <small>${what}</small>` : ''}${a.value ? ' <span class="tennis-tag is-tracked" title="The read gives this more than the price asks for">Room</span>' : ''}</strong>${Number.isFinite(a.american) ? pricePill(a.bookId, a.book, a.american, a.link) : ''}<small>${pct(a.prob)} by the read · the price asks ${pct(a.implied)}</small></span>${books ? tennisBookPrices(a.quotes, 'At every book') : ''}`;
+};
 
 /**
  * A match worth betting (2026-11-12: "who to lean and how, moneyline,
@@ -12394,7 +12397,7 @@ function renderTennisLean(l, rank, { full = false } = {}) {
   // The main play's price at every book is always on the card; the other plays' open on a tap.
   const booksKey = `books:${key}`;
   const booksOpen = Boolean(tennisState.open[booksKey]);
-  const otherBooks = [...(l.alternates ?? []), ...(l.also ?? [])].some((a) => a.quotes?.length);
+  const otherBooks = [...(l.alternates ?? []), ...(l.also ?? []), ...(l.setBetting ?? [])].some((a) => a.quotes?.length);
   return `<article class="trend-card pick-bet-card tennis-play tennis-lean ${l.conviction === 'high' ? 'is-high' : ''}" aria-label="${esc(`${rank ? `Number ${rank}: ` : ''}${main.short}`)}">
     <div class="pick-bet-head">
       ${rank ? `<span class="tennis-rank" title="Ranked by how likely it is to land">${rank}</span>` : ''}
@@ -12415,7 +12418,7 @@ function renderTennisLean(l, rank, { full = false } = {}) {
       <ul class="tennis-why-list is-gist">${gist.map((w) => `<li>${esc(capFirst(w))}</li>`).join('')}${open ? rest.map((w) => `<li>${esc(capFirst(w))}</li>`).join('') : ''}</ul>
       ${l.alternates?.length ? `<div class="tennis-ways"><span class="tennis-ways-h">Other ways to play ${esc(l.name ?? 'it')}</span>${l.alternates.map((a) => tennisWay(a, booksOpen)).join('')}</div>` : ''}
       ${l.also?.length ? `<div class="tennis-ways"><span class="tennis-ways-h">Also on this match</span>${l.also.map((a) => tennisWay(a, booksOpen)).join('')}</div>` : ''}
-      ${l.setBetting?.length ? `<div class="tennis-ways tennis-setbet"><span class="tennis-ways-h">Set betting on ${esc(lastName(l.name))} <small>the score in sets; not tracked</small></span>${l.setBetting.map(tennisSetScore).join('')}</div>` : ''}
+      ${l.setBetting?.length ? `<div class="tennis-ways tennis-setbet"><span class="tennis-ways-h">Set betting on ${esc(lastName(l.name))} <small>the set spread, both ways</small></span>${l.setBetting.map((a) => tennisSetLine(a, booksOpen)).join('')}</div>` : ''}
       <div class="tennis-actions">
         ${rest.length ? `<button type="button" class="parlay-btn tennis-why" data-tennis-why="${esc(key)}" data-tennis-why-default="${full ? 'open' : 'shut'}" aria-expanded="${open}">${open ? 'Hide the full read' : 'The full read'}</button>` : ''}
         ${otherBooks ? `<button type="button" class="parlay-btn tennis-why" data-tennis-why="${esc(booksKey)}" data-tennis-why-default="shut" aria-expanded="${booksOpen}">${booksOpen ? 'Hide the other plays\' books' : 'Every book on the other plays'}</button>` : ''}

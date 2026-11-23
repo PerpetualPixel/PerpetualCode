@@ -46,7 +46,6 @@ export function playStanding(play, m) {
     case 'set1_total': { const s = sets[0]; return { state: s && s[0] + s[1] >= play.point - 2 ? 'on' : 'wait', text: `${line}: ${s ? s[0] + s[1] : 0} games in the first` }; }
     case 'set2_total': { const s = sets[1]; return { state: s && s[0] + s[1] >= play.point - 2 ? 'on' : 'wait', text: `${line}: ${s ? s[0] + s[1] : 0} games in the second` }; }
     case 'set2_ml': { const s = sets[1]; if (!s) return { state: 'wait', text: `${line}: the second set has not started` }; const lead = play.side === 'a' ? s[0] - s[1] : s[1] - s[0]; return { state: lead >= 0 ? 'on' : 'off', text: `${line}: ${lead > 0 ? `up ${lead}` : lead < 0 ? `down ${-lead}` : 'level'} in the second` }; }
-    case 'set_betting': return { state: 'on', text: `${line}: needs ${Math.floor(play.point / 10)}-${play.point % 10} in sets` };
     case 'aces': return { state: 'wait', text: `${line}: aces settle from the match stats` };
     default: return { state: 'wait', text: line };
   }

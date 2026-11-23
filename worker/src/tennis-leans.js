@@ -19,10 +19,11 @@
  *   set2_ml       the second set
  *   games_spread  the game spread
  *
- * The score in sets (set_betting) is never the lean itself: a 2-0 is the
- * same bet as -1.5 sets, and a 2-1 is a long price on one way of winning.
- * It rides on the card as "set betting": every score on the lean's side
- * with the read's share against the price, the ones with room marked.
+ * Set betting (2026-11-23: "not exact set score but set betting like
+ * winning 2-0 sets or -1.5 sets or +1.5 sets"): the set spread on the
+ * lean's side, both ways, always on the card with the read's share
+ * against the price, whether or not a line clears the lean's own bar.
+ * -1.5 sets is winning 2-0; +1.5 sets is taking at least one set.
  *
  * A price of STRAIGHT_FLOOR or longer is played straight, sized by its
  * chance (half a unit to two); a shorter one is a parlay piece, and the
@@ -50,7 +51,7 @@ export const CONVICTION_EDGE = 0.07;
 export const EXTRA_MIN_PROB = 0.66;
 export const EXTRA_MIN_EDGE = 0.05;
 export const SIDE_MARKETS = ['ml', 'set_spread', 'set1_ml', 'set2_ml', 'games_spread'];
-/** A score in sets is worth pointing out on a card from this much room over its price. */
+/** A set line is marked as having room on a card from this much over its price. */
 export const SET_BETTING_EDGE = 0.03;
 export const EXTRA_MARKETS = ['games_total', 'set1_total', 'set2_total', 'sets_total', 'aces'];
 export const MAX_SUGGESTIONS = 3;
@@ -70,7 +71,6 @@ export function shortSelection(leg) {
     case 'set_spread': return leg.point > 0 ? `${leg.name} to win a set` : `${leg.name} in straight sets`;
     case 'set1_ml': return `${leg.name} 1st set`;
     case 'set2_ml': return `${leg.name} 2nd set`;
-    case 'set_betting': return `${leg.name} ${Math.floor(leg.point / 10)}-${leg.point % 10}`;
     case 'games_spread': return `${leg.name} ${signed(leg.point)} games`;
     default: return leg.selection;
   }
@@ -128,10 +128,13 @@ export function leanFor(legs, { read = {} } = {}) {
   why.push(how === 'straight'
     ? `Played straight: ${signed(q.american)} pays enough alone, ${units}u at ${pct(main.prob)}`
     : `Too short to take alone at ${signed(q.american)}: use it as a parlay leg`);
-  const alternates = sides.filter((l) => l !== main && l.side === side).sort((x, y) => room(y) - room(x)).slice(0, 3).map(legView);
+  // The set lines have their own block on the card (set betting, below), so they are not listed twice.
+  const alternates = sides.filter((l) => l !== main && l.side === side && l.market !== 'set_spread').sort((x, y) => room(y) - room(x)).slice(0, 3).map(legView);
   const also = extras.filter((l) => l !== main).sort((x, y) => room(y) - room(x)).slice(0, 2).map(legView);
-  // Set betting on the lean's side: each score a book prices, likeliest first, with whether the price leaves room. Not on a thin read.
-  const setBetting = thin || !side ? [] : (legs ?? []).filter((l) => l.market === 'set_betting' && l.side === side && bestQuote(l)).sort((x, y) => y.prob - x.prob).map((l) => ({ ...legView(l), value: l.edge >= SET_BETTING_EDGE }));
+  // Set betting on the lean's side: -1.5 sets (to win 2-0), then +1.5 (to take a set), each with whether the price leaves room,
+  // and whether it clears the lean's own bar (a line that does is one to play; one that does not is there to be seen). Not on a thin read.
+  const setBetting = thin || !side ? [] : (legs ?? []).filter((l) => l.market === 'set_spread' && l.side === side && l !== main && bestQuote(l)).sort((x, y) => x.point - y.point)
+    .map((l) => ({ ...legView(l), value: l.edge >= SET_BETTING_EDGE, clears: sides.includes(l) }));
   return {
     matchId: main.matchId, tour: main.tour, event: main.event, round: main.round, commenceMs: main.commenceMs, a: main.a, b: main.b,
     side, name: main.name ?? null, opponent: main.opponent ?? null, confidence: main.prob, how, units, conviction, thin,
