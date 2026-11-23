@@ -31,6 +31,7 @@ jobs:
           CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
         run: |
           npm install --no-save --silent wrangler@4 >/dev/null 2>&1 || npm install --no-save wrangler@4
+          npx wrangler --version
           cat > /tmp/review.mjs <<'EOF'
           import { execFileSync } from 'node:child_process';
           const DAY = "strftime('%Y-%m-%d', created_at/1000, 'unixepoch')";
@@ -60,7 +61,7 @@ jobs:
               const rows = JSON.parse(out.slice(out.indexOf('[')))[0]?.results ?? [];
               for (const r of rows) { const line = JSON.stringify(r); console.log(line.includes('@') ? '(a row was withheld: it held an address)' : line); }
               if (!rows.length) console.log('(no rows)');
-            } catch (e) { console.log('FAILED:', String(e.stderr ?? e.message ?? e).replace(/\S+@\S+/g, '(address)').slice(0, 400)); }
+            } catch (e) { console.log('FAILED:', [e.stdout, e.stderr, e.message].map((x) => String(x ?? '')).join(' | ').replace(/\S+@\S+/g, '(address)').replace(/\s+/g, ' ').slice(0, 700)); if (label === 'users') break; }
           }
           EOF
           node /tmp/review.mjs
