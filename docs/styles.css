@@ -7576,7 +7576,7 @@ a.trend-price:hover { background: rgba(255, 255, 255, 0.06); }
 
 /* One play's price at every book: a row of named chips, the best price marked, the user's own books in bold. */
 .tennis-books { display: grid; gap: 6px; margin-top: 10px; min-width: 0; }
-.tennis-books .tennis-ways-h small { font-weight: 600; letter-spacing: 0; text-transform: none; opacity: 0.85; margin-left: 4px; }
+.tennis-ways-h small { font-weight: 600; letter-spacing: 0; text-transform: none; opacity: 0.85; margin-left: 4px; }
 .tennis-books-row { display: flex; flex-wrap: wrap; gap: 6px; min-width: 0; }
 .tennis-book {
   display: inline-flex; align-items: center; gap: 6px; padding: 4px 9px 4px 5px; border: 1px solid var(--line); border-radius: 10px;

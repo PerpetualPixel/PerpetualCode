@@ -87,6 +87,48 @@ export function setOutcome(pA, pB, gA = 0, gB = 0, aServes = true) {
 }
 
 /**
+ * How many games the set in play runs to, from a score with one player
+ * due to serve: {6: p, 7: p, ... 13: p}, the chance of each count (6-4 is
+ * 10, 7-5 is 12, a tiebreak set 13; no set ends on 11). The same walk as
+ * setOutcome: each game is the server's hold or the returner's break.
+ */
+export function setGamesDist(pA, pB, gA = 0, gB = 0, aServes = true) {
+  const hA = holdProb(pA); const hB = holdProb(pB);
+  const memo = new Map();
+  const f = (a, b, s) => {
+    if (setDone(a, b)) return { [a + b]: 1 };
+    if (a === 6 && b === 6) return { 13: 1 };
+    const k = (a * 8 + b) * 2 + (s ? 1 : 0);
+    if (memo.has(k)) return memo.get(k);
+    const w = s ? hA : 1 - hB;
+    const o = {};
+    for (const [n, p] of Object.entries(f(a + 1, b, !s))) o[n] = (o[n] ?? 0) + w * p;
+    for (const [n, p] of Object.entries(f(a, b + 1, !s))) o[n] = (o[n] ?? 0) + (1 - w) * p;
+    memo.set(k, o);
+    return o;
+  };
+  return f(gA, gB, aServes);
+}
+
+/** The lines a set's games are read at: the ones a book hangs on a set (9.5 the usual, 12.5 "a tiebreak"). */
+export const LIVE_SET_TOTAL_LINES = [8.5, 9.5, 10.5, 12.5];
+
+/**
+ * The games read of the set in play: {mean, over: {8.5: p, ...}}, the
+ * expected count and the chance it runs past each line. `aServes` null
+ * (the order is not read yet) averages the two cases.
+ */
+export function setGamesRead(pA, pB, gA = 0, gB = 0, aServes = null) {
+  const cases = aServes === null ? [setGamesDist(pA, pB, gA, gB, true), setGamesDist(pA, pB, gA, gB, false)] : [setGamesDist(pA, pB, gA, gB, aServes)];
+  const dist = {};
+  for (const c of cases) for (const [n, p] of Object.entries(c)) dist[n] = (dist[n] ?? 0) + p / cases.length;
+  const mean = Object.entries(dist).reduce((s, [n, p]) => s + Number(n) * p, 0);
+  const over = {};
+  for (const line of LIVE_SET_TOTAL_LINES) over[line] = Object.entries(dist).reduce((s, [n, p]) => s + (Number(n) > line ? p : 0), 0);
+  return { mean, over };
+}
+
+/**
  * The chance A wins the match, and the set in play, from the score:
  * {match, set, nextSet}. `aServes` is who serves the next game; null
  * when it is not known, and the two cases are averaged. `nextSet` is the
@@ -264,6 +306,8 @@ export function liveRead({ sets, games, serve, market = null, bestOf = 3, modelW
   // The same score with the pre-match serving: what the players' form today adds or takes.
   const flat = liveMatchProb({ pA: serve.pA, pB: serve.pB, ...state, aServes: read.aServesNext, bestOf });
   const blended = market != null ? modelWeight * now.match + (1 - modelWeight) * market : now.match;
+  // The games the set in play runs to, from the score and today's holds (not in a tiebreak: that set is 13).
+  const setGames = state.inSet && !state.tiebreak ? setGamesRead(today.pA, today.pB, state.gA, state.gB, read.aServesNext) : null;
   const momentum = momentumOf(games, read);
   const why = [];
   const pct = (x) => `${Math.round(x * 100)}%`;
@@ -275,13 +319,18 @@ export function liveRead({ sets, games, serve, market = null, bestOf = 3, modelW
     const shift = now.match - flat.match;
     if (Math.abs(shift) >= 0.02) why.push(`Serving today moves ${shift > 0 ? names.a : names.b} up ${Math.round(Math.abs(shift) * 100)} point${Math.round(Math.abs(shift) * 100) === 1 ? '' : 's'} on what the score alone says.`);
   } else why.push('The serve order is not clear from the games seen yet, so the read is from the score and the pre-match serve numbers alone.');
+  if (setGames && read.first) {
+    // The line nearest a coin flip is the one that says most about the set.
+    const line = [...LIVE_SET_TOTAL_LINES].sort((x, y) => Math.abs(setGames.over[x] - 0.5) - Math.abs(setGames.over[y] - 0.5))[0];
+    why.push(`Set ${state.setNumber} at ${state.gA}-${state.gB}: about ${setGames.mean.toFixed(1)} games expected at today's hold rates, ${pct(setGames.over[line])} to run past ${line}.`);
+  }
   if (momentum.last.of >= 4) why.push(`Last ${momentum.last.of} games: ${names.a} ${momentum.last.a}, ${names.b} ${momentum.last.b}${momentum.streak.n >= 3 ? `; ${names[momentum.streak.side]} has won the last ${momentum.streak.n}` : ''}.`);
   if (market != null) why.push(`The live price gives ${names.a} ${pct(market)}; the read splits the difference at ${pct(blended)}.`);
   const apart = market != null && Math.abs(now.match - market) > LIVE_MAX_GAP;
   if (apart) why.push(`The model and the live price are more than ${Math.round(LIVE_MAX_GAP * 100)} points apart, so there is no moneyline play: the price may be stale, or the match holds something the score does not show.`);
   return {
     state, serve: { pre: serve, today, first: read.first, sure: read.sure, aServesNext: read.aServesNext, a: read.a, b: read.b, breaks: read.breaks.length },
-    model: { match: now.match, set: now.set, nextSet: now.nextSet }, market, prob: blended, apart, momentum, why,
+    model: { match: now.match, set: now.set, nextSet: now.nextSet, setGames }, market, prob: blended, apart, momentum, why,
     fair: { match: americanOf(blended), set: americanOf(now.set) },
   };
 }
@@ -332,6 +381,25 @@ export const LIVE_MAX_GAP = 0.2;
  */
 export const FOLLOW_ON_CAP = 0.69;
 
+/**
+ * The games in the set in play, over or under (2026-11-23: "over under
+ * games in a set ... reading into how the game is being played out. Not
+ * guessing but using data backed reasoning").
+ *
+ * The read is the set walked game by game from the score, each game the
+ * server's hold at today's rate: the pre-match serve number moved by the
+ * holds and breaks seen so far (updatedServe). So it only stands once the
+ * serve order is certain, since a wrong order turns every hold into a
+ * break. The band stops short of 80% for the reason the set winner's
+ * does: past it the price is too short to pay for its misses. The margin
+ * is a point wider than the set winner's, and the stake is one unit
+ * whatever the chance, until this play has a record of its own.
+ */
+export const LIVE_SET_TOTAL_PROB = [0.64, 0.78];
+export const LIVE_SET_TOTAL_MARGIN = 0.05;
+export const LIVE_SET_TOTAL_PRICE = [-300, 250];
+export const LIVE_SET_TOTAL_UNITS = 1;
+
 /** Units by confidence: the likelier the play, the more units (docs/trends.js suggestedUnits, kept in step). */
 export const liveUnits = (prob) => (prob >= 0.8 ? 2 : prob >= 0.7 ? 1.5 : prob >= 0.6 ? 1 : 0.5);
 
@@ -342,10 +410,14 @@ export const liveUnits = (prob) => (prob >= 0.8 ? 2 : prob >= 0.7 ? 1.5 : prob >
  * band (not so short there is no price worth taking). A set has no live
  * price in the feed, so its play names the price to take it at or
  * better. Nothing during a tiebreak, or before enough games are in.
+ * The games in the set in play, over or under one line, when the serve
+ * order is certain and one side of a line sits in its band: the likeliest
+ * such side, one a set.
  *
  * `quotes` is {a: [{bookId, book, american, link}], b: [...]}, the live
- * moneyline. Returns [{market: 'live_ml' | 'live_set', side, set?, prob,
- * edge?, american?, bookId?, book?, link?, playable?, units, selection}].
+ * moneyline. Returns [{market: 'live_ml' | 'live_set' | 'live_set_total',
+ * side, set?, point?, sideWord?, prob, edge?, american?, bookId?, book?,
+ * link?, playable?, units, selection}].
  */
 export function livePlays(read, { quotes = { a: [], b: [] }, names = { a: 'A', b: 'B' }, gamesSeen = 0, sets = null } = {}) {
   const out = [];
@@ -371,6 +443,23 @@ export function livePlays(read, { quotes = { a: [], b: [] }, names = { a: 'A', b
       out.push({
         market: 'live_set', side: setSide, set: state.setNumber, prob: Math.round(setProb * 1000) / 1000, playable: americanOf(setProb - LIVE_SET_MARGIN), units: liveUnits(setProb), selection: `${names[setSide]} to win set ${state.setNumber}`,
         ...(followOn && modelProb > FOLLOW_ON_CAP ? { held: Math.round(modelProb * 1000) / 1000, note: `${names[setSide]} won the last set but has no break in this one yet, and a new set starts level: the read of ${Math.round(modelProb * 100)}% is held to ${Math.round(FOLLOW_ON_CAP * 100)}%, a one-unit play.` } : {}),
+      });
+    }
+  }
+  const sg = read.model.setGames;
+  if (state.inSet && sg && read.serve?.first && read.serve?.sure && state.gA + state.gB >= 2) {
+    const cands = [];
+    for (const point of LIVE_SET_TOTAL_LINES) for (const sideWord of ['over', 'under']) {
+      const p = sideWord === 'over' ? sg.over[point] : 1 - sg.over[point];
+      if (p >= LIVE_SET_TOTAL_PROB[0] && p <= LIVE_SET_TOTAL_PROB[1]) cands.push({ point, sideWord, prob: p });
+    }
+    const pick = cands.sort((x, y) => y.prob - x.prob)[0];
+    if (pick) {
+      const holds = (s, n) => `${n} has held ${s.held} of ${s.served}`;
+      out.push({
+        market: 'live_set_total', side: null, set: state.setNumber, point: pick.point, sideWord: pick.sideWord, prob: Math.round(pick.prob * 1000) / 1000, playable: americanOf(pick.prob - LIVE_SET_TOTAL_MARGIN), units: LIVE_SET_TOTAL_UNITS,
+        selection: `Set ${state.setNumber} ${pick.sideWord} ${pick.point} games`,
+        note: `${holds(read.serve.a, names.a)} service games today and ${holds(read.serve.b, names.b)}; walked from ${state.gA}-${state.gB} at those rates the set ${pick.sideWord === 'over' ? 'runs past' : 'stays under'} ${pick.point} games ${Math.round(pick.prob * 100)}% of the time (about ${sg.mean.toFixed(1)} expected). One unit, while this play has no record of its own.`,
       });
     }
   }

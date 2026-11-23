@@ -16,7 +16,13 @@
  *   ml            the moneyline
  *   set_spread    +1.5 "to win a set", -1.5 "in straight sets"
  *   set1_ml       the first set
+ *   set2_ml       the second set
  *   games_spread  the game spread
+ *
+ * The score in sets (set_betting) is never the lean itself: a 2-0 is the
+ * same bet as -1.5 sets, and a 2-1 is a long price on one way of winning.
+ * It rides on the card as "set betting": every score on the lean's side
+ * with the read's share against the price, the ones with room marked.
  *
  * A price of STRAIGHT_FLOOR or longer is played straight, sized by its
  * chance (half a unit to two); a shorter one is a parlay piece, and the
@@ -43,8 +49,10 @@ export const CONVICTION_EDGE = 0.07;
 /** The bar for a total or an aces line: no side behind it, so more room is asked. */
 export const EXTRA_MIN_PROB = 0.66;
 export const EXTRA_MIN_EDGE = 0.05;
-export const SIDE_MARKETS = ['ml', 'set_spread', 'set1_ml', 'games_spread'];
-export const EXTRA_MARKETS = ['games_total', 'set1_total', 'sets_total', 'aces'];
+export const SIDE_MARKETS = ['ml', 'set_spread', 'set1_ml', 'set2_ml', 'games_spread'];
+/** A score in sets is worth pointing out on a card from this much room over its price. */
+export const SET_BETTING_EDGE = 0.03;
+export const EXTRA_MARKETS = ['games_total', 'set1_total', 'set2_total', 'sets_total', 'aces'];
 export const MAX_SUGGESTIONS = 3;
 /** A parlay suggestion is offered only while its legs together stay this likely. */
 export const PAIR_MIN_PROB = 0.4;
@@ -61,6 +69,8 @@ export function shortSelection(leg) {
     case 'ml': return `${leg.name} ML`;
     case 'set_spread': return leg.point > 0 ? `${leg.name} to win a set` : `${leg.name} in straight sets`;
     case 'set1_ml': return `${leg.name} 1st set`;
+    case 'set2_ml': return `${leg.name} 2nd set`;
+    case 'set_betting': return `${leg.name} ${Math.floor(leg.point / 10)}-${leg.point % 10}`;
     case 'games_spread': return `${leg.name} ${signed(leg.point)} games`;
     default: return leg.selection;
   }
@@ -68,7 +78,7 @@ export function shortSelection(leg) {
 
 /** How a lean is played, in words. */
 export function howText(leg, how, units) {
-  const market = leg.market === 'ml' ? 'Moneyline' : leg.market === 'set_spread' ? (leg.point > 0 ? 'To win a set (+1.5 sets)' : 'In straight sets (-1.5 sets)') : leg.market === 'set1_ml' ? 'First set winner' : leg.market === 'games_spread' ? `Game spread ${signed(leg.point)}` : leg.label ?? leg.market;
+  const market = leg.market === 'ml' ? 'Moneyline' : leg.market === 'set_spread' ? (leg.point > 0 ? 'To win a set (+1.5 sets)' : 'In straight sets (-1.5 sets)') : leg.market === 'set1_ml' ? 'First set winner' : leg.market === 'set2_ml' ? 'Second set winner' : leg.market === 'games_spread' ? `Game spread ${signed(leg.point)}` : leg.label ?? leg.market;
   return how === 'straight' ? `${market}, straight for ${units}u` : `${market}, as a parlay leg: too short to take alone`;
 }
 
@@ -120,10 +130,12 @@ export function leanFor(legs, { read = {} } = {}) {
     : `Too short to take alone at ${signed(q.american)}: use it as a parlay leg`);
   const alternates = sides.filter((l) => l !== main && l.side === side).sort((x, y) => room(y) - room(x)).slice(0, 3).map(legView);
   const also = extras.filter((l) => l !== main).sort((x, y) => room(y) - room(x)).slice(0, 2).map(legView);
+  // Set betting on the lean's side: each score a book prices, likeliest first, with whether the price leaves room. Not on a thin read.
+  const setBetting = thin || !side ? [] : (legs ?? []).filter((l) => l.market === 'set_betting' && l.side === side && bestQuote(l)).sort((x, y) => y.prob - x.prob).map((l) => ({ ...legView(l), value: l.edge >= SET_BETTING_EDGE }));
   return {
     matchId: main.matchId, tour: main.tour, event: main.event, round: main.round, commenceMs: main.commenceMs, a: main.a, b: main.b,
     side, name: main.name ?? null, opponent: main.opponent ?? null, confidence: main.prob, how, units, conviction, thin,
-    howText: howText(main, how, units), main: legView(main), alternates, also, why,
+    howText: howText(main, how, units), main: legView(main), alternates, also, setBetting, why,
     opponentFlags: main.opponentFlags ?? [], pMarket: read.pMarket ?? null, pModel: read.pModel ?? null, pFinal: read.pFinal ?? null,
   };
 }
