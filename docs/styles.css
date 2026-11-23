@@ -7887,3 +7887,66 @@ a.tennis-book:hover { background: rgba(255, 255, 255, 0.06); }
 .pick-board-units { flex: none; font-family: var(--mono); font-weight: 800; font-size: 0.82rem; color: var(--success); }
 .pick-board-row .trend-price { flex: none; }
 .pick-emblem.is-static { cursor: default; }
+
+/* ---------- Results tab (docs/app.js renderResults): two sides, a total, a card a sport ---------- */
+.results-body { display: grid; gap: 12px; padding: 0 0 96px; }
+.res-link { display: block; width: 100%; margin: 18px 0 8px; }
+.res-sides { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+.res-side { display: grid; gap: 2px; justify-items: start; padding: 12px 14px; border-radius: 14px; border: 1px solid var(--line); background: var(--surface); color: var(--text); font: inherit; text-align: left; cursor: pointer; min-width: 0; }
+.res-side.is-active { border-color: var(--accent); background: var(--accent-dim); box-shadow: inset 0 0 0 1px var(--accent); }
+.res-side-name { font-size: 1rem; font-weight: 800; }
+.res-side small { color: var(--muted); font-size: 0.74rem; font-weight: 600; }
+.res-side-net { font-size: 0.86rem; font-weight: 800; font-variant-numeric: tabular-nums; }
+.res-note, .res-none { margin: 0; }
+.res-h3 { margin: 6px 0 0; font-size: 0.74rem; font-weight: 800; letter-spacing: 0.08em; text-transform: uppercase; color: var(--muted); }
+.res-grid { display: grid; gap: 10px; grid-template-columns: minmax(0, 1fr); align-items: start; }
+.res-card { border: 1px solid var(--line); border-radius: 16px; background: var(--surface); padding: 12px 14px 14px; min-width: 0; }
+.res-card.is-total { border-color: var(--accent); }
+.res-head { display: flex; align-items: center; gap: 10px; width: 100%; padding: 0 0 10px; border: 0; background: none; color: var(--text); font: inherit; cursor: pointer; text-align: left; min-height: 34px; }
+.res-name { display: inline-flex; align-items: center; gap: 8px; font-size: 1rem; font-weight: 800; min-width: 0; flex: 1 1 auto; }
+.res-name svg { width: 18px; height: 18px; flex: none; }
+.res-rec { font-weight: 700; font-variant-numeric: tabular-nums; white-space: nowrap; }
+.res-rec small { color: var(--muted); font-weight: 600; margin-left: 2px; }
+.res-chev { color: var(--muted); font-size: 0.8rem; width: 14px; text-align: center; }
+.res-stats { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 8px; margin: 0; }
+.res-stat { padding: 8px 10px; border-radius: 12px; background: var(--surface-2); min-width: 0; }
+.res-stat dt { color: var(--muted); font-size: 0.66rem; font-weight: 800; letter-spacing: 0.06em; text-transform: uppercase; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.res-stat dd { margin: 2px 0 0; font-size: 1.06rem; font-weight: 800; font-variant-numeric: tabular-nums; white-space: nowrap; }
+.res-stat.is-up dd, .res-side-net.is-up, .res-period .is-up { color: var(--success); }
+.res-stat.is-down dd, .res-side-net.is-down, .res-period .is-down { color: var(--danger, #ff5c7a); }
+.res-body { margin-top: 14px; display: grid; gap: 10px; min-width: 0; }
+.res-graph-head { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 8px; }
+.res-graph-head h4, .res-period h4 { margin: 0; font-size: 0.82rem; font-weight: 800; }
+.res-buckets { display: inline-flex; padding: 3px; border-radius: 999px; border: 1px solid var(--line); background: var(--surface-2); }
+.res-bucket { border: 0; background: none; color: var(--muted); font: inherit; font-size: 0.78rem; font-weight: 700; padding: 6px 12px; border-radius: 999px; cursor: pointer; min-height: 32px; }
+.res-bucket.is-active { background: var(--accent); color: var(--on-accent, #fff); }
+.res-chart { position: relative; width: 100%; min-width: 0; }
+.res-chart svg { display: block; max-width: 100%; height: auto; overflow: visible; }
+.res-grid-line { stroke: rgba(255, 255, 255, 0.07); stroke-width: 1; }
+.res-zero { stroke: rgba(255, 255, 255, 0.32); stroke-width: 1; }
+.res-flat { fill: var(--muted); }
+.res-axis { fill: var(--muted); font-size: 10.5px; font-variant-numeric: tabular-nums; }
+.res-val { fill: var(--text); font-size: 11px; font-weight: 700; font-variant-numeric: tabular-nums; }
+.res-hit { cursor: pointer; outline: none; }
+.res-hit.is-on, .res-hit:focus-visible { fill: rgba(255, 255, 255, 0.07); }
+.res-tip { position: absolute; top: 0; transform: translateX(-50%); display: grid; gap: 1px; padding: 8px 10px; border-radius: 10px; background: #14121f; border: 1px solid var(--line); box-shadow: 0 8px 24px rgba(0, 0, 0, 0.45); font-size: 0.74rem; line-height: 1.35; pointer-events: none; white-space: nowrap; z-index: 2; }
+.res-tip[hidden] { display: none; }
+.res-tip strong { font-size: 0.98rem; font-variant-numeric: tabular-nums; }
+.res-tip-when, .res-tip-more { color: var(--muted); }
+.res-chart-note { margin: 0; color: var(--muted); font-size: 0.72rem; }
+.res-period { display: grid; gap: 6px; padding-top: 10px; border-top: 1px solid var(--line); }
+.res-period h4 small { color: var(--muted); font-weight: 600; margin-left: 4px; font-variant-numeric: tabular-nums; }
+.res-row { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 4px 12px; padding: 8px 10px; border-radius: 10px; background: var(--surface-2); min-width: 0; }
+.res-row-main { display: grid; gap: 1px; min-width: 0; flex: 1 1 220px; }
+.res-row-main b { font-size: 0.88rem; overflow-wrap: anywhere; }
+.res-row-main small, .res-row-meta small { color: var(--muted); font-size: 0.74rem; overflow-wrap: anywhere; }
+.res-row-meta { display: inline-flex; align-items: center; gap: 10px; flex: 0 1 auto; margin-left: auto; }
+.res-row-meta small { white-space: nowrap; font-variant-numeric: tabular-nums; }
+.res-row .pick-result { margin-left: 0; white-space: nowrap; }
+.res-more { justify-self: start; }
+@media (min-width: 820px) {
+  .res-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .res-grid .res-card.is-open { grid-column: 1 / -1; }
+  .res-sides { max-width: 560px; }
+}
+@media (min-width: 1180px) { .res-grid { grid-template-columns: repeat(3, minmax(0, 1fr)); } }
