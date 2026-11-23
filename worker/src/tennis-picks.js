@@ -179,14 +179,6 @@ export async function liveSetMarket(env, ctx, key, eventId, set, now) {
   const url = `${UPSTREAM}/sports/${key}/events/${eventId}/odds?bookmakers=${TREND_BOOKMAKERS}&markets=h2h_s${set}&oddsFormat=american&dateFormat=iso&includeLinks=true`;
   return feedJson(env, ctx, url, `tennis:odds:liveset:${eventId}:${set}`, LIVE_BOARD_TTL, { now, sport: key });
 }
-/** A set's total games at the books, live: the first set's main and alternate lines, the second's alternates. One call a set, kept as long as the live board. */
-export const liveSetTotalKeys = (set) => (set === 1 ? ['totals_s1', 'alternate_totals_s1'] : set === 2 ? ['alternate_totals_s2'] : []);
-export async function liveSetTotals(env, ctx, key, eventId, set, now) {
-  const keys = liveSetTotalKeys(set);
-  if (!keys.length) return null;
-  const url = `${UPSTREAM}/sports/${key}/events/${eventId}/odds?bookmakers=${TREND_BOOKMAKERS}&markets=${keys.join(',')}&oddsFormat=american&dateFormat=iso&includeLinks=true`;
-  return feedJson(env, ctx, url, `tennis:odds:livesettotal:${eventId}:${set}`, LIVE_BOARD_TTL, { now, sport: key });
-}
 export async function cachedTournamentBoard(env, key) {
   const cached = await readJson(env, `tennis:odds:board:${key}`);
   return Array.isArray(cached?.body) ? cached.body : [];
@@ -195,6 +187,36 @@ export async function cachedTournamentBoard(env, key) {
 async function eventMarkets(env, ctx, key, eventId, now, { cachedOnly = false } = {}) {
   const url = `${UPSTREAM}/sports/${key}/events/${eventId}/odds?bookmakers=${TREND_BOOKMAKERS}&markets=${EVENT_MARKETS}&oddsFormat=american&dateFormat=iso&includeLinks=true`;
   return feedJson(env, ctx, url, `tennis:odds:event:${eventId}`, EVENT_TTL, { now, sport: key, cachedOnly });
+}
+
+/**
+ * The later copy of a play that was posted on two days is voided (the
+ * review of 2026-11-23: a match on the card on its eve and again on its
+ * day was posted on both, eight plays and two parlays, about three units
+ * of the record; the owner: "whatever you recommend ... try not to double
+ * post"). The first posting stands, at the price it had. A voided copy
+ * keeps what it was graded as under `was`, so nothing is lost. A parlay
+ * is the same parlay when its legs are the same sides of the same
+ * matches. Returns how many were voided. The tick no longer posts a
+ * match twice, so this runs once.
+ */
+export async function voidDoublePosts(env, dates) {
+  const first = new Map(); let voided = 0;
+  const keyOf = (p) => (p.market === 'ml_parlay' ? `parlay:${(p.legs ?? []).map((l) => `${l.matchId}:${l.side ?? l.selection}`).sort().join('|')}` : p.id);
+  for (const d of [...(dates ?? [])].sort()) {
+    const rec = await readJson(env, tennisPicksKey(d));
+    if (!rec?.plays?.length) continue;
+    let dirty = false;
+    for (const p of rec.plays) {
+      const k = keyOf(p);
+      if (!first.has(k)) { first.set(k, rec.date ?? d); continue; }
+      if (p.duplicateOf) continue;
+      Object.assign(p, { was: { status: p.status, result: p.result ?? null, net: p.net ?? null, actual: p.actual ?? null }, status: 'void', result: 'void', net: 0, duplicateOf: first.get(k), actual: `Posted twice: on the record from ${first.get(k)}, so this copy does not count` });
+      voided++; dirty = true;
+    }
+    if (dirty) await env.POTD_KV.put(tennisPicksKey(d), JSON.stringify(rec), { expirationTtl: KV_TTL });
+  }
+  return voided;
 }
 
 /** The feed event for a card match on a board: both names fit, either order. */
@@ -690,7 +712,11 @@ export async function runTennisTick(env, ctx, now = Date.now(), { deps = {} } = 
     const n = await gradeRecord(old);
     if (n) { graded += n; await env.POTD_KV.put(tennisPicksKey(d), JSON.stringify(old), { expirationTtl: KV_TTL }).catch(() => {}); }
   }
-  if (!index.dates.includes(date)) { index.dates = [date, ...index.dates].slice(0, 120); await env.POTD_KV.put(TENNIS_PICKS_INDEX, JSON.stringify(index), { expirationTtl: KV_TTL }).catch(() => {}); }
+  let indexDirty = false;
+  if (!index.dates.includes(date)) { index.dates = [date, ...index.dates].slice(0, 120); indexDirty = true; }
+  // Once: the plays posted on two days before 2026-11-23 (see voidDoublePosts). The index remembers it was done.
+  if (!index.doublesVoided) { index.doublesVoided = { at: now, voided: await voidDoublePosts(env, index.dates) }; indexDirty = true; }
+  if (indexDirty) await env.POTD_KV.put(TENNIS_PICKS_INDEX, JSON.stringify(index), { expirationTtl: KV_TTL }).catch(() => {});
   return { skipped: false, date, considered, candidates: candidates.length, posted, parlay: parlay ? parlay.legs.length : 0, graded, plays: record.plays.length, units: unitsPosted(record.plays), trendsBuilt: Boolean(trends.built), builderLegs: builder.legs.length, leans: record.leans.length, suggestions: record.suggestions.length, fanduel: fd?.events?.length ?? 0, keys: Object.fromEntries(TOURS.map((t) => [t, (keys[t] ?? []).map((k) => k.key)])) };
 }
 

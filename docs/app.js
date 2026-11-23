@@ -11425,8 +11425,8 @@ function ufcSprinkleHtml(legs) {
   return `<div class="ufc-sprinkle"><strong>Sprinkle · a couple of dollars each</strong>${legs.map((l) => {
     const fair = Number.isFinite(l.fairAmerican) ? l.fairAmerican : null;
     const at = (l.books ?? []).find((x) => x.bookId === 'fanduel') ?? (l.books ?? [])[0] ?? null;
-    return `<div class="ufc-sprinkle-leg"><b>${esc(l.selection)}</b><small>${esc(pct(l.chance))} chance${fair != null ? ` · fair ${esc(formatAmerican(fair))} · $${stake} pays about $${esc((stake * (1 + fair / 100)).toFixed(0))}` : ''}</small>${at ? `<a href="${escUrl(at.link)}" target="_blank" rel="noopener">Open the fight at ${esc(at.book)} ↗</a>` : ''}</div>`;
-  }).join('')}<p class="row-sub">Pixel's fair price, no vig; the book's own number is on the fight page. Our odds feed carries no fight props for MMA.</p></div>`;
+    return `<div class="ufc-sprinkle-leg"><b>${esc(l.selection)}</b><small>${esc(pct(l.chance))} chance${fair != null ? ` · take it at ${esc(formatAmerican(fair))} or better · $${stake} pays about $${esc((stake * (1 + fair / 100)).toFixed(0))} there` : ''}</small>${at ? `<a href="${escUrl(at.link)}" target="_blank" rel="noopener">Open the fight at ${esc(at.book)} ↗</a>` : ''}</div>`;
+  }).join('')}<p class="row-sub">The price to take is Pixel's fair price, no vig: shorter than that at the book and it is not worth it. The book's own number is on the fight page; our odds feed carries no fight props for MMA.</p></div>`;
 }
 
 function ufcDogHowHtml(dog) {
@@ -12102,7 +12102,7 @@ function renderTennisLiveRead(r) {
     <small class="row-sub">To win the match${r.market != null ? ` · model ${esc(pct(r.model.match))}, live price ${esc(pct(r.market))}` : ' · from the score and the serving; no live price'}${r.state?.inSet ? ` · set ${r.state.setNumber}: ${esc(lastName(r[setSide]))} ${esc(pct(setProb))}` : ''}</small>
     <small class="row-sub">${holds}${mo ? ` · ${mo}` : ''}</small>
     ${sgOpen.length ? `<small class="row-sub">Set ${r.state.setNumber} games: about ${esc(String(sg.mean))} expected at today's holds · ${sgOpen.map((k) => (k === 12.5 ? `a tiebreak ${esc(pct(sg.over[k]))}` : `past ${k}: ${esc(pct(sg.over[k]))}`)).join(' · ')}</small>` : ''}
-    ${(r.plays ?? []).map((p) => renderTennisLivePlay({ ...p, nowScore: (r.sets ?? []).map(([x, y]) => `${x}-${y}`).join(' ') })).join('') || '<small class="row-sub live-tennis-none">No live play: nothing here clears the bar against the price.</small>'}
+    ${(r.plays ?? []).map((p) => renderTennisLivePlay({ ...p, nowScore: (r.sets ?? []).map(([x, y]) => `${x}-${y}`).join(' ') })).join('') || `<small class="row-sub live-tennis-none">${r.already?.length ? `No live play: ${esc(r.already.join(', '))} is already on the record from before the match, and the same bet is not posted twice.` : 'No live play: nothing here clears the bar against the price.'}</small>`}
     <button type="button" class="parlay-btn sc-why" data-tennis-live-why="${esc(r.id)}">${open ? 'Hide the read' : 'The read'}</button>
     ${open ? `<ul class="tennis-why-list">${(r.why ?? []).map((w) => `<li>${esc(w)}</li>`).join('')}<li>Serve numbers from ${esc(r.serve?.source ?? 'the tour average')}. ESPN's feed carries the score game by game and no serve statistics, so the holds and breaks are read from the order of the games.</li></ul>${tennisBookPrices(r.books?.a, `${r.a} to win, live`)}${tennisBookPrices(r.books?.b, `${r.b} to win, live`)}${(r.plays ?? []).map((p) => tennisBookPrices(p.quotes, `${p.selection}, when it posted`)).join('')}` : ''}
   </div>`;
@@ -12124,7 +12124,7 @@ function renderLiveTennisMatch(m) {
 function renderTennisLiveLedger(tl, inPlayIds) {
   if (!tl) return '';
   const rec = (r, label, note) => (r && r.wins + r.losses > 0 ? `${label} ${r.wins}-${r.losses} <small>${esc(signedUnits(r.units))}u${r.roi != null ? ` · ${esc(roiText(r.roi))}` : ''}${note}</small>` : '');
-  const lines = [rec(tl.record?.ml, 'Moneyline', ''), rec(tl.record?.sets, 'Sets', ' at the book\'s price, or the price named where no book had the set'), rec(tl.record?.setGames, 'Set games', ' over or under, one unit each')].filter(Boolean);
+  const lines = [rec(tl.record?.ml, 'Moneyline', ''), rec(tl.record?.sets, 'Sets', ' at the book\'s price, or the price named where no book had the set'), rec(tl.record?.setGames, 'Set games', ' over or under, one unit each, at the price named')].filter(Boolean);
   const done = (tl.today ?? []).filter((p) => !inPlayIds.has(p.matchId));
   if (!lines.length && !done.length) return '<p class="row-sub live-tennis-ledger">Live plays post here while a match is in play: the moneyline when the read beats the live price, a set when one player is likely to take it, the games in a set when the holds say which way it runs. Stakes are sized by confidence. Tracked apart from the pre-match plays.</p>';
   return `<div class="live-tennis-ledger">${lines.length ? `<p class="row-sub"><strong>Live plays</strong> · ${lines.join(' · ')}</p>` : ''}${done.length ? `<details ${liveState.open['tennis:liveplays'] ? 'open' : ''} class="live-tennis-rest" data-live-details="tennis:liveplays"><summary>${done.length} live play${done.length === 1 ? '' : 's'} today on matches off court</summary>${done.map((p) => renderTennisLivePlay(p, { withMatch: true })).join('')}</details>` : ''}</div>`;
