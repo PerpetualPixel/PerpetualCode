@@ -44,6 +44,49 @@ async function fetchRecentUsers(env, now) {
   return results ?? [];
 }
 
+/**
+ * Account health for the owner's digest (2026-11-23, the owner: "look over
+ * users trends, anything being abused?"). Counts only, no name or address:
+ * the accounts and how many never verified, one mailbox behind several
+ * accounts (dots and +tags removed, the way a mail provider reads them),
+ * the busiest hour of signups this week, and the week's reports (many
+ * from one account, links, the same text again). Usage is not here: the
+ * daily count is kept outside the database, where it cannot be got round
+ * by a second row. `flags` are the sentences worth a look; an empty list
+ * means nothing stands out. Returns null when the tables cannot be read,
+ * so the digest still goes.
+ */
+export async function accountHealth(env, now = Date.now()) {
+  const first = async (sql, ...bind) => (await env.DB.prepare(sql).bind(...bind).first()) ?? {};
+  const week = now - 7 * 86400000;
+  try {
+    const users = await first('SELECT COUNT(*) total, SUM(email_verified = 1) verified, SUM(CASE WHEN email_verified = 0 AND created_at < ? THEN 1 ELSE 0 END) stale FROM users', week);
+    const shared = await first("SELECT COUNT(*) mailboxes, COALESCE(SUM(n), 0) accounts, COALESCE(MAX(n), 0) most FROM (SELECT COUNT(*) n FROM (SELECT replace(CASE WHEN instr(l, '+') > 0 THEN substr(l, 1, instr(l, '+') - 1) ELSE l END, '.', '') || '#' || d k FROM (SELECT lower(substr(email, 1, instr(email, '@') - 1)) l, lower(substr(email, instr(email, '@') + 1)) d FROM users)) GROUP BY k HAVING n > 1)");
+    const burst = await first("SELECT COALESCE(MAX(n), 0) most FROM (SELECT COUNT(*) n FROM users WHERE created_at >= ? GROUP BY strftime('%Y-%m-%d %H', created_at / 1000, 'unixepoch'))", week);
+    const reports = await first("SELECT COUNT(*) total, COALESCE(SUM(message LIKE '%http%'), 0) links FROM bug_reports WHERE created_at >= ?", week);
+    const reporter = await first('SELECT COALESCE(MAX(n), 0) most FROM (SELECT COUNT(*) n FROM bug_reports WHERE created_at >= ? GROUP BY user_id)', week);
+    const repeats = await first('SELECT COUNT(*) texts FROM (SELECT COUNT(*) n FROM bug_reports WHERE created_at >= ? GROUP BY message HAVING n > 1)', week);
+    const n = (x) => Number(x ?? 0);
+    const counts = {
+      accounts: n(users.total), verified: n(users.verified), unverifiedOverAWeek: n(users.stale),
+      sharedMailboxes: n(shared.mailboxes), sharedAccounts: n(shared.accounts), mostOnOneMailbox: n(shared.most),
+      busiestSignupHour: n(burst.most),
+      reportsThisWeek: n(reports.total), reportsWithLinks: n(reports.links), mostReportsFromOne: n(reporter.most), repeatedReportTexts: n(repeats.texts),
+    };
+    const flags = [];
+    if (counts.sharedMailboxes) flags.push(`${counts.sharedMailboxes} mailbox${counts.sharedMailboxes === 1 ? ' is' : 'es are'} behind ${counts.sharedAccounts} accounts (the most on one: ${counts.mostOnOneMailbox}). One person signing up more than once.`);
+    if (counts.busiestSignupHour >= 5) flags.push(`${counts.busiestSignupHour} signups landed in one hour this week. A burst like that is usually a script or a shared link.`);
+    if (counts.unverifiedOverAWeek >= 10 && counts.unverifiedOverAWeek > counts.accounts * 0.2) flags.push(`${counts.unverifiedOverAWeek} of ${counts.accounts} accounts are over a week old and never verified their email.`);
+    if (counts.mostReportsFromOne > 5) flags.push(`One account sent ${counts.mostReportsFromOne} reports this week.`);
+    if (counts.reportsWithLinks) flags.push(`${counts.reportsWithLinks} report${counts.reportsWithLinks === 1 ? '' : 's'} this week carried a link, which is how spam arrives.`);
+    if (counts.repeatedReportTexts) flags.push(`${counts.repeatedReportTexts} report text${counts.repeatedReportTexts === 1 ? ' was' : 's were'} sent more than once this week.`);
+    return { counts, flags };
+  } catch (e) {
+    console.error('Account health failed:', e);
+    return null;
+  }
+}
+
 function escapeHtml(s) {
   return String(s).replace(/[&<>"']/g, (c) => (
     { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]
@@ -69,6 +112,22 @@ export async function sendDailyOnboardingReport(env, now = Date.now()) {
     if (dateKey >= weekStartKey && dateKey <= todayKey) weekCount++;
     if (dateKey.slice(0, 7) === monthKey) monthCount++;
   }
+
+  const health = await accountHealth(env, now);
+  const hc = health?.counts;
+  const healthLines = hc ? [
+    ['Accounts', `${hc.accounts} (${hc.verified} verified)`],
+    ['Never verified, over a week old', String(hc.unverifiedOverAWeek)],
+    ['Most signups in one hour this week', String(hc.busiestSignupHour)],
+    ['Reports this week', String(hc.reportsThisWeek)],
+  ] : [];
+  const healthHtml = health ? `
+        <h3 style="color: #d946ef; margin: 28px 0 8px; font-size: 15px;">Account health</h3>
+        <table style="width: 100%; border-collapse: collapse; font-size: 14px; margin-bottom: 12px;"><tbody>
+          ${healthLines.map(([k, v]) => `<tr><td style="padding:6px 12px; color:#a0a0cc;">${k}</td><td style="padding:6px 12px; font-weight:bold;">${escapeHtml(v)}</td></tr>`).join('')}
+        </tbody></table>
+        ${health.flags.length ? `<ul style="margin: 0; padding-left: 20px; font-size: 14px; line-height: 1.5; color: #ffd27a;">${health.flags.map((f) => `<li>${escapeHtml(f)}</li>`).join('')}</ul>` : '<p style="font-size: 14px; color: #7fe0a8; margin: 0;">Nothing stands out: no shared mailboxes, no signup bursts, no report spam.</p>'}` : '';
+  const healthText = health ? `\n\nAccount health\n${healthLines.map(([k, v]) => `${k}: ${v}`).join('\n')}\n${health.flags.length ? health.flags.map((f) => `! ${f}`).join('\n') : 'Nothing stands out.'}` : '';
 
   const rowsHtml = todayUsers.length
     ? todayUsers
@@ -106,7 +165,7 @@ export async function sendDailyOnboardingReport(env, now = Date.now()) {
             </tr>
           </thead>
           <tbody>${rowsHtml}</tbody>
-        </table>
+        </table>${healthHtml}
       </div>
     </div>`;
 
@@ -115,13 +174,13 @@ export async function sendDailyOnboardingReport(env, now = Date.now()) {
     `Onboarded today: ${todayUsers.length}\n` +
     `Onboarded this week: ${weekCount}\n` +
     `Onboarded this month: ${monthCount}\n\n` +
-    `Today's signups:\n${rowsText}`;
+    `Today's signups:\n${rowsText}${healthText}`;
 
   try {
     await env.EMAIL.send({
       to: ADMIN_EMAIL,
       from: FROM,
-      subject: `PerpetualPicks Onboarding — ${todayUsers.length} today (${todayKey})`,
+      subject: `PerpetualPicks Onboarding — ${todayUsers.length} today (${todayKey})${health?.flags.length ? ` · ${health.flags.length} to look at` : ''}`,
       html,
       text,
     });

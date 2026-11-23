@@ -21,7 +21,7 @@
      only page that reads the feed; the other pages' connect-src stays the
      worker alone. -->
 <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src 'self' https://fonts.gstatic.com; img-src 'self' data: https:; connect-src 'self' https://pixel-pick-odds.mgbouldering.workers.dev https://perpetualpixel.github.io; object-src 'none'; base-uri 'self'; form-action 'self'">
-<script src="frame-guard.js?v=1.359"></script>
+<script src="frame-guard.js?v=1.360"></script>
 <title>Perpetual Picks - App</title>
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <meta name="theme-color" content="#05050A">
@@ -37,9 +37,9 @@
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Syne:wght@600;700;800&family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
-<link rel="stylesheet" href="styles.css?v=1.359">
+<link rel="stylesheet" href="styles.css?v=1.360">
 <!-- Before first paint: a desktop reader who chose "Fit screen" gets the wide shell without a flash of the narrow one. -->
-<script src="wide.js?v=1.359"></script>
+<script src="wide.js?v=1.360"></script>
 </head>
 <body>
 
@@ -153,38 +153,18 @@
 <details id="whatsNewHint" class="notice" hidden>
   <summary class="notice-summary">
     <span class="notice-tag">New</span>
-    <span class="notice-title">Perpetual Picks is now Trends: every NBA player prop with its last-20 hit rate, built three times a day</span>
+    <span class="notice-title">What's new: UFC, Tennis, Live</span>
     <span class="notice-more" aria-hidden="true">Details</span>
     <button type="button" id="whatsNewHintClose" class="icon-btn notice-close" aria-label="Dismiss">✕</button>
   </summary>
   <div class="notice-body">
-    <p>
-      After a round of major changes, the tracked record was reset on Oct 20, 2026 —
-      everything before that (three earlier eras) lives under the <strong>Archive</strong> button in the Tracking
-      Dashboard, untouched. Every price is de-vigged with the power method and graded against
-      the sharp market (Pinnacle) where it prices the game, and a curated pick is only ever a price
-      at a book you can bet. The daily boards are simpler now: at 2am ET the
-      whole slate is graded once and built into two-leg tickets — two low-level lines (a
-      player-prop number far below the player's season average, or a heavy favourite) priced
-      −150 to +150 together — from NFL, NHL and MMA game markets and NFL, NBA and NHL player
-      props, current season only (topped up from the end of last season in a league's first
-      weeks, and the card says so); two players' props from one game can pair as a same game
-      parlay, and a high-conviction leg standing in that band on its own can post as a straight
-      play when no ticket does. The best ticket becomes the <strong>Play of the Day</strong>,
-      the next five become <strong>Pixel's Picks</strong> (up to 5, never sharing a
-      game with the Play of the Day), and the <strong>Ladder</strong> rung — one parlay a day of
-      deep player-prop lines, every win rolled into the next rung — posts beside them. Every pick on every board has to beat
-      the market's no-vig line by the edge floor; a pick that clears that but not the full
-      sharp standard posts visibly flagged. A day with fewer real edges no longer posts short:
-      the open slots fill with the best-read plays inside the band, each flagged "Fallback"
-      with the reason and sized at the minimum, and kept out of the standard record's
-      win-rate and ROI. The Play of the Day posts every day: on a slate where nothing clears
-      the standard it posts the best play the day offers, flagged with why and sized at the
-      minimum, and tomorrow's goes up by 10pm ET the night before, so the tab shows today's and
-      tomorrow's, each dated.
-      Every card now also shows the algorithm's own unit sizing, scaled to its confidence —
-      3–5 units for the Play of the Day, 1–2.5 for Pixel's Picks and the Prop Play.
-    </p>
+    <ul class="notice-list">
+      <li><strong>UFC:</strong> a Recommended button on the parlay section opens ready-made builders, parlays and lottos for the card, each leg with its odds and why it was picked. Sort and filter them by confidence, payout, favorites, underdogs or type.</li>
+      <li><strong>Tennis:</strong> each lean now shows set betting (-1.5 sets to win 2-0, +1.5 sets to win a set), the second set, and every book's price. Every play says the price to take it at or better.</li>
+      <li><strong>Live:</strong> tap a game and the bet is the first thing you see. Finished games leave the list. Tennis matches in play can now carry an over or under on the games in the set.</li>
+      <li><strong>Parlay:</strong> separate sliders for hits in the last 5 and the last 10, a Last 20 switch, and half-star scores.</li>
+    </ul>
+    <p>The Guide has the full walk-through of every tab.</p>
   </div>
 </details>
 
@@ -648,39 +628,81 @@
   </div>
   <div class="guide-body">
     <details open>
-      <summary>What Trends shows</summary>
-      <p>Every player prop a sportsbook is offering on today's and tomorrow's NBA, NFL, NHL and European soccer games, with the player's real results at that number. Each card is one line: the player, the game, the stat and the number, the best price and the book offering it, the hit rate for the period you chose, and a bar for each game in that period. Green bars cleared the number, red bars missed it, grey bars landed on it exactly.</p>
-      <p>A game stays on the tab while it is being played and leaves once it is over. Tomorrow's games appear as soon as the books post lines on them, usually the evening before.</p>
+      <summary>What's new</summary>
+      <p><strong>UFC Recommended parlays.</strong> On the UFC tab's parlay section, the Recommended button opens a page of ready-made tickets for the card: builders, regular parlays and lottos. Each leg shows its odds and at least one reason it was picked. Sort and filter by confidence, payout, favorites, underdogs or type, then take the one that suits you. After the card, the page shows which tickets and legs landed.</p>
+      <p><strong>Tennis.</strong> Each lean now carries set betting on the leaned player (-1.5 sets to win 2-0, +1.5 sets to win a set), the second set's winner and games, and the price at every book. Every play says the price to take it at or better.</p>
+      <p><strong>Live.</strong> Tap a game and the bet comes first; the box score is folded underneath. A game or match leaves the list when it ends. Live tennis can now post an over or under on the games in the set being played.</p>
+      <p><strong>Parlay.</strong> Hits in the last 5 and hits in the last 10 have their own sliders, with a Last 20 switch beside them. Tap a star twice for a half star.</p>
+      <p><strong>The record.</strong> A play is posted once. A match that sits on the card for two days is no longer counted twice, and the copies that were have been voided.</p>
     </details>
 
     <details>
-      <summary>Where the numbers come from</summary>
-      <p>Lines and prices come from the sportsbooks through The Odds API. Results come from ESPN's game logs. A hit rate counts the games in the period where the player reached the number. Last 20 means the player's last 20 games, including the end of last season early in the year. Head to head means every logged game against the opponent he plays today. The season periods count only that season.</p>
-      <p>Lines are refreshed three times a day for the NBA and twice a day for the NFL. The time at the top of the tab is when the lines were last pulled, so a price can have moved since.</p>
-    </details>
-
-    <details>
-      <summary>Period, Filters and Sort</summary>
-      <p>The three buttons at the bottom of the screen control the whole tab. Period picks which games the hit rate and the bars cover: head to head, last 5, last 10, last 20, or a season. Sort orders the cards by hit rate, by price, or by game time, in either direction. The tab opens sorted by hit rate with the 100% lines first.</p>
-      <p>Filters narrow the list. Markets limits it to the stats you want. Games limits it to certain games. Odds keeps only prices inside a range. Period Hit Rate hides every line under the rate you set, so 90% and up shows only the lines that almost always land. Side keeps overs or unders only. The search box matches players, teams and markets.</p>
-    </details>
-
-    <details>
-      <summary>Your sportsbooks</summary>
-      <p>Open Filters, then Sportsbooks, and tick the books you have an account with. From then on a line shows only if one of your books is offering it, at the best price among them, and the price on the card is one you can actually bet. With no book ticked, every book counts. Your choice is saved to your account, so it applies on every device you sign in from.</p>
-    </details>
-
-    <details>
-      <summary>The detail sheet</summary>
-      <p>Tap a card to open it. The tabs along the top show the hit rate in every period at once. Below them is the split of hits and misses, the average and the median for that period, the chart with the value of every game and the opponent under each bar, the game log with dates and finals, and every sportsbook's price on the line.</p>
+      <summary>Getting around</summary>
+      <p>The tabs along the top are the whole app. <strong>Pixel's Picks</strong> is the tracked record. <strong>Live</strong> is what is being played right now. <strong>Trends</strong> is every player prop with its hit rate. <strong>Parlay</strong> builds a ticket from those props. <strong>UFC</strong> and <strong>Tennis</strong> have their own cards and reads. <strong>Slip Check</strong> grades a bet you already have in mind. <strong>Player search</strong> looks up any player or fighter.</p>
+      <p>Tell the app which sportsbooks you use and it shows prices from those books only. You can change them any time in Account settings.</p>
     </details>
 
     <details>
       <summary>Pixel's Picks</summary>
-      <p>Pixel's Picks are the Trends lines that pass a fixed test, then a research check. The test does not change: the line must have landed in every one of the player's last 20 games, at least ten of them logged, and in every game against today's opponent if he has played them before. One line per player and stat qualifies, the best paying of his 100% lines.</p>
-      <p>Each qualifying line is then researched before it can post. Is the player on limited minutes, measured as his last three games against his last twenty? Is he out, doubtful or questionable on the injury report? Is he a starter or a bench player? Does ESPN project a blowout that would sit him in the fourth quarter? Is a teammate out, which changes who gets the ball? Is there a defender or a scheme that hinders this line? If any answer goes against the line, it passes and the tab says why. If everything comes back favorable, it posts, and anything still worth knowing goes in the note under the pick.</p>
-      <p>The lines that pass become the day's tickets, priced only at the books Pixel plays: FanDuel, DraftKings, Caesars, Hard Rock, PrizePicks, bet365, Fanatics, BetMGM, Sleeper and Underdog. The first choice is a two leg parlay on one book as close to +100 as the lines allow, three legs when that is what fits under +150. Otherwise a straight bet between -200 and +150. A two leg ticket at +100 beats one straight at -200. At most two tickets a day, one unit each; the record is kept in units and the return on them, so it reads the same at any unit size. PrizePicks takes no single picks, so a PrizePicks ticket is a lineup of different players from at least two teams: a 2-pick Power Play paid 3x, or a 3-pick Flex Play paid 2.25x with all three in and 1.25x with two. Some days it is none, and the tab says what qualified and what the research found.</p>
-      <p>Every ticket is graded within the hour after its last game ends, as one bet, the way the book settles it: a lost leg loses the ticket, a pushed or voided leg drops out and the ticket pays at the legs left. The record at the bottom of the tab keeps the running total in units with the ROI on the units risked, a graph of it by day you can hover or tap to see each day's tickets and what won or lost, and the full history, filtered by NBA, NFL, NHL, soccer or all.</p>
+      <p>Pixel's Picks are the Trends lines that pass a fixed test, then a research check. The test does not change: the line must have landed in every one of the player's last 20 games, at least ten of them logged, and in every game against today's opponent if he has played them before. One line per player and stat qualifies, the best paying of his 100% lines, and a player is on one ticket a day.</p>
+      <p>Each qualifying line is then researched before it can post. Is the player on limited minutes? Is he out, doubtful or questionable? Is he a starter or a bench player? Is a blowout expected that would sit him late? Is a teammate out, which changes who gets the ball? Is there a defender or a scheme that hinders this line? If any answer goes against the line, it passes and the tab says why. If everything comes back favorable, it posts, and anything still worth knowing goes in the note under the pick.</p>
+      <p>The lines that pass become the day's tickets: a two or three leg parlay on one book near even money when the lines allow, otherwise a straight bet. At most two tickets a day, one unit each. Some days it is none, and the tab says what qualified and what the research found.</p>
+      <p>Every ticket is graded after its last game ends, as one bet, the way the book settles it: a lost leg loses the ticket, a pushed or voided leg drops out and the ticket pays at the legs left. The record at the bottom of the tab keeps the running total in units with the return on the units risked, a graph by day, and the full history, filtered by sport. The strongest tennis leans and the UFC picks for the card show here too.</p>
+    </details>
+
+    <details>
+      <summary>Trends</summary>
+      <p>Every player prop a sportsbook is offering on today's and tomorrow's games, with the player's real results at that number. Each card is one line: the player, the game, the stat and the number, the best price and the book offering it, the hit rate for the period you chose, and a bar for each game in that period. Green bars cleared the number, red bars missed it, grey bars landed on it exactly.</p>
+      <p>The three buttons at the bottom control the whole tab. <strong>Period</strong> picks which games the hit rate covers: head to head, last 5, last 10, last 20, or a season. <strong>Sort</strong> orders the cards by hit rate, price or game time. <strong>Filters</strong> narrow the list by market, game, odds range, hit rate, side and sportsbook. The search box matches players, teams and markets.</p>
+      <p>Tap a card to open it: the hit rate in every period at once, the split of hits and misses, the average and the median, a chart of every game with the opponent under each bar, the game log, and every sportsbook's price on the line.</p>
+      <p>Prices come from the sportsbooks and results from the official game logs. The time at the top of the tab is when the lines were last pulled, so a price can have moved since.</p>
+    </details>
+
+    <details>
+      <summary>Live</summary>
+      <p>The games and matches in play or about to start. Tap a game to open it: the slips come first, one for each of your books that prices one, with each leg showing what the player has now, his pace, and where he projects to finish. The game lines sit under the slips and the box score is folded below them.</p>
+      <p>Slips build from the first minutes of a game and are rebuilt as it moves. In a blowout, or very late in a game, there may be none, and the card says why. A game leaves the list when it ends.</p>
+      <p>Tennis sits on the same tab. A match in play shows each player's chance of winning from the score and how they are serving today, the holds and the last few games, and any live play: the moneyline, a player to win the set, or an over or under on the games in the set. Each live play says the price to take it at or better.</p>
+    </details>
+
+    <details>
+      <summary>Parlay</summary>
+      <p>Build a ticket from the props on the board. Choose the sport, the number of legs, the odds range, the prop types, over or under, and the sportsbook. The sliders set how often a leg must have hit in the player's last 5 and last 10 games; the Last 20 switch asks for the same form over twenty. Score is the star rating a leg must reach: tap a star for a whole star, tap it again for a half.</p>
+      <p>Generate, and the builder returns tickets that fit, each leg with its hit rates and price. Save a setup as a preset to reuse it.</p>
+    </details>
+
+    <details>
+      <summary>UFC</summary>
+      <p>The next card, fight by fight. Open a fight for the tale of the tape, each fighter's last five and fight history, the moneyline at every book, the rounds total, Pixel's read of the fight, and what the sharper sources and the cappers are saying. Card changes are listed as they happen.</p>
+      <p>The parlay section builds tickets from the card. <strong>Recommended</strong> opens ready-made ones: builders (short prices, built to land), regular parlays, and lottos (long prices, small stakes). Every leg has its odds and its reason. Sort and filter by confidence, payout, favorites, underdogs or type. Once the card is over, each ticket and leg is marked hit or missed.</p>
+      <p>Long shots worth a couple of dollars are listed as sprinkles with the price to take them at or better. Pixel's own picks for the card post on Pixel's Picks.</p>
+    </details>
+
+    <details>
+      <summary>Tennis</summary>
+      <p>Only the matches worth a bet are listed, the likeliest first. Each card names the side, the play and its price, how sure the read is against what the price asks, and how to play it: straight, for a stated number of units, or as a parlay leg when the price is too short to take alone. The reasons are under it, and the full read opens on a tap.</p>
+      <p>Under the main play are the other ways to play the same side (the first set, the second set, the game spread) and <strong>set betting</strong>: -1.5 sets, to win 2-0, and +1.5 sets, to win at least one set, each with the read against the price. A Room tag marks a line the price is generous on. Each play's price at every book is on the card, best first, with yours in bold.</p>
+      <p>Every match that was read is listed at the bottom with why it was passed. In a week when no sportsbook prices the event on the card, the tab says so: a lean is the read set against a price, so without a price there is none to make.</p>
+    </details>
+
+    <details>
+      <summary>Take it at this price or better</summary>
+      <p>A price moves, and your book is not always the one with the best number. Tennis plays, live plays and UFC long shots each state the shortest price at which the play is still worth taking. At that price or a better one, it is the play. Shorter than that, pass. Where a line reads "needs" a price, the board is not offering it yet.</p>
+    </details>
+
+    <details>
+      <summary>Slip Check</summary>
+      <p>Drop in a bet you are thinking about, by screenshot, by typing it, or by picking legs off the board. You get every leg's hit rate over its last 5, 10 and 20 games and against tonight's opponent, a confidence out of 100 for each leg, a grade for the ticket, and what to drop or move. Say whether it is a builder, a regular ticket or a lotto: the grade and the advice change with it.</p>
+    </details>
+
+    <details>
+      <summary>Player search</summary>
+      <p>Search any player or fighter in any sport. Pick a stat and a number to see how often it has landed, with the same chart and game log as a Trends card.</p>
+    </details>
+
+    <details>
+      <summary>Units and the record</summary>
+      <p>Everything tracked is kept in units, so the record reads the same at any bet size. A stake is sized by confidence: the likelier the play, the more units, and never many. Every tracked play is graded, wins and losses alike, and a play is on the record once. Leans and suggestions marked "not tracked" are there to inform, not to count.</p>
     </details>
 
     <details>
@@ -698,12 +720,6 @@
   <div class="guide-body">
     <p class="about-intro">
       I'm Perpetual Pixel. I work in IT by day and I bet on sports most of the hours I'm not working. I built this because the research I wanted to do before a bet took too long by hand: pull up a player's last twenty games, check how often he cleared a number, check what he did against tonight's opponent, then find which book has the best price. Perpetual Picks does that for every player prop on the board, every day, and shows the work.
-    </p>
-    <p class="about-intro">
-      Trends shows every player prop on the board with the player's real hit rate at that number. Pixel's Picks are the few lines that pass a fixed test and a research check, posted as tickets and graded, wins and losses alike.
-    </p>
-    <p>
-      Nothing here predicts a game. It counts what happened, puts the price next to it, and shows the work.
     </p>
     <div class="report-bug-section">
       <button type="button" id="reportBugToggle" class="action-btn" aria-expanded="false" aria-controls="reportBugForm">
@@ -1140,6 +1156,6 @@
   </div>
 </aside>
 
-<script type="module" src="app.js?v=1.359"></script>
+<script type="module" src="app.js?v=1.360"></script>
 </body>
 </html>
