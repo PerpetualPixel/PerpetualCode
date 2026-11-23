@@ -60,6 +60,18 @@ export const PAIR_MIN_PROB = 0.4;
 
 const pct = (x) => `${Math.round(x * 100)}%`;
 const signed = (n) => (n > 0 ? `+${n}` : String(n));
+const americanOf = (prob) => { const p = Math.min(0.99, Math.max(0.01, prob)); return p >= 0.5 ? -Math.round((p / (1 - p)) * 100) : Math.round(((1 - p) / p) * 100); };
+
+/**
+ * The price to take a play at or better (2026-11-23, the owner on the
+ * live plays' wording: "I like 'take it at this price or better'"): the
+ * shortest price that still leaves the read `minEdge` of room, which is
+ * the bar the play had to clear to be listed. A price moves and a user's
+ * book is not always the best one, so every play says how far it can
+ * move and still be the play. Never shorter than the shortest price the
+ * tab takes at all.
+ */
+export const playableAt = (prob, minEdge = LEAN_MIN_EDGE) => Math.max(americanOf(prob - minEdge), LEAN_PRICE[0]);
 const round3 = (x) => Math.round(x * 1000) / 1000;
 const americanOfDecimal = (d) => (d >= 2 ? Math.round((d - 1) * 100) : Math.round(-100 / (d - 1)));
 const bestQuote = (leg) => [...(leg.quotes ?? [])].sort((x, y) => y.american - x.american)[0] ?? null;
@@ -91,7 +103,8 @@ const room = (leg) => leg.edge * leg.prob;
 /** A leg trimmed to what a card shows and a slip needs. */
 function legView(leg) {
   const q = bestQuote(leg);
-  return { id: leg.id, market: leg.market, label: leg.label, side: leg.side ?? null, name: leg.name ?? null, selection: leg.selection, short: shortSelection(leg), point: leg.point ?? null, sideWord: leg.sideWord ?? null, prob: leg.prob, implied: leg.implied, edge: leg.edge, bookId: q?.bookId ?? null, book: q?.book ?? null, american: q?.american ?? null, link: q?.link ?? null, quotes: leg.quotes ?? [], consistency: leg.consistency ?? null };
+  const playable = playableAt(leg.prob, EXTRA_MARKETS.includes(leg.market) ? EXTRA_MIN_EDGE : LEAN_MIN_EDGE);
+  return { playable, id: leg.id, market: leg.market, label: leg.label, side: leg.side ?? null, name: leg.name ?? null, selection: leg.selection, short: shortSelection(leg), point: leg.point ?? null, sideWord: leg.sideWord ?? null, prob: leg.prob, implied: leg.implied, edge: leg.edge, bookId: q?.bookId ?? null, book: q?.book ?? null, american: q?.american ?? null, link: q?.link ?? null, quotes: leg.quotes ?? [], consistency: leg.consistency ?? null };
 }
 
 /**
@@ -138,7 +151,8 @@ export function leanFor(legs, { read = {} } = {}) {
   return {
     matchId: main.matchId, tour: main.tour, event: main.event, round: main.round, commenceMs: main.commenceMs, a: main.a, b: main.b,
     side, name: main.name ?? null, opponent: main.opponent ?? null, confidence: main.prob, how, units, conviction, thin,
-    howText: howText(main, how, units), main: legView(main), alternates, also, setBetting, why,
+    // Played straight, the price to take it at stops at the straight floor: shorter than that it is a parlay piece.
+    howText: howText(main, how, units), main: { ...legView(main), playable: how === 'straight' ? Math.max(legView(main).playable, STRAIGHT_FLOOR) : legView(main).playable }, alternates, also, setBetting, why,
     opponentFlags: main.opponentFlags ?? [], pMarket: read.pMarket ?? null, pModel: read.pModel ?? null, pFinal: read.pFinal ?? null,
   };
 }

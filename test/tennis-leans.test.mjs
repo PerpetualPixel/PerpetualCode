@@ -1,7 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { fanduelPlayers, fanduelEventFor, fanduelFeedEvent, withFanduel, samePlayer, FANDUEL_MAX_AGE } from '../worker/src/tennis-fanduel.js';
-import { leanFor, propFor, sortLeans, pairSuggestions, priceTogether, shortSelection, STRAIGHT_FLOOR } from '../worker/src/tennis-leans.js';
+import { leanFor, propFor, sortLeans, pairSuggestions, priceTogether, shortSelection, playableAt, STRAIGHT_FLOOR, LEAN_PRICE, LEAN_MIN_EDGE } from '../worker/src/tennis-leans.js';
 import { quotesOf, marketWinShare, gradePlay, runTennisTick, getTennisPicks, getTennisParlay, MAX_UNITS_DAY } from '../worker/src/tennis-picks.js';
 
 let sel = 1;
@@ -273,4 +273,22 @@ test('gradePlay settles the second set\'s winner when that set is in', () => {
   assert.equal(gradePlay(play('set2_ml'), { completed: false, sets: [[6, 4], [6, 3]] }).result, 'win', 'settled when the set is in');
   assert.equal(gradePlay(play('set2_ml'), { completed: false, sets: [[6, 4], [2, 1]] }), null);
   assert.equal(gradePlay(play('set2_ml'), { completed: true, statusName: 'STATUS_RETIRED', sets: [[6, 4], [2, 1]], winner: 'a' }).result, 'void');
+});
+
+test('every way to play a lean says the price to take it at or better: the shortest one that still leaves the read its room', () => {
+  const ask = (american) => (american < 0 ? -american / (-american + 100) : 100 / (american + 100));
+  // 70% with two points of room is 68%: about -213.
+  assert.ok(Math.abs(ask(playableAt(0.7)) - (0.7 - LEAN_MIN_EDGE)) < 0.003, String(playableAt(0.7)));
+  assert.ok(playableAt(0.4) > 100, 'an underdog\'s is a plus price');
+  assert.equal(playableAt(0.95), LEAN_PRICE[0], 'never shorter than the shortest price taken at all');
+  const fritz = leanFor([leg('m1', 'ml', 'Taylor Fritz', 0.70, [q('fanduel', -184)]), leg('m1', 'set1_ml', 'Taylor Fritz', 0.64, [q('fanduel', -150)]), leg('m1', 'set_spread', 'Taylor Fritz', 0.5, [q('fanduel', 110)], { point: -1.5 })], { read: { pFinal: 0.7 } });
+  assert.equal(fritz.main.playable, playableAt(0.7)); assert.ok(fritz.main.playable <= fritz.main.american, 'the price on the board is inside it');
+  assert.equal(fritz.alternates[0].playable, playableAt(0.64));
+  // A set line the board prices too short says the price it needs: 50% wants +108 or better, the board has +110... and one at 45% needs more than the +110 there.
+  assert.ok(fritz.setBetting[0].playable <= 110);
+  const needs = leanFor([leg('m1', 'ml', 'Taylor Fritz', 0.70, [q('fanduel', -184)]), leg('m1', 'set_spread', 'Taylor Fritz', 0.45, [q('fanduel', 110)], { point: -1.5 })], { read: { pFinal: 0.7 } });
+  assert.ok(needs.setBetting[0].playable > needs.setBetting[0].american, 'the board is short of it');
+  // A straight play stops at the straight floor; a parlay piece runs to the shortest price taken.
+  assert.equal(leanFor([leg('m2', 'ml', 'Jessica Pegula', 0.76, [q('fanduel', -120)])], { read: { pFinal: 0.76 } }).main.playable, STRAIGHT_FLOOR);
+  assert.equal(leanFor([leg('m3', 'ml', 'Bianca Andreescu', 0.9, [q('fanduel', -600)])], {}).main.playable, LEAN_PRICE[0]);
 });

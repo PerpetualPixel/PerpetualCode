@@ -339,6 +339,8 @@ export function liveRead({ sets, games, serve, market = null, bestOf = 3, modelW
 export const LIVE_ML_PROB = 0.6;
 export const LIVE_ML_EDGE = 0.05;
 export const LIVE_ML_PRICE = [-350, 250];
+/** The room the moneyline's "take it at this price or better" leaves under the read: two points, about what a book's margin takes off the edge above. */
+export const LIVE_ML_MARGIN = 0.02;
 /**
  * A set play is read between these. The top was 90%.
  *
@@ -428,7 +430,7 @@ export function livePlays(read, { quotes = { a: [], b: [] }, names = { a: 'A', b
   const marketSide = read.market == null ? null : side === 'a' ? read.market : 1 - read.market;
   const best = [...(quotes[side] ?? [])].filter((q) => Number.isFinite(q.american) && q.american >= LIVE_ML_PRICE[0] && q.american <= LIVE_ML_PRICE[1]).sort((x, y) => y.american - x.american)[0] ?? null;
   if (best && marketSide != null && !read.apart && prob >= LIVE_ML_PROB && prob - marketSide >= LIVE_ML_EDGE) {
-    out.push({ market: 'live_ml', side, prob: Math.round(prob * 1000) / 1000, edge: Math.round((prob - marketSide) * 1000) / 1000, american: best.american, bookId: best.bookId, book: best.book, link: best.link ?? null, units: liveUnits(prob), selection: `${names[side]} to win the match (live)` });
+    out.push({ market: 'live_ml', side, prob: Math.round(prob * 1000) / 1000, edge: Math.round((prob - marketSide) * 1000) / 1000, american: best.american, bookId: best.bookId, book: best.book, link: best.link ?? null, playable: Math.max(Math.min(americanOf(prob - LIVE_ML_MARGIN), best.american), LIVE_ML_PRICE[0]), units: liveUnits(prob), selection: `${names[side]} to win the match (live)` });
   }
   if (state.inSet && state.gA + state.gB >= 2) {
     const setSide = read.model.set >= 0.5 ? 'a' : 'b';

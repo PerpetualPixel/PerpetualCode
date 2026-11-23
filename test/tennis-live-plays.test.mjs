@@ -180,6 +180,8 @@ test('runTennisLiveTick follows a match game by game, posts a play once, grades 
   // The price (-320, about 73%) sits under the read by more than the edge and less than the gap: the moneyline posts once.
   const ml = day().find((p) => p.market === 'live_ml');
   assert.deepEqual([ml.id, ml.side, ml.american, ml.bookId, ml.status, ml.score], ['atp:77:live_ml', 'a', -320, 'draftkings', 'pending', '3-1']);
+  // The price to take it at or better: two points under the read, never better than the price it posted at, never past the shortest one taken.
+  assert.ok(ml.playable <= ml.american && ml.playable >= -350, String(ml.playable));
   assert.ok(ml.why.length >= 3);
   // The play keeps the moneyline at every book when it posted; the read carries both players' live prices at every book.
   assert.deepEqual(ml.quotes, [{ bookId: 'draftkings', book: 'DraftKings', american: -320 }]);
