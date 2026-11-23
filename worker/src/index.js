@@ -71,7 +71,7 @@ import { sendUfcTicketNotifications, sendUfcChangeNotifications } from './notifi
 import { legBreakdown } from './parlay-builder.js';
 import { runTrendPicksDaily, runTrendPicksGrading, getTrendPicks } from './trend-picks.js';
 import { runLiveProbe, getLiveProbe } from './live-probe.js';
-import { getLiveBoard, getLiveRecap } from './live-board.js';
+import { getLiveBoard, getLiveRecap, archiveLiveResults, getLiveResults } from './live-board.js';
 
 /** The Trends build's own cron (must match wrangler.toml's second trigger exactly — Cloudflare hands the string back as written). */
 export const TRENDS_CRON = '7,22,37,52 * * * *';
@@ -519,6 +519,8 @@ export default {
     // The live-props probe (worker/src/live-probe.js): one game, one
     // window, one props call a tick on either schedule.
     ctx.waitUntil(runLiveProbe(env, ctx, now).catch((e) => console.error('Live probe failed:', e)));
+    // The finished games' live slips into the kept ledger (worker/src/live-board.js archiveLiveResults): once an hour, a few KV reads when nothing is new.
+    if (event.cron !== TRENDS_CRON && new Date(now).getUTCMinutes() < 15) ctx.waitUntil(archiveLiveResults(env, now).catch((e) => console.error('Live results archive failed:', e)));
 
     // The Trends build has its own schedule (wrangler.toml's second cron)
     // and so its own invocation and subrequest budget: a chunk of games is
@@ -1606,6 +1608,10 @@ export default {
     // Last night's slips graded against the final box scores (worker/src/live-board.js): read-only.
     if (pathname === '/live/recap' && request.method === 'GET') {
       return json(await getLiveRecap(env), { headers: { ...cors, 'Cache-Control': 'no-store' } });
+    }
+    // The live slips' kept results, month by month (worker/src/live-board.js): read-only, what the Results tab draws.
+    if (pathname === '/live/results' && request.method === 'GET') {
+      return json(await getLiveResults(env), { headers: { ...cors, 'Cache-Control': 'public, max-age=300' } });
     }
     // The live-props probe's logs (worker/src/live-probe.js): read-only.
     if (pathname === '/live/probe' && request.method === 'GET') {

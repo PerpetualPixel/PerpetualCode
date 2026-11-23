@@ -76,6 +76,7 @@ jobs:
           fetch tennis-picks "$WORKER/tennis/picks"
           fetch tennis-live "$WORKER/tennis/live"
           fetch live-recap "$WORKER/live/recap"
+          fetch live-results "$WORKER/live/results"
           fetch gridiron-tracking-nfl "$GRIDIRON/tracking-nfl.json"
           fetch gridiron-tracking-ncaa "$GRIDIRON/tracking-ncaa.json"
           fetch gridiron-picks "$GRIDIRON/picks.json"

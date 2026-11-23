@@ -21,7 +21,7 @@
      only page that reads the feed; the other pages' connect-src stays the
      worker alone. -->
 <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src 'self' https://fonts.gstatic.com; img-src 'self' data: https:; connect-src 'self' https://pixel-pick-odds.mgbouldering.workers.dev https://perpetualpixel.github.io; object-src 'none'; base-uri 'self'; form-action 'self'">
-<script src="frame-guard.js?v=1.360"></script>
+<script src="frame-guard.js?v=1.361"></script>
 <title>Perpetual Picks - App</title>
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <meta name="theme-color" content="#05050A">
@@ -37,9 +37,9 @@
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Syne:wght@600;700;800&family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
-<link rel="stylesheet" href="styles.css?v=1.360">
+<link rel="stylesheet" href="styles.css?v=1.361">
 <!-- Before first paint: a desktop reader who chose "Fit screen" gets the wide shell without a flash of the narrow one. -->
-<script src="wide.js?v=1.360"></script>
+<script src="wide.js?v=1.361"></script>
 </head>
 <body>
 
@@ -113,6 +113,10 @@
   <button id="tabTrendPicks" class="top-tab is-featured" role="tab" aria-selected="false" aria-controls="trendPicksView">
     <img src="assets/logo-icon-64.png" alt="" class="top-tab-logo" width="16" height="16">Pixel's Picks
   </button>
+  <!-- Results (2026-11-23): every tracked record in one place, pregame first and live on a toggle, by sport. Beside Pixel's Picks, whose record it is. -->
+  <button id="tabResults" class="top-tab" role="tab" aria-selected="false" aria-controls="resultsView">
+    Results
+  </button>
   <span class="top-tabs-gap" aria-hidden="true"></span>
   <!-- The order from here (2026-11-12): Live, Trends, Parlay, UFC, Tennis, Slip Check; Player search sits apart at the end. -->
   <button id="tabLive" class="top-tab" role="tab" aria-selected="false" aria-controls="liveView">
@@ -162,6 +166,7 @@
       <li><strong>UFC:</strong> a Recommended button on the parlay section opens ready-made builders, parlays and lottos for the card, each leg with its odds and why it was picked. Sort and filter them by confidence, payout, favorites, underdogs or type.</li>
       <li><strong>Tennis:</strong> each lean now shows set betting (-1.5 sets to win 2-0, +1.5 sets to win a set), the second set, and every book's price. Every play says the price to take it at or better.</li>
       <li><strong>Live:</strong> tap a game and the bet is the first thing you see. Finished games leave the list. Tennis matches in play can now carry an over or under on the games in the set.</li>
+      <li><strong>Results:</strong> a new tab with every record in one place. Pregame first, Live on a toggle, a card for each sport with units played, net units, ROI and a graph by day, week, month or year.</li>
       <li><strong>Parlay:</strong> separate sliders for hits in the last 5 and the last 10, a Last 20 switch, and half-star scores.</li>
     </ul>
     <p>The Guide has the full walk-through of every tab.</p>
@@ -347,14 +352,15 @@
   <div id="trendPicksFilters" class="trend-leagues pick-filters" role="group" aria-label="League"></div>
   <div id="trendPicksStatus" class="status trends-status" role="status" aria-live="polite"><span class="pp-loading"><img class="pp-loading-logo" src="assets/logo-icon-64.png" alt="" width="28" height="28"><span>Loading picks…</span></span></div>
   <section id="trendPicksBody" class="trends-body" aria-live="polite"></section>
-  <h2 class="trend-picks-heading">Record</h2>
-  <section id="trendPicksRecord" class="trend-picks-record"></section>
-  <section id="trendPicksGraph" class="pick-graph" aria-live="polite"></section>
-  <h2 class="trend-picks-heading">History</h2>
-  <section id="trendPicksHistory" class="trend-picks-history"></section>
-  <!-- The UFC ledger, kept apart from the NBA and NFL record (docs/app.js's renderUfcLedger). -->
-  <section id="trendPicksUfc" class="pick-ufc" aria-live="polite"></section>
-  <section id="trendPicksTennis" class="pick-ufc" aria-live="polite"></section>
+  <!-- The record, the graph and the history moved to the Results tab (2026-11-23); this is the way there. -->
+  <button type="button" id="trendPicksResults" class="parlay-btn res-link">See the results: record, units and the graph ›</button>
+</section>
+
+<!-- Results: every tracked record in one place (docs/results.js does the sums, docs/app.js's renderResults draws it).
+     Two sides, Pregame first and Live on a toggle; a total and a card per sport, each condensed and open on a tap. -->
+<section id="resultsView" role="tabpanel" aria-labelledby="tabResults" hidden>
+  <div id="resultsStatus" class="status trends-status" role="status" aria-live="polite"></div>
+  <section id="resultsBody" class="results-body"></section>
 </section>
 
 <!-- UFC: the next card (fight night or numbered event) with every bout in
@@ -629,6 +635,7 @@
   <div class="guide-body">
     <details open>
       <summary>What's new</summary>
+      <p><strong>Results tab.</strong> Every record now lives on its own tab: pregame results first, live results on a toggle, and a card for each sport. See the Results section below.</p>
       <p><strong>UFC Recommended parlays.</strong> On the UFC tab's parlay section, the Recommended button opens a page of ready-made tickets for the card: builders, regular parlays and lottos. Each leg shows its odds and at least one reason it was picked. Sort and filter by confidence, payout, favorites, underdogs or type, then take the one that suits you. After the card, the page shows which tickets and legs landed.</p>
       <p><strong>Tennis.</strong> Each lean now carries set betting on the leaned player (-1.5 sets to win 2-0, +1.5 sets to win a set), the second set's winner and games, and the price at every book. Every play says the price to take it at or better.</p>
       <p><strong>Live.</strong> Tap a game and the bet comes first; the box score is folded underneath. A game or match leaves the list when it ends. Live tennis can now post an over or under on the games in the set being played.</p>
@@ -638,7 +645,7 @@
 
     <details>
       <summary>Getting around</summary>
-      <p>The tabs along the top are the whole app. <strong>Pixel's Picks</strong> is the tracked record. <strong>Live</strong> is what is being played right now. <strong>Trends</strong> is every player prop with its hit rate. <strong>Parlay</strong> builds a ticket from those props. <strong>UFC</strong> and <strong>Tennis</strong> have their own cards and reads. <strong>Slip Check</strong> grades a bet you already have in mind. <strong>Player search</strong> looks up any player or fighter.</p>
+      <p>The tabs along the top are the whole app. <strong>Pixel's Picks</strong> is the day's tracked picks. <strong>Results</strong> is how everything has done. <strong>Live</strong> is what is being played right now. <strong>Trends</strong> is every player prop with its hit rate. <strong>Parlay</strong> builds a ticket from those props. <strong>UFC</strong> and <strong>Tennis</strong> have their own cards and reads. <strong>Slip Check</strong> grades a bet you already have in mind. <strong>Player search</strong> looks up any player or fighter.</p>
       <p>Tell the app which sportsbooks you use and it shows prices from those books only. You can change them any time in Account settings.</p>
     </details>
 
@@ -647,7 +654,14 @@
       <p>Pixel's Picks are the Trends lines that pass a fixed test, then a research check. The test does not change: the line must have landed in every one of the player's last 20 games, at least ten of them logged, and in every game against today's opponent if he has played them before. One line per player and stat qualifies, the best paying of his 100% lines, and a player is on one ticket a day.</p>
       <p>Each qualifying line is then researched before it can post. Is the player on limited minutes? Is he out, doubtful or questionable? Is he a starter or a bench player? Is a blowout expected that would sit him late? Is a teammate out, which changes who gets the ball? Is there a defender or a scheme that hinders this line? If any answer goes against the line, it passes and the tab says why. If everything comes back favorable, it posts, and anything still worth knowing goes in the note under the pick.</p>
       <p>The lines that pass become the day's tickets: a two or three leg parlay on one book near even money when the lines allow, otherwise a straight bet. At most two tickets a day, one unit each. Some days it is none, and the tab says what qualified and what the research found.</p>
-      <p>Every ticket is graded after its last game ends, as one bet, the way the book settles it: a lost leg loses the ticket, a pushed or voided leg drops out and the ticket pays at the legs left. The record at the bottom of the tab keeps the running total in units with the return on the units risked, a graph by day, and the full history, filtered by sport. The strongest tennis leans and the UFC picks for the card show here too.</p>
+      <p>Every ticket is graded after its last game ends, as one bet, the way the book settles it: a lost leg loses the ticket, a pushed or voided leg drops out and the ticket pays at the legs left. The strongest tennis leans and the UFC picks for the card show here too. The record, the graph and the history are on the Results tab.</p>
+    </details>
+
+    <details>
+      <summary>Results</summary>
+      <p>How everything tracked has done, in one place. There are two sides. <strong>Pregame</strong> is everything posted before the game: the league tickets, the UFC picks and the tennis plays. <strong>Live</strong> is everything posted while a game was being played: the live slips and the live tennis plays. Pregame shows first; tap Live to switch, and the app remembers which you looked at last.</p>
+      <p>Each side has a total and a card for each sport. A card shows the record, the units played, the net units and the ROI. Tap it to open the graph and the results behind it. The graph is net units by period: a bar above the line is a winning period, a bar below it a losing one. The Day, Week, Month and Year buttons regroup the graph and the list, and a tap or hover on a bar shows that period's numbers.</p>
+      <p>A live slip is offered at several books at once, so a game counts once, at your book where it had one.</p>
     </details>
 
     <details>
@@ -1156,6 +1170,6 @@
   </div>
 </aside>
 
-<script type="module" src="app.js?v=1.360"></script>
+<script type="module" src="app.js?v=1.361"></script>
 </body>
 </html>

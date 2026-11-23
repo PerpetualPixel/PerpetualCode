@@ -470,3 +470,43 @@ test('a catch comes whole: an NFL reception leg needs the catches still to come 
   // A rushing line does not hang on a catch.
   assert.deepEqual(got, ['Busy Hands receivingYards 89.5', 'Busy Hands receptions 7.5', 'Ground Game rushingYards 69.5']);
 });
+
+test('archiveLiveResults keeps each finished game\'s slips for good, once, and getLiveResults reads them back', async () => {
+  const { archiveLiveResults, getLiveResults, liveResultsKey, LIVE_RESULTS_INDEX } = await import('../worker/src/live-board.js');
+  const m = new Map(); let reads = 0; const env = { POTD_KV: { get: async (k) => { reads++; return m.get(k) ?? null; }, put: async (k, v) => { m.set(k, v); } } };
+  const now = Date.parse('2026-11-05T12:00:00Z');
+  m.set('live:watch:index:nba', JSON.stringify({ games: [
+    { id: '9', name: 'Bulls at Knicks', league: 'nba', date: '2026-11-05T00:30:00Z' },
+    { id: '10', name: 'Heat at Clippers', league: 'nba', date: '2026-11-05T03:30:00Z' },
+    { id: '11', name: 'Suns at Lakers', league: 'nba', date: '2026-11-05T11:30:00Z' },
+  ] }));
+  m.set('live:watch:9', JSON.stringify({ ticks: [{ state: 'post', score: { NY: 110, CHI: 100 }, detail: 'Final', box: [{ name: 'Landry Shamet', team: 'NY', stats: { points: '12' } }, { name: 'OG Anunoby', team: 'NY', stats: { points: '20' } }, { name: 'Josh Giddey', team: 'CHI', stats: { points: '8' } }] }] }));
+  m.set('live:play:9', JSON.stringify({ builtAt: 5, slips: [
+    { bookId: 'fanduel', book: 'FanDuel', american: 152, decimal: 2.52, legs: [{ player: 'Landry Shamet', stat: 'points', label: 'Pts', point: 9.5, price: -270 }, { player: 'OG Anunoby', stat: 'points', label: 'Pts', point: 14.5, price: -280 }] },
+    { bookId: 'draftkings', book: 'DraftKings', american: 142, decimal: 2.42, legs: [{ player: 'Josh Giddey', stat: 'points', label: 'Pts', point: 9.5, price: -280 }] },
+  ] }));
+  // Game 10 started over two hours ago and is still being played: left for a later run. Game 11 has only just started.
+  m.set('live:watch:10', JSON.stringify({ ticks: [{ state: 'in', box: [] }] }));
+  assert.equal(await archiveLiveResults(env, now), 1);
+  const nov = JSON.parse(m.get(liveResultsKey('2026-11')));
+  assert.deepEqual(nov.games.map((g) => g.id), ['9']);
+  assert.deepEqual(nov.games[0].slips.map((s) => [s.bookId, s.american, s.result, s.units, s.legs.length]), [['fanduel', 152, 'win', 1.52, 2], ['draftkings', 142, 'loss', -1, 1]]);
+  assert.deepEqual(nov.games[0].slips[0].legs[0], { player: 'Landry Shamet', label: 'Pts', point: 9.5, hit: true });
+  assert.deepEqual(JSON.parse(m.get(LIVE_RESULTS_INDEX)).months, ['2026-11']);
+  // The slips themselves are only stored for three days: once they are gone the ledger still has the game.
+  m.delete('live:play:9');
+  reads = 0;
+  assert.equal(await archiveLiveResults(env, now + 3600e3), 0, 'nothing new: nothing written');
+  assert.ok(reads <= 16, `a quiet run is a handful of reads: the watch indexes, the month, the one game still in play (${reads})`);
+  // Game 10 goes final with no slip: kept bare so it is not read again, and left out of what the tab is given.
+  m.set('live:watch:10', JSON.stringify({ ticks: [{ state: 'post', box: [] }] }));
+  assert.equal(await archiveLiveResults(env, now + 2 * 3600e3), 1);
+  const out = await getLiveResults(env, now + 2 * 3600e3);
+  assert.deepEqual(out.games.map((g) => [g.id, g.league, g.slips.length]), [['9', 'nba', 2]]);
+  assert.equal(JSON.parse(m.get(liveResultsKey('2026-11'))).games.length, 2);
+  // A late game on the last night of a month belongs to that month (Eastern time, near enough).
+  m.set('live:watch:index:nba', JSON.stringify({ games: [{ id: '20', name: 'Late game', league: 'nba', date: '2026-12-01T03:30:00Z' }] }));
+  m.set('live:watch:20', JSON.stringify({ ticks: [{ state: 'post', box: [] }] }));
+  await archiveLiveResults(env, Date.parse('2026-12-01T12:00:00Z'));
+  assert.ok(JSON.parse(m.get(liveResultsKey('2026-11'))).games.some((g) => g.id === '20'));
+});

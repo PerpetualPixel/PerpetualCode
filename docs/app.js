@@ -59,6 +59,7 @@ import { VIABILITY_LABEL } from './slip-viability.js';
 import { parlaySnapshot, applyParlaySnapshot, cleanParlayStore, withParlaySlot, PARLAY_SLOTS, passesHitBars, l20Floor, hitBarText, nextMinScore } from './parlay-presets.js';
 import { playbookText, playbookKey, playbookUserId, discordChannelUrl, cleanPlaybookLink, PLAYBOOK_SITE } from './playbook.js';
 import { hitFlags as slipHitFlags } from './trends.js';
+import { RESULT_SIDES, RESULT_SPORTS, RESULT_BUCKETS, resultEntries, summarize, bucketize, unitTicks } from './results.js';
 import {
   auditLegs,
   MODE_SLATE,
@@ -886,6 +887,10 @@ const el = {
   ufcFightersStatus: document.getElementById('ufcFightersStatus'),
   trendPicksUfc: document.getElementById('trendPicksUfc'),
   tabTennis: document.getElementById('tabTennis'),
+  tabResults: document.getElementById('tabResults'),
+  resultsView: document.getElementById('resultsView'),
+  resultsStatus: document.getElementById('resultsStatus'),
+  resultsBody: document.getElementById('resultsBody'),
   tabSlipCheck: document.getElementById('tabSlipCheck'),
   slipCheckView: document.getElementById('slipCheckView'),
   slipDrop: document.getElementById('slipDrop'),
@@ -6323,8 +6328,8 @@ const loadingHtml = (text) => `<span class="pp-loading"><img class="pp-loading-l
 const showLoading = (node, text) => { if (node) node.innerHTML = loadingHtml(text); };
 
 function setActiveTab(tab) {
-  const views = { slate: el.slateView, board: el.boardView, potd: el.potdView, trends: el.trendsView, trendPicks: el.trendPicksView, players: el.playersView, parlay: el.parlayView, ufc: el.ufcView, live: el.liveView, tennis: el.tennisView, slipCheck: el.slipCheckView };
-  const tabs = { slate: el.tabSlate, board: el.tabBoard, potd: el.tabPotd, trends: el.tabTrends, trendPicks: el.tabTrendPicks, players: el.tabPlayers, parlay: el.tabParlay, ufc: el.tabUfc, live: el.tabLive, tennis: el.tabTennis, slipCheck: el.tabSlipCheck };
+  const views = { slate: el.slateView, board: el.boardView, potd: el.potdView, trends: el.trendsView, trendPicks: el.trendPicksView, players: el.playersView, parlay: el.parlayView, ufc: el.ufcView, live: el.liveView, tennis: el.tennisView, slipCheck: el.slipCheckView, results: el.resultsView };
+  const tabs = { slate: el.tabSlate, board: el.tabBoard, potd: el.tabPotd, trends: el.tabTrends, trendPicks: el.tabTrendPicks, players: el.tabPlayers, parlay: el.tabParlay, ufc: el.tabUfc, live: el.tabLive, tennis: el.tabTennis, slipCheck: el.tabSlipCheck, results: el.tabResults };
 
   for (const [name, view] of Object.entries(views)) {
     const active = name === tab;
@@ -6336,7 +6341,7 @@ function setActiveTab(tab) {
   // The day toggle applies to Full Slate only — Play of the Day and
   // Pixel's Picks are both fixed daily sets locked server-side, with no
   // Today/Tomorrow of their own to choose.
-  el.dayFilterBar.hidden = tab === 'potd' || tab === 'board' || tab === 'trends' || tab === 'trendPicks' || tab === 'players' || tab === 'parlay' || tab === 'ufc' || tab === 'live' || tab === 'tennis' || tab === 'slipCheck';
+  el.dayFilterBar.hidden = tab === 'potd' || tab === 'board' || tab === 'trends' || tab === 'trendPicks' || tab === 'players' || tab === 'parlay' || tab === 'ufc' || tab === 'live' || tab === 'tennis' || tab === 'slipCheck' || tab === 'results';
   // The highlight paints on this frame; the board's render (hundreds of
   // cards on Trends) runs on the next, so a tap answers at once.
   requestAnimationFrame(() => loadTabContent(tab));
@@ -6368,6 +6373,7 @@ function loadTabContent(tab) {
   if (tab === 'live') loadLive({ force: true });
   if (tab === 'tennis') loadTennis({ force: true });
   if (tab === 'slipCheck') loadSlipQuota();
+  if (tab === 'results') loadResults();
   if (tab === 'trendPicks' && !ufcState.picks) loadUfcPicks();
   if (tab === 'trendPicks' && !tennisState.data) loadTennis();
   // Re-render from whatever's already loaded rather than re-fetching —
@@ -6390,6 +6396,8 @@ el.tabUfc?.addEventListener('click', () => setActiveTab('ufc'));
 el.tabLive?.addEventListener('click', () => setActiveTab('live'));
 el.tabTennis?.addEventListener('click', () => setActiveTab('tennis'));
 el.tabSlipCheck?.addEventListener('click', () => setActiveTab('slipCheck'));
+el.tabResults?.addEventListener('click', () => setActiveTab('results'));
+document.getElementById('trendPicksResults')?.addEventListener('click', () => setActiveTab('results'));
 
 /* ---------------------------------------------------------------- */
 /* Tracking Dashboard                                                */
@@ -10213,7 +10221,7 @@ function renderTrendPicks() {
   }
   renderPickGraph();
   const history = (d?.history ?? []).map((day) => ({ ...day, bets: (day.bets ?? []).filter(betMatches) })).filter((day) => day.bets.length);
-  el.trendPicksHistory.innerHTML = history.length ? history.map((day) => `
+  if (el.trendPicksHistory) el.trendPicksHistory.innerHTML = history.length ? history.map((day) => `
       <div class="pick-day">
         <h3>${esc(pickDayFmt.format(new Date(`${day.date}T12:00:00`)))}</h3>
         ${day.bets.map((b) => `<div class="pick-row">
@@ -12497,7 +12505,7 @@ function renderTennisPicksTab() {
   const d = tennisState.data;
   if (!d) {
     el.trendPicksStatus.textContent = tennisState.loading ? 'Reading the tennis board…' : 'The tennis board has not been read yet.';
-    el.trendPicksBody.innerHTML = ''; if (el.trendPicksRecord) el.trendPicksRecord.innerHTML = ''; if (el.trendPicksGraph) el.trendPicksGraph.innerHTML = ''; el.trendPicksHistory.innerHTML = '';
+    el.trendPicksBody.innerHTML = ''; if (el.trendPicksRecord) el.trendPicksRecord.innerHTML = ''; if (el.trendPicksGraph) el.trendPicksGraph.innerHTML = ''; if (el.trendPicksHistory) el.trendPicksHistory.innerHTML = '';
     if (!tennisState.loading) loadTennis();
     return;
   }
@@ -12514,7 +12522,7 @@ function renderTennisPicksTab() {
   if (el.trendPicksRecord) el.trendPicksRecord.innerHTML = `<p class="pick-record">${rec.wins}-${rec.losses}${rec.pushes ? `-${rec.pushes}` : ''} <small>${esc(signedUnits(rec.units ?? 0))} units · ${esc(roiText(rec.roi))} on ${rec.risked ?? 0} risked, half a unit to two by confidence · ATP ${line(d.byTour?.atp ?? rec)} · WTA ${line(d.byTour?.wta ?? rec)}</small></p>`;
   if (el.trendPicksGraph) el.trendPicksGraph.innerHTML = '';
   const days = (d.history ?? []).filter((r) => (r.plays ?? []).length);
-  el.trendPicksHistory.innerHTML = days.length ? days.map((r) => `<div class="pick-day"><h3>${esc(tennisDayFmt.format(new Date(`${r.date}T12:00:00Z`)))}</h3>${r.plays.map((p) => `<div class="pick-hist-row"><span><strong>${esc(p.selection)}</strong> <small>${esc(p.tour === 'both' ? 'ATP + WTA' : TENNIS_TOUR_LABEL[p.tour] ?? p.tour)} · ${p.market === 'ml_parlay' ? `${(p.legs ?? []).length} legs` : `${esc(p.a)} vs ${esc(p.b)}`}${Number.isFinite(p.american) ? ` · ${esc(formatAmerican(p.american))}` : ''}</small></span>${tennisPickBadge(p)}</div>`).join('')}</div>`).join('') : '<p class="empty">No tennis play has posted yet.</p>';
+  if (el.trendPicksHistory) el.trendPicksHistory.innerHTML = days.length ? days.map((r) => `<div class="pick-day"><h3>${esc(tennisDayFmt.format(new Date(`${r.date}T12:00:00Z`)))}</h3>${r.plays.map((p) => `<div class="pick-hist-row"><span><strong>${esc(p.selection)}</strong> <small>${esc(p.tour === 'both' ? 'ATP + WTA' : TENNIS_TOUR_LABEL[p.tour] ?? p.tour)} · ${p.market === 'ml_parlay' ? `${(p.legs ?? []).length} legs` : `${esc(p.a)} vs ${esc(p.b)}`}${Number.isFinite(p.american) ? ` · ${esc(formatAmerican(p.american))}` : ''}</small></span>${tennisPickBadge(p)}</div>`).join('')}</div>`).join('') : '<p class="empty">No tennis play has posted yet.</p>';
 }
 
 /** The Pixel's Picks tab's tennis section: its own record, by tour and by market, and the plays by day. */
@@ -12866,3 +12874,206 @@ el.tennisView?.addEventListener('click', (event) => {
   const reads = event.target.closest('details.tennis-reads');
   if (reads) setTimeout(() => { tennisState.reads = reads.open; }, 0);
 });
+
+/* ================================================================ */
+/* Results: every tracked record in one place (docs/results.js)      */
+/* ================================================================ */
+
+/*
+ * 2026-11-23, the owner: "Move the results to its own tab. Have it
+ * separated by sport and pregame and live ... show pregame results first
+ * but have a toggle to show all live results too. Basically showing two
+ * sides of the results ... Condensed but able to expand for more info,
+ * showing units played, net of units, ROI % and a graph showing the
+ * results and able to show by day, week and month and year".
+ *
+ * Two sides on a toggle, Pregame first. On each: a total, then a card a
+ * sport. A card is three numbers until it is tapped; open, it has the
+ * graph (net units a period, the period on four buttons) and the results
+ * under it, period by period. The graph is bars either side of a zero
+ * line, so a winning period reads up and a losing one down before any
+ * colour does.
+ */
+const RESULTS_PREFS_KEY = 'pixelpick.results.v1';
+const RESULTS_ICON = { nba: 'basketball_nba', nfl: 'americanfootball_nfl', nhl: 'icehockey_nhl', soccer: 'soccer', ufc: 'ufc', tennis: 'tennis' };
+/** Gain and loss on the graph: a green and a red far enough apart to tell under colour-blind vision too (checked on this surface). */
+const RESULTS_GAIN = '#12a594'; const RESULTS_LOSS = '#e5484d';
+const resultsPrefs = loadJSON(RESULTS_PREFS_KEY, null) ?? {};
+const resultsState = {
+  side: RESULT_SIDES.some((s) => s.key === resultsPrefs.side) ? resultsPrefs.side : 'pre',
+  bucket: RESULT_BUCKETS.some((b) => b.key === resultsPrefs.bucket) ? resultsPrefs.bucket : 'week',
+  open: { 'pre:total': true, 'live:total': true }, more: {}, entries: [], loaded: false, loading: false, at: 0, failed: [],
+};
+const resultsDayFmt = new Intl.DateTimeFormat('en-US', { month: 'short', day: 'numeric', timeZone: 'UTC' });
+
+async function loadResults({ force = false } = {}) {
+  if (resultsState.loading || (!force && resultsState.loaded && Date.now() - resultsState.at < 60e3)) { renderResults(); return; }
+  resultsState.loading = true; renderResults();
+  const routes = { trendPicks: '/trend-picks', ufcPicks: '/ufc/picks', tennisPicks: '/tennis/picks', tennisLive: '/tennis/live', liveRecap: '/live/results' };
+  const got = {}; const failed = [];
+  await Promise.all(Object.entries(routes).map(async ([key, path]) => {
+    try { const res = await fetch(new URL(path, CONFIG.WORKER_URL), { headers: { Accept: 'application/json' } }); if (!res.ok) throw new Error(String(res.status)); got[key] = await res.json(); } catch { got[key] = null; failed.push(key); }
+  }));
+  // The kept ledger is written once an hour; until its first write, the last few days' slips stand in.
+  if (!got.liveRecap?.games?.length) { try { const res = await fetch(new URL('/live/recap', CONFIG.WORKER_URL), { headers: { Accept: 'application/json' } }); if (res.ok) got.liveRecap = await res.json(); } catch { /* the ledger's answer stands */ } }
+  resultsState.entries = resultEntries({ ...got, myBooks: myBooks() ?? [] });
+  resultsState.failed = failed; resultsState.loaded = true; resultsState.loading = false; resultsState.at = Date.now();
+  renderResults();
+}
+
+const resultsSide = () => RESULT_SIDES.find((s) => s.key === resultsState.side) ?? RESULT_SIDES[0];
+/** The results a card stands for: the whole side, or one sport of it. */
+const resultsFor = (key) => resultsState.entries.filter((e) => e.side === resultsState.side && (key === 'total' || e.sport === key));
+const resultsNet = (n) => `${n < 0 ? '−' : '+'}${Math.abs(n).toFixed(2)}u`;
+const resultsRoi = (roi) => (roi == null ? 'n/a' : `${roi < 0 ? '−' : '+'}${Math.abs(roi * 100).toFixed(1)}%`);
+const resultsUnits = (u) => `${Math.round(u * 100) / 100}u`;
+const resultsTone = (n) => (n > 0 ? 'is-up' : n < 0 ? 'is-down' : '');
+const RESULTS_WORD = { win: 'Won', loss: 'Lost', push: 'Push', void: 'Void' };
+
+/** One settled result as a row: what it was, the price, the stake, and how it ended. */
+function resultsRow(e, { sport = false } = {}) {
+  const price = Number.isFinite(e.american) ? `${formatAmerican(e.american)}${e.orBetter ? ' or better' : ''}` : '';
+  const end = e.result === 'void' || e.net == null ? RESULTS_WORD[e.result] : `${RESULTS_WORD[e.result]} ${resultsNet(e.net)}`;
+  return `<div class="res-row">
+    <span class="res-row-main"><b>${esc(e.title)}</b><small>${esc([sport ? RESULT_SPORTS.find((sp) => sp.key === e.sport)?.label : null, e.sub, e.note].filter(Boolean).join(' · '))}</small></span>
+    <span class="res-row-meta"><small>${esc(resultsDayFmt.format(new Date(`${e.date}T12:00:00Z`)))}${price ? ` · ${esc(price)}` : ''} · ${esc(resultsUnits(e.units))}</small><span class="pick-result is-${esc(e.result)}">${esc(end)}</span></span>
+  </div>`;
+}
+
+/** A card: the name and the record, three numbers, and (open) the graph and the results by period. */
+function resultsCard(key, label, icon) {
+  const entries = resultsFor(key);
+  const s = summarize(entries);
+  const id = `${resultsState.side}:${key}`;
+  const open = Boolean(resultsState.open[id]);
+  const decided = s.wins + s.losses;
+  const tile = (name, value, tone = '', title = '') => `<div class="res-stat ${tone}" ${title ? `title="${esc(title)}"` : ''}><dt>${name}</dt><dd>${esc(value)}</dd></div>`;
+  let body = '';
+  if (open) {
+    const bucket = RESULT_BUCKETS.find((b) => b.key === resultsState.bucket) ?? RESULT_BUCKETS[1];
+    const periods = bucketize(entries, bucket.key).filter((p) => p.count).reverse();
+    const all = Boolean(resultsState.more[id]);
+    const shown = all ? periods : periods.slice(0, 2);
+    const hidden = periods.slice(shown.length).reduce((n, p) => n + p.count, 0);
+    body = `<div class="res-body">
+      <div class="res-graph-head"><h4>Net units by ${esc(bucket.label.toLowerCase())}</h4>
+        <div class="res-buckets" role="group" aria-label="Group the graph and the list by">${RESULT_BUCKETS.map((b) => `<button type="button" class="res-bucket ${b.key === bucket.key ? 'is-active' : ''}" data-res-bucket="${b.key}" aria-pressed="${b.key === bucket.key}">${b.label}</button>`).join('')}</div>
+      </div>
+      <div class="res-chart" data-res-chart="${esc(key)}"></div>
+      <p class="res-chart-note">A bar above the line is a winning ${esc(bucket.label.toLowerCase())}, a bar below it a losing one. Hover or tap a bar for its numbers.</p>
+      ${shown.map((p) => `<div class="res-period"><h4>${esc(p.label)} <small>${p.wins}-${p.losses}${p.pushes ? `-${p.pushes}` : ''} · ${esc(resultsUnits(p.played))} played · <span class="${resultsTone(p.net)}">${esc(resultsNet(p.net))}</span> · ROI ${esc(resultsRoi(p.roi))}</small></h4>${p.entries.map((e) => resultsRow(e, { sport: key === 'total' })).join('')}</div>`).join('')}
+      ${hidden ? `<button type="button" class="parlay-btn res-more" data-res-more="${esc(id)}">Show ${hidden} earlier result${hidden === 1 ? '' : 's'}</button>` : all && periods.length > 2 ? `<button type="button" class="parlay-btn res-more" data-res-more="${esc(id)}">Show fewer</button>` : ''}
+    </div>`;
+  }
+  return `<article class="res-card ${open ? 'is-open' : ''} ${key === 'total' ? 'is-total' : ''}" data-res-card="${esc(key)}">
+    <button type="button" class="res-head" data-res-toggle="${esc(id)}" aria-expanded="${open}">
+      <span class="res-name">${icon}${esc(label)}</span>
+      <span class="res-rec" title="Wins and losses">${s.wins}-${s.losses}${s.pushes ? `-${s.pushes}` : ''}${decided ? ` <small>${Math.round((s.wins / decided) * 100)}%</small>` : ''}</span>
+      <span class="res-chev" aria-hidden="true">${open ? '▴' : '▾'}</span>
+    </button>
+    <dl class="res-stats">
+      ${tile('Units played', resultsUnits(s.played), '', 'The units risked on everything that settled')}
+      ${tile('Net units', resultsNet(s.net), resultsTone(s.net), 'Units won less units lost')}
+      ${tile('ROI', resultsRoi(s.roi), resultsTone(s.net), 'Net units over units played')}
+    </dl>
+    ${body}
+  </article>`;
+}
+
+function renderResults() {
+  if (!el.resultsBody) return;
+  const say = (text) => { el.resultsStatus.textContent = text; el.resultsStatus.hidden = !text; };
+  if (!resultsState.loaded) { say(resultsState.loading ? 'Adding up the results…' : ''); el.resultsBody.innerHTML = ''; return; }
+  say(resultsState.failed.length ? 'Some results could not be loaded just now, so a few numbers may be short. Try again in a moment.' : '');
+  const side = resultsSide();
+  const sides = RESULT_SIDES.map((s) => {
+    const sum = summarize(resultsState.entries.filter((e) => e.side === s.key));
+    const on = s.key === side.key;
+    return `<button type="button" class="res-side ${on ? 'is-active' : ''}" data-res-side="${s.key}" aria-pressed="${on}"><span class="res-side-name">${esc(s.label)}</span><small>${esc(s.long)}</small><span class="res-side-net ${resultsTone(sum.net)}">${sum.count ? esc(resultsNet(sum.net)) : 'no results yet'}</span></button>`;
+  }).join('');
+  const withResults = RESULT_SPORTS.filter((sp) => resultsFor(sp.key).length);
+  const without = RESULT_SPORTS.filter((sp) => !resultsFor(sp.key).length);
+  const any = resultsFor('total').length > 0;
+  el.resultsBody.innerHTML = `
+    <div class="res-sides" role="group" aria-label="Which side of the results">${sides}</div>
+    <p class="row-sub res-note">${esc(side.note)} Tap a card to open its graph and results.</p>
+    ${any ? `${resultsCard('total', `${side.long} · all sports`, '')}
+    <h3 class="res-h3">By sport</h3>
+    <div class="res-grid">${withResults.map((sp) => resultsCard(sp.key, sp.label, sportIcon(RESULTS_ICON[sp.key]))).join('')}</div>
+    ${without.length ? `<p class="row-sub res-none">No ${side.key === 'live' ? 'live' : 'pregame'} results yet for ${esc(without.map((sp) => sp.label).join(', '))}.</p>` : ''}` : `<p class="empty">No ${side.key === 'live' ? 'live' : 'pregame'} results have settled yet.</p>`}`;
+  drawResultsCharts();
+}
+
+/** The graph in every open card: bars of net units a period either side of a zero line, sized to the card it sits in. */
+function drawResultsCharts() {
+  for (const box of el.resultsBody.querySelectorAll('[data-res-chart]')) {
+    const periods = bucketize(resultsFor(box.dataset.resChart), resultsState.bucket);
+    const W = Math.max(260, Math.floor(box.clientWidth || 320)); const H = W < 520 ? 190 : 230;
+    // Room under the plot for a losing bar's number, so it never sits on the dates.
+    const L = 40; const Rt = 10; const T = 18; const B = 40;
+    if (!periods.length) { box.innerHTML = '<p class="empty">The graph starts with the first result.</p>'; continue; }
+    const nets = periods.map((p) => p.net);
+    const ticks = unitTicks(Math.min(0, ...nets), Math.max(0, ...nets));
+    const lo = ticks[0]; const hi = ticks.at(-1); const span = hi - lo || 1;
+    const y = (v) => T + (1 - (v - lo) / span) * (H - T - B);
+    const band = (W - L - Rt) / periods.length; const bw = Math.max(2, Math.min(24, band - 2));
+    const x = (i) => L + band * i + band / 2;
+    const tickText = (v) => `${v > 0 ? '+' : v < 0 ? '−' : ''}${Math.abs(v)}`;
+    const grid = ticks.map((v) => `<line x1="${L}" x2="${W - Rt}" y1="${y(v).toFixed(1)}" y2="${y(v).toFixed(1)}" class="${v === 0 ? 'res-zero' : 'res-grid-line'}"/><text x="${L - 6}" y="${(y(v) + 3.5).toFixed(1)}" text-anchor="end" class="res-axis">${tickText(v)}</text>`).join('');
+    // A bar from the zero line to its value: rounded at the far end, square on the line.
+    const bar = (i, v) => {
+      const x0 = x(i) - bw / 2; const y0 = y(0); const y1 = y(v); const h = Math.max(2, Math.abs(y1 - y0)); const r = Math.min(4, bw / 2, h);
+      return v > 0
+        ? `M${x0.toFixed(1)},${y0.toFixed(1)} v${(-(h - r)).toFixed(1)} q0,${-r} ${r},${-r} h${(bw - 2 * r).toFixed(1)} q${r},0 ${r},${r} v${(h - r).toFixed(1)} z`
+        : `M${x0.toFixed(1)},${y0.toFixed(1)} v${(h - r).toFixed(1)} q0,${r} ${r},${r} h${(bw - 2 * r).toFixed(1)} q${r},0 ${r},${-r} v${(-(h - r)).toFixed(1)} z`;
+    };
+    const bars = periods.map((p, i) => (p.net === 0 ? (p.count ? `<rect x="${(x(i) - bw / 2).toFixed(1)}" y="${(y(0) - 1).toFixed(1)}" width="${bw.toFixed(1)}" height="2" class="res-flat"/>` : '') : `<path d="${bar(i, p.net)}" fill="${p.net > 0 ? RESULTS_GAIN : RESULTS_LOSS}" data-res-mark="${i}"/>`)).join('');
+    // Labels on the axis only as often as they fit; the value written on the best, the worst and the latest period only.
+    const every = Math.max(1, Math.ceil(periods.length / Math.max(1, Math.floor((W - L - Rt) / 52))));
+    const axis = periods.map((p, i) => ((periods.length - 1 - i) % every === 0 ? `<text x="${x(i).toFixed(1)}" y="${H - 7}" text-anchor="middle" class="res-axis">${esc(p.tick)}</text>` : '')).join('');
+    const played = periods.map((p, i) => ({ p, i })).filter((o) => o.p.count && o.p.net !== 0);
+    const pickIdx = new Set([played.at(-1)?.i, [...played].sort((a, b) => b.p.net - a.p.net)[0]?.i, [...played].sort((a, b) => a.p.net - b.p.net)[0]?.i].filter((v) => v != null));
+    const labels = [...pickIdx].map((i) => { const p = periods[i]; return `<text x="${Math.min(W - Rt - 16, Math.max(L + 16, x(i))).toFixed(1)}" y="${(p.net > 0 ? y(p.net) - 5 : y(p.net) + 12).toFixed(1)}" text-anchor="middle" class="res-val">${esc(resultsNet(p.net).replace('u', ''))}</text>`; }).join('');
+    const hits = periods.map((p, i) => `<rect x="${(L + band * i).toFixed(1)}" y="${T - 8}" width="${band.toFixed(1)}" height="${H - T - B + 16}" fill="transparent" class="res-hit" data-res-bar="${i}" tabindex="0" role="img" aria-label="${esc(`${p.label}: ${p.count ? `${resultsNet(p.net)}, ${p.wins} won and ${p.losses} lost, ${resultsUnits(p.played)} played, ${resultsNet(p.total)} to date` : 'no results'}`)}"/>`).join('');
+    box.innerHTML = `<svg viewBox="0 0 ${W} ${H}" width="${W}" height="${H}" role="group" aria-label="Net units by ${esc(resultsState.bucket)}">${grid}${bars}${axis}${labels}${hits}</svg><div class="res-tip" hidden></div>`;
+    box._periods = periods; box._geom = { W, x };
+  }
+}
+
+/** The numbers of one period, beside its bar: built from text, never from markup. */
+function showResultsTip(hit) {
+  const box = hit.closest('[data-res-chart]'); const tip = box?.querySelector('.res-tip'); const p = box?._periods?.[Number(hit.dataset.resBar)];
+  if (!tip || !p) return;
+  const line = (cls, text) => { const n = document.createElement(cls === 'strong' ? 'strong' : 'span'); if (cls !== 'strong') n.className = cls; n.textContent = text; return n; };
+  tip.replaceChildren(
+    line('res-tip-when', p.label),
+    line('strong', p.count ? resultsNet(p.net) : 'No results'),
+    ...(p.count ? [line('res-tip-more', `${p.wins}-${p.losses}${p.pushes ? `-${p.pushes}` : ''} · ${resultsUnits(p.played)} played · ROI ${resultsRoi(p.roi)}`)] : []),
+    line('res-tip-more', `${resultsNet(p.total)} to date`),
+  );
+  tip.hidden = false;
+  const { W, x } = box._geom; const at = x(Number(hit.dataset.resBar));
+  tip.style.left = `${Math.min(Math.max(at, 78), W - 78)}px`;
+  box.querySelectorAll('.res-hit.is-on').forEach((n) => n.classList.remove('is-on')); hit.classList.add('is-on');
+}
+function hideResultsTip(box) { const tip = box?.querySelector('.res-tip'); if (tip) tip.hidden = true; box?.querySelectorAll('.res-hit.is-on').forEach((n) => n.classList.remove('is-on')); }
+
+el.resultsView?.addEventListener('click', (event) => {
+  const side = event.target.closest('[data-res-side]');
+  if (side) { resultsState.side = side.dataset.resSide; saveJSON(RESULTS_PREFS_KEY, { side: resultsState.side, bucket: resultsState.bucket }); renderResults(); return; }
+  const bucket = event.target.closest('[data-res-bucket]');
+  if (bucket) { resultsState.bucket = bucket.dataset.resBucket; saveJSON(RESULTS_PREFS_KEY, { side: resultsState.side, bucket: resultsState.bucket }); renderResults(); return; }
+  const more = event.target.closest('[data-res-more]');
+  if (more) { resultsState.more[more.dataset.resMore] = !resultsState.more[more.dataset.resMore]; renderResults(); return; }
+  const hit = event.target.closest('[data-res-bar]');
+  if (hit) { if (hit.classList.contains('is-on') && event.pointerType !== 'mouse') hideResultsTip(hit.closest('[data-res-chart]')); else showResultsTip(hit); return; }
+  const toggle = event.target.closest('[data-res-toggle]');
+  if (toggle) { resultsState.open[toggle.dataset.resToggle] = !resultsState.open[toggle.dataset.resToggle]; renderResults(); }
+});
+el.resultsView?.addEventListener('pointerover', (event) => { const hit = event.target.closest('[data-res-bar]'); if (hit && event.pointerType !== 'touch') showResultsTip(hit); });
+el.resultsView?.addEventListener('pointerout', (event) => { const box = event.target.closest('[data-res-chart]'); if (box && event.pointerType !== 'touch' && !box.contains(event.relatedTarget)) hideResultsTip(box); });
+el.resultsView?.addEventListener('focusin', (event) => { const hit = event.target.closest('[data-res-bar]'); if (hit) showResultsTip(hit); });
+el.resultsView?.addEventListener('focusout', (event) => { const box = event.target.closest('[data-res-chart]'); if (box && !box.contains(event.relatedTarget)) hideResultsTip(box); });
+// A graph is drawn to the width of its card, so it is drawn again when the window changes size.
+let resultsResizeTimer = null;
+window.addEventListener('resize', () => { if (el.resultsView?.hidden !== false) return; clearTimeout(resultsResizeTimer); resultsResizeTimer = setTimeout(drawResultsCharts, 150); });
