@@ -399,7 +399,6 @@ export const FOLLOW_ON_CAP = 0.69;
  */
 export const LIVE_SET_TOTAL_PROB = [0.64, 0.78];
 export const LIVE_SET_TOTAL_MARGIN = 0.05;
-export const LIVE_SET_TOTAL_PRICE = [-300, 250];
 export const LIVE_SET_TOTAL_UNITS = 1;
 
 /** Units by confidence: the likelier the play, the more units (docs/trends.js suggestedUnits, kept in step). */

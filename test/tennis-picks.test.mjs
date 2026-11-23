@@ -450,3 +450,24 @@ test('builderLegs prices the second set\'s winner and its games off the simulati
   assert.deepEqual(playStanding({ market: 'set2_ml', side: 'a', status: 'pending' }, live), { state: 'off', text: '6-4 2-3: down 1 in the second' });
   assert.equal(playStanding({ market: 'set2_ml', side: 'b', status: 'pending' }, live).state, 'on');
 });
+
+test('voidDoublePosts voids the later copy of a play posted on two days, keeps what it was, and leaves everything else alone', async () => {
+  const { voidDoublePosts, tennisPicksKey } = await import('../worker/src/tennis-picks.js');
+  const m = new Map(); const env = { POTD_KV: { get: async (k) => m.get(k) ?? null, put: async (k, v) => { m.set(k, v); } } };
+  const play = (id, over = {}) => ({ id, matchId: id.split(':').slice(0, 2).join(':'), market: id.split(':')[2], side: 'a', units: 1, status: 'graded', result: 'win', net: 0.6, actual: '6-4 6-4', ...over });
+  const parlay = (date, legs, over = {}) => ({ id: `parlay:${date}`, market: 'ml_parlay', tour: 'both', units: 1, status: 'graded', result: 'win', net: 0.61, legs: legs.map((x) => ({ matchId: x, side: 'a' })), ...over });
+  m.set(tennisPicksKey('2026-11-19'), JSON.stringify({ date: '2026-11-19', plays: [play('atp:1:ml', { net: 0.63 }), play('atp:2:set_spread'), parlay('2026-11-19', ['atp:1', 'atp:2'])] }));
+  m.set(tennisPicksKey('2026-11-20'), JSON.stringify({ date: '2026-11-20', plays: [play('atp:1:ml'), play('atp:3:ml', { result: 'loss', net: -1 }), parlay('2026-11-20', ['atp:2', 'atp:1'], { net: 0.65 })] }));
+  m.set(tennisPicksKey('2026-11-21'), JSON.stringify({ date: '2026-11-21', plays: [play('atp:4:aces', { status: 'pending', result: null, net: null }), parlay('2026-11-21', ['atp:1', 'atp:4'])] }));
+  assert.equal(await voidDoublePosts(env, ['2026-11-21', '2026-11-19', '2026-11-20']), 2);
+  const day = (d) => JSON.parse(m.get(tennisPicksKey(d))).plays;
+  assert.ok(day('2026-11-19').every((p) => p.status === 'graded' && !p.duplicateOf), 'the first posting stands');
+  const [ml, other, par] = day('2026-11-20');
+  assert.deepEqual([ml.status, ml.result, ml.net, ml.duplicateOf, ml.was.result, ml.was.net], ['void', 'void', 0, '2026-11-19', 'win', 0.6]);
+  assert.match(ml.actual, /Posted twice: on the record from 2026-11-19/);
+  assert.deepEqual([other.status, other.result, other.net], ['graded', 'loss', -1], 'a play posted once is untouched');
+  assert.deepEqual([par.result, par.duplicateOf, par.was.net], ['void', '2026-11-19', 0.65], 'the same legs in another order are the same parlay');
+  assert.ok(day('2026-11-21').every((p) => !p.duplicateOf), 'a parlay sharing one leg is another parlay');
+  // Run again: nothing more to void.
+  assert.equal(await voidDoublePosts(env, ['2026-11-19', '2026-11-20', '2026-11-21']), 0);
+});

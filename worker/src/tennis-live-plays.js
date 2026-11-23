@@ -25,16 +25,21 @@
  * on the set it posts at the price to take it at or better, marked so.
  *
  * The games in a set (2026-11-23: "over under games in a set"): one play
- * a set, over or under a line, from the score and today's holds. Priced
- * the same way: the book's line when the feed has that set's games at the
- * line and the price is good enough; no play when a book prices the set's
- * games and not that line or not well enough; the price to take it at
- * when no book carries the set's games at all.
+ * a set, over or under a line, from the score and today's holds. It asks
+ * the feed nothing (the owner the same day: "keep API calls cost low", and
+ * of the wording a play has when no book is read, "I like 'take it at
+ * this price or better'"): it always posts at the price to take it at.
+ *
+ * No double post (the owner, 2026-11-23: "try not to double post"): a
+ * live play is not posted when the same bet is already on the pre-match
+ * record: the moneyline on a player with a pre-match moneyline (straight
+ * or as a parlay leg), a set on a player with that set's winner, the
+ * set's games where that set's games are already played.
  */
 import { etParts } from './potd.js';
 import { loadTennisScoreboard } from './tennis-live.js';
-import { tennisPicksKey, tennisSportKeys, feedEventFor, quotesOf, marketWinShare, liveTournamentBoard, cachedTournamentBoard, liveSetMarket, liveSetTotals, liveSetTotalKeys, bookPrices } from './tennis-picks.js';
-import { advanceTimeline, liveRead, livePlays, serveFromMarket, scoreState, LIVE_SET_PRICE, LIVE_SET_TOTAL_PRICE } from './tennis-live-model.js';
+import { tennisPicksKey, tennisSportKeys, feedEventFor, quotesOf, marketWinShare, liveTournamentBoard, cachedTournamentBoard, liveSetMarket, bookPrices } from './tennis-picks.js';
+import { advanceTimeline, liveRead, livePlays, serveFromMarket, scoreState, LIVE_SET_PRICE } from './tennis-live-model.js';
 import { TOUR_AVG } from './tennis-model.js';
 import { setDone } from './tennis-card-parse.js';
 
@@ -48,8 +53,23 @@ export const TENNIS_LIVE_CRON = '* * * * *';
 export const IDLE_MS = 5 * 60e3;
 /** The scoreboard is read again when the stored copy is older than this. */
 const SCORE_MAX_AGE = 45e3;
-/** How long the books are asked for a set's games once a play on them is ready: past it the set has no play (each ask is a billed call when the cache has lapsed). */
-export const SET_TOTAL_ASK_MS = 10 * 60e3;
+
+/**
+ * The pre-match play a live play would repeat, or null: the same match,
+ * and the same bet. `prePlays` is the pre-match record's plays for the
+ * last two days, voids left out.
+ */
+export function alreadyPlayed(play, matchId, prePlays) {
+  for (const p of prePlays ?? []) {
+    if (p.status === 'void') continue;
+    if (p.market === 'ml_parlay') { if (play.market === 'live_ml' && (p.legs ?? []).some((l) => l.matchId === matchId && l.side === play.side)) return p; continue; }
+    if (p.matchId !== matchId) continue;
+    if (play.market === 'live_ml' && p.market === 'ml' && p.side === play.side) return p;
+    if (play.market === 'live_set' && p.market === `set${play.set}_ml` && p.side === play.side) return p;
+    if (play.market === 'live_set_total' && p.market === `set${play.set}_total`) return p;
+  }
+  return null;
+}
 const KV_TTL = 60 * 86400;
 
 const readJson = async (env, key) => { const raw = await env.POTD_KV.get(key).catch(() => null); if (!raw) return null; try { return JSON.parse(raw); } catch { return null; } };
@@ -151,23 +171,6 @@ async function setPriceFor(env, ctx, m, play, odds, read, now, deps) {
 }
 
 /**
- * The book's price for a set's games, over or under the play's line: the
- * same three answers as setPriceFor. A book that prices the set's games
- * and not at this line is a line that has moved on: no play.
- */
-async function setTotalPriceFor(env, ctx, play, odds, now, deps) {
-  if (!odds || play.set > 2) return undefined;
-  const body = deps.setTotals ? await deps.setTotals(odds.key, odds.eventId, play.set) : await liveSetTotals(env, ctx, odds.key, odds.eventId, play.set, now);
-  const all = liveSetTotalKeys(play.set).flatMap((k) => quotesOf(body, k));
-  if (!all.length) return undefined;
-  const word = new RegExp(play.sideWord, 'i');
-  const quotes = all.filter((q) => q.point === play.point && word.test(q.name));
-  const best = [...quotes].filter((q) => Number.isFinite(q.american) && q.american >= LIVE_SET_TOTAL_PRICE[0] && q.american <= LIVE_SET_TOTAL_PRICE[1]).sort((x, y) => y.american - x.american)[0] ?? null;
-  if (!best || best.american < play.playable) return null;
-  return { american: best.american, bookId: best.bookId, book: best.book, link: best.link ?? null, quotes: bookPrices(quotes) };
-}
-
-/**
  * One tick. Returns what it did: {skipped} when resting, else {inPlay,
  * posted, graded}. `deps` lets the tests stand in for the scoreboard,
  * the tournament keys and the boards.
@@ -199,16 +202,15 @@ export async function runTennisLiveTick(env, ctx, now = Date.now(), { deps = {},
   let posted = 0;
   if (inPlay.length) {
     const keys = deps.sportKeys ? await deps.sportKeys() : await tennisSportKeys(env, ctx, now);
-    const pre = {};
-    for (const d of [today, yesterday]) Object.assign(pre, (await readJson(env, tennisPicksKey(d)))?.reads ?? {});
+    const pre = {}; const prePlays = [];
+    for (const d of [today, yesterday]) { const rec = await readJson(env, tennisPicksKey(d)); Object.assign(pre, rec?.reads ?? {}); prePlays.push(...(rec?.plays ?? [])); }
     const postedIds = new Set([...records[today].plays, ...records[yesterday].plays].map((p) => p.id));
     for (const m of inPlay) {
       const id = idOf(m);
       const names = { a: m.a.name, b: m.b.name };
       const prev = state.matches[id] ?? { firstAt: now, sets: [], games: [] };
       const timeline = advanceTimeline(prev, m.sets);
-      // When each set's games were first asked of the books.
-      const asked = { ...(prev.asked ?? {}) };
+      const already = [];
       const odds = await liveOddsFor(env, ctx, m, keys, now, deps).catch(() => null);
       // The serve numbers: the pre-match read's, else solved from the live price once and kept.
       let serve = prev.serve ?? null;
@@ -222,17 +224,13 @@ export async function runTennisLiveTick(env, ctx, now = Date.now(), { deps = {},
       for (const play of plays) {
         const playId = play.market === 'live_ml' ? `${id}:live_ml` : `${id}:${play.market}:${play.set}`;
         if (postedIds.has(playId)) continue;
+        // The same bet is on the pre-match record: not posted a second time.
+        const dup = alreadyPlayed(play, id, prePlays);
+        if (dup) { already.push(dup.selection ?? dup.market); continue; }
         if (play.market === 'live_set') {
           // The book's price on the set: the deciding set is the match, the first two have their own market.
           const priced = await setPriceFor(env, ctx, m, play, odds, read, now, deps).catch(() => undefined);
           if (priced === null) continue; // a book prices the set, and not well enough: no play
-          if (priced) Object.assign(play, priced);
-        }
-        if (play.market === 'live_set_total') {
-          if (asked[play.set] && now - asked[play.set] > SET_TOTAL_ASK_MS) continue;
-          asked[play.set] ??= now;
-          const priced = await setTotalPriceFor(env, ctx, play, odds, now, deps).catch(() => undefined);
-          if (priced === null) continue; // a book prices the set's games, and not this line or not well enough: no play
           if (priced) Object.assign(play, priced);
         }
         postedIds.add(playId);
@@ -243,7 +241,7 @@ export async function runTennisLiveTick(env, ctx, now = Date.now(), { deps = {},
         records[today].plays.push({ id: playId, matchId: id, tour: m.tour, event: m.eventName, round: m.round, a: m.a.name, b: m.b.name, ...shown, ...(note ? { reason: note } : {}), score: scoreLine(m.sets), why: note ? [...read.why, note] : read.why, postedAt: now, status: 'pending', result: null, profit: null });
         posted++; dirty.add(today);
       }
-      state.matches[id] = { ...timeline, serve, asked, firstAt: prev.firstAt ?? now, lastAt: now };
+      state.matches[id] = { ...timeline, serve, firstAt: prev.firstAt ?? now, lastAt: now };
       const best = (side) => [...(odds?.quotes?.[side] ?? [])].sort((x, y) => y.american - x.american)[0] ?? null;
       reads.push({
         id, tour: m.tour, event: m.eventName, round: m.round, a: m.a.name, b: m.b.name, sets: m.sets, bestOf: m.bestOf, detail: m.detail ?? null,
@@ -251,7 +249,7 @@ export async function runTennisLiveTick(env, ctx, now = Date.now(), { deps = {},
         market: read.market != null ? Math.round(read.market * 1000) / 1000 : null, fair: read.fair, state: read.state, momentum: read.momentum,
         serve: { first: read.serve.first, sure: read.serve.sure, aServesNext: read.serve.aServesNext, a: read.serve.a, b: read.serve.b, breaks: read.serve.breaks, source: serve?.source ?? 'the tour average: no pre-match read and no live price' },
         why: read.why, quotes: { a: best('a'), b: best('b') }, books: { a: bookPrices(odds?.quotes?.a), b: bookPrices(odds?.quotes?.b) }, games: timeline.games.length,
-        plays: [...records[today].plays, ...records[yesterday].plays].filter((p) => p.matchId === id),
+        plays: [...records[today].plays, ...records[yesterday].plays].filter((p) => p.matchId === id), already: [...new Set(already)],
       });
     }
   }

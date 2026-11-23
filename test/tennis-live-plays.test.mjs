@@ -348,48 +348,61 @@ test('gradeLivePlay settles the games in a set: an over the moment the count pas
   assert.equal(gradeLivePlay({ ...over, set: 2, point: 10.5 }, { sets: [[6, 0], [7, 5]], completed: true, winner: 'a' }).result, 'win');
 });
 
-test('the games in a set take the book\'s line when it is there at a price good enough, pass when the book has moved on, and post at the price named when no book has the set\'s games', async () => {
+test('the games in a set post once a set at the price to take them at, and ask the feed nothing', async () => {
   const T0 = Date.parse('2026-11-12T18:00:00Z');
-  const totals = (point, over, under) => ({ id: 'e1', bookmakers: [{ key: 'fanduel', title: 'FanDuel', markets: [{ key: 'totals_s1', outcomes: [{ name: 'Over', point, price: over, link: 'https://sportsbook.fanduel.com/t1' }, { name: 'Under', point, price: under }] }] }] });
-  const run = async (setTotals) => {
+  const m = new Map(); const env = { POTD_KV: { get: async (k) => m.get(k) ?? null, put: async (k, v) => { m.set(k, v); } } };
+  m.set(tennisPicksKey('2026-11-12'), JSON.stringify({ plays: [], reads: { 'atp:77': { serve: { pA: 0.68, pB: 0.67 }, bestOf: 3 } } }));
+  let sets = [[1, 0]]; let boards = 0; let setAsks = 0;
+  const deps = { scoreboard: async () => ({ at: 0, matches: [match(sets)] }), sportKeys: async () => ({ atp: [{ key: 'k' }], wta: [] }), liveBoard: async () => { boards++; return feed(-115, -105); }, cachedBoard: async () => [], setMarket: async () => { setAsks++; return { id: 'e1', bookmakers: [] }; } };
+  let now = T0;
+  for (const s of [[[1, 0]], [[1, 1]], [[2, 1]], [[2, 2]], [[3, 2]], [[3, 3]], [[4, 3]], [[4, 4]]]) { sets = s; await runTennisLiveTick(env, {}, now, { deps }); now += 60e3; }
+  const plays = JSON.parse(m.get(tennisLivePlaysKey('2026-11-12'))).plays.filter((p) => p.market === 'live_set_total');
+  assert.equal(plays.length, 1, 'one a set');
+  const play = plays[0];
+  assert.deepEqual([play.id, play.american ?? null, play.bookId ?? null, play.units, play.status], ['atp:77:live_set_total:1', null, null, 1, 'pending']);
+  assert.ok(play.playable < 0 && /games/.test(play.selection));
+  assert.match(play.reason, /walked from \d-\d at those rates/);
+  assert.equal(setAsks, 0, 'no set play here, so the set market was never asked; the set\'s games never ask');
+  // The record keeps the set's games apart, and the read carries the games expected.
+  const view = await getTennisLivePlays(env, now);
+  assert.equal(view.record.setGames.pending, 1);
+  assert.ok(view.matches[0].model.setGames.mean > 9);
+  // Graded at the price named when the set ends.
+  sets = [[7, 5]]; await runTennisLiveTick(env, {}, now, { deps });
+  const done = JSON.parse(m.get(tennisLivePlaysKey('2026-11-12'))).plays.find((p) => p.market === 'live_set_total');
+  assert.equal(done.status, 'graded'); assert.equal(done.result, done.sideWord === 'over' ? 'win' : 'loss');
+});
+
+test('a live play is not posted when the same bet is already on the pre-match record', async () => {
+  const { alreadyPlayed } = await import('../worker/src/tennis-live-plays.js');
+  const pre = [
+    { id: 'atp:77:ml', matchId: 'atp:77', market: 'ml', side: 'a', selection: 'Jannik Sinner ML', status: 'pending' },
+    { id: 'atp:77:set2_ml', matchId: 'atp:77', market: 'set2_ml', side: 'b', selection: 'Taylor Fritz 2nd set', status: 'pending' },
+    { id: 'atp:77:set1_total', matchId: 'atp:77', market: 'set1_total', side: null, selection: '1st set over 9.5 games', status: 'pending' },
+    { id: 'parlay:x', market: 'ml_parlay', status: 'pending', legs: [{ matchId: 'atp:88', side: 'b' }] },
+    { id: 'atp:99:ml', matchId: 'atp:99', market: 'ml', side: 'a', status: 'void' },
+  ];
+  assert.equal(alreadyPlayed({ market: 'live_ml', side: 'a' }, 'atp:77', pre).id, 'atp:77:ml');
+  assert.equal(alreadyPlayed({ market: 'live_ml', side: 'b' }, 'atp:77', pre), null, 'the other player is another bet');
+  assert.equal(alreadyPlayed({ market: 'live_set', side: 'b', set: 2 }, 'atp:77', pre).id, 'atp:77:set2_ml');
+  assert.equal(alreadyPlayed({ market: 'live_set', side: 'b', set: 1 }, 'atp:77', pre), null);
+  assert.equal(alreadyPlayed({ market: 'live_set_total', set: 1, sideWord: 'under' }, 'atp:77', pre).id, 'atp:77:set1_total', 'either way: the set\'s games are already played');
+  assert.equal(alreadyPlayed({ market: 'live_ml', side: 'b' }, 'atp:88', pre).id, 'parlay:x', 'a parlay leg is a bet on the player too');
+  assert.equal(alreadyPlayed({ market: 'live_ml', side: 'a' }, 'atp:99', pre), null, 'a voided play holds nothing');
+  // The tick: the same match and prices that post a live moneyline, with that moneyline already on the pre-match record.
+  const T0 = Date.parse('2026-11-12T18:00:00Z');
+  const run = async (plays) => {
     const m = new Map(); const env = { POTD_KV: { get: async (k) => m.get(k) ?? null, put: async (k, v) => { m.set(k, v); } } };
-    m.set(tennisPicksKey('2026-11-12'), JSON.stringify({ plays: [], reads: { 'atp:77': { serve: { pA: 0.68, pB: 0.67 }, bestOf: 3 } } }));
+    m.set(tennisPicksKey('2026-11-12'), JSON.stringify({ plays, reads: { 'atp:77': { serve: { pA: 0.66, pB: 0.62 }, bestOf: 3 } } }));
     let sets = [[1, 0]];
-    const deps = { scoreboard: async () => ({ at: 0, matches: [match(sets)] }), sportKeys: async () => ({ atp: [{ key: 'k' }], wta: [] }), liveBoard: async () => feed(-115, -105), cachedBoard: async () => [], setMarket: async () => ({ id: 'e1', bookmakers: [] }), setTotals };
+    const deps = { scoreboard: async () => ({ at: 0, matches: [match(sets)] }), sportKeys: async () => ({ atp: [{ key: 'tennis_atp_finals' }], wta: [] }), liveBoard: async () => feed(-320, 250), cachedBoard: async () => [], setMarket: async () => ({ id: 'e1', bookmakers: [] }) };
     let now = T0;
-    for (const s of [[[1, 0]], [[1, 1]], [[2, 1]], [[2, 2]], [[3, 2]], [[3, 3]]]) { sets = s; await runTennisLiveTick(env, {}, now, { deps }); now += 60e3; }
-    const plays = JSON.parse(m.get(tennisLivePlaysKey('2026-11-12')) ?? '{"plays":[]}').plays;
-    return { play: plays.find((p) => p.market === 'live_set_total') ?? null, n: plays.filter((p) => p.market === 'live_set_total').length, env, now };
+    for (const s of [[[1, 0]], [[1, 1]], [[2, 1]], [[3, 1]]]) { sets = s; await runTennisLiveTick(env, {}, now, { deps }); now += 60e3; }
+    return { plays: JSON.parse(m.get(tennisLivePlaysKey('2026-11-12')) ?? '{"plays":[]}').plays, read: JSON.parse(m.get(TENNIS_LIVE_READS_KEY)).matches[0] };
   };
-  const first = await run(async () => ({ id: 'e1', bookmakers: [] }));
-  assert.equal(first.n, 1, 'one a set');
-  const none = first.play;
-  assert.deepEqual([none.id, none.american ?? null, none.units, none.status], ['atp:77:live_set_total:1', null, 1, 'pending']);
-  assert.ok(none.playable < 0 && /games/.test(none.selection));
-  assert.ok(none.why.some((w) => /walked from \d-\d at those rates/.test(w)), 'the reason rides with the play');
-  // The book has the play's own line at a price better than the one the read needs: taken at the book.
-  const good = await run(async () => totals(none.point, none.sideWord === 'over' ? none.playable + 30 : -400, none.sideWord === 'under' ? none.playable + 30 : -400));
-  assert.deepEqual([good.play.point, good.play.american, good.play.bookId], [none.point, none.playable + 30, 'fanduel']);
-  assert.deepEqual(good.play.quotes, [{ bookId: 'fanduel', book: 'FanDuel', american: none.playable + 30 }]);
-  // The book prices the set's games at another line only: nothing to take, no play.
-  assert.equal((await run(async () => totals(none.point === 12.5 ? 9.5 : 12.5, -110, -110))).play, null);
-  // The right line, too short: no play.
-  assert.equal((await run(async () => totals(none.point, -900, -900))).play, null);
-  // A book that keeps pricing it too short is asked for ten minutes, then the set is left alone.
-  {
-    const { SET_TOTAL_ASK_MS } = await import('../worker/src/tennis-live-plays.js');
-    const m = new Map(); const env = { POTD_KV: { get: async (k) => m.get(k) ?? null, put: async (k, v) => { m.set(k, v); } } };
-    m.set(tennisPicksKey('2026-11-12'), JSON.stringify({ plays: [], reads: { 'atp:77': { serve: { pA: 0.68, pB: 0.67 }, bestOf: 3 } } }));
-    let sets = [[1, 0]]; let asks = 0;
-    const deps = { scoreboard: async () => ({ at: 0, matches: [match(sets)] }), sportKeys: async () => ({ atp: [{ key: 'k' }], wta: [] }), liveBoard: async () => feed(-115, -105), cachedBoard: async () => [], setMarket: async () => ({ id: 'e1', bookmakers: [] }), setTotals: async () => { asks++; return totals(none.point, -900, -900); } };
-    let now = T0;
-    for (const s of [[[1, 0]], [[1, 1]], [[2, 1]], [[2, 2]], [[3, 2]], [[3, 3]]]) { sets = s; await runTennisLiveTick(env, {}, now, { deps }); now += 60e3; }
-    const early = asks; assert.ok(early >= 1);
-    for (let i = 0; i < 30; i++) { await runTennisLiveTick(env, {}, now, { deps }); now += 60e3; }
-    assert.ok(asks > early && asks - early <= SET_TOTAL_ASK_MS / 60e3 + 1, `asked ${asks - early} more times over half an hour`);
-  }
-  // The record keeps the set's games apart.
-  const view = await getTennisLivePlays(first.env, first.now);
-  assert.deepEqual([view.record.setGames.pending, view.record.sets.pending >= 0], [1, true]);
-  assert.ok(view.matches[0].model.setGames.mean > 9, 'the read carries the games expected');
+  const open = await run([]);
+  assert.equal(open.plays.filter((p) => p.market === 'live_ml').length, 1); assert.deepEqual(open.read.already, []);
+  const held = await run([pre[0]]);
+  assert.equal(held.plays.filter((p) => p.market === 'live_ml').length, 0, 'not posted a second time');
+  assert.deepEqual(held.read.already, ['Jannik Sinner ML'], 'and the read says why');
 });
