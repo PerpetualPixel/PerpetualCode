@@ -27,12 +27,13 @@ import { sortTrends, sortQuotes, bestQuote, attachSeries, hitFlags, nflWeek, leg
 import { enhanceSelect } from './custom-select.js';
 import { BUILD_INFO } from './version.js';
 import { safeUrl } from './safe-url.js';
-import { hardRockCombined, phoneSlipLink, isPhone } from './book-links.js';
+import { hardRockCombined, phoneSlipLink, isPhone, pickText } from './book-links.js';
 import { summarizePicks, gradePick } from './learning.js';
 import { liveSetsLabel } from './tennis-results.js';
 import {
   RULES,
   SPORTSBOOKS,
+  pricedBooks,
   analyze,
   topPicks,
   explain,
@@ -1262,6 +1263,27 @@ function relativeTime(ms) {
  */
 const escUrl = (value) => esc(safeUrl(value));
 
+/**
+ * Onyx, for a user who has it among their books: one button that puts the pick on the clipboard and opens Onyx
+ * (docs/book-links.js pickText; the feed carries no Onyx prices or slip links, so this is the quick way in).
+ * `legs` is [{selection, game}]; nothing for a user without Onyx, or with nothing to copy.
+ */
+function onyxQuick(legs, { cls = '' } = {}) {
+  let mine = []; try { const v = JSON.parse(localStorage.getItem('pixelpick.myBooks.v1') ?? 'null'); if (Array.isArray(v)) mine = v; } catch { /* no list */ }
+  const text = mine.includes('onyx') ? pickText(legs) : '';
+  if (!text) return '';
+  const n = text.split('\n').length;
+  return `<a class="onyx-quick ${cls}" href="${escUrl(SPORTSBOOKS.onyx.url)}" target="_blank" rel="noopener" data-copy-pick="${esc(text)}" title="Copies ${n === 1 ? 'this pick' : `these ${n} legs`}, then opens Onyx">${bookBadge('onyx', 'Onyx')}<span data-copy-label>Copy ${n === 1 ? 'pick' : `${n} legs`} &amp; open Onyx</span> <span aria-hidden="true">↗</span></a>`;
+}
+document.addEventListener('click', (event) => {
+  const a = event.target?.closest?.('[data-copy-pick]');
+  if (!a) return;
+  // The link opens by itself; the copy rides the same tap.
+  const label = a.querySelector('[data-copy-label]'); const was = label?.textContent;
+  const done = (ok) => { if (!label) return; label.textContent = ok ? 'Copied. Paste it into Onyx' : 'Opened Onyx (copy was blocked)'; setTimeout(() => { if (label.isConnected) label.textContent = was; }, 6000); };
+  try { navigator.clipboard.writeText(a.dataset.copyPick).then(() => done(true), () => done(false)); } catch { done(false); }
+}, true);
+
 // Hard Rock on a phone (docs/book-links.js): its website sends every phone to a "download our app" page, so a slip link
 // is turned, as it is touched, into the one Hard Rock's own slip shares, which the app opens with the pick on the slip.
 // Done here once, for every Hard Rock link the app draws, whichever tab drew it.
@@ -1836,7 +1858,7 @@ function renderConfidence(pick) {
 function renderBooks(leg) {
   const offers = bookOffers(leg);
 
-  const buttons = Object.keys(SPORTSBOOKS)
+  const buttons = pricedBooks(Object.keys(SPORTSBOOKS))
     .map((id) => {
       const meta = SPORTSBOOKS[id];
       const offer = offers.get(id);
@@ -3417,8 +3439,8 @@ async function loadSettings() {
     // The user's sportsbooks (see persistTrendBooks): the account's list
     // wins over this device's, same as the bankroll.
     if (Array.isArray(settings?.trendBooks)) {
-      trendsState.books = new Set(settings.trendBooks);
-      saveJSON(TREND_BOOKS_KEY, settings.trendBooks);
+      trendsState.books = new Set(pricedBooks(settings.trendBooks));
+      saveJSON(TREND_BOOKS_KEY, pricedBooks(settings.trendBooks));
     }
     // The books the Live tab shows slips for (see persistLiveBooks): the account's list wins too.
     if (Array.isArray(settings?.liveBooks)) {
@@ -3444,7 +3466,7 @@ const MY_BOOKS_KEY = 'pixelpick.myBooks.v1';
 /* The Playbook setup (worker/src/settings.js's playbook) and the slip links brought back per ticket. */
 const PLAYBOOK_KEY = 'pixelpick.playbook.v1';
 const PLAYBOOK_LINKS_KEY = 'pixelpick.playbookLinks.v1';
-const ONBOARD_BOOKS = ['draftkings', 'fanduel', 'betmgm', 'caesars', 'fanatics', 'hardrock', 'bet365', 'betrivers', 'espnbet', 'prizepicks', 'kalshi'];
+const ONBOARD_BOOKS = ['draftkings', 'fanduel', 'betmgm', 'caesars', 'fanatics', 'hardrock', 'bet365', 'betrivers', 'espnbet', 'prizepicks', 'kalshi', 'onyx'];
 const myBooksState = { chosen: new Set(), open: false };
 const myBooks = () => { const v = loadJSON(MY_BOOKS_KEY, null); return Array.isArray(v) ? v : null; };
 
@@ -3452,7 +3474,8 @@ const myBooks = () => { const v = loadJSON(MY_BOOKS_KEY, null); return Array.isA
 function applyMyBooks(list, { push = true } = {}) {
   const books = [...new Set((list ?? []).filter((b) => SPORTSBOOKS[b]))];
   saveJSON(MY_BOOKS_KEY, books);
-  if (typeof trendsState !== 'undefined') { trendsState.books = new Set(books); saveJSON(TREND_BOOKS_KEY, books); if (trendsState.data) renderTrends(); }
+  // A book with no prices (Onyx) is kept in the list and out of the price filter: with it there no line would be left.
+  if (typeof trendsState !== 'undefined') { trendsState.books = new Set(pricedBooks(books)); saveJSON(TREND_BOOKS_KEY, pricedBooks(books)); if (trendsState.data) renderTrends(); }
   if (typeof liveState !== 'undefined') { liveState.books = new Set(books.filter((b) => LIVE_BOOKS.includes(b))); saveJSON(LIVE_BOOKS_KEY, [...liveState.books]); if (liveState.data) renderLive(); }
   if (typeof parlayState !== 'undefined') { const first = books.find((b) => PARLAY_BOOKS.includes(b)); if (first) { parlayState.book = first; parlayState.built = null; parlayState.locked.clear(); if (el.parlayView && !el.parlayView.hidden) renderParlay(); } }
   const headers = settingsHeaders();
@@ -9005,7 +9028,7 @@ const trendsState = {
   // The user's sportsbooks, by registry id (docs/engine.js's SPORTSBOOKS)
   // or a feed key the registry doesn't list. Saved to the account
   // (persistTrendBooks) and to this device; the account's list wins.
-  books: new Set((() => { try { const v = loadJSON(TREND_BOOKS_KEY, []); return Array.isArray(v) ? v : []; } catch { return []; } })()),
+  books: new Set((() => { try { const v = loadJSON(TREND_BOOKS_KEY, []); return Array.isArray(v) ? pricedBooks(v) : []; } catch { return []; } })()),
   odds: { min: null, max: null },
   minRate: 0,
   // The head-to-head floor, 0 to 1 in tenths: a line must have landed this often against today's opponent, whatever period is shown. 0 is off.
@@ -9465,7 +9488,7 @@ function renderTrendsSheet() {
   } else if (sheet.type === 'books') {
     // Every book the registry knows, so the user can pick theirs before the
     // first build lands, plus any book the rows price that it doesn't.
-    const list = Object.entries(SPORTSBOOKS).map(([id, meta]) => [id, meta.name, meta.color]);
+    const list = Object.entries(SPORTSBOOKS).filter(([, meta]) => !meta.noPrices).map(([id, meta]) => [id, meta.name, meta.color]);
     const seen = new Set(list.map(([id]) => id));
     for (const r of rows) for (const q of r.quotes ?? []) {
       if (bookIdFor(q.bookKey) || seen.has(q.bookKey)) continue;
@@ -9652,6 +9675,7 @@ function renderTrendDetail(row) {
         <a class="bet-btn" href="${escUrl(quote.link ?? bookMeta(quote.bookKey)?.url ?? '#')}" target="_blank" rel="noopener" title="${esc(quote.link ? `Open this line on your ${quote.book} slip` : `Open ${quote.book}`)}">${quote.link ? 'Add to slip' : 'Bet'} <span aria-hidden="true">↗</span></a>
         ${quotes.length > 1 ? `<button type="button" class="bet-more" data-bet-more>${trendsState.betMore ? 'Less' : `+${quotes.length - 1} more`} ${trendsState.betMore ? '▴' : '▾'}</button>` : ''}
       </div>
+      ${onyxQuick([{ selection: row.selection, game: row.away && row.home ? `${row.away} @ ${row.home}` : '' }], { cls: 'bet-extra' })}
       ${trendsState.betMore ? `<div class="bet-list">${quotes.filter((q) => q !== quote).map((q) => `<a href="${escUrl(q.link ?? bookMeta(q.bookKey)?.url ?? '#')}" target="_blank" rel="noopener"><span>${bookPill(q)} ${esc(q.book)}</span><b>${esc(formatAmerican(q.american))}</b></a>`).join('')}</div>` : ''}
     </div>` : ''}`;
 }
@@ -10940,10 +10964,11 @@ function ticketSlipFoot(bet) {
   const href = all ?? bet.link ?? bet.bookUrl ?? (bookIdFor(bet.bookId) ? SPORTSBOOKS[bookIdFor(bet.bookId)]?.url : null);
   const legs = (bet.legs ?? []).filter((l) => l.selection);
   const pb = legs.length ? playbookBlock({ key: playbookKey(bet.bookId ?? bet.book, legs.map((l) => l.id ?? l.selection)), legs: legs.map((l) => ({ selection: l.selection, game: l.away && l.home ? `${l.away} @ ${l.home}` : '' })), book: bookIdFor(bet.bookId) ?? bet.bookId ?? bet.book, bookName: bet.book }) : '';
-  if (!href) return pb ? `<div class="pick-bet-foot">${pb}</div>` : '';
+  const onyx = onyxQuick(legs.map((l) => ({ selection: l.selection, game: l.away && l.home ? `${l.away} @ ${l.home}` : '' })));
+  if (!href) return pb || onyx ? `<div class="pick-bet-foot">${onyx}${pb}</div>` : '';
   const label = all ? `Add all ${bet.legs.length} legs to your ${esc(bet.book)} slip ↗` : bet.link ? `Open on your ${esc(bet.book)} slip ↗` : `Open ${esc(bet.book)}`;
   const perLeg = !all && bet.type === 'parlay' ? (bet.legs.some((l) => l.link) ? `<p class="row-sub">${esc(bet.book)} takes legs one at a time: tap each leg's price to add it.</p>` : `<p class="row-sub">${esc(bet.book)} gives out no slip links: add the legs by hand.</p>`) : '';
-  return `<div class="pick-bet-foot">${perLeg}<a class="pick-bet-link" href="${escUrl(href)}" target="_blank" rel="noopener">${label}</a>${pb}</div>`;
+  return `<div class="pick-bet-foot">${perLeg}<a class="pick-bet-link" href="${escUrl(href)}" target="_blank" rel="noopener">${label}</a>${onyx}${pb}</div>`;
 }
 
 /* ---------------------------------------------------------------- */
@@ -11233,7 +11258,7 @@ function renderParlay() {
       ${price?.unpriced ? `<p class="parlay-note">${esc(String(price.unpriced))} leg${price.unpriced === 1 ? ' has' : 's have'} no line yet; the price covers the ${esc(String(price.priced))} priced leg${price.priced === 1 ? '' : 's'}.</p>` : legs.length && !price ? '<p class="parlay-note">No line on any of these legs yet; the price comes once a book posts them.</p>' : ''}
       <div class="parlay-card-top">${all ? `<a class="parlay-all" href="${escUrl(all)}" target="_blank" rel="noopener">Add all ${legs.length} legs to your ${esc(parlayBookName(s.book))} slip ↗</a>` : some ? `<a class="parlay-all" href="${escUrl(some)}" target="_blank" rel="noopener">Add ${slipLegs.length} of ${legs.length} legs to your ${esc(parlayBookName(s.book))} slip ↗</a><p class="row-sub">${esc(parlayBookName(s.book))} has no slip link for the other ${legs.length - slipLegs.length}: add ${legs.length - slipLegs.length === 1 ? 'it' : 'them'} by hand (${legs.filter((l) => !slipLegs.includes(l)).map((l) => esc(l.row?.selection ?? l.selection ?? '')).filter(Boolean).join('; ')}).</p>` : parlaySlipNote(s.book, legs)}</div>
       <div class="parlay-legs">${legs.map(renderParlayLeg).join('')}</div>
-      <div class="parlay-card-foot">${all ? `<a class="parlay-all" href="${escUrl(all)}" target="_blank" rel="noopener">Add all ${legs.length} legs to your ${esc(parlayBookName(s.book))} slip ↗</a>` : parlaySlipNote(s.book, legs)}${playbookBlock({ key: playbookKey(s.book, legs.map((l) => l.row.id)), legs: legs.map((l) => ({ selection: l.row.selection ?? `${l.row.playerName} ${l.row.side} ${l.row.point} ${l.row.marketLabel ?? l.row.statLabel}`, game: l.row.ufc || l.row.tennis ? `${l.row.away} vs ${l.row.home}` : `${l.row.away} @ ${l.row.home}` })), book: s.book, bookName: parlayBookName(s.book) })}</div>
+      <div class="parlay-card-foot">${all ? `<a class="parlay-all" href="${escUrl(all)}" target="_blank" rel="noopener">Add all ${legs.length} legs to your ${esc(parlayBookName(s.book))} slip ↗</a>` : parlaySlipNote(s.book, legs)}${onyxQuick(legs.map((l) => ({ selection: l.row.selection, game: l.row.away && l.row.home ? `${l.row.away} @ ${l.row.home}` : '' })))}${playbookBlock({ key: playbookKey(s.book, legs.map((l) => l.row.id)), legs: legs.map((l) => ({ selection: l.row.selection ?? `${l.row.playerName} ${l.row.side} ${l.row.point} ${l.row.marketLabel ?? l.row.statLabel}`, game: l.row.ufc || l.row.tennis ? `${l.row.away} vs ${l.row.home}` : `${l.row.away} @ ${l.row.home}` })), book: s.book, bookName: parlayBookName(s.book) })}</div>
     </div>
     <div class="parlay-payout">
       <h3>Potential payout</h3>

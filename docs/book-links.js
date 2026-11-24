@@ -52,3 +52,15 @@ export function isPhone(userAgent, maxTouchPoints = 0) {
   const ua = String(userAgent ?? '');
   return /iPhone|iPad|iPod|Android/i.test(ua) || (/Macintosh/i.test(ua) && maxTouchPoints > 1);
 }
+
+/**
+ * A pick written out to paste (2026-11-24, of Onyx, which the odds feed does
+ * not carry: "Allowing quick imports for users to the app. Odds don't matter
+ * as much"). With no prices and no selection ids there is no link that puts
+ * a pick on Onyx's slip, so the quick way in is the pick on the clipboard
+ * and Onyx open: a line a leg, the selection and then its game.
+ * `legs` is [{selection, game}].
+ */
+export function pickText(legs) {
+  return (legs ?? []).map((l) => { const sel = String(l?.selection ?? '').replace(/\s+/g, ' ').trim(); const game = String(l?.game ?? '').replace(/\s+/g, ' ').trim(); return sel ? `${sel}${game ? ` (${game})` : ''}` : ''; }).filter(Boolean).join('\n');
+}

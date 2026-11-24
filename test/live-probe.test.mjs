@@ -36,7 +36,9 @@ test('the live call names every book the site lists that posts props, ten at mos
   const keys = LIVE_BOOKMAKERS.split(',');
   assert.ok(keys.length <= 10, 'more than ten names and the feed charges a second region');
   const ids = new Set(keys.map((k) => bookIdFor(k)));
-  for (const id of Object.keys(SPORTSBOOKS)) if (id !== 'kalshi') assert.ok(ids.has(id), `${id} is on the site but not in the live call`);
+  // Kalshi posts no props; a book the feed does not carry at all (noPrices: Onyx) has nothing to ask for.
+  for (const [id, meta] of Object.entries(SPORTSBOOKS)) if (id !== 'kalshi' && !meta.noPrices) assert.ok(ids.has(id), `${id} is on the site but not in the live call`);
+  assert.ok(!ids.has('onyx'), 'and a book with no prices is never asked for: a name the feed does not know would be a wasted slot');
 });
 
 test('pickLiveEvent: a club named one way by ESPN and another by the feed still matches on a shared word, never on a club word alone, the nearest kick-off breaking ties', () => {
