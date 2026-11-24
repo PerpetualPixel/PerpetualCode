@@ -60,7 +60,7 @@ import { parlaySnapshot, applyParlaySnapshot, cleanParlayStore, withParlaySlot, 
 import { playbookText, playbookKey, playbookUserId, discordChannelUrl, cleanPlaybookLink, PLAYBOOK_SITE } from './playbook.js';
 import { hitFlags as slipHitFlags } from './trends.js';
 import { lineFlags, lineVerdict, looksTooGood } from './line-check.js';
-import { RESULT_SIDES, RESULT_SPORTS, RESULT_BUCKETS, resultEntries, summarize, bucketize, unitTicks } from './results.js';
+import { RESULT_SIDES, RESULT_SPORTS, RESULT_BUCKETS, resultEntries, countedResults, summarize, bucketize, unitTicks } from './results.js';
 import {
   auditLegs,
   MODE_SLATE,
@@ -13004,9 +13004,10 @@ const resultsState = {
 };
 const resultsDayFmt = new Intl.DateTimeFormat('en-US', { month: 'short', day: 'numeric', timeZone: 'UTC' });
 
-async function loadResults({ force = false } = {}) {
+async function loadResults({ force = false, quiet = false } = {}) {
   if (resultsState.loading || (!force && resultsState.loaded && Date.now() - resultsState.at < 60e3)) { renderResults(); return; }
-  resultsState.loading = true; renderResults();
+  // A quiet read (the two-minute refresh) leaves the board as it is until the new numbers are in.
+  resultsState.loading = true; if (!quiet) renderResults();
   const routes = { trendPicks: '/trend-picks', ufcPicks: '/ufc/picks', tennisPicks: '/tennis/picks', tennisLive: '/tennis/live', liveRecap: '/live/results' };
   const got = {}; const failed = [];
   await Promise.all(Object.entries(routes).map(async ([key, path]) => {
@@ -13020,8 +13021,19 @@ async function loadResults({ force = false } = {}) {
 }
 
 const resultsSide = () => RESULT_SIDES.find((s) => s.key === resultsState.side) ?? RESULT_SIDES[0];
+/** When the board was last read, in words; it reads itself again every two minutes while it is open. */
+const resultsUpdatedText = () => (resultsState.at ? `Updated ${ago(resultsState.at)} · refreshes every 2 minutes while open` : '');
+const RESULTS_REFRESH_MS = 120e3;
+setInterval(() => {
+  if (!el.resultsView || el.resultsView.hidden || document.hidden) return;
+  const stamp = el.resultsView.querySelector('[data-res-updated]'); if (stamp) stamp.textContent = resultsUpdatedText();
+  // Not while a bar's numbers are showing: a redraw would take them away from under a finger.
+  if (Date.now() - resultsState.at >= RESULTS_REFRESH_MS && !el.resultsView.querySelector('.res-tip:not([hidden])')) loadResults({ force: true, quiet: true });
+}, 20e3);
+document.addEventListener('visibilitychange', () => { if (!document.hidden && el.resultsView && !el.resultsView.hidden && Date.now() - resultsState.at >= 60e3) loadResults({ force: true, quiet: true }); });
 /** The results a card stands for: the whole side, or one sport of it. */
-const resultsFor = (key) => resultsState.entries.filter((e) => e.side === resultsState.side && (key === 'total' || e.sport === key));
+/** The leans have a card of their own ('leans') and are in no other: a lean is shown with its result, never counted. */
+const resultsFor = (key) => resultsState.entries.filter((e) => e.side === resultsState.side && (key === 'leans' ? e.lean : !e.lean && (key === 'total' || e.sport === key)));
 const resultsNet = (n) => `${n < 0 ? '−' : '+'}${Math.abs(n).toFixed(2)}u`;
 const resultsRoi = (roi) => (roi == null ? 'n/a' : `${roi < 0 ? '−' : '+'}${Math.abs(roi * 100).toFixed(1)}%`);
 const resultsUnits = (u) => `${Math.round(u * 100) / 100}u`;
@@ -13083,9 +13095,10 @@ function renderResults() {
   const say = (text) => { el.resultsStatus.textContent = text; el.resultsStatus.hidden = !text; };
   if (!resultsState.loaded) { say(resultsState.loading ? 'Adding up the results…' : ''); el.resultsBody.innerHTML = ''; return; }
   say(resultsState.failed.length ? 'Some results could not be loaded just now, so a few numbers may be short. Try again in a moment.' : '');
+  const leans = resultsFor('leans');
   const side = resultsSide();
   const sides = RESULT_SIDES.map((s) => {
-    const sum = summarize(resultsState.entries.filter((e) => e.side === s.key));
+    const sum = summarize(countedResults(resultsState.entries.filter((e) => e.side === s.key)));
     const on = s.key === side.key;
     return `<button type="button" class="res-side ${on ? 'is-active' : ''}" data-res-side="${s.key}" aria-pressed="${on}"><span class="res-side-name">${esc(s.label)}</span><small>${esc(s.long)}</small><span class="res-side-net ${resultsTone(sum.net)}">${sum.count ? esc(resultsNet(sum.net)) : 'no results yet'}</span></button>`;
   }).join('');
@@ -13095,10 +13108,12 @@ function renderResults() {
   el.resultsBody.innerHTML = `
     <div class="res-sides" role="group" aria-label="Which side of the results">${sides}</div>
     <p class="row-sub res-note">${esc(side.note)} Tap a card to open its graph and results.</p>
+    <p class="row-sub res-fresh"><span data-res-updated>${esc(resultsUpdatedText())}</span> <button type="button" class="res-refresh" data-res-refresh>Refresh</button></p>
     ${any ? `${resultsCard('total', `${side.long} · all sports`, '')}
     <h3 class="res-h3">By sport</h3>
     <div class="res-grid">${withResults.map((sp) => resultsCard(sp.key, sp.label, sportIcon(RESULTS_ICON[sp.key]))).join('')}</div>
-    ${without.length ? `<p class="row-sub res-none">No ${side.key === 'live' ? 'live' : 'pregame'} results yet for ${esc(without.map((sp) => sp.label).join(', '))}.</p>` : ''}` : `<p class="empty">No ${side.key === 'live' ? 'live' : 'pregame'} results have settled yet.</p>`}`;
+    ${without.length ? `<p class="row-sub res-none">No ${side.key === 'live' ? 'live' : 'pregame'} results yet for ${esc(without.map((sp) => sp.label).join(', '))}.</p>` : ''}` : `<p class="empty">No ${side.key === 'live' ? 'live' : 'pregame'} results have settled yet.</p>`}
+    ${leans.length ? `<h3 class="res-h3">Leans <small>shown with their results, not counted above</small></h3><div class="res-grid">${resultsCard('leans', 'Live tennis leans', sportIcon(RESULTS_ICON.tennis))}</div><p class="row-sub res-none">A lean is the best call on a match when nothing clears the bar for a tracked play. Each is graded as half a unit at the price it said to take, so you can see how they do.</p>` : ''}`;
   drawResultsCharts();
 }
 
@@ -13161,6 +13176,7 @@ el.resultsView?.addEventListener('click', (event) => {
   if (side) { resultsState.side = side.dataset.resSide; saveJSON(RESULTS_PREFS_KEY, { side: resultsState.side, bucket: resultsState.bucket }); renderResults(); return; }
   const bucket = event.target.closest('[data-res-bucket]');
   if (bucket) { resultsState.bucket = bucket.dataset.resBucket; saveJSON(RESULTS_PREFS_KEY, { side: resultsState.side, bucket: resultsState.bucket }); renderResults(); return; }
+  if (event.target.closest('[data-res-refresh]')) { loadResults({ force: true, quiet: true }); return; }
   const more = event.target.closest('[data-res-more]');
   if (more) { resultsState.more[more.dataset.resMore] = !resultsState.more[more.dataset.resMore]; renderResults(); return; }
   const hit = event.target.closest('[data-res-bar]');

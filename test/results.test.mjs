@@ -1,7 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
-import { resultEntries, summarize, bucketize, bucketStart, nextBucket, bucketLabel, sportOfKey, etDate, unitTicks, RESULT_BUCKETS } from '../docs/results.js';
+import { resultEntries, countedResults, summarize, bucketize, bucketStart, nextBucket, bucketLabel, sportOfKey, etDate, unitTicks, RESULT_BUCKETS } from '../docs/results.js';
 
 const read = (name) => JSON.parse(fs.readFileSync(new URL(`../docs/data/tracking/${name}.json`, import.meta.url), 'utf8'));
 
@@ -75,9 +75,13 @@ test('unitTicks gives clean steps either side of zero', () => {
 });
 
 test('the site\'s own records add up the way the tabs say they do', () => {
-  const es = resultEntries({ trendPicks: read('trend-picks'), ufcPicks: read('ufc-picks'), tennisPicks: read('tennis-picks'), tennisLive: read('tennis-live'), liveRecap: read('live-recap') });
-  const of = (side, sport) => summarize(es.filter((e) => e.side === side && (!sport || e.sport === sport)));
-  const tp = read('trend-picks').record; const leagues = summarize(es.filter((e) => e.side === 'pre' && ['nba', 'nfl', 'nhl', 'soccer'].includes(e.sport)));
+  const all = resultEntries({ trendPicks: read('trend-picks'), ufcPicks: read('ufc-picks'), tennisPicks: read('tennis-picks'), tennisLive: read('tennis-live'), liveRecap: read('live-recap') });
+  // The leans are on the board (every one of them live tennis) and in no total.
+  const leans = all.filter((e) => e.lean);
+  assert.ok(leans.every((e) => e.side === 'live' && e.sport === 'tennis' && /^Lean/.test(e.note)));
+  assert.equal(leans.filter((e) => e.result === 'win').length, read('tennis-live').record.leans?.wins ?? 0, 'the leans match the Tennis tab\'s own count');
+  const of = (side, sport) => summarize(countedResults(all).filter((e) => e.side === side && (!sport || e.sport === sport)));
+  const tp = read('trend-picks').record; const leagues = summarize(countedResults(all).filter((e) => e.side === 'pre' && ['nba', 'nfl', 'nhl', 'soccer'].includes(e.sport)));
   assert.deepEqual([leagues.wins, leagues.losses, leagues.net, leagues.played], [tp.wins, tp.losses, tp.units, tp.risked], 'the league tickets match the Pixel\'s Picks record');
   const tn = read('tennis-picks').record; const tennis = of('pre', 'tennis');
   assert.deepEqual([tennis.wins, tennis.losses, tennis.net, tennis.played], [tn.wins, tn.losses, tn.units, tn.risked], 'tennis before the match matches the Tennis tab');
@@ -87,5 +91,5 @@ test('the site\'s own records add up the way the tabs say they do', () => {
   assert.equal(live.wins, tl.ml.wins + tl.sets.wins + (tl.setGames?.wins ?? 0));
   assert.ok(Math.abs(live.net - (tl.ml.units + tl.sets.units + (tl.setGames?.units ?? 0))) < 0.011);
   assert.ok(of('live', 'nba').count > 0 && of('live', 'nfl').count > 0, 'live slips for both leagues');
-  assert.ok(bucketize(es.filter((e) => e.side === 'pre'), 'week').length >= 2);
+  assert.ok(bucketize(all.filter((e) => e.side === 'pre'), 'week').length >= 2);
 });
