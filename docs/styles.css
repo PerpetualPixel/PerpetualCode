@@ -7667,7 +7667,11 @@ a.tennis-book:hover { background: rgba(255, 255, 255, 0.06); }
 .live-tennis-play.is-liveplay > span:first-child { flex: 1 1 180px; min-width: 0; display: grid; gap: 1px; }
 .live-tennis-play.is-liveplay small { color: var(--muted); font-size: 0.74rem; }
 .live-tennis-fair { border-style: dashed; }
-.live-tennis-none { font-style: italic; }
+.live-tennis-none { display: grid; gap: 4px; }
+.live-tennis-none > small { font-style: italic; }
+.live-tennis-wait { margin: 0; padding-left: 18px; display: grid; gap: 3px; color: var(--muted); font-size: 0.78rem; line-height: 1.4; }
+.live-tennis-today { display: grid; gap: 4px; margin-top: 6px; }
+.live-tennis-when { display: block; margin-top: 6px; color: var(--muted); font-size: 0.72rem; font-weight: 700; letter-spacing: 0.02em; }
 .live-tennis-take { display: block; color: var(--text); font-size: 0.78rem; }
 .tennis-take strong { font-weight: 800; }
 .live-tennis-ledger { display: grid; gap: 6px; }
@@ -7950,3 +7954,5 @@ a.tennis-book:hover { background: rgba(255, 255, 255, 0.06); }
   .res-sides { max-width: 560px; }
 }
 @media (min-width: 1180px) { .res-grid { grid-template-columns: repeat(3, minmax(0, 1fr)); } }
+
+.live-tennis-rest > p.row-sub { font-size: 0.78rem; line-height: 1.45; margin: 8px 0 0; }

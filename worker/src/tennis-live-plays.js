@@ -39,7 +39,7 @@
 import { etParts } from './potd.js';
 import { loadTennisScoreboard } from './tennis-live.js';
 import { tennisPicksKey, tennisSportKeys, feedEventFor, quotesOf, marketWinShare, liveTournamentBoard, cachedTournamentBoard, liveSetMarket, bookPrices } from './tennis-picks.js';
-import { advanceTimeline, liveRead, livePlays, serveFromMarket, scoreState, LIVE_SET_PRICE } from './tennis-live-model.js';
+import { advanceTimeline, liveRead, livePlays, liveWaiting, serveFromMarket, scoreState, LIVE_SET_PRICE } from './tennis-live-model.js';
 import { TOUR_AVG } from './tennis-model.js';
 import { setDone } from './tennis-card-parse.js';
 
@@ -221,6 +221,10 @@ export async function runTennisLiveTick(env, ctx, now = Date.now(), { deps = {},
       const read = liveRead({ sets: m.sets, games: timeline.games, serve: serve ?? { pA: base, pB: base }, market: odds?.market ?? null, bestOf: m.bestOf, names });
       // No serve numbers and no price: the score alone is not a play.
       const plays = thin ? [] : livePlays(read, { quotes: odds?.quotes ?? { a: [], b: [] }, names, gamesSeen: timeline.games.length, sets: m.sets });
+      // What a play would take, for the match's card when it has none (liveWaiting).
+      const waiting = thin
+        ? ['No book prices this match and neither player has serve numbers on file, so there is nothing to measure a play against. Plays post on matches the books carry.']
+        : liveWaiting(read, { quotes: odds?.quotes ?? { a: [], b: [] }, names, gamesSeen: timeline.games.length, sets: m.sets });
       for (const play of plays) {
         const playId = play.market === 'live_ml' ? `${id}:live_ml` : `${id}:${play.market}:${play.set}`;
         if (postedIds.has(playId)) continue;
@@ -230,7 +234,7 @@ export async function runTennisLiveTick(env, ctx, now = Date.now(), { deps = {},
         if (play.market === 'live_set') {
           // The book's price on the set: the deciding set is the match, the first two have their own market.
           const priced = await setPriceFor(env, ctx, m, play, odds, read, now, deps).catch(() => undefined);
-          if (priced === null) continue; // a book prices the set, and not well enough: no play
+          if (priced === null) { waiting.push(`Set ${play.set}: ${names[play.side]} is ${Math.round(play.prob * 100)}% to win it, but the books price it shorter than ${play.playable}, the price the read needs.`); continue; } // a book prices the set, and not well enough: no play
           if (priced) Object.assign(play, priced);
         }
         postedIds.add(playId);
@@ -249,7 +253,7 @@ export async function runTennisLiveTick(env, ctx, now = Date.now(), { deps = {},
         market: read.market != null ? Math.round(read.market * 1000) / 1000 : null, fair: read.fair, state: read.state, momentum: read.momentum,
         serve: { first: read.serve.first, sure: read.serve.sure, aServesNext: read.serve.aServesNext, a: read.serve.a, b: read.serve.b, breaks: read.serve.breaks, source: serve?.source ?? 'the tour average: no pre-match read and no live price' },
         why: read.why, quotes: { a: best('a'), b: best('b') }, books: { a: bookPrices(odds?.quotes?.a), b: bookPrices(odds?.quotes?.b) }, games: timeline.games.length,
-        plays: [...records[today].plays, ...records[yesterday].plays].filter((p) => p.matchId === id), already: [...new Set(already)],
+        plays: [...records[today].plays, ...records[yesterday].plays].filter((p) => p.matchId === id), already: [...new Set(already)], waiting,
       });
     }
   }
