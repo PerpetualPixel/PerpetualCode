@@ -6560,7 +6560,10 @@ button, [role="tab"], .league-chip, .parlay-btn, .trend-price { touch-action: ma
 
 /* Dock */
 .trends-dock {
-  position: fixed; left: 50%; transform: translateX(-50%); bottom: calc(14px + env(safe-area-inset-bottom, 0px)); z-index: 40;
+  /* Centred between the two edges of the screen and never wider than it: the Period button gives way (its label shortens)
+     before the bar runs off either side. (Centred with left: 50% and a transform, it was sized against half the screen.) */
+  position: fixed; left: max(8px, env(safe-area-inset-left, 0px)); right: max(8px, env(safe-area-inset-right, 0px)); margin: 0 auto; width: fit-content; max-width: calc(100% - 16px); box-sizing: border-box;
+  bottom: calc(14px + env(safe-area-inset-bottom, 0px)); z-index: 40;
   display: flex; align-items: center; gap: 10px; padding: 6px; border-radius: 999px;
   background: rgba(12, 10, 24, 0.82); backdrop-filter: blur(14px); -webkit-backdrop-filter: blur(14px);
   border: 1px solid var(--line); box-shadow: 0 10px 30px rgba(0, 0, 0, 0.5);
@@ -6569,7 +6572,13 @@ button, [role="tab"], .league-chip, .parlay-btn, .trend-price { touch-action: ma
   display: inline-flex; align-items: center; gap: 8px; min-height: 42px; padding: 0 16px; border-radius: 999px; border: 1px solid transparent;
   background: var(--surface-2); color: var(--text); font: inherit; font-weight: 700; font-size: 0.9rem; cursor: pointer; white-space: nowrap; position: relative;
 }
-.trends-dock-btn svg { width: 18px; height: 18px; }
+.trends-dock-btn svg { width: 18px; height: 18px; flex: none; }
+.trends-dock-btn { flex: none; }
+#trendsPeriodBtn { flex: 0 1 auto; min-width: 0; }
+#trendsPeriodLabel { display: grid; min-width: 0; line-height: 1.15; text-align: left; }
+#trendsPeriodLabel .dock-main, #trendsPeriodLabel .dock-sub { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+#trendsPeriodLabel .dock-sub { font-size: 0.68rem; font-weight: 700; color: var(--success); letter-spacing: 0.02em; }
+@media (max-width: 420px) { .trends-dock { gap: 6px; } .trends-dock-btn:not(.is-icon) { padding: 0 13px; font-size: 0.86rem; } }
 .trends-dock-btn.is-icon { width: 46px; height: 46px; padding: 0; justify-content: center; }
 .trends-dock-btn:hover { border-color: var(--line); }
 .trends-dock-badge { position: absolute; top: -4px; right: -4px; min-width: 18px; height: 18px; border-radius: 9px; background: var(--magenta); color: #fff; font-size: 0.68rem; font-weight: 800; display: grid; place-items: center; padding: 0 5px; }
@@ -6617,7 +6626,8 @@ button, [role="tab"], .league-chip, .parlay-btn, .trend-price { touch-action: ma
 }
 .sheet-tile .tile-icon { width: 46px; height: 46px; border-radius: 12px; background: rgba(255, 255, 255, 0.06); display: grid; place-items: center; }
 .sheet-tile .tile-icon svg { width: 24px; height: 24px; }
-.sheet-tile .tile-label { font-weight: 800; font-size: 1.05rem; }
+/* Room for the radio at the top right: a long label ("2026-27 season") wraps under itself, never under the circle. */
+.sheet-tile .tile-label { font-weight: 800; font-size: 1.05rem; padding-right: 34px; overflow-wrap: anywhere; }
 .sheet-tile .tile-state { position: absolute; top: 12px; right: 12px; font-size: 0.72rem; color: var(--muted); font-weight: 700; }
 .sheet-tile.is-set { border-color: color-mix(in srgb, var(--success) 65%, transparent); }
 .sheet-tile.is-set .tile-state { color: var(--success); }
@@ -6628,7 +6638,7 @@ button, [role="tab"], .league-chip, .parlay-btn, .trend-price { touch-action: ma
 /* The "last N" tile: its label is the pick, a slider from 5 to 20 under it, the bars for that many games below. */
 .sheet-tile-slider { cursor: default; gap: 8px; }
 .sheet-tile-slider .tile-pick { all: unset; cursor: pointer; display: block; font: inherit; color: inherit; }
-.sheet-tile-slider .tile-pick .tile-label { font-weight: 800; font-size: 1.05rem; }
+.sheet-tile-slider .tile-pick .tile-label { font-weight: 800; font-size: 1.05rem; display: block; }
 .sheet-tile-slider input[type="range"] { width: 100%; margin: 0; accent-color: var(--success); cursor: pointer; }
 .sheet-tile-slider .tile-mini { margin-top: 2px; }
 /* The head-to-head floor under the period tiles. */

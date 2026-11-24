@@ -9070,6 +9070,19 @@ const periodLabel = (key) => PERIOD_LABEL[key] ?? (lastN(key) ? `L${lastN(key)}`
 const periodLong = (key) => PERIOD_LONG[key] ?? (lastN(key) ? `Last ${lastN(key)}` : key.startsWith('s') ? `${seasonName(key.slice(1))} season` : key);
 /** The dock's Period label: the period, and the head-to-head floor when one is set. */
 const periodDockLabel = () => `${periodLong(trendsState.period)}${trendsState.h2hMin > 0 ? ` · H2H ${Math.round(trendsState.h2hMin * 100)}%+` : ''}`;
+/**
+ * The dock's Period button, drawn to fit a phone (2026-11-24, the owner, of "2026-27 season · H2H 100%+" on one line:
+ * "the UI messed up": the bar ran off both sides of the screen). The period is the first line, a season by its years
+ * alone; the head-to-head floor, when one is set, is a second, smaller line under it. The whole label is the button's title.
+ */
+function paintPeriodDock() {
+  if (!el.trendsPeriodLabel) return;
+  const key = trendsState.period;
+  const main = key.startsWith('s') && !PERIOD_LONG[key] ? periodLabel(key) : periodLong(key);
+  const floor = trendsState.h2hMin > 0 ? `H2H ${Math.round(trendsState.h2hMin * 100)}%+` : '';
+  el.trendsPeriodLabel.innerHTML = `<span class="dock-main">${esc(main)}</span>${floor ? `<small class="dock-sub">${esc(floor)}</small>` : ''}`;
+  el.trendsPeriodLabel.closest('button')?.setAttribute('title', `Period: ${periodDockLabel()}`);
+}
 
 /**
  * A row with stats for `period`. The worker stores L5, L10, L20, the
@@ -9322,7 +9335,7 @@ function renderTrends() {
   if (dock) dock.hidden = trendsState.sport === 'tennis';
   if (trendsState.sport === 'tennis') return renderTennisTrends();
   const data = trendsState.data;
-  el.trendsPeriodLabel.textContent = periodDockLabel();
+  paintPeriodDock();
   el.trendsSortLabel.textContent = SORT_LABEL[trendsState.sort.by];
   const n = activeFilterCount();
   el.trendsFilterCount.hidden = n === 0;
@@ -9888,11 +9901,11 @@ el.trendsSheet?.addEventListener('input', (event) => {
       const max = Math.max(sample.point, ...series.map((s) => s.value), 1);
       mini.innerHTML = series.length ? `<div class="tile-mini"><span class="mini-line" style="top:${(100 - (sample.point / max) * 100).toFixed(1)}%"></span>${series.map((s) => `<span class="${s.hit === 1 ? 'is-hit' : s.hit === null ? '' : 'is-miss'}" style="height:${Math.max(8, (s.value / max) * 100).toFixed(1)}%"></span>`).join('')}</div>` : '<div class="tile-mini"></div>';
     }
-    if (el.trendsPeriodLabel) el.trendsPeriodLabel.textContent = periodDockLabel();
+    paintPeriodDock();
   } else if (input.id === 'trendsH2hMin') {
     trendsState.h2hMin = Math.round(Number(input.value) / 10) / 10;
     const label = el.trendsSheet.querySelector('#trendsH2hMinLabel'); if (label) label.textContent = trendsState.h2hMin ? `${Math.round(trendsState.h2hMin * 100)}%` : 'Any';
-    if (el.trendsPeriodLabel) el.trendsPeriodLabel.textContent = periodDockLabel();
+    paintPeriodDock();
   } else if (input.id === 'trendsOddsLo' || input.id === 'trendsOddsHi') {
     const range = input.closest('.odds-range');
     const scale = oddsScale(Number(range.dataset.oddsLo), Number(range.dataset.oddsHi));
