@@ -21,7 +21,7 @@
      only page that reads the feed; the other pages' connect-src stays the
      worker alone. -->
 <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src 'self' https://fonts.gstatic.com; img-src 'self' data: https:; connect-src 'self' https://pixel-pick-odds.mgbouldering.workers.dev https://perpetualpixel.github.io; object-src 'none'; base-uri 'self'; form-action 'self'">
-<script src="frame-guard.js?v=1.364"></script>
+<script src="frame-guard.js?v=1.365"></script>
 <title>Perpetual Picks - App</title>
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <meta name="theme-color" content="#05050A">
@@ -37,9 +37,9 @@
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Syne:wght@600;700;800&family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
-<link rel="stylesheet" href="styles.css?v=1.364">
+<link rel="stylesheet" href="styles.css?v=1.365">
 <!-- Before first paint: a desktop reader who chose "Fit screen" gets the wide shell without a flash of the narrow one. -->
-<script src="wide.js?v=1.364"></script>
+<script src="wide.js?v=1.365"></script>
 </head>
 <body>
 
@@ -166,7 +166,7 @@
       <li><strong>UFC:</strong> a Recommended button on the parlay section opens ready-made builders, parlays and lottos for the card, each leg with its odds and why it was picked. Sort and filter them by confidence, payout, favorites, underdogs or type.</li>
       <li><strong>Tennis:</strong> each lean now shows set betting (-1.5 sets to win 2-0, +1.5 sets to win a set), the second set, and every book's price. Every play says the price to take it at or better.</li>
       <li><strong>Live:</strong> tap a game and the bet is the first thing you see. Finished games leave the list. Tennis matches in play can now carry an over or under on the games in the set.</li>
-      <li><strong>Results:</strong> a new tab with every record in one place. Pregame first, Live on a toggle, a card for each sport with units played, net units, ROI and a graph by day, week, month or year.</li>
+      <li><strong>Results:</strong> a new tab with every record in one place. Pregame first, Live on a toggle, a card for each sport with units played, net units, ROI and a graph by day, week, month or year. It now updates itself through the day, and live tennis leans have their own card there.</li>
       <li><strong>Too good to be true?</strong> Open any Trends line and a new box says whether it is a good or bad take and why: the price against the record, recent form, minutes, injuries, a change of team, a teammate back or out.</li>
       <li><strong>Parlay:</strong> separate sliders for hits in the last 5 and the last 10, a Last 20 switch, and half-star scores.</li>
     </ul>
@@ -636,7 +636,7 @@
   <div class="guide-body">
     <details open>
       <summary>What's new</summary>
-      <p><strong>Results tab.</strong> Every record now lives on its own tab: pregame results first, live results on a toggle, and a card for each sport. See the Results section below.</p>
+      <p><strong>Results tab.</strong> Every record now lives on its own tab: pregame results first, live results on a toggle, and a card for each sport. It updates itself through the day, and live tennis leans have their own card on the Live side. See the Results section below.</p>
       <p><strong>UFC Recommended parlays.</strong> On the UFC tab's parlay section, the Recommended button opens a page of ready-made tickets for the card: builders, regular parlays and lottos. Each leg shows its odds and at least one reason it was picked. Sort and filter by confidence, payout, favorites, underdogs or type, then take the one that suits you. After the card, the page shows which tickets and legs landed.</p>
       <p><strong>Tennis.</strong> Each lean now carries set betting on the leaned player (-1.5 sets to win 2-0, +1.5 sets to win a set), the second set's winner and games, and the price at every book. Every play says the price to take it at or better.</p>
       <p><strong>Live.</strong> Tap a game and the bet comes first; the box score is folded underneath. A game or match leaves the list when it ends. Live tennis can now post an over or under on the games in the set being played.</p>
@@ -663,6 +663,8 @@
       <p>How everything tracked has done, in one place. There are two sides. <strong>Pregame</strong> is everything posted before the game: the league tickets, the UFC picks and the tennis plays. <strong>Live</strong> is everything posted while a game was being played: the live slips and the live tennis plays. Pregame shows first; tap Live to switch, and the app remembers which you looked at last.</p>
       <p>Each side has a total and a card for each sport. A card shows the record, the units played, the net units and the ROI. Tap it to open the graph and the results behind it. The graph is net units by period: a bar above the line is a winning period, a bar below it a losing one. The Day, Week, Month and Year buttons regroup the graph and the list, and a tap or hover on a bar shows that period's numbers.</p>
       <p>A live slip is offered at several books at once, so a game counts once, at your book where it had one.</p>
+      <p>The board keeps itself up to date through the day. Live results land on it soon after each game or match ends, and while the tab is open it refreshes on its own every couple of minutes. The line under the note says when it was last updated, and Refresh updates it right away.</p>
+      <p><strong>Leans</strong> have a card of their own at the bottom of the Live side. A lean is the best call on a tennis match when nothing clears the bar for a tracked play. Each lean is shown with its result, graded as half a unit at the price it said to take, and none of them count toward the totals above.</p>
     </details>
 
     <details>
@@ -1172,6 +1174,6 @@
   </div>
 </aside>
 
-<script type="module" src="app.js?v=1.364"></script>
+<script type="module" src="app.js?v=1.365"></script>
 </body>
 </html>

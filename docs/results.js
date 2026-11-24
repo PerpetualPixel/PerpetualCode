@@ -56,6 +56,8 @@ const num = (x) => (Number.isFinite(Number(x)) && x != null ? Number(x) : null);
  * A game's live slip is built at every book that prices one, the same bet
  * several times over, so a game counts once: the slip at one of `myBooks`
  * when there is one, else the first. A unit a slip.
+ * A live tennis lean comes back marked `lean: true`: the board shows it in
+ * a card of its own and no total counts it (countedResults).
  */
 export function resultEntries({ trendPicks = null, ufcPicks = null, tennisPicks = null, tennisLive = null, liveRecap = null, myBooks = [] } = {}) {
   const out = [];
@@ -78,12 +80,13 @@ export function resultEntries({ trendPicks = null, ufcPicks = null, tennisPicks 
       american: num(p.american), book: p.book ?? null, units: num(p.units) ?? 1, net: num(p.net), result: p.result, note: p.duplicateOf ? 'Posted twice: this copy does not count' : null });
   }
   for (const rec of tennisLive?.history ?? []) for (const p of rec.plays ?? []) {
-    if (p.lean) continue; // a lean is shown and graded, never counted
     const priced = num(p.american) != null;
     add({ id: `live:tennis:${p.id}`, side: 'live', sport: 'tennis', at: num(p.postedAt), date: rec.date,
       title: p.selection ?? 'Live play', sub: `${p.a ?? ''} vs ${p.b ?? ''}${p.score ? ` · posted at ${p.score}` : ''}`,
       american: priced ? num(p.american) : num(p.playable), orBetter: !priced && num(p.playable) != null, book: p.book ?? null,
-      units: num(p.units) ?? 1, net: p.result === 'void' ? 0 : num(p.profit), result: p.result });
+      units: num(p.units) ?? 1, net: p.result === 'void' ? 0 : num(p.profit), result: p.result,
+      // A lean (the best call on a match when nothing clears the bar for a tracked play) is on the board with its result and kept out of every total.
+      ...(p.lean ? { lean: true, note: p.basis === 'score' ? 'Lean · from the score alone' : 'Lean' } : {}) });
   }
   for (const g of liveRecap?.games ?? []) {
     const slips = (g.slips ?? []).filter((s) => s.result === 'win' || s.result === 'loss');
@@ -96,6 +99,9 @@ export function resultEntries({ trendPicks = null, ufcPicks = null, tennisPicks 
   }
   return out.sort((a, b) => (b.date < a.date ? -1 : b.date > a.date ? 1 : (b.at ?? 0) - (a.at ?? 0)));
 }
+
+/** The results a record counts: everything but the leans. */
+export const countedResults = (entries) => (entries ?? []).filter((e) => !e.lean);
 
 const round2 = (x) => Math.round(x * 100) / 100;
 

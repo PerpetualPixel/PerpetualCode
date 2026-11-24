@@ -520,7 +520,10 @@ test('the tick keeps one lean a match, graded and never in the record; with none
   assert.deepEqual([day()[0].status, day()[0].result], ['graded', 'win']);
   const view = await getTennisLivePlays(env, now);
   assert.deepEqual([view.record.sets.wins, view.record.ml.wins, view.record.leans.wins, view.record.leans.staked], [0, 0, 1, 0.5]);
-  // And out of the Results tab.
-  const { resultEntries } = await import('../docs/results.js');
-  assert.deepEqual(resultEntries({ tennisLive: view }), []);
+  // On the Results board as a lean with its result, and in none of its totals.
+  const { resultEntries, countedResults } = await import('../docs/results.js');
+  const shown = resultEntries({ tennisLive: view });
+  assert.deepEqual(shown.map((e) => [e.side, e.sport, e.lean, e.result, e.units]), [['live', 'tennis', true, 'win', 0.5]]);
+  assert.match(shown[0].note, /^Lean/);
+  assert.deepEqual(countedResults(shown), []);
 });

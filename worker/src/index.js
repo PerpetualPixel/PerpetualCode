@@ -520,8 +520,9 @@ export default {
     // The live-props probe (worker/src/live-probe.js): one game, one
     // window, one props call a tick on either schedule.
     ctx.waitUntil(runLiveProbe(env, ctx, now).catch((e) => console.error('Live probe failed:', e)));
-    // The finished games' live slips into the kept ledger (worker/src/live-board.js archiveLiveResults): once an hour, a few KV reads when nothing is new.
-    if (event.cron !== TRENDS_CRON && new Date(now).getUTCMinutes() < 15) ctx.waitUntil(archiveLiveResults(env, now).catch((e) => console.error('Live results archive failed:', e)));
+    // The finished games' live slips into the kept ledger (worker/src/live-board.js archiveLiveResults): every quarter hour
+    // (2026-11-24: "the board should be updated throughout the day"; it was hourly), a few KV reads when nothing is new.
+    if (event.cron !== TRENDS_CRON) ctx.waitUntil(archiveLiveResults(env, now).catch((e) => console.error('Live results archive failed:', e)));
 
     // The Trends build has its own schedule (wrangler.toml's second cron)
     // and so its own invocation and subrequest budget: a chunk of games is
@@ -1612,7 +1613,7 @@ export default {
     }
     // The live slips' kept results, month by month (worker/src/live-board.js): read-only, what the Results tab draws.
     if (pathname === '/live/results' && request.method === 'GET') {
-      return json(await getLiveResults(env), { headers: { ...cors, 'Cache-Control': 'public, max-age=300' } });
+      return json(await getLiveResults(env), { headers: { ...cors, 'Cache-Control': 'public, max-age=60' } });
     }
     // The live-props probe's logs (worker/src/live-probe.js): read-only.
     if (pathname === '/live/probe' && request.method === 'GET') {

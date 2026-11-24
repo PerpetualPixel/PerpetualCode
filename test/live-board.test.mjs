@@ -504,6 +504,18 @@ test('archiveLiveResults keeps each finished game\'s slips for good, once, and g
   const out = await getLiveResults(env, now + 2 * 3600e3);
   assert.deepEqual(out.games.map((g) => [g.id, g.league, g.slips.length]), [['9', 'nba', 2]]);
   assert.equal(JSON.parse(m.get(liveResultsKey('2026-11'))).games.length, 2);
+  // A slip kept while a leg's player was missing from the box is looked at again, and replaced once the box has him.
+  m.set('live:watch:index:nba', JSON.stringify({ games: [{ id: '12', name: 'Nets at Hawks', league: 'nba', date: '2026-11-05T00:30:00Z' }] }));
+  m.set('live:watch:12', JSON.stringify({ ticks: [{ state: 'post', detail: 'Final', box: [] }] }));
+  m.set('live:play:12', JSON.stringify({ builtAt: 5, slips: [{ bookId: 'fanduel', book: 'FanDuel', american: -110, decimal: 1.91, legs: [{ player: 'Trae Young', stat: 'points', label: 'Pts', point: 19.5, price: -110 }] }] }));
+  assert.equal(await archiveLiveResults(env, now + 3 * 3600e3), 1);
+  const held = () => JSON.parse(m.get(liveResultsKey('2026-11'))).games.filter((g) => g.id === '12');
+  assert.deepEqual(held().map((g) => g.slips[0].result), ['open']);
+  assert.equal(await archiveLiveResults(env, now + 4 * 3600e3), 0, 'still open: nothing rewritten');
+  m.set('live:watch:12', JSON.stringify({ ticks: [{ state: 'post', detail: 'Final', box: [{ name: 'Trae Young', team: 'ATL', stats: { points: '31' } }] }] }));
+  assert.equal(await archiveLiveResults(env, now + 5 * 3600e3), 1);
+  assert.deepEqual(held().map((g) => g.slips[0].result), ['win'], 'settled in place, the game kept once');
+  assert.equal(await archiveLiveResults(env, now + 6 * 3600e3), 0, 'settled: not looked at again');
   // A late game on the last night of a month belongs to that month (Eastern time, near enough).
   m.set('live:watch:index:nba', JSON.stringify({ games: [{ id: '20', name: 'Late game', league: 'nba', date: '2026-12-01T03:30:00Z' }] }));
   m.set('live:watch:20', JSON.stringify({ ticks: [{ state: 'post', box: [] }] }));

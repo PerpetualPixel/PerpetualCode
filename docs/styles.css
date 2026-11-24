@@ -7902,6 +7902,9 @@ a.tennis-book:hover { background: rgba(255, 255, 255, 0.06); }
 .res-side small { color: var(--muted); font-size: 0.74rem; font-weight: 600; }
 .res-side-net { font-size: 0.86rem; font-weight: 800; font-variant-numeric: tabular-nums; }
 .res-note, .res-none { margin: 0; }
+.res-fresh { margin: 0; display: flex; flex-wrap: wrap; align-items: center; gap: 6px 10px; font-size: 0.74rem; color: var(--muted); }
+.res-refresh { border: 1px solid var(--line); background: var(--surface-2); color: var(--text); font: inherit; font-size: 0.72rem; font-weight: 700; padding: 4px 10px; border-radius: 999px; cursor: pointer; min-height: 28px; }
+.res-h3 small { text-transform: none; letter-spacing: 0; font-weight: 600; margin-left: 6px; }
 .res-h3 { margin: 6px 0 0; font-size: 0.74rem; font-weight: 800; letter-spacing: 0.08em; text-transform: uppercase; color: var(--muted); }
 .res-grid { display: grid; gap: 10px; grid-template-columns: minmax(0, 1fr); align-items: start; }
 .res-card { border: 1px solid var(--line); border-radius: 16px; background: var(--surface); padding: 12px 14px 14px; min-width: 0; }

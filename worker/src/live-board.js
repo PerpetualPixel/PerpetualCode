@@ -568,10 +568,15 @@ export async function archiveLiveResults(env, now = Date.now()) {
   for (const g of due) {
     const m = monthOf(g.date); if (!m) continue;
     const book = await ledger(m);
-    if (book.games.some((x) => String(x.id) === String(g.id))) continue;
+    const at = book.games.findIndex((x) => String(x.id) === String(g.id));
+    // Kept already. A slip kept while a leg's player was still missing from the box is looked at again for a day and a half, in case the box filled in.
+    const reopen = at >= 0 && book.games[at].slips.some((s) => s.result === 'open') && Date.parse(g.date) > now - 36 * 3600e3;
+    if (at >= 0 && !reopen) continue;
     const r = await recapGame(env, g);
     if (r.state !== 'post' && Date.parse(g.date) > now - 12 * 3600e3) continue;
-    book.games.push({ id: r.id, name: r.name, league: r.league, date: r.date, slips: r.slips.map((s) => ({ bookId: s.bookId, book: s.book, american: s.american, result: s.result, units: s.units, legs: s.legs.map((l) => ({ player: l.player, label: l.label, point: l.point, hit: l.hit })) })) });
+    const entry = { id: r.id, name: r.name, league: r.league, date: r.date, slips: r.slips.map((s) => ({ bookId: s.bookId, book: s.book, american: s.american, result: s.result, units: s.units, legs: s.legs.map((l) => ({ player: l.player, label: l.label, point: l.point, hit: l.hit })) })) };
+    if (at >= 0) { if (!entry.slips.length || JSON.stringify(entry.slips.map((s) => s.result)) === JSON.stringify(book.games[at].slips.map((s) => s.result))) continue; book.games[at] = entry; }
+    else book.games.push(entry);
     written++; touched.add(m);
   }
   for (const m of touched) await env.POTD_KV.put(liveResultsKey(m), JSON.stringify({ ...months.get(m), at: now }), { expirationTtl: LEDGER_TTL });
