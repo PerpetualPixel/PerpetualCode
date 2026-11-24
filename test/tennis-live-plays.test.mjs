@@ -406,3 +406,39 @@ test('a live play is not posted when the same bet is already on the pre-match re
   assert.equal(held.plays.filter((p) => p.market === 'live_ml').length, 0, 'not posted a second time');
   assert.deepEqual(held.read.already, ['Jannik Sinner ML'], 'and the read says why');
 });
+
+test('liveWaiting says what each kind of play would take, with the number the read has now', async () => {
+  const { liveWaiting } = await import('../worker/src/tennis-live-model.js');
+  const N = { a: 'Ann Lee', b: 'Bea Roy' };
+  const holds = (n) => Array.from({ length: n }, (_, i) => ({ s: 0, w: i % 2 === 0 ? 'a' : 'b' }));
+  // Level at 2-2 between even players, a live price on the board: nothing is close.
+  const even = liveRead({ sets: [[2, 2]], games: holds(4), serve: { pA: 0.63, pB: 0.63 }, market: 0.5, names: N });
+  const lines = liveWaiting(even, { quotes: { a: [{ bookId: 'fanduel', american: -110 }], b: [{ bookId: 'fanduel', american: -110 }] }, names: N, gamesSeen: 4, sets: [[2, 2]] });
+  assert.ok(lines.some((l) => /^Moneyline: .* is 5\d% to win\. A play needs 60% or more\.$/.test(l)), lines.join(' | '));
+  assert.ok(lines.some((l) => /^Set 1: .* is 5\d% to win it\. A set play needs 66% to 80%\.$/.test(l)), lines.join(' | '));
+  // The games in the set are either a play here or explained: never neither.
+  const madeEven = livePlays(even, { names: N, gamesSeen: 4, sets: [[2, 2]] }).some((p) => p.market === 'live_set_total');
+  assert.equal(lines.some((l) => /^Games in the set: /.test(l)), !madeEven);
+  // No live price: the moneyline line says so.
+  const bare = liveRead({ sets: [[2, 2]], games: holds(4), serve: { pA: 0.63, pB: 0.63 }, market: null, names: N });
+  assert.ok(liveWaiting(bare, { names: N, gamesSeen: 4 }).some((l) => /no book has a live price on this match/.test(l)));
+  // Too few games, and a tiebreak: one line each.
+  assert.deepEqual(liveWaiting(even, { names: N, gamesSeen: 2 }), ['A play needs 4 games on the board to read the serving; 2 so far.']);
+  assert.match(liveWaiting(liveRead({ sets: [[6, 6]], games: [], serve: { pA: 0.63, pB: 0.63 }, market: 0.5, names: N }), { names: N, gamesSeen: 12 })[0], /tiebreak/);
+  // A play that is made has no line: at 3-1 up a break the set play posts, so only the others are explained.
+  const up = liveRead({ sets: [[3, 1]], games: ['a', 'b', 'a', 'a'].map((w) => ({ s: 0, w })), serve: { pA: 0.66, pB: 0.62 }, market: 0.6, names: N });
+  const made = livePlays(up, { names: N, gamesSeen: 4, sets: [[3, 1]] }).map((p) => p.market);
+  const rest = liveWaiting(up, { names: N, gamesSeen: 4, sets: [[3, 1]] });
+  for (const m of made) assert.ok(!rest.some((l) => (m === 'live_set' ? /^Set \d/ : m === 'live_ml' ? /^Moneyline/ : /^Games in the set/).test(l)), `${m} was made: ${rest.join(' | ')}`);
+  // The tick stores the lines on the match's read; a match with no price and no serve numbers says that instead.
+  const T0 = Date.parse('2026-11-12T18:00:00Z');
+  const run = async (reads, board) => {
+    const m = new Map(); const env = { POTD_KV: { get: async (k) => m.get(k) ?? null, put: async (k, v) => { m.set(k, v); } } };
+    m.set(tennisPicksKey('2026-11-12'), JSON.stringify({ plays: [], reads }));
+    await runTennisLiveTick(env, {}, T0, { deps: { scoreboard: async () => ({ at: 0, matches: [match([[2, 2]])] }), sportKeys: async () => ({ atp: [{ key: 'k' }], wta: [] }), liveBoard: async () => board, cachedBoard: async () => [] } });
+    return JSON.parse(m.get(TENNIS_LIVE_READS_KEY)).matches[0].waiting;
+  };
+  assert.match((await run({}, []))[0], /No book prices this match and neither player has serve numbers on file/);
+  const priced = await run({ 'atp:77': { serve: { pA: 0.63, pB: 0.63 }, bestOf: 3 } }, feed(-110, -110));
+  assert.ok(priced.length >= 1 && priced.every((l) => typeof l === 'string'), JSON.stringify(priced));
+});

@@ -15,7 +15,7 @@
 
 export const RESULT_SIDES = [
   { key: 'pre', label: 'Pregame', long: "Pixel's Picks", note: 'Everything posted before the game: the league tickets, the UFC picks and the tennis plays.' },
-  { key: 'live', label: 'Live', long: 'Live plays', note: 'Everything posted while the game was being played: the live slips and the live tennis plays.' },
+  { key: 'live', label: 'Live', long: 'Live plays', note: 'Everything posted while the game was being played: the live slips and the live tennis plays. A tennis play marked "or better" had no book price when it posted: it is graded at the price it said to take, which your book may not have had.' },
 ];
 export const RESULT_SPORTS = [
   { key: 'nba', label: 'NBA' }, { key: 'nfl', label: 'NFL' }, { key: 'nhl', label: 'NHL' },

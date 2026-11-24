@@ -466,3 +466,46 @@ export function livePlays(read, { quotes = { a: [], b: [] }, names = { a: 'A', b
   }
   return out;
 }
+
+/**
+ * Why a match in play has no play, and what one would take (2026-11-24,
+ * the owner: "when I look for live tennis plays, they say it's not in
+ * range and nothing to play ... I've not seen one"). One short line a
+ * kind of play, each with the number the read has now beside the number
+ * a play needs, so "nothing clears the bar" is never the whole answer.
+ * The same inputs as livePlays; a line only for a play livePlays did not
+ * make.
+ */
+export function liveWaiting(read, { quotes = { a: [], b: [] }, names = { a: 'A', b: 'B' }, gamesSeen = 0, sets = null } = {}) {
+  const pct = (x) => `${Math.round(x * 100)}%`;
+  const { state } = read;
+  if (state.tiebreak) return ['A tiebreak is close to a coin flip from here: no play is made during one.'];
+  if (gamesSeen < LIVE_MIN_GAMES) return [`A play needs ${LIVE_MIN_GAMES} games on the board to read the serving; ${gamesSeen} so far.`];
+  const made = new Set(livePlays(read, { quotes, names, gamesSeen, sets }).map((p) => p.market));
+  const out = [];
+  if (!made.has('live_ml')) {
+    const side = read.prob >= 0.5 ? 'a' : 'b'; const prob = side === 'a' ? read.prob : 1 - read.prob;
+    const market = read.market == null ? null : side === 'a' ? read.market : 1 - read.market;
+    const priced = (quotes[side] ?? []).some((q) => Number.isFinite(q.american) && q.american >= LIVE_ML_PRICE[0] && q.american <= LIVE_ML_PRICE[1]);
+    if (market == null) out.push('Moneyline: no book has a live price on this match, so there is nothing to beat.');
+    else if (read.apart) out.push(`Moneyline: the read and the live price are more than ${Math.round(LIVE_MAX_GAP * 100)} points apart, which usually means a stale price or something the score does not show. No play.`);
+    else if (prob < LIVE_ML_PROB) out.push(`Moneyline: ${names[side]} is ${pct(prob)} to win. A play needs ${pct(LIVE_ML_PROB)} or more.`);
+    else if (prob - market < LIVE_ML_EDGE) out.push(`Moneyline: the read gives ${names[side]} ${pct(prob)} and the live price ${pct(market)}. A play needs the read ${Math.round(LIVE_ML_EDGE * 100)} points over the price; it is ${Math.max(0, Math.round((prob - market) * 100))}.`);
+    else if (!priced) out.push(`Moneyline: ${names[side]} is ${pct(prob)} against a price of ${pct(market)}, but no book has it between ${LIVE_ML_PRICE[0]} and +${LIVE_ML_PRICE[1]}.`);
+  }
+  if (state.inSet && !made.has('live_set')) {
+    if (state.gA + state.gB < 2) out.push(`Set ${state.setNumber}: too early, a set play waits for two games.`);
+    else {
+      const side = read.model.set >= 0.5 ? 'a' : 'b'; const p = side === 'a' ? read.model.set : 1 - read.model.set;
+      out.push(p < LIVE_SET_PROB[0]
+        ? `Set ${state.setNumber}: ${names[side]} is ${pct(p)} to win it. A set play needs ${pct(LIVE_SET_PROB[0])} to ${pct(LIVE_SET_PROB[1])}.`
+        : `Set ${state.setNumber}: ${names[side]} is ${pct(p)} to win it, past the ${pct(LIVE_SET_PROB[1])} where the price stops paying for the misses.`);
+    }
+  }
+  if (state.inSet && read.model.setGames && !made.has('live_set_total') && state.gA + state.gB >= 2) {
+    out.push(!(read.serve?.first && read.serve?.sure)
+      ? 'Games in the set: the serve order is not certain from the games seen yet, so the holds cannot be read.'
+      : `Games in the set: no line reads between ${pct(LIVE_SET_TOTAL_PROB[0])} and ${pct(LIVE_SET_TOTAL_PROB[1])} either way (about ${read.model.setGames.mean.toFixed(1)} games expected).`);
+  }
+  return out;
+}
