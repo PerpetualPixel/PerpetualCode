@@ -35,11 +35,19 @@
  * record: the moneyline on a player with a pre-match moneyline (straight
  * or as a parlay leg), a set on a player with that set's winner, the
  * set's games where that set's games are already played.
+ *
+ * One call a match (2026-11-24: "one play per match minimum ... If it
+ * is [volatile or poorly priced], state that. Use less words"): when no
+ * tracked play is open on a match, liveCall gives its card one line. A
+ * lean among them is kept beside the plays (`lean: true`), one open at a
+ * time a match, with the price to take it at; it is graded like a play so
+ * a review can ask how the leans did, and it is left out of every record
+ * and of the Results tab. A watch or a pass rides on the read as `call`.
  */
 import { etParts } from './potd.js';
 import { loadTennisScoreboard } from './tennis-live.js';
 import { tennisPicksKey, tennisSportKeys, feedEventFor, quotesOf, marketWinShare, liveTournamentBoard, cachedTournamentBoard, liveSetMarket, bookPrices } from './tennis-picks.js';
-import { advanceTimeline, liveRead, livePlays, liveWaiting, serveFromMarket, scoreState, LIVE_SET_PRICE } from './tennis-live-model.js';
+import { advanceTimeline, liveRead, livePlays, liveWaiting, liveCall, serveFromMarket, scoreState, LIVE_SET_PRICE, LIVE_LEAN_UNITS } from './tennis-live-model.js';
 import { TOUR_AVG } from './tennis-model.js';
 import { setDone } from './tennis-card-parse.js';
 
@@ -245,6 +253,25 @@ export async function runTennisLiveTick(env, ctx, now = Date.now(), { deps = {},
         records[today].plays.push({ id: playId, matchId: id, tour: m.tour, event: m.eventName, round: m.round, a: m.a.name, b: m.b.name, ...shown, ...(note ? { reason: note } : {}), score: scoreLine(m.sets), why: note ? [...read.why, note] : read.why, postedAt: now, status: 'pending', result: null, profit: null });
         posted++; dirty.add(today);
       }
+      // The match's one line when no play or lean is open on it (liveCall): a lean is kept, a watch or a pass only shown.
+      const mine = () => [...records[today].plays, ...records[yesterday].plays].filter((p) => p.matchId === id);
+      let call = null;
+      if (!mine().some((p) => p.status === 'pending')) {
+        call = liveCall(read, { quotes: odds?.quotes ?? { a: [], b: [] }, names, gamesSeen: timeline.games.length, thin });
+        if (call.kind === 'lean') {
+          const leanId = `${id}:lean:${call.market}:${call.set ?? 0}`;
+          const dup = alreadyPlayed(call, id, prePlays);
+          if (dup) call = { kind: 'pass', text: `On from before the match: ${dup.selection ?? 'the same bet'}.` };
+          // One lean a set (and one on the match): a lean that has settled is not given again.
+          else if (postedIds.has(leanId)) call = { kind: 'pass', text: `No new call: the set ${call.set ?? ''} lean has settled.`.replace('set  lean', 'match lean') };
+          else {
+            const { kind, basis, ...shown } = call;
+            postedIds.add(leanId);
+            records[today].plays.push({ id: leanId, matchId: id, tour: m.tour, event: m.eventName, round: m.round, a: m.a.name, b: m.b.name, ...shown, lean: true, basis, units: LIVE_LEAN_UNITS, score: scoreLine(m.sets), why: read.why, postedAt: now, status: 'pending', result: null, profit: null });
+            posted++; dirty.add(today); call = null;
+          }
+        }
+      }
       state.matches[id] = { ...timeline, serve, firstAt: prev.firstAt ?? now, lastAt: now };
       const best = (side) => [...(odds?.quotes?.[side] ?? [])].sort((x, y) => y.american - x.american)[0] ?? null;
       reads.push({
@@ -253,7 +280,7 @@ export async function runTennisLiveTick(env, ctx, now = Date.now(), { deps = {},
         market: read.market != null ? Math.round(read.market * 1000) / 1000 : null, fair: read.fair, state: read.state, momentum: read.momentum,
         serve: { first: read.serve.first, sure: read.serve.sure, aServesNext: read.serve.aServesNext, a: read.serve.a, b: read.serve.b, breaks: read.serve.breaks, source: serve?.source ?? 'the tour average: no pre-match read and no live price' },
         why: read.why, quotes: { a: best('a'), b: best('b') }, books: { a: bookPrices(odds?.quotes?.a), b: bookPrices(odds?.quotes?.b) }, games: timeline.games.length,
-        plays: [...records[today].plays, ...records[yesterday].plays].filter((p) => p.matchId === id), already: [...new Set(already)], waiting,
+        plays: mine(), call, already: [...new Set(already)], waiting,
       });
     }
   }
@@ -291,6 +318,7 @@ export async function getTennisLivePlays(env, now = Date.now(), { days = 30 } = 
   return {
     at: reads.at, tickAt: tick.at ?? null, nextTickAt: tick.nextAt ?? null, fresh: reads.at != null && now - reads.at < 5 * 60e3, matches: reads.at != null && now - reads.at < 10 * 60e3 ? reads.matches : [],
     today: history.find((r) => r.date === today)?.plays ?? [], history,
-    record: { ml: liveRecordOf(all.filter((p) => p.market === 'live_ml')), sets: liveRecordOf(all.filter((p) => p.market === 'live_set')), setGames: liveRecordOf(all.filter((p) => p.market === 'live_set_total')) },
+    // The leans are graded and kept apart: never in the tracked record.
+    record: { ml: liveRecordOf(all.filter((p) => !p.lean && p.market === 'live_ml')), sets: liveRecordOf(all.filter((p) => !p.lean && p.market === 'live_set')), setGames: liveRecordOf(all.filter((p) => !p.lean && p.market === 'live_set_total')), leans: liveRecordOf(all.filter((p) => p.lean)) },
   };
 }

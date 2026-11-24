@@ -220,7 +220,9 @@ test('a match with no pre-match read takes its serve numbers from the live price
   // No price at all: a read from the score, no serve source, no plays.
   const m2 = new Map(); const env2 = { POTD_KV: { get: async (k) => m2.get(k) ?? null, put: async (k, v) => { m2.set(k, v); } } };
   const out = await runTennisLiveTick(env2, {}, T0, { deps: { ...base, scoreboard: async () => ({ at: 0, matches: [match([[5, 1]])] }), liveBoard: async () => [] } });
-  assert.equal(out.posted, 0);
+  // No tracked play; the one thing kept is the match's lean, from the score alone, marked as one.
+  const kept = JSON.parse(m2.get(tennisLivePlaysKey('2026-11-12')) ?? '{"plays":[]}').plays;
+  assert.equal(out.posted, kept.length); assert.ok(kept.every((p) => p.lean === true && p.basis === 'score'), JSON.stringify(kept.map((p) => p.id)));
   assert.match(JSON.parse(m2.get(TENNIS_LIVE_READS_KEY)).matches[0].serve.source, /tour average/);
 });
 
@@ -441,4 +443,84 @@ test('liveWaiting says what each kind of play would take, with the number the re
   assert.match((await run({}, []))[0], /No book prices this match and neither player has serve numbers on file/);
   const priced = await run({ 'atp:77': { serve: { pA: 0.63, pB: 0.63 }, bestOf: 3 } }, feed(-110, -110));
   assert.ok(priced.length >= 1 && priced.every((l) => typeof l === 'string'), JSON.stringify(priced));
+});
+
+test('liveCall gives a match one line: a lean with the price to take, what to watch for when it is early, or why there is no call', async () => {
+  const { liveCall, LIVE_LEAN_PROB, LIVE_LEAN_MARGIN } = await import('../worker/src/tennis-live-model.js');
+  const N = { a: 'Luna Cinalli', b: 'Guiomar Reales' };
+  const g = (seq) => [...seq].map((w) => ({ s: 0, w }));
+  const implied = (am) => (am < 0 ? -am / (-am + 100) : 100 / (am + 100));
+  const tour = { pA: 0.56, pB: 0.56 };
+  // One game in, no serve numbers, no price (the owner's screenshot): too early, and what to watch for.
+  const early = liveCall(liveRead({ sets: [[1, 0]], games: g('a'), serve: tour, names: N }), { names: N, gamesSeen: 1, thin: true });
+  assert.deepEqual([early.kind, early.text], ['watch', 'Too early: 1 of 6 games in.']);
+  assert.match(early.watch, /Watch for the first break of serve/);
+  // A break up early: the note names who to watch.
+  const brk = liveCall(liveRead({ sets: [[2, 0]], games: g('aa'), serve: tour, names: N }), { names: N, gamesSeen: 2, thin: true });
+  assert.match(brk.watch, /Luna Cinalli has the break\. If it holds, Luna Cinalli is the set 1 lean\./);
+  // Six games in and a break up at 4-2: a lean on the set, with the price to take it at, from the score alone.
+  const up = liveRead({ sets: [[4, 2]], games: g('abaaab'), serve: tour, names: N });
+  const lean = liveCall(up, { names: N, gamesSeen: 6, thin: true });
+  // (The set itself is nearly won at 4-2 between weak servers, so the call is the match.)
+  assert.deepEqual([lean.kind, lean.side, lean.basis], ['lean', 'a', 'score']);
+  assert.match(lean.selection, /^Luna Cinalli to win (set 1|the match)$/);
+  assert.ok(lean.prob >= LIVE_LEAN_PROB[0] && lean.prob <= LIVE_LEAN_PROB[1], String(lean.prob));
+  near(implied(lean.playable), lean.prob - LIVE_LEAN_MARGIN, 0.004);
+  // With serve numbers the call comes after four games, on the set in play, and says it stands on them.
+  const served = liveCall(liveRead({ sets: [[3, 2]], games: g('abaab'), serve: { pA: 0.64, pB: 0.62 }, names: N }), { names: N, gamesSeen: 5 });
+  assert.deepEqual([served.kind, served.market, served.set, served.selection, served.basis], ['lean', 'live_set', 1, 'Luna Cinalli to win set 1', 'serve']);
+  // Level and close: no call, in a few words, and what to watch.
+  const close = liveCall(liveRead({ sets: [[3, 3]], games: g('ababab'), serve: tour, names: N }), { names: N, gamesSeen: 6, thin: true });
+  assert.equal(close.kind, 'pass'); assert.match(close.text, /^No call: too close, set 1 is \d\d-\d\d\.$/); assert.match(close.watch, /next break/);
+  // Trading breaks: volatile.
+  const wild = liveCall(liveRead({ sets: [[3, 4]], games: g('aaabbbb'), serve: tour, names: N }), { names: N, gamesSeen: 7, thin: true });
+  assert.deepEqual([wild.kind, /volatile, \d breaks of serve this set/.test(wild.text)], ['pass', true]);
+  // All but won: the price is too short.
+  const done = liveCall(liveRead({ sets: [[6, 1], [5, 0]], games: [...g('aaaaaba'), ...[...'aaaaa'].map((w) => ({ s: 1, w }))], serve: tour, names: N }), { names: N, gamesSeen: 12, thin: true });
+  assert.deepEqual([done.kind, /is \d+% already, the price is too short/.test(done.text)], ['pass', true]);
+  // A tiebreak, and a price that disagrees with the score.
+  assert.equal(liveCall(liveRead({ sets: [[6, 6]], games: [], serve: tour, names: N }), { names: N, gamesSeen: 12 }).text, 'No call: tiebreak.');
+  assert.match(liveCall(liveRead({ sets: [[4, 2]], games: g('abaaab'), serve: tour, market: 0.25, names: N }), { names: N, gamesSeen: 6 }).text, /the live price and the score disagree/);
+  // A set up and level in the second: the set is too close, so the call is the match. A book price worse than the read needs is a pass that says so; a fair one rides on the lean.
+  const second = liveRead({ sets: [[6, 4], [1, 1]], games: [...g('abababaaba'), { s: 1, w: 'a' }, { s: 1, w: 'b' }], serve: { pA: 0.6, pB: 0.6 }, market: 0.66, names: N });
+  const short = liveCall(second, { names: N, gamesSeen: 12, quotes: { a: [{ bookId: 'fanduel', book: 'FanDuel', american: -900 }], b: [] } });
+  assert.equal(short.kind, 'pass'); assert.match(short.text, /^No call: poorly priced\. Luna Cinalli is -900; worth it at -\d+ or better\.$/);
+  const fair = liveCall(second, { names: N, gamesSeen: 12, quotes: { a: [{ bookId: 'fanduel', book: 'FanDuel', american: -150 }], b: [] } });
+  assert.deepEqual([fair.kind, fair.market, fair.selection, fair.american, fair.bookId], ['lean', 'live_ml', 'Luna Cinalli to win the match', -150, 'fanduel']);
+  assert.ok(fair.playable < -150, 'and the price it is still good to');
+});
+
+test('the tick keeps one lean a match, graded and never in the record; with none it puts a watch or a pass on the read', async () => {
+  const T0 = Date.parse('2026-11-12T18:00:00Z');
+  const m = new Map(); const env = { POTD_KV: { get: async (k) => m.get(k) ?? null, put: async (k, v) => { m.set(k, v); } } };
+  let sets = [[1, 0]]; let extra = {};
+  const wta = (s) => ({ ...match(s, extra), tour: 'wta', id: '5', a: { name: 'Luna Cinalli' }, b: { name: 'Guiomar Reales' }, eventName: 'IEB+ Argentina Open' });
+  const deps = { scoreboard: async () => ({ at: 0, matches: [wta(sets)] }), sportKeys: async () => ({ atp: [], wta: [] }), liveBoard: async () => [], cachedBoard: async () => [] };
+  let now = T0;
+  const tick = async (s) => { sets = s; const out = await runTennisLiveTick(env, {}, now, { deps }); now += 60e3; return out; };
+  const read = () => JSON.parse(m.get(TENNIS_LIVE_READS_KEY)).matches[0];
+  const day = () => JSON.parse(m.get(tennisLivePlaysKey('2026-11-12')) ?? '{"plays":[]}').plays;
+  // No price, no serve numbers, one game in: a watch note, nothing kept.
+  await tick([[1, 0]]);
+  assert.deepEqual([read().call.kind, read().call.text, day().length], ['watch', 'Too early: 1 of 6 games in.', 0]);
+  for (const s of [[[1, 1]], [[2, 1]], [[3, 1]], [[3, 2]]]) await tick(s);
+  assert.equal(day().length, 0, 'still inside the first six games');
+  // 4-2 with the break: the lean is kept, with its price, and the card leads with it. (The set is past a reasonable price by then, so the call is the match.)
+  await tick([[4, 2]]);
+  const lean = day()[0];
+  assert.deepEqual([day().length, lean.id, lean.lean, lean.basis, lean.selection, lean.units, lean.status, lean.score], [1, 'wta:5:lean:live_ml:0', true, 'score', 'Luna Cinalli to win the match', 0.5, 'pending', '4-2']);
+  assert.ok(lean.playable < 0 && lean.playable >= -290 && lean.american == null, String(lean.playable));
+  assert.equal(read().call, null, 'an open lean is the call');
+  assert.equal(read().plays.length, 1);
+  // It stands while it is open: no second lean a minute later, or a set later.
+  await tick([[5, 2]]); await tick([[6, 2], [1, 0]]); assert.equal(day().length, 1);
+  // The match ends: graded like a play, kept out of the tracked record.
+  extra = { state: 'post', completed: true, winner: 'a' };
+  await tick([[6, 2], [6, 3]]);
+  assert.deepEqual([day()[0].status, day()[0].result], ['graded', 'win']);
+  const view = await getTennisLivePlays(env, now);
+  assert.deepEqual([view.record.sets.wins, view.record.ml.wins, view.record.leans.wins, view.record.leans.staked], [0, 0, 1, 0.5]);
+  // And out of the Results tab.
+  const { resultEntries } = await import('../docs/results.js');
+  assert.deepEqual(resultEntries({ tennisLive: view }), []);
 });

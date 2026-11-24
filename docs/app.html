@@ -21,7 +21,7 @@
      only page that reads the feed; the other pages' connect-src stays the
      worker alone. -->
 <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src 'self' https://fonts.gstatic.com; img-src 'self' data: https:; connect-src 'self' https://pixel-pick-odds.mgbouldering.workers.dev https://perpetualpixel.github.io; object-src 'none'; base-uri 'self'; form-action 'self'">
-<script src="frame-guard.js?v=1.362"></script>
+<script src="frame-guard.js?v=1.363"></script>
 <title>Perpetual Picks - App</title>
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <meta name="theme-color" content="#05050A">
@@ -37,9 +37,9 @@
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Syne:wght@600;700;800&family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
-<link rel="stylesheet" href="styles.css?v=1.362">
+<link rel="stylesheet" href="styles.css?v=1.363">
 <!-- Before first paint: a desktop reader who chose "Fit screen" gets the wide shell without a flash of the narrow one. -->
-<script src="wide.js?v=1.362"></script>
+<script src="wide.js?v=1.363"></script>
 </head>
 <body>
 
@@ -676,7 +676,7 @@
       <summary>Live</summary>
       <p>The games and matches in play or about to start. Tap a game to open it: the slips come first, one for each of your books that prices one, with each leg showing what the player has now, his pace, and where he projects to finish. The game lines sit under the slips and the box score is folded below them.</p>
       <p>Slips build from the first minutes of a game and are rebuilt as it moves. In a blowout, or very late in a game, there may be none, and the card says why. A game leaves the list when it ends.</p>
-      <p>Tennis sits on the same tab. A match in play shows each player's chance of winning from the score and how they are serving today, the holds and the last few games, and any live play: the moneyline, a player to win the set, or an over or under on the games in the set. Each live play says the price to take it at or better.</p>
+      <p>Tennis sits on the same tab. A match in play shows each player's chance of winning and one call. <strong>Play</strong> is a tracked play with its stake. <strong>Lean</strong> is the best call on the match when nothing clears the bar for a tracked play; it is graded but not counted in the record. <strong>Watch</strong> means it is too early, with what to look for. <strong>No call</strong> gives the reason in a few words, such as too close, volatile or poorly priced. Each play and lean says the price to take it at or better. Tap More for the serving, the games expected in the set and the reasons.</p>
     </details>
 
     <details>
@@ -1170,6 +1170,6 @@
   </div>
 </aside>
 
-<script type="module" src="app.js?v=1.362"></script>
+<script type="module" src="app.js?v=1.363"></script>
 </body>
 </html>

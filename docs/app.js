@@ -12090,11 +12090,32 @@ const tennisStanding = (st) => { const [word, cls] = TENNIS_STANDING[st?.state] 
 const liveSetScore = (m) => (m.sets?.length ? m.sets.map(([a, b]) => `${a}-${b}`).join(' ') : '');
 /** A live tennis play (worker/src/tennis-live-plays.js): the moneyline with its book's price and link, or a set with the price to take it at or better; the stake by confidence; where it stands. */
 function renderTennisLivePlay(p, { withMatch = false } = {}) {
-  const badge = p.status === 'graded' ? `<span class="pick-result ${p.result === 'win' ? 'is-win' : 'is-loss'}" title="${esc(p.actual ?? '')}">${p.result === 'win' ? 'Won' : 'Lost'}${Number.isFinite(p.profit) ? ` ${esc(signedUnits(p.profit))}u` : ''}</span>` : p.status === 'void' ? `<span class="pick-result" title="${esc(p.actual ?? '')}">Void</span>` : '<span class="pick-result is-live">Live</span>';
-  const price = Number.isFinite(p.american) ? pricePill(p.bookId, p.book, p.american, p.link) : `<span class="trend-price live-tennis-fair" title="${p.market === 'live_set_total' ? 'No book in the feed prices this set\'s games in play' : 'No book in the feed prices a set in play'}: this is the price to take it at or better">${esc(formatAmerican(p.playable))} or better</span>`;
-  return `<div class="live-tennis-play is-liveplay"><span><strong>${esc(p.selection)}</strong> <small>${esc(pct(p.prob))}${Number.isFinite(p.edge) ? ` · ${esc(String(Math.round(p.edge * 100)))} pts over the price` : ''} · ${postedTag(p.postedAt)} at ${esc(p.score ?? '')}${p.nowScore && p.nowScore !== p.score ? ` <span class="live-move is-up" title="The score when the play was posted, and now">→ <b>${esc(p.nowScore)}</b></span>` : ''}${withMatch ? ` · ${esc(p.a)} vs ${esc(p.b)}` : ''}</small>${p.status === 'pending' && Number.isFinite(p.american) && Number.isFinite(p.playable) ? `<small class="live-tennis-take" title="A live price moves: this is the shortest one that still leaves the read its margin">Take it at <b>${esc(formatAmerican(p.playable))}</b> or better</small>` : ''}${p.reason ? `<small class="live-tennis-note">${esc(p.reason)}</small>` : ''}</span><span class="pick-board-units" title="${p.market === 'live_set_total' ? 'One unit while this play has no record of its own' : 'Stake sized by confidence'}">${esc(unitsLabel(p.units))}</span>${price}${badge}</div>`;
+  // A lean is shown and graded, never counted: its result carries no units.
+  const badge = p.status === 'graded' ? `<span class="pick-result ${p.result === 'win' ? 'is-win' : 'is-loss'}" title="${esc(p.actual ?? '')}">${p.result === 'win' ? 'Won' : 'Lost'}${!p.lean && Number.isFinite(p.profit) ? ` ${esc(signedUnits(p.profit))}u` : ''}</span>` : p.status === 'void' ? `<span class="pick-result" title="${esc(p.actual ?? '')}">Void</span>` : '<span class="pick-result is-live">Live</span>';
+  const price = Number.isFinite(p.american) ? pricePill(p.bookId, p.book, p.american, p.link) : `<span class="trend-price live-tennis-fair" title="No book in the feed prices this in play: this is the price to take it at or better">${esc(formatAmerican(p.playable))} or better</span>`;
+  const stake = p.lean ? '<span class="pick-board-units is-lean" title="A lean: the best call on the match when nothing clears the bar for a tracked play. Graded, not counted in the record.">Lean</span>' : `<span class="pick-board-units" title="${p.market === 'live_set_total' ? 'One unit while this play has no record of its own' : 'Stake sized by confidence'}">${esc(unitsLabel(p.units))}</span>`;
+  return `<div class="live-tennis-play is-liveplay ${p.lean ? 'is-lean' : ''}"><span><strong>${esc(p.selection)}</strong> <small>${esc(pct(p.prob))} · ${postedTag(p.postedAt)} at ${esc(p.score ?? '')}${p.nowScore && p.nowScore !== p.score ? ` <span class="live-move is-up" title="The score when it was posted, and now">→ <b>${esc(p.nowScore)}</b></span>` : ''}${withMatch ? ` · ${esc(p.a)} vs ${esc(p.b)}` : ''}</small></span>${stake}${price}${badge}</div>`;
 }
-/** The live read of a match in play: the chance of the match and of the set, the holds and the last games, the plays, and why. */
+/**
+ * A match's one line (2026-11-24: "Lots of words but not 'Take Luna to win a set +160' ... Use less words and allow the user to tap on
+ * more info"): the open play or lean as "Take ...", with its price; else the worker's watch or pass, a few words. Everything else is under More.
+ */
+function renderTennisLiveCall(r) {
+  const nowScore = (r.sets ?? []).map(([x, y]) => `${x}-${y}`).join(' ');
+  const open = (r.plays ?? []).filter((p) => p.status === 'pending').sort((x, y) => (x.lean ? 1 : 0) - (y.lean ? 1 : 0));
+  if (open.length) return open.map((p) => {
+    const price = Number.isFinite(p.american) ? `${pricePill(p.bookId, p.book, p.american, p.link)}${Number.isFinite(p.playable) && p.playable < p.american ? `<small class="live-call-floor">good to ${esc(formatAmerican(p.playable))}</small>` : ''}` : `<span class="trend-price live-tennis-fair" title="No book in the feed prices this in play: take it at this price or better">${esc(formatAmerican(p.playable))} or better</span>`;
+    return `<div class="live-call ${p.lean ? 'is-lean' : 'is-play'}">
+      <span class="live-call-tag" title="${p.lean ? 'A lean: the best call on this match. Graded, not counted in the record.' : 'A tracked play: counted in the record at this stake.'}">${p.lean ? 'Lean' : `Play · ${esc(unitsLabel(p.units))}`}</span>
+      <strong class="live-call-text">Take ${esc(p.selection)}</strong>
+      <span class="live-call-price">${price}</span>
+      <small class="live-call-sub">${esc(pct(p.prob))} · ${postedTag(p.postedAt)} at ${esc(p.score ?? '')}${nowScore && nowScore !== p.score ? `, now ${esc(nowScore)}` : ''}${p.basis === 'score' ? ' · from the score alone' : ''}</small>
+    </div>`;
+  }).join('');
+  const c = r.call ?? (r.already?.length ? { kind: 'pass', text: `On from before the match: ${r.already.join(', ')}.` } : { kind: 'pass', text: 'No call right now.' });
+  return `<div class="live-call is-${esc(c.kind)}"><span class="live-call-tag">${c.kind === 'watch' ? 'Watch' : 'No call'}</span><strong class="live-call-text">${esc(String(c.text ?? '').replace(/^No call: /, ''))}</strong>${c.watch ? `<small class="live-call-sub">${esc(c.watch)}</small>` : ''}</div>`;
+}
+/** The live read of a match in play: the chance bar and the match's one call; the serving, the set's games, what a tracked play needs and the reasons open on a tap. */
 function renderTennisLiveRead(r) {
   const a = Math.round(r.prob * 100);
   const setSide = r.model.set >= 0.5 ? 'a' : 'b';
@@ -12105,14 +12126,24 @@ function renderTennisLiveRead(r) {
   const sg = r.state?.inSet ? r.model?.setGames : null;
   const sgOpen = sg ? Object.keys(sg.over ?? {}).map(Number).sort((x, y) => x - y).filter((k) => sg.over[k] > 0.005 && sg.over[k] < 0.995) : [];
   const open = Boolean(liveState.open[`tl:${r.id}`]);
+  const settled = (r.plays ?? []).filter((p) => p.status !== 'pending');
+  const reasons = (r.plays ?? []).filter((p) => p.status === 'pending' && p.reason);
+  const more = open ? `<div class="live-tennis-more">
+      <small class="row-sub">To win the match${r.market != null ? ` · model ${esc(pct(r.model.match))}, live price ${esc(pct(r.market))}` : ' · from the score and the serving; no live price'}${r.state?.inSet ? ` · set ${r.state.setNumber}: ${esc(lastName(r[setSide]))} ${esc(pct(setProb))}` : ''}</small>
+      <small class="row-sub">${holds}${mo ? ` · ${mo}` : ''}</small>
+      ${sgOpen.length ? `<small class="row-sub">Set ${r.state.setNumber} games: about ${esc(String(sg.mean))} expected · ${sgOpen.map((k) => (k === 12.5 ? `a tiebreak ${esc(pct(sg.over[k]))}` : `past ${k}: ${esc(pct(sg.over[k]))}`)).join(' · ')}</small>` : ''}
+      ${reasons.map((p) => `<small class="row-sub">${esc(p.reason)}</small>`).join('')}
+      ${settled.length ? `<div class="live-tennis-settled"><span class="tennis-ways-h">Earlier on this match</span>${settled.map((p) => renderTennisLivePlay(p)).join('')}</div>` : ''}
+      ${r.waiting?.length ? `<span class="tennis-ways-h">What a tracked play needs</span><ul class="live-tennis-wait">${r.waiting.map((w) => `<li>${esc(w)}</li>`).join('')}</ul>` : ''}
+      <span class="tennis-ways-h">The read</span>
+      <ul class="tennis-why-list">${(r.why ?? []).map((w) => `<li>${esc(w)}</li>`).join('')}<li>Serve numbers from ${esc(r.serve?.source ?? 'the tour average')}. The scoreboard gives the score game by game and no serve statistics, so the holds and breaks are read from the order of the games.</li></ul>
+      ${tennisBookPrices(r.books?.a, `${r.a} to win, live`)}${tennisBookPrices(r.books?.b, `${r.b} to win, live`)}${(r.plays ?? []).map((p) => tennisBookPrices(p.quotes, `${p.selection}, when it posted`)).join('')}
+    </div>` : '';
   return `<div class="live-tennis-read">
     <div class="live-tennis-bar" role="img" aria-label="${esc(r.a)} ${a}% to win, ${esc(r.b)} ${100 - a}%"><span class="is-a" style="width:${a}%">${a >= 12 ? `${a}%` : ''}</span><span class="is-b">${100 - a >= 12 ? `${100 - a}%` : ''}</span></div>
-    <small class="row-sub">To win the match${r.market != null ? ` · model ${esc(pct(r.model.match))}, live price ${esc(pct(r.market))}` : ' · from the score and the serving; no live price'}${r.state?.inSet ? ` · set ${r.state.setNumber}: ${esc(lastName(r[setSide]))} ${esc(pct(setProb))}` : ''}</small>
-    <small class="row-sub">${holds}${mo ? ` · ${mo}` : ''}</small>
-    ${sgOpen.length ? `<small class="row-sub">Set ${r.state.setNumber} games: about ${esc(String(sg.mean))} expected at today's holds · ${sgOpen.map((k) => (k === 12.5 ? `a tiebreak ${esc(pct(sg.over[k]))}` : `past ${k}: ${esc(pct(sg.over[k]))}`)).join(' · ')}</small>` : ''}
-    ${(r.plays ?? []).map((p) => renderTennisLivePlay({ ...p, nowScore: (r.sets ?? []).map(([x, y]) => `${x}-${y}`).join(' ') })).join('') || `<div class="live-tennis-none"><small class="row-sub">${r.already?.length ? `No live play: ${esc(r.already.join(', '))} is already on the record from before the match, and the same bet is not posted twice.` : 'No live play right now. What one would take:'}</small>${r.waiting?.length ? `<ul class="live-tennis-wait">${r.waiting.map((w) => `<li>${esc(w)}</li>`).join('')}</ul>` : ''}</div>`}
-    <button type="button" class="parlay-btn sc-why" data-tennis-live-why="${esc(r.id)}">${open ? 'Hide the read' : 'The read'}</button>
-    ${open ? `<ul class="tennis-why-list">${(r.why ?? []).map((w) => `<li>${esc(w)}</li>`).join('')}<li>Serve numbers from ${esc(r.serve?.source ?? 'the tour average')}. The scoreboard gives the score game by game and no serve statistics, so the holds and breaks are read from the order of the games.</li></ul>${tennisBookPrices(r.books?.a, `${r.a} to win, live`)}${tennisBookPrices(r.books?.b, `${r.b} to win, live`)}${(r.plays ?? []).map((p) => tennisBookPrices(p.quotes, `${p.selection}, when it posted`)).join('')}` : ''}
+    ${renderTennisLiveCall(r)}
+    <button type="button" class="parlay-btn sc-why" data-tennis-live-why="${esc(r.id)}" aria-expanded="${open}">${open ? 'Less' : 'More'}</button>
+    ${more}
   </div>`;
 }
 const lastName = (name) => String(name ?? '').trim().split(/\s+/).at(-1) ?? '';
@@ -12138,9 +12169,10 @@ function renderTennisLiveLedger(tl, inPlayIds) {
   const today = [...(tl.today ?? [])].sort((x, y) => (x.status === 'pending' ? 0 : 1) - (y.status === 'pending' ? 0 : 1) || (y.postedAt ?? 0) - (x.postedAt ?? 0));
   const off = today.filter((p) => !inPlayIds.has(p.matchId));
   const when = (p) => `<small class="live-tennis-when">${esc(liveWhenFmt.format(new Date(p.postedAt)))}</small>`;
-  const todayHtml = off.length ? `<div class="live-tennis-today"><p class="row-sub"><strong>Today's live plays</strong> · ${today.length} posted${today.some((p) => p.status === 'pending') ? `, ${today.filter((p) => p.status === 'pending').length} still open` : ''}</p>${off.map((p) => `${when(p)}${renderTennisLivePlay(p, { withMatch: true })}`).join('')}</div>` : '';
+  const leanN = today.filter((p) => p.lean).length;
+  const todayHtml = off.length ? `<div class="live-tennis-today"><p class="row-sub"><strong>Today's live calls</strong> · ${today.length - leanN} play${today.length - leanN === 1 ? '' : 's'}${leanN ? `, ${leanN} lean${leanN === 1 ? '' : 's'}` : ''}${today.some((p) => p.status === 'pending') ? ` · ${today.filter((p) => p.status === 'pending').length} still open` : ''}</p>${off.map((p) => `${when(p)}${renderTennisLivePlay(p, { withMatch: true })}`).join('')}</div>` : '';
   // None today: the last ones posted, so it is plain when they come and what they look like.
-  const earlier = today.length ? [] : (tl.history ?? []).flatMap((d) => d.plays ?? []).sort((x, y) => (y.postedAt ?? 0) - (x.postedAt ?? 0)).slice(0, 3);
+  const earlier = today.length ? [] : (tl.history ?? []).flatMap((d) => d.plays ?? []).filter((p) => !p.lean).sort((x, y) => (y.postedAt ?? 0) - (x.postedAt ?? 0)).slice(0, 3);
   const earlierHtml = earlier.length ? `<details class="live-tennis-rest" ${liveState.open['tennis:lastplays'] !== false ? 'open' : ''} data-live-details="tennis:lastplays"><summary>No live play yet today · the last ${earlier.length === 1 ? 'one' : earlier.length} posted</summary>${earlier.map((p) => `${when(p)}${renderTennisLivePlay(p, { withMatch: true })}`).join('')}<p class="row-sub">A live play posts only while a match a sportsbook prices is being played, and stays open for about half an hour. The Results tab has every one.</p></details>` : '';
   if (!lines.length && !today.length && !earlier.length) return '<p class="row-sub live-tennis-ledger">Live plays post here while a match is in play: the moneyline when the read beats the live price, a set when one player is likely to take it, the games in a set when the holds say which way it runs. Stakes are sized by confidence. Tracked apart from the pre-match plays.</p>';
   return `<div class="live-tennis-ledger">${lines.length ? `<p class="row-sub"><strong>Live plays</strong> · ${lines.join(' · ')}</p>` : ''}${todayHtml}${earlierHtml}</div>`;
