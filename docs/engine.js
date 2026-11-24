@@ -151,7 +151,16 @@ export const SPORTSBOOKS = {
   // A pick'em app, not a sportsbook: the feed lists its lines under the
   // us_dfs region with the payout written as a price per leg.
   prizepicks: { name: 'PrizePicks', color: '#8c52ff', url: 'https://app.prizepicks.com/',         keys: ['prizepicks'] },
+  // Onyx (2026-11-24, the owner: "integrate it with links just like the other books ... Allowing quick imports for
+  // users to the app. Odds don't matter as much"). The odds feed does not carry it, so it has no prices and no slip
+  // links of its own: `noPrices` keeps it out of every "only lines these books price" filter (pricedBooks), and a
+  // user who picks it gets a button that copies the pick and opens Onyx (docs/book-links.js). The keys are there for
+  // the day a feed lists it.
+  onyx:       { name: 'Onyx',       color: '#f5c542', url: 'https://onyxodds.com/',               keys: ['onyx', 'onyxodds', 'onyx_odds'], noPrices: true },
 };
+
+/** The books of a list that have prices in the feed: a book kept for its link alone (Onyx) is never a price filter. */
+export const pricedBooks = (ids) => (ids ?? []).filter((id) => !SPORTSBOOKS[id]?.noPrices);
 
 /** Pre-selected on first run; the user can change this in the UI. */
 export const DEFAULT_BOOKS = [
