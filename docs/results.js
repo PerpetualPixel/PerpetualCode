@@ -78,6 +78,7 @@ export function resultEntries({ trendPicks = null, ufcPicks = null, tennisPicks 
       american: num(p.american), book: p.book ?? null, units: num(p.units) ?? 1, net: num(p.net), result: p.result, note: p.duplicateOf ? 'Posted twice: this copy does not count' : null });
   }
   for (const rec of tennisLive?.history ?? []) for (const p of rec.plays ?? []) {
+    if (p.lean) continue; // a lean is shown and graded, never counted
     const priced = num(p.american) != null;
     add({ id: `live:tennis:${p.id}`, side: 'live', sport: 'tennis', at: num(p.postedAt), date: rec.date,
       title: p.selection ?? 'Live play', sub: `${p.a ?? ''} vs ${p.b ?? ''}${p.score ? ` · posted at ${p.score}` : ''}`,

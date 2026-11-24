@@ -7956,3 +7956,19 @@ a.tennis-book:hover { background: rgba(255, 255, 255, 0.06); }
 @media (min-width: 1180px) { .res-grid { grid-template-columns: repeat(3, minmax(0, 1fr)); } }
 
 .live-tennis-rest > p.row-sub { font-size: 0.78rem; line-height: 1.45; margin: 8px 0 0; }
+
+/* A live tennis match's one call (docs/app.js renderTennisLiveCall): a tag, the call in a line, its price; the rest under More. */
+.live-call { display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: center; gap: 4px 10px; margin: 10px 0 8px; padding: 10px 12px; border-radius: 12px; border: 1px solid var(--line); background: var(--surface-2); }
+.live-call.is-play { border-color: var(--success); }
+.live-call.is-lean { border-color: var(--accent); }
+.live-call-tag { grid-column: 1 / -1; justify-self: start; font-size: 0.66rem; font-weight: 800; letter-spacing: 0.08em; text-transform: uppercase; color: var(--muted); }
+.live-call.is-play .live-call-tag { color: var(--success); }
+.live-call.is-lean .live-call-tag { color: #b79cff; }
+.live-call-text { font-size: 1rem; line-height: 1.3; min-width: 0; overflow-wrap: anywhere; }
+.live-call.is-watch .live-call-text, .live-call.is-pass .live-call-text { grid-column: 1 / -1; font-weight: 700; }
+.live-call-price { display: inline-flex; flex-direction: column; align-items: flex-end; gap: 2px; }
+.live-call-floor { color: var(--muted); font-size: 0.68rem; white-space: nowrap; }
+.live-call-sub { grid-column: 1 / -1; color: var(--muted); font-size: 0.76rem; line-height: 1.4; }
+.live-tennis-more { display: grid; gap: 6px; margin-top: 8px; }
+.live-tennis-settled { display: grid; gap: 4px; }
+.pick-board-units.is-lean { color: #b79cff; }

@@ -509,3 +509,65 @@ export function liveWaiting(read, { quotes = { a: [], b: [] }, names = { a: 'A',
   }
   return out;
 }
+
+/**
+ * One call a match (2026-11-24, the owner, of a card that explained at
+ * length why it had nothing: "Lots of words but not 'Take Luna to win a
+ * set +160' ... I'd like to see it have one play per match minimum
+ * assuming the match can be bet on within reason (not volatile) or poorly
+ * priced. If it is, state that. Use less words").
+ *
+ * When no tracked play is open on a match, this is what its card leads
+ * with, in a line:
+ *   lean   the best call on the match with the price to take it at or
+ *          better: the set in play first, else the match. Shown, graded,
+ *          and never counted in the record (the tracked plays keep their
+ *          own bars above).
+ *   watch  too early to call: what to look for.
+ *   pass   no call, and why in a few words: a tiebreak, too close, a set
+ *          trading breaks (volatile), already won in all but name (the
+ *          price is too short), a book price worse than the read needs
+ *          (poorly priced), or a price that disagrees with the score.
+ * A match with no serve numbers and no book price is read from the score
+ * and the holds alone, so its lean waits for a full six games and says
+ * what it stands on.
+ */
+/** A lean is called between these: likelier than a coin flip by enough to matter, and not so likely that the price to take it at is past about -285 ("within reason"). */
+export const LIVE_LEAN_PROB = [0.58, 0.78];
+export const LIVE_LEAN_MARGIN = 0.04;
+export const LIVE_LEAN_GAMES = { full: LIVE_MIN_GAMES, thin: 6 };
+/** Breaks of serve in the set in play from which it is called volatile, when both players have been broken. */
+export const LIVE_VOLATILE_BREAKS = 3;
+/** A lean's stake when it is graded: half a unit, the least the site plays. It is never added to the record. */
+export const LIVE_LEAN_UNITS = 0.5;
+
+export function liveCall(read, { quotes = { a: [], b: [] }, names = { a: 'A', b: 'B' }, gamesSeen = 0, thin = false } = {}) {
+  const pct = (x) => Math.round(x * 100);
+  const { state } = read;
+  const basis = thin ? 'score' : 'serve';
+  if (state.tiebreak) return { kind: 'pass', text: 'No call: tiebreak.' };
+  const need = thin ? LIVE_LEAN_GAMES.thin : LIVE_LEAN_GAMES.full;
+  const br = read.momentum?.setBreaks ?? { a: 0, b: 0 };
+  if (gamesSeen < need) {
+    // Two games clear in a set is a break whoever served first; before the order of serve is read, that is all there is to go on.
+    const ahead = state.gA - state.gB >= 2 ? 'a' : state.gB - state.gA >= 2 ? 'b' : br.a > br.b ? 'a' : br.b > br.a ? 'b' : null;
+    return { kind: 'watch', text: `Too early: ${gamesSeen} of ${need} games in.`, watch: ahead ? `${names[ahead]} has the break. If it holds, ${names[ahead]} is the set ${state.setNumber} lean.` : 'Watch for the first break of serve: that player becomes the lean.' };
+  }
+  if (read.apart) return { kind: 'pass', text: 'No call: the live price and the score disagree.' };
+  if (state.inSet && br.a >= 1 && br.b >= 1 && br.a + br.b >= LIVE_VOLATILE_BREAKS) return { kind: 'pass', text: `No call: volatile, ${br.a + br.b} breaks of serve this set.` };
+  const setSide = read.model.set >= 0.5 ? 'a' : 'b'; const pSet = setSide === 'a' ? read.model.set : 1 - read.model.set;
+  const mlSide = read.prob >= 0.5 ? 'a' : 'b'; const pMl = mlSide === 'a' ? read.prob : 1 - read.prob;
+  const inBand = (p) => p >= LIVE_LEAN_PROB[0] && p <= LIVE_LEAN_PROB[1];
+  const lean = (market, side, prob, extra) => ({ kind: 'lean', market, side, prob: Math.round(prob * 1000) / 1000, playable: americanOf(prob - LIVE_LEAN_MARGIN), basis, ...extra });
+  if (state.inSet && state.gA + state.gB >= 2 && inBand(pSet)) return lean('live_set', setSide, pSet, { set: state.setNumber, selection: `${names[setSide]} to win set ${state.setNumber}` });
+  if (inBand(pMl)) {
+    const call = lean('live_ml', mlSide, pMl, { selection: `${names[mlSide]} to win the match` });
+    // The books' live moneyline, when the feed has one: a price worse than the read needs is a pass, said as one.
+    const best = [...(quotes[mlSide] ?? [])].filter((q) => Number.isFinite(q.american)).sort((x, y) => y.american - x.american)[0] ?? null;
+    if (best && best.american < call.playable) return { kind: 'pass', text: `No call: poorly priced. ${names[mlSide]} is ${best.american > 0 ? '+' : ''}${best.american}; worth it at ${call.playable > 0 ? '+' : ''}${call.playable} or better.` };
+    return best ? { ...call, american: best.american, bookId: best.bookId, book: best.book, link: best.link ?? null } : call;
+  }
+  const top = Math.max(state.inSet ? pSet : 0, pMl);
+  if (top > LIVE_LEAN_PROB[1]) { const who = (state.inSet && pSet >= pMl) ? names[setSide] : names[mlSide]; return { kind: 'pass', text: `No call: ${who} is ${pct(top)}% already, the price is too short.` }; }
+  return { kind: 'pass', text: state.inSet ? `No call: too close, set ${state.setNumber} is ${pct(pSet)}-${100 - pct(pSet)}.` : `No call: too close, ${pct(pMl)}-${100 - pct(pMl)}.`, watch: 'Watch for the next break of serve.' };
+}
