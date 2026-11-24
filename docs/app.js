@@ -27,6 +27,7 @@ import { sortTrends, sortQuotes, bestQuote, attachSeries, hitFlags, nflWeek, leg
 import { enhanceSelect } from './custom-select.js';
 import { BUILD_INFO } from './version.js';
 import { safeUrl } from './safe-url.js';
+import { hardRockCombined, phoneSlipLink, isPhone } from './book-links.js';
 import { summarizePicks, gradePick } from './learning.js';
 import { liveSetsLabel } from './tennis-results.js';
 import {
@@ -1260,6 +1261,19 @@ function relativeTime(ms) {
  * site (docs/safe-url.js says why), then escaped like any other value.
  */
 const escUrl = (value) => esc(safeUrl(value));
+
+// Hard Rock on a phone (docs/book-links.js): its website sends every phone to a "download our app" page, so a slip link
+// is turned, as it is touched, into the one Hard Rock's own slip shares, which the app opens with the pick on the slip.
+// Done here once, for every Hard Rock link the app draws, whichever tab drew it.
+if (isPhone(navigator.userAgent, navigator.maxTouchPoints)) {
+  const forPhone = (event) => {
+    const a = event.target?.closest?.('a[href^="https://app.hardrock.bet/"]');
+    if (!a) return;
+    const href = a.getAttribute('href'); const next = phoneSlipLink(href);
+    if (next !== href) { a.setAttribute('href', next); a.title = 'Open this on your Hard Rock Bet app slip'; }
+  };
+  for (const type of ['touchstart', 'pointerdown', 'click']) document.addEventListener(type, forPhone, { capture: true, passive: true });
+}
 
 function esc(value) {
   return String(value).replace(/[&<>"']/g, (c) => (
@@ -10862,7 +10876,7 @@ function parlayPriceOf(legs) {
   return dec ? { decimal: dec, american: decimalToAmerican(dec), priced: priced.length, unpriced: legs.length - priced.length } : null;
 }
 
-/** One link that adds every leg to the slip, where the book's deep link takes a list (DraftKings outcomes, FanDuel indexed pairs, Caesars selectionIds); null for other books or when a leg has no link. */
+/** One link that adds every leg to the slip, where the book's deep link takes a list (DraftKings outcomes, FanDuel indexed pairs, Caesars selectionIds, Hard Rock selections); null for other books or when a leg has no link. */
 function combinedSlipLink(bookId, legLinks) {
   const links = (legLinks ?? []).filter(Boolean);
   if (!links.length || links.length !== (legLinks ?? []).length) return null;
@@ -10883,6 +10897,8 @@ function combinedSlipLink(bookId, legLinks) {
       const ids = links.map((u) => new URL(u.replace('{state}', 'nj')).searchParams.get('options')).filter(Boolean);
       return ids.length === links.length ? `https://sports.{state}.betmgm.com/en/sports?options=${ids.join(',')}&type=Multi` : null;
     }
+    // Hard Rock's slip link takes its selections joined by commas (docs/book-links.js); on a phone the tap turns it into the one its app opens.
+    if (bookId === 'hardrock') return hardRockCombined(links);
     if (bookId === 'caesars') {
       const first = new URL(links[0].replace('{state}', 'nj'));
       const ids = links.map((u) => new URL(u.replace('{state}', 'nj')).searchParams.get('selectionIds')).filter(Boolean);
