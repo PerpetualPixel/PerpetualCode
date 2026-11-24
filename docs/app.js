@@ -9601,7 +9601,7 @@ function renderTrendDetail(row) {
   const bookMeta = (key) => (bookIdFor(key) ? SPORTSBOOKS[bookIdFor(key)] : null);
   const bookPill = (q) => bookBadge(q.bookKey, q.book, 'book-badge is-large');
   const log = (row.series ?? []).filter((g) => period === 'h2h' || period.startsWith('s') ? periodSeries(row, period).includes(g) : true).slice(0, 20);
-  return `<button type="button" class="sheet-back" data-sheet-close aria-label="Close"><svg viewBox="0 0 24 24" width="16" height="16"><path d="M6 6l12 12M18 6L6 18" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"/></svg></button>
+  return `<button type="button" class="sheet-close-x" data-sheet-close aria-label="Close"><svg viewBox="0 0 24 24" width="18" height="18"><path d="M6 6l12 12M18 6L6 18" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"/></svg></button>
     <div class="sheet-grip"></div>
     <div class="detail-top">
       <div>
