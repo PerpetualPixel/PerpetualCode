@@ -21,7 +21,7 @@
      only page that reads the feed; the other pages' connect-src stays the
      worker alone. -->
 <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src 'self' https://fonts.gstatic.com; img-src 'self' data: https:; connect-src 'self' https://pixel-pick-odds.mgbouldering.workers.dev https://perpetualpixel.github.io; object-src 'none'; base-uri 'self'; form-action 'self'">
-<script src="frame-guard.js?v=1.365"></script>
+<script src="frame-guard.js?v=1.366"></script>
 <title>Perpetual Picks - App</title>
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <meta name="theme-color" content="#05050A">
@@ -37,9 +37,9 @@
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Syne:wght@600;700;800&family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
-<link rel="stylesheet" href="styles.css?v=1.365">
+<link rel="stylesheet" href="styles.css?v=1.366">
 <!-- Before first paint: a desktop reader who chose "Fit screen" gets the wide shell without a flash of the narrow one. -->
-<script src="wide.js?v=1.365"></script>
+<script src="wide.js?v=1.366"></script>
 </head>
 <body>
 
@@ -167,6 +167,7 @@
       <li><strong>Tennis:</strong> each lean now shows set betting (-1.5 sets to win 2-0, +1.5 sets to win a set), the second set, and every book's price. Every play says the price to take it at or better.</li>
       <li><strong>Live:</strong> tap a game and the bet is the first thing you see. Finished games leave the list. Tennis matches in play can now carry an over or under on the games in the set.</li>
       <li><strong>Results:</strong> a new tab with every record in one place. Pregame first, Live on a toggle, a card for each sport with units played, net units, ROI and a graph by day, week, month or year. It now updates itself through the day, and live tennis leans have their own card there.</li>
+      <li><strong>Hard Rock on a phone:</strong> Add to slip now opens the Hard Rock Bet app with the pick on your slip, and a whole ticket goes over in one link.</li>
       <li><strong>Too good to be true?</strong> Open any Trends line and a new box says whether it is a good or bad take and why: the price against the record, recent form, minutes, injuries, a change of team, a teammate back or out.</li>
       <li><strong>Parlay:</strong> separate sliders for hits in the last 5 and the last 10, a Last 20 switch, and half-star scores.</li>
     </ul>
@@ -687,6 +688,7 @@
       <summary>Parlay</summary>
       <p>Build a ticket from the props on the board. Choose the sport, the number of legs, the odds range, the prop types, over or under, and the sportsbook. The sliders set how often a leg must have hit in the player's last 5 and last 10 games; the Last 20 switch asks for the same form over twenty. Score is the star rating a leg must reach: tap a star for a whole star, tap it again for a half.</p>
       <p>Generate, and the builder returns tickets that fit, each leg with its hit rates and price. Save a setup as a preset to reuse it.</p>
+      <p><strong>Add to slip</strong> opens the sportsbook with the pick on your slip, where the book allows it. On a phone, Hard Rock takes bets only in its app, so a Hard Rock link opens the Hard Rock Bet app with the pick on the slip; the app has to be installed and you have to be signed in. A whole Hard Rock ticket goes over in one link.</p>
     </details>
 
     <details>
@@ -1174,6 +1176,6 @@
   </div>
 </aside>
 
-<script type="module" src="app.js?v=1.365"></script>
+<script type="module" src="app.js?v=1.366"></script>
 </body>
 </html>
