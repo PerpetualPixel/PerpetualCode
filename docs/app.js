@@ -59,6 +59,7 @@ import { VIABILITY_LABEL } from './slip-viability.js';
 import { parlaySnapshot, applyParlaySnapshot, cleanParlayStore, withParlaySlot, PARLAY_SLOTS, passesHitBars, l20Floor, hitBarText, nextMinScore } from './parlay-presets.js';
 import { playbookText, playbookKey, playbookUserId, discordChannelUrl, cleanPlaybookLink, PLAYBOOK_SITE } from './playbook.js';
 import { hitFlags as slipHitFlags } from './trends.js';
+import { lineFlags, lineVerdict, looksTooGood } from './line-check.js';
 import { RESULT_SIDES, RESULT_SPORTS, RESULT_BUCKETS, resultEntries, summarize, bucketize, unitTicks } from './results.js';
 import {
   auditLegs,
@@ -7883,7 +7884,7 @@ function showWelcomeToastIfFresh() {
 // Versioned so a future, meaningfully different change can show its own
 // hint again even to someone who already dismissed this one — bump the
 // suffix, don't reuse the key.
-const WHATS_NEW_LEAN_FINAL_KEY = 'pp_seen_hint_2026_11_23'; // bumped for the 2026-11-23 notes (UFC Recommended, tennis set betting, the Live tab) so the notice shows once more
+const WHATS_NEW_LEAN_FINAL_KEY = 'pp_seen_hint_2026_11_24'; // bumped for the 2026-11-23 notes (UFC Recommended, tennis set betting, the Live tab) so the notice shows once more
 
 /** One-time explainer for the 2026-08-21 fresh-slate reset (tracking
  * archived, boards drawn once daily at 2am ET) — localStorage, not
@@ -9522,6 +9523,53 @@ function renderTrendsSheet() {
 
 /* ---- Detail ---------------------------------------------------- */
 
+/*
+ * "Too good to be true?" on a line's sheet (2026-11-24; docs/line-check.js has the rules, worker/src/line-check.js the lineup).
+ * The flags read off the line show at once; the lineup around the player (a teammate back or out, a blowout) comes from the worker,
+ * asked for when the box is opened, or straight away for a line that looks too good so the warning is there without a tap.
+ */
+const lineCheckState = { rowId: null, open: false, server: null, loading: false };
+async function loadLineCheck(row) {
+  if (lineCheckState.loading || lineCheckState.server) return;
+  lineCheckState.loading = true;
+  const id = row.id;
+  try {
+    const url = new URL('/trends/check', CONFIG.WORKER_URL); url.searchParams.set('sport', row.sportKey); url.searchParams.set('id', id);
+    const res = await fetch(url, { headers: { Accept: 'application/json' } });
+    const body = res.ok ? await res.json() : null;
+    if (lineCheckState.rowId === id) lineCheckState.server = body?.flags ? body : { flags: [], failed: true };
+  } catch { if (lineCheckState.rowId === id) lineCheckState.server = { flags: [], failed: true }; }
+  lineCheckState.loading = false;
+  if (lineCheckState.rowId === id && trendsState.sheet?.type === 'detail') renderTrendsSheet();
+}
+function lineCheckBlock(row, quote) {
+  if (row.yesNo || !row.periods) return '';
+  if (lineCheckState.rowId !== row.id) Object.assign(lineCheckState, { rowId: row.id, open: false, server: null, loading: false });
+  const american = quote?.american ?? row.american;
+  const tooGood = looksTooGood(row, american);
+  const own = lineFlags(row, { american });
+  // The worker's flags that the line itself cannot show: the lineup and the game.
+  const lineup = (lineCheckState.server?.flags ?? []).filter((f) => !own.some((o) => o.key === f.key) && /^(back|due|out):|^blowout$/.test(f.key));
+  const flags = [...own, ...lineup].sort((x, y) => ['bad', 'warn', 'info', 'good'].indexOf(x.tone) - ['bad', 'warn', 'info', 'good'].indexOf(y.tone));
+  const verdict = lineVerdict(flags, { tooGood });
+  if (tooGood && !lineCheckState.server && !lineCheckState.loading) setTimeout(() => loadLineCheck(row), 0);
+  const open = lineCheckState.open;
+  const pending = !lineCheckState.server;
+  const count = flags.filter((f) => f.tone === 'bad' || f.tone === 'warn').length;
+  return `<div class="line-check is-${esc(verdict.key)} ${open ? 'is-open' : ''}">
+    <button type="button" class="line-check-head" data-line-check aria-expanded="${open}">
+      <span class="line-check-q">${tooGood ? 'Too good to be true?' : 'Good take or bad?'}</span>
+      <span class="line-check-verdict">${esc(verdict.label)}${count ? ` · ${count} flag${count === 1 ? '' : 's'}` : ''}</span>
+      <span class="line-check-chev" aria-hidden="true">${open ? '▴' : '▾'}</span>
+    </button>
+    ${open ? `<div class="line-check-body">
+      <p class="line-check-sum">${esc(verdict.text)}</p>
+      ${flags.length ? `<ul class="line-check-list">${flags.map((f) => `<li class="is-${esc(f.tone)}"><strong>${esc(f.title)}</strong><span>${esc(f.text)}</span></li>`).join('')}</ul>` : ''}
+      <p class="line-check-foot">${pending ? 'Checking the lineup around him…' : lineCheckState.server.failed ? 'The lineup check could not be loaded just now; the flags above are from the line itself.' : lineup.length ? '' : 'Lineup checked: no teammate back or out who changes this line, no blowout projected. '}${pending ? '' : 'Read from the game logs, the injury report and the price. It cannot see news that is not in them yet.'}</p>
+    </div>` : ''}
+  </div>`;
+}
+
 function renderTrendDetail(row) {
   row = { ...row };
   const period = trendsState.detailPeriod && (row.periods[trendsState.detailPeriod] || lastN(trendsState.detailPeriod)) ? trendsState.detailPeriod : trendsState.period;
@@ -9557,6 +9605,7 @@ function renderTrendDetail(row) {
       <span class="big">${stats.rate === null ? '—' : pct(stats.rate)}<small>${stats.hits}/${stats.games} events</small></span>
       <span class="stats">Avg <b>${stats.avg ?? '—'}</b> ▪ Median <b>${stats.median ?? '—'}</b></span>
     </div>
+    ${lineCheckBlock(row, quote)}
     ${series.length ? `<div class="detail-chart ${series.length > 12 ? 'is-dense' : ''}">
       <span class="chart-line" style="top:${lineTop.toFixed(1)}%"></span><span class="chart-line-label" style="top:${lineTop.toFixed(1)}%">${esc(String(row.point))}</span>
       ${series.map((s) => `<div class="chart-col"><div class="chart-bar ${s.hit === 1 ? 'is-hit' : s.hit === null ? 'is-push' : 'is-miss'}" style="height:${Math.max(2, (s.value / max) * 100).toFixed(1)}%"></div><span class="chart-val ${s.hit === 1 ? 'is-hit' : s.hit === null ? '' : 'is-miss'}">${esc(String(s.value))}</span><span class="chart-opp">${esc(s.atVs ?? '')}${s.opponent ? `<img src="${esc(trendLogo(row.sportKey, s.opponent))}" alt="${esc(s.opponent)}" loading="lazy">` : ''}</span></div>`).join('')}
@@ -9718,6 +9767,14 @@ el.trendsSheet?.addEventListener('click', (event) => {
   if (hit('[data-sheet-close]')) return closeTrendsSheet();
   if (hit('[data-sheet-back]')) { const prev = (trendsState.sheetStack ?? []).pop(); if (prev) { trendsState.sheet = prev; renderTrendsSheet(); } else closeTrendsSheet(); return; }
   if (trendsState.sheet?.type === 'ufcRecommended' && handleUfcRecClick(t)) return;
+  if (hit('[data-line-check]')) {
+    const sheet = trendsState.sheet;
+    const row = (trendsState.data?.rows ?? []).find((r) => r.id === sheet?.rowId) ?? sheet?.row;
+    lineCheckState.open = !lineCheckState.open;
+    if (row && lineCheckState.open) loadLineCheck(row);
+    renderTrendsSheet();
+    return;
+  }
   if (hit('[data-view-stats]')) {
     const sheet = trendsState.sheet;
     const row = (trendsState.data?.rows ?? []).find((r) => r.id === sheet?.rowId) ?? sheet?.row;

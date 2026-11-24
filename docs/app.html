@@ -21,7 +21,7 @@
      only page that reads the feed; the other pages' connect-src stays the
      worker alone. -->
 <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src 'self' https://fonts.gstatic.com; img-src 'self' data: https:; connect-src 'self' https://pixel-pick-odds.mgbouldering.workers.dev https://perpetualpixel.github.io; object-src 'none'; base-uri 'self'; form-action 'self'">
-<script src="frame-guard.js?v=1.363"></script>
+<script src="frame-guard.js?v=1.364"></script>
 <title>Perpetual Picks - App</title>
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <meta name="theme-color" content="#05050A">
@@ -37,9 +37,9 @@
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Syne:wght@600;700;800&family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
-<link rel="stylesheet" href="styles.css?v=1.363">
+<link rel="stylesheet" href="styles.css?v=1.364">
 <!-- Before first paint: a desktop reader who chose "Fit screen" gets the wide shell without a flash of the narrow one. -->
-<script src="wide.js?v=1.363"></script>
+<script src="wide.js?v=1.364"></script>
 </head>
 <body>
 
@@ -167,6 +167,7 @@
       <li><strong>Tennis:</strong> each lean now shows set betting (-1.5 sets to win 2-0, +1.5 sets to win a set), the second set, and every book's price. Every play says the price to take it at or better.</li>
       <li><strong>Live:</strong> tap a game and the bet is the first thing you see. Finished games leave the list. Tennis matches in play can now carry an over or under on the games in the set.</li>
       <li><strong>Results:</strong> a new tab with every record in one place. Pregame first, Live on a toggle, a card for each sport with units played, net units, ROI and a graph by day, week, month or year.</li>
+      <li><strong>Too good to be true?</strong> Open any Trends line and a new box says whether it is a good or bad take and why: the price against the record, recent form, minutes, injuries, a change of team, a teammate back or out.</li>
       <li><strong>Parlay:</strong> separate sliders for hits in the last 5 and the last 10, a Last 20 switch, and half-star scores.</li>
     </ul>
     <p>The Guide has the full walk-through of every tab.</p>
@@ -669,6 +670,7 @@
       <p>Every player prop a sportsbook is offering on today's and tomorrow's games, with the player's real results at that number. Each card is one line: the player, the game, the stat and the number, the best price and the book offering it, the hit rate for the period you chose, and a bar for each game in that period. Green bars cleared the number, red bars missed it, grey bars landed on it exactly.</p>
       <p>The three buttons at the bottom control the whole tab. <strong>Period</strong> picks which games the hit rate covers: head to head, last 5, last 10, last 20, or a season. <strong>Sort</strong> orders the cards by hit rate, price or game time. <strong>Filters</strong> narrow the list by market, game, odds range, hit rate, side and sportsbook. The search box matches players, teams and markets.</p>
       <p>Tap a card to open it: the hit rate in every period at once, the split of hits and misses, the average and the median, a chart of every game with the opponent under each bar, the game log, and every sportsbook's price on the line.</p>
+      <p><strong>Too good to be true?</strong> Every line's sheet has a box that says whether it is a good take or a bad one, with the numbers behind it: the price against the record, the last five games against the last twenty, thin margins, minutes, the injury report, a bench role, a change of team, a teammate who is back or out, and a likely blowout. When a near-perfect record sits at a generous price the box warns you without a tap. It reads the game logs, the injury report and the price; it cannot see news that is not in them yet.</p>
       <p>Prices come from the sportsbooks and results from the official game logs. The time at the top of the tab is when the lines were last pulled, so a price can have moved since.</p>
     </details>
 
@@ -1170,6 +1172,6 @@
   </div>
 </aside>
 
-<script type="module" src="app.js?v=1.363"></script>
+<script type="module" src="app.js?v=1.364"></script>
 </body>
 </html>
