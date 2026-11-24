@@ -69,6 +69,7 @@ import { runTennisLiveTick, getTennisLivePlays, TENNIS_LIVE_CRON } from './tenni
 import { getTennisTrends } from './tennis-trends.js';
 import { sendUfcTicketNotifications, sendUfcChangeNotifications } from './notifications.js';
 import { legBreakdown } from './parlay-builder.js';
+import { lineCheck } from './line-check.js';
 import { runTrendPicksDaily, runTrendPicksGrading, getTrendPicks } from './trend-picks.js';
 import { runLiveProbe, getLiveProbe } from './live-probe.js';
 import { getLiveBoard, getLiveRecap, archiveLiveResults, getLiveResults } from './live-board.js';
@@ -1664,6 +1665,22 @@ export default {
 
     // The Parlay Builder's breakdown of one leg (worker/src/parlay-builder.js):
     // the model's read of a stored Trends row, cached for the day.
+    // "Too good to be true?" for one Trends line (worker/src/line-check.js): the flags read off the line and the lineup around it.
+    // The stored rows, the bundled logs, the injury report and ESPN's free summary: no odds call, no model call.
+    if (pathname === '/trends/check' && request.method === 'GET') {
+      const q = new URL(request.url).searchParams;
+      const sportKey = q.get('sport') ?? 'basketball_nba';
+      const rowId = q.get('id') ?? '';
+      if (!TREND_ENABLED_SPORTS.includes(sportKey) || !rowId || rowId.length > 300) return json({ error: 'unknown sport or line' }, { status: 400, headers: cors });
+      try {
+        const out = await lineCheck(env, sportKey, rowId, ctx);
+        if (!out) return json({ error: 'that line is no longer on the board' }, { status: 404, headers: cors });
+        return json(out, { headers: { ...cors, 'Cache-Control': 'public, max-age=600' } });
+      } catch (error) {
+        return json({ error: String(error).slice(0, 120) }, { status: 500, headers: cors });
+      }
+    }
+
     if (pathname === '/parlay/leg' && request.method === 'GET') {
       const q = new URL(request.url).searchParams;
       const sportKey = q.get('sport') ?? 'basketball_nba';
