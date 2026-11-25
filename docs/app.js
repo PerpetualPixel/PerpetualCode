@@ -12155,7 +12155,7 @@ function liveLeaguePicker(all) {
 }
 function liveBooksPicker() {
   const none = !liveState.books.size;
-  return `<div class="live-books-pick" role="group" aria-label="Slips at your books"><span class="row-sub">Slips at</span><button type="button" class="league-chip ${none ? 'is-active' : ''}" data-live-book="all" aria-pressed="${none}"><span class="league-chip-label">All books</span></button>${LIVE_BOOKS.map((id) => `<button type="button" class="league-chip ${liveState.books.has(id) ? 'is-active' : ''}" data-live-book="${esc(id)}" aria-pressed="${liveState.books.has(id)}" title="${esc(SPORTSBOOKS[id]?.name ?? id)}">${bookBadge(id, id)}<span class="league-chip-label">${esc(SPORTSBOOKS[id]?.name ?? id)}</span></button>`).join('')}</div>`;
+  return `<div class="live-books-pick" role="group" aria-label="Slips at your books"><span class="row-sub">Slips at</span><button type="button" class="league-chip is-sport ${none ? 'is-active' : ''}" data-live-book="all" aria-pressed="${none}"><span class="league-chip-label">All books</span>${chipTick(none)}</button>${LIVE_BOOKS.map((id) => { const on = liveState.books.has(id); return `<button type="button" class="league-chip is-sport ${on ? 'is-active' : ''}" data-live-book="${esc(id)}" aria-pressed="${on}" title="${esc(SPORTSBOOKS[id]?.name ?? id)}">${bookBadge(id, id)}<span class="league-chip-label">${esc(SPORTSBOOKS[id]?.name ?? id)}</span>${chipTick(on)}</button>`; }).join('')}</div>`;
 }
 const liveTimeFmt = new Intl.DateTimeFormat(undefined, { hour: 'numeric', minute: '2-digit', second: '2-digit' });
 const liveKickFmt = new Intl.DateTimeFormat(undefined, { weekday: 'short', hour: 'numeric', minute: '2-digit' });
@@ -12561,7 +12561,10 @@ el.liveView?.addEventListener('click', (event) => {
     if (liveState.leagues.has(k)) { if (liveState.leagues.size > 1) liveState.leagues.delete(k); } else liveState.leagues.add(k);
     saveJSON(LIVE_LEAGUES_KEY, [...liveState.leagues]); renderLive(); return;
   }
-  if (event.target.closest('[data-live-showall]')) { liveState.showAll = true; renderLive(); return; }
+  // "Show all books" is the All books chip, pressed: the chips always say what is on screen. (It was a switch of its own that
+  // nothing showed: with FanDuel still lit, every other book's slips were listed. 2026-11-24: "I had FanDuel selected and the
+  // live section was showing me a BetRivers parlay, fix that.")
+  if (event.target.closest('[data-live-showall]')) { liveState.books.clear(); liveState.showAll = false; persistLiveBooks(); renderLive(); return; }
   const tlWhy = event.target.closest('[data-tennis-live-why]');
   if (tlWhy) { const k = `tl:${tlWhy.dataset.tennisLiveWhy}`; liveState.open[k] = !liveState.open[k]; renderLive(); return; }
   // A folded section on a game card (the box score, the books posting): remembered, so the next refresh draws it the same way.
