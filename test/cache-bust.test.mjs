@@ -49,7 +49,8 @@ for (const page of CACHE_BUSTED_PAGES) {
 test('no page loads a local .js or .css without a version stamp', () => {
   for (const page of CACHE_BUSTED_PAGES) {
     const html = read(page);
-    const unstamped = [...html.matchAll(/(?:href|src)="(?!https?:)([^"?]+\.(?:js|css))"/g)];
+    // A modulepreload link is bare on purpose: it names the file exactly as app.js imports it (test/page-speed.test.mjs).
+    const unstamped = [...html.matchAll(/(?<!rel="modulepreload" )(?:href|src)="(?!https?:)([^"?]+\.(?:js|css))"/g)];
     assert.deepEqual(
       unstamped.map((m) => m[1]), [],
       `${page} loads local asset(s) with no ?v= stamp — run update-version.js`,

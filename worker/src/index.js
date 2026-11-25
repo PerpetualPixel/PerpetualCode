@@ -1741,7 +1741,10 @@ export default {
       try {
         const wanted = new URL(request.url).searchParams.get('sport');
         const keys = wanted && isTrendKey(wanted) ? [wanted] : TREND_TABS;
-        const all = await Promise.all(keys.map((k) => getTrendsFor(env, k)));
+        // Each league's stored rows are read once per request: the board and the list of leagues under it share the read.
+        const reads = new Map();
+        const read = (k) => { if (!reads.has(k)) reads.set(k, getTrendsFor(env, k)); return reads.get(k); };
+        const all = await Promise.all(keys.map(read));
         const found = all.find((t) => t.rows.length) ?? all[0];
         // The injury report as of the last half hour, on every row: a
         // player questionable or out is tagged on the card the moment the
@@ -1769,7 +1772,7 @@ export default {
           context,
           feed: feedRaw ? publicOddsDiag(JSON.parse(feedRaw)) : null,
           leagues: TREND_TABS,
-          available: await Promise.all(TREND_TABS.map(async (k) => { const t = await getTrendsFor(env, k); return { sportKey: k, title: t.title, rows: t.rows.length, builtAt: t.builtAt }; })),
+          available: await Promise.all(TREND_TABS.map(async (k) => { const t = await read(k); return { sportKey: k, title: t.title, rows: t.rows.length, builtAt: t.builtAt }; })),
         }, { headers: { ...cors, 'Cache-Control': 'public, max-age=300' } });
       } catch (error) {
         return json({ error: String(error).slice(0, 120) }, { status: 500, headers: cors });
