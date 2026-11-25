@@ -10218,13 +10218,55 @@ function openPickLeg(target) {
    his position. Listed most confident first; the tracked ones count, the rest are shown. */
 const MVP_GROUP = { G: 'guards', F: 'forwards', C: 'centers' };
 const ordinalOf = (n) => `${n}${n % 100 >= 11 && n % 100 <= 13 ? 'th' : ['th', 'st', 'nd', 'rd'][n % 10] ?? 'th'}`;
+const MVP_STAT = { points: 'Points', rebounds: 'Rebounds', assists: 'Assists' };
+/** The whole MVP ticket on the book's slip: one link where the book takes a list, else its legs one at a time; and Onyx's copy for a user who has it. */
+function mvpSlipFoot(bet) {
+  const legs = bet.legs ?? [];
+  const all = combinedSlipLink(bet.bookId, legs.map((l) => l.link));
+  const onyx = onyxQuick(legs.map((l) => ({ selection: l.selection, game: l.away && l.home ? `${l.away} @ ${l.home}` : '' })));
+  const one = legs.filter((l) => l.link);
+  const main = all ? `<a class="pick-bet-link" href="${escUrl(all)}" target="_blank" rel="noopener">Add all ${legs.length} legs to your ${esc(bet.book)} slip ↗</a>`
+    : one.length ? `<p class="row-sub mvp-onebyone">${esc(bet.book)} takes legs one at a time: ${one.map((l) => `<a href="${escUrl(l.link)}" target="_blank" rel="noopener">${esc(l.statLabel)} ${esc(String(Math.ceil(l.point)))}+ ↗</a>`).join(' ')}</p>`
+    : bet.bookUrl ? `<a class="pick-bet-link" href="${escUrl(bet.bookUrl)}" target="_blank" rel="noopener">Open ${esc(bet.book)}</a>` : '';
+  return main || onyx ? `<div class="pick-bet-foot">${main}${onyx}</div>` : '';
+}
+const mvpLinesText = (lines, withNames = false) => (lines ?? []).map((l) => `${withNames ? `${String(l.player).split(' ').at(-1)} ` : ''}${Math.ceil(l.point)}+ ${String(l.label ?? '').toLowerCase()}`).join(' · ');
+/**
+ * One MVP pick, condensed (2026-11-24: "way too long, condense it and show all 3 stats in one spot and still allow the
+ * user to expand into each stat individually, also allow them to add all 3 legs and import them as a parlay"): a line
+ * of facts, the legs as three short rows (a tap on one opens that stat in full), one button for the whole slip, and
+ * the other ways to play it folded under.
+ */
 function renderMvpCard(pick) {
   const bet = pick.bet;
-  const t = pick.together ?? {};
+  const t = pick.together;
+  const options = pick.options ?? [];
+  const chosen = options.find((o) => o.kind === pick.play) ?? null;
+  const lines = chosen?.lines ?? [];
+  const pair = pick.play === 'pair';
   const worst = pick.dvp ? (pick.dvp.rank === 1 ? 'the worst' : `${ordinalOf(pick.dvp.rank)} worst`) : '';
-  const fact = (name, value, sub) => `<div class="mvp-fact"><dt>${esc(name)}</dt><dd>${esc(value)}</dd>${sub ? `<small>${esc(sub)}</small>` : ''}</div>`;
   const flags = (pick.flags ?? []).filter((f) => f.tone !== 'good');
   const settled = bet.status === 'graded' || bet.status === 'void';
+  const safe = options.find((o) => o.kind === 'safe');
+  const title = pick.play === 'step' ? 'Stepped up for a better price' : pair ? `Paired with ${pick.partner?.player ?? 'a second player'}` : 'The 90% numbers';
+  const note = pick.play === 'step' && safe ? `His 90% numbers (${mvpLinesText(safe.lines)}) come to about ${formatAmerican(safe.est.american)}, too short to play. These are the same three stats a step up.`
+    : pair ? `Each player's 90% numbers on one slip, two different games. ${pick.partner?.mvp ? `${pick.partner.player} is an MVP pick too.` : `${pick.partner?.player ?? 'The second player'} is not an MVP pick (${pick.partner?.why ?? 'the matchup rule'}), but leads his team in usage and has the numbers.`}`
+    : chosen && !chosen.playable ? `About ${formatAmerican(pick.est.american)} for all three: too short to play, and today there are no higher numbers or second player that clear the price.` : '';
+  const mark = (leg) => (leg.result === 'win' ? '<span class="ufc-leg-mark is-win" aria-label="Won">✓</span>' : leg.result === 'loss' ? '<span class="ufc-leg-mark is-loss" aria-label="Lost">✕</span>' : leg.result === 'void' ? '<span class="ufc-leg-mark" aria-label="Void">–</span>' : '');
+  const legRow = (leg, i) => {
+    const l = lines[i] ?? {};
+    return `<details class="mvp-leg"><summary>
+        <span class="mvp-leg-stat">${pair ? `<small>${esc(String(leg.playerName).split(' ').at(-1))}</small> ` : ''}${esc(MVP_STAT[leg.statKey] ?? leg.statLabel)} <b>${esc(String(Math.ceil(leg.point)))}+</b></span>
+        <span class="mvp-leg-rate">${l.games ? `${esc(String(l.hits))}/${esc(String(l.games))} <small>${Math.round((l.rate ?? 0) * 100)}%</small>` : ''}</span>
+        <span class="mvp-leg-price">${esc(formatAmerican(leg.american))}</span>${mark(leg)}<span class="mvp-leg-caret" aria-hidden="true"></span>
+      </summary>${renderPickLeg(leg, bet)}</details>`;
+  };
+  const wayTitle = (o) => (o.kind === 'safe' ? 'The 90% numbers' : o.kind === 'step' ? 'Stepped up' : `With ${o.partner?.player ?? 'a second player'}`);
+  const ways = options.filter((o) => o.kind !== pick.play && (o.playable || o.kind === 'safe'));
+  const wayRow = (o) => {
+    const link = !settled && o.bet ? combinedSlipLink(o.bookId, o.bet.legs.map((l) => l.link)) : null;
+    return `<div class="mvp-way"><div><strong>${esc(wayTitle(o))}</strong><small>${esc(mvpLinesText(o.lines, o.kind === 'pair'))}</small><small>${Math.round(o.chance * 100)}% chance · about ${esc(formatAmerican(o.est.american))} at ${esc(o.book)}${o.playable ? ` · take ${esc(formatAmerican(o.take.american))} or better` : ' · too short to play'}</small></div>${link ? `<a class="parlay-btn is-slip" href="${escUrl(link)}" target="_blank" rel="noopener">Add ↗</a>` : ''}</div>`;
+  };
   return `<article class="trend-card pick-bet-card mvp-card ${pick.tracked ? 'is-tracked' : ''}" aria-label="MVP pick: ${esc(pick.player)}">
     <div class="pick-bet-head">
       <span class="mvp-rank" title="Confidence order">#${esc(String(pick.rank))}</span>
@@ -10232,17 +10274,17 @@ function renderMvpCard(pick) {
       <span class="mvp-tag ${pick.tracked ? 'is-on' : ''}">${pick.tracked ? `Tracked · ${esc(String(bet.units))} unit` : 'Listed · not tracked'}</span>
       ${betResultBadge(bet)}
     </div>
-    <dl class="mvp-facts">
-      ${fact('Usage', `${pick.usage}%`, `highest on ${pick.team}${pick.next ? ` · next ${pick.next.usage}%` : ''}`)}
-      ${pick.dvp ? fact(`${pick.opponent} vs ${MVP_GROUP[pick.dvp.group] ?? 'his position'}`, worst, `of ${pick.dvp.of} teams · ${pick.dvp.pra} pts+reb+ast a game`) : ''}
-      ${fact('All three together', `${t.hits ?? 0}/${t.games ?? 0}`, `this season${pick.last ? ` · ${pick.last.hits}/${pick.last.games} last season` : ''}`)}
-      ${fact('Chance', `${Math.round((pick.chance ?? 0) * 100)}%`, 'this season weighed with last')}
-    </dl>
-    <p class="tennis-take mvp-take"><strong>Take it at ${esc(formatAmerican(pick.take.american))} or better</strong> as a same-game parlay at ${esc(bet.book)}. <small>The slip shows ${esc(bet.book)}'s own same-game price; from the legs it should be near ${esc(formatAmerican(pick.est.american))}. ${pick.tracked ? 'Tracked at the price to take.' : ''}</small></p>
-    <div class="pick-legs">${bet.legs.map((leg) => renderPickLeg(leg, bet)).join('')}</div>
-    ${flags.length ? `<ul class="mvp-flags">${flags.map((f) => `<li class="is-${esc(f.tone)}"><strong>${esc(f.title)}.</strong> ${esc(f.text)}</li>`).join('')}</ul>` : '<p class="row-sub mvp-clear">Vetted: minutes, injury report, role, lineup changes and blowout risk. Nothing against it.</p>'}
+    <p class="mvp-facts"><span><b>${esc(String(pick.usage))}%</b> usage, highest on ${esc(pick.team)}</span>${pick.dvp ? `<span>${esc(pick.opponent)} is <b>${esc(worst)}</b> of ${esc(String(pick.dvp.of))} vs ${esc(MVP_GROUP[pick.dvp.group] ?? 'his position')}</span>` : ''}<span><b>${Math.round((pick.chance ?? 0) * 100)}%</b> chance${t?.games ? `, all together ${esc(String(t.hits))}/${esc(String(t.games))}` : ''}</span></p>
+    <div class="mvp-play">
+      <div class="mvp-play-head"><strong>${esc(title)}</strong><span class="pick-bet-book">${bookBadge(bet.bookId, bet.book)}${esc(bet.book)}</span></div>
+      ${bet.legs.map(legRow).join('')}
+      <p class="mvp-take"><strong>Take it at ${esc(formatAmerican(pick.take.american))} or better</strong> <small>as one parlay. ${esc(bet.book)} should show about ${esc(formatAmerican(pick.est.american))}.</small></p>
+      ${note ? `<p class="row-sub mvp-note">${esc(note)}</p>` : ''}
+    </div>
+    ${settled ? '' : mvpSlipFoot(bet)}
+    ${flags.length ? `<details class="mvp-fold"><summary>${flags.length} thing${flags.length === 1 ? '' : 's'} to weigh: ${esc(flags.map((f) => f.title).join(', '))}</summary><ul class="mvp-flags">${flags.map((f) => `<li class="is-${esc(f.tone)}"><strong>${esc(f.title)}.</strong> ${esc(f.text)}</li>`).join('')}</ul></details>` : '<p class="row-sub mvp-clear" title="Minutes, the injury report, his role, lineup changes and blowout risk">Vetted: nothing against it.</p>'}
     ${!pick.tracked && pick.why ? `<p class="row-sub mvp-why">Not tracked: ${esc(pick.why)}.</p>` : ''}
-    ${settled ? '' : ticketSlipFoot(bet)}
+    ${ways.length ? `<details class="mvp-fold"><summary>Other ways to play it (${ways.length})</summary>${ways.map(wayRow).join('')}</details>` : ''}
   </article>`;
 }
 /** The day's MVP Picks for the Pixel's Picks tab: every player who met the system, then who fell short and why. */
@@ -10256,7 +10298,7 @@ function renderMvpSection() {
   const rec = mvp.record;
   const record = rec && (rec.wins || rec.losses) ? ` · record ${rec.wins}-${rec.losses}, ${signedUnits(rec.units)} units` : '';
   const head = `<h3 class="tennis-h3 mvp-h3">MVP Picks <small>one player, one same-game parlay${esc(record)}</small></h3>`;
-  const how = `<p class="row-sub mvp-how">The team's highest-usage player, a number in each of points, rebounds and assists he has cleared in ${Math.round((mvp.rules?.rate ?? 0.9) * 100)}% of his games this season, against a bottom-${mvp.rules?.bottom ?? 5} defense at his position. Most confident first; the best ${mvp.rules?.tracked ?? 2} with nothing against them are tracked.</p>`;
+  const how = `<p class="row-sub mvp-how">His team's top usage · points, rebounds and assists numbers he clears ${Math.round((mvp.rules?.rate ?? 0.9) * 100)}% of the time · a bottom-${mvp.rules?.bottom ?? 5} defense at his position. Most confident first.</p>`;
   const nearHtml = near.length ? `<details class="mvp-near"><summary>${picks.length ? 'Who fell short' : `No MVP pick yet today: ${near.length} usage leader${near.length === 1 ? '' : 's'} checked`}</summary><ul>${near.map((n) => `<li><strong>${esc(n.player)}</strong> <small>${esc(n.team)} · ${esc(String(n.usage))}% usage</small>: ${esc(n.why)}</li>`).join('')}</ul></details>` : '';
   return `${head}${how}${picks.map(renderMvpCard).join('')}${nearHtml}`;
 }
@@ -10988,7 +11030,7 @@ function parlayPriceOf(legs) {
   return dec ? { decimal: dec, american: decimalToAmerican(dec), priced: priced.length, unpriced: legs.length - priced.length } : null;
 }
 
-/** One link that adds every leg to the slip, where the book's deep link takes a list (DraftKings outcomes, FanDuel indexed pairs, Caesars selectionIds, Hard Rock selections); null for other books or when a leg has no link. */
+/** One link that adds every leg to the slip, where the book's deep link takes a list (DraftKings outcomes, FanDuel indexed pairs, Caesars selectionIds, Hard Rock selections, Fanatics legs); null for other books or when a leg has no link. */
 function combinedSlipLink(bookId, legLinks) {
   const links = (legLinks ?? []).filter(Boolean);
   if (!links.length || links.length !== (legLinks ?? []).length) return null;
@@ -11011,6 +11053,14 @@ function combinedSlipLink(bookId, legLinks) {
     }
     // Hard Rock's slip link takes its selections joined by commas (docs/book-links.js); on a phone the tap turns it into the one its app opens.
     if (bookId === 'hardrock') return hardRockCombined(links);
+    if (bookId === 'fanatics') {
+      // Fanatics' share-a-bet link carries its legs as a list ({"legs": [{eventId, marketId, selectionId}]}): every leg's entry on one link.
+      const legs = [];
+      for (const u of links) { const one = JSON.parse(new URL(u).searchParams.get('deep_link_sub1') ?? 'null'); if (!Array.isArray(one?.legs) || !one.legs.length) return null; legs.push(...one.legs); }
+      const first = new URL(links[0]);
+      first.searchParams.set('deep_link_sub1', JSON.stringify({ legs }));
+      return first.toString();
+    }
     if (bookId === 'caesars') {
       const first = new URL(links[0].replace('{state}', 'nj'));
       const ids = links.map((u) => new URL(u.replace('{state}', 'nj')).searchParams.get('selectionIds')).filter(Boolean);
