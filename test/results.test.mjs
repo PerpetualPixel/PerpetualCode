@@ -81,7 +81,7 @@ test('the site\'s own records add up the way the tabs say they do', () => {
   assert.ok(leans.every((e) => e.side === 'live' && e.sport === 'tennis' && /^Lean/.test(e.note)));
   assert.equal(leans.filter((e) => e.result === 'win').length, read('tennis-live').record.leans?.wins ?? 0, 'the leans match the Tennis tab\'s own count');
   const of = (side, sport) => summarize(countedResults(all).filter((e) => e.side === side && (!sport || e.sport === sport)));
-  const tp = read('trend-picks').record; const leagues = summarize(countedResults(all).filter((e) => e.side === 'pre' && ['nba', 'nfl', 'nhl', 'soccer'].includes(e.sport)));
+  const tp = read('trend-picks').record; const leagues = summarize(countedResults(all).filter((e) => e.side === 'pre' && !e.mvp && ['nba', 'nfl', 'nhl', 'soccer'].includes(e.sport))); // the MVP Picks keep a record of their own
   assert.deepEqual([leagues.wins, leagues.losses, leagues.net, leagues.played], [tp.wins, tp.losses, tp.units, tp.risked], 'the league tickets match the Pixel\'s Picks record');
   const tn = read('tennis-picks').record; const tennis = of('pre', 'tennis');
   assert.deepEqual([tennis.wins, tennis.losses, tennis.net, tennis.played], [tn.wins, tn.losses, tn.units, tn.risked], 'tennis before the match matches the Tennis tab');

@@ -10197,12 +10197,61 @@ function renderPickBoard(rows) {
 function openPickLeg(target) {
   const [betId, index] = String(target.dataset.pickLeg).split('|');
   const showcase = betId.startsWith('showcase:') ? trendPicksState.data?.today?.showcase?.[betId.slice('showcase:'.length)] : null;
-  const bet = showcase ? showcaseBet(showcase) : [...(trendPicksState.data?.today?.bets ?? []), ...(trendPicksState.data?.history ?? []).flatMap((d) => d.bets ?? [])].find((b) => b.id === betId);
+  const bet = showcase ? showcaseBet(showcase) : [...(trendPicksState.data?.today?.bets ?? []), ...(trendPicksState.data?.history ?? []).flatMap((d) => d.bets ?? []), ...(trendPicksState.data?.mvp?.history ?? []).flatMap((d) => (d.picks ?? []).map((p) => p.bet))].find((b) => b.id === betId);
   const leg = bet?.legs?.[Number(index)];
   if (!leg) return;
   trendsState.detailPeriod = null;
   trendsState.betMore = false;
   openTrendsSheet('detail', { rowId: leg.id, row: legAsRow(leg, bet) });
+}
+
+/* ---- MVP Picks (worker/src/mvp-picks.js) ------------------------------------------------
+   One player's same-game parlay: his team's usage leader, a number in each of points, rebounds
+   and assists he has cleared in 90% of his games this season, against a bottom-five defense at
+   his position. Listed most confident first; the tracked ones count, the rest are shown. */
+const MVP_GROUP = { G: 'guards', F: 'forwards', C: 'centers' };
+const ordinalOf = (n) => `${n}${n % 100 >= 11 && n % 100 <= 13 ? 'th' : ['th', 'st', 'nd', 'rd'][n % 10] ?? 'th'}`;
+function renderMvpCard(pick) {
+  const bet = pick.bet;
+  const t = pick.together ?? {};
+  const worst = pick.dvp ? (pick.dvp.rank === 1 ? 'the worst' : `${ordinalOf(pick.dvp.rank)} worst`) : '';
+  const fact = (name, value, sub) => `<div class="mvp-fact"><dt>${esc(name)}</dt><dd>${esc(value)}</dd>${sub ? `<small>${esc(sub)}</small>` : ''}</div>`;
+  const flags = (pick.flags ?? []).filter((f) => f.tone !== 'good');
+  const settled = bet.status === 'graded' || bet.status === 'void';
+  return `<article class="trend-card pick-bet-card mvp-card ${pick.tracked ? 'is-tracked' : ''}" aria-label="MVP pick: ${esc(pick.player)}">
+    <div class="pick-bet-head">
+      <span class="mvp-rank" title="Confidence order">#${esc(String(pick.rank))}</span>
+      <span class="pick-bet-type">${esc(pick.player)} <small>${esc(pick.team)} vs ${esc(pick.opponent)}</small></span>
+      <span class="mvp-tag ${pick.tracked ? 'is-on' : ''}">${pick.tracked ? `Tracked · ${esc(String(bet.units))} unit` : 'Listed · not tracked'}</span>
+      ${betResultBadge(bet)}
+    </div>
+    <dl class="mvp-facts">
+      ${fact('Usage', `${pick.usage}%`, `highest on ${pick.team}${pick.next ? ` · next ${pick.next.usage}%` : ''}`)}
+      ${pick.dvp ? fact(`${pick.opponent} vs ${MVP_GROUP[pick.dvp.group] ?? 'his position'}`, worst, `of ${pick.dvp.of} teams · ${pick.dvp.pra} pts+reb+ast a game`) : ''}
+      ${fact('All three together', `${t.hits ?? 0}/${t.games ?? 0}`, `this season${pick.last ? ` · ${pick.last.hits}/${pick.last.games} last season` : ''}`)}
+      ${fact('Chance', `${Math.round((pick.chance ?? 0) * 100)}%`, 'this season weighed with last')}
+    </dl>
+    <p class="tennis-take mvp-take"><strong>Take it at ${esc(formatAmerican(pick.take.american))} or better</strong> as a same-game parlay at ${esc(bet.book)}. <small>The slip shows ${esc(bet.book)}'s own same-game price; from the legs it should be near ${esc(formatAmerican(pick.est.american))}. ${pick.tracked ? 'Tracked at the price to take.' : ''}</small></p>
+    <div class="pick-legs">${bet.legs.map((leg) => renderPickLeg(leg, bet)).join('')}</div>
+    ${flags.length ? `<ul class="mvp-flags">${flags.map((f) => `<li class="is-${esc(f.tone)}"><strong>${esc(f.title)}.</strong> ${esc(f.text)}</li>`).join('')}</ul>` : '<p class="row-sub mvp-clear">Vetted: minutes, injury report, role, lineup changes and blowout risk. Nothing against it.</p>'}
+    ${!pick.tracked && pick.why ? `<p class="row-sub mvp-why">Not tracked: ${esc(pick.why)}.</p>` : ''}
+    ${settled ? '' : ticketSlipFoot(bet)}
+  </article>`;
+}
+/** The day's MVP Picks for the Pixel's Picks tab: every player who met the system, then who fell short and why. */
+function renderMvpSection() {
+  const mvp = trendPicksState.data?.mvp;
+  const today = mvp?.today;
+  if (!today) return '';
+  const picks = today.picks ?? [];
+  const near = today.near ?? [];
+  if (!picks.length && !near.length) return '';
+  const rec = mvp.record;
+  const record = rec && (rec.wins || rec.losses) ? ` · record ${rec.wins}-${rec.losses}, ${signedUnits(rec.units)} units` : '';
+  const head = `<h3 class="tennis-h3 mvp-h3">MVP Picks <small>one player, one same-game parlay${esc(record)}</small></h3>`;
+  const how = `<p class="row-sub mvp-how">The team's highest-usage player, a number in each of points, rebounds and assists he has cleared in ${Math.round((mvp.rules?.rate ?? 0.9) * 100)}% of his games this season, against a bottom-${mvp.rules?.bottom ?? 5} defense at his position. Most confident first; the best ${mvp.rules?.tracked ?? 2} with nothing against them are tracked.</p>`;
+  const nearHtml = near.length ? `<details class="mvp-near"><summary>${picks.length ? 'Who fell short' : `No MVP pick yet today: ${near.length} usage leader${near.length === 1 ? '' : 's'} checked`}</summary><ul>${near.map((n) => `<li><strong>${esc(n.player)}</strong> <small>${esc(n.team)} · ${esc(String(n.usage))}% usage</small>: ${esc(n.why)}</li>`).join('')}</ul></details>` : '';
+  return `${head}${how}${picks.map(renderMvpCard).join('')}${nearHtml}`;
 }
 
 function renderBetCard(bet) {
@@ -10321,6 +10370,8 @@ function renderTrendPicks() {
     if (top) el.trendPicksStatus.textContent = `${el.trendPicksStatus.textContent} The suggestion below is the likeliest play on the board at a fair price, and is not tracked.`;
     el.trendPicksBody.innerHTML = (top ? (top.leg ? renderShowcaseCard(top.leg) : renderBoardSuggestion(top)) : '') + renderPickBoard(board) + (notes.length ? `<div class="pick-passed"><p class="row-sub">Qualified today:</p><ul>${notes.join('')}</ul></div>` : '');
   }
+  // The MVP Picks lead the tab, under All and under the NBA.
+  if (trendPicksState.filter === 'all' || betMatches({ sportKey: 'basketball_nba' })) el.trendPicksBody.insertAdjacentHTML('afterbegin', renderMvpSection());
   const rec = trendPicksState.filter === 'all' ? d?.record : d?.bySport?.[trendPicksState.filter];
   if (el.trendPicksRecord) {
     el.trendPicksRecord.innerHTML = rec

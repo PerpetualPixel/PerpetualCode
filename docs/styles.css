@@ -7696,6 +7696,32 @@ a.tennis-book:hover { background: rgba(255, 255, 255, 0.06); }
 .live-tennis-when { display: block; margin-top: 6px; color: var(--muted); font-size: 0.72rem; font-weight: 700; letter-spacing: 0.02em; }
 .live-tennis-take { display: block; color: var(--text); font-size: 0.78rem; }
 .tennis-take strong { font-weight: 800; }
+/* MVP Picks */
+.mvp-h3 { margin-top: 6px; }
+.mvp-how { margin: 0 0 12px; }
+.mvp-card { margin-bottom: 14px; }
+.mvp-card.is-tracked { border-color: color-mix(in srgb, var(--success) 55%, var(--line)); }
+.mvp-rank { font-family: var(--mono); font-weight: 800; color: var(--muted); }
+.mvp-card .pick-bet-type small { color: var(--muted); font-weight: 600; margin-left: 4px; }
+.mvp-tag { font-size: 0.7rem; font-weight: 800; letter-spacing: 0.06em; text-transform: uppercase; padding: 3px 8px; border-radius: 999px; border: 1px solid var(--line); color: var(--muted); white-space: nowrap; }
+.mvp-tag.is-on { color: var(--success); border-color: color-mix(in srgb, var(--success) 55%, transparent); }
+.mvp-facts { display: grid; grid-template-columns: repeat(4, 1fr); gap: 8px; margin: 0; padding: 12px 16px 4px; }
+.mvp-fact { background: var(--surface-2); border-radius: 12px; padding: 8px 10px; min-width: 0; }
+.mvp-fact dt { font-size: 0.66rem; font-weight: 700; letter-spacing: 0.05em; text-transform: uppercase; color: var(--muted); overflow-wrap: anywhere; }
+.mvp-fact dd { margin: 2px 0 0; font-size: 1.05rem; font-weight: 800; }
+.mvp-fact small { display: block; color: var(--muted); font-size: 0.7rem; line-height: 1.3; }
+.mvp-take { margin: 10px 16px 0; }
+.mvp-take small { display: block; color: var(--muted); margin-top: 2px; }
+.mvp-flags { list-style: none; margin: 10px 16px 0; padding: 0; display: grid; gap: 6px; font-size: 0.84rem; line-height: 1.45; }
+.mvp-flags li { padding: 8px 10px; border-radius: 10px; background: var(--surface-2); border-left: 3px solid var(--muted); }
+.mvp-flags li.is-bad { border-left-color: #e5484d; }
+.mvp-flags li.is-warn { border-left-color: #f5c542; }
+.mvp-clear, .mvp-why { margin: 10px 16px 0; }
+.mvp-card .pick-bet-foot { margin-top: 10px; }
+.mvp-near { margin: 0 0 14px; font-size: 0.86rem; }
+.mvp-near summary { cursor: pointer; font-weight: 700; color: var(--muted); padding: 6px 0; }
+.mvp-near ul { margin: 6px 0 0; padding-left: 18px; display: grid; gap: 4px; }
+@media (max-width: 560px) { .mvp-facts { grid-template-columns: 1fr 1fr; padding: 10px 12px 2px; } .mvp-take, .mvp-flags, .mvp-clear, .mvp-why { margin-left: 12px; margin-right: 12px; } }
 .live-tennis-ledger { display: grid; gap: 6px; }
 .live-tennis-ledger p { margin: 0; }
 .live-tennis-rest { border: 1px solid var(--line); border-radius: 14px; padding: 8px 12px; background: var(--surface); display: grid; gap: 8px; }
