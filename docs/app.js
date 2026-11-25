@@ -6395,15 +6395,14 @@ function renderPropPlayCard(record) {
 
 /**
  * The loader, everywhere something is being read (2026-11-25: "use this for my loading symbol on all loading symbol
- * locations"): the user's film of the infinity with a pixel racing it (docs/assets/loader.mp4, cut to the symbol alone,
- * silent, looping). Under it sits the drawn emblem (the infinity in the logo's colours as the track, a bright pixel
- * lapping it, dust strung out behind), which is on screen at once; the film takes its place the moment it is playing
- * (docs/early.js marks that), and where a browser will not play it (a phone saving power) the drawn one stays.
+ * locations"; later that day, of the film it first was: "the loading animation shows the whole area outline ... more
+ * of an orb ... a seamless loop"). An orb of light laps an infinity in the logo's colours, drawn on a clear canvas by
+ * docs/loader-fx.js, so the page shows through around it and one lap runs into the next with no seam. Under the
+ * canvas sits the plain drawn emblem (the track, a pixel lapping it, dust behind): it is there before the script
+ * has run, and it is what a reduced-motion user sees, still.
  * `size`: 'full' fills a tab that has nothing to show yet, 'line' sits in a status line beside its words.
- * Still for a reduced-motion user: no film, and the drawn track without its pixel.
  */
 let loaderSeq = 0;
-const LOADER_FILM = 'assets/loader.mp4';
 function loaderHtml(text, { size = 'line' } = {}) {
   const id = `ppInf${++loaderSeq}`;
   const DUR = 1.9;
@@ -6411,7 +6410,9 @@ function loaderHtml(text, { size = 'line' } = {}) {
   // The dust: each speck a little later round the track, smaller and fainter, and knocked a pixel or two off the line.
   const dust = [[0.05, 4.4, 0.85, 0, 0], [0.1, 3.8, 0.7, 1.6, -1.2], [0.15, 3.4, 0.58, -1.4, 1.6], [0.21, 3, 0.46, 2, 1.2], [0.27, 2.6, 0.36, -2.2, -1.6], [0.34, 2.2, 0.27, 1.2, 2.4], [0.42, 1.9, 0.19, -1.8, 0.6], [0.51, 1.6, 0.12, 2.4, -2]];
   const still = typeof matchMedia === 'function' && matchMedia('(prefers-reduced-motion: reduce)').matches;
-  const film = still ? '' : `<video class="pp-loader-video" src="${LOADER_FILM}" autoplay muted loop playsinline disablepictureinpicture disableremoteplayback preload="auto" tabindex="-1" aria-hidden="true"></video>`;
+  // The canvas the animation is drawn on; docs/loader-fx.js finds it once it is on the page.
+  const fx = still ? '' : '<canvas class="pp-loader-fx"></canvas>';
+  globalThis.ppLoaderFx?.start();
   return `<span class="pp-loader is-${size === 'full' ? 'full' : 'line'}">
     <span class="pp-loader-art" aria-hidden="true">
       <svg viewBox="0 3.5 120 60" focusable="false">
@@ -6419,7 +6420,7 @@ function loaderHtml(text, { size = 'line' } = {}) {
         <path id="${id}t" class="pp-inf-track" stroke="url(#${id}g)" d="M60 32 C46 8 12 8 12 32 C12 56 46 56 60 32 C74 8 108 8 108 32 C108 56 74 56 60 32 Z"/>
         ${dust.map(([lag, sz, alpha, dx, dy]) => `<rect class="pp-inf-dust" x="${(-sz / 2 + dx).toFixed(1)}" y="${(-sz / 2 + dy).toFixed(1)}" width="${sz}" height="${sz}" opacity="${alpha}">${lap(lag)}</rect>`).join('')}
         <rect class="pp-inf-pixel" x="-3.5" y="-3.5" width="7" height="7" rx="1">${lap(0)}</rect>
-      </svg>${film}
+      </svg>${fx}
     </span>
     <span class="pp-loader-text">${esc(text)}</span>
   </span>`;

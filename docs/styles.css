@@ -7285,23 +7285,23 @@ a.trend-price:hover { background: rgba(255, 255, 255, 0.06); }
 .parlay-regen { margin-left: auto; min-height: 36px; padding: 0 18px; border-radius: 10px; border: 0; background: var(--success); color: #06120a; font: inherit; font-weight: 800; cursor: pointer; }
 .parlay-regen:hover { filter: brightness(1.08); }
 
-/* The loader (docs/app.js loaderHtml): the user's film of the infinity with a pixel racing it, over the drawn emblem
-   (the logo's infinity as a track, a pixel lapping it, pixel dust behind). The drawn one is there at once; the film
-   fades in over it once it is playing (docs/early.js adds .is-video), its black ground screened away. */
+/* The loader (docs/app.js loaderHtml): an orb lapping an infinity, drawn on a clear canvas by docs/loader-fx.js, over
+   the plain drawn emblem (the logo's infinity as a track, a pixel lapping it, dust behind). The canvas has no ground
+   of its own, so there is no box around it: the page shows through. The emblem is there until the canvas draws its
+   first frame (.is-fx), and stays for a reduced-motion user. The canvas runs past the box on every side so the glow
+   is never cut by an edge. */
 .pp-loader { display: flex; align-items: center; justify-content: center; gap: 12px; padding: 20px 0; color: var(--muted); font-weight: 600; }
 .pp-loader-art { position: relative; flex: none; display: block; width: 84px; aspect-ratio: 2 / 1; }
-.pp-loader-art svg { position: absolute; inset: 0; width: 100%; height: 100%; overflow: visible; transition: opacity 0.3s ease; }
-.pp-loader-video { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; opacity: 0; transition: opacity 0.3s ease; mix-blend-mode: screen; pointer-events: none; }
-.pp-loader-video::-webkit-media-controls, .pp-loader-video::-webkit-media-controls-start-playback-button { display: none !important; -webkit-appearance: none; }
-.pp-loader-art.is-video .pp-loader-video { opacity: 1; }
-.pp-loader-art.is-video svg { opacity: 0; }
+.pp-loader-art svg { position: absolute; inset: 0; width: 100%; height: 100%; overflow: visible; transition: opacity 0.2s ease; }
+.pp-loader-fx { position: absolute; left: -14%; top: -22%; width: 128%; height: 144%; pointer-events: none; }
+.pp-loader-art.is-fx svg { opacity: 0; }
 .pp-loader.is-full { display: grid; justify-items: center; gap: 8px; padding: 32px 16px 40px; font-weight: 700; letter-spacing: 0.02em; text-align: center; }
 .pp-loader.is-full .pp-loader-art { width: min(280px, 74vw); }
 .pp-inf-track { fill: none; stroke-width: 3.2; stroke-linecap: round; stroke-linejoin: round; opacity: 0.55; filter: drop-shadow(0 0 5px rgba(139, 92, 246, 0.55)); }
 .pp-inf-pixel { fill: #ffffff; filter: drop-shadow(0 0 4px #22e3ff) drop-shadow(0 0 9px rgba(255, 43, 214, 0.9)); }
 .pp-inf-dust { fill: #9be9ff; }
 .pp-inf-dust:nth-of-type(odd) { fill: #ff8ae6; }
-@media (prefers-reduced-motion: reduce) { .pp-loader-video, .pp-inf-pixel, .pp-inf-dust { display: none; } .pp-inf-track { opacity: 0.9; } }
+@media (prefers-reduced-motion: reduce) { .pp-loader-fx, .pp-inf-pixel, .pp-inf-dust { display: none; } .pp-inf-track { opacity: 0.9; } }
 .books-state { display: grid; gap: 4px; font-size: 0.84rem; font-weight: 700; }
 .books-state select { min-height: 44px; padding: 0 12px; border-radius: 12px; border: 1px solid var(--line); background: var(--surface-2); color: var(--text); font: inherit; max-width: 180px; }
 .books-state small { color: var(--muted); font-weight: 500; line-height: 1.4; }
