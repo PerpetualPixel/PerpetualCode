@@ -8087,7 +8087,7 @@ a.tennis-book:hover { background: rgba(255, 255, 255, 0.06); }
 .live-call-floor { color: var(--muted); font-size: 0.68rem; white-space: nowrap; }
 .live-call-sub { grid-column: 1 / -1; color: var(--muted); font-size: 0.76rem; line-height: 1.4; }
 .live-tennis-more { display: grid; gap: 6px; margin-top: 8px; }
-.live-tennis-settled { display: grid; gap: 4px; }
+.live-results-link { border: 0; background: none; padding: 0; color: var(--accent); font: inherit; font-weight: 700; cursor: pointer; min-height: 24px; }
 .pick-board-units.is-lean { color: #b79cff; }
 
 /* "Too good to be true?" on a Trends line's sheet (docs/app.js lineCheckBlock). */
