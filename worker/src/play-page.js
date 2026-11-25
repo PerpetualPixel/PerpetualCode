@@ -35,6 +35,9 @@ const shell = (title, body, tone = '#7C3AED') => `<!doctype html>
 <style>
   :root { --tone: ${tone}; }
   * { box-sizing: border-box; }
+  /* A long name, event or reason wraps inside its own box: nothing runs under what is beside it. */
+  h1, p, li, dt, dd, span, strong { overflow-wrap: anywhere; }
+  dl > div { min-width: 0; }
   body { margin: 0; background-color: #05050A; background-image: linear-gradient(rgba(124,58,237,0.08) 1px, transparent 1px), linear-gradient(90deg, rgba(124,58,237,0.08) 1px, transparent 1px); background-size: 40px 40px; color: #F3F1FA; font: 16px/1.5 -apple-system, BlinkMacSystemFont, "Segoe UI", Inter, Roboto, system-ui, sans-serif; }
   main { max-width: 560px; margin: 0 auto; padding: 20px 16px 48px; }
   header { display: flex; align-items: center; gap: 10px; margin-bottom: 16px; }
@@ -57,7 +60,8 @@ const shell = (title, body, tone = '#7C3AED') => `<!doctype html>
   .books { display: grid; gap: 8px; }
   .book { display: flex; align-items: center; justify-content: space-between; gap: 10px; padding: 12px 14px; border-radius: 12px; background: rgba(255,255,255,0.06); color: #F3F1FA; text-decoration: none; font-weight: 700; min-height: 48px; }
   a.book { border: 1px solid var(--tone); }
-  .book span:last-child { font-variant-numeric: tabular-nums; }
+  .book span:first-child { min-width: 0; }
+  .book span:last-child { font-variant-numeric: tabular-nums; white-space: nowrap; flex: none; }
   .book small { color: #9C98B8; font-weight: 500; }
   .note { color: #9C98B8; font-size: 0.82rem; margin: 10px 0 0; }
   .more { display: block; text-align: center; margin-top: 18px; padding: 14px; border-radius: 12px; background: #7C3AED; color: #fff; font-weight: 800; text-decoration: none; }
