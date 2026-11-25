@@ -47,6 +47,15 @@ REQUIRE_AUTH = "false"
 # same way once you have a key:
 #   wrangler secret put ANTHROPIC_API_KEY
 
+# DISCORD_LIVE_WEBHOOK is a secret too, and optional: a Discord channel webhook
+# URL. With it set, each tracked live tennis play is posted to that channel when
+# it opens and its message is edited with the result (see src/discord.js and
+# DEPLOY.md, "Discord live alerts"). The URL is a password for the channel:
+#   wrangler secret put DISCORD_LIVE_WEBHOOK
+# Optional with it: DISCORD_LIVE_ROLE_ID (a role to ping on a new play) and
+# DISCORD_UPDATES_WEBHOOK (a second channel for one line per result). NEVER set
+# any of them here as a plain var: this file is public.
+
 # D1 database binding (run: wrangler d1 create pixel-pick)
 [[d1_databases]]
 binding = "DB"
