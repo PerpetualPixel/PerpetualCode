@@ -341,6 +341,11 @@ and make a new one.
   **Developer Mode**, then right-click the role → **Copy Role ID**. The role
   must allow being mentioned (**Server Settings** → **Roles** → the role →
   "Allow anyone to @mention this role").
+- `DISCORD_LIVE_LEAN_WEBHOOK`: a webhook in a channel for the live leans (for
+  example `tennis-leans`). A lean posts there when it opens and its message is
+  edited when it settles. A lean is not a tracked play: its card says LEAN,
+  carries no stake or units, pings nobody, and never goes to the results
+  channel. With this unset, leans stay on the site only.
 - `DISCORD_UPDATES_WEBHOOK`: a second webhook, made the same way in another
   channel (for example `updates`), that gets one simple card per result: won, lost or void, the final score, the
   units, the price it was taken at, and the record.
@@ -370,7 +375,8 @@ URL or a message id.
 ### What posts, and what does not
 
 - Posts: tracked live tennis plays (match winner, set winner, set games).
-- Does not post: leans (they are not tracked), and a play that was already
+- Leans post only to the leans channel, when `DISCORD_LIVE_LEAN_WEBHOOK` is set.
+- Does not post: a play that was already
   more than 15 minutes old or already settled when the webhook was added.
 - A play is never posted twice. If Discord does not answer a post at all,
   that play is skipped rather than risked twice.

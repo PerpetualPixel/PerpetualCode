@@ -59,7 +59,8 @@ REQUIRE_AUTH = "false"
 # it opens and its message is edited with the result (see src/discord.js and
 # DEPLOY.md, "Discord live alerts"). The URL is a password for the channel:
 #   wrangler secret put DISCORD_LIVE_WEBHOOK
-# Optional with it: DISCORD_LIVE_ROLE_ID (a role to ping on a new play) and
+# Optional with it: DISCORD_LIVE_LEAN_WEBHOOK (a channel for the live leans),
+# DISCORD_LIVE_ROLE_ID (a role to ping on a new play) and
 # DISCORD_UPDATES_WEBHOOK (a second channel for one line per result). NEVER set
 # any of them here as a plain var: this file is public.
 
