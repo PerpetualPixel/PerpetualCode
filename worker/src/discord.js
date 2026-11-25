@@ -50,6 +50,8 @@ const WEBHOOK = /^https:\/\/(?:(?:canary|ptb)\.)?discord(?:app)?\.com\/api\/webh
 const SNOWFLAKE = /^\d{5,25}$/;
 // The site's own colours (docs/styles.css): magenta for a play that is live, its green and red for a result.
 const COLOR = { open: 0xff007a, win: 0x10b981, loss: 0xef4444, void: 0x9c98b8 };
+/** An open lean's colour: the violet of the lean box on the site. */
+const LEAN_COLOR = 0x8b5cf6;
 const LOGO = 'https://perpetualpicks.com/assets/logo-icon-180.png';
 // The strips under the card (docs/assets/discord: live, won, lost, void). Discord keeps an image by its address, so a redrawn strip needs a new version.
 const ART = 'https://perpetualpicks.com/assets/discord';
@@ -62,13 +64,14 @@ const TOUR = { atp: 'ATP', wta: 'WTA' };
  * this value and the next tick posts one sample play, marked as a test, with the role ping; the tick after edits it
  * to its settled form. That is the whole path a real play takes.
  */
-export const TEST_ALERT_ID = '2026-11-25-5';
+export const TEST_ALERT_ID = '2026-11-25-6';
 /**
  * What the test sends: 'cards' (one card for each template in the live channel: live play, won, lost, void, with
- * their buttons and no ping), 'all' (one alert with its ping, its edit, and the result card) or 'results' (the
- * result cards alone, a win and a loss, in the results channel).
+ * their buttons and no ping), 'all' (one alert with its ping, its edit, and the result card), 'results' (the
+ * result cards alone, a win and a loss, in the results channel) or 'leans' (a lean as it opens and one that has
+ * won, in the leans channel).
  */
-export const TEST_SCOPE = 'cards';
+export const TEST_SCOPE = 'leans';
 const TEST_BASE = { market: 'live_ml', tour: 'atp', event: 'Test alert', round: 'not a real play', a: 'Test Player', b: 'Sample Opponent', side: 'a', prob: 0.69, american: -150, playable: -165, bookId: 'fanduel', book: 'FanDuel', units: 1, selection: 'Test Player to win the match (live)', score: '6-0 3-4', status: 'pending',
   stats: { holds: { a: { held: 6, served: 6 }, b: { held: 3, served: 5 } }, last: { of: 8, a: 5, b: 3 }, streak: null, setGames: null },
   why: ['Score 6-0 3-4: from here the model gives Test Player 74% to win the match and 58% to win the set in play.', 'Test Player has held 6 of 6 service games; Sample Opponent has held 3 of 5 service games.', 'Last 8 games: Test Player 5, Sample Opponent 3.', 'The live price gives Test Player 60%; the read puts it at 69%.'],
@@ -81,6 +84,15 @@ export function testPlays(now = Date.now()) {
     'test-won': { ...TEST_BASE, id: 'test-won', postedAt: now, gradedAt: now, status: 'graded', result: 'win', profit: 0.67, actual: '6-0 4-6 7-6' },
     'test-lost': { ...TEST_BASE, id: 'test-lost', postedAt: now, gradedAt: now, status: 'graded', result: 'loss', profit: -1, actual: '6-0 4-6 3-6' },
     'test-void': { ...TEST_BASE, id: 'test-void', postedAt: now, gradedAt: now, status: 'void', result: 'void', profit: 0, actual: '6-0 1-0: a retirement' },
+  };
+}
+/** The two test leans, as the leans channel shows them: test-lean (open) and test-lean-won. A lean has no stake on the record, no hold counts and often no book. */
+export function testLeans(now = Date.now()) {
+  const { quotes: _q, stats: _s, american: _a, bookId: _b, book: _n, ...base } = TEST_BASE;
+  const lean = { ...base, lean: true, basis: 'score', units: 0.5, prob: 0.75, playable: -245, score: '6-0', why: ['Score 6-0: from here the model gives Test Player 75% to win the match.', 'No serve data on this match: the read is from the score alone.'] };
+  return {
+    'test-lean': { ...lean, id: 'test-lean', postedAt: now },
+    'test-lean-won': { ...lean, id: 'test-lean-won', postedAt: now, gradedAt: now, status: 'graded', result: 'win', profit: 0.2, actual: '6-0 6-3' },
   };
 }
 const isTestId = (id) => /^test(-|$)/.test(String(id ?? ''));
@@ -101,11 +113,11 @@ export function testAlertMessage(now, { role = null, settled = false } = {}) {
 
 /** The role id as Discord gives it, or however it was pasted (a mention <@&123>, in quotes, after a label): the one long number in the value. A name has none. */
 const roleOf = (v) => { const ids = String(v ?? '').match(/\d{15,22}/g) ?? []; return ids.length === 1 ? ids[0] : String(v ?? '').trim(); };
-/** What is configured: the webhooks (null when unset or not a Discord webhook URL) and the role to ping. */
+/** What is configured: the webhooks (null when unset or not a Discord webhook URL) and the role to ping. `leans` is the channel for the live leans (2026-11-25: "I made another channel (tennis-leans)"). */
 export function discordConfig(env) {
   const hook = (v) => { const s = String(v ?? '').trim(); return WEBHOOK.test(s) ? s : null; };
   const role = roleOf(env?.DISCORD_LIVE_ROLE_ID);
-  return { live: hook(env?.DISCORD_LIVE_WEBHOOK), updates: hook(env?.DISCORD_UPDATES_WEBHOOK), role: SNOWFLAKE.test(role) ? role : null };
+  return { live: hook(env?.DISCORD_LIVE_WEBHOOK), updates: hook(env?.DISCORD_UPDATES_WEBHOOK), leans: hook(env?.DISCORD_LIVE_LEAN_WEBHOOK), role: SNOWFLAKE.test(role) ? role : null };
 }
 
 const fmt = (american) => (american > 0 ? `+${american}` : String(american).replace('-', '−'));
@@ -163,6 +175,7 @@ export function whyLine(play) {
     else if (st.last && st.last[side] > st.last[other]) out.push(`Has won ${st.last[side]} of the last ${st.last.of} games.`);
   }
   const price = Number.isFinite(play.american) ? play.american : play.playable;
+  if (play.lean && play.basis === 'score') out.push('Read from the score alone: no serve data on this match.');
   if (Number.isFinite(play.prob) && Number.isFinite(price)) out.push(`We make it ${pct(play.prob)} to land; the price only needs ${pct(implied(price))}.`);
   return out.slice(0, 3).join(' ');
 }
@@ -190,14 +203,17 @@ export function livePlayMessage(play, { role = null, record = null } = {}) {
   const outcome = play.status === 'void' ? 'void' : play.result === 'win' ? 'win' : play.result === 'loss' ? 'loss' : 'open';
   const take = String(play.selection ?? '').replace(/\s*\(live\)\s*$/i, '');
   const bookName = md(SPORTSBOOKS[play.bookId]?.name ?? play.book ?? 'the book');
+  // A lean is a call, not a tracked play: it carries no stake and is never on the record, and every line of it says so.
+  const lean = Boolean(play.lean);
+  const stake = lean ? '**lean · not tracked**' : `stake **${unitsOf(play.units)}**`;
   const betLine = priced
-    ? `**${fmt(play.american)}** at **${bookName}**${Number.isFinite(play.playable) && play.playable < play.american ? ` · good down to ${fmt(play.playable)}` : ''} · stake **${unitsOf(play.units)}**`
-    : `**${fmt(price)} or better** at your book · stake **${unitsOf(play.units)}**`;
+    ? `**${fmt(play.american)}** at **${bookName}**${Number.isFinite(play.playable) && play.playable < play.american ? ` · good down to ${fmt(play.playable)}` : ''} · ${stake}`
+    : `**${fmt(price)} or better** at your book · ${stake}`;
   const why = whyLine(play);
   const links = settled ? [] : bookLinks(play);
   const lines = [
-    settled ? (outcome === 'void' ? `**Stake returned**${play.actual ? ` · ${md(play.actual)}` : ''}` : `**Final ${md(play.actual ?? '')}${Number.isFinite(play.profit) ? ` · ${signedUnits(play.profit)}` : ''}**`) : null,
-    settled ? `Taken at **${priced ? fmt(play.american) : `${fmt(price)} or better`}**${priced ? ` (${bookName})` : ''} · stake **${unitsOf(play.units)}**` : betLine,
+    settled ? (outcome === 'void' ? `**${lean ? 'No result' : 'Stake returned'}**${play.actual ? ` · ${md(play.actual)}` : ''}` : `**Final ${md(play.actual ?? '')}${!lean && Number.isFinite(play.profit) ? ` · ${signedUnits(play.profit)}` : ''}**`) : null,
+    settled ? `${lean ? 'Leaned' : 'Taken'} at **${priced ? fmt(play.american) : `${fmt(price)} or better`}**${priced ? ` (${bookName})` : ''} · ${stake}` : betLine,
     `${kind.label(play)} · ${md(play.a)} vs ${md(play.b)}`,
     [TOUR[play.tour] ?? null, play.event ? md(play.event) : null, play.round ? md(play.round) : null].filter(Boolean).join(' · ') || null,
     why ? `\n**Why:** ${why}` : null,
@@ -213,20 +229,21 @@ export function livePlayMessage(play, { role = null, record = null } = {}) {
     h ? { name: 'Serve held today', value: `${md(lastName(play.a))} ${h.a.held}/${h.a.served} · ${md(lastName(play.b))} ${h.b.held}/${h.b.served}`, inline: true } : null,
     record && record.wins + record.losses > 0 ? { name: `Our ${kind.head(play).replace(/^Set \d+ /, 'Set ')} record`, value: `${record.wins}-${record.losses} · ${signedUnits(record.units)}`, inline: true } : null,
   ].filter(Boolean);
-  const mark = { open: '🎾 TAKE ·', win: '✅ WON ·', loss: '❌ LOST ·', void: '⚪ VOID ·' }[outcome];
+  const mark = (lean ? { open: '💡 LEAN ·', win: '✅ LEAN WON ·', loss: '❌ LEAN LOST ·', void: '⚪ LEAN VOID ·' } : { open: '🎾 TAKE ·', win: '✅ WON ·', loss: '❌ LOST ·', void: '⚪ VOID ·' })[outcome];
   return {
     // The ping rides the first post only; an edit re-sends the same text and Discord does not ping again.
     content: role ? `<@&${role}>` : '',
     allowed_mentions: { parse: [], roles: role ? [role] : [] },
     embeds: [{
-      author: { name: 'PERPETUAL PICKS · LIVE TENNIS', url: SITE, icon_url: LOGO },
+      author: { name: lean ? 'PERPETUAL PICKS · LIVE TENNIS LEAN' : 'PERPETUAL PICKS · LIVE TENNIS', url: SITE, icon_url: LOGO },
       title: `${mark} ${md(take)}`.slice(0, 250),
       url: SITE,
       description: lines.join('\n').slice(0, 3900),
-      color: COLOR[outcome],
+      color: lean && outcome === 'open' ? LEAN_COLOR : COLOR[outcome],
       fields,
-      image: { url: `${ART}/${{ open: 'live', win: 'won', loss: 'lost', void: 'void' }[outcome]}.png?v=${ART_VERSION}` },
-      footer: { text: 'Tracked play · graded automatically · perpetualpicks.com', icon_url: LOGO },
+      // The strips say LIVE PLAY, WON, LOST and VOID: a lean is none of the first, so an open lean carries no strip.
+      ...(lean && outcome === 'open' ? {} : { image: { url: `${ART}/${{ open: 'live', win: 'won', loss: 'lost', void: 'void' }[outcome]}.png?v=${ART_VERSION}` } }),
+      footer: { text: lean ? 'Lean · not a tracked play · not on the record · perpetualpicks.com' : 'Tracked play · graded automatically · perpetualpicks.com', icon_url: LOGO },
       timestamp: new Date(play.postedAt ?? Date.now()).toISOString(),
     }],
   };
@@ -301,9 +318,15 @@ export function cardLine(play, { role = null } = {}) {
   const take = md(String(play.selection ?? '').replace(/\s*\(live\)\s*$/i, ''));
   const priced = Number.isFinite(play.american);
   const price = priced ? play.american : play.playable;
+  const at = Number.isFinite(price) ? (priced ? ` · ${fmt(price)} at ${md(SPORTSBOOKS[play.bookId]?.name ?? play.book ?? 'the book')}` : ` · ${fmt(price)} or better`) : '';
+  if (play.lean) {
+    // A lean says it is one first, and never carries units: it is not on the record.
+    if (play.status === 'void') return `⚪ **LEAN VOID** · ${take}`;
+    if (play.status === 'graded') return `${play.result === 'win' ? '✅ **LEAN WON**' : '❌ **LEAN LOST**'} · ${take}${play.actual ? ` · final ${md(play.actual)}` : ''} · not tracked`;
+    return `💡 **LEAN · ${take}**${at} · not tracked`;
+  }
   if (play.status === 'void') return `⚪ **VOID** · ${take} · stake returned`;
   if (play.status === 'graded') return `${play.result === 'win' ? '✅ **WON**' : '❌ **LOST**'} · ${take}${play.actual ? ` · final ${md(play.actual)}` : ''}${Number.isFinite(play.profit) ? ` · ${signedUnits(play.profit)}` : ''}`;
-  const at = Number.isFinite(price) ? (priced ? ` · ${fmt(price)} at ${md(SPORTSBOOKS[play.bookId]?.name ?? play.book ?? 'the book')}` : ` · ${fmt(price)} or better`) : '';
   return `${role ? `<@&${role}> ` : ''}🎾 **TAKE · ${take}**${at} · ${unitsOf(play.units)}`;
 }
 
@@ -320,7 +343,7 @@ export function cardMessage(play, { role = null, record = null, png = null, resu
   const payload = {
     content: cardLine(play, { role: result ? null : role }),
     allowed_mentions: { parse: [], roles: role && !result ? [role] : [] },
-    embeds: [{ color: COLOR[outcome], image: { url: 'attachment://card.png' } }],
+    embeds: [{ color: play.lean && outcome === 'open' ? LEAN_COLOR : COLOR[outcome], image: { url: 'attachment://card.png' } }],
     attachments: [{ id: 0, filename: 'card.png' }],
     ...(buttons ? { components: cardButtons(play) } : {}),
   };
@@ -467,6 +490,19 @@ export async function syncLiveDiscord(env, now = Date.now(), { deps = {} } = {})
     }
     ledger.test = { id: testId, state: ok === 4 ? 'done' : 'failed', at: now, cards: ok, pictures, buttons: !ledger.noButtons };
     dirty = true;
+  } else if (testId && ledger.test?.id !== testId && testScope === 'leans') {
+    // The leans channel: a lean as it opens and one that has won, marked as a test. Nobody is pinged there.
+    const cards = [];
+    if (cfg.leans) for (const play of Object.values(testLeans(now))) cards.push(await dress(play, { role: null, test: true }));
+    ledger.test = { id: testId, state: 'sending', at: now };
+    await writeLedger(env, ledger);
+    let ok = 0; let pictures = 0;
+    for (const card of cards) {
+      const r = await send(cfg.leans, card);
+      if (r.ok) { ok++; if (card.file && !r.noPicture) pictures++; } else fail('test lean', r);
+    }
+    ledger.test = { id: testId, state: !cfg.leans ? 'no leans channel' : ok === cards.length ? 'done' : 'failed', at: now, leans: ok, pictures, buttons: !ledger.noButtons };
+    dirty = true;
   } else if (testId && ledger.test?.id !== testId && testScope === 'results') {
     // The result cards alone, a win and a loss, in the results channel: nobody is pinged.
     const plays = testPlays(now);
@@ -509,17 +545,23 @@ export async function syncLiveDiscord(env, now = Date.now(), { deps = {} } = {})
   let records = null;
   const recordFor = async (p) => { records ??= deps.records ? await deps.records() : await liveRecords(env, now).catch(() => ({})); return records?.[KIND[p.market].record] ?? null; };
 
-  for (const p of tracked) {
+  // The leans go to their own channel, when there is one: posted as they open and edited when they settle, like a
+  // play, but with nobody pinged, no record under them and nothing sent to the results channel.
+  const leans = cfg.leans ? plays.filter((p) => p && p.lean && p.id && KIND[p.market]) : [];
+  for (const p of [...tracked, ...leans]) {
+    const lean = Boolean(p.lean);
+    const hook = lean ? cfg.leans : cfg.live;
+    const mine = async (more = {}) => dress(p, { record: lean ? null : await recordFor(p), ...(lean ? { role: null } : {}), ...more });
     const entry = ledger.plays[p.id];
     const settled = p.status === 'graded' || p.status === 'void';
     if (!entry) {
       // A new alert: open, and fresh enough that its price is still there to take.
       if (settled || p.status !== 'pending' || now - (p.postedAt ?? 0) > FRESH_MS) continue;
       // Drawn first, then marked as sending: a run that dies drawing has posted nothing, and the next tick posts it written.
-      const card = await dress(p, { record: await recordFor(p) });
+      const card = await mine();
       ledger.plays[p.id] = { state: 'sending', at: now, tries: 1 };
       await writeLedger(env, ledger);
-      const r = await send(cfg.live, card);
+      const r = await send(hook, card);
       if (r.ok && r.id) { ledger.plays[p.id] = { state: 'open', at: now, messageId: String(r.id), tries: 1 }; ledger.lastPostAt = now; out.posted++; }
       // No answer: it may be in the channel, so it is not sent again. Refused: it is not, so the next tick tries again.
       else if (r.unknown || r.ok) { ledger.plays[p.id] = { state: 'lost', at: now }; fail('post', r); }
@@ -529,10 +571,10 @@ export async function syncLiveDiscord(env, now = Date.now(), { deps = {} } = {})
     }
     if (entry.state === 'retry') {
       if (settled || now - (p.postedAt ?? 0) > FRESH_MS || (entry.tries ?? 1) >= POST_TRIES) { ledger.plays[p.id] = { state: 'failed', at: entry.at }; dirty = true; continue; }
-      const card = await dress(p, { record: await recordFor(p) });
+      const card = await mine();
       ledger.plays[p.id] = { state: 'sending', at: entry.at, tries: (entry.tries ?? 1) + 1 };
       await writeLedger(env, ledger);
-      const r = await send(cfg.live, card);
+      const r = await send(hook, card);
       if (r.ok && r.id) { ledger.plays[p.id] = { state: 'open', at: entry.at, messageId: String(r.id) }; ledger.lastPostAt = now; out.posted++; }
       else if (r.unknown || r.ok) { ledger.plays[p.id] = { state: 'lost', at: entry.at }; fail('post', r); }
       else { ledger.plays[p.id] = { state: 'retry', at: entry.at, tries: (entry.tries ?? 1) + 1 }; fail('post', r); }
@@ -541,11 +583,11 @@ export async function syncLiveDiscord(env, now = Date.now(), { deps = {} } = {})
     }
     // Posted and now settled: the same message says how it ended.
     if (entry.state === 'open' && entry.messageId && settled) {
-      const r = await send(cfg.live, await dress(p, { record: await recordFor(p) }), { messageId: entry.messageId });
+      const r = await send(hook, await mine(), { messageId: entry.messageId });
       if (r.ok) {
         ledger.plays[p.id] = { ...entry, state: 'done', doneAt: now };
         out.edited++;
-        if (cfg.updates) { const u = await send(cfg.updates, await dress(p, { record: await recordFor(p), result: true })); if (!u.ok && !u.unknown) fail('update', u); }
+        if (cfg.updates && !lean) { const u = await send(cfg.updates, await mine({ result: true })); if (!u.ok && !u.unknown) fail('update', u); }
       } else {
         const tries = (entry.editTries ?? 0) + 1;
         // The message is gone (deleted by hand) or the edit keeps failing: stop trying.
@@ -572,15 +614,15 @@ export async function syncLiveDiscord(env, now = Date.now(), { deps = {} } = {})
  * front page, else the site.
  */
 /**
- * A tracked live play by its id, for the card, the stats page and the book links: today's and yesterday's first,
- * then the kept days, newest first. The test cards' plays answer to their own ids. Null when it is not on file.
+ * A live play or a live lean by its id, for the card, the stats page and the book links: today's and yesterday's
+ * first, then the kept days, newest first. The test cards' plays answer to their own ids. Null when it is not on file.
  */
 export async function findLivePlay(env, playId, now = Date.now()) {
   const id = String(playId ?? '');
-  if (isTestId(id)) return testPlays(now)[id] ?? null;
+  if (isTestId(id)) return testPlays(now)[id] ?? testLeans(now)[id] ?? null;
   if (!id || id.length > 120) return null;
   const tried = new Set();
-  const look = async (date) => { if (tried.has(date)) return null; tried.add(date); return ((await readJson(env, tennisLivePlaysKey(date)))?.plays ?? []).find((p) => p.id === id && !p.lean) ?? null; };
+  const look = async (date) => { if (tried.has(date)) return null; tried.add(date); return ((await readJson(env, tennisLivePlaysKey(date)))?.plays ?? []).find((p) => p.id === id) ?? null; };
   for (const d of [etParts(now).date, etParts(now - 864e5).date]) { const hit = await look(d); if (hit) return hit; }
   const index = (await readJson(env, TENNIS_LIVE_PLAYS_INDEX)) ?? { dates: [] };
   for (const d of [...index.dates].sort().reverse().slice(0, 62)) { const hit = await look(d); if (hit) return hit; }
@@ -588,6 +630,8 @@ export async function findLivePlay(env, playId, now = Date.now()) {
 }
 /** The site's record for the kind of play this is ({wins, losses, units}), or null. */
 export async function recordForPlay(env, play, now = Date.now()) {
+  // A lean is on no record.
+  if (play?.lean) return null;
   if (isTestId(play?.id)) return { wins: 9, losses: 2, units: 3.86 };
   const records = await liveRecords(env, now).catch(() => null);
   return records?.[KIND[play?.market]?.record] ?? null;
@@ -612,13 +656,15 @@ export async function discordStatus(env) {
   const counts = {};
   for (const e of Object.values(ledger.plays ?? {})) counts[e.state] = (counts[e.state] ?? 0) + 1;
   return {
-    live: Boolean(cfg.live), updates: Boolean(cfg.updates), role: Boolean(cfg.role),
+    live: Boolean(cfg.live), updates: Boolean(cfg.updates), leans: Boolean(cfg.leans), role: Boolean(cfg.role),
+    // Set but not a Discord webhook address: the leans secret is there and wrong.
+    leansSecretRejected: Boolean(String(env?.DISCORD_LIVE_LEAN_WEBHOOK ?? '').trim()) && !cfg.leans,
     // Set but not a Discord webhook address: the secret is there and wrong.
     liveSecretRejected: Boolean(String(env?.DISCORD_LIVE_WEBHOOK ?? '').trim()) && !cfg.live,
     // The role: found under its name at all, and if found, whether it is a role id (digits only).
     roleSecretFound: Boolean(String(env?.DISCORD_LIVE_ROLE_ID ?? '').trim()),
     roleSecretRejected: Boolean(String(env?.DISCORD_LIVE_ROLE_ID ?? '').trim()) && !cfg.role,
-    test: ledger.test ? { id: ledger.test.id, state: ledger.test.state, at: ledger.test.at ?? null, ...(ledger.test.updates ? { updates: ledger.test.updates } : {}), ...(ledger.test.cards != null ? { cards: ledger.test.cards, pictures: ledger.test.pictures, buttons: ledger.test.buttons } : {}) } : null,
+    test: ledger.test ? { id: ledger.test.id, state: ledger.test.state, at: ledger.test.at ?? null, ...(ledger.test.updates ? { updates: ledger.test.updates } : {}), ...(ledger.test.cards != null ? { cards: ledger.test.cards, pictures: ledger.test.pictures, buttons: ledger.test.buttons } : {}), ...(ledger.test.leans != null ? { leans: ledger.test.leans, pictures: ledger.test.pictures, buttons: ledger.test.buttons } : {}) } : null,
     // Whether Discord took the buttons, and the last reason a card's picture could not be drawn.
     buttons: !ledger.noButtons, pictures: !ledger.noPictures, cardError: ledger.cardError ?? null,
     helloAt: ledger.helloAt ?? null, lastPostAt: ledger.lastPostAt ?? null, lastError: ledger.lastError ?? null, plays: counts,

@@ -88,7 +88,7 @@ export function playPage(play, { record = null } = {}) {
     Number.isFinite(play.prob) ? ['Chance to land', pct(play.prob), 'our read'] : null,
     needs != null ? ['Price needs', pct(needs), `to break even at ${fmt(price)}`] : null,
     edge != null ? ['Edge', `${edge >= 0 ? '+' : '−'}${Math.abs(edge)} pts`, 'read less price'] : null,
-    ['Stake', `${Math.round((play.units ?? 1) * 100) / 100}u`, 'sized by confidence'],
+    play.lean ? ['Stake', 'None', 'a lean is not tracked'] : ['Stake', `${Math.round((play.units ?? 1) * 100) / 100}u`, 'sized by confidence'],
     play.score ? ['Score when taken', play.score, ''] : null,
     h ? [`${lastName(play.a)} serve`, `${h.a.held}/${h.a.served}`, 'games held today'] : null,
     h ? [`${lastName(play.b)} serve`, `${h.b.held}/${h.b.served}`, 'games held today'] : null,
@@ -98,10 +98,10 @@ export function playPage(play, { record = null } = {}) {
   const books = state === 'live' ? booksOf(play) : [];
   const why = whyLine(play).replace(/\\([\\*_~`|>[\]()])/g, '$1');
   const reasons = (play.why ?? []).map((w) => String(w)).filter(Boolean).slice(0, 8);
-  const result = state === 'live' ? '' : `<section class="result"><h2>Result</h2><strong>${state === 'void' ? 'Void · stake returned' : `${state === 'won' ? 'Won' : 'Lost'}${Number.isFinite(play.profit) ? ` · ${signedUnits(play.profit)}` : ''}`}</strong>${play.actual ? `<p class="note">Final ${esc(play.actual)}</p>` : ''}</section>`;
+  const result = state === 'live' ? '' : `<section class="result"><h2>Result</h2><strong>${state === 'void' ? (play.lean ? 'Void · no result' : 'Void · stake returned') : `${play.lean ? 'Lean ' : ''}${state === 'won' ? (play.lean ? 'won' : 'Won') : (play.lean ? 'lost' : 'Lost')}${!play.lean && Number.isFinite(play.profit) ? ` · ${signedUnits(play.profit)}` : ''}`}</strong>${play.actual ? `<p class="note">Final ${esc(play.actual)}</p>` : ''}</section>`;
   const body = `
 <img class="card" src="${CONFIG.WORKER_URL}/card/${encodeURIComponent(play.id)}.png?s=${state}" alt="${esc(`${big} ${small}`)}" width="1080" height="1470">
-<h1><small>${state === 'live' ? 'Live play · take' : 'Tracked live play'}</small>${esc(String(play.selection ?? '').replace(/\s*\(live\)\s*$/i, ''))}</h1>
+<h1><small>${play.lean ? (state === 'live' ? 'Live lean · not tracked' : 'Live lean · not on the record') : state === 'live' ? 'Live play · take' : 'Tracked live play'}</small>${esc(String(play.selection ?? '').replace(/\s*\(live\)\s*$/i, ''))}</h1>
 <p class="sub">${esc(play.a)} vs ${esc(play.b)}${play.event ? ` · ${esc(play.event)}` : ''}${play.round ? ` · ${esc(play.round)}` : ''}${Number.isFinite(play.postedAt) ? ` · posted ${esc(cardTime(play.postedAt).replace(/\s+•\s+/, ', '))}` : ''}</p>
 ${result}
 <section><h2>The price</h2><div class="books">
@@ -113,6 +113,6 @@ ${books.filter((b) => !b.url).map((b) => `<div class="book"><span>${esc(b.name)}
 <section><h2>Why</h2>${why ? `<p style="margin:0 0 8px">${esc(why)}</p>` : ''}${reasons.length ? `<ul>${reasons.map((r) => `<li>${esc(r)}</li>`).join('')}</ul>` : ''}</section>
 ${record && record.wins + record.losses > 0 ? `<section><h2>Our ${esc(KIND[play.market] ?? 'live')} record</h2><dl><div><dt>Record</dt><dd>${record.wins}-${record.losses}</dd></div><div><dt>Net units</dt><dd>${esc(signedUnits(record.units))}</dd></div>${record.roi != null ? `<div><dt>ROI</dt><dd>${record.roi < 0 ? '−' : '+'}${Math.abs(record.roi * 100).toFixed(1)}%</dd></div>` : ''}</dl></section>` : ''}
 <a class="more" href="${SITE}">Open Perpetual Picks</a>
-<footer>Tracked play, graded automatically. Bet only what you can afford to lose.</footer>`;
+<footer>${play.lean ? 'A lean is a call, not a tracked play: it is not on the record.' : 'Tracked play, graded automatically.'} Bet only what you can afford to lose.</footer>`;
   return shell(`${big} ${small} · Perpetual Picks`.replace(/\s+/g, ' '), body, TONE[state]);
 }

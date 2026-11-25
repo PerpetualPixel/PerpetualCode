@@ -33,6 +33,16 @@ const STATES = {
   lost: { tag: 'LOST • GRADED', a: '#FF4545', b: '#C81E3A', ink: '#FF4D4D' },
   void: { tag: 'VOID • GRADED', a: '#9A9DB2', b: '#5E6178', ink: '#B4B7CB' },
 };
+/**
+ * A lean's card (2026-11-25, the leans channel): the same layout, said as a lean everywhere a play says play. An
+ * open lean is the violet of the site's lean box; a settled one keeps the result's colour with LEAN in its tag.
+ */
+const LEAN = {
+  live: { tag: 'LEAN', a: '#A78BFA', b: '#6D28D9', ink: '#B9A2FF' },
+  won: { tag: 'LEAN • WON' },
+  lost: { tag: 'LEAN • LOST' },
+  void: { tag: 'LEAN • VOID' },
+};
 const TOUR = { atp: 'ATP', wta: 'WTA' };
 
 /** Text a Latin-only font can draw, safe inside SVG. */
@@ -147,7 +157,8 @@ export function cardTime(ms) {
  */
 export function cardSvg(play, { logo = null } = {}) {
   const state = cardState(play);
-  const c = STATES[state];
+  const lean = Boolean(play.lean);
+  const c = { ...STATES[state], ...(lean ? LEAN[state] : {}) };
   const W = CARD_W; const H = CARD_H; const M = 44; const inner = W - 2 * M;
   const mid = W / 2;
   const priced = Number.isFinite(play.american);
@@ -202,7 +213,8 @@ export function cardSvg(play, { logo = null } = {}) {
   // The price and where to take it sit side by side inside the panel: a long book name comes down in size, then is cut.
   const priceW = Math.max(150, Math.ceil(textWidth(priceText, 50) * ROOM) + 52);
   const whereRoom = inner - 32 - priceW - 22;
-  const whereOf = (book) => [book, `${stake} stake`].filter(Boolean).join('  •  ');
+  // A lean has no stake: it is not a tracked play, and the card says so where a play shows its units.
+  const whereOf = (book) => [book, lean ? 'not tracked' : `${stake} stake`].filter(Boolean).join('  •  ');
   const bookName = priced ? plain(play.book ?? '') : 'or better';
   let whereLine = { text: whereOf(bookName), size: 0 };
   whereLine.size = fitSize(whereLine.text, whereRoom, 31, { min: 23, weight: 500 });
@@ -235,16 +247,20 @@ export function cardSvg(play, { logo = null } = {}) {
   let foot;
   if (live) {
     // The chip is as wide as its words; a long score comes down in size inside it.
-    const chip = fitLine(sets.length ? `${ordinal(sets.length)} SET  •  ${sets.join('  ')}` : 'IN PLAY', inner - 56, 38, { min: 20, spacing: 0.6 });
+    // A score whose last set is over ("6-0") was taken between sets: it is said as "after 1 set", not as a set in play.
+    const [g1, g2] = (sets[sets.length - 1] ?? '').split('-').map(Number);
+    const between = Number.isFinite(g1) && Number.isFinite(g2) && Math.max(g1, g2) >= 6 && (Math.abs(g1 - g2) >= 2 || Math.max(g1, g2) === 7);
+    const lead = between ? `AFTER ${sets.length} SET${sets.length === 1 ? '' : 'S'}` : `${ordinal(sets.length)} SET`;
+    const chip = fitLine(sets.length ? `${lead}  •  ${sets.join('  ')}` : 'IN PLAY', inner - 56, 38, { min: 20, spacing: 0.6 });
     const chipW = Math.min(inner, Math.ceil(textWidth(chip.text, chip.size, { spacing: 0.6 }) * ROOM) + 56);
     foot = `${label(812, 'score when taken')}
     <rect x="${mid - chipW / 2}" y="826" width="${chipW}" height="62" rx="14" fill="#1E1D2B" stroke="#34334A" stroke-width="2"/>
     ${text(mid, 857 + Math.round(chip.size * 0.32), chip.size, 700, '#F3F1FA', esc(chip.text), `${centre} letter-spacing="0.6"`)}`;
   } else {
-    const units = Number.isFinite(play.profit) ? `${play.profit < 0 ? '-' : '+'}${Math.abs(play.profit).toFixed(2)}u` : '';
+    const units = !lean && Number.isFinite(play.profit) ? `${play.profit < 0 ? '-' : '+'}${Math.abs(play.profit).toFixed(2)}u` : '';
     const final = plain(play.actual).replace(/:.*$/, '');
     // The units are never cut: a long final score comes down in size, and past that the score gives way.
-    const line = state === 'void' ? fitLine('VOID  •  STAKE RETURNED', inner, 56, { min: 30 }) : fitLine(`FINAL ${final}`.trim(), inner, 56, { min: 30, tail: units ? `  •  ${units}` : '' });
+    const line = state === 'void' ? fitLine(lean ? 'VOID  •  NO RESULT' : 'VOID  •  STAKE RETURNED', inner, 56, { min: 30 }) : fitLine(`FINAL ${final}`.trim(), inner, 56, { min: 30, tail: units ? `  •  ${units}` : '' });
     const why = state === 'void' ? plain(play.actual).replace(/^[^:]*:\s*/, '') : '';
     const whyLine = fitLine(why.toUpperCase(), inner, 24, { min: 18, weight: 500 });
     foot = `${label(812, state === 'void' ? 'no result' : 'result  •  final score')}
@@ -280,7 +296,7 @@ export function cardSvg(play, { logo = null } = {}) {
   ${text(mid, 296, vsSize, 700, '#FFFFFF', esc(versus).replace(' vs ', `<tspan font-weight="400" fill="#B9BBCB"> vs </tspan>`), `${centre} xml:space="preserve"`)}
 
   <rect x="${M - 8}" y="${heroTop}" width="${inner + 16}" height="${heroH}" rx="26" fill="url(#hero)" stroke="${c.a}" stroke-opacity="${live ? 0.55 : 0.28}" stroke-width="2.5"/>
-  ${text(mid, heroTop + 48, 26, 700, c.ink, live ? 'THE PLAY  •  TAKE' : 'THE PLAY', `${centre} letter-spacing="3"`)}
+  ${text(mid, heroTop + 48, 26, 700, c.ink, lean ? (live ? 'THE LEAN  •  NOT TRACKED' : 'THE LEAN') : live ? 'THE PLAY  •  TAKE' : 'THE PLAY', `${centre} letter-spacing="3"`)}
   ${text(mid, heroTop + 108 + Math.round(bigSize * 0.35), bigSize, 700, live ? '#FFFFFF' : '#E8E8F2', esc(bigUp), `${centre} letter-spacing="0.5"`)}
   ${smallUp ? text(mid, heroTop + 190, smallLine.size, 700, c.ink, esc(smallUp), `${centre} letter-spacing="1.5"`) : ''}
   ${priceText ? `<rect x="${rowX}" y="${heroTop + 214}" width="${priceW}" height="68" rx="16" fill="${live ? c.a : '#2A2A3A'}" fill-opacity="${live ? 0.95 : 1}"/>

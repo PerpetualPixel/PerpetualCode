@@ -10,7 +10,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import { cardSvg, cardState, playLines, fitSize, fitLine, nameForms, textWidth, cardTime, ADVANCES, CARD_W, CARD_H } from '../worker/src/card-svg.js';
-import { syncLiveDiscord, discordStatus, testPlays, cardButtons, cardLine, cardMessage, booksOf, statsUrl, findLivePlay, recordForPlay, DISCORD_LEDGER_KEY } from '../worker/src/discord.js';
+import { syncLiveDiscord, discordStatus, discordConfig, livePlayMessage, testPlays, testLeans, cardButtons, cardLine, cardMessage, booksOf, statsUrl, findLivePlay, recordForPlay, DISCORD_LEDGER_KEY } from '../worker/src/discord.js';
 import { playPage, missingPlayPage } from '../worker/src/play-page.js';
 import { tennisLivePlaysKey, TENNIS_LIVE_PLAYS_INDEX } from '../worker/src/tennis-live-plays.js';
 
@@ -281,14 +281,15 @@ test('a drawing that throws is not a failure: the written card goes and the stat
   assert.equal(status.pictures, true, 'one bad drawing does not turn pictures off');
 });
 
-test('a play is found by its id for the card, the stats page and the links: today\'s, an older kept day\'s, never a lean, and the test cards by their own ids', async () => {
+test('a play is found by its id for the card, the stats page and the links: today\'s, an older kept day\'s, a lean too, and the test cards by their own ids', async () => {
   const { env, store } = makeEnv();
   store.set(tennisLivePlaysKey('2026-11-25'), JSON.stringify({ plays: [ml(), ml({ id: 'atp:3:live_ml', lean: true })] }));
   store.set(tennisLivePlaysKey('2026-11-02'), JSON.stringify({ plays: [ml({ id: 'atp:7:live_ml', a: 'Old Play' })] }));
   store.set(TENNIS_LIVE_PLAYS_INDEX, JSON.stringify({ dates: ['2026-11-02', '2026-11-25'] }));
   assert.equal((await findLivePlay(env, 'atp:1:live_ml', NOW)).a, 'M. Dellavedova');
   assert.equal((await findLivePlay(env, 'atp:7:live_ml', NOW)).a, 'Old Play');
-  assert.equal(await findLivePlay(env, 'atp:3:live_ml', NOW), null, 'a lean is not a tracked play');
+  assert.equal((await findLivePlay(env, 'atp:3:live_ml', NOW)).lean, true, 'a lean has a card and a stats page too');
+  assert.equal(await recordForPlay(env, { id: 'atp:3:live_ml', lean: true, market: 'live_ml' }, NOW), null, 'and is on no record');
   assert.equal(await findLivePlay(env, 'nope', NOW), null);
   assert.equal(await findLivePlay(env, '', NOW), null);
   assert.equal(await findLivePlay(env, 'x'.repeat(121), NOW), null);
@@ -389,6 +390,8 @@ test('nothing on the card overlaps or leaves the card, however long the names, t
     'short everything': { ...base, event: 'X', round: '', a: 'Li', b: 'Wu', selection: 'Li to win the match', score: '' },
     'a set total': { ...base, market: 'live_set_total', side: null, selection: 'Set 2 over 9.5 games', american: undefined, book: undefined, playable: -150 },
     'no names at all': { ...base, a: '', b: '', selection: '', event: '', round: '' },
+    'a lean, long names': { ...base, lean: true, basis: 'score', units: 0.5, american: undefined, book: undefined, playable: -245, a: long, b: 'Bartholomew Montgomery-Featherstonehaugh Junior', selection: `${long} to win the match` },
+    'a lean that lost': { ...base, lean: true, units: 0.5, status: 'graded', result: 'loss', profit: -0.5, actual: '6-7 7-6 6-7 7-6 70-68 99-97' },
   };
   for (const [name, play] of Object.entries(cases)) {
     const svg = cardSvg(play, { logo: 'data:image/png;base64,AAAA' });
@@ -419,4 +422,92 @@ test('the stats page lets a long name, event or reason wrap inside its own box',
   assert.match(html, /h1, p, li, dt, dd, span, strong \{ overflow-wrap: anywhere; \}/);
   assert.match(html, /\.book span:last-child \{[^}]*white-space: nowrap; flex: none; \}/, 'a price is never squeezed by a long book name');
   assert.match(html, /dl \{ display: grid; grid-template-columns: repeat\(3, minmax\(0, 1fr\)\)/);
+});
+
+// --- The leans channel (2026-11-25: "I made another channel (tennis-leans) and added the webhook DISCORD_LIVE_LEAN_WEBHOOK") ---
+
+const LEANS = 'https://discord.com/api/webhooks/323456789012345678/yyyDEF_ghi-jklMNOpqrSTUvwxYZ0123456789abcdefghijklmnopqrstuvwxyzABCDEF';
+const leanOf = (over = {}) => ({ id: 'wta:5:lean:live_ml:0', matchId: 'wta:5', tour: 'wta', event: 'IEB+ Argentina Open', round: 'Round 2', a: 'Veronika Erjavec', b: 'Martina Trevisan', market: 'live_ml', side: 'a', prob: 0.75, playable: -245, basis: 'score', lean: true, units: 0.5, selection: 'Veronika Erjavec to win the match', score: '6-0', why: ['Score 6-0.'], postedAt: NOW, status: 'pending', result: null, profit: null, ...over });
+
+test('a lean\'s card says lean wherever a play says play: its own tag and colour, no stake, and no units when it settles', () => {
+  const open = cardSvg(leanOf());
+  assert.deepEqual(texts(open), ['PERPETUAL', 'PICKS', '[ LEAN ]', '[ WTA  •  IEB+ ARGENTINA OPEN  •  ROUND 2 ]', 'V. ERJAVEC vs M. TREVISAN', 'THE LEAN  •  NOT TRACKED', 'VERONIKA ERJAVEC', 'TO WIN THE MATCH', '-245', 'or better  •  not tracked', '75%', 'CHANCE TO LAND', '71%', 'PRICE NEEDS', '+4', 'EDGE, PTS', '[ SCORE WHEN TAKEN ]', 'AFTER 1 SET  •  6-0', 'perpetualpicks.com  •  Nov 25  •  1:00 PM ET'], 'a score taken between sets is said as that');
+  assert.match(open, /#A78BFA/, 'the violet of the site\'s lean box');
+  assert.doesNotMatch(open, /#22B8FF|LIVE PLAY|stake/, 'nothing on it reads as a tracked play');
+  const won = cardSvg(leanOf({ status: 'graded', result: 'win', profit: 0.2, actual: '6-0 6-3' }));
+  assert.deepEqual([texts(won)[2], texts(won)[5], ...texts(won).slice(-3)], ['[ LEAN • WON ]', 'THE LEAN', '[ RESULT  •  FINAL SCORE ]', 'FINAL 6-0 6-3', 'perpetualpicks.com  •  Nov 25  •  1:00 PM ET']);
+  assert.match(won, /#2EE86B/);
+  assert.doesNotMatch(won, /0\.20u/, 'a lean carries no units: it is not on the record');
+  assert.deepEqual([cardSvg(leanOf({ status: 'graded', result: 'loss', actual: '6-0 3-6 2-6' })), cardSvg(leanOf({ status: 'void', actual: '6-0 1-0: a retirement' }))].map((s) => texts(s)[2]), ['[ LEAN • LOST ]', '[ LEAN • VOID ]']);
+  // The line above the card and the written card say the same.
+  assert.equal(cardLine(leanOf(), { role: ROLE }), '💡 **LEAN · Veronika Erjavec to win the match** · −245 or better · not tracked', 'and nobody is pinged for a lean');
+  assert.equal(cardLine(leanOf({ status: 'graded', result: 'loss', profit: -0.5, actual: '6-0 3-6 2-6' })), '❌ **LEAN LOST** · Veronika Erjavec to win the match · final 6-0 3-6 2-6 · not tracked');
+  const written = livePlayMessage(leanOf()).embeds[0];
+  assert.deepEqual([written.author.name, written.title, written.color, written.image, written.footer.text], ['PERPETUAL PICKS · LIVE TENNIS LEAN', '💡 LEAN · Veronika Erjavec to win the match', 0x8b5cf6, undefined, 'Lean · not a tracked play · not on the record · perpetualpicks.com']);
+  assert.match(written.description, /^\*\*−245 or better\*\* at your book · \*\*lean · not tracked\*\*\n[^]*\*\*Why:\*\* Read from the score alone: no serve data on this match\. We make it 75% to land; the price only needs 71%\./);
+  assert.doesNotMatch(written.description, /stake \*\*0\.5u/);
+  // The stats page too.
+  const page = playPage(leanOf({ status: 'graded', result: 'win', profit: 0.2, actual: '6-0 6-3' }));
+  assert.match(page, /<h1><small>Live lean · not on the record<\/small>/);
+  assert.match(page, /<strong>Lean won<\/strong>/);
+  assert.match(page, /<dt>Stake<\/dt><dd>None<small>a lean is not tracked<\/small><\/dd>/);
+  assert.doesNotMatch(page, /\+0\.20u|record<\/h2>/);
+});
+
+test('the leans go to their own channel: posted as they open and edited when they settle, nobody pinged, nothing sent to the results channel, and never mixed with the plays', async () => {
+  assert.equal(discordConfig({ DISCORD_LIVE_LEAN_WEBHOOK: LEANS }).leans, LEANS);
+  assert.equal(discordConfig({ DISCORD_LIVE_LEAN_WEBHOOK: 'https://example.com/hook' }).leans, null);
+  const { env, store } = makeEnv({ DISCORD_LIVE_WEBHOOK: HOOK, DISCORD_UPDATES_WEBHOOK: UPDATES, DISCORD_LIVE_LEAN_WEBHOOK: LEANS, DISCORD_LIVE_ROLE_ID: ROLE });
+  hello(store);
+  const d = fakeDiscord();
+  const out = await run(env, NOW, d, { plays: [ml({ postedAt: NOW }), leanOf()] });
+  assert.deepEqual(out, { posted: 2, edited: 0, failed: 0 });
+  assert.deepEqual(d.calls.map((c) => [c.method, c.url.split('?')[0]]), [['POST', HOOK], ['POST', LEANS]]);
+  const lean = d.calls[1];
+  assert.equal(lean.body.content, '💡 **LEAN · Veronika Erjavec to win the match** · −245 or better · not tracked');
+  assert.deepEqual(lean.body.allowed_mentions, { parse: [], roles: [] }, 'the role is for tracked plays');
+  assert.equal(lean.body.embeds[0].color, 0x8b5cf6);
+  assert.equal(lean.file.size, PNG.length);
+  assert.deepEqual(lean.body.components.map((r) => r.components.map((b) => b.label)), [['Stats & why']], 'no book has it, so the stats button alone');
+  assert.match(d.calls[0].body.content, new RegExp(`^<@&${ROLE}> 🎾 \\*\\*TAKE`), 'the play still pings, in its own channel');
+  // The same tick again: nothing more.
+  await run(env, NOW + 60e3, d, { plays: [ml({ postedAt: NOW }), leanOf()] });
+  assert.equal(d.calls.length, 2);
+  // The lean settles: its own message is edited, and the results channel hears nothing of it.
+  await run(env, NOW + 3600e3, d, { plays: [ml({ postedAt: NOW }), leanOf({ status: 'graded', result: 'win', profit: 0.2, actual: '6-0 6-3', gradedAt: NOW + 3600e3 })] });
+  assert.deepEqual(d.calls.slice(2).map((c) => [c.method, c.url]), [['PATCH', `${LEANS}/messages/900000000000000002?with_components=true`]]);
+  assert.equal(d.calls[2].body.content, '✅ **LEAN WON** · Veronika Erjavec to win the match · final 6-0 6-3 · not tracked');
+  const status = await discordStatus(env);
+  assert.deepEqual([status.leans, status.leansSecretRejected, status.lastError], [true, false, null]);
+  assert.ok(!JSON.stringify(status).includes('323456789012345678') && !JSON.stringify(status).includes('yyyDEF'), 'the status never gives the address away');
+  assert.deepEqual([(await discordStatus({ ...env, DISCORD_LIVE_LEAN_WEBHOOK: 'not a webhook' })).leans, (await discordStatus({ ...env, DISCORD_LIVE_LEAN_WEBHOOK: 'not a webhook' })).leansSecretRejected], [false, true]);
+
+  // With no leans channel a lean goes nowhere: the plays' channel never carries one.
+  const bare = makeEnv({ DISCORD_LIVE_WEBHOOK: HOOK, DISCORD_UPDATES_WEBHOOK: UPDATES });
+  hello(bare.store);
+  const d2 = fakeDiscord();
+  assert.deepEqual(await run(bare.env, NOW, d2, { plays: [leanOf()] }), { posted: 0, edited: 0, failed: 0 });
+  assert.equal(d2.calls.length, 0);
+});
+
+test('the leans test: a lean as it opens and one that has won, in the leans channel, marked as a test', async () => {
+  const { env, store } = makeEnv({ DISCORD_LIVE_WEBHOOK: HOOK, DISCORD_LIVE_LEAN_WEBHOOK: LEANS, DISCORD_LIVE_ROLE_ID: ROLE });
+  hello(store);
+  const d = fakeDiscord();
+  await run(env, NOW, d, { testId: 't-leans', testScope: 'leans' });
+  assert.deepEqual(d.calls.map((c) => [c.method, c.url]), Array(2).fill(['POST', `${LEANS}?wait=true&with_components=true`]));
+  assert.deepEqual(d.calls.map((c) => c.body.content), ['🧪 **TEST · not a real play**\n💡 **LEAN · Test Player to win the match** · −245 or better · not tracked', '🧪 **TEST · not a real play**\n✅ **LEAN WON** · Test Player to win the match · final 6-0 6-3 · not tracked']);
+  assert.ok(d.calls.every((c) => c.file && c.body.allowed_mentions.roles.length === 0));
+  assert.deepEqual((await discordStatus(env)).test, { id: 't-leans', state: 'done', at: NOW, leans: 2, pictures: 2, buttons: true });
+  await run(env, NOW + 60e3, d, { testId: 't-leans', testScope: 'leans' });
+  assert.equal(d.calls.length, 2, 'once');
+  assert.deepEqual(Object.keys(testLeans(NOW)), ['test-lean', 'test-lean-won']);
+  assert.equal((await findLivePlay(env, 'test-lean', NOW)).lean, true);
+  // No leans channel: nothing is sent and the status says why.
+  const bare = makeEnv({ DISCORD_LIVE_WEBHOOK: HOOK });
+  hello(bare.store);
+  const d2 = fakeDiscord();
+  await run(bare.env, NOW, d2, { testId: 't-leans', testScope: 'leans' });
+  assert.equal(d2.calls.length, 0);
+  assert.equal((await discordStatus(bare.env)).test.state, 'no leans channel');
 });
