@@ -21,7 +21,10 @@
      only page that reads the feed; the other pages' connect-src stays the
      worker alone. -->
 <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src 'self' https://fonts.gstatic.com; img-src 'self' data: https:; connect-src 'self' https://pixel-pick-odds.mgbouldering.workers.dev https://perpetualpixel.github.io; object-src 'none'; base-uri 'self'; form-action 'self'">
-<script src="frame-guard.js?v=1.377"></script>
+<script src="frame-guard.js?v=1.378"></script>
+<!-- The first board is asked for here, while the rest of the page is still arriving (docs/early.js). -->
+<link rel="preconnect" href="https://pixel-pick-odds.mgbouldering.workers.dev" crossorigin>
+<script src="early.js?v=1.378"></script>
 <title>Perpetual Picks - App</title>
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <meta name="theme-color" content="#05050A">
@@ -37,9 +40,38 @@
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Syne:wght@600;700;800&family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
-<link rel="stylesheet" href="styles.css?v=1.377">
+<link rel="stylesheet" href="styles.css?v=1.378">
+<!-- modulepreload:start (written by update-version.js: every file app.js imports, fetched alongside it rather than one after another) -->
+<link rel="modulepreload" href="config.js">
+<link rel="modulepreload" href="demo.js">
+<link rel="modulepreload" href="team-logos.js">
+<link rel="modulepreload" href="league-icons.js">
+<link rel="modulepreload" href="trends.js">
+<link rel="modulepreload" href="custom-select.js">
+<link rel="modulepreload" href="version.js">
+<link rel="modulepreload" href="safe-url.js">
+<link rel="modulepreload" href="book-links.js">
+<link rel="modulepreload" href="live-slips.js">
+<link rel="modulepreload" href="learning.js">
+<link rel="modulepreload" href="tennis-results.js">
+<link rel="modulepreload" href="engine.js">
+<link rel="modulepreload" href="qualitative.js">
+<link rel="modulepreload" href="slip-check.js">
+<link rel="modulepreload" href="slip-viability.js">
+<link rel="modulepreload" href="parlay-presets.js">
+<link rel="modulepreload" href="playbook.js">
+<link rel="modulepreload" href="line-check.js">
+<link rel="modulepreload" href="results.js">
+<link rel="modulepreload" href="tail-fade.js">
+<link rel="modulepreload" href="capper-consensus.js">
+<link rel="modulepreload" href="gridiron.js">
+<link rel="modulepreload" href="insights.js">
+<link rel="modulepreload" href="soccer-markets.js">
+<link rel="modulepreload" href="tennis-tiers.js">
+<link rel="modulepreload" href="take-or-fade.js">
+<!-- modulepreload:end -->
 <!-- Before first paint: a desktop reader who chose "Fit screen" gets the wide shell without a flash of the narrow one. -->
-<script src="wide.js?v=1.377"></script>
+<script src="wide.js?v=1.378"></script>
 </head>
 <body>
 
@@ -359,7 +391,7 @@
        history, all filtered by league. Built in docs/app.js's
        renderTrendPicks from the worker's /trend-picks. -->
   <div id="trendPicksFilters" class="trend-leagues pick-filters" role="group" aria-label="League"></div>
-  <div id="trendPicksStatus" class="status trends-status" role="status" aria-live="polite"><span class="pp-loading"><img class="pp-loading-logo" src="assets/logo-icon-64.png" alt="" width="28" height="28"><span>Loading picks…</span></span></div>
+  <div id="trendPicksStatus" class="status trends-status" role="status" aria-live="polite"><span class="pp-loader is-line"><span class="pp-loader-art" aria-hidden="true"><svg viewBox="0 3.5 120 60" focusable="false"><defs><linearGradient id="ppInfS1g" x1="0" y1="0" x2="1" y2="0"><stop offset="0" stop-color="#ff2bd6"/><stop offset="0.5" stop-color="#8b5cf6"/><stop offset="1" stop-color="#22e3ff"/></linearGradient></defs><path id="ppInfS1t" class="pp-inf-track" stroke="url(#ppInfS1g)" d="M60 32 C46 8 12 8 12 32 C12 56 46 56 60 32 C74 8 108 8 108 32 C108 56 74 56 60 32 Z"/><rect class="pp-inf-pixel" x="-3.5" y="-3.5" width="7" height="7" rx="1"><animateMotion dur="1.9s" repeatCount="indefinite" calcMode="linear"><mpath href="#ppInfS1t"/></animateMotion></rect></svg><video class="pp-loader-video" src="assets/loader.mp4" autoplay muted loop playsinline disablepictureinpicture disableremoteplayback preload="auto" tabindex="-1" aria-hidden="true"></video></span><span class="pp-loader-text">Loading picks…</span></span></div>
   <section id="trendPicksBody" class="trends-body" aria-live="polite"></section>
   <!-- The record, the graph and the history moved to the Results tab (2026-11-23); this is the way there. -->
   <button type="button" id="trendPicksResults" class="parlay-btn res-link">See the results: record, units and the graph ›</button>
@@ -534,7 +566,7 @@
       <input id="trendsSearch" type="search" placeholder="Search" autocomplete="off">
     </label>
   </div>
-  <div id="trendsStatus" class="status trends-status" role="status" aria-live="polite"><span class="pp-loading"><img class="pp-loading-logo" src="assets/logo-icon-64.png" alt="" width="28" height="28"><span>Loading trends…</span></span></div>
+  <div id="trendsStatus" class="status trends-status" role="status" aria-live="polite"><span class="pp-loader is-line"><span class="pp-loader-art" aria-hidden="true"><svg viewBox="0 3.5 120 60" focusable="false"><defs><linearGradient id="ppInfS2g" x1="0" y1="0" x2="1" y2="0"><stop offset="0" stop-color="#ff2bd6"/><stop offset="0.5" stop-color="#8b5cf6"/><stop offset="1" stop-color="#22e3ff"/></linearGradient></defs><path id="ppInfS2t" class="pp-inf-track" stroke="url(#ppInfS2g)" d="M60 32 C46 8 12 8 12 32 C12 56 46 56 60 32 C74 8 108 8 108 32 C108 56 74 56 60 32 Z"/><rect class="pp-inf-pixel" x="-3.5" y="-3.5" width="7" height="7" rx="1"><animateMotion dur="1.9s" repeatCount="indefinite" calcMode="linear"><mpath href="#ppInfS2t"/></animateMotion></rect></svg><video class="pp-loader-video" src="assets/loader.mp4" autoplay muted loop playsinline disablepictureinpicture disableremoteplayback preload="auto" tabindex="-1" aria-hidden="true"></video></span><span class="pp-loader-text">Loading trends…</span></span></div>
   <section id="trendsBody" class="trends-body" aria-live="polite"></section>
 
   <!-- The floating controls, fixed to the bottom while this tab is open. -->
@@ -1197,6 +1229,6 @@
   </div>
 </aside>
 
-<script type="module" src="app.js?v=1.377"></script>
+<script type="module" src="app.js?v=1.378"></script>
 </body>
 </html>

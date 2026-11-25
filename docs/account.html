@@ -13,7 +13,7 @@
      <meta> ignores — X-Frame-Options equivalent protection would need a
      real header, so clickjacking is not covered here. -->
 <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; font-src 'self'; img-src 'self' data: https:; connect-src 'self' https://pixel-pick-odds.mgbouldering.workers.dev; object-src 'none'; base-uri 'self'; form-action 'self'">
-<script src="frame-guard.js?v=1.377"></script>
+<script src="frame-guard.js?v=1.378"></script>
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>PerpetualPicks - Account Settings</title>
   <style>
@@ -301,6 +301,10 @@
 
     .hidden { display: none !important; }
 
+    /* The loader: the same film the app shows while it reads (docs/assets/loader.mp4), its black ground screened away. */
+    .acct-loader { display: block; width: min(220px, 60vw); aspect-ratio: 2 / 1; margin: 0 auto 6px; mix-blend-mode: screen; pointer-events: none; }
+    .acct-loader::-webkit-media-controls, .acct-loader::-webkit-media-controls-start-playback-button { display: none !important; -webkit-appearance: none; }
+    @media (prefers-reduced-motion: reduce) { .acct-loader { display: none; } }
     .skeleton {
       color: #7070aa;
       font-size: 13px;
@@ -318,7 +322,7 @@
     </div>
     <div class="page-title"><img src="assets/logo-icon-32.png" alt="" width="24" height="24" style="vertical-align: -3px; margin-right: 8px;">Account Settings</div>
 
-    <div id="loading-state" class="skeleton">Loading account...</div>
+    <div id="loading-state" class="skeleton"><video class="acct-loader" src="assets/loader.mp4" autoplay muted loop playsinline disablepictureinpicture disableremoteplayback preload="auto" tabindex="-1" aria-hidden="true"></video><span>Loading account…</span></div>
 
     <div id="settings-body" class="hidden">
       <!-- Profile: username -->
@@ -500,6 +504,6 @@
     </div>
   </div>
 
-  <script src="account.js?v=1.377" defer></script>
+  <script src="account.js?v=1.378" defer></script>
 </body>
 </html>

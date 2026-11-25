@@ -90,6 +90,38 @@ console.log(`✅ Updated version.js: v${currentVersion} (${commit}) @ ${builtAt}
 // Content-Security-Policy that forbids inline script), those files are
 // separately cacheable and need the same treatment or a returning visitor
 // keeps yesterday's copy.
+/**
+ * Every file app.js imports, directly or through another import, in the
+ * order found. The browser only learns of these once app.js has arrived
+ * and been read, then of their own imports once each of those has, so a
+ * first visit fetched them in three or four rounds; listed in the head as
+ * modulepreload links they are all fetched at once, alongside app.js.
+ * test/page-speed.test.mjs holds the list in app.html to this graph.
+ */
+function moduleGraph(entry) {
+  const docs = path.join(__dirname, 'docs');
+  const seen = [];
+  const queue = [entry];
+  while (queue.length) {
+    const file = queue.shift();
+    const src = fs.readFileSync(path.join(docs, file), 'utf8');
+    const specs = [...src.matchAll(/^\s*(?:import|export)\b[^'"`;]*?\bfrom\s*['"](\.[^'"]+\.js)['"]|^\s*import\s*['"](\.[^'"]+\.js)['"]/gm)].map((m) => m[1] ?? m[2]);
+    for (const spec of specs) {
+      const next = path.posix.normalize(path.posix.join(path.posix.dirname(file), spec));
+      if (next === entry || seen.includes(next) || !fs.existsSync(path.join(docs, next))) continue;
+      seen.push(next);
+      queue.push(next);
+    }
+  }
+  return seen;
+}
+
+/** app.html with its modulepreload block rewritten from the import graph. */
+function withModulePreloads(html) {
+  const links = moduleGraph('app.js').map((file) => `<link rel="modulepreload" href="${file}">`).join('\n');
+  return html.replace(/(<!-- modulepreload:start[^>]*-->\n)[\s\S]*?(<!-- modulepreload:end -->)/, `$1${links}\n$2`);
+}
+
 const CACHE_BUSTED_PAGES = ['app.html', 'login.html', 'account.html', 'index.html', 'privacy.html', 'terms.html'];
 
 for (const page of CACHE_BUSTED_PAGES) {
@@ -98,10 +130,13 @@ for (const page of CACHE_BUSTED_PAGES) {
     const before = fs.readFileSync(pagePath, 'utf8');
     // Local .js/.css only: absolute URLs (Google Fonts, Turnstile) aren't
     // ours to version, and images/manifests aren't code.
-    const after = before.replace(
-      /((?:href|src)="(?!https?:)[^"?]+\.(?:js|css))(\?v=[^"]*)?(")/g,
+    // A modulepreload link is left bare: it must name a file exactly as
+    // app.js imports it (no stamp), or the browser fetches it twice.
+    let after = before.replace(
+      /(?<!rel="modulepreload" )((?:href|src)="(?!https?:)[^"?]+\.(?:js|css))(\?v=[^"]*)?(")/g,
       `$1?v=${currentVersion}$3`,
     );
+    if (page === 'app.html') after = withModulePreloads(after);
     if (after !== before) fs.writeFileSync(pagePath, after);
     const count = [...after.matchAll(/\?v=/g)].length;
     console.log(`✅ Cache-busted ${count} asset${count === 1 ? '' : 's'} in ${page} to ?v=${currentVersion}`);

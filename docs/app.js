@@ -6393,8 +6393,39 @@ function renderPropPlayCard(record) {
   </div>`;
 }
 
-/** The loading line with the logo turning beside it (styles.css .pp-loading); plain text again once the status is set. */
-const loadingHtml = (text) => `<span class="pp-loading"><img class="pp-loading-logo" src="assets/logo-icon-64.png" alt="" width="28" height="28"><span>${esc(text)}</span></span>`;
+/**
+ * The loader, everywhere something is being read (2026-11-25: "use this for my loading symbol on all loading symbol
+ * locations"): the user's film of the infinity with a pixel racing it (docs/assets/loader.mp4, cut to the symbol alone,
+ * silent, looping). Under it sits the drawn emblem (the infinity in the logo's colours as the track, a bright pixel
+ * lapping it, dust strung out behind), which is on screen at once; the film takes its place the moment it is playing
+ * (docs/early.js marks that), and where a browser will not play it (a phone saving power) the drawn one stays.
+ * `size`: 'full' fills a tab that has nothing to show yet, 'line' sits in a status line beside its words.
+ * Still for a reduced-motion user: no film, and the drawn track without its pixel.
+ */
+let loaderSeq = 0;
+const LOADER_FILM = 'assets/loader.mp4';
+function loaderHtml(text, { size = 'line' } = {}) {
+  const id = `ppInf${++loaderSeq}`;
+  const DUR = 1.9;
+  const lap = (lag) => `<animateMotion dur="${DUR}s" begin="${(-(DUR - lag)).toFixed(3)}s" repeatCount="indefinite" calcMode="linear"><mpath href="#${id}t"/></animateMotion>`;
+  // The dust: each speck a little later round the track, smaller and fainter, and knocked a pixel or two off the line.
+  const dust = [[0.05, 4.4, 0.85, 0, 0], [0.1, 3.8, 0.7, 1.6, -1.2], [0.15, 3.4, 0.58, -1.4, 1.6], [0.21, 3, 0.46, 2, 1.2], [0.27, 2.6, 0.36, -2.2, -1.6], [0.34, 2.2, 0.27, 1.2, 2.4], [0.42, 1.9, 0.19, -1.8, 0.6], [0.51, 1.6, 0.12, 2.4, -2]];
+  const still = typeof matchMedia === 'function' && matchMedia('(prefers-reduced-motion: reduce)').matches;
+  const film = still ? '' : `<video class="pp-loader-video" src="${LOADER_FILM}" autoplay muted loop playsinline disablepictureinpicture disableremoteplayback preload="auto" tabindex="-1" aria-hidden="true"></video>`;
+  return `<span class="pp-loader is-${size === 'full' ? 'full' : 'line'}">
+    <span class="pp-loader-art" aria-hidden="true">
+      <svg viewBox="0 3.5 120 60" focusable="false">
+        <defs><linearGradient id="${id}g" x1="0" y1="0" x2="1" y2="0"><stop offset="0" stop-color="#ff2bd6"/><stop offset="0.5" stop-color="#8b5cf6"/><stop offset="1" stop-color="#22e3ff"/></linearGradient></defs>
+        <path id="${id}t" class="pp-inf-track" stroke="url(#${id}g)" d="M60 32 C46 8 12 8 12 32 C12 56 46 56 60 32 C74 8 108 8 108 32 C108 56 74 56 60 32 Z"/>
+        ${dust.map(([lag, sz, alpha, dx, dy]) => `<rect class="pp-inf-dust" x="${(-sz / 2 + dx).toFixed(1)}" y="${(-sz / 2 + dy).toFixed(1)}" width="${sz}" height="${sz}" opacity="${alpha}">${lap(lag)}</rect>`).join('')}
+        <rect class="pp-inf-pixel" x="-3.5" y="-3.5" width="7" height="7" rx="1">${lap(0)}</rect>
+      </svg>${film}
+    </span>
+    <span class="pp-loader-text">${esc(text)}</span>
+  </span>`;
+}
+/** The loader in a status line; plain text again once the status is set. */
+const loadingHtml = (text) => loaderHtml(text);
 const showLoading = (node, text) => { if (node) node.innerHTML = loadingHtml(text); };
 
 function setActiveTab(tab) {
@@ -9214,12 +9245,28 @@ async function loadTrends({ force = false } = {}) {
   if (!el.trendsBody || !CONFIG.WORKER_URL) return;
   if (trendsState.sport === 'tennis') { renderTrendLeagues(); await loadTennisTrends({ force }); return; }
   if (trendsState.data && !force && trendsState.data.sportKey === trendsState.sport) { renderTrends(); return; }
+  // One read at a time per league: the boot opens the tab and then, with the account's settings in, asks again, and
+  // the second ask rides the first rather than fetching and drawing the whole board twice.
+  const wanted = trendsState.sport ?? '';
+  if (trendsInflight && trendsInflight.sport === wanted && !force) return trendsInflight.promise;
+  const promise = readTrends({ force }).finally(() => { if (trendsInflight?.promise === promise) trendsInflight = null; });
+  trendsInflight = { sport: wanted, promise };
+  return promise;
+}
+let trendsInflight = null;
+async function readTrends({ force }) {
   showLoading(el.trendsStatus, 'Loading trends…');
   try {
-    const url = new URL('/trends', CONFIG.WORKER_URL);
-    if (trendsState.sport) url.searchParams.set('sport', trendsState.sport);
-    const res = await fetch(url, { headers: { Accept: 'application/json' } });
-    const body = await res.json();
+    // The first board was asked for in the head, before this file had loaded (docs/early.js); that answer is taken once.
+    const early = !force && !trendsState.sport ? globalThis.ppEarly?.trends : null;
+    if (globalThis.ppEarly) globalThis.ppEarly.trends = null;
+    let body = early ? await early.catch(() => null) : null;
+    if (!body?.trends) {
+      const url = new URL('/trends', CONFIG.WORKER_URL);
+      if (trendsState.sport) url.searchParams.set('sport', trendsState.sport);
+      const res = await fetch(url, { headers: { Accept: 'application/json' } });
+      body = await res.json();
+    }
     trendsState.data = body.trends ?? null;
     // The worker shares one game series per player and stat; each line
     // gets its own copy back here, hit flags for its number and side.
@@ -9980,7 +10027,7 @@ el.trendsSheet?.addEventListener('input', (event) => {
 /* Pixel's Picks: the day's tickets from the Trends rows (worker/src/trend-picks.js) */
 /* ================================================================ */
 
-const trendPicksState = { data: null, loaded: false, filter: 'all', hover: null, emblemOpen: null, tennisRows: null };
+const trendPicksState = { data: null, loaded: false, loading: null, failed: false, filter: 'all', hover: null, emblemOpen: null, tennisRows: null };
 const pickDayFmt = new Intl.DateTimeFormat(undefined, { weekday: 'short', month: 'short', day: 'numeric' });
 const pickShortFmt = new Intl.DateTimeFormat(undefined, { month: 'numeric', day: 'numeric' });
 const PICK_FILTERS = [['all', 'All'], ['basketball_nba', 'NBA'], ['americanfootball_nfl', 'NFL'], ['icehockey_nhl', 'NHL'], ['soccer', 'Soccer'], ['tennis', 'Tennis']];
@@ -9999,15 +10046,23 @@ async function loadTrendPicks({ force = false } = {}) {
   if (!el.trendPicksBody || !CONFIG.WORKER_URL) return;
   loadPickBoardTennis();
   if (trendPicksState.loaded && !force) { renderTrendPicks(); return; }
-  showLoading(el.trendPicksStatus, 'Loading picks…');
-  try {
-    const res = await fetch(new URL('/trend-picks', CONFIG.WORKER_URL), { headers: { Accept: 'application/json' } });
-    trendPicksState.data = await res.json();
-    trendPicksState.loaded = true;
+  if (trendPicksState.loading) return trendPicksState.loading;
+  trendPicksState.failed = false;
+  // Nothing read yet: the loader fills the tab (renderTrendPicks draws it). A tab already on screen keeps its place, with the loader in its status line.
+  if (trendPicksState.loaded) showLoading(el.trendPicksStatus, 'Loading picks…');
+  else renderTrendPicks();
+  trendPicksState.loading = (async () => {
+    try {
+      const res = await fetch(new URL('/trend-picks', CONFIG.WORKER_URL), { headers: { Accept: 'application/json' } });
+      trendPicksState.data = await res.json();
+      trendPicksState.loaded = true;
+    } catch {
+      trendPicksState.failed = true;
+    }
+    trendPicksState.loading = null;
     renderTrendPicks();
-  } catch {
-    el.trendPicksStatus.textContent = "Couldn't load this right now. Try again in a moment.";
-  }
+  })();
+  return trendPicksState.loading;
 }
 
 const RESULT_LABEL = { win: 'Won', loss: 'Lost', push: 'Push', void: 'Void' };
@@ -10414,6 +10469,13 @@ function renderTrendPicks() {
   if (el.trendPicksUfc) el.trendPicksUfc.hidden = trendPicksState.filter === 'tennis';
   if (el.trendPicksTennis) el.trendPicksTennis.hidden = trendPicksState.filter !== 'all';
   if (trendPicksState.filter === 'tennis') return renderTennisPicksTab();
+  // The day's picks are not in yet (2026-11-25: "it just sits there ... with no indication of loading"): the loader, never
+  // "no tickets today", which is only true once the answer is here. A read that failed says so.
+  if (!trendPicksState.loaded) {
+    el.trendPicksStatus.textContent = trendPicksState.failed ? "Couldn't load this right now. Try again in a moment." : '';
+    el.trendPicksBody.innerHTML = trendPicksState.failed ? '' : loaderHtml("Pixel's Picks are loading", { size: 'full' });
+    return;
+  }
   const today = d?.today ?? null;
   const bets = (today?.bets ?? []).filter(betMatches);
   // The board card sits under the pick (or the suggestion) every day: the best play per sport in one place.
@@ -12034,7 +12096,7 @@ function renderUfc() {
 function renderUfcFighterSheet(sheet) {
   const f = ufcState.fightersById[sheet.fighterId];
   const head = `${sheetHead('ufc', f?.name ?? sheet.name ?? 'Fighter')}`;
-  if (!f) return `${head}<p class="row-sub ufc-sheet-wait">Loading the record…</p>${sheetClose()}`;
+  if (!f) return `${head}<p class="row-sub ufc-sheet-wait">${loadingHtml('Loading the record…')}</p>${sheetClose()}`;
   if (f.missing) return `${head}<p class="row-sub ufc-sheet-wait">${esc(f.error ?? 'No profile for that fighter yet.')}</p>${sheetClose()}`;
   const bio = f.bio ?? {};
   const bioRow = [['Age', bio.age], ['Height', bio.height], ['Weight', bio.weight], ['Reach', bio.reach], ['Stance', bio.stance], ['Style', bio.style], ['Division', bio.weightClass], ['Team', bio.team], ['Country', bio.country]].filter(([, v]) => v != null && v !== '').map(([k, v]) => `<div class="ufc-bio-cell"><span>${k}</span><strong>${esc(String(v))}</strong></div>`).join('');
@@ -12168,29 +12230,8 @@ const ago = (ms) => { const s = Math.max(0, Math.round((Date.now() - ms) / 1000)
 const league = (k) => ({ nfl: 'NFL', nba: 'NBA', nhl: 'NHL', tennis: 'Tennis', ucl: 'Champions League', epl: 'Premier League', laliga: 'La Liga', seriea: 'Serie A', bundesliga: 'Bundesliga', ligue1: 'Ligue 1' }[k] ?? String(k ?? '').toUpperCase());
 const LIVE_SOCCER = new Set(['ucl', 'epl', 'laliga', 'seriea', 'bundesliga', 'ligue1']);
 
-/**
- * The Live tab's loader (2026-11-24: "there is no indication that it's loading, add a loading emblem. Make it the infinity
- * portion of my icon and having an energy pixel going around the infinity symbol like a race track and a trail of pixel
- * dust behind it. And some text saying 'live plays are loading'"): the infinity in the logo's own colours as the
- * track, a bright pixel lapping it, and smaller, fainter pixels strung out behind. Still for a reduced-motion user.
- */
-let liveLoaderSeq = 0;
-function liveLoaderHtml(text = 'Live plays are loading', { small = false } = {}) {
-  const id = `ppInf${++liveLoaderSeq}`;
-  const DUR = 1.9;
-  const lap = (lag) => `<animateMotion dur="${DUR}s" begin="${(-(DUR - lag)).toFixed(3)}s" repeatCount="indefinite" calcMode="linear"><mpath href="#${id}t"/></animateMotion>`;
-  // The dust: each speck a little later round the track, smaller and fainter, and knocked a pixel or two off the line.
-  const dust = [[0.05, 4.4, 0.85, 0, 0], [0.1, 3.8, 0.7, 1.6, -1.2], [0.15, 3.4, 0.58, -1.4, 1.6], [0.21, 3, 0.46, 2, 1.2], [0.27, 2.6, 0.36, -2.2, -1.6], [0.34, 2.2, 0.27, 1.2, 2.4], [0.42, 1.9, 0.19, -1.8, 0.6], [0.51, 1.6, 0.12, 2.4, -2]];
-  return `<div class="pp-inf ${small ? 'is-small' : ''}" role="status" aria-live="polite">
-    <svg viewBox="0 0 120 64" aria-hidden="true" focusable="false">
-      <defs><linearGradient id="${id}g" x1="0" y1="0" x2="1" y2="0"><stop offset="0" stop-color="#ff2bd6"/><stop offset="0.5" stop-color="#8b5cf6"/><stop offset="1" stop-color="#22e3ff"/></linearGradient></defs>
-      <path id="${id}t" class="pp-inf-track" stroke="url(#${id}g)" d="M60 32 C46 8 12 8 12 32 C12 56 46 56 60 32 C74 8 108 8 108 32 C108 56 74 56 60 32 Z"/>
-      ${dust.map(([lag, size, alpha, dx, dy]) => `<rect class="pp-inf-dust" x="${(-size / 2 + dx).toFixed(1)}" y="${(-size / 2 + dy).toFixed(1)}" width="${size}" height="${size}" opacity="${alpha}">${lap(lag)}</rect>`).join('')}
-      <rect class="pp-inf-pixel" x="-3.5" y="-3.5" width="7" height="7" rx="1">${lap(0)}</rect>
-    </svg>
-    <span>${esc(text)}</span>
-  </div>`;
-}
+/** The Live tab's loader (2026-11-24: "there is no indication that it's loading, add a loading emblem ... and some text saying 'live plays are loading'"): the shared loader, filling the tab or small over a board already on screen. */
+const liveLoaderHtml = (text = 'Live plays are loading', { small = false } = {}) => loaderHtml(text, { size: small ? 'line' : 'full' });
 
 async function loadLive({ force = false, announce = false } = {}) {
   if (!el.liveBody || !CONFIG.WORKER_URL) return;
@@ -12869,7 +12910,8 @@ function renderTennis() {
 function renderTennisPicksTab() {
   const d = tennisState.data;
   if (!d) {
-    el.trendPicksStatus.textContent = tennisState.loading ? 'Reading the tennis board…' : 'The tennis board has not been read yet.';
+    if (tennisState.loading) showLoading(el.trendPicksStatus, 'Reading the tennis board…');
+    else el.trendPicksStatus.textContent = 'The tennis board has not been read yet.';
     el.trendPicksBody.innerHTML = ''; if (el.trendPicksRecord) el.trendPicksRecord.innerHTML = ''; if (el.trendPicksGraph) el.trendPicksGraph.innerHTML = ''; if (el.trendPicksHistory) el.trendPicksHistory.innerHTML = '';
     if (!tennisState.loading) loadTennis();
     return;
