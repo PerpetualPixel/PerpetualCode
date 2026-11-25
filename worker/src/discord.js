@@ -48,10 +48,29 @@ const SNOWFLAKE = /^\d{5,25}$/;
 const COLOR = { open: 0x8b5cf6, win: 0x22c55e, loss: 0xef4444, void: 0x6b7280 };
 const TOUR = { atp: 'ATP', wta: 'WTA' };
 
+/**
+ * A test alert, sent once per value (2026-11-25, the owner, with the webhook and the role in place: "Can you send a
+ * test"). The worker cannot be asked to post from outside without a credential, so the test rides a deploy: change
+ * this value and the next tick posts one sample play, marked as a test, with the role ping; the tick after edits it
+ * to its settled form. That is the whole path a real play takes.
+ */
+export const TEST_ALERT_ID = '2026-11-25-1';
+const TEST_PLAY = { id: 'test', market: 'live_ml', tour: 'atp', event: 'Test alert', round: 'not a real play', a: 'Test Player', b: 'Sample Opponent', side: 'a', prob: 0.69, american: -175, playable: -190, book: 'FanDuel', units: 1, selection: 'Test Player to win the match (live)', score: '6-0 3-4', status: 'pending' };
+/** The sample alert: a real alert's shape, with TEST in its title and its footer so nobody takes it for a play. */
+export function testAlertMessage(now, { role = null, settled = false } = {}) {
+  const play = settled ? { ...TEST_PLAY, postedAt: now, status: 'graded', result: 'win', profit: 0.57, actual: '6-0 4-6 7-6' } : { ...TEST_PLAY, postedAt: now };
+  const msg = livePlayMessage(play, { role, record: { wins: 8, losses: 2, units: 3.29 } });
+  msg.embeds[0].title = `🧪 TEST · ${msg.embeds[0].title}`.slice(0, 250);
+  msg.embeds[0].footer = { text: 'Perpetual Picks · TEST ALERT · not a real play' };
+  return msg;
+}
+
+/** The role id as Discord gives it, or as a pasted mention (<@&123>). */
+const roleOf = (v) => String(v ?? '').trim().replace(/^<@&(\d+)>$/, '$1');
 /** What is configured: the webhooks (null when unset or not a Discord webhook URL) and the role to ping. */
 export function discordConfig(env) {
   const hook = (v) => { const s = String(v ?? '').trim(); return WEBHOOK.test(s) ? s : null; };
-  const role = String(env?.DISCORD_LIVE_ROLE_ID ?? '').trim();
+  const role = roleOf(env?.DISCORD_LIVE_ROLE_ID);
   return { live: hook(env?.DISCORD_LIVE_WEBHOOK), updates: hook(env?.DISCORD_UPDATES_WEBHOOK), role: SNOWFLAKE.test(role) ? role : null };
 }
 
@@ -184,6 +203,22 @@ export async function syncLiveDiscord(env, now = Date.now(), { deps = {} } = {})
     dirty = true;
   }
 
+  // The test alert (TEST_ALERT_ID): posted once per value, then edited on a later tick to its settled form.
+  const testId = deps.testId ?? TEST_ALERT_ID;
+  if (testId && ledger.test?.id !== testId) {
+    ledger.test = { id: testId, state: 'sending', at: now };
+    await writeLedger(env, ledger);
+    const r = await post(fetcher, cfg.live, testAlertMessage(now, { role: cfg.role }));
+    if (r.ok && r.id) ledger.test = { id: testId, state: 'open', at: now, messageId: String(r.id) };
+    else { ledger.test = { id: testId, state: 'failed', at: now }; fail('test', r); }
+    dirty = true;
+  } else if (ledger.test?.state === 'open' && ledger.test.messageId && now - ledger.test.at >= 50e3) {
+    const r = await edit(fetcher, cfg.live, ledger.test.messageId, testAlertMessage(ledger.test.at, { role: cfg.role, settled: true }));
+    ledger.test = { id: ledger.test.id, state: r.ok ? 'done' : 'edit failed', at: ledger.test.at, doneAt: now };
+    if (!r.ok) fail('test edit', r);
+    dirty = true;
+  }
+
   const today = etParts(now).date; const yesterday = etParts(now - 864e5).date;
   const plays = deps.plays ? await deps.plays() : [...((await readJson(env, tennisLivePlaysKey(today)))?.plays ?? []), ...((await readJson(env, tennisLivePlaysKey(yesterday)))?.plays ?? [])];
   const tracked = plays.filter((p) => p && !p.lean && p.id && KIND[p.market]);
@@ -252,6 +287,10 @@ export async function discordStatus(env) {
     live: Boolean(cfg.live), updates: Boolean(cfg.updates), role: Boolean(cfg.role),
     // Set but not a Discord webhook address: the secret is there and wrong.
     liveSecretRejected: Boolean(String(env?.DISCORD_LIVE_WEBHOOK ?? '').trim()) && !cfg.live,
+    // The role: found under its name at all, and if found, whether it is a role id (digits only).
+    roleSecretFound: Boolean(String(env?.DISCORD_LIVE_ROLE_ID ?? '').trim()),
+    roleSecretRejected: Boolean(String(env?.DISCORD_LIVE_ROLE_ID ?? '').trim()) && !cfg.role,
+    test: ledger.test ? { id: ledger.test.id, state: ledger.test.state, at: ledger.test.at ?? null } : null,
     helloAt: ledger.helloAt ?? null, lastPostAt: ledger.lastPostAt ?? null, lastError: ledger.lastError ?? null, plays: counts,
   };
 }

@@ -6,7 +6,7 @@
  */
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { discordConfig, livePlayMessage, liveResultLine, syncLiveDiscord, discordStatus, DISCORD_LEDGER_KEY, FRESH_MS, POST_TRIES } from '../worker/src/discord.js';
+import { discordConfig, livePlayMessage, liveResultLine, syncLiveDiscord, discordStatus, testAlertMessage, TEST_ALERT_ID, DISCORD_LEDGER_KEY, FRESH_MS, POST_TRIES } from '../worker/src/discord.js';
 
 const NOW = Date.parse('2026-11-25T18:00:00Z');
 const HOOK = 'https://discord.com/api/webhooks/123456789012345678/abcDEF_ghi-jklMNOpqrSTUvwxYZ0123456789abcdefghijklmnopqrstuvwxyzABCDEF';
@@ -31,7 +31,8 @@ function fakeDiscord(reply = null) {
 }
 const ml = (over = {}) => ({ id: 'atp:1:live_ml', matchId: 'atp:1', tour: 'atp', event: 'Challenger Playford 2', round: '1/8-finals', a: 'M. Dellavedova', b: 'H. Moriya', market: 'live_ml', side: 'a', prob: 0.69, american: -175, playable: -190, bookId: 'fanduel', book: 'FanDuel', link: 'https://sportsbook.fanduel.com/addToBetslip?marketId=1&selectionId=2', units: 1, selection: 'M. Dellavedova to win the match (live)', score: '6-0 3-4', postedAt: NOW - 60e3, status: 'pending', ...over });
 const set = (over = {}) => ({ id: 'atp:2:live_set:2', matchId: 'atp:2', tour: 'atp', event: 'Nitto ATP Finals', round: 'Final', a: 'Carlos Alcaraz', b: 'Alexander Zverev', market: 'live_set', side: 'a', set: 2, prob: 0.69, playable: -186, units: 1, selection: 'Carlos Alcaraz to win set 2', score: '6-2 2-1', postedAt: NOW - 60e3, status: 'pending', ...over });
-const sync = (env, now, d, plays, records = { ml: { wins: 8, losses: 2, units: 3.29 }, sets: { wins: 31, losses: 6, units: 10.22 }, setGames: { wins: 0, losses: 0, units: 0 } }) => syncLiveDiscord(env, now, { deps: { fetch: d.fetch, plays: async () => plays, records: async () => records } });
+// testId '' keeps the test alert out of the way of these; it has a test of its own below.
+const sync = (env, now, d, plays, records = { ml: { wins: 8, losses: 2, units: 3.29 }, sets: { wins: 31, losses: 6, units: 10.22 }, setGames: { wins: 0, losses: 0, units: 0 } }, testId = '') => syncLiveDiscord(env, now, { deps: { fetch: d.fetch, plays: async () => plays, records: async () => records, testId } });
 
 test('only a real Discord webhook address is used, and the role must be an id', () => {
   assert.equal(discordConfig({}).live, null);
@@ -184,4 +185,35 @@ test('the status route says whether it is set up and working, never the address 
   // A secret that is set but is not a webhook address is reported as that.
   assert.equal((await discordStatus(makeEnv({ DISCORD_LIVE_WEBHOOK: 'https://example.com/hook' }).env)).liveSecretRejected, true);
   assert.deepEqual([(await discordStatus(makeEnv().env)).live, (await discordStatus(makeEnv().env)).liveSecretRejected], [false, false]);
+});
+
+test('a test alert goes out once per test id: a sample play marked TEST with the role ping, then the same message edited to its settled form', async () => {
+  const { env, store } = makeEnv({ DISCORD_LIVE_WEBHOOK: HOOK, DISCORD_LIVE_ROLE_ID: '<@&987654321098765432>' });
+  store.set(DISCORD_LEDGER_KEY, JSON.stringify({ helloAt: NOW - 1, plays: {} }));
+  const d = fakeDiscord();
+  const run = (now, id = 't1') => sync(env, now, d, [], undefined, id);
+  await run(NOW);
+  assert.equal(d.calls.length, 1);
+  assert.equal(d.calls[0].method, 'POST');
+  assert.equal(d.calls[0].body.content, '<@&987654321098765432>', 'a role pasted as a mention is read as its id, and the test pings it');
+  assert.match(d.calls[0].body.embeds[0].title, /^🧪 TEST · 🎾 Match Winner — Take Test Player/);
+  assert.match(d.calls[0].body.embeds[0].footer.text, /TEST ALERT · not a real play/);
+  await run(NOW + 20e3);
+  assert.equal(d.calls.length, 1, 'not edited within the same minute');
+  await run(NOW + 60e3);
+  assert.deepEqual([d.calls[1].method, d.calls[1].url], ['PATCH', `${HOOK}/messages/900000000000000001`]);
+  assert.match(d.calls[1].body.embeds[0].description, /^\*\*✅ WON · final 6-0 4-6 7-6 · \+0\.57u\*\*/);
+  for (let i = 2; i < 6; i++) await run(NOW + i * 60e3);
+  assert.equal(d.calls.length, 2, 'once per id');
+  assert.deepEqual((await discordStatus(env)).test, { id: 't1', state: 'done', at: NOW });
+  // A new id sends a new test.
+  await run(NOW + 10 * 60e3, 't2');
+  assert.equal(d.calls.length, 3);
+  assert.ok(TEST_ALERT_ID.length > 0 && testAlertMessage(NOW).embeds[0].title.includes('TEST'));
+
+  // The status says whether the role was found under its name and whether it is an id.
+  const st = async (extra) => { const s = await discordStatus(makeEnv({ DISCORD_LIVE_WEBHOOK: HOOK, ...extra }).env); return [s.role, s.roleSecretFound, s.roleSecretRejected]; };
+  assert.deepEqual(await st({}), [false, false, false], 'not set under DISCORD_LIVE_ROLE_ID');
+  assert.deepEqual(await st({ DISCORD_LIVE_ROLE_ID: 'Live Tennis' }), [false, true, true], 'set, but a name and not an id');
+  assert.deepEqual(await st({ DISCORD_LIVE_ROLE_ID: ' 987654321098765432 ' }), [true, true, false]);
 });
