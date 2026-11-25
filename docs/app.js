@@ -12485,14 +12485,12 @@ function renderTennisLiveRead(r) {
   const sg = r.state?.inSet ? r.model?.setGames : null;
   const sgOpen = sg ? Object.keys(sg.over ?? {}).map(Number).sort((x, y) => x - y).filter((k) => sg.over[k] > 0.005 && sg.over[k] < 0.995) : [];
   const open = Boolean(liveState.open[`tl:${r.id}`]);
-  const settled = (r.plays ?? []).filter((p) => p.status !== 'pending');
   const reasons = (r.plays ?? []).filter((p) => p.status === 'pending' && p.reason);
   const more = open ? `<div class="live-tennis-more">
       <small class="row-sub">To win the match${r.market != null ? ` · model ${esc(pct(r.model.match))}, live price ${esc(pct(r.market))}` : ' · from the score and the serving; no live price'}${r.state?.inSet ? ` · set ${r.state.setNumber}: ${esc(lastName(r[setSide]))} ${esc(pct(setProb))}` : ''}</small>
       <small class="row-sub">${holds}${mo ? ` · ${mo}` : ''}</small>
       ${sgOpen.length ? `<small class="row-sub">Set ${r.state.setNumber} games: about ${esc(String(sg.mean))} expected · ${sgOpen.map((k) => (k === 12.5 ? `a tiebreak ${esc(pct(sg.over[k]))}` : `past ${k}: ${esc(pct(sg.over[k]))}`)).join(' · ')}</small>` : ''}
       ${reasons.map((p) => `<small class="row-sub">${esc(p.reason)}</small>`).join('')}
-      ${settled.length ? `<div class="live-tennis-settled"><span class="tennis-ways-h">Earlier on this match</span>${settled.map((p) => renderTennisLivePlay(p)).join('')}</div>` : ''}
       ${r.waiting?.length ? `<span class="tennis-ways-h">What a tracked play needs</span><ul class="live-tennis-wait">${r.waiting.map((w) => `<li>${esc(w)}</li>`).join('')}</ul>` : ''}
       <span class="tennis-ways-h">The read</span>
       <ul class="tennis-why-list">${(r.why ?? []).map((w) => `<li>${esc(w)}</li>`).join('')}<li>Serve numbers from ${esc(r.serve?.source ?? 'the tour average')}. The scoreboard gives the score game by game and no serve statistics, so the holds and breaks are read from the order of the games.</li></ul>
@@ -12518,23 +12516,22 @@ function renderLiveTennisMatch(m) {
     ${read ? renderTennisLiveRead(read) : ''}
   </div>`;
 }
-/** The live plays' own line: the record (moneyline at the book's price, sets at the price named), and today's plays on matches no longer in play. */
+/**
+ * The live plays' own line (2026-11-25: "no need to have old or outdated live plays, only new and upcoming plays. After
+ * it's a win, loss or void it should be going to the results section"): the record in a line with the way to Results,
+ * and the plays still open on matches no longer on court. A settled play is not listed here at all; Results has it.
+ */
 function renderTennisLiveLedger(tl, inPlayIds) {
   if (!tl) return '';
-  const rec = (r, label, note) => (r && r.wins + r.losses > 0 ? `${label} ${r.wins}-${r.losses} <small>${esc(signedUnits(r.units))}u${r.roi != null ? ` · ${esc(roiText(r.roi))}` : ''}${note}</small>` : '');
-  const lines = [rec(tl.record?.ml, 'Moneyline', ''), rec(tl.record?.sets, 'Sets', ' at the book\'s price, or the price named where no book had the set'), rec(tl.record?.setGames, 'Set games', ' over or under, one unit each, at the price named')].filter(Boolean);
-  // Today's plays in the open (2026-11-24: "All these tracked plays. I've not seen one"): the ones still live first, then the settled ones, each with when it was posted.
-  // A play is open about half an hour and posts while a match is on court, so a look later in the day used to find nothing but a folded line.
-  const today = [...(tl.today ?? [])].sort((x, y) => (x.status === 'pending' ? 0 : 1) - (y.status === 'pending' ? 0 : 1) || (y.postedAt ?? 0) - (x.postedAt ?? 0));
-  const off = today.filter((p) => !inPlayIds.has(p.matchId));
+  const rec = (r, label) => (r && r.wins + r.losses > 0 ? `${label} ${r.wins}-${r.losses} <small>${esc(signedUnits(r.units))}u</small>` : '');
+  const lines = [rec(tl.record?.ml, 'Moneyline'), rec(tl.record?.sets, 'Sets'), rec(tl.record?.setGames, 'Set games')].filter(Boolean);
+  const results = '<button type="button" class="live-results-link" data-live-results>Results ›</button>';
+  // Still open, on a match that has gone off court (a match in play shows its own call on its card).
+  const open = (tl.today ?? []).filter((p) => p.status === 'pending' && !inPlayIds.has(p.matchId)).sort((x, y) => (y.postedAt ?? 0) - (x.postedAt ?? 0));
   const when = (p) => `<small class="live-tennis-when">${esc(liveWhenFmt.format(new Date(p.postedAt)))}</small>`;
-  const leanN = today.filter((p) => p.lean).length;
-  const todayHtml = off.length ? `<div class="live-tennis-today"><p class="row-sub"><strong>Today's live calls</strong> · ${today.length - leanN} play${today.length - leanN === 1 ? '' : 's'}${leanN ? `, ${leanN} lean${leanN === 1 ? '' : 's'}` : ''}${today.some((p) => p.status === 'pending') ? ` · ${today.filter((p) => p.status === 'pending').length} still open` : ''}</p>${off.map((p) => `${when(p)}${renderTennisLivePlay(p, { withMatch: true })}`).join('')}</div>` : '';
-  // None today: the last ones posted, so it is plain when they come and what they look like.
-  const earlier = today.length ? [] : (tl.history ?? []).flatMap((d) => d.plays ?? []).filter((p) => !p.lean).sort((x, y) => (y.postedAt ?? 0) - (x.postedAt ?? 0)).slice(0, 3);
-  const earlierHtml = earlier.length ? `<details class="live-tennis-rest" ${liveState.open['tennis:lastplays'] !== false ? 'open' : ''} data-live-details="tennis:lastplays"><summary>No live play yet today · the last ${earlier.length === 1 ? 'one' : earlier.length} posted</summary>${earlier.map((p) => `${when(p)}${renderTennisLivePlay(p, { withMatch: true })}`).join('')}<p class="row-sub">A live play posts only while a match a sportsbook prices is being played, and stays open for about half an hour. The Results tab has every one.</p></details>` : '';
-  if (!lines.length && !today.length && !earlier.length) return '<p class="row-sub live-tennis-ledger">Live plays post here while a match is in play: the moneyline when the read beats the live price, a set when one player is likely to take it, the games in a set when the holds say which way it runs. Stakes are sized by confidence. Tracked apart from the pre-match plays.</p>';
-  return `<div class="live-tennis-ledger">${lines.length ? `<p class="row-sub"><strong>Live plays</strong> · ${lines.join(' · ')}</p>` : ''}${todayHtml}${earlierHtml}</div>`;
+  const openHtml = open.length ? `<div class="live-tennis-today"><p class="row-sub"><strong>Open live plays</strong> · ${open.length}</p>${open.map((p) => `${when(p)}${renderTennisLivePlay(p, { withMatch: true })}`).join('')}</div>` : '';
+  if (!lines.length && !open.length) return '<p class="row-sub live-tennis-ledger">Live plays post here while a match is in play. Once one is settled it moves to Results.</p>';
+  return `<div class="live-tennis-ledger">${lines.length ? `<p class="row-sub"><strong>Live plays</strong> · ${lines.join(' · ')} · ${results}</p>` : ''}${openHtml}</div>`;
 }
 const liveWhenFmt = new Intl.DateTimeFormat('en-US', { weekday: 'short', month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' });
 /** Tennis on the Live tab: the day's parlay with each leg's standing, the matches in play, the matches with a play, the rest folded. */
@@ -12589,6 +12586,8 @@ function renderLive() {
 }
 
 el.liveView?.addEventListener('click', (event) => {
+  // A settled play lives on the Results tab, on its Live side.
+  if (event.target.closest('[data-live-results]')) { resultsState.side = 'live'; setActiveTab('results'); return; }
   const book = event.target.closest('[data-live-book]');
   if (book) {
     const id = book.dataset.liveBook;
