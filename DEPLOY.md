@@ -351,12 +351,15 @@ and make a new one.
   plays (`worker/src/discord-nba.js`). One play at a time a game: the game's
   best slip posts when it is first built, and a new one posts when that slip is
   replaced. When the game ends each post is edited to how it finished.
-- `DISCORD_PLAYBOOK_USER_ID`: the Playbook bot's user id, so each new NBA play
+- `DISCORD_FOOTBALL_WEBHOOK`: the same for the live NFL plays, in their own
+  channel.
+- `DISCORD_PLAYBOOK_USER_ID`: the Playbook bot's user id (one id serves both
+  channels), so each new NBA or NFL play
   starts with a real tag of the bot and the legs written out for it to answer
   with slip links. In Discord, with Developer Mode on, right-click Playbook →
   **Copy User ID**. Without it the legs are still written out, and nobody is
-  tagged. Playbook must be in the server and able to read and write in that
-  channel.
+  tagged. Playbook must be in the server and able to read and write in both
+  channels.
 - `DISCORD_UPDATES_WEBHOOK`: a second webhook, made the same way in another
   channel (for example `updates`), that gets one simple card per result: won, lost or void, the final score, the
   units, the price it was taken at, and the record.
