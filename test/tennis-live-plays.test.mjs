@@ -524,6 +524,7 @@ test('the tick keeps one lean a match, graded and never in the record; with none
   const { resultEntries, countedResults } = await import('../docs/results.js');
   const shown = resultEntries({ tennisLive: view });
   assert.deepEqual(shown.map((e) => [e.side, e.sport, e.lean, e.result, e.units]), [['live', 'tennis', true, 'win', 0.5]]);
-  assert.match(shown[0].note, /^Lean/);
+  // The Leans card says what it is; the row itself carries no extra words.
+  assert.equal(shown[0].note, undefined);
   assert.deepEqual(countedResults(shown), []);
 });

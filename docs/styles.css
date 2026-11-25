@@ -8059,12 +8059,10 @@ a.tennis-book:hover { background: rgba(255, 255, 255, 0.06); }
 .res-chart-note { margin: 0; color: var(--muted); font-size: 0.72rem; }
 .res-period { display: grid; gap: 6px; padding-top: 10px; border-top: 1px solid var(--line); }
 .res-period h4 small { color: var(--muted); font-weight: 600; margin-left: 4px; font-variant-numeric: tabular-nums; }
-.res-row { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 4px 12px; padding: 8px 10px; border-radius: 10px; background: var(--surface-2); min-width: 0; }
-.res-row-main { display: grid; gap: 1px; min-width: 0; flex: 1 1 220px; }
-.res-row-main b { font-size: 0.88rem; overflow-wrap: anywhere; }
-.res-row-main small, .res-row-meta small { color: var(--muted); font-size: 0.74rem; overflow-wrap: anywhere; }
-.res-row-meta { display: inline-flex; align-items: center; gap: 10px; flex: 0 1 auto; margin-left: auto; }
-.res-row-meta small { white-space: nowrap; font-variant-numeric: tabular-nums; }
+/* A result: its name with how it ended beside it (the pill keeps its own width, the name wraps), and one short line under both. Nothing in it is wider than the card. */
+.res-row { display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: start; gap: 3px 10px; padding: 8px 10px; border-radius: 10px; background: var(--surface-2); min-width: 0; }
+.res-row-title { font-size: 0.88rem; overflow-wrap: anywhere; min-width: 0; }
+.res-row-sub { grid-column: 1 / -1; color: var(--muted); font-size: 0.74rem; overflow-wrap: anywhere; font-variant-numeric: tabular-nums; min-width: 0; }
 .res-row .pick-result { margin-left: 0; white-space: nowrap; }
 .res-more { justify-self: start; }
 @media (min-width: 820px) {

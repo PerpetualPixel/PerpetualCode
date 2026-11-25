@@ -14,8 +14,8 @@
  */
 
 export const RESULT_SIDES = [
-  { key: 'pre', label: 'Pregame', long: "Pixel's Picks", note: 'Everything posted before the game: the league tickets, the UFC picks and the tennis plays.' },
-  { key: 'live', label: 'Live', long: 'Live plays', note: 'Everything posted while the game was being played: the live slips and the live tennis plays. A tennis play marked "or better" had no book price when it posted: it is graded at the price it said to take, which your book may not have had.' },
+  { key: 'pre', label: 'Pregame', long: "Pixel's Picks", note: 'Posted before the game. A price with a * is the price the pick said to take, not a book\'s.' },
+  { key: 'live', label: 'Live', long: 'Live plays', note: 'Posted during the game. A price with a * is the price the play said to take: no book had one when it posted.' },
 ];
 export const RESULT_SPORTS = [
   { key: 'nba', label: 'NBA' }, { key: 'nfl', label: 'NFL' }, { key: 'nhl', label: 'NHL' },
@@ -59,13 +59,21 @@ const num = (x) => (Number.isFinite(Number(x)) && x != null ? Number(x) : null);
  * A live tennis lean comes back marked `lean: true`: the board shows it in
  * a card of its own and no total counts it (countedResults).
  */
+/** The other side of a match, when the title already names one player ("vs Hercog"); both names otherwise. */
+const versus = (title, a, b) => {
+  const t = String(title ?? '');
+  if (a && b && t.startsWith(a)) return `vs ${b}`;
+  if (a && b && t.startsWith(b)) return `vs ${a}`;
+  return [a, b].filter(Boolean).join(' vs ');
+};
+
 export function resultEntries({ trendPicks = null, ufcPicks = null, tennisPicks = null, tennisLive = null, liveRecap = null, myBooks = [] } = {}) {
   const out = [];
   const add = (e) => { if (e.sport && e.date && SETTLED.has(e.result)) out.push(e); };
 
   for (const day of trendPicks?.history ?? []) for (const b of day.bets ?? []) {
     add({ id: `pre:${b.id}`, side: 'pre', sport: sportOfKey(b.sportKey), at: num(b.commenceMs) ?? num(b.postedAt), date: day.date,
-      title: (b.legs ?? []).map((l) => l.selection).join(' + ') || 'Ticket', sub: `${(b.legs ?? []).length > 1 ? `${b.legs.length}-leg parlay` : 'Straight'}${b.book ? ` at ${b.book}` : ''}`,
+      title: (b.legs ?? []).map((l) => l.selection).join(' + ') || 'Ticket', sub: [(b.legs ?? []).length > 1 ? `${b.legs.length} legs` : null, b.book].filter(Boolean).join(' · '),
       american: num(b.american), book: b.book ?? null, units: num(b.units) ?? 1, net: num(b.net), result: b.result });
   }
   // The MVP Picks (worker/src/mvp-picks.js) ride the same answer as the league tickets: the tracked ones, each at the price it said to take.
@@ -73,7 +81,7 @@ export function resultEntries({ trendPicks = null, ufcPicks = null, tennisPicks 
     if (!p.tracked || !p.bet) continue;
     const b = p.bet;
     add({ id: `pre:${b.id}`, side: 'pre', sport: 'nba', at: num(b.commenceMs) ?? num(b.postedAt), date: day.date, mvp: true,
-      title: (b.legs ?? []).map((l) => l.selection).join(' + ') || 'MVP pick', sub: `MVP pick · same-game parlay${b.book ? ` at ${b.book}` : ''}`,
+      title: (b.legs ?? []).map((l) => l.selection).join(' + ') || 'MVP pick', sub: ['MVP', b.book].filter(Boolean).join(' · '),
       american: num(b.american), orBetter: true, book: b.book ?? null, units: num(b.units) ?? 1, net: num(b.net), result: b.result });
   }
   for (const card of ufcPicks?.history ?? []) for (const b of card.bets ?? []) {
@@ -84,17 +92,18 @@ export function resultEntries({ trendPicks = null, ufcPicks = null, tennisPicks 
   }
   for (const rec of tennisPicks?.history ?? []) for (const p of rec.plays ?? []) {
     add({ id: `pre:tennis:${rec.date}:${p.id}`, side: 'pre', sport: 'tennis', at: num(p.commenceMs) ?? num(p.postedAt), date: rec.date,
-      title: p.selection ?? (p.legs ?? []).map((l) => l.selection).join(' + ') ?? 'Tennis play', sub: p.market === 'ml_parlay' ? 'Moneyline parlay' : `${p.a ?? ''} vs ${p.b ?? ''}`,
-      american: num(p.american), book: p.book ?? null, units: num(p.units) ?? 1, net: num(p.net), result: p.result, note: p.duplicateOf ? 'Posted twice: this copy does not count' : null });
+      title: p.selection ?? (p.legs ?? []).map((l) => l.selection).join(' + ') ?? 'Tennis play', sub: p.market === 'ml_parlay' ? 'Parlay' : versus(p.selection, p.a, p.b),
+      american: num(p.american), book: p.book ?? null, units: num(p.units) ?? 1, net: num(p.net), result: p.result, note: p.duplicateOf ? 'Duplicate, not counted' : null });
   }
   for (const rec of tennisLive?.history ?? []) for (const p of rec.plays ?? []) {
     const priced = num(p.american) != null;
     add({ id: `live:tennis:${p.id}`, side: 'live', sport: 'tennis', at: num(p.postedAt), date: rec.date,
-      title: p.selection ?? 'Live play', sub: `${p.a ?? ''} vs ${p.b ?? ''}${p.score ? ` · posted at ${p.score}` : ''}`,
+      title: p.selection ?? 'Live play', sub: [versus(p.selection, p.a, p.b), p.score ? `at ${p.score}` : null].filter(Boolean).join(' · '),
       american: priced ? num(p.american) : num(p.playable), orBetter: !priced && num(p.playable) != null, book: p.book ?? null,
       units: num(p.units) ?? 1, net: p.result === 'void' ? 0 : num(p.profit), result: p.result,
       // A lean (the best call on a match when nothing clears the bar for a tracked play) is on the board with its result and kept out of every total.
-      ...(p.lean ? { lean: true, note: p.basis === 'score' ? 'Lean · from the score alone' : 'Lean' } : {}) });
+      // It sits in the Leans card, which says what it is: the row does not repeat it.
+      ...(p.lean ? { lean: true } : {}) });
   }
   for (const g of liveRecap?.games ?? []) {
     const slips = (g.slips ?? []).filter((s) => s.result === 'win' || s.result === 'loss');
