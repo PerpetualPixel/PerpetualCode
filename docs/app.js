@@ -13362,7 +13362,7 @@ setInterval(() => {
 }, 20e3);
 document.addEventListener('visibilitychange', () => { if (!document.hidden && el.resultsView && !el.resultsView.hidden && Date.now() - resultsState.at >= 60e3) loadResults({ force: true, quiet: true }); });
 /** The results a card stands for: the whole side, or one sport of it. */
-/** The leans have a card of their own ('leans') and are in no other: a lean is shown with its result, never counted. */
+/** A card's counted results. The leans are in none of them: a lean is shown with its result in its sport's card (resultsLeans), never counted. */
 const resultsFor = (key) => resultsState.entries.filter((e) => e.side === resultsState.side && (key === 'leans' ? e.lean : !e.lean && (key === 'total' || e.sport === key)));
 const resultsNet = (n) => `${n < 0 ? '−' : '+'}${Math.abs(n).toFixed(2)}u`;
 const resultsRoi = (roi) => (roi == null ? 'n/a' : `${roi < 0 ? '−' : '+'}${Math.abs(roi * 100).toFixed(1)}%`);
@@ -13388,9 +13388,25 @@ function resultsRow(e, { sport = false, byDay = false } = {}) {
 }
 
 /** A card: the name and the record, three numbers, and (open) the graph and the results by period. */
+/** A card's results by period, the two latest shown and the rest behind a button. `id` names the list for that button. */
+function resultsPeriods(entries, bucket, id, { sport = false } = {}) {
+  const periods = bucketize(entries, bucket.key).filter((p) => p.count).reverse();
+  const all = Boolean(resultsState.more[id]);
+  const shown = all ? periods : periods.slice(0, 2);
+  const hidden = periods.slice(shown.length).reduce((n, p) => n + p.count, 0);
+  return `${shown.map((p) => `<div class="res-period"><h4>${esc(p.label)} <small>${p.wins}-${p.losses}${p.pushes ? `-${p.pushes}` : ''} · <span class="${resultsTone(p.net)}">${esc(resultsNet(p.net))}</span> · ROI ${esc(resultsRoi(p.roi))}</small></h4>${p.entries.map((e) => resultsRow(e, { sport, byDay: bucket.key === 'day' })).join('')}</div>`).join('')}
+      ${hidden ? `<button type="button" class="parlay-btn res-more" data-res-more="${esc(id)}">Show ${hidden} earlier result${hidden === 1 ? '' : 's'}</button>` : all && periods.length > 2 ? `<button type="button" class="parlay-btn res-more" data-res-more="${esc(id)}">Show fewer</button>` : ''}`;
+}
+/** A sport's leans on this side: graded, shown in the sport's own card, and in none of its numbers. */
+const resultsLeans = (key) => (key === 'total' ? [] : resultsState.entries.filter((e) => e.side === resultsState.side && e.lean && e.sport === key));
+
 function resultsCard(key, label, icon) {
   const entries = resultsFor(key);
   const s = summarize(entries);
+  // The leans sit in their sport's card (2026-11-25: "these should be one card, not separate"): a line under the numbers, and their results under the tracked ones when the card is open. They stay out of the record, the units and the graph.
+  const leans = resultsLeans(key);
+  const ls = summarize(leans);
+  const leanRec = `${ls.wins}-${ls.losses}${ls.pushes ? `-${ls.pushes}` : ''} · <span class="${resultsTone(ls.net)}">${esc(resultsNet(ls.net))}</span>`;
   const id = `${resultsState.side}:${key}`;
   const open = Boolean(resultsState.open[id]);
   const decided = s.wins + s.losses;
@@ -13398,18 +13414,14 @@ function resultsCard(key, label, icon) {
   let body = '';
   if (open) {
     const bucket = RESULT_BUCKETS.find((b) => b.key === resultsState.bucket) ?? RESULT_BUCKETS[1];
-    const periods = bucketize(entries, bucket.key).filter((p) => p.count).reverse();
-    const all = Boolean(resultsState.more[id]);
-    const shown = all ? periods : periods.slice(0, 2);
-    const hidden = periods.slice(shown.length).reduce((n, p) => n + p.count, 0);
     body = `<div class="res-body">
       <div class="res-graph-head"><h4>Net units by ${esc(bucket.label.toLowerCase())}</h4>
         <div class="res-buckets" role="group" aria-label="Group the graph and the list by">${RESULT_BUCKETS.map((b) => `<button type="button" class="res-bucket ${b.key === bucket.key ? 'is-active' : ''}" data-res-bucket="${b.key}" aria-pressed="${b.key === bucket.key}">${b.label}</button>`).join('')}</div>
       </div>
       <div class="res-chart" data-res-chart="${esc(key)}"></div>
       <p class="res-chart-note">Tap a bar for its numbers.</p>
-      ${shown.map((p) => `<div class="res-period"><h4>${esc(p.label)} <small>${p.wins}-${p.losses}${p.pushes ? `-${p.pushes}` : ''} · <span class="${resultsTone(p.net)}">${esc(resultsNet(p.net))}</span> · ROI ${esc(resultsRoi(p.roi))}</small></h4>${p.entries.map((e) => resultsRow(e, { sport: key === 'total', byDay: bucket.key === 'day' })).join('')}</div>`).join('')}
-      ${hidden ? `<button type="button" class="parlay-btn res-more" data-res-more="${esc(id)}">Show ${hidden} earlier result${hidden === 1 ? '' : 's'}</button>` : all && periods.length > 2 ? `<button type="button" class="parlay-btn res-more" data-res-more="${esc(id)}">Show fewer</button>` : ''}
+      ${resultsPeriods(entries, bucket, id, { sport: key === 'total' })}
+      ${leans.length ? `<div class="res-leans"><h4 class="res-leans-h">Leans <small>${leanRec} · not counted above</small></h4>${resultsPeriods(leans, bucket, `${id}:leans`)}</div>` : ''}
     </div>`;
   }
   return `<article class="res-card ${open ? 'is-open' : ''} ${key === 'total' ? 'is-total' : ''}" data-res-card="${esc(key)}">
@@ -13423,6 +13435,7 @@ function resultsCard(key, label, icon) {
       ${tile('Net units', resultsNet(s.net), resultsTone(s.net), 'Units won less units lost')}
       ${tile('ROI', resultsRoi(s.roi), resultsTone(s.net), 'Net units over units played')}
     </dl>
+    ${leans.length ? `<p class="res-leans-line" title="A lean is the best call on a match when nothing clears the bar for a tracked play. Graded as half a unit at the price it said to take."><strong>Leans</strong> ${leanRec} · ROI ${esc(resultsRoi(ls.roi))} <small>half a unit each, not counted above</small></p>` : ''}
     ${body}
   </article>`;
 }
@@ -13432,16 +13445,17 @@ function renderResults() {
   const say = (text) => { el.resultsStatus.textContent = text; el.resultsStatus.hidden = !text; };
   if (!resultsState.loaded) { say(resultsState.loading ? 'Adding up the results…' : ''); el.resultsBody.innerHTML = ''; return; }
   say(resultsState.failed.length ? 'Some results could not be loaded just now, so a few numbers may be short. Try again in a moment.' : '');
-  const leans = resultsFor('leans');
   const side = resultsSide();
   const sides = RESULT_SIDES.map((s) => {
     const sum = summarize(countedResults(resultsState.entries.filter((e) => e.side === s.key)));
     const on = s.key === side.key;
     return `<button type="button" class="res-side ${on ? 'is-active' : ''}" data-res-side="${s.key}" aria-pressed="${on}"><span class="res-side-name">${esc(s.label)}</span><small>${esc(s.long)}</small><span class="res-side-net ${resultsTone(sum.net)}">${sum.count ? esc(resultsNet(sum.net)) : 'no results yet'}</span></button>`;
   }).join('');
-  const withResults = RESULT_SPORTS.filter((sp) => resultsFor(sp.key).length);
-  const without = RESULT_SPORTS.filter((sp) => !resultsFor(sp.key).length);
-  const any = resultsFor('total').length > 0;
+  // A sport with only leans so far still has its card: the leans are in it.
+  const has = (sp) => resultsFor(sp.key).length > 0 || resultsLeans(sp.key).length > 0;
+  const withResults = RESULT_SPORTS.filter(has);
+  const without = RESULT_SPORTS.filter((sp) => !has(sp));
+  const any = resultsFor('total').length > 0 || withResults.length > 0;
   el.resultsBody.innerHTML = `
     <div class="res-sides" role="group" aria-label="Which side of the results">${sides}</div>
     <p class="row-sub res-note">${esc(side.note)} Tap a card to open its graph and results.</p>
@@ -13449,8 +13463,7 @@ function renderResults() {
     ${any ? `${resultsCard('total', `${side.long} · all sports`, '')}
     <h3 class="res-h3">By sport</h3>
     <div class="res-grid">${withResults.map((sp) => resultsCard(sp.key, sp.label, sportIcon(RESULTS_ICON[sp.key]))).join('')}</div>
-    ${without.length ? `<p class="row-sub res-none">No ${side.key === 'live' ? 'live' : 'pregame'} results yet for ${esc(without.map((sp) => sp.label).join(', '))}.</p>` : ''}` : `<p class="empty">No ${side.key === 'live' ? 'live' : 'pregame'} results have settled yet.</p>`}
-    ${leans.length ? `<h3 class="res-h3">Leans <small>shown with their results, not counted above</small></h3><div class="res-grid">${resultsCard('leans', 'Live tennis leans', sportIcon(RESULTS_ICON.tennis))}</div><p class="row-sub res-none">A lean is the best call on a match when nothing clears the bar for a tracked play. Each is graded as half a unit at the price it said to take, so you can see how they do.</p>` : ''}`;
+    ${without.length ? `<p class="row-sub res-none">No ${side.key === 'live' ? 'live' : 'pregame'} results yet for ${esc(without.map((sp) => sp.label).join(', '))}.</p>` : ''}` : `<p class="empty">No ${side.key === 'live' ? 'live' : 'pregame'} results have settled yet.</p>`}`;
   drawResultsCharts();
 }
 

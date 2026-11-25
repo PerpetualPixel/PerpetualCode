@@ -8066,6 +8066,14 @@ a.tennis-book:hover { background: rgba(255, 255, 255, 0.06); }
 .res-row-sub { grid-column: 1 / -1; color: var(--muted); font-size: 0.74rem; overflow-wrap: anywhere; font-variant-numeric: tabular-nums; min-width: 0; }
 .res-row .pick-result { margin-left: 0; white-space: nowrap; }
 .res-more { justify-self: start; }
+/* A sport's leans, in its own card: a line under the numbers, and their results under the tracked ones. */
+.res-leans-line { margin: 10px 0 0; padding: 8px 10px; border-radius: 12px; border: 1px dashed var(--line); font-size: 0.84rem; font-variant-numeric: tabular-nums; }
+.res-leans-line small { color: var(--muted); margin-left: 4px; }
+.res-leans-line .is-up, .res-leans-h .is-up { color: var(--success); }
+.res-leans-line .is-down, .res-leans-h .is-down { color: var(--danger, #ff5c7a); }
+.res-leans { display: grid; gap: 10px; padding-top: 12px; border-top: 1px dashed var(--line); }
+.res-leans-h { margin: 0; font-size: 0.9rem; font-weight: 800; }
+.res-leans-h small { color: var(--muted); font-weight: 600; margin-left: 4px; font-variant-numeric: tabular-nums; }
 @media (min-width: 820px) {
   .res-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
   .res-grid .res-card.is-open { grid-column: 1 / -1; }
