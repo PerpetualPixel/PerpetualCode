@@ -15,7 +15,7 @@ import condensedBold from '../vendor/fonts/RobotoCondensed-700.ttf';
 import condensedMedium from '../vendor/fonts/RobotoCondensed-500.ttf';
 import condensedRegular from '../vendor/fonts/RobotoCondensed-400.ttf';
 import logoPng from '../../docs/assets/logo-icon-180.png';
-import { cardSvg } from './card-svg.js';
+import { cardSvg, slipCardSvg } from './card-svg.js';
 
 /** The picture's width in pixels: sharp on a phone, and well under Discord's limits. */
 export const CARD_PIXELS = 1080;
@@ -25,12 +25,15 @@ let logoUri = null;
 const base64 = (buf) => { const u = new Uint8Array(buf); let s = ''; for (let i = 0; i < u.length; i += 0x8000) s += String.fromCharCode.apply(null, u.subarray(i, i + 0x8000)); return btoa(s); };
 const FONTS = [condensedBold, condensedMedium, condensedRegular].map((f) => new Uint8Array(f));
 
-/** The card for a play as PNG bytes. */
-export async function renderCardPng(play) {
+/** An SVG card as PNG bytes. */
+async function drawPng(svgOf) {
   ready ??= initWasm(resvgWasm);
   await ready;
   logoUri ??= `data:image/png;base64,${base64(logoPng)}`;
-  const svg = cardSvg(play, { logo: logoUri });
-  const drawn = new Resvg(svg, { fitTo: { mode: 'width', value: CARD_PIXELS }, font: { fontBuffers: FONTS, loadSystemFonts: false, defaultFontFamily: 'Roboto Condensed' } }).render();
+  const drawn = new Resvg(svgOf(logoUri), { fitTo: { mode: 'width', value: CARD_PIXELS }, font: { fontBuffers: FONTS, loadSystemFonts: false, defaultFontFamily: 'Roboto Condensed' } }).render();
   try { return drawn.asPng(); } finally { drawn.free?.(); }
 }
+/** The card for a play as PNG bytes. */
+export const renderCardPng = (play) => drawPng((logo) => cardSvg(play, { logo }));
+/** The card for a slip of several legs (the live NBA plays) as PNG bytes. */
+export const renderSlipPng = (post) => drawPng((logo) => slipCardSvg(post, { logo }));

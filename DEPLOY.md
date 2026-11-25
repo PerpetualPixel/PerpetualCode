@@ -347,6 +347,16 @@ and make a new one.
   says so in its tag, and pings nobody. When it settles, its result goes to
   the results channel too, marked as a lean and with no units, since a lean
   is not on the record. With this unset, leans stay on the site only.
+- `DISCORD_LIVE_BASKETBALL_WEBHOOK`: a webhook in a channel for the live NBA
+  plays (`worker/src/discord-nba.js`). One play at a time a game: the game's
+  best slip posts when it is first built, and a new one posts when that slip is
+  replaced. When the game ends each post is edited to how it finished.
+- `DISCORD_PLAYBOOK_USER_ID`: the Playbook bot's user id, so each new NBA play
+  starts with a real tag of the bot and the legs written out for it to answer
+  with slip links. In Discord, with Developer Mode on, right-click Playbook →
+  **Copy User ID**. Without it the legs are still written out, and nobody is
+  tagged. Playbook must be in the server and able to read and write in that
+  channel.
 - `DISCORD_UPDATES_WEBHOOK`: a second webhook, made the same way in another
   channel (for example `updates`), that gets one simple card per result: won, lost or void, the final score, the
   units, the price it was taken at, and the record.

@@ -110,7 +110,7 @@ export function testLeans(now = Date.now()) {
 }
 const isTestId = (id) => /^test(-|$)/.test(String(id ?? ''));
 /** A message marked as a test, wherever its words are: the line above the card, the written card's title and footer. */
-const markTest = (msg) => {
+export const markTest = (msg) => {
   // Marked once: the card and its written form can share the same title and footer.
   if (!String(msg.content ?? '').startsWith('🧪')) msg.content = `🧪 **TEST · not a real play**${msg.content ? `\n${msg.content}` : ''}`;
   const e = msg.embeds?.[0];
@@ -126,6 +126,8 @@ export function testAlertMessage(now, { role = null, settled = false } = {}) {
 
 /** The role id as Discord gives it, or however it was pasted (a mention <@&123>, in quotes, after a label): the one long number in the value. A name has none. */
 const roleOf = (v) => { const ids = String(v ?? '').match(/\d{15,22}/g) ?? []; return ids.length === 1 ? ids[0] : String(v ?? '').trim(); };
+/** A Discord channel webhook address as given in a secret, or null when it is unset or is not one. */
+export const webhookOf = (value) => { const s = String(value ?? '').trim(); return WEBHOOK.test(s) ? s : null; };
 /** What is configured: the webhooks (null when unset or not a Discord webhook URL) and the role to ping. `leans` is the channel for the live leans (2026-11-25: "I made another channel (tennis-leans)"). */
 export function discordConfig(env) {
   const hook = (v) => { const s = String(v ?? '').trim(); return WEBHOOK.test(s) ? s : null; };
@@ -400,7 +402,7 @@ const post = (fetcher, hook, payload) => call(fetcher, `${hook}?wait=true`, 'POS
  * the buttons (`refused` on the answer says they were the trouble), then as the written card with no picture
  * (`noPicture`), which is the form every earlier alert went out in.
  */
-async function deliver(fetcher, hook, card, { messageId = null } = {}) {
+export async function deliver(fetcher, hook, card, { messageId = null } = {}) {
   const rich = Boolean(card.payload.components);
   const target = (withComponents) => (messageId ? `${hook}/messages/${messageId}${withComponents ? '?with_components=true' : ''}` : `${hook}?wait=true${withComponents ? '&with_components=true' : ''}`);
   const method = messageId ? 'PATCH' : 'POST';
@@ -417,7 +419,7 @@ async function deliver(fetcher, hook, card, { messageId = null } = {}) {
   return { ...third, noPicture: true };
 }
 
-const readJson = async (env, key) => { try { const raw = await env.POTD_KV.get(key); return raw ? JSON.parse(raw) : null; } catch { return null; } };
+export const readJson = async (env, key) => { try { const raw = await env.POTD_KV.get(key); return raw ? JSON.parse(raw) : null; } catch { return null; } };
 const writeLedger = (env, ledger) => env.POTD_KV.put(DISCORD_LEDGER_KEY, JSON.stringify(ledger), { expirationTtl: LEDGER_TTL });
 
 /** The site's record for each kind of live play over the kept days (worker/src/tennis-live-plays.js's own sums), read only when a message is about to go out. */

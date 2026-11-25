@@ -68,6 +68,7 @@ import { getTennisLive } from './tennis-live.js';
 import { runTennisLiveTick, getTennisLivePlays, TENNIS_LIVE_CRON } from './tennis-live-plays.js';
 import { syncLiveDiscord, discordStatus, bookRedirect, findLivePlay, recordForPlay } from './discord.js';
 import { CARD_VERSION } from './card-svg.js';
+import { syncBasketballDiscord, basketballStatus } from './discord-nba.js';
 import { playPage, missingPlayPage } from './play-page.js';
 import { getTennisTrends } from './tennis-trends.js';
 import { sendUfcTicketNotifications, sendUfcChangeNotifications } from './notifications.js';
@@ -528,7 +529,11 @@ export default {
 
     // The live-props probe (worker/src/live-probe.js): one game, one
     // window, one props call a tick on either schedule.
-    ctx.waitUntil(runLiveProbe(env, ctx, now).catch((e) => console.error('Live probe failed:', e)));
+    // Then the live NBA plays to the owner's Discord (worker/src/discord-nba.js): the probe has just rebuilt each game's slips.
+    // With no webhook set this is a no-op.
+    ctx.waitUntil(runLiveProbe(env, ctx, now).catch((e) => console.error('Live probe failed:', e))
+      .then(() => syncBasketballDiscord(env, now))
+      .catch((e) => console.error('Basketball Discord sync failed:', String(e?.message ?? e).slice(0, 120))));
     // The finished games' live slips into the kept ledger (worker/src/live-board.js archiveLiveResults): every quarter hour
     // (2026-11-24: "the board should be updated throughout the day"; it was hourly), a few KV reads when nothing is new.
     if (event.cron !== TRENDS_CRON) ctx.waitUntil(archiveLiveResults(env, now).catch((e) => console.error('Live results archive failed:', e)));
@@ -1764,7 +1769,7 @@ export default {
 
     // Whether the Discord alerts are set up and working (worker/src/discord.js): yes or no and when, never the address.
     if (pathname === '/discord/status' && request.method === 'GET') {
-      return json(await discordStatus(env), { headers: { ...cors, 'Cache-Control': 'no-store' } });
+      return json({ ...(await discordStatus(env)), basketball: await basketballStatus(env) }, { headers: { ...cors, 'Cache-Control': 'no-store' } });
     }
 
     if (pathname === '/region' && request.method === 'GET') {
