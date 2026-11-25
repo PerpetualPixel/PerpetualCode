@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { hardRockSelections, hardRockSlipLink, hardRockCombined, phoneSlipLink, isPhone, pickText, HARDROCK_SHARE } from '../docs/book-links.js';
+import { hardRockSelections, hardRockSlipLink, hardRockCombined, phoneSlipLink, isPhone, pickText, HARDROCK_SHARE, withState, needsState, cleanState } from '../docs/book-links.js';
 import { SPORTSBOOKS, pricedBooks, bookIdFor } from '../docs/engine.js';
 
 const FEED = 'https://app.hardrock.bet/?deep_link_value=betslip/5962328190182621608';
@@ -56,4 +56,16 @@ test('pickText writes a pick out to paste: a line a leg, the selection and its g
   assert.equal(pickText([{ selection: 'A  Over 1.5 Reb', game: '' }, { selection: 'B Under 20.5 Pts', game: 'PHX @ HOU' }, { selection: '' }, null]), 'A Over 1.5 Reb\nB Under 20.5 Pts (PHX @ HOU)');
   assert.equal(pickText([]), '');
   assert.equal(pickText(null), '');
+});
+
+test('a Caesars or BetMGM link gets the user\'s state written in; without one it is not opened half-made', () => {
+  const czr = 'https://sportsbook.caesars.com/us/{state}/bet?selectionIds=abc-123&dl=betslip';
+  const mgm = 'https://sports.{state}.betmgm.com/en/sports?options=6:1:2&type=Single';
+  assert.equal(withState(czr, 'NJ'), 'https://sportsbook.caesars.com/us/nj/bet?selectionIds=abc-123&dl=betslip');
+  assert.equal(withState(mgm, 'az'), 'https://sports.az.betmgm.com/en/sports?options=6:1:2&type=Single');
+  assert.equal(withState('https://sportsbook.caesars.com/us/%7Bstate%7D/bet?selectionIds=a,b', 'US-PA'), 'https://sportsbook.caesars.com/us/pa/bet?selectionIds=a,b', 'the braces as a browser writes them, and a region as "US-PA"');
+  assert.equal(withState(czr, null), null); assert.equal(withState(czr, 'ZZ'), null, 'no state, or not a state: no link to a page with braces in it');
+  assert.equal(withState('https://sportsbook.fanduel.com/addToBetslip?marketId=1', null), 'https://sportsbook.fanduel.com/addToBetslip?marketId=1', 'a link with no placeholder is left alone');
+  assert.deepEqual([needsState(czr), needsState(mgm), needsState('https://sportsbook.draftkings.com/'), needsState(null)], [true, true, false, false]);
+  assert.deepEqual([cleanState('nj'), cleanState('US-NY'), cleanState('Ontario'), cleanState('')], ['NJ', 'NY', null, null]);
 });

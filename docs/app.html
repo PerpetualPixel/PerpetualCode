@@ -21,7 +21,7 @@
      only page that reads the feed; the other pages' connect-src stays the
      worker alone. -->
 <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src 'self' https://fonts.gstatic.com; img-src 'self' data: https:; connect-src 'self' https://pixel-pick-odds.mgbouldering.workers.dev https://perpetualpixel.github.io; object-src 'none'; base-uri 'self'; form-action 'self'">
-<script src="frame-guard.js?v=1.375"></script>
+<script src="frame-guard.js?v=1.376"></script>
 <title>Perpetual Picks - App</title>
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <meta name="theme-color" content="#05050A">
@@ -37,9 +37,9 @@
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Syne:wght@600;700;800&family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
-<link rel="stylesheet" href="styles.css?v=1.375">
+<link rel="stylesheet" href="styles.css?v=1.376">
 <!-- Before first paint: a desktop reader who chose "Fit screen" gets the wide shell without a flash of the narrow one. -->
-<script src="wide.js?v=1.375"></script>
+<script src="wide.js?v=1.376"></script>
 </head>
 <body>
 
@@ -167,7 +167,8 @@
       <li><strong>Tennis:</strong> each lean now shows set betting (-1.5 sets to win 2-0, +1.5 sets to win a set), the second set, and every book's price. Every play says the price to take it at or better.</li>
       <li><strong>Live:</strong> tap a game and the bet is the first thing you see. Finished games leave the list. Tennis matches in play can now carry an over or under on the games in the set.</li>
       <li><strong>Results:</strong> a new tab with every record in one place. Pregame first, Live on a toggle, a card for each sport with units played, net units, ROI and a graph by day, week, month or year. It now updates itself through the day, and live tennis leans have their own card there.</li>
-      <li><strong>Live:</strong> one card a bet with a single "Add to sportsbook" button. Tap it and pick your app from the sportsbooks that have the bet, each with its own price.</li>
+      <li><strong>Caesars and BetMGM links:</strong> they now open your slip for your state, where before they opened the sportsbook's front page.</li>
+      <li><strong>Live:</strong> a loading emblem while the plays load, and one card a bet with a single "Add to sportsbook" button. Tap it and pick your app from the sportsbooks that have the bet, each with its own price.</li>
       <li><strong>Best on the board:</strong> today's games only, and the first thing on Pixel's Picks on a day with no pick. Today's suggestion comes from it, never from another day.</li>
       <li><strong>MVP Picks:</strong> on Pixel's Picks, one player's same-game parlay: his team's highest-usage player, a points, rebounds and assists number he clears in 90% of his games, against a bottom-five defense at his position. The card is short, each stat opens on a tap, and one button adds every leg. When the price is too short it steps the numbers up or pairs a second player.</li>
       <li><strong>Player search:</strong> a new "To record" choice between Over and Under. Type 15 points and it shows the games with 15 or more.</li>
@@ -566,6 +567,7 @@
   <h2 id="booksOnboardTitle" class="books-onboard-title">Which sportsbooks do you use?</h2>
   <p class="row-sub">Pick the ones you play at. Trends, the Parlay Builder, Live slips and your own Pixel's Pick then show those books only. Change it any time in Account settings.</p>
   <div id="booksOnboardGrid" class="books-grid" role="group" aria-label="Your sportsbooks"></div>
+  <label class="books-state"><span>Your state</span><select id="booksOnboardState" aria-describedby="booksStateHelp"></select><small id="booksStateHelp">Caesars and BetMGM run a separate site in each state, so their slip links need yours. It is filled in from your connection when it can be.</small></label>
   <div class="books-onboard-actions">
     <button type="button" id="booksOnboardSave" class="parlay-build">Save my books</button>
     <button type="button" id="booksOnboardAll" class="parlay-reset">Show every book</button>
@@ -705,6 +707,7 @@
       <p>Generate, and the builder returns tickets that fit, each leg with its hit rates and price. Save a setup as a preset to reuse it.</p>
       <p><strong>Onyx</strong> has no slip links, so it works differently. Choose Onyx as one of your sportsbooks and a line's sheet and every ticket get a <strong>Copy pick &amp; open Onyx</strong> button: it copies the pick as text and opens Onyx, so you can find it there. Prices shown are from the other books.</p>
       <p><strong>Add to slip</strong> opens the sportsbook with the pick on your slip, where the book allows it. On a phone, Hard Rock takes bets only in its app, so a Hard Rock link opens the Hard Rock Bet app with the pick on the slip; the app has to be installed and you have to be signed in. A whole Hard Rock ticket goes over in one link.</p>
+      <p>Caesars and BetMGM run a separate site in each state, so their links are written for yours. It is filled in from your connection; if a link asks, choose your state once and tap again.</p>
     </details>
 
     <details>
@@ -1193,6 +1196,6 @@
   </div>
 </aside>
 
-<script type="module" src="app.js?v=1.375"></script>
+<script type="module" src="app.js?v=1.376"></script>
 </body>
 </html>

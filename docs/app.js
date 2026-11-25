@@ -27,7 +27,7 @@ import { sortTrends, sortQuotes, bestQuote, attachSeries, hitFlags, nflWeek, leg
 import { enhanceSelect } from './custom-select.js';
 import { BUILD_INFO } from './version.js';
 import { safeUrl } from './safe-url.js';
-import { hardRockCombined, phoneSlipLink, isPhone, pickText } from './book-links.js';
+import { hardRockCombined, phoneSlipLink, isPhone, pickText, withState, needsState, cleanState, US_STATES } from './book-links.js';
 import { groupLiveSlips, slipNumbers } from './live-slips.js';
 import { summarizePicks, gradePick } from './learning.js';
 import { liveSetsLabel } from './tennis-results.js';
@@ -1263,6 +1263,35 @@ function relativeTime(ms) {
  * site (docs/safe-url.js says why), then escaped like any other value.
  */
 const escUrl = (value) => esc(safeUrl(value));
+
+// The state Caesars' and BetMGM's links are written for (docs/book-links.js withState): the one the user chose, else
+// the one their connection is in. A link with the placeholder still in it is completed as it is touched; with no state
+// known the tap asks for one first and opens nothing half-made.
+const BOOK_STATE_KEY = 'pixelpick.bookState.v1';
+const BOOK_STATE_AUTO_KEY = 'pixelpick.bookStateAuto.v1';
+// Where the connection is, asked once a visit unless the user has said: the worker reads it off the request and keeps nothing.
+setTimeout(() => {
+  try {
+    if (storedState(BOOK_STATE_KEY) || typeof CONFIG === 'undefined' || !CONFIG.WORKER_URL) return;
+    fetch(new URL('/region', CONFIG.WORKER_URL), { headers: { Accept: 'application/json' } }).then((r) => (r.ok ? r.json() : null)).then((d) => { const st = d?.country === 'US' ? cleanState(d.region) : null; if (st) localStorage.setItem(BOOK_STATE_AUTO_KEY, JSON.stringify(st)); }).catch(() => {});
+  } catch { /* storage or the network is off: the user can choose a state by hand */ }
+}, 1500);
+document.addEventListener('change', (event) => { if (event.target?.id !== 'booksOnboardState') return; const st = cleanState(event.target.value); try { if (st) localStorage.setItem(BOOK_STATE_KEY, JSON.stringify(st)); else localStorage.removeItem(BOOK_STATE_KEY); } catch { /* not kept */ } });
+const storedState = (k) => { try { return cleanState(JSON.parse(localStorage.getItem(k) ?? 'null')); } catch { return null; } };
+const bookState = () => storedState(BOOK_STATE_KEY) ?? storedState(BOOK_STATE_AUTO_KEY);
+{
+  const forState = (event) => {
+    const a = event.target?.closest?.('a[href*="{state}"], a[href*="%7Bstate%7D"], a[href*="%7bstate%7d"]');
+    if (!a) return;
+    const next = withState(a.getAttribute('href'), bookState());
+    if (next) { a.setAttribute('href', next); return; }
+    if (event.type !== 'click') return;
+    event.preventDefault(); event.stopPropagation();
+    if (typeof openBooksOnboard === 'function') { openBooksOnboard(); const note = document.getElementById('booksOnboardNote'); if (note) note.textContent = 'Choose your state below, then tap the link again: Caesars and BetMGM open your slip only for the state you bet in.'; }
+  };
+  for (const type of ['touchstart', 'pointerdown']) document.addEventListener(type, forState, { capture: true, passive: true });
+  document.addEventListener('click', forState, true);
+}
 
 /**
  * Onyx, for a user who has it among their books: one button that puts the pick on the clipboard and opens Onyx
@@ -3486,6 +3515,8 @@ function applyMyBooks(list, { push = true } = {}) {
 }
 function renderBooksOnboard() {
   if (!el.booksOnboardGrid) return;
+  const stateSel = document.getElementById('booksOnboardState');
+  if (stateSel) { const cur = bookState(); stateSel.innerHTML = `<option value="">Choose…</option>${US_STATES.map((st) => `<option value="${st}" ${st === cur ? 'selected' : ''}>${st}</option>`).join('')}`; }
   el.booksOnboardGrid.innerHTML = ONBOARD_BOOKS.map((id) => { const on = myBooksState.chosen.has(id); return `<button type="button" class="books-chip ${on ? 'is-active' : ''}" data-onboard-book="${esc(id)}" aria-pressed="${on}">${bookBadge(id, SPORTSBOOKS[id]?.name)}<span>${esc(SPORTSBOOKS[id]?.name ?? id)}</span>${on ? '<span class="league-chip-on" aria-hidden="true">✓</span>' : ''}</button>`; }).join('');
   if (el.booksOnboardSave) el.booksOnboardSave.textContent = myBooksState.chosen.size ? `Save ${myBooksState.chosen.size} book${myBooksState.chosen.size === 1 ? '' : 's'}` : 'Save my books';
   if (el.booksOnboardNote) el.booksOnboardNote.textContent = settingsHeaders() ? 'Saved to your account, the same on every device.' : 'Saved on this device; sign in to keep it on every device.';
@@ -6409,7 +6440,7 @@ function loadTabContent(tab) {
   if (tab === 'players') loadPlayers();
   if (tab === 'parlay') loadParlay();
   if (tab === 'ufc') { if (ufcState.event) renderUfc(); else loadUfc(); }
-  if (tab === 'live') loadLive({ force: true });
+  if (tab === 'live') loadLive({ force: true, announce: true });
   if (tab === 'tennis') loadTennis({ force: true });
   if (tab === 'slipCheck') loadSlipQuota();
   if (tab === 'results') loadResults();
@@ -12137,11 +12168,37 @@ const ago = (ms) => { const s = Math.max(0, Math.round((Date.now() - ms) / 1000)
 const league = (k) => ({ nfl: 'NFL', nba: 'NBA', nhl: 'NHL', tennis: 'Tennis', ucl: 'Champions League', epl: 'Premier League', laliga: 'La Liga', seriea: 'Serie A', bundesliga: 'Bundesliga', ligue1: 'Ligue 1' }[k] ?? String(k ?? '').toUpperCase());
 const LIVE_SOCCER = new Set(['ucl', 'epl', 'laliga', 'seriea', 'bundesliga', 'ligue1']);
 
-async function loadLive({ force = false } = {}) {
+/**
+ * The Live tab's loader (2026-11-24: "there is no indication that it's loading, add a loading emblem. Make it the infinity
+ * portion of my icon and having an energy pixel going around the infinity symbol like a race track and a trail of pixel
+ * dust behind it. And some text saying 'live plays are loading'"): the infinity in the logo's own colours as the
+ * track, a bright pixel lapping it, and smaller, fainter pixels strung out behind. Still for a reduced-motion user.
+ */
+let liveLoaderSeq = 0;
+function liveLoaderHtml(text = 'Live plays are loading', { small = false } = {}) {
+  const id = `ppInf${++liveLoaderSeq}`;
+  const DUR = 1.9;
+  const lap = (lag) => `<animateMotion dur="${DUR}s" begin="${(-(DUR - lag)).toFixed(3)}s" repeatCount="indefinite" calcMode="linear"><mpath href="#${id}t"/></animateMotion>`;
+  // The dust: each speck a little later round the track, smaller and fainter, and knocked a pixel or two off the line.
+  const dust = [[0.05, 4.4, 0.85, 0, 0], [0.1, 3.8, 0.7, 1.6, -1.2], [0.15, 3.4, 0.58, -1.4, 1.6], [0.21, 3, 0.46, 2, 1.2], [0.27, 2.6, 0.36, -2.2, -1.6], [0.34, 2.2, 0.27, 1.2, 2.4], [0.42, 1.9, 0.19, -1.8, 0.6], [0.51, 1.6, 0.12, 2.4, -2]];
+  return `<div class="pp-inf ${small ? 'is-small' : ''}" role="status" aria-live="polite">
+    <svg viewBox="0 0 120 64" aria-hidden="true" focusable="false">
+      <defs><linearGradient id="${id}g" x1="0" y1="0" x2="1" y2="0"><stop offset="0" stop-color="#ff2bd6"/><stop offset="0.5" stop-color="#8b5cf6"/><stop offset="1" stop-color="#22e3ff"/></linearGradient></defs>
+      <path id="${id}t" class="pp-inf-track" stroke="url(#${id}g)" d="M60 32 C46 8 12 8 12 32 C12 56 46 56 60 32 C74 8 108 8 108 32 C108 56 74 56 60 32 Z"/>
+      ${dust.map(([lag, size, alpha, dx, dy]) => `<rect class="pp-inf-dust" x="${(-size / 2 + dx).toFixed(1)}" y="${(-size / 2 + dy).toFixed(1)}" width="${size}" height="${size}" opacity="${alpha}">${lap(lag)}</rect>`).join('')}
+      <rect class="pp-inf-pixel" x="-3.5" y="-3.5" width="7" height="7" rx="1">${lap(0)}</rect>
+    </svg>
+    <span>${esc(text)}</span>
+  </div>`;
+}
+
+async function loadLive({ force = false, announce = false } = {}) {
   if (!el.liveBody || !CONFIG.WORKER_URL) return;
   if (liveState.loading && !force) return;
   liveState.loading = true;
-  if (!liveState.data) showLoading(el.liveStatus, 'Reading the live board…');
+  // Nothing read yet: the emblem fills the tab. A board already on screen keeps its place, with the emblem small over it when the tab was just opened.
+  if (!liveState.data) { el.liveStatus.textContent = ''; el.liveBody.innerHTML = liveLoaderHtml(); }
+  else if (announce) el.liveStatus.innerHTML = liveLoaderHtml('Live plays are loading', { small: true });
   try {
     const res = await fetch(new URL('/live', CONFIG.WORKER_URL), { headers: { Accept: 'application/json' } });
     liveState.data = await res.json();

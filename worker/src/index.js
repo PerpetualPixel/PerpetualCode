@@ -1709,6 +1709,12 @@ export default {
     // The personal ticket is gone (2026-11-12 direction: every user sees the same Pixel's Pick): the route answers that plainly to an old client.
     if (pathname === '/trend-picks/mine') return json({ error: 'The personal ticket was retired; everyone sees the same Pixel\'s Pick.', retired: true }, { status: 410, headers: cors });
 
+    // The US state this request came from, as Cloudflare reads it: the app writes it into Caesars' and BetMGM's
+    // slip links, which are a site a state (docs/book-links.js withState). Nothing is stored.
+    if (pathname === '/region' && request.method === 'GET') {
+      return json({ country: request.cf?.country ?? null, region: request.cf?.regionCode ?? null }, { headers: { ...cors, 'Cache-Control': 'private, no-store' } });
+    }
+
     // The MVP Picks alone (they also ride /trend-picks): today's, the days before and the tracked record. Stored records only.
     if (pathname === '/mvp-picks' && request.method === 'GET') {
       try { return json(await getMvpPicks(env, Date.now()), { headers: { ...cors, 'Cache-Control': 'public, max-age=120' } }); }
