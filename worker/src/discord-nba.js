@@ -8,12 +8,15 @@
  *
  * What is posted: the game's best slip, the one the Live tab shows as "Best slip", each time it is a slip that has
  * not been posted before. So whatever play the app is showing for a game is in the channel, each once: a slip that
- * still stands is never posted again, and the same legs are not posted at five books at the same minute.
+ * still stands is never posted again, and the same legs are not posted at five books at the same minute. Where the
+ * best slip shares a player with a play already posted for that game, another book's slip that shares none is posted
+ * in its place when there is one.
  *
  * (It first followed one slip a game and stopped at six posts. On its first night, 2026-11-25, a game's slips were
  * replaced every few minutes, the six were used in forty minutes, and the owner saw a play in the app that was not
- * in the channel: "how come I see this play in the app but it wasn't posted to the discord?" The cap is now only a
- * guard against a runaway board, far above what a game makes.)
+ * in the channel: "how come I see this play in the app but it wasn't posted to the discord?" and then "remove the
+ * cap, allow the app and discord to post as many as it finds". There is no cap: every best slip the board makes is
+ * posted.)
  *
  * Playbook (docs/playbook.js) is the Discord bot that turns a written bet into a slip link at any book. It has no
  * API: it reads a message that tags it, with the book named and the legs written out, and replies in the channel.
@@ -47,8 +50,6 @@ export const LEAGUES = {
 export const DISCORD_NBA_LEDGER_KEY = LEAGUES.nba.ledger;
 /** A slip is posted only while the board that made it is this fresh: an older build's prices are gone. */
 export const NBA_FRESH_MS = 12 * 60e3;
-/** A guard, not a limit: far more plays than a game makes (a new one at most every few minutes for three hours). */
-export const MAX_A_GAME = 40;
 const POST_TRIES = 3;
 const LEDGER_KEEP_MS = 4 * 86400e3;
 const LEDGER_TTL = 14 * 86400;
@@ -230,15 +231,26 @@ export async function syncLeagueDiscord(env, now = Date.now(), league = 'nba', {
     const state = ledger.games[gid] ?? { count: 0, tries: 0 };
 
     // A new play: the game's best slip is one that has not been posted, and the board that made it is fresh.
-    if (play?.slips?.length && now - (play.builtAt ?? 0) <= NBA_FRESH_MS && state.count < MAX_A_GAME && (state.tries ?? 0) < POST_TRIES * MAX_A_GAME) {
-      const post = slipPost(g, play, play.slips[0], league);
-      if (!ledger.posts[post.id] && post.legs.length) {
+    if (play?.slips?.length && now - (play.builtAt ?? 0) <= NBA_FRESH_MS) {
+      const best = slipPost(g, play, play.slips[0], league);
+      // Not the same players twice, where there is a choice (2026-11-25, the owner: "let's not post overlapping players
+      // if possible"). A play posted earlier is still someone's bet until the game ends, so its players count. When
+      // the best slip shares a player with one, another book's slip that shares none is posted in its place; when
+      // every slip shares one, the best slip goes, since a play is still a play.
+      const taken = new Set(mine.filter((e) => e.state !== 'skipped').flatMap((e) => (e.post?.legs ?? []).map((l) => String(l.player).toLowerCase())));
+      const shares = (p) => p.legs.some((l) => taken.has(String(l.player).toLowerCase()));
+      const fresh = !ledger.posts[best.id] && best.legs.length > 0;
+      const other = fresh && shares(best) ? play.slips.slice(1).map((sl) => slipPost(g, play, sl, league)).find((p) => p.legs.length && !ledger.posts[p.id] && !shares(p)) ?? null : null;
+      const post = other ?? best;
+      if (fresh) {
         const card = slipMessage(post, { png: await picture(post), playbook: cfg.playbook, buttons: !ledger.noButtons });
         // Marked before it is sent: a run that dies mid-send does not send it again.
         ledger.posts[post.id] = { state: 'sending', at: now, post };
         ledger.games[gid] = { ...state, tries: (state.tries ?? 0) + 1 };
         await writeLedger(env, ledger);
         const r = await send(card);
+        // The best slip another stood in for is not posted later: it is kept as passed over.
+        if (other && (r.ok || r.unknown)) ledger.posts[best.id] = { state: 'skipped', at: now, post: { id: best.id, gameId: gid, legs: [] } };
         if (r.ok && r.id) { ledger.posts[post.id] = { state: 'open', at: now, messageId: String(r.id), post }; ledger.games[gid] = { ...ledger.games[gid], current: post.id, count: state.count + 1 }; ledger.lastPostAt = now; ledger.lastPostTagged = Boolean(cfg.playbook); ledger.tagged = (ledger.tagged ?? 0) + (cfg.playbook ? 1 : 0); out.posted++; }
         // No answer: it may be in the channel, so it is not sent again. Refused: it is not, so a later tick may try.
         else if (r.unknown || r.ok) { ledger.posts[post.id] = { state: 'lost', at: now, post }; ledger.games[gid] = { ...ledger.games[gid], current: post.id, count: state.count + 1 }; fail('post', r); }
