@@ -62,21 +62,41 @@ const TOUR = { atp: 'ATP', wta: 'WTA' };
  * this value and the next tick posts one sample play, marked as a test, with the role ping; the tick after edits it
  * to its settled form. That is the whole path a real play takes.
  */
-export const TEST_ALERT_ID = '2026-11-25-4';
-/** What the test sends: 'all' (the alert with its ping, its edit, the result card) or 'results' (the result cards alone, a win and a loss, with no ping). */
-export const TEST_SCOPE = 'results';
-const markTest = (msg) => { msg.embeds[0].title = `🧪 TEST · ${msg.embeds[0].title}`.slice(0, 250); msg.embeds[0].footer = { ...msg.embeds[0].footer, text: `TEST · not a real play · ${msg.embeds[0].footer.text}` }; return msg; };
-const TEST_PLAY = { id: 'test', market: 'live_ml', tour: 'atp', event: 'Test alert', round: 'not a real play', a: 'Test Player', b: 'Sample Opponent', side: 'a', prob: 0.69, american: -175, playable: -190, bookId: 'fanduel', book: 'FanDuel', units: 1, selection: 'Test Player to win the match (live)', score: '6-0 3-4', status: 'pending',
+export const TEST_ALERT_ID = '2026-11-25-5';
+/**
+ * What the test sends: 'cards' (one card for each template in the live channel: live play, won, lost, void, with
+ * their buttons and no ping), 'all' (one alert with its ping, its edit, and the result card) or 'results' (the
+ * result cards alone, a win and a loss, in the results channel).
+ */
+export const TEST_SCOPE = 'cards';
+const TEST_BASE = { market: 'live_ml', tour: 'atp', event: 'Test alert', round: 'not a real play', a: 'Test Player', b: 'Sample Opponent', side: 'a', prob: 0.69, american: -150, playable: -165, bookId: 'fanduel', book: 'FanDuel', units: 1, selection: 'Test Player to win the match (live)', score: '6-0 3-4', status: 'pending',
   stats: { holds: { a: { held: 6, served: 6 }, b: { held: 3, served: 5 } }, last: { of: 8, a: 5, b: 3 }, streak: null, setGames: null },
+  why: ['Score 6-0 3-4: from here the model gives Test Player 74% to win the match and 58% to win the set in play.', 'Test Player has held 6 of 6 service games; Sample Opponent has held 3 of 5 service games.', 'Last 8 games: Test Player 5, Sample Opponent 3.', 'The live price gives Test Player 60%; the read puts it at 69%.'],
   // The books' own front pages: a test has no bet to put on a slip.
-  quotes: [{ bookId: 'fanduel', book: 'FanDuel', american: -175, link: 'https://sportsbook.fanduel.com/' }, { bookId: 'draftkings', book: 'DraftKings', american: -180, link: 'https://sportsbook.draftkings.com/' }, { bookId: 'caesars', book: 'Caesars', american: -185, link: 'https://sportsbook.caesars.com/' }] };
-/** The sample alert: a real alert's shape, with TEST in its title and its footer so nobody takes it for a play. */
-export function testAlertMessage(now, { role = null, settled = false } = {}) {
-  const play = settled ? { ...TEST_PLAY, postedAt: now, status: 'graded', result: 'win', profit: 0.57, actual: '6-0 4-6 7-6' } : { ...TEST_PLAY, postedAt: now };
-  const msg = livePlayMessage(play, { role, record: { wins: 8, losses: 2, units: 3.29 } });
-  msg.embeds[0].title = `🧪 TEST · ${msg.embeds[0].title}`.slice(0, 250);
-  msg.embeds[0].footer = { ...msg.embeds[0].footer, text: 'TEST ALERT · not a real play · perpetualpicks.com' };
+  quotes: [{ bookId: 'fanduel', book: 'FanDuel', american: -150, link: 'https://sportsbook.fanduel.com/' }, { bookId: 'draftkings', book: 'DraftKings', american: -155, link: 'https://sportsbook.draftkings.com/' }, { bookId: 'caesars', book: 'Caesars', american: -160, link: 'https://sportsbook.caesars.com/' }] };
+/** The four test plays, one for each card: test-live, test-won, test-lost, test-void. */
+export function testPlays(now = Date.now()) {
+  return {
+    'test-live': { ...TEST_BASE, id: 'test-live', postedAt: now },
+    'test-won': { ...TEST_BASE, id: 'test-won', postedAt: now, gradedAt: now, status: 'graded', result: 'win', profit: 0.67, actual: '6-0 4-6 7-6' },
+    'test-lost': { ...TEST_BASE, id: 'test-lost', postedAt: now, gradedAt: now, status: 'graded', result: 'loss', profit: -1, actual: '6-0 4-6 3-6' },
+    'test-void': { ...TEST_BASE, id: 'test-void', postedAt: now, gradedAt: now, status: 'void', result: 'void', profit: 0, actual: '6-0 1-0: a retirement' },
+  };
+}
+const isTestId = (id) => /^test(-|$)/.test(String(id ?? ''));
+/** A message marked as a test, wherever its words are: the line above the card, the written card's title and footer. */
+const markTest = (msg) => {
+  // Marked once: the card and its written form can share the same title and footer.
+  if (!String(msg.content ?? '').startsWith('🧪')) msg.content = `🧪 **TEST · not a real play**${msg.content ? `\n${msg.content}` : ''}`;
+  const e = msg.embeds?.[0];
+  if (e?.title && !e.title.startsWith('🧪')) e.title = `🧪 TEST · ${e.title}`.slice(0, 250);
+  if (e?.footer && !e.footer.text.startsWith('TEST')) e.footer = { ...e.footer, text: `TEST · not a real play · ${e.footer.text}` };
   return msg;
+};
+/** The written card for the first test alert, open or settled. */
+export function testAlertMessage(now, { role = null, settled = false } = {}) {
+  const plays = testPlays(now);
+  return markTest(livePlayMessage(settled ? plays['test-won'] : plays['test-live'], { role, record: { wins: 8, losses: 2, units: 3.29 } }));
 }
 
 /** The role id as Discord gives it, or however it was pasted (a mention <@&123>, in quotes, after a label): the one long number in the value. A name has none. */
@@ -114,14 +134,7 @@ export function cardLink(play, quote) {
 }
 /** The books that have the line, best price first, each as "Book −175", linked where the link can be carried. */
 function bookLinks(play) {
-  const quotes = [...(play.quotes ?? [])];
-  // The play's own book leads even when the stored prices are from before the links were kept.
-  if (play.bookId && Number.isFinite(play.american) && !quotes.some((q) => q.bookId === play.bookId)) quotes.unshift({ bookId: play.bookId, book: play.book, american: play.american, link: play.link });
-  return quotes.filter((q) => q?.bookId && Number.isFinite(q.american)).sort((x, y) => y.american - x.american).slice(0, 6).map((q) => {
-    const url = cardLink(play, q.link ? q : { ...q, link: q.bookId === play.bookId ? play.link : null });
-    const text = `${md(SPORTSBOOKS[q.bookId]?.name ?? q.book ?? q.bookId)} ${fmt(q.american)}`;
-    return url ? `[${text}](${url})` : text;
-  });
+  return booksOf(play).slice(0, 6).map((b) => { const text = `${md(b.name)} ${fmt(b.american)}`; return b.url ? `[${text}](${b.url})` : text; });
 }
 
 /** The three kinds of live play, by the words a bettor uses. */
@@ -253,15 +266,81 @@ export function liveResultMessage(play, { record = null } = {}) {
   };
 }
 
+/** The books that have the line, best price first, each with the link the card can carry for it (or null). */
+export function booksOf(play) {
+  const quotes = [...(play.quotes ?? [])];
+  if (play.bookId && Number.isFinite(play.american) && !quotes.some((q) => q.bookId === play.bookId)) quotes.unshift({ bookId: play.bookId, book: play.book, american: play.american, link: play.link });
+  return quotes.filter((q) => q?.bookId && Number.isFinite(q.american)).sort((x, y) => y.american - x.american)
+    .map((q) => ({ bookId: q.bookId, name: SPORTSBOOKS[q.bookId]?.name ?? q.book ?? q.bookId, american: q.american, url: cardLink(play, q.link ? q : { ...q, link: q.bookId === play.bookId ? play.link : null }) }));
+}
+/** The page with the numbers behind a play (GET /play/<id>, worker/src/play-page.js). */
+export const statsUrl = (play) => `${CONFIG.WORKER_URL}/play/${encodeURIComponent(play.id)}`;
+
+/**
+ * The buttons under a card (2026-11-25: "allowing for the user to click one button and add to the sports book ...
+ * click a button and find more stats and data backing the pick"). While the play is open: one button a book that
+ * has the line, best price first (three at most), each opening that book with the bet on the slip; then the stats
+ * button. Once it has settled: the stats button alone. They are link buttons: the only kind a channel webhook can send.
+ */
+export function cardButtons(play) {
+  const settled = play.status === 'graded' || play.status === 'void';
+  const buttons = [];
+  if (!settled) for (const b of booksOf(play)) {
+    if (!b.url || buttons.length >= 3) continue;
+    buttons.push({ type: 2, style: 5, url: b.url, label: `${buttons.length ? '' : 'Add to slip · '}${b.name} ${fmt(b.american)}`.slice(0, 80), ...(buttons.length ? {} : { emoji: { name: '➕' } }) });
+  }
+  buttons.push({ type: 2, style: 5, url: statsUrl(play), label: settled ? 'Stats behind the pick' : 'Stats & why', emoji: { name: '📊' } });
+  return [{ type: 1, components: buttons }];
+}
+
+/** The line above the card: what a phone's notification shows, and what stands if the picture does not load. */
+export function cardLine(play, { role = null } = {}) {
+  const take = md(String(play.selection ?? '').replace(/\s*\(live\)\s*$/i, ''));
+  const priced = Number.isFinite(play.american);
+  const price = priced ? play.american : play.playable;
+  if (play.status === 'void') return `⚪ **VOID** · ${take} · stake returned`;
+  if (play.status === 'graded') return `${play.result === 'win' ? '✅ **WON**' : '❌ **LOST**'} · ${take}${play.actual ? ` · final ${md(play.actual)}` : ''}${Number.isFinite(play.profit) ? ` · ${signedUnits(play.profit)}` : ''}`;
+  const at = Number.isFinite(price) ? (priced ? ` · ${fmt(price)} at ${md(SPORTSBOOKS[play.bookId]?.name ?? play.book ?? 'the book')}` : ` · ${fmt(price)} or better`) : '';
+  return `${role ? `<@&${role}> ` : ''}🎾 **TAKE · ${take}**${at} · ${unitsOf(play.units)}`;
+}
+
+/**
+ * A play as it goes to Discord (2026-11-25, the owner's four templates): the card as a picture (worker/src/card-svg.js
+ * draws it, `png` its bytes), a line above it, and the buttons under it. Returns {payload, file, plain}: `file` is
+ * the picture to attach, and `plain` is the same play as the written card with its links in the text, which is what
+ * goes out when there is no picture or Discord will not take the buttons. `result` is the results channel's card.
+ */
+export function cardMessage(play, { role = null, record = null, png = null, result = false, buttons = true } = {}) {
+  const plain = result ? liveResultMessage(play, { record }) : livePlayMessage(play, { role, record });
+  if (!png) return { payload: buttons ? { ...plain, components: cardButtons(play) } : plain, file: null, plain };
+  const outcome = play.status === 'void' ? 'void' : play.status === 'graded' ? (play.result === 'win' ? 'win' : 'loss') : 'open';
+  const payload = {
+    content: cardLine(play, { role: result ? null : role }),
+    allowed_mentions: { parse: [], roles: role && !result ? [role] : [] },
+    embeds: [{ color: COLOR[outcome], image: { url: 'attachment://card.png' } }],
+    attachments: [{ id: 0, filename: 'card.png' }],
+    ...(buttons ? { components: cardButtons(play) } : {}),
+  };
+  return { payload, file: { name: 'card.png', bytes: png }, plain };
+}
+
 /**
  * One call to Discord. {ok, status, id} when it answered; {unknown: true}
  * when it did not (a timeout or a dropped connection: the message may or
  * may not be there). A short rate-limit wait is honoured once.
  */
-async function call(fetcher, url, method, payload) {
+async function call(fetcher, url, method, payload, file = null) {
   const once = async () => {
     try {
-      const res = await fetcher(url, { method, headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload), signal: typeof AbortSignal?.timeout === 'function' ? AbortSignal.timeout(8000) : undefined });
+      let init;
+      if (file) {
+        // A picture rides beside the message: the message as payload_json, the picture as files[0].
+        const form = new FormData();
+        form.append('payload_json', JSON.stringify(payload));
+        form.append('files[0]', new Blob([file.bytes], { type: 'image/png' }), file.name);
+        init = { method, body: form };
+      } else init = { method, headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) };
+      const res = await fetcher(url, { ...init, signal: typeof AbortSignal?.timeout === 'function' ? AbortSignal.timeout(file ? 15000 : 8000) : undefined });
       let body = null;
       try { body = await res.json(); } catch { /* an empty answer */ }
       return { ok: res.ok, status: res.status, id: body?.id ?? null, retryAfter: Number(body?.retry_after) || null };
@@ -273,7 +352,28 @@ async function call(fetcher, url, method, payload) {
   return out;
 }
 const post = (fetcher, hook, payload) => call(fetcher, `${hook}?wait=true`, 'POST', payload);
-const edit = (fetcher, hook, id, payload) => call(fetcher, `${hook}/messages/${id}`, 'PATCH', payload);
+/**
+ * Send a card ({payload, file, plain} from cardMessage), new or over a message already posted. Buttons need
+ * with_components. If Discord refuses the card outright (a 400), it is sent again with less on it: first without
+ * the buttons (`refused` on the answer says they were the trouble), then as the written card with no picture
+ * (`noPicture`), which is the form every earlier alert went out in.
+ */
+async function deliver(fetcher, hook, card, { messageId = null } = {}) {
+  const rich = Boolean(card.payload.components);
+  const target = (withComponents) => (messageId ? `${hook}/messages/${messageId}${withComponents ? '?with_components=true' : ''}` : `${hook}?wait=true${withComponents ? '&with_components=true' : ''}`);
+  const method = messageId ? 'PATCH' : 'POST';
+  // An edit that carries no picture takes an earlier one off, or the written card would sit under it.
+  const body = (payload, file) => (messageId && !file ? { ...payload, attachments: [] } : payload);
+  const first = await call(fetcher, target(rich), method, body(card.payload, card.file), card.file);
+  if (first.ok || first.unknown || first.status !== 400 || (!rich && !card.file)) return first;
+  if (rich) {
+    const { components: _buttons, ...bare } = card.payload;
+    const second = await call(fetcher, target(false), method, body(messageId ? { ...bare, components: [] } : bare, card.file), card.file);
+    if (second.ok || second.unknown || second.status !== 400 || !card.file) return { ...second, refused: true };
+  }
+  const third = await call(fetcher, target(false), method, messageId ? { ...card.plain, attachments: [], components: [] } : card.plain);
+  return { ...third, noPicture: true };
+}
 
 const readJson = async (env, key) => { try { const raw = await env.POTD_KV.get(key); return raw ? JSON.parse(raw) : null; } catch { return null; } };
 const writeLedger = (env, ledger) => env.POTD_KV.put(DISCORD_LEDGER_KEY, JSON.stringify(ledger), { expirationTtl: LEDGER_TTL });
@@ -303,6 +403,41 @@ export async function syncLiveDiscord(env, now = Date.now(), { deps = {} } = {})
   const out = { posted: 0, edited: 0, failed: 0 };
   let dirty = false;
   const fail = (what, r) => { ledger.lastError = { at: now, what, status: r.unknown ? 'no answer' : r.status }; out.failed++; dirty = true; };
+  const testId = deps.testId ?? TEST_ALERT_ID;
+  const testScope = deps.testScope ?? TEST_SCOPE;
+  // Drawing a card is the one heavy thing here, and a run that goes over its CPU allowance is ended where it stands.
+  // So a marker is stored before each drawing and taken off after it: a marker still there on a later run means that
+  // run died drawing, and from then on the written cards go, with no picture. A new test id tries pictures again.
+  if (ledger.noPictures && ledger.noPictures.test !== testId) { delete ledger.noPictures; dirty = true; }
+  if (ledger.rendering) { ledger.noPictures = { at: now, test: testId }; delete ledger.rendering; dirty = true; }
+  // The card's picture (worker/src/card-render.js, loaded only here: it carries a WebAssembly renderer). No picture is not a failure: the written card goes.
+  const render = deps.render ?? (async (play) => (await import('./card-render.js')).renderCardPng(play));
+  const drawn = new Map();
+  const picture = async (play) => {
+    if (ledger.noPictures) return null;
+    const key = `${play.id}:${play.status}`;
+    if (drawn.has(key)) return drawn.get(key);
+    ledger.rendering = { at: now, id: String(play.id).slice(0, 120) };
+    await writeLedger(env, ledger);
+    let png = null;
+    try { png = (await render(play)) ?? null; } catch (e) { ledger.cardError = { at: now, message: String(e?.message ?? e).slice(0, 120) }; }
+    delete ledger.rendering; dirty = true;
+    drawn.set(key, png);
+    return png;
+  };
+  const dress = async (play, { record = null, result = false, role = cfg.role, test = false } = {}) => {
+    const card = cardMessage(play, { role, record, png: await picture(play), result, buttons: !ledger.noButtons });
+    if (test) { markTest(card.payload); markTest(card.plain); }
+    return card;
+  };
+  // Discord refused the buttons once: they are left off from then on, so every later card is one request, not two.
+  const sent = (r) => {
+    if (r.refused && r.ok) { ledger.noButtons = true; dirty = true; }
+    if (r.noPicture && r.ok) { ledger.cardError = { at: now, message: 'Discord did not take the card with its picture; the written card went' }; dirty = true; }
+    return r;
+  };
+  // A card drawn before the buttons were refused goes without them.
+  const send = async (hook, card, opts) => { if (ledger.noButtons && card.payload.components) delete card.payload.components; return sent(await deliver(fetcher, hook, card, opts)); };
 
   // The first run with a webhook says so in the channel, once: the owner sees the setup works without waiting for a match.
   if (!ledger.helloAt && now - (ledger.helloTriedAt ?? 0) >= HELLO_RETRY_MS) {
@@ -314,33 +449,51 @@ export async function syncLiveDiscord(env, now = Date.now(), { deps = {} } = {})
   }
 
   // The test alert (TEST_ALERT_ID): posted once per value, then edited on a later tick to its settled form.
-  const testId = deps.testId ?? TEST_ALERT_ID;
-  const testScope = deps.testScope ?? TEST_SCOPE;
-  if (testId && ledger.test?.id !== testId && testScope === 'results') {
-    // The result cards alone, a win and a loss, in the results channel: nobody is pinged.
+  // Each card is drawn before the test is marked as sending: a run that dies drawing has sent nothing, and the next sends it written.
+  const testRecord = { wins: 9, losses: 2, units: 3.86 };
+  if (testId && ledger.test?.id !== testId && testScope === 'cards') {
+    // One card for each template, in the live channel, with their buttons: nobody is pinged.
+    const cards = [];
+    for (const play of Object.values(testPlays(now))) cards.push(await dress(play, { record: testRecord, role: null, test: true }));
     ledger.test = { id: testId, state: 'sending', at: now };
     await writeLedger(env, ledger);
-    let sent = cfg.updates ? 'sent' : 'no results channel';
-    if (cfg.updates) for (const over of [{ result: 'win', profit: 0.57, actual: '6-0 4-6 7-6' }, { result: 'loss', profit: -1, actual: '6-0 4-6 3-6' }]) {
-      const u = await post(fetcher, cfg.updates, markTest(liveResultMessage({ ...TEST_PLAY, postedAt: now, gradedAt: now, status: 'graded', ...over }, { record: { wins: 9, losses: 2, units: 3.86 } })));
-      if (!u.ok) { sent = 'failed'; fail('test result', u); }
+    let ok = 0; let pictures = 0;
+    for (const card of cards) {
+      const r = await send(cfg.live, card);
+      if (r.ok) { ok++; if (card.file && !r.noPicture) pictures++; } else fail('test card', r);
     }
-    ledger.test = { id: testId, state: 'done', at: now, updates: sent };
+    ledger.test = { id: testId, state: ok === 4 ? 'done' : 'failed', at: now, cards: ok, pictures, buttons: !ledger.noButtons };
+    dirty = true;
+  } else if (testId && ledger.test?.id !== testId && testScope === 'results') {
+    // The result cards alone, a win and a loss, in the results channel: nobody is pinged.
+    const plays = testPlays(now);
+    const cards = [];
+    if (cfg.updates) for (const play of [plays['test-won'], plays['test-lost']]) cards.push(await dress(play, { record: testRecord, result: true, test: true }));
+    ledger.test = { id: testId, state: 'sending', at: now };
+    await writeLedger(env, ledger);
+    let state = cfg.updates ? 'sent' : 'no results channel';
+    for (const card of cards) {
+      const u = await send(cfg.updates, card);
+      if (!u.ok) { state = 'failed'; fail('test result', u); }
+    }
+    ledger.test = { id: testId, state: 'done', at: now, updates: state };
     dirty = true;
   } else if (testId && ledger.test?.id !== testId) {
+    const card = await dress(testPlays(now)['test-live'], { record: testRecord, test: true });
     ledger.test = { id: testId, state: 'sending', at: now };
     await writeLedger(env, ledger);
-    const r = await post(fetcher, cfg.live, testAlertMessage(now, { role: cfg.role }));
+    const r = await send(cfg.live, card);
     if (r.ok && r.id) ledger.test = { id: testId, state: 'open', at: now, messageId: String(r.id) };
     else { ledger.test = { id: testId, state: 'failed', at: now }; fail('test', r); }
     dirty = true;
   } else if (ledger.test?.state === 'open' && ledger.test.messageId && now - ledger.test.at >= 50e3) {
-    const r = await edit(fetcher, cfg.live, ledger.test.messageId, testAlertMessage(ledger.test.at, { role: cfg.role, settled: true }));
+    const won = testPlays(ledger.test.at)['test-won'];
+    const r = await send(cfg.live, await dress(won, { record: testRecord, test: true }), { messageId: ledger.test.messageId });
     ledger.test = { id: ledger.test.id, state: r.ok ? 'done' : 'edit failed', at: ledger.test.at, doneAt: now };
     if (!r.ok) fail('test edit', r);
-    // The updates channel gets the test's result line too, as it would a real play's, marked as a test.
+    // The results channel gets the test's result card too, as it would a real play's, marked as a test.
     if (cfg.updates) {
-      const u = await post(fetcher, cfg.updates, markTest(liveResultMessage({ ...TEST_PLAY, postedAt: ledger.test.at, gradedAt: now, status: 'graded', result: 'win', profit: 0.57, actual: '6-0 4-6 7-6' }, { record: { wins: 9, losses: 2, units: 3.86 } })));
+      const u = await send(cfg.updates, await dress(won, { record: testRecord, result: true, test: true }));
       ledger.test.updates = u.ok ? 'sent' : 'failed';
       if (!u.ok) fail('test update', u);
     }
@@ -359,9 +512,11 @@ export async function syncLiveDiscord(env, now = Date.now(), { deps = {} } = {})
     if (!entry) {
       // A new alert: open, and fresh enough that its price is still there to take.
       if (settled || p.status !== 'pending' || now - (p.postedAt ?? 0) > FRESH_MS) continue;
+      // Drawn first, then marked as sending: a run that dies drawing has posted nothing, and the next tick posts it written.
+      const card = await dress(p, { record: await recordFor(p) });
       ledger.plays[p.id] = { state: 'sending', at: now, tries: 1 };
       await writeLedger(env, ledger);
-      const r = await post(fetcher, cfg.live, livePlayMessage(p, { role: cfg.role, record: await recordFor(p) }));
+      const r = await send(cfg.live, card);
       if (r.ok && r.id) { ledger.plays[p.id] = { state: 'open', at: now, messageId: String(r.id), tries: 1 }; ledger.lastPostAt = now; out.posted++; }
       // No answer: it may be in the channel, so it is not sent again. Refused: it is not, so the next tick tries again.
       else if (r.unknown || r.ok) { ledger.plays[p.id] = { state: 'lost', at: now }; fail('post', r); }
@@ -371,9 +526,10 @@ export async function syncLiveDiscord(env, now = Date.now(), { deps = {} } = {})
     }
     if (entry.state === 'retry') {
       if (settled || now - (p.postedAt ?? 0) > FRESH_MS || (entry.tries ?? 1) >= POST_TRIES) { ledger.plays[p.id] = { state: 'failed', at: entry.at }; dirty = true; continue; }
+      const card = await dress(p, { record: await recordFor(p) });
       ledger.plays[p.id] = { state: 'sending', at: entry.at, tries: (entry.tries ?? 1) + 1 };
       await writeLedger(env, ledger);
-      const r = await post(fetcher, cfg.live, livePlayMessage(p, { role: cfg.role, record: await recordFor(p) }));
+      const r = await send(cfg.live, card);
       if (r.ok && r.id) { ledger.plays[p.id] = { state: 'open', at: entry.at, messageId: String(r.id) }; ledger.lastPostAt = now; out.posted++; }
       else if (r.unknown || r.ok) { ledger.plays[p.id] = { state: 'lost', at: entry.at }; fail('post', r); }
       else { ledger.plays[p.id] = { state: 'retry', at: entry.at, tries: (entry.tries ?? 1) + 1 }; fail('post', r); }
@@ -382,11 +538,11 @@ export async function syncLiveDiscord(env, now = Date.now(), { deps = {} } = {})
     }
     // Posted and now settled: the same message says how it ended.
     if (entry.state === 'open' && entry.messageId && settled) {
-      const r = await edit(fetcher, cfg.live, entry.messageId, livePlayMessage(p, { role: cfg.role, record: await recordFor(p) }));
+      const r = await send(cfg.live, await dress(p, { record: await recordFor(p) }), { messageId: entry.messageId });
       if (r.ok) {
         ledger.plays[p.id] = { ...entry, state: 'done', doneAt: now };
         out.edited++;
-        if (cfg.updates) { const u = await post(fetcher, cfg.updates, liveResultMessage(p, { record: await recordFor(p) })); if (!u.ok && !u.unknown) fail('update', u); }
+        if (cfg.updates) { const u = await send(cfg.updates, await dress(p, { record: await recordFor(p), result: true })); if (!u.ok && !u.unknown) fail('update', u); }
       } else {
         const tries = (entry.editTries ?? 0) + 1;
         // The message is gone (deleted by hand) or the edit keeps failing: stop trying.
@@ -412,11 +568,32 @@ export async function syncLiveDiscord(env, now = Date.now(), { deps = {} } = {})
  * to send anyone anywhere else. With no such link, or one that cannot be finished (no state known), the book's own
  * front page, else the site.
  */
+/**
+ * A tracked live play by its id, for the card, the stats page and the book links: today's and yesterday's first,
+ * then the kept days, newest first. The test cards' plays answer to their own ids. Null when it is not on file.
+ */
+export async function findLivePlay(env, playId, now = Date.now()) {
+  const id = String(playId ?? '');
+  if (isTestId(id)) return testPlays(now)[id] ?? null;
+  if (!id || id.length > 120) return null;
+  const tried = new Set();
+  const look = async (date) => { if (tried.has(date)) return null; tried.add(date); return ((await readJson(env, tennisLivePlaysKey(date)))?.plays ?? []).find((p) => p.id === id && !p.lean) ?? null; };
+  for (const d of [etParts(now).date, etParts(now - 864e5).date]) { const hit = await look(d); if (hit) return hit; }
+  const index = (await readJson(env, TENNIS_LIVE_PLAYS_INDEX)) ?? { dates: [] };
+  for (const d of [...index.dates].sort().reverse().slice(0, 62)) { const hit = await look(d); if (hit) return hit; }
+  return null;
+}
+/** The site's record for the kind of play this is ({wins, losses, units}), or null. */
+export async function recordForPlay(env, play, now = Date.now()) {
+  if (isTestId(play?.id)) return { wins: 9, losses: 2, units: 3.86 };
+  const records = await liveRecords(env, now).catch(() => null);
+  return records?.[KIND[play?.market]?.record] ?? null;
+}
+
 export async function bookRedirect(env, playId, bookId, { region = null, userAgent = '', now = Date.now() } = {}) {
   const fallback = /^https:\/\//.test(SPORTSBOOKS[bookId]?.url ?? '') ? SPORTSBOOKS[bookId].url : SITE;
-  if (playId === TEST_PLAY.id) return fallback;
-  let play = null;
-  for (const d of [etParts(now).date, etParts(now - 864e5).date]) { play = ((await readJson(env, tennisLivePlaysKey(d)))?.plays ?? []).find((p) => p.id === playId) ?? null; if (play) break; }
+  if (isTestId(playId)) return fallback;
+  const play = await findLivePlay(env, playId, now);
   const raw = (play?.quotes ?? []).find((q) => q.bookId === bookId)?.link ?? (play?.bookId === bookId ? play.link : null);
   if (!raw || !/^https:\/\//.test(raw)) return fallback;
   let url = withState(raw, region);
@@ -438,7 +615,9 @@ export async function discordStatus(env) {
     // The role: found under its name at all, and if found, whether it is a role id (digits only).
     roleSecretFound: Boolean(String(env?.DISCORD_LIVE_ROLE_ID ?? '').trim()),
     roleSecretRejected: Boolean(String(env?.DISCORD_LIVE_ROLE_ID ?? '').trim()) && !cfg.role,
-    test: ledger.test ? { id: ledger.test.id, state: ledger.test.state, at: ledger.test.at ?? null, ...(ledger.test.updates ? { updates: ledger.test.updates } : {}) } : null,
+    test: ledger.test ? { id: ledger.test.id, state: ledger.test.state, at: ledger.test.at ?? null, ...(ledger.test.updates ? { updates: ledger.test.updates } : {}), ...(ledger.test.cards != null ? { cards: ledger.test.cards, pictures: ledger.test.pictures, buttons: ledger.test.buttons } : {}) } : null,
+    // Whether Discord took the buttons, and the last reason a card's picture could not be drawn.
+    buttons: !ledger.noButtons, pictures: !ledger.noPictures, cardError: ledger.cardError ?? null,
     helloAt: ledger.helloAt ?? null, lastPostAt: ledger.lastPostAt ?? null, lastError: ledger.lastError ?? null, plays: counts,
   };
 }

@@ -3,6 +3,13 @@ main = "src/index.js"
 compatibility_date = "2025-09-01"
 compatibility_flags = ["nodejs_compat"]
 
+# The Discord card pictures (src/card-render.js) load their fonts and the logo as
+# bytes; a .wasm file is already loaded as a module by default.
+[[rules]]
+type = "Data"
+globs = ["**/*.ttf", "**/*.png"]
+fallthrough = true
+
 [vars]
 # Origins allowed to call this proxy. Replace with your GitHub Pages origin.
 # No trailing slash. Add http://localhost:8080 while developing locally.
