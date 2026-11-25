@@ -13312,6 +13312,7 @@ const resultsState = {
   open: { 'pre:total': true, 'live:total': true }, more: {}, entries: [], loaded: false, loading: false, at: 0, failed: [],
 };
 const resultsDayFmt = new Intl.DateTimeFormat('en-US', { month: 'short', day: 'numeric', timeZone: 'UTC' });
+const resultsTimeFmt = new Intl.DateTimeFormat('en-US', { hour: 'numeric', minute: '2-digit' });
 
 async function loadResults({ force = false, quiet = false } = {}) {
   if (resultsState.loading || (!force && resultsState.loaded && Date.now() - resultsState.at < 60e3)) { renderResults(); return; }
@@ -13349,13 +13350,20 @@ const resultsUnits = (u) => `${Math.round(u * 100) / 100}u`;
 const resultsTone = (n) => (n > 0 ? 'is-up' : n < 0 ? 'is-down' : '');
 const RESULTS_WORD = { win: 'Won', loss: 'Lost', push: 'Push', void: 'Void' };
 
-/** One settled result as a row: what it was, the price, the stake, and how it ended. */
-function resultsRow(e, { sport = false } = {}) {
-  const price = Number.isFinite(e.american) ? `${formatAmerican(e.american)}${e.orBetter ? ' or better' : ''}` : '';
+/**
+ * One settled result as a row (2026-11-25: "less words needed in results, also fix it so the oval isn't hanging off"):
+ * what it was with how it ended beside it, then one short line under both: who or where, when, the price, the stake.
+ * Under a day's heading the row gives the time alone (a live play) or no date at all; a * on a price is the price the
+ * pick said to take (the side's note says so).
+ */
+function resultsRow(e, { sport = false, byDay = false } = {}) {
+  const price = Number.isFinite(e.american) ? `${formatAmerican(e.american)}${e.orBetter ? '*' : ''}` : '';
+  const timed = e.side === 'live' && Number.isFinite(e.at) && e.sport === 'tennis';
+  const when = timed ? (byDay ? resultsTimeFmt : liveWhenFmt).format(new Date(e.at)) : byDay ? '' : resultsDayFmt.format(new Date(`${e.date}T12:00:00Z`));
   const end = e.result === 'void' || e.net == null ? RESULTS_WORD[e.result] : `${RESULTS_WORD[e.result]} ${resultsNet(e.net)}`;
   return `<div class="res-row">
-    <span class="res-row-main"><b>${esc(e.title)}</b><small>${esc([sport ? RESULT_SPORTS.find((sp) => sp.key === e.sport)?.label : null, e.sub, e.note].filter(Boolean).join(' · '))}</small></span>
-    <span class="res-row-meta"><small>${esc(e.side === 'live' && Number.isFinite(e.at) && e.sport === 'tennis' ? liveWhenFmt.format(new Date(e.at)) : resultsDayFmt.format(new Date(`${e.date}T12:00:00Z`)))}${price ? ` · ${esc(price)}` : ''} · ${esc(resultsUnits(e.units))}</small><span class="pick-result is-${esc(e.result)}">${esc(end)}</span></span>
+    <b class="res-row-title">${esc(e.title)}</b><span class="pick-result is-${esc(e.result)}">${esc(end)}</span>
+    <small class="res-row-sub">${esc([sport ? RESULT_SPORTS.find((sp) => sp.key === e.sport)?.label : null, e.sub, e.note, when, price, resultsUnits(e.units)].filter(Boolean).join(' · '))}</small>
   </div>`;
 }
 
@@ -13379,8 +13387,8 @@ function resultsCard(key, label, icon) {
         <div class="res-buckets" role="group" aria-label="Group the graph and the list by">${RESULT_BUCKETS.map((b) => `<button type="button" class="res-bucket ${b.key === bucket.key ? 'is-active' : ''}" data-res-bucket="${b.key}" aria-pressed="${b.key === bucket.key}">${b.label}</button>`).join('')}</div>
       </div>
       <div class="res-chart" data-res-chart="${esc(key)}"></div>
-      <p class="res-chart-note">A bar above the line is a winning ${esc(bucket.label.toLowerCase())}, a bar below it a losing one. Hover or tap a bar for its numbers.</p>
-      ${shown.map((p) => `<div class="res-period"><h4>${esc(p.label)} <small>${p.wins}-${p.losses}${p.pushes ? `-${p.pushes}` : ''} · ${esc(resultsUnits(p.played))} played · <span class="${resultsTone(p.net)}">${esc(resultsNet(p.net))}</span> · ROI ${esc(resultsRoi(p.roi))}</small></h4>${p.entries.map((e) => resultsRow(e, { sport: key === 'total' })).join('')}</div>`).join('')}
+      <p class="res-chart-note">Tap a bar for its numbers.</p>
+      ${shown.map((p) => `<div class="res-period"><h4>${esc(p.label)} <small>${p.wins}-${p.losses}${p.pushes ? `-${p.pushes}` : ''} · <span class="${resultsTone(p.net)}">${esc(resultsNet(p.net))}</span> · ROI ${esc(resultsRoi(p.roi))}</small></h4>${p.entries.map((e) => resultsRow(e, { sport: key === 'total', byDay: bucket.key === 'day' })).join('')}</div>`).join('')}
       ${hidden ? `<button type="button" class="parlay-btn res-more" data-res-more="${esc(id)}">Show ${hidden} earlier result${hidden === 1 ? '' : 's'}</button>` : all && periods.length > 2 ? `<button type="button" class="parlay-btn res-more" data-res-more="${esc(id)}">Show fewer</button>` : ''}
     </div>`;
   }

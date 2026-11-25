@@ -30,15 +30,15 @@ test('resultEntries reads each record into one shape, on its side and under its 
   assert.deepEqual(es.map((e) => `${e.side}:${e.sport}:${e.result}`).sort(), ['live:nba:win', 'live:tennis:win', 'pre:nba:win', 'pre:soccer:loss', 'pre:tennis:void', 'pre:tennis:win', 'pre:ufc:loss'], 'pending and open plays are left out');
   assert.equal(es[0].date >= es.at(-1).date, true, 'newest first');
   const ticket = es.find((e) => e.id === 'pre:t1');
-  assert.deepEqual([ticket.title, ticket.sub, ticket.american, ticket.units, ticket.net, ticket.date], ['A 4+ Reb + B 2+ Ast', '2-leg parlay at FanDuel', -110, 1, 0.91, '2026-11-20']);
+  assert.deepEqual([ticket.title, ticket.sub, ticket.american, ticket.units, ticket.net, ticket.date], ['A 4+ Reb + B 2+ Ast', '2 legs · FanDuel', -110, 1, 0.91, '2026-11-20']);
   // A game counts once: the slip at the user's book, not every book's copy of it.
   const slip = es.find((e) => e.id === 'live:g1');
   assert.deepEqual([slip.book, slip.net, slip.units, slip.sub, slip.date], ['FanDuel', 1.5, 1, 'Jayson Tatum 6+ Reb', '2026-11-22']);
   assert.equal(resultEntries({ liveRecap }).find((e) => e.id === 'live:g1').book, 'DraftKings', 'no book chosen: the first slip');
   // A live play with no book carries the price it was to be taken at.
   const set = es.find((e) => e.id === 'live:tennis:atp:9:live_set:2');
-  assert.deepEqual([set.american, set.orBetter, set.net, set.sub], [-186, true, 0.54, 'Alcaraz vs Zverev · posted at 6-2 2-1']);
-  assert.equal(es.find((e) => e.result === 'void').note, 'Posted twice: this copy does not count');
+  assert.deepEqual([set.american, set.orBetter, set.net, set.sub], [-186, true, 0.54, 'vs Zverev · at 6-2 2-1']);
+  assert.equal(es.find((e) => e.result === 'void').note, 'Duplicate, not counted');
   assert.deepEqual(resultEntries({}), []);
 });
 
@@ -78,7 +78,7 @@ test('the site\'s own records add up the way the tabs say they do', () => {
   const all = resultEntries({ trendPicks: read('trend-picks'), ufcPicks: read('ufc-picks'), tennisPicks: read('tennis-picks'), tennisLive: read('tennis-live'), liveRecap: read('live-recap') });
   // The leans are on the board (every one of them live tennis) and in no total.
   const leans = all.filter((e) => e.lean);
-  assert.ok(leans.every((e) => e.side === 'live' && e.sport === 'tennis' && /^Lean/.test(e.note)));
+  assert.ok(leans.every((e) => e.side === 'live' && e.sport === 'tennis' && e.note == null));
   assert.equal(leans.filter((e) => e.result === 'win').length, read('tennis-live').record.leans?.wins ?? 0, 'the leans match the Tennis tab\'s own count');
   const of = (side, sport) => summarize(countedResults(all).filter((e) => e.side === side && (!sport || e.sport === sport)));
   const tp = read('trend-picks').record; const leagues = summarize(countedResults(all).filter((e) => e.side === 'pre' && !e.mvp && ['nba', 'nfl', 'nhl', 'soccer'].includes(e.sport))); // the MVP Picks keep a record of their own
