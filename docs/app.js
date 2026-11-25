@@ -28,6 +28,7 @@ import { enhanceSelect } from './custom-select.js';
 import { BUILD_INFO } from './version.js';
 import { safeUrl } from './safe-url.js';
 import { hardRockCombined, phoneSlipLink, isPhone, pickText } from './book-links.js';
+import { groupLiveSlips, slipNumbers } from './live-slips.js';
 import { summarizePicks, gradePick } from './learning.js';
 import { liveSetsLabel } from './tennis-results.js';
 import {
@@ -12044,7 +12045,7 @@ function liveOrder(games) {
 function liveSummary(g) {
   const t = g.tick;
   if (t?.state === 'in') {
-    const slips = liveSlipsFor(g).length; const reads = (g.game ?? []).length;
+    const slips = groupLiveSlips(liveSlipsFor(g)).length; const reads = (g.game ?? []).length;
     if (!slips && !reads) return g.elapsed < 0.03 ? 'Slips build from the first minutes' : 'Nothing playable right now';
     return [slips ? `${slips} live slip${slips === 1 ? '' : 's'}` : null, reads ? `${reads} game line${reads === 1 ? '' : 's'}` : null].filter(Boolean).join(' · ');
   }
@@ -12155,12 +12156,12 @@ function livePaceTiles(current, point, elapsed, { cleared = false } = {}) {
     <span class="live-pace-tile is-pct"><b>${cleared ? 'Cleared' : `${esc(String(pace.pct))}%`}</b><small>${cleared ? `${esc(String(pace.pct))}% pace` : 'Pace %'}</small></span>
   </div>`;
 }
-function liveLeg(l, { showBook = false, elapsed = null } = {}) {
+function liveLeg(l, { showBook = false, elapsed = null, add = true } = {}) {
   return `<div class="live-leg ${l.cleared ? 'is-cleared' : ''} ${Number.isFinite(l.postedCurrent) && l.postedCurrent !== l.current ? 'is-moved' : ''} ${l.foul ? 'has-foul' : ''}">
     <div class="live-leg-head"><strong>${esc(l.player)}</strong> <small>${esc(l.team ?? '')}</small>${l.onSlips > 1 ? `<span class="live-shared" title="This player rides on more than one slip">on ${esc(String(l.onSlips))} slips</span>` : ''}<span class="live-leg-line">${esc(String(l.point))}+ ${esc(l.label)}</span><span class="live-leg-price">${showBook ? `${bookBadge(l.bookId, l.book)} ` : ''}${esc(formatAmerican(l.price))}</span></div>
     ${liveBar(l.current, l.point, l.postedCurrent)}
     ${livePaceTiles(l.current, l.point, elapsed, { cleared: l.cleared })}
-    <p class="live-leg-sub">${liveLegMove(l)}${l.cleared ? ' · Cleared' : ` · proj ${esc(String(l.pace))} · +${esc(String(Math.round(l.cushion * 100)))}%`}${Number.isFinite(l.postedPrice) && l.postedPrice !== l.price ? ` · <span class="live-move" title="The price when the play was posted, and now">${esc(formatAmerican(l.postedPrice))} → <b>${esc(formatAmerican(l.price))}</b></span>` : ''}${l.link ? ` · <a href="${escUrl(l.link)}" target="_blank" rel="noopener">add ↗</a>` : ''}</p>
+    <p class="live-leg-sub">${liveLegMove(l)}${l.cleared ? ' · Cleared' : ` · proj ${esc(String(l.pace))} · +${esc(String(Math.round(l.cushion * 100)))}%`}${Number.isFinite(l.postedPrice) && l.postedPrice !== l.price ? ` · <span class="live-move" title="The price when the play was posted, and now">${esc(formatAmerican(l.postedPrice))} → <b>${esc(formatAmerican(l.price))}</b></span>` : ''}${add && l.link ? ` · <a href="${escUrl(l.link)}" target="_blank" rel="noopener">add ↗</a>` : ''}</p>
     ${l.foul ? `<p class="live-foul is-${esc(l.foul.level)}">${esc(l.foul.text)}. His minutes are at risk, so this play is replaced on the next build.</p>` : ''}
   </div>`;
 }
@@ -12197,16 +12198,37 @@ function liveGameReads(g) {
 }
 
 
-function liveSlip(s, i, elapsed = null) {
-  const all = combinedSlipLink(s.bookId, s.legs.map((l) => l.link));
-  const mine = liveState.books.size && liveState.books.has(s.bookId);
-  const bookUrl = SPORTSBOOKS[s.bookId]?.url ?? null;
+/**
+ * One bet on the Live tab (docs/live-slips.js): the slips on the same players at every book that prices them, as one
+ * card with one button. "Add to sportsbook" opens a bubble of the books that have the bet, each with its own price;
+ * a tap on one puts the slip on that book. A book that takes legs one at a time lists them there.
+ */
+function liveSlip(group, i, elapsed = null, gameId = '', onBets = null) {
+  const s = group.lead;
+  const many = group.slips.length > 1;
   const done = s.legs.filter((l) => l.cleared).length;
   const shared = (s.shared ?? []).length;
+  const newest = Math.max(0, ...group.slips.map((x) => Number(x.postedAt) || 0));
+  const key = `add:${gameId}:${group.key}`;
+  const choice = (x) => {
+    const all = combinedSlipLink(x.bookId, x.legs.map((l) => l.link));
+    const mine = liveState.books.size && liveState.books.has(x.bookId);
+    const inner = `<span class="live-add-name">${bookBadge(x.bookId, x.book, 'book-badge is-large')}<span>${esc(x.book)}${mine ? '<small class="live-mine">your book</small>' : ''}${x.differs ? `<small class="live-add-diff">${esc(slipNumbers(x))}</small>` : ''}</span></span><b>${esc(formatAmerican(x.american))}</b>`;
+    if (all) return `<a class="live-add-book" href="${escUrl(all)}" target="_blank" rel="noopener" data-live-add-go title="Add all ${x.legs.length} legs to your ${esc(x.book)} slip">${inner}</a>`;
+    const legs = x.legs.filter((l) => l.link);
+    const bookUrl = SPORTSBOOKS[x.bookId]?.url ?? null;
+    // A book with no one-link slip: its legs one at a time, or the book itself to add them by hand.
+    if (legs.length) return `<div class="live-add-book is-legs">${inner}<span class="live-add-legs">${esc(x.book)} takes legs one at a time: ${legs.map((l, n) => `<a href="${escUrl(l.link)}" target="_blank" rel="noopener" data-live-add-go>${esc(String(l.player).split(' ').at(-1))} ↗</a>`).join(' ')}</span></div>`;
+    return bookUrl ? `<a class="live-add-book" href="${escUrl(bookUrl)}" target="_blank" rel="noopener" data-live-add-go title="Open ${esc(x.book)} and add the legs by hand">${inner}</a>` : '';
+  };
+  const choices = group.slips.map(choice).filter(Boolean);
   return `<div class="live-play ${i === 0 ? 'is-best' : ''}">
-    <div class="pick-bet-head"><span class="pick-bet-type">${i === 0 ? 'Best slip' : s.diversified ? 'Slip · different players' : 'Slip'} · ${s.legs.length} legs</span><span class="pick-bet-book">${bookBadge(s.bookId, s.book)}${esc(s.book)}${mine ? '<small class="live-mine">your book</small>' : ''}</span><span class="pick-bet-price">${esc(formatAmerican(s.american))}</span>${postedTag(s.postedAt)}${Number.isFinite(s.postedAmerican) && s.postedAmerican !== s.american ? `<span class="live-move" title="The slip's price when it was posted, and now">${esc(formatAmerican(s.postedAmerican))} → <b>${esc(formatAmerican(s.american))}</b></span>` : ''}${done ? `<span class="pick-result is-win">${done} of ${s.legs.length} cleared</span>` : ''}${shared ? `<span class="live-shared" title="${esc(s.shared.join(', '))}">${shared === s.legs.length ? 'same players as another slip' : `${shared} shared with another slip`}</span>` : ''}</div>
-    <div class="live-legs">${s.legs.map((l) => liveLeg(l, { elapsed })).join('')}</div>
-    <div class="pick-bet-foot">${all ? `<a class="pick-bet-link" href="${escUrl(all)}" target="_blank" rel="noopener">Add all ${s.legs.length} legs to your ${esc(s.book)} slip ↗</a>` : bookUrl ? `<a class="pick-bet-link" href="${escUrl(bookUrl)}" target="_blank" rel="noopener">Open ${esc(s.book)} (legs one at a time above)</a>` : ''}</div>
+    <div class="pick-bet-head"><span class="pick-bet-type">${i === 0 ? 'Best slip' : s.diversified ? 'Slip · different players' : 'Slip'} · ${s.legs.length} legs</span><span class="pick-bet-book">${many ? `<span class="live-add-count">${group.slips.length} books</span>` : `${bookBadge(s.bookId, s.book)}${esc(s.book)}`}</span><span class="pick-bet-price" title="${many ? `The best price, at ${esc(s.book)}` : ''}">${many ? '<small>best</small> ' : ''}${esc(formatAmerican(s.american))}</span>${postedTag(newest || s.postedAt)}${Number.isFinite(s.postedAmerican) && s.postedAmerican !== s.american ? `<span class="live-move" title="The slip's price when it was posted, and now">${esc(formatAmerican(s.postedAmerican))} → <b>${esc(formatAmerican(s.american))}</b></span>` : ''}${done ? `<span class="pick-result is-win">${done} of ${s.legs.length} cleared</span>` : ''}${shared && shared < s.legs.length ? `<span class="live-shared" title="${esc(s.shared.join(', '))}">${shared} shared with another slip</span>` : ''}</div>
+    <div class="live-legs">${s.legs.map((l) => liveLeg({ ...l, bookId: s.bookId, book: s.book, onSlips: onBets?.get(l.player) ?? 1 }, { elapsed, add: false, showBook: many })).join('')}</div>
+    ${choices.length ? `<div class="pick-bet-foot"><details class="live-add" data-live-details="${esc(key)}" ${liveState.open[key] ? 'open' : ''}>
+      <summary class="pick-bet-link" aria-label="Add to a sportsbook: choose which">Add to sportsbook <span class="live-add-caret" aria-hidden="true"></span></summary>
+      <div class="live-add-bubble" role="group" aria-label="Sportsbooks with this bet"><p class="row-sub">Pick your app. The slip opens there with ${s.legs.length === 1 ? 'the leg' : `all ${s.legs.length} legs`} on it.</p>${choices.join('')}</div>
+    </details></div>` : ''}
   </div>`;
 }
 
@@ -12215,7 +12237,7 @@ function livePlaysBadge(g, slips) {
   if (g.tick?.state !== 'in') return '';
   const n = slips.length + (g.game ?? []).length;
   if (!n) return '';
-  const newest = Math.max(0, ...slips.map((s) => Number(s.postedAt) || 0));
+  const newest = Math.max(0, ...slips.flatMap((s) => (s.slips ?? [s]).map((x) => Number(x.postedAt) || 0)));
   return `<span class="live-plays-badge" title="Live plays on this game at your books">${n} live play${n === 1 ? '' : 's'} available${newest ? ` · ${postedTag(newest, 'newest')}` : ''}</span>`;
 }
 function renderLiveGame(g) {
@@ -12227,8 +12249,12 @@ function renderLiveGame(g) {
   const books = g.probe?.books?.filter((b) => b.markets.length) ?? [];
   const script = g.script?.leader ? `<span class="live-tag">${esc(g.script.leader)} up ${esc(String(g.script.margin))}: ${nhl || soccer ? 'the side behind shoots more' : 'run game favoured, passing faded'}</span>` : '';
   const weather = g.weather ? `<span class="live-tag ${g.weather.rough ? 'is-rough' : ''}">${esc(g.weather.rough ? 'Rough weather: passing faded' : 'Weather fine')}${g.weather.windSpeed ? ` · wind ${esc(String(g.weather.windSpeed))}` : ''}${g.weather.precipChance != null ? ` · rain ${esc(String(g.weather.precipChance))}%` : ''}</span>` : '';
-  const slips = liveSlipsFor(g);
-  const hidden = (g.slips?.list?.length ?? 0) - slips.length;
+  // One card a bet: the same players at several books are one slip with a book to pick (docs/live-slips.js).
+  const mineSlips = liveSlipsFor(g);
+  const slips = groupLiveSlips(mineSlips);
+  const hidden = groupLiveSlips(g.slips?.list ?? []).length - slips.length;
+  // "On 2 slips" counts bets now, not the same bet at two books.
+  const onBets = new Map(); for (const grp of slips) for (const l of grp.lead.legs) onBets.set(l.player, (onBets.get(l.player) ?? 0) + 1);
   const open = liveOpen(g);
   const stars = g.play?.playable ? `<span class="live-conf" title="Confidence: the best slip's cushion against the best game line's edge">${'★'.repeat(g.play.stars)}${'☆'.repeat(5 - g.play.stars)}</span>` : '';
   return `<article class="trend-card live-game ${live ? 'is-live' : ''} ${g.play?.playable ? 'is-playable' : ''} ${open ? 'is-open' : 'is-closed'}">
@@ -12245,7 +12271,7 @@ function renderLiveGame(g) {
       <span class="live-read ${g.probe && Date.now() - g.probe.at < 10 * 60e3 ? 'is-fresh' : ''}">Odds ${g.probe ? `${esc(ago(g.probe.at))} · ${books.length} book${books.length === 1 ? '' : 's'} posting` : 'not read yet'}</span>
       ${g.blowout?.blowout ? `<span class="live-tag is-blowout">${esc(g.blowout.leader)} up ${esc(String(g.blowout.margin))} with ${esc(String(g.blowout.minutesLeft))} min left: no live bets, the starters may sit</span>` : ''}${script}${weather}
     </div>
-    ${slips.length ? `<p class="live-sub">Slips <small>built ${esc(liveBuiltWhen(g.slips))}${g.slips.builtAt ? `, ${esc(liveTimeFmt.format(new Date(g.slips.builtAt)))}` : ''}</small></p>${slips.map((x, i) => liveSlip(x, i, g.elapsed)).join('')}${hidden ? `<p class="row-sub">${hidden} more at books you have not chosen. <button type="button" class="link-button" data-live-showall="1">Show all books</button></p>` : ''}<p class="row-sub">A slip stays as posted while it stands, and is replaced when a leg stops clearing or a player gets into foul trouble. Pace % is what the player has over what it takes by now to land on the number. Shown, not tracked.</p>`
+    ${slips.length ? `<p class="live-sub">Slips <small>built ${esc(liveBuiltWhen(g.slips))}${g.slips.builtAt ? `, ${esc(liveTimeFmt.format(new Date(g.slips.builtAt)))}` : ''}</small></p>${slips.map((x, i) => liveSlip(x, i, g.elapsed, g.espnEventId, onBets)).join('')}${hidden ? `<p class="row-sub">${hidden} more at books you have not chosen. <button type="button" class="link-button" data-live-showall="1">Show all books</button></p>` : ''}<p class="row-sub">A slip stays as posted while it stands, and is replaced when a leg stops clearing or a player gets into foul trouble. Pace % is what the player has over what it takes by now to land on the number. Shown, not tracked.</p>`
       : hidden ? `<p class="row-sub">No slip at your books right now: nothing there clears the pace with margin at a usable price. ${hidden} at other books. <button type="button" class="link-button" data-live-showall="1">Show all books</button></p>`
       : live ? `<p class="row-sub">${esc(liveNoSlipWhy(g))}</p>` : ''}
     ${liveGameReads(g)}
@@ -12404,7 +12430,7 @@ function renderLive() {
     el.liveBody.innerHTML = `${liveLeaguePicker(all)}${(tennis?.matches ?? []).some((x) => x.state === 'in' || x.state === 'pre') ? '' : `<p class="empty">${note || 'Nothing on today\'s board.'}</p>`}${tennisHtml}<p class="row-sub">${watcherNote}.</p>`;
     return;
   }
-  const slips = games.reduce((n, g) => n + liveSlipsFor(g).length, 0);
+  const slips = games.reduce((n, g) => n + groupLiveSlips(liveSlipsFor(g)).length, 0);
   const elsewhere = games.reduce((n, g) => n + (g.slips?.list?.length ?? 0), 0) - slips;
   const inPlay = games.filter((g) => g.tick?.state === 'in').length;
   const where = liveState.books.size && !liveState.showAll ? ' at your books' : '';
@@ -12432,6 +12458,9 @@ el.liveView?.addEventListener('click', (event) => {
   const tlWhy = event.target.closest('[data-tennis-live-why]');
   if (tlWhy) { const k = `tl:${tlWhy.dataset.tennisLiveWhy}`; liveState.open[k] = !liveState.open[k]; renderLive(); return; }
   // A folded section on a game card (the box score, the books posting): remembered, so the next refresh draws it the same way.
+  // The "Add to sportsbook" bubble: shut after a book is picked, and by a tap anywhere outside it.
+  const picked = event.target.closest('[data-live-add-go]');
+  for (const d of document.querySelectorAll('details.live-add[open]')) { if (picked || !d.contains(event.target)) { d.open = false; liveState.open[d.dataset.liveDetails] = false; } }
   const fold = event.target.closest('details[data-live-details] > summary');
   if (fold && !fold.parentElement.classList.contains('live-tennis-rest')) { const d = fold.parentElement; setTimeout(() => { liveState.open[d.dataset.liveDetails] = d.open; }, 0); return; }
   const rest = event.target.closest('details.live-tennis-rest');

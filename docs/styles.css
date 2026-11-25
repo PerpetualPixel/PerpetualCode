@@ -7449,6 +7449,28 @@ a.trend-price:hover { background: rgba(255, 255, 255, 0.06); }
 .live-bar-now { border-color: rgba(255, 255, 255, 0.85); box-shadow: 0 2px 8px rgba(0, 0, 0, 0.4); }
 #liveView .pick-bet-link { background: var(--accent); color: var(--on-accent); text-decoration: none; box-shadow: none; }
 #liveView .pick-bet-link:hover { color: var(--on-accent); filter: brightness(1.1); }
+/* "Add to sportsbook": one button a bet, and a bubble of the books that have it. The bubble opens above the button. */
+.live-add { display: flex; flex-direction: column-reverse; gap: 8px; }
+.live-add > summary { list-style: none; cursor: pointer; gap: 8px; user-select: none; }
+.live-add > summary::-webkit-details-marker { display: none; }
+.live-add-caret { width: 0; height: 0; border-left: 5px solid transparent; border-right: 5px solid transparent; border-top: 6px solid currentColor; transition: transform 120ms ease; }
+.live-add[open] .live-add-caret { transform: rotate(180deg); }
+.live-add-bubble { position: relative; display: grid; gap: 6px; padding: 10px; border-radius: 16px; border: 1px solid color-mix(in srgb, var(--accent) 55%, var(--line)); background: #1a1730; box-shadow: 0 10px 26px rgba(0, 0, 0, 0.45); }
+.live-add-bubble::after { content: ''; position: absolute; left: 50%; bottom: -7px; width: 12px; height: 12px; transform: translateX(-50%) rotate(45deg); background: #1a1730; border-right: 1px solid color-mix(in srgb, var(--accent) 55%, var(--line)); border-bottom: 1px solid color-mix(in srgb, var(--accent) 55%, var(--line)); }
+.live-add-bubble > .row-sub { margin: 0 2px 2px; }
+.live-add-book { display: flex; align-items: center; justify-content: space-between; gap: 10px; min-height: 48px; padding: 6px 12px; border-radius: 12px; background: var(--surface-2); border: 1px solid transparent; color: var(--text); text-decoration: none; }
+a.live-add-book:hover, a.live-add-book:focus-visible { border-color: var(--accent); }
+.live-add-book b { font-family: var(--mono); font-size: 1rem; }
+#liveView a.live-add-book, #liveView a.live-add-book * { text-decoration: none; }
+.live-add-name { display: flex; align-items: center; gap: 10px; min-width: 0; font-weight: 700; }
+.live-add-name > span { display: grid; min-width: 0; }
+.live-add-name .book-badge { flex: none; }
+.live-add-diff { color: var(--muted); font-weight: 600; font-size: 0.72rem; }
+.live-add-book.is-legs { flex-wrap: wrap; }
+.live-add-legs { flex-basis: 100%; font-size: 0.78rem; color: var(--muted); }
+.live-add-legs a { color: var(--accent-2, var(--accent)); margin-left: 6px; white-space: nowrap; }
+.live-add-count { font-weight: 700; color: var(--muted); }
+.live-play .pick-bet-price small { font-size: 0.66rem; font-weight: 700; letter-spacing: 0.05em; text-transform: uppercase; color: var(--muted); }
 .live-bar.is-cleared .live-bar-line { opacity: 0.55; }
 .live-watch, .live-book, .live-count { background: rgba(255, 255, 255, 0.03); }
 .live-watch-nums b { font-weight: 700; }
