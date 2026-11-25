@@ -64,3 +64,32 @@ export function isPhone(userAgent, maxTouchPoints = 0) {
 export function pickText(legs) {
   return (legs ?? []).map((l) => { const sel = String(l?.selection ?? '').replace(/\s+/g, ' ').trim(); const game = String(l?.game ?? '').replace(/\s+/g, ' ').trim(); return sel ? `${sel}${game ? ` (${game})` : ''}` : ''; }).filter(Boolean).join('\n');
 }
+
+/**
+ * The state a book's link is for (2026-11-24, the owner, of Caesars: "Open
+ * the books URL, not the app, fix that"). Caesars and BetMGM run a site a
+ * state, and the feed writes their slip links with the state left as a
+ * placeholder, `{state}`:
+ *
+ *   https://sportsbook.caesars.com/us/{state}/bet?selectionIds=...&dl=betslip
+ *   https://sports.{state}.betmgm.com/en/sports?options=...&type=Single
+ *
+ * Nothing filled it in, so a tap opened Caesars at an address with the
+ * braces still in it: the book's front page, never the slip in its app.
+ * withState writes the user's state into the link; a link with no
+ * placeholder comes back as it was, and one with a placeholder and no
+ * state known comes back null (the caller asks for the state).
+ */
+export const US_STATES = ['AL', 'AK', 'AZ', 'AR', 'CA', 'CO', 'CT', 'DE', 'DC', 'FL', 'GA', 'HI', 'ID', 'IL', 'IN', 'IA', 'KS', 'KY', 'LA', 'ME', 'MD', 'MA', 'MI', 'MN', 'MS', 'MO', 'MT', 'NE', 'NV', 'NH', 'NJ', 'NM', 'NY', 'NC', 'ND', 'OH', 'OK', 'OR', 'PA', 'RI', 'SC', 'SD', 'TN', 'TX', 'UT', 'VT', 'VA', 'WA', 'WV', 'WI', 'WY'];
+const STATE_SLOT = /\{state\}|%7Bstate%7D/gi;
+export const needsState = (link) => /\{state\}|%7Bstate%7D/i.test(String(link ?? ''));
+/** A two-letter state out of whatever was stored or detected ("nj", "NJ", "US-NJ"), or null. */
+export function cleanState(value) {
+  const v = String(value ?? '').toUpperCase().replace(/^US-/, '').trim();
+  return US_STATES.includes(v) ? v : null;
+}
+export function withState(link, state) {
+  if (!needsState(link)) return link;
+  const st = cleanState(state);
+  return st ? String(link).replace(STATE_SLOT, st.toLowerCase()) : null;
+}

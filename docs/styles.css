@@ -7286,6 +7286,19 @@ a.trend-price:hover { background: rgba(255, 255, 255, 0.06); }
 
 /* The loading line: the logo turning beside the words, in place of a bare
    sentence (or nothing) while a board loads. */
+/* The Live tab's loader: the logo's infinity as a track, a pixel lapping it, pixel dust behind. */
+.pp-inf { display: grid; justify-items: center; gap: 12px; padding: 40px 16px; color: var(--muted); font-weight: 700; letter-spacing: 0.02em; text-align: center; }
+.pp-inf svg { width: min(180px, 52vw); height: auto; overflow: visible; }
+.pp-inf-track { fill: none; stroke-width: 3.2; stroke-linecap: round; stroke-linejoin: round; opacity: 0.55; filter: drop-shadow(0 0 5px rgba(139, 92, 246, 0.55)); }
+.pp-inf-pixel { fill: #ffffff; filter: drop-shadow(0 0 4px #22e3ff) drop-shadow(0 0 9px rgba(255, 43, 214, 0.9)); }
+.pp-inf-dust { fill: #9be9ff; }
+.pp-inf-dust:nth-of-type(odd) { fill: #ff8ae6; }
+.pp-inf.is-small { display: flex; align-items: center; justify-content: center; gap: 10px; padding: 6px 0; font-size: 0.86rem; }
+.pp-inf.is-small svg { width: 54px; }
+@media (prefers-reduced-motion: reduce) { .pp-inf-pixel, .pp-inf-dust { display: none; } .pp-inf-track { opacity: 0.9; } }
+.books-state { display: grid; gap: 4px; font-size: 0.84rem; font-weight: 700; }
+.books-state select { min-height: 44px; padding: 0 12px; border-radius: 12px; border: 1px solid var(--line); background: var(--surface-2); color: var(--text); font: inherit; max-width: 180px; }
+.books-state small { color: var(--muted); font-weight: 500; line-height: 1.4; }
 .pp-loading { display: flex; align-items: center; justify-content: center; gap: 12px; padding: 28px 0; color: var(--muted); font-weight: 600; }
 .pp-loading-logo { width: 36px; height: 36px; display: block; animation: ppSpin 1.1s linear infinite; filter: drop-shadow(0 0 6px rgba(255, 0, 122, 0.55)); }
 @keyframes ppSpin { to { transform: rotate(360deg); } }
