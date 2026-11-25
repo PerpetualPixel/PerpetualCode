@@ -352,33 +352,29 @@ body {
   filter: drop-shadow(0 0 10px rgba(255, 0, 122, 0.45));
   display: inline-block;
 }
-/* PICKS re-pixelates every few seconds instead of pulsing: each letter's
-   fill breaks into a checkerboard of magenta and violet blocks, coarse
-   then fine, and resolves back into the gradient, rippling P to S. The
-   blocks are clipped to the letterform, so the word stays readable. Every
-   step is a hard cut (steps(1)), the way pixels change. */
-.wordmark-pix i {
-  font-style: normal;
-  display: inline-block;
-  background-image: linear-gradient(90deg, var(--accent), var(--magenta));
-  background-size: 100% 100%;
-  -webkit-background-clip: text;
-  background-clip: text;
-  -webkit-text-fill-color: transparent;
-  animation: pixelFill 5.2s steps(1, end) infinite;
-  animation-delay: calc(var(--i, 0) * 0.11s);
+/* PICKS carries the loader's light (2026-11-25: "in line with the loading
+   symbol ... nothing too flashy ... a more polished subtle animation"). The
+   loader is an orb running the infinity with a tail behind it; here the same
+   light crosses the word once every few seconds: a white head with a cool
+   edge, a violet tail fading out behind it, clipped to the letters over the
+   word's own gradient. It starts and ends off the word, so the loop has no
+   seam, and for most of each cycle the word simply rests. */
+.wordmark .wordmark-picks {
+  background-image:
+    linear-gradient(90deg, rgba(255, 255, 255, 0) 0%, rgba(198, 132, 255, 0.22) 30%, rgba(214, 150, 255, 0.5) 58%, rgba(205, 240, 255, 0.86) 78%, #fff 88%, rgba(255, 255, 255, 0) 100%),
+    linear-gradient(90deg, var(--accent), var(--magenta));
+  background-repeat: no-repeat;
+  background-size: 62% 100%, 100% 100%;
+  /* The light is 62% of the word wide: -170% puts it wholly off the left, 270% wholly off the right. */
+  background-position: -170% 0, 0 0;
+  animation: wordmarkLight 8s cubic-bezier(0.4, 0, 0.3, 1) infinite;
 }
-@keyframes pixelFill {
-  0%, 100% { background-image: linear-gradient(90deg, var(--accent), var(--magenta)); background-size: 100% 100%; transform: none; }
-  3% { background-image: repeating-conic-gradient(var(--magenta) 0 25%, var(--accent) 0 50%); background-size: 6px 6px; transform: translate(1px, 0); }
-  5% { background-image: linear-gradient(90deg, var(--accent), var(--magenta)); background-size: 100% 100%; transform: none; }
-  6% { background-image: repeating-conic-gradient(var(--magenta) 0 25%, var(--accent) 0 50%); background-size: 6px 6px; transform: translate(-1px, 0); }
-  8% { background-image: repeating-conic-gradient(var(--magenta) 0 25%, var(--accent) 0 50%); background-size: 4px 4px; transform: none; }
-  10% { background-image: linear-gradient(90deg, var(--accent), var(--magenta)); background-size: 100% 100%; }
-  11% { background-image: repeating-conic-gradient(var(--magenta) 0 25%, var(--accent) 0 50%); background-size: 3px 3px; }
-  12.5% { background-image: linear-gradient(90deg, var(--accent), var(--magenta)); background-size: 100% 100%; }
+@keyframes wordmarkLight {
+  0%, 8% { background-position: -170% 0, 0 0; filter: drop-shadow(0 0 10px rgba(255, 0, 122, 0.45)); }
+  24% { filter: drop-shadow(0 0 13px rgba(255, 70, 170, 0.58)); }
+  40%, 100% { background-position: 270% 0, 0 0; filter: drop-shadow(0 0 10px rgba(255, 0, 122, 0.45)); }
 }
-@media (prefers-reduced-motion: reduce) { .wordmark-pix i { animation: none; } }
+@media (prefers-reduced-motion: reduce) { .wordmark .wordmark-picks { animation: none; } }
 
 /* Three weights, not five identical pills: reference material (Guide/About)
    sits quiet, the two mid-session tools (Bankroll/Tracking) carry the
