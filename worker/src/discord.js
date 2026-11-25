@@ -280,17 +280,20 @@ export const statsUrl = (play) => `${CONFIG.WORKER_URL}/play/${encodeURIComponen
  * The buttons under a card (2026-11-25: "allowing for the user to click one button and add to the sports book ...
  * click a button and find more stats and data backing the pick"). While the play is open: one button a book that
  * has the line, best price first (three at most), each opening that book with the bet on the slip; then the stats
- * button. Once it has settled: the stats button alone. They are link buttons: the only kind a channel webhook can send.
+ * button on a row of its own. Once it has settled: the stats button alone. They are link buttons: the only kind a channel webhook can send.
  */
 export function cardButtons(play) {
   const settled = play.status === 'graded' || play.status === 'void';
-  const buttons = [];
+  // A long book name is cut so a label stays short enough to read on a phone, whatever the book is called.
+  const short = (name) => (String(name).length > 22 ? `${String(name).slice(0, 21).trimEnd()}…` : String(name));
+  const books = [];
   if (!settled) for (const b of booksOf(play)) {
-    if (!b.url || buttons.length >= 3) continue;
-    buttons.push({ type: 2, style: 5, url: b.url, label: `${buttons.length ? '' : 'Add to slip · '}${b.name} ${fmt(b.american)}`.slice(0, 80), ...(buttons.length ? {} : { emoji: { name: '➕' } }) });
+    if (!b.url || books.length >= 3) continue;
+    books.push({ type: 2, style: 5, url: b.url, label: `${books.length ? '' : 'Add to slip · '}${short(b.name)} ${fmt(b.american)}`.slice(0, 80), ...(books.length ? {} : { emoji: { name: '➕' } }) });
   }
-  buttons.push({ type: 2, style: 5, url: statsUrl(play), label: settled ? 'Stats behind the pick' : 'Stats & why', emoji: { name: '📊' } });
-  return [{ type: 1, components: buttons }];
+  const stats = { type: 2, style: 5, url: statsUrl(play), label: settled ? 'Stats behind the pick' : 'Stats & why', emoji: { name: '📊' } };
+  // The books on one row and the stats on the row under it: the stats button is always in the same place, and a row is never crowded.
+  return [...(books.length ? [{ type: 1, components: books }] : []), { type: 1, components: [stats] }];
 }
 
 /** The line above the card: what a phone's notification shows, and what stands if the picture does not load. */

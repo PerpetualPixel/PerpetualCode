@@ -8,7 +8,8 @@
  */
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { cardSvg, cardState, playLines, fitSize, cardTime, CARD_W, CARD_H } from '../worker/src/card-svg.js';
+import fs from 'node:fs';
+import { cardSvg, cardState, playLines, fitSize, fitLine, nameForms, textWidth, cardTime, ADVANCES, CARD_W, CARD_H } from '../worker/src/card-svg.js';
 import { syncLiveDiscord, discordStatus, testPlays, cardButtons, cardLine, cardMessage, booksOf, statsUrl, findLivePlay, recordForPlay, DISCORD_LEDGER_KEY } from '../worker/src/discord.js';
 import { playPage, missingPlayPage } from '../worker/src/play-page.js';
 import { tennisLivePlaysKey, TENNIS_LIVE_PLAYS_INDEX } from '../worker/src/tennis-live-plays.js';
@@ -93,18 +94,22 @@ test('a play no book priced says "or better"; a name is folded to letters the ca
 
 test('the buttons: one a book that has the line, best price first and three at most, then the stats; a settled card keeps the stats alone', () => {
   const t = testPlays(NOW);
-  const [row] = cardButtons(t['test-live']);
-  assert.equal(row.type, 1);
-  assert.deepEqual(row.components.map((b) => [b.label, b.url]), [
-    ['Add to slip · FanDuel −150', 'https://sportsbook.fanduel.com/'],
-    ['DraftKings −155', 'https://sportsbook.draftkings.com/'],
-    ['Caesars −160', 'https://sportsbook.caesars.com/'],
-    ['Stats & why', `${WORKER}/play/test-live`],
+  const flat = (rows) => rows.map((r) => r.components.map((b) => [b.label, b.url]));
+  const rows = cardButtons(t['test-live']);
+  assert.ok(rows.every((r) => r.type === 1));
+  // The books on one row, the stats on the row under it: the stats button never moves and no row is crowded.
+  assert.deepEqual(flat(rows), [
+    [['Add to slip · FanDuel −150', 'https://sportsbook.fanduel.com/'], ['DraftKings −155', 'https://sportsbook.draftkings.com/'], ['Caesars −160', 'https://sportsbook.caesars.com/']],
+    [['Stats & why', `${WORKER}/play/test-live`]],
   ]);
   // Link buttons: the only kind a channel webhook can send.
-  assert.ok(row.components.every((b) => b.type === 2 && b.style === 5 && /^https:\/\//.test(b.url) && b.label.length <= 80));
-  assert.deepEqual(cardButtons(t['test-won'])[0].components.map((b) => b.label), ['Stats behind the pick']);
-  assert.deepEqual(cardButtons(t['test-void'])[0].components.map((b) => b.label), ['Stats behind the pick']);
+  assert.ok(rows.flatMap((r) => r.components).every((b) => b.type === 2 && b.style === 5 && /^https:\/\//.test(b.url) && b.label.length <= 80));
+  assert.deepEqual(flat(cardButtons(t['test-won'])).map((r) => r.map((b) => b[0])), [['Stats behind the pick']]);
+  assert.deepEqual(flat(cardButtons(t['test-void'])).map((r) => r.map((b) => b[0])), [['Stats behind the pick']]);
+  // A book with a very long name: its label is cut, so a button is never wider than a phone.
+  const longBook = cardButtons(ml({ bookId: 'longbook', book: 'The Extraordinarily Long Sportsbook & Casino Company', quotes: [] }));
+  assert.deepEqual(longBook[0].components.map((b) => b.label), ['Add to slip · The Extraordinarily L… −175']);
+  assert.ok(longBook.flatMap((r) => r.components).every((b) => b.label.length <= 42));
   // Four books: the three best prices get a button. A link with a blank nobody can fill gets none; one that needs the reader's state goes through the worker.
   const many = ml({ quotes: [
     { bookId: 'betrivers', book: 'BetRivers', american: -160, link: 'https://{state}.betrivers.com/?page=sportsbook#event/1?coupon={pickType}|2|{wagerAmount}' },
@@ -114,14 +119,12 @@ test('the buttons: one a book that has the line, best price first and three at m
     { bookId: 'betmgm', book: 'BetMGM', american: -200, link: 'https://sports.betmgm.com/en/sports?options=1' },
   ] });
   assert.deepEqual(booksOf(many).map((b) => [b.bookId, b.american, Boolean(b.url)]), [['betrivers', -160, false], ['fanduel', -175, true], ['caesars', -180, true], ['draftkings', -185, true], ['betmgm', -200, true]]);
-  assert.deepEqual(cardButtons(many)[0].components.map((b) => [b.label, b.url]), [
-    ['Add to slip · FanDuel −175', 'https://sportsbook.fanduel.com/addToBetslip?marketId=1&selectionId=2'],
-    ['Caesars −180', `${WORKER}/go/atp%3A1%3Alive_ml/caesars`],
-    ['DraftKings −185', 'https://sportsbook.draftkings.com/event/1?outcomes=2'],
-    ['Stats & why', `${WORKER}/play/atp%3A1%3Alive_ml`],
+  assert.deepEqual(flat(cardButtons(many)), [
+    [['Add to slip · FanDuel −175', 'https://sportsbook.fanduel.com/addToBetslip?marketId=1&selectionId=2'], ['Caesars −180', `${WORKER}/go/atp%3A1%3Alive_ml/caesars`], ['DraftKings −185', 'https://sportsbook.draftkings.com/event/1?outcomes=2']],
+    [['Stats & why', `${WORKER}/play/atp%3A1%3Alive_ml`]],
   ]);
   // A play with no book: the stats button alone.
-  assert.deepEqual(cardButtons({ id: 'atp:2:live_set:2', market: 'live_set', playable: -186, status: 'pending' })[0].components.map((b) => b.label), ['Stats & why']);
+  assert.deepEqual(flat(cardButtons({ id: 'atp:2:live_set:2', market: 'live_set', playable: -186, status: 'pending' })).map((r) => r.map((b) => b[0])), [['Stats & why']]);
   assert.equal(statsUrl({ id: 'atp:2:live_set:2' }), `${WORKER}/play/atp%3A2%3Alive_set%3A2`);
 });
 
@@ -138,7 +141,7 @@ test('the line above the card says the bet outright, and the message carries the
   assert.deepEqual(card.payload.embeds, [{ color: 0xff007a, image: { url: 'attachment://card.png' } }], 'the picture is the card: no words beside it to compete with the play');
   assert.deepEqual(card.payload.attachments, [{ id: 0, filename: 'card.png' }]);
   assert.deepEqual(card.payload.allowed_mentions, { parse: [], roles: [ROLE] });
-  assert.equal(card.payload.components[0].components.length, 4);
+  assert.deepEqual(card.payload.components.map((r) => r.components.length), [3, 1]);
   // The written card rides along for when the picture cannot go.
   assert.equal(card.plain.embeds[0].title, '🎾 TAKE · Test Player to win the match');
   // The results channel's card pings nobody; a settled card's colour follows how it ended.
@@ -147,7 +150,7 @@ test('the line above the card says the bet outright, and the message carries the
   // No picture: the written card with the buttons under it; buttons off: the written card as it always was.
   const written = cardMessage(t['test-live'], { role: ROLE });
   assert.equal(written.file, null);
-  assert.deepEqual([written.payload.embeds[0].title, written.payload.components[0].components.length], ['🎾 TAKE · Test Player to win the match', 4]);
+  assert.deepEqual([written.payload.embeds[0].title, written.payload.components.map((r) => r.components.length)], ['🎾 TAKE · Test Player to win the match', [3, 1]]);
   assert.equal(cardMessage(t['test-live'], { role: ROLE, buttons: false }).payload.components, undefined);
 });
 
@@ -170,7 +173,7 @@ test('the template test: one card for each of the four, in the live channel, eac
     assert.equal(c.file.size, PNG.length, 'the picture rides with the message');
     assert.deepEqual(c.body.embeds[0].image, { url: 'attachment://card.png' });
   }
-  assert.deepEqual(d.calls.map((c) => c.body.components[0].components.length), [4, 1, 1, 1]);
+  assert.deepEqual(d.calls.map((c) => c.body.components.map((r) => r.components.length)), [[3, 1], [1], [1], [1]]);
   assert.deepEqual(d.calls.map((c) => c.body.embeds[0].color), [0xff007a, 0x10b981, 0xef4444, 0x9c98b8]);
   const status = await discordStatus(env);
   assert.deepEqual(status.test, { id: 't-cards', state: 'done', at: NOW, cards: 4, pictures: 4, buttons: true });
@@ -223,13 +226,13 @@ test('a play with its picture: posted as a card, its own message redrawn when it
   const render = async (p) => { drawn.push(`${p.id}:${p.status}`); return PNG; };
   await run(env, NOW, d, { plays: [ml({ postedAt: NOW })], render });
   assert.equal(d.calls[0].body.content, `<@&${ROLE}> 🎾 **TAKE · M. Dellavedova to win the match** · −175 at FanDuel · 1u`);
-  assert.deepEqual(d.calls[0].body.components[0].components.map((b) => b.label), ['Add to slip · FanDuel −175', 'Stats & why']);
+  assert.deepEqual(d.calls[0].body.components.map((r) => r.components.map((b) => b.label)), [['Add to slip · FanDuel −175'], ['Stats & why']]);
   const settled = ml({ postedAt: NOW, status: 'graded', result: 'win', profit: 0.57, actual: '6-0 4-6 7-6', gradedAt: NOW + 3600e3 });
   await run(env, NOW + 3600e3, d, { plays: [settled], render });
   assert.deepEqual(d.calls.slice(1).map((c) => [c.method, c.url, Boolean(c.file)]), [['PATCH', `${HOOK}/messages/900000000000000001?with_components=true`, true], ['POST', `${UPDATES}?wait=true&with_components=true`, true]]);
   assert.equal(d.calls[1].body.content, '✅ **WON** · M. Dellavedova to win the match · final 6-0 4-6 7-6 · +0.57u');
   assert.deepEqual(d.calls[1].body.attachments, [{ id: 0, filename: 'card.png' }], 'the new picture takes the old one\'s place');
-  assert.deepEqual(d.calls[1].body.components[0].components.map((b) => b.label), ['Stats behind the pick'], 'the bet buttons come off a settled card');
+  assert.deepEqual(d.calls[1].body.components.map((r) => r.components.map((b) => b.label)), [['Stats behind the pick']], 'the bet buttons come off a settled card');
   assert.deepEqual(d.calls[2].body.allowed_mentions.roles, [], 'the results channel pings nobody');
   assert.deepEqual(drawn, ['atp:1:live_ml:pending', 'atp:1:live_ml:graded']);
 });
@@ -256,7 +259,7 @@ test('drawing is guarded: a marker is stored before each drawing and taken off a
   assert.equal(draws, 0);
   const posts = d2.calls.filter((c) => c.body.embeds?.[0]?.title === '🎾 TAKE · M. Dellavedova to win the match');
   assert.equal(posts.length, 1);
-  assert.deepEqual([posts[0].file, posts[0].body.components[0].components.length], [null, 2], 'the written card, with its buttons');
+  assert.deepEqual([posts[0].file, posts[0].body.components.map((r) => r.components.length)], [null, [1, 1]], 'the written card, with its buttons');
   assert.equal((await discordStatus(died.env)).pictures, false);
   // Pictures stay off until a new test id asks for them again.
   await run(died.env, NOW + 60e3, d2, { plays: [ml({ id: 'atp:9:live_ml', postedAt: NOW + 60e3 })], testId: 't1', testScope: 'none', render });
@@ -316,4 +319,104 @@ test('the page behind the stats button: the card, the bet, the price with a link
   const gone = missingPlayPage();
   assert.match(gone, /That play is no longer on file\./);
   assert.doesNotMatch(gone, /<script/i);
+});
+
+// --- Nothing overlaps, whatever the names, the event, the score or the book are called (2026-11-25) ---
+
+/** Advance widths per 1000 em for the card's characters, read from a font file: the head, hhea, hmtx and cmap (format 4) tables. */
+function advancesOf(path, chars) {
+  const b = fs.readFileSync(path); const dv = new DataView(b.buffer, b.byteOffset, b.byteLength);
+  const tables = {};
+  for (let i = 0; i < dv.getUint16(4); i++) { const o = 12 + i * 16; tables[b.toString('latin1', o, o + 4)] = dv.getUint32(o + 8); }
+  const upm = dv.getUint16(tables.head + 18); const nH = dv.getUint16(tables.hhea + 34);
+  const c = tables.cmap; let sub = null;
+  for (let i = 0; i < dv.getUint16(c + 2); i++) { const pid = dv.getUint16(c + 4 + i * 8); const eid = dv.getUint16(c + 6 + i * 8); const off = c + dv.getUint32(c + 8 + i * 8); if (dv.getUint16(off) === 4 && (pid === 0 || (pid === 3 && eid === 1))) sub = off; }
+  const segX2 = dv.getUint16(sub + 6); const endO = sub + 14; const startO = endO + segX2 + 2; const deltaO = startO + segX2; const rangeO = deltaO + segX2;
+  const glyph = (cp) => { for (let i = 0; i < segX2; i += 2) { if (cp > dv.getUint16(endO + i)) continue; const start = dv.getUint16(startO + i); if (cp < start) return 0; const delta = dv.getInt16(deltaO + i); const ro = dv.getUint16(rangeO + i); if (ro === 0) return (cp + delta) & 0xffff; const g = dv.getUint16(rangeO + i + ro + 2 * (cp - start)); return g ? (g + delta) & 0xffff : 0; } return 0; };
+  return [...chars].map((ch) => Math.round((dv.getUint16(tables.hmtx + 4 * Math.min(glyph(ch.codePointAt(0)), nH - 1)) * 1000) / upm));
+}
+
+test('the card measures its text with the fonts\' own letter widths: the table matches the font files it is drawn with', () => {
+  const chars = `${Array.from({ length: 95 }, (_, i) => String.fromCharCode(32 + i)).join('')}•`;
+  for (const weight of [400, 500, 700]) assert.deepEqual(ADVANCES[weight], advancesOf(new URL(`../worker/vendor/fonts/RobotoCondensed-${weight}.ttf`, import.meta.url), chars), `Roboto Condensed ${weight}`);
+  // A width is the letters' widths at the size plus the spacing after each; runs of spaces count once, as they are drawn.
+  assert.equal(Math.round(textWidth('AB', 40) * 100) / 100, 46.32);
+  assert.equal(textWidth('A  •  B', 20, { weight: 500 }), textWidth('A • B', 20, { weight: 500 }));
+  assert.ok(textWidth('WWWW', 40) > textWidth('IIII', 40) * 2, 'a wide letter is not counted like a narrow one');
+});
+
+test('a line always fits: it comes down in size, then to a shorter form, then is cut with "...", and what must stay is never cut', () => {
+  assert.deepEqual(fitLine('AB', 100, 40), { text: 'AB', size: 40 });
+  const cut = fitLine('A'.repeat(200), 100, 40, { min: 24 });
+  assert.deepEqual(cut, { text: 'AAAAA...', size: 24 });
+  assert.ok(textWidth(cut.text, cut.size) <= 100);
+  // The units after a final score stay whole; the score gives way.
+  const final = fitLine('FINAL 6-7 7-6 6-7 7-6 70-68 99-97 88-86', 300, 56, { min: 30, tail: '  •  +0.67u' });
+  assert.match(final.text, /^FINAL 6-7.*\.\.\.  •  \+0\.67u$/);
+  assert.ok(textWidth(final.text, final.size) <= 300);
+  // Names shorten the way a scoreboard does, and a pair stays a pair.
+  assert.deepEqual(nameForms('Victoria Jimenez Kasintseva'), ['Victoria Jimenez Kasintseva', 'V. Jimenez Kasintseva', 'V. Kasintseva', 'Kasintseva']);
+  assert.deepEqual(nameForms('M. Dellavedova'), ['M. Dellavedova', 'Dellavedova']);
+  assert.deepEqual(nameForms('Alex de Minaur'), ['Alex de Minaur', 'A. de Minaur', 'de Minaur']);
+  assert.deepEqual(nameForms('Alcaraz'), ['Alcaraz']);
+  assert.deepEqual(nameForms('Marcel Granollers / Horacio Zeballos'), ['Marcel Granollers / Horacio Zeballos', 'M. Granollers / H. Zeballos', 'Granollers / Zeballos']);
+});
+
+/** Every line of text on a card as a box: where it starts and ends across, and its band down the card. */
+function boxes(svg) {
+  return [...svg.matchAll(/<text x="([\d.]+)" y="([\d.]+)" font-family="([^"]+)" font-size="([\d.]+)" font-weight="(\d+)"[^>]*?>([^]*?)<\/text>/g)].map((m) => {
+    const [whole, x, y, family, size, weight, body] = m;
+    const words = body.replace(/<[^>]+>/g, '').replace(/&amp;/g, '&').replace(/&lt;/g, '<').replace(/&gt;/g, '>').replace(/&quot;/g, '"');
+    const spacing = Number(whole.match(/letter-spacing="([\d.]+)"/)?.[1] ?? 0);
+    // The wordmark is Syne and never changes: its two words are 150 wide at most.
+    const width = family === 'Syne' ? 150 : textWidth(words, Number(size), { weight: Number(weight), spacing });
+    const left = /text-anchor="middle"/.test(whole) ? Number(x) - width / 2 : Number(x);
+    // Capitals and figures stand on the line and rise about three quarters of the size; only a lower-case tail hangs under it.
+    return { words, left, right: left + width, top: Number(y) - Number(size) * 0.76, bottom: Number(y) + Number(size) * (/[gjpqy,]/.test(words) ? 0.22 : 0.02), size: Number(size) };
+  });
+}
+
+test('nothing on the card overlaps or leaves the card, however long the names, the event, the round, the book, the score or the bet are', () => {
+  const long = 'Wolfeschlegelsteinhausenbergerdorff Maximilian-Alexander von Hohenzollern-Sigmaringen';
+  const base = { id: 'x', tour: 'atp', market: 'live_ml', side: 'a', prob: 0.69, american: -150, playable: -165, bookId: 'fanduel', book: 'FanDuel', units: 1, score: '6-0 3-4', status: 'pending', postedAt: NOW, event: 'Wimbledon', round: 'Final', a: 'Carlos Alcaraz', b: 'Alexander Zverev', selection: 'Carlos Alcaraz to win the match (live)' };
+  const cases = {
+    'everything long': { ...base, event: 'The International Championships of the Greater Metropolitan Area presented by A Very Long Sponsor Name Incorporated', round: 'Round of 128 Qualifying Playoff', a: long, b: 'Bartholomew Montgomery-Featherstonehaugh Junior', selection: `${long} to win the match (live)`, book: 'Hard Rock Bet Sportsbook & Casino Online', american: 10000, units: 0.75, score: '6-7 7-6 6-7 7-6 12-12' },
+    'the widest letters': { ...base, a: 'W'.repeat(40), b: 'M'.repeat(40), side: 'b', selection: `${'M'.repeat(40)} to win the match`, status: 'graded', result: 'win', profit: 12.34, actual: '6-7 7-6 6-7 7-6 70-68' },
+    'a long round alone': { ...base, event: '', round: 'R'.repeat(120) },
+    'a bet in other words': { ...base, side: null, selection: 'A completely different kind of selection that nobody planned for and is very long indeed', status: 'void', actual: '6-0 1-0: the match was abandoned after a very long rain delay and will not resume today or tomorrow' },
+    'a long final and big units': { ...base, status: 'graded', result: 'loss', profit: -123.45, actual: '6-7 7-6 6-7 7-6 70-68 99-97 88-86 77-75' },
+    'a doubles pair, no price': { ...base, a: 'Marcel Granollers / Horacio Zeballos', b: 'Mate Pavic / Marcelo Arevalo', market: 'live_set', selection: 'Marcel Granollers / Horacio Zeballos to win set 3', american: undefined, book: undefined, playable: -1860 },
+    'short everything': { ...base, event: 'X', round: '', a: 'Li', b: 'Wu', selection: 'Li to win the match', score: '' },
+    'a set total': { ...base, market: 'live_set_total', side: null, selection: 'Set 2 over 9.5 games', american: undefined, book: undefined, playable: -150 },
+    'no names at all': { ...base, a: '', b: '', selection: '', event: '', round: '' },
+  };
+  for (const [name, play] of Object.entries(cases)) {
+    const svg = cardSvg(play, { logo: 'data:image/png;base64,AAAA' });
+    const all = boxes(svg);
+    assert.ok(all.length >= 12, `${name}: the card has its lines`);
+    for (const box of all) {
+      assert.ok(box.left >= 30 && box.right <= CARD_W - 30, `${name}: "${box.words}" stays inside the card (${Math.round(box.left)} to ${Math.round(box.right)})`);
+      assert.ok(box.top >= 20 && box.bottom <= CARD_H - 14, `${name}: "${box.words}" stays inside the card, top to bottom`);
+    }
+    for (let i = 0; i < all.length; i++) for (let j = i + 1; j < all.length; j++) {
+      const x = all[i]; const y = all[j];
+      const across = Math.min(x.right, y.right) - Math.max(x.left, y.left);
+      const down = Math.min(x.bottom, y.bottom) - Math.max(x.top, y.top);
+      assert.ok(across <= 0 || down <= 0, `${name}: "${x.words}" and "${y.words}" do not overlap`);
+    }
+    // The price and its book sit inside the play's panel, and the play stays the largest line.
+    const big = all.reduce((p, q) => (q.size > p.size ? q : p));
+    assert.ok(big.size >= 44, `${name}: the play is still large (${big.size})`);
+  }
+  // The price pill is as wide as its number and stays inside the panel beside a long book name.
+  const svg = cardSvg(cases['everything long']);
+  const pill = svg.match(/<rect x="([\d.]+)" y="566" width="([\d.]+)" height="68"/);
+  assert.ok(Number(pill[1]) >= 60 && Number(pill[2]) >= textWidth('+10000', 50), 'the pill holds its number');
+});
+
+test('the stats page lets a long name, event or reason wrap inside its own box', () => {
+  const html = playPage(ml({ a: 'W'.repeat(60), event: 'E'.repeat(120), why: ['R'.repeat(300)] }));
+  assert.match(html, /h1, p, li, dt, dd, span, strong \{ overflow-wrap: anywhere; \}/);
+  assert.match(html, /\.book span:last-child \{[^}]*white-space: nowrap; flex: none; \}/, 'a price is never squeezed by a long book name');
+  assert.match(html, /dl \{ display: grid; grid-template-columns: repeat\(3, minmax\(0, 1fr\)\)/);
 });
