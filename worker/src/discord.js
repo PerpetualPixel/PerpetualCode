@@ -51,7 +51,9 @@ const SNOWFLAKE = /^\d{5,25}$/;
 // The site's own colours (docs/styles.css): magenta for a play that is live, its green and red for a result.
 const COLOR = { open: 0xff007a, win: 0x10b981, loss: 0xef4444, void: 0x9c98b8 };
 /** An open lean's colour: the violet of the lean box on the site. */
-const LEAN_COLOR = 0x8b5cf6;
+const LEAN_COLOR = 0x7c3aed;
+/** A live play's card: the site's laser blue. */
+const LIVE_COLOR = 0x00f0ff;
 const LOGO = 'https://perpetualpicks.com/assets/logo-icon-180.png';
 // The strips under the card (docs/assets/discord: live, won, lost, void). Discord keeps an image by its address, so a redrawn strip needs a new version.
 const ART = 'https://perpetualpicks.com/assets/discord';
@@ -64,14 +66,16 @@ const TOUR = { atp: 'ATP', wta: 'WTA' };
  * this value and the next tick posts one sample play, marked as a test, with the role ping; the tick after edits it
  * to its settled form. That is the whole path a real play takes.
  */
-export const TEST_ALERT_ID = '2026-11-25-7';
+export const TEST_ALERT_ID = '2026-11-25-8';
 /**
  * What the test sends: 'cards' (one card for each template in the live channel: live play, won, lost, void, with
  * their buttons and no ping), 'all' (one alert with its ping, its edit, and the result card), 'results' (the
  * result cards alone, a win and a loss, in the results channel) or 'leans' (a lean as it opens and one that has
- * won, in the leans channel), or 'cards+leans' (both of those: every template, each in its own channel).
+ * won, in the leans channel), 'cards+leans' (both of those: every template, each in its own channel), or 'pair'
+ * (one live play card in the live channel and one lean card in the leans channel: a look at a restyle without
+ * filling the channels).
  */
-export const TEST_SCOPE = 'cards+leans';
+export const TEST_SCOPE = 'pair';
 const TEST_BASE = { market: 'live_ml', tour: 'atp', event: 'Test alert', round: 'not a real play', a: 'Test Player', b: 'Sample Opponent', side: 'a', prob: 0.69, american: -150, playable: -165, bookId: 'fanduel', book: 'FanDuel', units: 1, selection: 'Test Player to win the match (live)', score: '6-0 3-4', status: 'pending',
   stats: { holds: { a: { held: 6, served: 6 }, b: { held: 3, served: 5 } }, last: { of: 8, a: 5, b: 3 }, streak: null, setGames: null },
   why: ['Score 6-0 3-4: from here the model gives Test Player 74% to win the match and 58% to win the set in play.', 'Test Player has held 6 of 6 service games; Sample Opponent has held 3 of 5 service games.', 'Last 8 games: Test Player 5, Sample Opponent 3.', 'The live price gives Test Player 60%; the read puts it at 69%.'],
@@ -343,7 +347,8 @@ export function cardMessage(play, { role = null, record = null, png = null, resu
   const payload = {
     content: cardLine(play, { role: result ? null : role }),
     allowed_mentions: { parse: [], roles: role && !result ? [role] : [] },
-    embeds: [{ color: play.lean && outcome === 'open' ? LEAN_COLOR : COLOR[outcome], image: { url: 'attachment://card.png' } }],
+    // The bar Discord draws beside the picture takes the card's own accent: laser blue for a live play, violet for a lean.
+    embeds: [{ color: play.lean && outcome === 'open' ? LEAN_COLOR : outcome === 'open' ? LIVE_COLOR : COLOR[outcome], image: { url: 'attachment://card.png' } }],
     attachments: [{ id: 0, filename: 'card.png' }],
     ...(buttons ? { components: cardButtons(play) } : {}),
   };
@@ -477,12 +482,13 @@ export async function syncLiveDiscord(env, now = Date.now(), { deps = {} } = {})
   // The test alert (TEST_ALERT_ID): posted once per value, then edited on a later tick to its settled form.
   // Each card is drawn before the test is marked as sending: a run that dies drawing has sent nothing, and the next sends it written.
   const testRecord = { wins: 9, losses: 2, units: 3.86 };
-  if (testId && ledger.test?.id !== testId && (testScope === 'cards' || testScope === 'cards+leans')) {
+  if (testId && ledger.test?.id !== testId && (testScope === 'cards' || testScope === 'cards+leans' || testScope === 'pair')) {
     // One card for each template, in the live channel, with their buttons: nobody is pinged. With 'cards+leans' the two lean cards follow, in the leans channel.
     const cards = [];
-    for (const play of Object.values(testPlays(now))) cards.push(await dress(play, { record: testRecord, role: null, test: true }));
+    const pair = testScope === 'pair';
+    for (const play of Object.values(testPlays(now)).slice(0, pair ? 1 : 4)) cards.push(await dress(play, { record: testRecord, role: null, test: true }));
     const leanCards = [];
-    if (testScope === 'cards+leans' && cfg.leans) for (const play of Object.values(testLeans(now))) leanCards.push(await dress(play, { role: null, test: true }));
+    if (testScope !== 'cards' && cfg.leans) for (const play of Object.values(testLeans(now)).slice(0, pair ? 1 : 2)) leanCards.push(await dress(play, { role: null, test: true }));
     ledger.test = { id: testId, state: 'sending', at: now };
     await writeLedger(env, ledger);
     let ok = 0; let pictures = 0;
@@ -495,7 +501,7 @@ export async function syncLiveDiscord(env, now = Date.now(), { deps = {} } = {})
       const r = await send(cfg.leans, card);
       if (r.ok) { leansOk++; if (card.file && !r.noPicture) pictures++; } else fail('test lean', r);
     }
-    ledger.test = { id: testId, state: ok === 4 && leansOk === leanCards.length ? 'done' : 'failed', at: now, cards: ok, pictures, buttons: !ledger.noButtons, ...(testScope === 'cards+leans' ? { leans: leansOk } : {}) };
+    ledger.test = { id: testId, state: ok === cards.length && leansOk === leanCards.length ? 'done' : 'failed', at: now, cards: ok, pictures, buttons: !ledger.noButtons, ...(testScope !== 'cards' ? { leans: leansOk } : {}) };
     dirty = true;
   } else if (testId && ledger.test?.id !== testId && testScope === 'leans') {
     // The leans channel: a lean as it opens and one that has won, marked as a test. Nobody is pinged there.
