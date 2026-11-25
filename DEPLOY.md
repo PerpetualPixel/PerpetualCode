@@ -359,9 +359,11 @@ market, the two players, the recommended units (or the result once it
 settles), the score and the time. The whole card is the state's colour: blue
 for a live play, violet for a lean, green for a win, red for a loss, grey for
 a void. Under an open play sit link buttons: one a book that has the line
-("Add to slip"), and "More info", which opens `GET /play/<id>` on the worker
+("Add to slip"), and "More info", which opens the site's `play.html?id=<id>`
+(`docs/play.js`). That page shows the worker's page for the play
 (`worker/src/play-page.js`): the price, the numbers, the reasons and the
-record for that play. A settled card keeps the More info button alone.
+record. A Discord message only ever links to the site's own name and to the
+books; the worker's address is never written into one. A settled card keeps the More info button alone.
 
 If the picture cannot be drawn, or Discord will not take the buttons, the
 same play goes out as a written card with its links in the text, so an alert

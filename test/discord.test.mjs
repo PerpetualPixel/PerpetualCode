@@ -52,7 +52,7 @@ const BOOKS = [
   { bookId: 'hardrock', book: 'Hard Rock Bet', american: -185, link: 'https://app.hardrock.bet/?deep_link_value=betslip/3947887837145334180' },
   { bookId: 'betrivers', book: 'BetRivers', american: -190, link: 'https://{state}.betrivers.com/?page=sportsbook#event/1?coupon={pickType}|2|{wagerAmount}' },
 ];
-const GO = 'https://pixel-pick-odds.mgbouldering.workers.dev/go/atp%3A1%3Alive_ml';
+const GO = 'https://perpetualpicks.com/play.html?id=atp%3A1%3Alive_ml&go=';
 
 test('the card: TAKE and the bet, the price and where, why in a sentence, the chance as a number, every book that has it linked, in the site\'s colours', () => {
   const open = livePlayMessage(ml({ stats: STATS, quotes: BOOKS }), { role: '987654321098765432', record: { wins: 8, losses: 2, units: 3.29 } });
@@ -69,7 +69,7 @@ test('the card: TAKE and the bet, the price and where, why in a sentence, the ch
   // Why, short, from the numbers kept with the play.
   assert.equal(lines[4], '**Why:** Dellavedova has held 6 of 6 service games today; Moriya 3 of 5. Has won 5 of the last 8 games. We make it 69% to land; the price only needs 64%.');
   // Every book with the line, best price first: a whole link as it is, one that needs the reader's state or is Hard Rock's through the worker, one with a blank nobody can fill as a price alone.
-  assert.equal(lines[6], `**Bet it:** [FanDuel −175](https://sportsbook.fanduel.com/addToBetslip?marketId=1&selectionId=2) · [Caesars −180](${GO}/caesars) · [Hard Rock −185](${GO}/hardrock) · BetRivers −190`);
+  assert.equal(lines[6], `**Bet it:** [FanDuel −175](https://sportsbook.fanduel.com/addToBetslip?marketId=1&selectionId=2) · [Caesars −180](${GO}caesars) · [Hard Rock −185](${GO}hardrock) · BetRivers −190`);
   // The stats behind it.
   assert.deepEqual(e.fields.map((f) => [f.name, f.value]), [['Chance to land', '▰▰▰▰▰▰▰▱▱▱ **69%**'], ['Price needs', '64%'], ['Edge', '+5 pts'], ['Score when taken', '6-0 3-4'], ['Serve held today', 'Dellavedova 6/6 · Moriya 3/5'], ['Our Match Winner record', '8-2 · +3.29u']]);
   assert.ok(e.fields.every((f) => f.inline));
@@ -119,8 +119,8 @@ test('the card: TAKE and the bet, the price and where, why in a sentence, the ch
 test('a book link on a card: whole links go straight; the worker finishes one for the reader\'s state and phone, and never sends anyone anywhere but a link the site stored', async () => {
   const play = ml({ stats: STATS, quotes: BOOKS });
   assert.equal(cardLink(play, BOOKS[0]), BOOKS[0].link);
-  assert.equal(cardLink(play, BOOKS[1]), `${GO}/caesars`);
-  assert.equal(cardLink(play, BOOKS[2]), `${GO}/hardrock`);
+  assert.equal(cardLink(play, BOOKS[1]), `${GO}caesars`);
+  assert.equal(cardLink(play, BOOKS[2]), `${GO}hardrock`);
   assert.equal(cardLink(play, BOOKS[3]), null, 'a blank other than the state cannot be filled');
   for (const bad of ['http://sportsbook.fanduel.com/x', 'javascript:alert(1)', '', null, 'https://a.example/x y']) assert.equal(cardLink(play, { bookId: 'fanduel', link: bad }), null, String(bad));
 

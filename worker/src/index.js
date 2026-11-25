@@ -1725,7 +1725,7 @@ export default {
       let playId = ''; try { playId = decodeURIComponent(playRoute[1]); } catch { playId = ''; }
       const play = await findLivePlay(env, playId);
       const html = play ? playPage(play, { record: await recordForPlay(env, play) }) : missingPlayPage();
-      return new Response(html, { status: play ? 200 : 404, headers: { 'Content-Type': 'text/html; charset=utf-8', 'Cache-Control': 'public, max-age=60', 'Content-Security-Policy': "default-src 'none'; img-src https://perpetualpicks.com https://pixel-pick-odds.mgbouldering.workers.dev; style-src 'unsafe-inline'; base-uri 'none'; form-action 'none'", 'Referrer-Policy': 'no-referrer', 'X-Content-Type-Options': 'nosniff' } });
+      return new Response(html, { status: play ? 200 : 404, headers: { 'Content-Type': 'text/html; charset=utf-8', 'Cache-Control': 'public, max-age=60', 'Content-Security-Policy': "default-src 'none'; img-src https://perpetualpicks.com https://pixel-pick-odds.mgbouldering.workers.dev; style-src 'unsafe-inline'; base-uri 'none'; form-action 'none'; frame-ancestors https://perpetualpicks.com", 'Referrer-Policy': 'no-referrer', 'X-Content-Type-Options': 'nosniff' } });
     }
     // A play's card as a picture (worker/src/card-svg.js draws it, card-render.js makes the PNG): for the stats page, and
     // as .json a report that the renderer works here (its size and how long it took), which a probe can read.

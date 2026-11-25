@@ -122,7 +122,7 @@ function withModulePreloads(html) {
   return html.replace(/(<!-- modulepreload:start[^>]*-->\n)[\s\S]*?(<!-- modulepreload:end -->)/, `$1${links}\n$2`);
 }
 
-const CACHE_BUSTED_PAGES = ['app.html', 'login.html', 'account.html', 'index.html', 'privacy.html', 'terms.html'];
+const CACHE_BUSTED_PAGES = ['app.html', 'login.html', 'account.html', 'index.html', 'privacy.html', 'terms.html', 'play.html'];
 
 for (const page of CACHE_BUSTED_PAGES) {
   const pagePath = path.join(__dirname, 'docs', page);

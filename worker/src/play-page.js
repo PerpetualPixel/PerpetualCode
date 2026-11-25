@@ -72,7 +72,7 @@ ${body}
 </main></body></html>`;
 
 /** The page for a play that is not on file (an old link, a wrong one). */
-export const missingPlayPage = () => shell('Play not found · Perpetual Picks', `<h1>That play is no longer on file.</h1><p class="sub">Live plays are kept for about two months. Every result is on the site.</p><a class="more" href="${SITE}">Open Perpetual Picks</a>`);
+export const missingPlayPage = () => shell('Play not found · Perpetual Picks', `<h1>That play is no longer on file.</h1><p class="sub">Live plays are kept for about two months. Every result is on the site.</p><a class="more" href="${SITE}" target="_top">Open Perpetual Picks</a>`);
 
 /** The page for a play. `record` is the site's record for this kind of play ({wins, losses, units}) or null. */
 export function playPage(play, { record = null } = {}) {
@@ -106,13 +106,13 @@ export function playPage(play, { record = null } = {}) {
 ${result}
 <section><h2>The price</h2><div class="books">
 ${Number.isFinite(price) ? `<div class="book"><span>${priced ? esc(play.book ?? 'The book') : 'Take it at'} <small>${priced && Number.isFinite(play.playable) && play.playable < play.american ? `good down to ${fmt(play.playable)}` : priced ? 'when posted' : 'or better, at any book'}</small></span><span>${fmt(price)}</span></div>` : ''}
-${books.filter((b) => b.url).map((b) => `<a class="book" href="${esc(b.url)}" rel="noopener noreferrer"><span>Add to slip · ${esc(b.name)}</span><span>${fmt(b.american)} ↗</span></a>`).join('\n')}
+${books.filter((b) => b.url).map((b) => `<a class="book" href="${esc(b.url)}" target="_top" rel="noopener noreferrer"><span>Add to slip · ${esc(b.name)}</span><span>${fmt(b.american)} ↗</span></a>`).join('\n')}
 ${books.filter((b) => !b.url).map((b) => `<div class="book"><span>${esc(b.name)} <small>no slip link</small></span><span>${fmt(b.american)}</span></div>`).join('\n')}
 </div>${state === 'live' ? '<p class="note">A live price moves. If the book has gone past the "good down to" number, the play is gone.</p>' : ''}</section>
 <section><h2>The numbers</h2><dl>${cells.map(([name, value, note]) => `<div><dt>${esc(name)}</dt><dd>${esc(value)}${note ? `<small>${esc(note)}</small>` : ''}</dd></div>`).join('')}</dl></section>
 <section><h2>Why</h2>${why ? `<p style="margin:0 0 8px">${esc(why)}</p>` : ''}${reasons.length ? `<ul>${reasons.map((r) => `<li>${esc(r)}</li>`).join('')}</ul>` : ''}</section>
 ${record && record.wins + record.losses > 0 ? `<section><h2>Our ${esc(KIND[play.market] ?? 'live')} record</h2><dl><div><dt>Record</dt><dd>${record.wins}-${record.losses}</dd></div><div><dt>Net units</dt><dd>${esc(signedUnits(record.units))}</dd></div>${record.roi != null ? `<div><dt>ROI</dt><dd>${record.roi < 0 ? '−' : '+'}${Math.abs(record.roi * 100).toFixed(1)}%</dd></div>` : ''}</dl></section>` : ''}
-<a class="more" href="${SITE}">Open Perpetual Picks</a>
+<a class="more" href="${SITE}" target="_top">Open Perpetual Picks</a>
 <footer>${play.lean ? 'A lean is a call, not a tracked play: it is not on the record.' : 'Tracked play, graded automatically.'} Bet only what you can afford to lose.</footer>`;
   return shell(`${big} ${small} · Perpetual Picks`.replace(/\s+/g, ' '), body, TONE[state]);
 }
