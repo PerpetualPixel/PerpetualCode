@@ -6,7 +6,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
-import { syncBasketballDiscord, syncFootballDiscord, syncLeagueDiscord, leagueConfig, footballStatus, LEAGUES, basketballConfig, basketballStatus, slipPost, gradePost, slipLine, slipMessage, playbookLines, testSlipPost, DISCORD_NBA_LEDGER_KEY, NBA_FRESH_MS, MAX_A_GAME } from '../worker/src/discord-nba.js';
+import { syncBasketballDiscord, syncFootballDiscord, syncLeagueDiscord, leagueConfig, footballStatus, LEAGUES, basketballConfig, basketballStatus, slipPost, gradePost, slipLine, slipMessage, playbookLines, testSlipPost, DISCORD_NBA_LEDGER_KEY, NBA_FRESH_MS } from '../worker/src/discord-nba.js';
 import { slipCardSvg, slipCardHeight, textWidth, CARD_W } from '../worker/src/card-svg.js';
 
 const NOW = Date.parse('2026-11-26T01:12:00Z');
@@ -117,23 +117,17 @@ test('the game\'s best slip is posted each time it is one that has not been post
   assert.equal(d3.calls.length, 0);
 });
 
-test('a whole game\'s plays fit: a new play every few minutes for three hours is all posted, and only a runaway board is stopped', async () => {
+test('there is no cap: every play the board makes for a game is posted, however many that is', async () => {
   const { env } = makeEnv();
   const d = fakeDiscord();
-  // Twenty-four plays, one every seven and a half minutes: every one is posted.
-  for (let i = 0; i < 24; i++) { const now = NOW + i * 7.5 * 60e3; await run(env, now, d, { play: playOf([slip({ postedAt: now })], { builtAt: now }) }); }
-  assert.equal(d.calls.length, 24);
-  assert.ok(MAX_A_GAME >= 30);
-});
-
-test('a runaway board cannot fill the channel: a game\'s posts stop at the guard', async () => {
-  const { env } = makeEnv();
-  const d = fakeDiscord();
-  for (let i = 0; i < MAX_A_GAME + 6; i++) {
-    const now = NOW + i * 5 * 60e3;
-    await run(env, now, d, { play: playOf([slip({ postedAt: now })], { builtAt: now }) });
-  }
-  assert.equal(d.calls.length, MAX_A_GAME);
+  // Sixty plays in one game, a new one every three minutes: every one is posted, each once.
+  for (let i = 0; i < 60; i++) { const now = NOW + i * 3 * 60e3; await run(env, now, d, { play: playOf([slip({ postedAt: now })], { builtAt: now }) }); }
+  assert.equal(d.calls.length, 60);
+  assert.equal(new Set(d.calls.map((c) => c.body.content)).size >= 1, true);
+  // Running the last tick again posts nothing new.
+  const last = NOW + 59 * 3 * 60e3;
+  await run(env, last + 30e3, d, { play: playOf([slip({ postedAt: last })], { builtAt: last }) });
+  assert.equal(d.calls.length, 60);
 });
 
 test('when the game ends each open post is edited to how it finished, once; a post with no answer is not sent again', async () => {
@@ -304,4 +298,37 @@ test('with Playbook\'s id set, every new NBA and NFL play starts with its tag an
     await sync(bare.env, NOW, { deps: { fetch: d2.fetch, games: async () => [game], play: async () => ({ builtAt: NOW - 30e3, slips: [slipOf()] }), watch: async () => null, render: async () => PNG, testId: '' } });
     assert.deepEqual([(await status(bare.env)).lastPostTagged, (await status(bare.env)).tagged, d2.calls[0].body.allowed_mentions.users], [false, 0, []]);
   }
+});
+
+// --- Not the same players twice, where there is a choice (2026-11-25: "let's not post overlapping players if possible") ---
+
+test('a new play that shares a player with one already posted gives way to another book\'s slip that shares none; with no such slip it is posted anyway', async () => {
+  const { env, store } = makeEnv();
+  const d = fakeDiscord();
+  const names = (c) => c.body.content.split('\n').slice(1).map((line) => line.split(' Over ')[0]);
+  // The first play: Brunson, Tatum, Towns.
+  await run(env, NOW, d, { play: playOf([slip()]) });
+  assert.deepEqual(names(d.calls[0]), ['Jalen Brunson', 'Jayson Tatum', 'Karl-Anthony Towns']);
+  // A new best slip has Brunson again; DraftKings has a slip with three other players. That one is posted instead.
+  const t1 = NOW + 8 * 60e3;
+  const again = slip({ postedAt: t1, legs: [leg('Jalen Brunson', 'NY', 'assists', 'Ast', 5.5, -170, 4), leg('Jaylen Brown', 'BOS', 'points', 'Pts', 22.5, -170, 17), leg('Josh Hart', 'NY', 'rebounds', 'Reb', 8.5, -190, 6)] });
+  const clean = slip({ bookId: 'draftkings', book: 'DraftKings', american: 125, postedAt: t1, legs: [leg('Derrick White', 'BOS', 'assists', 'Ast', 4.5, -150, 3), leg('Mikal Bridges', 'NY', 'points', 'Pts', 14.5, -160, 10), leg('Al Horford', 'BOS', 'rebounds', 'Reb', 5.5, -140, 4)] });
+  assert.deepEqual(await run(env, t1, d, { play: playOf([again, clean], { builtAt: t1 }) }), { posted: 1, settled: 0, failed: 0 });
+  assert.equal(d.calls[1].body.content.split('\n')[0], `<@${BOT}> DraftKings`);
+  assert.deepEqual(names(d.calls[1]), ['Derrick White', 'Mikal Bridges', 'Al Horford']);
+  // The slip that was passed over is not posted on a later tick.
+  await run(env, t1 + 60e3, d, { play: playOf([again, clean], { builtAt: t1 + 30e3 }) });
+  assert.equal(d.calls.length, 2);
+  assert.deepEqual(Object.values(ledgerOf(store).posts).map((e) => e.state).sort(), ['open', 'open', 'skipped']);
+  // A later best slip shares a player and no other book's slip is clear of them: it is still a play, so it is posted.
+  const t2 = NOW + 16 * 60e3;
+  const shared = slip({ postedAt: t2, legs: [leg('Jayson Tatum', 'BOS', 'points', 'Pts', 24.5, -170, 18), leg('OG Anunoby', 'NY', 'points', 'Pts', 12.5, -180, 9), leg('Payton Pritchard', 'BOS', 'assists', 'Ast', 3.5, -150, 2)] });
+  const alsoShared = slip({ bookId: 'draftkings', book: 'DraftKings', postedAt: t2, legs: [leg('Derrick White', 'BOS', 'points', 'Pts', 12.5, -150, 9), leg('Miles McBride', 'NY', 'points', 'Pts', 8.5, -160, 6), leg('Sam Hauser', 'BOS', 'points', 'Pts', 7.5, -140, 5)] });
+  await run(env, t2, d, { play: playOf([shared, alsoShared], { builtAt: t2 }) });
+  assert.equal(d.calls.length, 3);
+  assert.deepEqual(names(d.calls[2]), ['Jayson Tatum', 'OG Anunoby', 'Payton Pritchard']);
+  // Another game's players do not count against this one.
+  const other = { ...GAME, id: '777', name: 'Los Angeles Lakers at Denver Nuggets' };
+  await run(env, t2 + 60e3, d, { games: [other], play: playOf([slip({ postedAt: t2 + 60e3 })], { builtAt: t2 + 60e3 }) });
+  assert.equal(d.calls.length, 4, 'the same names in another game are that game\'s first play');
 });
