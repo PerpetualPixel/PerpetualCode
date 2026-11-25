@@ -22,7 +22,9 @@ import { etParts, etDatePlusDays } from './potd.js';
 import { fetchContext, hasContext } from './context.js';
 import { fetchBasketballGamelog, basketballStatRows } from './basketball-props.js';
 import { fetchNflGamelog, gamelogStatIndex, nflStatRows } from './football-props.js';
-import { bundlePlayer, loadBundleTeams, loadInjuries, injuryFor } from './espn-bundle.js';
+import { bundlePlayer, loadBundleTeams, loadInjuries, injuryFor, loadRoles, roleFor } from './espn-bundle.js';
+import { lineupFlags } from './line-check.js';
+import { lineFlags, lineVerdict, looksTooGood } from '../../docs/line-check.js';
 import { boxKey, boxLegKey } from './box-grading.js';
 import { seasonColumnRows } from '../../docs/prop-legs.js';
 import { overNeed, underNeed, attachSeries, legScore, hitFlags, isAltLine, winLikelihood } from '../../docs/trends.js';
@@ -404,6 +406,12 @@ export async function researchPick(row, env, ctx, { now = Date.now(), deps = {} 
       notes.push(`${names} ${teammatesOut.length === 1 ? 'is' : 'are'} out for his team, so the usage shifts; the last 20 games were with a different lineup.`);
     }
   }
+  // The traps the "Good take or bad?" card names (docs/line-check.js, worker/src/line-check.js): a teammate who takes
+  // the same numbers is back after missing a run of games, or most of the record was made on another team. Either one
+  // means the last 20 were a different role, and a line the site would flag is not one it posts.
+  const lineup = deps.lineup ? await deps.lineup(row) : LINEUP_SPORTS.includes(row.sportKey) ? await lineupFlags(env, row, ctx, { deps: { context: async () => context } }).catch(() => []) : [];
+  for (const f of [...lineFlags(row).filter((x) => x.key === 'team'), ...lineup.filter((x) => String(x.key).startsWith('back:'))]) if (f.tone === 'bad') pass(`${f.title}: ${f.text}`);
+
   if (context?.projection) {
     const h = Number(context.projection.home); const a = Number(context.projection.away);
     const top = Math.max(h || 0, a || 0);
@@ -522,26 +530,71 @@ export function legRecord(leg, research, now) {
  * day. Not ... an NFL game on Friday"): a league with no game left today
  * (Eastern) has no line here, however good Friday's looks.
  */
+/** A league's lines for the board, best first: a listed book prices them in range, the game is today's and not started, the player is not out. */
+export function boardCandidates(rows, now, sportKey) {
+  const today = etParts(now).date;
+  const out = [];
+  for (const row of rows ?? []) {
+    if (row.sportKey !== sportKey || !(row.commenceMs > now) || etParts(row.commenceMs).date !== today || row.injury?.level === 'out') continue;
+    // A chance row (first basket, first touchdown) scores 5 for being its field's favorite, not for being likely.
+    if (row.noLog || Number.isFinite(row.prob)) continue;
+    const quote = pickQuotes(row).find((q) => inRange(q.american, LEG_RANGE));
+    if (!quote) continue;
+    out.push({ row, quote, score: legScore(row) });
+  }
+  return out.sort((a, b) => b.score - a.score || b.quote.american - a.quote.american);
+}
+const boardLeg = ({ row, quote, score }, now) => ({ ...legRecord({ line: row, american: quote.american, decimal: quote.decimal ?? americanToDecimal(quote.american), bookId: quote.bookId, link: quote.link ?? null }, { note: '', flags: [] }, now), score, shortOf: showcaseShortOf(row) });
+
 export function bestOnBoard(rows, now, enabled = TREND_ENABLED_SPORTS) {
   const out = {};
-  const today = etParts(now).date;
   for (const sportKey of enabled) {
-    let best = null;
-    for (const row of rows ?? []) {
-      if (row.sportKey !== sportKey || !(row.commenceMs > now) || etParts(row.commenceMs).date !== today || row.injury?.level === 'out') continue;
-      // A chance row (first basket, first touchdown) scores 5 for being its field's favorite, not for being likely.
-      if (row.noLog || Number.isFinite(row.prob)) continue;
-      const quote = pickQuotes(row).find((q) => inRange(q.american, LEG_RANGE));
-      if (!quote) continue;
-      const score = legScore(row);
-      if (!best || score > best.score || (score === best.score && quote.american > best.quote.american)) best = { row, quote, score };
-    }
-    if (!best) continue;
-    const { row, quote, score } = best;
-    const leg = legRecord({ line: row, american: quote.american, decimal: quote.decimal ?? americanToDecimal(quote.american), bookId: quote.bookId, link: quote.link ?? null }, { note: '', flags: [] }, now);
-    out[sportKey] = { ...leg, score, shortOf: showcaseShortOf(row) };
+    const best = boardCandidates(rows, now, sportKey)[0];
+    if (best) out[sportKey] = boardLeg(best, now);
   }
   return out;
+}
+
+/**
+ * The board, checked (2026-11-25, the owner, of a suggestion that opened to "Likely a trap: Marcus Smart is back":
+ * "a suggested play shouldn't contain any bad flags"). Each league's lines are taken best first and run through the
+ * same check the "Good take or bad?" card runs (docs/line-check.js off the line, worker/src/line-check.js for the
+ * lineup around the player): a line with a reason to stay off is never the league's line, and one with nothing
+ * against it is preferred to one with something to weigh. At most BOARD_CHECKS players are checked a league, so a
+ * league whose best lines are all flagged has no line on the board that hour. Returns {board, skipped}: the legs,
+ * each with its `check`, and the lines passed over with the flag that did it.
+ */
+export const BOARD_CHECKS = 4;
+const LINEUP_SPORTS = ['basketball_nba', 'americanfootball_nfl'];
+export async function vettedBoard(rows, now, env, ctx, { enabled = TREND_ENABLED_SPORTS, deps = {} } = {}) {
+  const board = {};
+  const skipped = [];
+  for (const sportKey of enabled) {
+    const candidates = boardCandidates(rows, now, sportKey);
+    if (!candidates.length) continue;
+    const report = deps.injuriesReport ? await deps.injuriesReport(sportKey) : await loadInjuries(env, sportKey).catch(() => null);
+    const roles = deps.roles ? await deps.roles(sportKey) : await loadRoles(env, sportKey).catch(() => null);
+    const seen = new Set();
+    let fallback = null;
+    for (const c of candidates) {
+      // One check a player and stat: his other numbers ride the same lineup.
+      const k = `${fold(c.row.playerName)}|${c.row.statKey}|${c.row.side}`;
+      if (seen.has(k)) continue;
+      if (seen.size >= BOARD_CHECKS) break;
+      seen.add(k);
+      const row = { ...c.row, injury: c.row.injury ?? (report ? injuryFor(report, c.row.athleteId) : null), role: c.row.role ?? (roles ? roleFor(roles, c.row.athleteId, now) : null) };
+      const lineup = deps.lineup ? await deps.lineup(row) : LINEUP_SPORTS.includes(sportKey) ? await lineupFlags(env, row, ctx, { deps: deps.context ? { context: deps.context } : {} }).catch(() => []) : [];
+      const flags = [...lineFlags(row, { american: c.quote.american }), ...lineup];
+      const verdict = lineVerdict(flags, { tooGood: looksTooGood(row, c.quote.american) });
+      const bad = flags.find((f) => f.tone === 'bad');
+      if (bad) { skipped.push({ sportKey, selection: c.row.selection, flag: bad.title }); continue; }
+      const leg = { ...boardLeg(c, now), check: { verdict: verdict.key, label: verdict.label, weigh: flags.filter((f) => f.tone === 'warn').map((f) => f.title).slice(0, 3) } };
+      if (verdict.key === 'fair') { fallback = leg; break; }
+      fallback ??= leg;
+    }
+    if (fallback) board[sportKey] = fallback;
+  }
+  return { board, skipped };
 }
 
 /** Why the board's best line is not a ticket: which part of the fixed test it misses, in plain words. */
@@ -727,7 +780,13 @@ export async function runTrendPicksDaily(env, ctx, now = Date.now(), { deps = {}
     return rows;
   };
   if (existing?.final) {
-    // Posted: the tickets stand, but each leg follows its book's number until tip-off.
+    // Posted: the tickets stand. The board under them is read again each hour, so a flag that appears after the draw takes its line off.
+    if (now - (existing.showcaseAt ?? existing.checkedAt ?? 0) >= RETRY_MINUTES * 60e3) {
+      const { board, skipped } = await vettedBoard(await loadRows(), now, env, ctx, { enabled, deps });
+      existing = { ...existing, showcase: board, boardSkipped: skipped, showcaseAt: now };
+      await env.POTD_KV.put(key(dateKey), JSON.stringify(existing), { expirationTtl: KV_TTL_SECONDS });
+    }
+    // Each leg follows its book's number until tip-off.
     if ((existing.bets ?? []).some((b) => b.status === 'pending' && b.commenceMs > now)) {
       const reports = Object.fromEntries(await Promise.all(enabled.map(async (k) => [k, deps.injuriesReport ? await deps.injuriesReport(k) : await loadInjuries(env, k).catch(() => ({ players: {} }))])));
       const refreshed = refreshLegs(existing, await loadRows(), now, reports);
@@ -798,6 +857,7 @@ export async function runTrendPicksDaily(env, ctx, now = Date.now(), { deps = {}
     if (betLegs.has(fold(g.playerName)) || unused.some((u) => fold(u.player) === fold(g.playerName))) continue;
     unused.push({ player: g.playerName, selection: g.best.selection, reason: full ? (wide ? 'one ticket from the wider look' : 'two bets a day') : 'no ticket at a usable price' });
   }
+  const checkedBoard = await vettedBoard(rows, now, env, ctx, { enabled, deps });
   const record = {
     version: RECORD_VERSION,
     rules: PICK_RULES,
@@ -814,7 +874,9 @@ export async function runTrendPicksDaily(env, ctx, now = Date.now(), { deps = {}
     bets,
     passed,
     unused,
-    showcase: bestOnBoard(rows, now, enabled),
+    boardSkipped: checkedBoard.skipped,
+    showcaseAt: now,
+    showcase: checkedBoard.board,
   };
   await env.POTD_KV.put(key(dateKey), JSON.stringify(record), { expirationTtl: KV_TTL_SECONDS });
   return { skipped: false, dateKey, posted: bets.length, considered: groups.length, passed: passed.length };

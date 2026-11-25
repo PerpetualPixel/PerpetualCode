@@ -9,7 +9,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import {
   qualifyingRows, researchPick, runTrendPicksDaily, runTrendPicksGrading, getTrendPicks, settle, settleBet, parseVerdict, buildBets, pickQuotes, refreshLegs,
-  PICK_MIN_GAMES, PICK_MAX_BETS, PICK_BOOKS, TICKET_UNITS, bestOnBoard, PICK_RULES, wideLookOpen, strongEdge, PICK_STRONG_EDGE,
+  PICK_MIN_GAMES, PICK_MAX_BETS, PICK_BOOKS, TICKET_UNITS, bestOnBoard, PICK_RULES, wideLookOpen, strongEdge, PICK_STRONG_EDGE, vettedBoard, BOARD_CHECKS,
 } from '../worker/src/trend-picks.js';
 
 const NOW = Date.parse('2026-10-27T15:00:00Z'); // 11am ET Oct 27
@@ -572,4 +572,69 @@ test('the wider look: with no perfect ticket, strong lines (90% of the last 20 a
   await runTrendPicksDaily(bare.env, ctx, NOW, { deps: { ...deps, rowsFor: async () => rows.slice(0, 2) }, enabled: ['basketball_nba'] });
   const brec = JSON.parse(bare.store.get('trendpicks:2026-10-27'));
   assert.deepEqual([brec.wide, brec.strong, brec.bets.length, brec.final], [true, 0, 0, false]);
+});
+
+test('the board is checked: a line with a reason to stay off is never the league\'s line, a clean one is preferred to one with something to weigh, and what was passed over is kept', async () => {
+  // 2026-11-25: the suggestion was Kevin Durant Over 2.5 Ast, and its own card said "Likely a trap: Marcus Smart is back".
+  const back = (name) => ({ key: `back:${name}`, tone: 'bad', title: `${name} is back`, text: 'He missed 3 of the team\'s 7 games before the last one.' });
+  const blow = { key: 'blowout', tone: 'warn', title: 'Blowout risk', text: 'ESPN projects an 80% favourite.' };
+  const lineupOf = (map) => async (r) => map[r.playerName] ?? [];
+  // Best first by score: Durant (20 of 20), Weigh (19), Clean (18).
+  const rows = [
+    row('kd', { player: 'Kevin Durant', rate: 1, american: -260 }),
+    row('kd2', { player: 'Kevin Durant', rate: 1, american: -200, point: 10.5 }),
+    row('w', { player: 'Weigh Me', rate: 0.95, american: -350, eventId: 'e-2' }),
+    row('c', { player: 'Clean Line', rate: 0.9, american: -300, eventId: 'e-3' }),
+  ];
+  const { env } = makeKvStore();
+  const opts = (lineup) => ({ enabled: ['basketball_nba'], deps: { lineup, injuriesReport: async () => ({ players: {} }), roles: async () => null } });
+  assert.equal(bestOnBoard(rows, NOW, ['basketball_nba']).basketball_nba.playerName, 'Kevin Durant', 'unchecked, Durant leads the league');
+
+  const asked = [];
+  const a = await vettedBoard(rows, NOW, env, ctx, opts(async (r) => { asked.push(r.id); return ({ 'Kevin Durant': [back('Marcus Smart')], 'Weigh Me': [blow] })[r.playerName] ?? []; }));
+  assert.equal(a.board.basketball_nba.playerName, 'Clean Line', 'the flagged line is passed over, and the clean line is taken ahead of the one with a blowout to weigh');
+  assert.deepEqual(a.board.basketball_nba.check, { verdict: 'fair', label: 'Nothing against it', weigh: [] });
+  assert.deepEqual(a.skipped, [{ sportKey: 'basketball_nba', selection: rows[1].selection, flag: 'Marcus Smart is back' }].map((x) => ({ ...x, selection: a.skipped[0].selection })));
+  assert.match(a.skipped[0].selection, /^Kevin Durant Over/);
+  assert.equal(asked.filter((id) => id.startsWith('kd')).length, 1, 'one check a player and stat: his other number is not checked again, nor put up');
+
+  // Nothing clean: the best line with no reason to stay off, and it says what there is to weigh.
+  const b = await vettedBoard(rows.slice(0, 3), NOW, env, ctx, opts(lineupOf({ 'Kevin Durant': [back('Marcus Smart')], 'Weigh Me': [blow] })));
+  assert.equal(b.board.basketball_nba.playerName, 'Weigh Me');
+  assert.deepEqual([b.board.basketball_nba.check.verdict, b.board.basketball_nba.check.weigh], ['careful', ['Blowout risk']]);
+
+  // Every line flagged: the league has no line on the board.
+  const c = await vettedBoard(rows, NOW, env, ctx, opts(async (r) => [back(`Someone on ${r.playerName}'s team`)]));
+  assert.deepEqual(c.board, {});
+  assert.equal(c.skipped.length, 3);
+  assert.ok(BOARD_CHECKS >= 3);
+
+  // A line the row itself flags (most of the record was for another team) is passed over without a lineup read saying so.
+  const traded = { ...row('t', { player: 'New Team', rate: 1, american: -200 }), team: 'CHA', series: Array.from({ length: 20 }, (_, i) => ({ value: 14, date: NOW - (i + 1) * 2 * 86400e3, opponent: i === 4 ? 'CHA' : 'ORL' })) };
+  const d = await vettedBoard([traded, rows[3]], NOW, env, ctx, opts(async () => []));
+  assert.equal(d.board.basketball_nba.playerName, 'Clean Line');
+  assert.equal(d.skipped[0].flag, 'Changed teams');
+});
+
+test('the same traps keep a line off a tracked ticket: a teammate back, or a record made on another team, passes it with the reason', async () => {
+  const { env } = makeKvStore();
+  const base = { minutes: async () => Array(20).fill(32), context: async () => null, model: async () => '{"verdict":"post","reason":"ok","note":"none"}' };
+  const flag = { key: 'back:Marcus Smart', tone: 'bad', title: 'Marcus Smart is back', text: 'He missed 3 of the team\'s 7 games before the last one and averages 2.4 ast.' };
+  const r = await researchPick(row('kd', { player: 'Kevin Durant' }), env, ctx, { now: NOW, deps: { ...base, lineup: async () => [flag] } });
+  assert.equal(r.verdict, 'pass');
+  assert.match(r.flags.join(' | '), /pass: Marcus Smart is back: He missed 3/);
+  // An under is not hurt by a teammate coming back: that flag is not a reason to stay off it.
+  const under = await researchPick(row('kd', { player: 'Kevin Durant', side: 'under' }), env, ctx, { now: NOW, deps: { ...base, lineup: async () => [{ ...flag, tone: 'info' }] } });
+  assert.equal(under.verdict, 'post');
+  // Nothing flagged: it posts as before.
+  assert.equal((await researchPick(row('kd', { player: 'Kevin Durant' }), env, ctx, { now: NOW, deps: { ...base, lineup: async () => [] } })).verdict, 'post');
+
+  // The day's record carries the checked board and what it passed over.
+  const day = makeKvStore();
+  const rows = [row('x', { player: 'Flagged Star', rate: 0.8, american: -150 }), row('y', { player: 'Clean Line', rate: 0.8, american: -160, eventId: 'e-2' })];
+  await runTrendPicksDaily(day.env, ctx, NOW, { deps: { ...base, rowsFor: async () => rows, lineup: async (r) => (r.playerName === 'Flagged Star' ? [flag] : []), injuriesReport: async () => ({ players: {} }), roles: async () => null }, enabled: ['basketball_nba'] });
+  const rec = JSON.parse(day.store.get('trendpicks:2026-10-27'));
+  assert.equal(rec.showcase.basketball_nba.playerName, 'Clean Line');
+  assert.equal(rec.showcase.basketball_nba.check.verdict, 'fair');
+  assert.deepEqual(rec.boardSkipped.map((x) => [x.selection, x.flag]), [['Flagged Star Over 9.5 Pts', 'Marcus Smart is back']]);
 });
