@@ -6,7 +6,7 @@
  */
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { discordConfig, livePlayMessage, liveResultLine, syncLiveDiscord, discordStatus, testAlertMessage, whyLine, meter, cardLink, bookRedirect, TEST_ALERT_ID, DISCORD_LEDGER_KEY, FRESH_MS, POST_TRIES } from '../worker/src/discord.js';
+import { discordConfig, livePlayMessage, liveResultMessage, syncLiveDiscord, discordStatus, testAlertMessage, whyLine, meter, cardLink, bookRedirect, TEST_ALERT_ID, DISCORD_LEDGER_KEY, FRESH_MS, POST_TRIES } from '../worker/src/discord.js';
 
 const NOW = Date.parse('2026-11-25T18:00:00Z');
 const HOOK = 'https://discord.com/api/webhooks/123456789012345678/abcDEF_ghi-jklMNOpqrSTUvwxYZ0123456789abcdefghijklmnopqrstuvwxyzABCDEF';
@@ -32,7 +32,7 @@ function fakeDiscord(reply = null) {
 const ml = (over = {}) => ({ id: 'atp:1:live_ml', matchId: 'atp:1', tour: 'atp', event: 'Challenger Playford 2', round: '1/8-finals', a: 'M. Dellavedova', b: 'H. Moriya', market: 'live_ml', side: 'a', prob: 0.69, american: -175, playable: -190, bookId: 'fanduel', book: 'FanDuel', link: 'https://sportsbook.fanduel.com/addToBetslip?marketId=1&selectionId=2', units: 1, selection: 'M. Dellavedova to win the match (live)', score: '6-0 3-4', postedAt: NOW - 60e3, status: 'pending', ...over });
 const set = (over = {}) => ({ id: 'atp:2:live_set:2', matchId: 'atp:2', tour: 'atp', event: 'Nitto ATP Finals', round: 'Final', a: 'Carlos Alcaraz', b: 'Alexander Zverev', market: 'live_set', side: 'a', set: 2, prob: 0.69, playable: -186, units: 1, selection: 'Carlos Alcaraz to win set 2', score: '6-2 2-1', postedAt: NOW - 60e3, status: 'pending', ...over });
 // testId '' keeps the test alert out of the way of these; it has a test of its own below.
-const sync = (env, now, d, plays, records = { ml: { wins: 8, losses: 2, units: 3.29 }, sets: { wins: 31, losses: 6, units: 10.22 }, setGames: { wins: 0, losses: 0, units: 0 } }, testId = '') => syncLiveDiscord(env, now, { deps: { fetch: d.fetch, plays: async () => plays, records: async () => records, testId } });
+const sync = (env, now, d, plays, records = { ml: { wins: 8, losses: 2, units: 3.29 }, sets: { wins: 31, losses: 6, units: 10.22 }, setGames: { wins: 0, losses: 0, units: 0 } }, testId = '', testScope = 'all') => syncLiveDiscord(env, now, { deps: { fetch: d.fetch, plays: async () => plays, records: async () => records, testId, testScope } });
 
 test('only a real Discord webhook address is used, and the role must be an id', () => {
   assert.equal(discordConfig({}).live, null);
@@ -112,7 +112,6 @@ test('the card: TAKE and the bet, the price and where, why in a sentence, the ch
   const odd = livePlayMessage(ml({ a: '@everyone **bold**', selection: '[x](http://evil.example) to win', link: 'javascript:alert(1)' }), {});
   assert.ok(!/\]\(https?:\/\/evil/.test(odd.embeds[0].description) && !/javascript:/.test(odd.embeds[0].description) && odd.embeds[0].description.includes('\\*\\*bold\\*\\*'));
   assert.deepEqual(odd.allowed_mentions, { parse: [], roles: [] });
-  assert.equal(liveResultLine(ml({ status: 'graded', result: 'win', profit: 0.57, actual: '6-0 4-6 7-6' })).content, '✅ WON · M. Dellavedova to win the match · M. Dellavedova vs H. Moriya · 6-0 4-6 7-6 · +0.57u');
 });
 
 test('a book link on a card: whole links go straight; the worker finishes one for the reader\'s state and phone, and never sends anyone anywhere but a link the site stored', async () => {
@@ -178,7 +177,8 @@ test('a tracked play is posted once when it opens, and its own message is edited
   assert.deepEqual(d.calls.slice(1).map((c) => [c.method, c.url]), [['PATCH', `${HOOK}/messages/900000000000000001`], ['POST', `${UPDATES}?wait=true`]]);
   assert.equal(d.calls[1].body.embeds[0].title, '✅ WON · M. Dellavedova to win the match');
   assert.match(d.calls[1].body.embeds[0].description, /^\*\*Final 6-0 4-6 7-6 · \+0\.57u\*\*/);
-  assert.match(d.calls[2].body.content, /^✅ WON · M\. Dellavedova to win the match/);
+  assert.equal(d.calls[2].body.embeds[0].title, '✅ WON · M. Dellavedova to win the match', 'the results channel gets the result card');
+  assert.match(d.calls[2].body.embeds[0].footer.text, /^Our Match Winner record: 8-2 · \+3\.29u$/);
   assert.deepEqual(await sync(env, NOW + 41 * 60e3, d, plays), { posted: 0, edited: 0, failed: 0 });
   assert.equal(d.calls.length, 3, 'and never again');
 });
@@ -291,6 +291,47 @@ test('a test alert goes out once per test id: a sample play marked TEST with the
   await sync(both.env, NOW + 60e3, d2, [], undefined, 't9');
   await sync(both.env, NOW + 120e3, d2, [], undefined, 't9');
   assert.deepEqual(d2.calls.map((c) => [c.method, c.url.split('?')[0].split('/messages')[0]]), [['POST', HOOK], ['PATCH', HOOK], ['POST', UPDATES]]);
-  assert.match(d2.calls[2].body.content, /^🧪 TEST \(not a real play\) · ✅ WON · Test Player to win the match/);
+  assert.equal(d2.calls[2].body.embeds[0].title, '🧪 TEST · ✅ WON · Test Player to win the match');
+  assert.match(d2.calls[2].body.embeds[0].footer.text, /^TEST · not a real play · /);
   assert.equal((await discordStatus(both.env)).test.updates, 'sent');
+});
+
+test('the result card: won or lost and the bet, the final score and the units, the price it was taken at, the match, and nothing more', async () => {
+  const won = liveResultMessage(ml({ status: 'graded', result: 'win', profit: 0.57, actual: '6-0 4-6 7-6', gradedAt: NOW }), { record: { wins: 9, losses: 2, units: 3.86 } });
+  const e = won.embeds[0];
+  assert.equal(won.content, '');
+  assert.deepEqual(won.allowed_mentions, { parse: [] }, 'a result pings nobody');
+  assert.equal(e.title, '✅ WON · M. Dellavedova to win the match');
+  assert.equal(e.description, '**Final 6-0 4-6 7-6** · **+0.57u**\nTaken at −175 (FanDuel) · 1u stake\nM. Dellavedova vs H. Moriya · ATP · Challenger Playford 2');
+  assert.equal(e.fields, undefined, 'no grid of numbers: the result is the card');
+  assert.deepEqual([e.author.name, e.color, e.footer.text], ['PERPETUAL PICKS · LIVE TENNIS', 0x10b981, 'Our Match Winner record: 9-2 · +3.86u']);
+  assert.match(e.image.url, /\/assets\/discord\/won\.png\?v=\d+$/);
+  assert.equal(e.timestamp, new Date(NOW).toISOString());
+
+  const lost = liveResultMessage(set({ status: 'graded', result: 'loss', profit: -1, actual: '6-2 4-6' }), {}).embeds[0];
+  assert.equal(lost.title, '❌ LOST · Carlos Alcaraz to win set 2');
+  assert.equal(lost.description, '**Final 6-2 4-6** · **−1.00u**\nTaken at −186 or better · 1u stake\nCarlos Alcaraz vs Alexander Zverev · ATP · Nitto ATP Finals');
+  assert.deepEqual([lost.color, lost.footer.text], [0xef4444, 'perpetualpicks.com']);
+  assert.match(lost.image.url, /\/lost\.png/);
+  const voided = liveResultMessage(ml({ status: 'void', result: 'void', profit: 0, actual: '6-0 1-0: a retirement' }), {}).embeds[0];
+  assert.deepEqual([voided.title, voided.description.split('\n')[0]], ['⚪ VOID · M. Dellavedova to win the match', '**Stake returned** · 6-0 1-0: a retirement']);
+  assert.match(voided.image.url, /\/void\.png/);
+
+  // A results-only test: a win and a loss in the results channel, marked as a test, with nothing sent to the live channel and nobody pinged.
+  const { env, store } = makeEnv({ DISCORD_LIVE_WEBHOOK: HOOK, DISCORD_UPDATES_WEBHOOK: UPDATES, DISCORD_LIVE_ROLE_ID: '987654321098765432' });
+  store.set(DISCORD_LEDGER_KEY, JSON.stringify({ helloAt: NOW - 1, plays: {} }));
+  const d = fakeDiscord();
+  for (let i = 0; i < 4; i++) await sync(env, NOW + i * 60e3, d, [], undefined, 'r1', 'results');
+  assert.deepEqual(d.calls.map((c) => [c.method, c.url, c.body.embeds[0].title, c.body.content]), [
+    ['POST', `${UPDATES}?wait=true`, '🧪 TEST · ✅ WON · Test Player to win the match', ''],
+    ['POST', `${UPDATES}?wait=true`, '🧪 TEST · ❌ LOST · Test Player to win the match', ''],
+  ]);
+  assert.deepEqual((await discordStatus(env)).test, { id: 'r1', state: 'done', at: NOW, updates: 'sent' });
+  // With no results channel set there is nothing to send, and it says so.
+  const none = makeEnv({ DISCORD_LIVE_WEBHOOK: HOOK });
+  none.store.set(DISCORD_LEDGER_KEY, JSON.stringify({ helloAt: NOW - 1, plays: {} }));
+  const quiet = fakeDiscord();
+  await sync(none.env, NOW, quiet, [], undefined, 'r1', 'results');
+  assert.equal(quiet.calls.length, 0);
+  assert.equal((await discordStatus(none.env)).test.updates, 'no results channel');
 });
