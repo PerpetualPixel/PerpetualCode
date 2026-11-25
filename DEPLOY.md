@@ -342,7 +342,8 @@ and make a new one.
   must allow being mentioned (**Server Settings** → **Roles** → the role →
   "Allow anyone to @mention this role").
 - `DISCORD_UPDATES_WEBHOOK`: a second webhook, made the same way in another
-  channel (for example `updates`), that gets one short line per result.
+  channel (for example `updates`), that gets one simple card per result: won, lost or void, the final score, the
+  units, the price it was taken at, and the record.
 
 ### Checking it
 

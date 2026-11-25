@@ -25,7 +25,7 @@
  *     not posted late: an alert is for a play that can still be taken.
  *
  * Optional: DISCORD_LIVE_ROLE_ID pings a role on each new play (never on an
- * edit), and DISCORD_UPDATES_WEBHOOK gets one short line per result.
+ * edit), and DISCORD_UPDATES_WEBHOOK gets one simple card per result.
  *
  * The webhook URL is a credential: it is read from the environment, never
  * logged, and never returned by a route.
@@ -62,7 +62,10 @@ const TOUR = { atp: 'ATP', wta: 'WTA' };
  * this value and the next tick posts one sample play, marked as a test, with the role ping; the tick after edits it
  * to its settled form. That is the whole path a real play takes.
  */
-export const TEST_ALERT_ID = '2026-11-25-3';
+export const TEST_ALERT_ID = '2026-11-25-4';
+/** What the test sends: 'all' (the alert with its ping, its edit, the result card) or 'results' (the result cards alone, a win and a loss, with no ping). */
+export const TEST_SCOPE = 'results';
+const markTest = (msg) => { msg.embeds[0].title = `🧪 TEST · ${msg.embeds[0].title}`.slice(0, 250); msg.embeds[0].footer = { ...msg.embeds[0].footer, text: `TEST · not a real play · ${msg.embeds[0].footer.text}` }; return msg; };
 const TEST_PLAY = { id: 'test', market: 'live_ml', tour: 'atp', event: 'Test alert', round: 'not a real play', a: 'Test Player', b: 'Sample Opponent', side: 'a', prob: 0.69, american: -175, playable: -190, bookId: 'fanduel', book: 'FanDuel', units: 1, selection: 'Test Player to win the match (live)', score: '6-0 3-4', status: 'pending',
   stats: { holds: { a: { held: 6, served: 6 }, b: { held: 3, served: 5 } }, last: { of: 8, a: 5, b: 3 }, streak: null, setGames: null },
   // The books' own front pages: a test has no bet to put on a slip.
@@ -216,11 +219,38 @@ export function livePlayMessage(play, { role = null, record = null } = {}) {
   };
 }
 
-/** One line for the updates channel when a play settles. */
-export function liveResultLine(play) {
-  const outcome = play.status === 'void' ? '⚪ VOID' : play.result === 'win' ? '✅ WON' : '❌ LOST';
+/**
+ * The result card for the results channel (2026-11-25, the owner, of the alert card: "Do the same for results but a
+ * very simple win or loss and the score or any pertinent information"). Won, lost or void and the bet in the title;
+ * the final score and the units; the price it was taken at; the match. The site's record for that kind of play, as it
+ * stands with this result in it, is the footer. The same logo, colours and strip as the alert, and nothing else.
+ */
+export function liveResultMessage(play, { record = null } = {}) {
+  const kind = KIND[play.market] ?? KIND.live_ml;
+  const outcome = play.status === 'void' ? 'void' : play.result === 'win' ? 'win' : 'loss';
   const take = String(play.selection ?? '').replace(/\s*\(live\)\s*$/i, '');
-  return { content: `${outcome} · ${md(take)} · ${md(play.a)} vs ${md(play.b)}${play.actual ? ` · ${md(play.actual)}` : ''}${play.status === 'void' ? '' : Number.isFinite(play.profit) ? ` · ${signedUnits(play.profit)}` : ''}`.slice(0, 1900), allowed_mentions: { parse: [] } };
+  const priced = Number.isFinite(play.american);
+  const price = priced ? play.american : play.playable;
+  const lines = [
+    outcome === 'void' ? `**Stake returned**${play.actual ? ` · ${md(play.actual)}` : ''}` : `**Final ${md(play.actual ?? '')}**${Number.isFinite(play.profit) ? ` · **${signedUnits(play.profit)}**` : ''}`,
+    Number.isFinite(price) ? `Taken at ${priced ? fmt(play.american) : `${fmt(price)} or better`}${priced ? ` (${md(SPORTSBOOKS[play.bookId]?.name ?? play.book ?? 'the book')})` : ''} · ${unitsOf(play.units)} stake` : null,
+    [`${md(play.a)} vs ${md(play.b)}`, TOUR[play.tour] ?? null, play.event ? md(play.event) : null].filter(Boolean).join(' · '),
+  ].filter(Boolean);
+  const mark = { win: '✅ WON ·', loss: '❌ LOST ·', void: '⚪ VOID ·' }[outcome];
+  return {
+    content: '',
+    allowed_mentions: { parse: [] },
+    embeds: [{
+      author: { name: 'PERPETUAL PICKS · LIVE TENNIS', url: SITE, icon_url: LOGO },
+      title: `${mark} ${md(take)}`.slice(0, 250),
+      url: SITE,
+      description: lines.join('\n').slice(0, 1900),
+      color: COLOR[outcome],
+      image: { url: `${ART}/${{ win: 'won', loss: 'lost', void: 'void' }[outcome]}.png?v=${ART_VERSION}` },
+      footer: { text: record && record.wins + record.losses > 0 ? `Our ${kind.head(play).replace(/^Set \d+ /, 'Set ')} record: ${record.wins}-${record.losses} · ${signedUnits(record.units)}` : 'perpetualpicks.com', icon_url: LOGO },
+      timestamp: new Date(play.gradedAt ?? Date.now()).toISOString(),
+    }],
+  };
 }
 
 /**
@@ -285,7 +315,19 @@ export async function syncLiveDiscord(env, now = Date.now(), { deps = {} } = {})
 
   // The test alert (TEST_ALERT_ID): posted once per value, then edited on a later tick to its settled form.
   const testId = deps.testId ?? TEST_ALERT_ID;
-  if (testId && ledger.test?.id !== testId) {
+  const testScope = deps.testScope ?? TEST_SCOPE;
+  if (testId && ledger.test?.id !== testId && testScope === 'results') {
+    // The result cards alone, a win and a loss, in the results channel: nobody is pinged.
+    ledger.test = { id: testId, state: 'sending', at: now };
+    await writeLedger(env, ledger);
+    let sent = cfg.updates ? 'sent' : 'no results channel';
+    if (cfg.updates) for (const over of [{ result: 'win', profit: 0.57, actual: '6-0 4-6 7-6' }, { result: 'loss', profit: -1, actual: '6-0 4-6 3-6' }]) {
+      const u = await post(fetcher, cfg.updates, markTest(liveResultMessage({ ...TEST_PLAY, postedAt: now, gradedAt: now, status: 'graded', ...over }, { record: { wins: 9, losses: 2, units: 3.86 } })));
+      if (!u.ok) { sent = 'failed'; fail('test result', u); }
+    }
+    ledger.test = { id: testId, state: 'done', at: now, updates: sent };
+    dirty = true;
+  } else if (testId && ledger.test?.id !== testId) {
     ledger.test = { id: testId, state: 'sending', at: now };
     await writeLedger(env, ledger);
     const r = await post(fetcher, cfg.live, testAlertMessage(now, { role: cfg.role }));
@@ -298,8 +340,7 @@ export async function syncLiveDiscord(env, now = Date.now(), { deps = {} } = {})
     if (!r.ok) fail('test edit', r);
     // The updates channel gets the test's result line too, as it would a real play's, marked as a test.
     if (cfg.updates) {
-      const line = liveResultLine({ ...TEST_PLAY, status: 'graded', result: 'win', profit: 0.57, actual: '6-0 4-6 7-6' });
-      const u = await post(fetcher, cfg.updates, { ...line, content: `🧪 TEST (not a real play) · ${line.content}` });
+      const u = await post(fetcher, cfg.updates, markTest(liveResultMessage({ ...TEST_PLAY, postedAt: ledger.test.at, gradedAt: now, status: 'graded', result: 'win', profit: 0.57, actual: '6-0 4-6 7-6' }, { record: { wins: 9, losses: 2, units: 3.86 } })));
       ledger.test.updates = u.ok ? 'sent' : 'failed';
       if (!u.ok) fail('test update', u);
     }
@@ -345,7 +386,7 @@ export async function syncLiveDiscord(env, now = Date.now(), { deps = {} } = {})
       if (r.ok) {
         ledger.plays[p.id] = { ...entry, state: 'done', doneAt: now };
         out.edited++;
-        if (cfg.updates) { const u = await post(fetcher, cfg.updates, liveResultLine(p)); if (!u.ok && !u.unknown) fail('update', u); }
+        if (cfg.updates) { const u = await post(fetcher, cfg.updates, liveResultMessage(p, { record: await recordFor(p) })); if (!u.ok && !u.unknown) fail('update', u); }
       } else {
         const tries = (entry.editTries ?? 0) + 1;
         // The message is gone (deleted by hand) or the edit keeps failing: stop trying.
