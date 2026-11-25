@@ -6,7 +6,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
-import { syncBasketballDiscord, basketballConfig, basketballStatus, slipPost, gradePost, slipLine, slipMessage, playbookLines, testSlipPost, DISCORD_NBA_LEDGER_KEY, NBA_FRESH_MS, MAX_A_GAME } from '../worker/src/discord-nba.js';
+import { syncBasketballDiscord, syncFootballDiscord, syncLeagueDiscord, leagueConfig, footballStatus, LEAGUES, basketballConfig, basketballStatus, slipPost, gradePost, slipLine, slipMessage, playbookLines, testSlipPost, DISCORD_NBA_LEDGER_KEY, NBA_FRESH_MS, MAX_A_GAME } from '../worker/src/discord-nba.js';
 import { slipCardSvg, slipCardHeight, textWidth, CARD_W } from '../worker/src/card-svg.js';
 
 const NOW = Date.parse('2026-11-26T01:12:00Z');
@@ -207,5 +207,55 @@ test('the slip card: a line a leg, the card as tall as its legs, and nothing ove
 test('the worker runs the basketball channel after each live probe, and its status rides the Discord status route', () => {
   const worker = fs.readFileSync(new URL('../worker/src/index.js', import.meta.url), 'utf8');
   assert.match(worker, /runLiveProbe\(env, ctx, now\)\.catch\([^]*?\)\s*\.then\(\(\) => syncBasketballDiscord\(env, now\)\)/);
-  assert.match(worker, /\{ \.\.\.\(await discordStatus\(env\)\), basketball: await basketballStatus\(env\) \}/);
+  assert.match(worker, /\{ \.\.\.\(await discordStatus\(env\)\), basketball: await basketballStatus\(env\), football: await footballStatus\(env\) \}/);
+  assert.match(worker, /\.then\(\(\) => syncFootballDiscord\(env, now\)\)/);
+});
+
+// --- Football: the same thing in its own channel (2026-11-25: "DISCORD_FOOTBALL_WEBHOOK ... post the live football plays and @playbook for links") ---
+
+const FOOT = 'https://discord.com/api/webhooks/523456789012345678/nflDEF_ghi-jklMNOpqrSTUvwxYZ0123456789abcdefghijklmnopqrstuvwxyzABCDEF';
+const NFL_GAME = { id: '901', name: 'Dallas Cowboys at Philadelphia Eagles', league: 'nfl', date: '2026-11-26T00:20:00Z' };
+const nflSlip = (over = {}) => ({ bookId: 'draftkings', book: 'DraftKings', american: 110, decimal: 2.1, postedAt: NOW - 60e3, legs: [
+  { bookId: 'draftkings', player: 'Jalen Hurts', team: 'PHI', stat: 'passingYards', label: 'Pass Yds', point: 224.5, price: -190, decimal: 1.53, current: 141 },
+  { bookId: 'draftkings', player: 'Saquon Barkley', team: 'PHI', stat: 'rushingYards', label: 'Rush Yds', point: 79.5, price: -170, decimal: 1.59, current: 52 },
+  { bookId: 'draftkings', player: 'CeeDee Lamb', team: 'DAL', stat: 'receptions', label: 'Rec', point: 5.5, price: -160, decimal: 1.63, current: 4 }], ...over });
+
+test('football has its own channel, ledger and test card, and is told apart from basketball everywhere', async () => {
+  assert.deepEqual([LEAGUES.nfl.secret, LEAGUES.nba.secret], ['DISCORD_FOOTBALL_WEBHOOK', 'DISCORD_LIVE_BASKETBALL_WEBHOOK']);
+  assert.notEqual(LEAGUES.nfl.ledger, LEAGUES.nba.ledger);
+  const { env, store } = makeEnv({ DISCORD_FOOTBALL_WEBHOOK: FOOT, DISCORD_PLAYBOOK_USER_ID: BOT });
+  assert.deepEqual(await leagueConfig(env, 'nfl'), { hook: FOOT, playbook: BOT }, 'one Playbook id serves both channels');
+  assert.deepEqual(await syncBasketballDiscord(env, NOW), { off: true }, 'the football webhook does not switch basketball on');
+  const play = { espnEventId: '901', name: NFL_GAME.name, builtAt: NOW - 30e3, score: { DAL: 10, PHI: 14 }, detail: '8:40 - 2nd Quarter', slips: [nflSlip()] };
+  const d = fakeDiscord();
+  const deps = (over = {}) => ({ deps: { fetch: d.fetch, games: async () => [NFL_GAME, GAME], play: async () => play, watch: async () => null, render: async () => PNG, testId: '', ...over } });
+  // An NFL game posts to the football channel; the NBA game in the same list is not football's.
+  assert.deepEqual(await syncFootballDiscord(env, NOW, deps()), { posted: 1, settled: 0, failed: 0 });
+  assert.deepEqual(d.calls.map((c) => c.url.split('?')[0]), [FOOT]);
+  assert.equal(d.calls[0].body.content, `<@${BOT}> DraftKings\nJalen Hurts Over 224.5 Passing Yards (Dallas Cowboys at Philadelphia Eagles)\nSaquon Barkley Over 79.5 Rushing Yards (Dallas Cowboys at Philadelphia Eagles)\nCeeDee Lamb Over 5.5 Receptions (Dallas Cowboys at Philadelphia Eagles)`);
+  assert.deepEqual(d.calls[0].body.allowed_mentions, { parse: [], users: [BOT] });
+  assert.deepEqual(d.calls[0].body.components[0].components[0].emoji, { name: '🏈' });
+  assert.ok(store.has(LEAGUES.nfl.ledger) && !store.has(LEAGUES.nba.ledger));
+  // The game ends: the post is edited to how it finished, against the football box.
+  const watch = { ticks: [{ state: 'post', at: NOW + 3 * 3600e3, score: { DAL: 20, PHI: 27 }, box: [{ name: 'Jalen Hurts', stats: { passingYards: 262 } }, { name: 'Saquon Barkley', stats: { rushingYards: 71 } }, { name: 'CeeDee Lamb', stats: { receptions: 8 } }] }] };
+  assert.deepEqual(await syncFootballDiscord(env, NOW + 3 * 3600e3, deps({ watch: async () => watch })), { posted: 0, settled: 1, failed: 0 });
+  assert.equal(d.calls[1].body.content, '❌ **LOST** · Dallas Cowboys at Philadelphia Eagles · 3 legs · +110 at DraftKings · −1.00u');
+  // Its card says NFL, and its written form names the league.
+  const post = slipPost(NFL_GAME, play, nflSlip(), 'nfl');
+  assert.match(slipCardSvg(post), />NFL  •  Nov 25  •  8:11 PM ET</);
+  assert.match(slipCardSvg(post), />Over 224\.5 Pass Yds</);
+  assert.equal(slipMessage(post).plain.embeds[0].author.name, 'PERPETUAL PICKS · LIVE NFL');
+  assert.equal(slipLine(post).split('\n')[0], '🏈 **LIVE PLAY** · +110 at DraftKings · 1u');
+
+  // The test card, once, in the football channel, and the status for it.
+  const t = makeEnv({ DISCORD_FOOTBALL_WEBHOOK: FOOT });
+  const d2 = fakeDiscord();
+  await syncLeagueDiscord(t.env, NOW, 'nfl', { deps: { fetch: d2.fetch, games: async () => [], render: async () => PNG } });
+  await syncLeagueDiscord(t.env, NOW + 60e3, 'nfl', { deps: { fetch: d2.fetch, games: async () => [], render: async () => PNG } });
+  assert.equal(d2.calls.length, 1);
+  assert.match(d2.calls[0].body.content, /^🧪 \*\*TEST · not a real play\*\*\n🏈 \*\*LIVE PLAY\*\* · \+110 at FanDuel · 1u\nTest Quarterback Over 224\.5 Passing Yards \(Test Team at Sample Team\)/);
+  const status = await footballStatus(t.env);
+  assert.deepEqual([status.channel, status.playbook, status.test.id, status.test.state, status.lastError], [true, false, LEAGUES.nfl.testId, 'done', null]);
+  assert.ok(!JSON.stringify(status).includes('nflDEF'));
+  assert.deepEqual([testSlipPost(NOW, 'nfl').league, testSlipPost(NOW).league], ['nfl', 'nba']);
 });

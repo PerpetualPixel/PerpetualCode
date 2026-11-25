@@ -60,7 +60,8 @@ REQUIRE_AUTH = "false"
 # DEPLOY.md, "Discord live alerts"). The URL is a password for the channel:
 #   wrangler secret put DISCORD_LIVE_WEBHOOK
 # Optional with it: DISCORD_LIVE_LEAN_WEBHOOK (a channel for the live leans),
-# DISCORD_LIVE_BASKETBALL_WEBHOOK (a channel for the live NBA plays) with
+# DISCORD_LIVE_BASKETBALL_WEBHOOK (a channel for the live NBA plays) and
+# DISCORD_FOOTBALL_WEBHOOK (one for the live NFL plays), with
 # DISCORD_PLAYBOOK_USER_ID (the Playbook bot's user id, tagged on each of them),
 # DISCORD_LIVE_ROLE_ID (a role to ping on a new play) and
 # DISCORD_UPDATES_WEBHOOK (a second channel for one line per result). NEVER set

@@ -21,6 +21,10 @@
  * When the game ends, each post's message is edited to how it finished: every leg against the final box score,
  * won or lost, and the units at one unit a play.
  *
+ * Football works the same way (2026-11-25: "DISCORD_FOOTBALL_WEBHOOK ... made another channel ... same thing. Post
+ * the live football plays and @playbook for links in the channel"): the live NFL plays go to their own channel,
+ * with their own ledger, by the same rules. LEAGUES below is the whole difference between the two.
+ *
  * The webhook address is a credential (see worker/src/discord.js): only in the worker's secrets, never logged,
  * never returned by a route.
  */
@@ -31,7 +35,12 @@ import { SPORTSBOOKS } from '../../docs/engine.js';
 import { PLAYBOOK_BOOK_NAMES } from '../../docs/playbook.js';
 import { getSettings } from './settings.js';
 
-export const DISCORD_NBA_LEDGER_KEY = 'discord:nba:ledger';
+/** A league's channel: its webhook secret, its ledger, how it is named, and its test card's id (a new value sends one more). */
+export const LEAGUES = {
+  nba: { secret: 'DISCORD_LIVE_BASKETBALL_WEBHOOK', ledger: 'discord:nba:ledger', name: 'NBA', emoji: '🏀', testId: '2026-11-25-nba-1' },
+  nfl: { secret: 'DISCORD_FOOTBALL_WEBHOOK', ledger: 'discord:nfl:ledger', name: 'NFL', emoji: '🏈', testId: '2026-11-25-nfl-1' },
+};
+export const DISCORD_NBA_LEDGER_KEY = LEAGUES.nba.ledger;
 /** A slip is posted only while the board that made it is this fresh: an older build's prices are gone. */
 export const NBA_FRESH_MS = 12 * 60e3;
 /** The most plays posted for one game. */
@@ -44,13 +53,13 @@ const BOARD = 'https://perpetualpicks.com/app.html';
 const LOGO = 'https://perpetualpicks.com/assets/logo-icon-180.png';
 const COLOR = { open: 0x00f0ff, win: 0x10b981, loss: 0xef4444, void: 0x9c98b8 };
 /** A stat as Playbook reads it. */
-const STAT_WORDS = { points: 'Points', rebounds: 'Rebounds', assists: 'Assists' };
+const STAT_WORDS = { points: 'Points', rebounds: 'Rebounds', assists: 'Assists', passingYards: 'Passing Yards', rushingYards: 'Rushing Yards', receivingYards: 'Receiving Yards', receptions: 'Receptions' };
 
 /**
  * One test card, sent once per value: the channel is new, and a card in it shows the setup works without waiting
  * for a game. It is marked as a test and tags nobody (a made-up slip would only confuse the bot).
  */
-export const NBA_TEST_ID = '2026-11-25-nba-1';
+export const NBA_TEST_ID = LEAGUES.nba.testId;
 
 const fmt = (american) => (american > 0 ? `+${american}` : String(american).replace('-', '−'));
 const md = (s) => String(s ?? '').replace(/([\\*_~`|>[\]()])/g, '\\$1').slice(0, 200);
@@ -59,19 +68,21 @@ const num = (v) => { const n = Number(v); return Number.isFinite(n) ? n : null; 
 const userIdOf = (v) => String(v ?? '').trim().match(/^(?:<@!?)?(\d{15,22})>?$/)?.[1] ?? null;
 
 /** What is configured: the channel's webhook (null when unset or not a Discord webhook) and Playbook's user id. */
-export async function basketballConfig(env) {
-  const hook = webhookOf(env?.DISCORD_LIVE_BASKETBALL_WEBHOOK);
+export async function leagueConfig(env, league = 'nba') {
+  const hook = webhookOf(env?.[LEAGUES[league].secret]);
   let playbook = userIdOf(env?.DISCORD_PLAYBOOK_USER_ID);
   // The id the owner saved in the app's Playbook settings stands in when the secret is not set.
   if (hook && !playbook) playbook = userIdOf((await getSettings(env, 'owner').catch(() => null))?.playbook?.mention);
   return { hook, playbook };
 }
 
+export const basketballConfig = (env) => leagueConfig(env, 'nba');
+
 /** A slip as it is kept and drawn: the game, the book and price, and each leg with where the player stood. */
-export function slipPost(game, play, slip) {
+export function slipPost(game, play, slip, league = 'nba') {
   return {
     id: `${game.id}:${slip.bookId}:${slip.postedAt ?? play.builtAt}`,
-    gameId: String(game.id), game: game.name ?? '', league: 'nba',
+    gameId: String(game.id), game: game.name ?? '', league,
     bookId: slip.bookId, book: SPORTSBOOKS[slip.bookId]?.name ?? slip.book ?? slip.bookId,
     american: slip.american, decimal: slip.decimal, units: 1,
     postedAt: slip.postedAt ?? play.builtAt, score: play.score ?? null, detail: play.detail ?? null,
@@ -105,20 +116,21 @@ export function slipLine(post, { playbook = null } = {}) {
   const price = `${fmt(post.american)} at ${md(post.book)}`;
   if (post.status === 'void') return `⚪ **VOID** · ${md(post.game)} · ${post.legs.length} legs · stake returned`;
   if (post.status === 'graded') return `${post.result === 'win' ? '✅ **WON**' : '❌ **LOST**'} · ${md(post.game)} · ${post.legs.length} legs · ${price} · ${signedUnits(post.profit ?? 0)}`;
-  const head = playbook ? `<@${playbook}> ${PLAYBOOK_BOOK_NAMES[post.bookId] ?? post.book}` : `🏀 **LIVE PLAY** · ${price} · 1u`;
+  const head = playbook ? `<@${playbook}> ${PLAYBOOK_BOOK_NAMES[post.bookId] ?? post.book}` : `${LEAGUES[post.league]?.emoji ?? '🏀'} **LIVE PLAY** · ${price} · 1u`;
   return [head, ...playbookLines(post)].join('\n').slice(0, 1900);
 }
 
 /** The written card, for when there is no picture: the same play in words. */
 function slipWritten(post) {
   const outcome = post.status === 'void' ? 'void' : post.status === 'graded' ? (post.result === 'win' ? 'win' : 'loss') : 'open';
-  const mark = { open: '🏀 LIVE PLAY ·', win: '✅ WON ·', loss: '❌ LOST ·', void: '⚪ VOID ·' }[outcome];
+  const sport = LEAGUES[post.league] ?? LEAGUES.nba;
+  const mark = { open: `${sport.emoji} LIVE PLAY ·`, win: '✅ WON ·', loss: '❌ LOST ·', void: '⚪ VOID ·' }[outcome];
   const legs = post.legs.map((l) => `• **${md(l.player)}** Over ${l.point} ${md(l.label)}${outcome === 'open' ? (l.current != null ? ` · now ${l.current}` : '') : l.final != null ? ` · final ${l.final} ${l.hit ? '✓' : '✗'}` : ''}`);
   const points = Object.entries((outcome === 'open' ? post.score : post.finalScore ?? post.score) ?? {}).map(([t, n]) => `${md(t)} ${n}`).join(', ');
   return {
     title: `${mark} ${post.legs.length} legs · ${fmt(post.american)} at ${md(post.book)}`.slice(0, 250),
     url: BOARD,
-    author: { name: 'PERPETUAL PICKS · LIVE NBA', url: BOARD, icon_url: LOGO },
+    author: { name: `PERPETUAL PICKS · LIVE ${sport.name}`, url: BOARD, icon_url: LOGO },
     description: [`${md(post.game)}${points ? ` · ${points}` : ''}`, ...legs, outcome === 'open' ? 'Recommended **1u**' : outcome === 'void' ? '**Stake returned**' : `**${signedUnits(post.profit ?? 0)}**`].join('\n').slice(0, 3900),
     color: COLOR[outcome],
     footer: { text: 'Live play · perpetualpicks.com', icon_url: LOGO },
@@ -132,14 +144,24 @@ export function slipMessage(post, { png = null, playbook = null, buttons = true 
   const content = slipLine(post, { playbook });
   // Only the bot can be tagged, and only on a new play: nothing else in the words can ping anyone.
   const allowed_mentions = { parse: [], users: playbook && outcome === 'open' ? [playbook] : [] };
-  const components = [{ type: 1, components: [{ type: 2, style: 5, url: BOARD, label: 'Live board', emoji: { name: '🏀' } }] }];
+  const components = [{ type: 1, components: [{ type: 2, style: 5, url: BOARD, label: 'Live board', emoji: { name: LEAGUES[post.league]?.emoji ?? '🏀' } }] }];
   const plain = { content, allowed_mentions, embeds: [slipWritten(post)] };
   if (!png) return { payload: buttons ? { ...plain, components } : plain, file: null, plain };
   return { payload: { content, allowed_mentions, embeds: [{ color: COLOR[outcome], image: { url: 'attachment://card.png' } }], attachments: [{ id: 0, filename: 'card.png' }], ...(buttons ? { components } : {}) }, file: { name: 'card.png', bytes: png }, plain };
 }
 
 /** The test slip: made-up players, in the shape of a real one. */
-export function testSlipPost(now = Date.now()) {
+export function testSlipPost(now = Date.now(), league = 'nba') {
+  if (league === 'nfl') return {
+    id: 'test-nfl', gameId: 'test', game: 'Test Team at Sample Team', league: 'nfl', bookId: 'fanduel', book: 'FanDuel', american: 110, decimal: 2.1, units: 1, postedAt: now,
+    score: { TST: 14, SMP: 10 }, detail: '8:40 - 2nd Quarter',
+    legs: [
+      { player: 'Test Quarterback', team: 'TST', stat: 'passingYards', label: 'Pass Yds', point: 224.5, price: -190, current: 141 },
+      { player: 'Sample Runner', team: 'SMP', stat: 'rushingYards', label: 'Rush Yds', point: 59.5, price: -170, current: 38 },
+      { player: 'Test Receiver', team: 'TST', stat: 'receptions', label: 'Rec', point: 4.5, price: -160, current: 3 },
+    ],
+    status: 'pending', result: null, profit: null,
+  };
   return {
     id: 'test-nba', gameId: 'test', game: 'Test Team at Sample Team', league: 'nba', bookId: 'fanduel', book: 'FanDuel', american: 105, decimal: 2.05, units: 1, postedAt: now,
     score: { TST: 54, SMP: 50 }, detail: '5:12 - 2nd Quarter',
@@ -152,18 +174,19 @@ export function testSlipPost(now = Date.now()) {
   };
 }
 
-const writeLedger = (env, ledger) => env.POTD_KV.put(DISCORD_NBA_LEDGER_KEY, JSON.stringify(ledger), { expirationTtl: LEDGER_TTL });
 
 /**
- * Bring the channel level with the live NBA plays. Returns {off} with no webhook, else {posted, settled, failed}.
+ * Bring a league's channel level with its live plays. Returns {off} with no webhook, else {posted, settled, failed}.
  * `deps.fetch`, `deps.games`, `deps.play`, `deps.watch` and `deps.render` stand in for Discord, the watched games,
  * a game's stored slips, its watch log and the picture in tests.
  */
-export async function syncBasketballDiscord(env, now = Date.now(), { deps = {} } = {}) {
-  const cfg = deps.config ?? await basketballConfig(env);
+export async function syncLeagueDiscord(env, now = Date.now(), league = 'nba', { deps = {} } = {}) {
+  const sport = LEAGUES[league];
+  const cfg = deps.config ?? await leagueConfig(env, league);
   if (!cfg.hook) return { off: true };
   const fetcher = deps.fetch ?? fetch;
-  const ledger = (await readJson(env, DISCORD_NBA_LEDGER_KEY)) ?? {};
+  const writeLedger = (e, l) => e.POTD_KV.put(sport.ledger, JSON.stringify(l), { expirationTtl: LEDGER_TTL });
+  const ledger = (await readJson(env, sport.ledger)) ?? {};
   ledger.games ??= {}; ledger.posts ??= {};
   const out = { posted: 0, settled: 0, failed: 0 };
   let dirty = false;
@@ -177,10 +200,10 @@ export async function syncBasketballDiscord(env, now = Date.now(), { deps = {} }
     return r;
   };
 
-  // The test card, once per NBA_TEST_ID.
-  const testId = deps.testId ?? NBA_TEST_ID;
+  // The test card, once per test id.
+  const testId = deps.testId ?? sport.testId;
   if (testId && ledger.test?.id !== testId) {
-    const post = testSlipPost(now);
+    const post = testSlipPost(now, league);
     const card = slipMessage(post, { png: await picture(post), buttons: !ledger.noButtons });
     markTest(card.payload); if (card.plain !== card.payload) markTest(card.plain);
     ledger.test = { id: testId, state: 'sending', at: now };
@@ -192,7 +215,7 @@ export async function syncBasketballDiscord(env, now = Date.now(), { deps = {} }
   }
 
   const games = (deps.games ? await deps.games() : (await readWatchIndex(env)).games)
-    .filter((g) => g?.id && (g.league ?? 'nfl') === 'nba' && Number.isFinite(Date.parse(g.date)) && now >= Date.parse(g.date) - GAME_WINDOW_MS[1] && now <= Date.parse(g.date) + GAME_WINDOW_MS[0]);
+    .filter((g) => g?.id && (g.league ?? 'nfl') === league && Number.isFinite(Date.parse(g.date)) && now >= Date.parse(g.date) - GAME_WINDOW_MS[1] && now <= Date.parse(g.date) + GAME_WINDOW_MS[0]);
   const playOf = deps.play ?? ((id) => readJson(env, livePlayKey(id)));
   const watchOf = deps.watch ?? ((id) => readJson(env, liveWatchKey(id)));
 
@@ -206,7 +229,7 @@ export async function syncBasketballDiscord(env, now = Date.now(), { deps = {} }
     if (play?.slips?.length && now - (play.builtAt ?? 0) <= NBA_FRESH_MS && state.count < MAX_A_GAME && (state.tries ?? 0) < POST_TRIES * MAX_A_GAME) {
       const followed = state.current ? ledger.posts[state.current]?.post : null;
       const standing = followed && play.slips.some((s) => s.bookId === followed.bookId && (s.postedAt ?? play.builtAt) === followed.postedAt);
-      const post = standing ? null : slipPost(g, play, play.slips[0]);
+      const post = standing ? null : slipPost(g, play, play.slips[0], league);
       if (post && !ledger.posts[post.id] && post.legs.length) {
         const card = slipMessage(post, { png: await picture(post), playbook: cfg.playbook, buttons: !ledger.noButtons });
         // Marked before it is sent: a run that dies mid-send does not send it again.
@@ -248,19 +271,24 @@ export async function syncBasketballDiscord(env, now = Date.now(), { deps = {} }
   return out;
 }
 
-/** What a probe may know about the basketball channel: whether it is set up and working. No address, no message id. */
-export async function basketballStatus(env) {
-  const cfg = await basketballConfig(env);
-  const ledger = (await readJson(env, DISCORD_NBA_LEDGER_KEY)) ?? {};
+export const syncBasketballDiscord = (env, now, opts) => syncLeagueDiscord(env, now, 'nba', opts);
+export const syncFootballDiscord = (env, now, opts) => syncLeagueDiscord(env, now, 'nfl', opts);
+
+/** What a probe may know about a league's channel: whether it is set up and working. No address, no message id. */
+export async function leagueStatus(env, league = 'nba') {
+  const cfg = await leagueConfig(env, league);
+  const ledger = (await readJson(env, LEAGUES[league].ledger)) ?? {};
   const counts = {};
   for (const e of Object.values(ledger.posts ?? {})) counts[e.state] = (counts[e.state] ?? 0) + 1;
   return {
     channel: Boolean(cfg.hook),
     // Set but not a Discord webhook address: the secret is there and wrong.
-    secretRejected: Boolean(String(env?.DISCORD_LIVE_BASKETBALL_WEBHOOK ?? '').trim()) && !cfg.hook,
+    secretRejected: Boolean(String(env?.[LEAGUES[league].secret] ?? '').trim()) && !cfg.hook,
     // Whether Playbook's user id is known, so its tag is a real mention.
     playbook: Boolean(cfg.playbook),
     test: ledger.test ? { id: ledger.test.id, state: ledger.test.state, at: ledger.test.at ?? null, picture: ledger.test.picture ?? null } : null,
     lastPostAt: ledger.lastPostAt ?? null, lastError: ledger.lastError ?? null, cardError: ledger.cardError ?? null, games: Object.keys(ledger.games ?? {}).length, posts: counts,
   };
 }
+export const basketballStatus = (env) => leagueStatus(env, 'nba');
+export const footballStatus = (env) => leagueStatus(env, 'nfl');
