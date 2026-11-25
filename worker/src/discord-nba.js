@@ -237,7 +237,7 @@ export async function syncLeagueDiscord(env, now = Date.now(), league = 'nba', {
         ledger.games[gid] = { ...state, tries: (state.tries ?? 0) + 1 };
         await writeLedger(env, ledger);
         const r = await send(card);
-        if (r.ok && r.id) { ledger.posts[post.id] = { state: 'open', at: now, messageId: String(r.id), post }; ledger.games[gid] = { ...ledger.games[gid], current: post.id, count: state.count + 1 }; ledger.lastPostAt = now; out.posted++; }
+        if (r.ok && r.id) { ledger.posts[post.id] = { state: 'open', at: now, messageId: String(r.id), post }; ledger.games[gid] = { ...ledger.games[gid], current: post.id, count: state.count + 1 }; ledger.lastPostAt = now; ledger.lastPostTagged = Boolean(cfg.playbook); ledger.tagged = (ledger.tagged ?? 0) + (cfg.playbook ? 1 : 0); out.posted++; }
         // No answer: it may be in the channel, so it is not sent again. Refused: it is not, so a later tick may try.
         else if (r.unknown || r.ok) { ledger.posts[post.id] = { state: 'lost', at: now, post }; ledger.games[gid] = { ...ledger.games[gid], current: post.id, count: state.count + 1 }; fail('post', r); }
         else { delete ledger.posts[post.id]; fail('post', r); }
@@ -287,6 +287,9 @@ export async function leagueStatus(env, league = 'nba') {
     // Whether Playbook's user id is known, so its tag is a real mention.
     playbook: Boolean(cfg.playbook),
     test: ledger.test ? { id: ledger.test.id, state: ledger.test.state, at: ledger.test.at ?? null, picture: ledger.test.picture ?? null } : null,
+    // Whether the last play posted started with Playbook's tag, and how many plays have (2026-11-25, the owner: "ensure
+    // when football and basketball plays are posted, it ats @Playbook with the card so it can build the links").
+    lastPostTagged: ledger.lastPostTagged ?? null, tagged: ledger.tagged ?? 0,
     lastPostAt: ledger.lastPostAt ?? null, lastError: ledger.lastError ?? null, cardError: ledger.cardError ?? null, games: Object.keys(ledger.games ?? {}).length, posts: counts,
   };
 }
