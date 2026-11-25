@@ -10,7 +10,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import { cardSvg, cardState, playLines, marketWords, fitSize, fitLine, nameForms, textWidth, cardTime, ADVANCES, CARD_W, CARD_H } from '../worker/src/card-svg.js';
-import { syncLiveDiscord, discordStatus, discordConfig, livePlayMessage, testPlays, testLeans, cardButtons, cardLine, cardMessage, booksOf, statsUrl, findLivePlay, recordForPlay, DISCORD_LEDGER_KEY } from '../worker/src/discord.js';
+import { LINK_VERSION, syncLiveDiscord, discordStatus, discordConfig, livePlayMessage, testPlays, testLeans, cardButtons, cardLine, cardMessage, booksOf, statsUrl, findLivePlay, recordForPlay, DISCORD_LEDGER_KEY } from '../worker/src/discord.js';
 import { playPage, missingPlayPage } from '../worker/src/play-page.js';
 import { tennisLivePlaysKey, TENNIS_LIVE_PLAYS_INDEX } from '../worker/src/tennis-live-plays.js';
 
@@ -19,6 +19,7 @@ const HOOK = 'https://discord.com/api/webhooks/123456789012345678/abcDEF_ghi-jkl
 const UPDATES = 'https://discord.com/api/webhooks/223456789012345678/zzzDEF_ghi-jklMNOpqrSTUvwxYZ0123456789abcdefghijklmnopqrstuvwxyzABCDEF';
 const ROLE = '987654321098765432';
 const WORKER = 'https://pixel-pick-odds.mgbouldering.workers.dev';
+const SITE_PLAY = 'https://perpetualpicks.com/play.html';
 const PNG = new Uint8Array([0x89, 0x50, 0x4e, 0x47, 1, 2, 3]);
 function makeEnv(extra = {}) {
   const store = new Map();
@@ -103,7 +104,7 @@ test('the buttons: one a book that has the line, best price first and three at m
   // The books on one row, the stats on the row under it: the stats button never moves and no row is crowded.
   assert.deepEqual(flat(rows), [
     [['Add to slip · FanDuel −150', 'https://sportsbook.fanduel.com/'], ['DraftKings −155', 'https://sportsbook.draftkings.com/'], ['Caesars −160', 'https://sportsbook.caesars.com/']],
-    [['More info', `${WORKER}/play/test-live`]],
+    [['More info', `${SITE_PLAY}?id=test-live`]],
   ]);
   // Link buttons: the only kind a channel webhook can send.
   assert.ok(rows.flatMap((r) => r.components).every((b) => b.type === 2 && b.style === 5 && /^https:\/\//.test(b.url) && b.label.length <= 80));
@@ -123,12 +124,12 @@ test('the buttons: one a book that has the line, best price first and three at m
   ] });
   assert.deepEqual(booksOf(many).map((b) => [b.bookId, b.american, Boolean(b.url)]), [['betrivers', -160, false], ['fanduel', -175, true], ['caesars', -180, true], ['draftkings', -185, true], ['betmgm', -200, true]]);
   assert.deepEqual(flat(cardButtons(many)), [
-    [['Add to slip · FanDuel −175', 'https://sportsbook.fanduel.com/addToBetslip?marketId=1&selectionId=2'], ['Caesars −180', `${WORKER}/go/atp%3A1%3Alive_ml/caesars`], ['DraftKings −185', 'https://sportsbook.draftkings.com/event/1?outcomes=2']],
-    [['More info', `${WORKER}/play/atp%3A1%3Alive_ml`]],
+    [['Add to slip · FanDuel −175', 'https://sportsbook.fanduel.com/addToBetslip?marketId=1&selectionId=2'], ['Caesars −180', `${SITE_PLAY}?id=atp%3A1%3Alive_ml&go=caesars`], ['DraftKings −185', 'https://sportsbook.draftkings.com/event/1?outcomes=2']],
+    [['More info', `${SITE_PLAY}?id=atp%3A1%3Alive_ml`]],
   ]);
   // A play with no book: the stats button alone.
   assert.deepEqual(flat(cardButtons({ id: 'atp:2:live_set:2', market: 'live_set', playable: -186, status: 'pending' })).map((r) => r.map((b) => b[0])), [['More info']]);
-  assert.equal(statsUrl({ id: 'atp:2:live_set:2' }), `${WORKER}/play/atp%3A2%3Alive_set%3A2`);
+  assert.equal(statsUrl({ id: 'atp:2:live_set:2' }), `${SITE_PLAY}?id=atp%3A2%3Alive_set%3A2`);
 });
 
 test('the line above the card says the bet outright, and the message carries the picture, the ping for the one role, and the buttons', () => {
@@ -309,7 +310,7 @@ test('the page behind the stats button: the card, the bet, the price with a link
   assert.match(html, /<title>Test Player to win the match · Perpetual Picks<\/title>/);
   assert.match(html, new RegExp(`<img class="card" src="${WORKER}/card/test-live\\.png\\?s=live&amp;v=\\d+" alt="Test Player to win the match" width="${CARD_W}" height="${CARD_H}">`));
   assert.match(html, /<h1><small>Live play · take<\/small>Test Player to win the match<\/h1>/);
-  assert.match(html, /<a class="book" href="https:\/\/sportsbook\.fanduel\.com\/" rel="noopener noreferrer"><span>Add to slip · FanDuel<\/span><span>−150 ↗<\/span><\/a>/);
+  assert.match(html, /<a class="book" href="https:\/\/sportsbook\.fanduel\.com\/" target="_top" rel="noopener noreferrer"><span>Add to slip · FanDuel<\/span><span>−150 ↗<\/span><\/a>/);
   for (const part of ['<h2>The price</h2>', 'good down to −165', '<h2>The numbers</h2>', '<dt>Chance to land</dt><dd>69%', '<dt>Price needs</dt><dd>60%', '<dt>Edge</dt><dd>+9 pts', '<dt>Player serve</dt><dd>6/6', '<dt>Last 8 games</dt><dd>5–3', '<h2>Why</h2>', '<li>Last 8 games: Test Player 5, Sample Opponent 3.</li>', '<h2>Our Match Winner record</h2>', '<dd>9-2</dd>', '<dd>+3.86u</dd>']) assert.ok(html.includes(part), part);
   // Settled: the result, and no bet links.
   const won = playPage(t['test-won']);
@@ -534,4 +535,93 @@ test('a look at a restyle: one live play card in the live channel and one lean c
   assert.deepEqual(d.calls.map((c) => [c.url.split('?')[0], c.body.content.split('\n')[1].split(' · ')[0]]), [[HOOK, '🎾 **TAKE'], [LEANS, '💡 **LEAN']]);
   assert.ok(d.calls.every((c) => c.file && c.body.allowed_mentions.roles.length === 0));
   assert.deepEqual((await discordStatus(env)).test, { id: 't-pair', state: 'done', at: NOW, cards: 1, leans: 1, pictures: 2, buttons: true });
+});
+
+// --- No message carries the worker's own address (2026-11-25: its name has part of a personal email address in it) ---
+
+test('every link a Discord message carries to something of ours is on the site\'s own name, never the worker\'s address', async () => {
+  const { env, store } = makeEnv({ DISCORD_LIVE_WEBHOOK: HOOK, DISCORD_UPDATES_WEBHOOK: UPDATES, DISCORD_LIVE_LEAN_WEBHOOK: LEANS, DISCORD_LIVE_ROLE_ID: ROLE });
+  hello(store);
+  const quotes = [
+    { bookId: 'fanduel', book: 'FanDuel', american: -175, link: 'https://sportsbook.fanduel.com/addToBetslip?marketId=1&selectionId=2' },
+    { bookId: 'caesars', book: 'Caesars', american: -180, link: 'https://sportsbook.caesars.com/us/{state}/bet?selectionIds=abc&dl=betslip' },
+    { bookId: 'hardrock', book: 'Hard Rock Bet', american: -185, link: 'https://app.hardrock.bet/?deep_link_value=betslip/3947887837145334180' },
+  ];
+  // Every kind of message: a play and a lean as they open and as they settle, the result card, every test, with pictures and written.
+  for (const render of [async () => PNG, async () => null]) {
+    const d = fakeDiscord();
+    const open = [ml({ postedAt: NOW, quotes }), leanOf()];
+    await run(env, NOW, d, { plays: open, render, testId: `t-${render.length}-${Math.random()}`, testScope: 'cards+leans' });
+    await run(env, NOW + 3600e3, d, { plays: [ml({ postedAt: NOW, quotes, status: 'graded', result: 'win', profit: 0.57, actual: '6-0 6-3' }), leanOf({ status: 'graded', result: 'loss', actual: '6-0 3-6 2-6' })], render });
+    assert.ok(d.calls.length >= 9);
+    for (const c of d.calls) {
+      const body = JSON.stringify(c.body);
+      assert.doesNotMatch(body, /workers\.dev|mgbouldering/, 'the worker\'s address is in no message');
+      for (const url of body.match(/https:\/\/[^"\\)\s]+/g) ?? []) assert.match(url, /^https:\/\/(perpetualpicks\.com\/|sportsbook\.fanduel\.com\/|sportsbook\.draftkings\.com\/|sportsbook\.caesars\.com\/)/, url);
+    }
+    store.set(DISCORD_LEDGER_KEY, JSON.stringify({ plays: {}, helloAt: 1 }));
+  }
+  // The buttons: the stats page and a link that needs finishing both go through the site's play page.
+  const rows = cardButtons(ml({ quotes }));
+  assert.deepEqual(rows.flatMap((r) => r.components.map((b) => b.url)), ['https://sportsbook.fanduel.com/addToBetslip?marketId=1&selectionId=2', `${SITE_PLAY}?id=atp%3A1%3Alive_ml&go=caesars`, `${SITE_PLAY}?id=atp%3A1%3Alive_ml&go=hardrock`, `${SITE_PLAY}?id=atp%3A1%3Alive_ml`]);
+});
+
+test('a message posted with the old links is edited once so they come off it: open or settled, a few a tick, and never twice', async () => {
+  const { env, store } = makeEnv({ DISCORD_LIVE_WEBHOOK: HOOK, DISCORD_UPDATES_WEBHOOK: UPDATES, DISCORD_LIVE_LEAN_WEBHOOK: LEANS, DISCORD_LIVE_ROLE_ID: ROLE });
+  // Posted before the change: no link version on file. One open lean, one settled lean, one open play, and one already on the new links.
+  const plays = [leanOf({ id: 'wta:1:lean:live_ml:0' }), leanOf({ id: 'wta:2:lean:live_ml:0', status: 'graded', result: 'win', actual: '6-0 6-3' }), ml({ postedAt: NOW - 20 * 60e3 }), ml({ id: 'atp:9:live_ml', postedAt: NOW - 20 * 60e3 })];
+  store.set(DISCORD_LEDGER_KEY, JSON.stringify({ helloAt: 1, plays: {
+    'wta:1:lean:live_ml:0': { state: 'open', at: NOW - 30 * 60e3, messageId: '111' },
+    'wta:2:lean:live_ml:0': { state: 'done', at: NOW - 90 * 60e3, messageId: '222', doneAt: NOW - 40 * 60e3 },
+    'atp:1:live_ml': { state: 'open', at: NOW - 20 * 60e3, messageId: '333' },
+    'atp:9:live_ml': { state: 'open', at: NOW - 20 * 60e3, messageId: '444', lv: LINK_VERSION },
+  } }));
+  const d = fakeDiscord();
+  assert.deepEqual(await run(env, NOW, d, { plays }), { posted: 0, edited: 0, failed: 0 });
+  assert.deepEqual(d.calls.map((c) => [c.method, c.url]).sort(), [['PATCH', `${HOOK}/messages/333?with_components=true`], ['PATCH', `${LEANS}/messages/111?with_components=true`], ['PATCH', `${LEANS}/messages/222?with_components=true`]].sort());
+  for (const c of d.calls) {
+    assert.doesNotMatch(JSON.stringify(c.body), /workers\.dev/);
+    assert.ok(c.body.components.at(-1).components[0].url.startsWith(`${SITE_PLAY}?id=`), 'More info now opens the site');
+  }
+  // The settled lean is redrawn as it stands; nobody is pinged by the edit, and the results channel hears nothing.
+  assert.equal(d.calls.find((c) => c.url.includes('/222')).body.content, '✅ **LEAN WON** · Veronika Erjavec to win the match · final 6-0 6-3');
+  assert.ok(d.calls.every((c) => !c.url.startsWith(UPDATES)));
+  assert.deepEqual(Object.values(ledgerOf(store).plays).map((e) => [e.state, e.lv]), [['open', LINK_VERSION], ['done', LINK_VERSION], ['open', LINK_VERSION], ['open', LINK_VERSION]]);
+  await run(env, NOW + 60e3, d, { plays });
+  assert.equal(d.calls.length, 3, 'once');
+  // A message deleted by hand is let go; one Discord keeps refusing is tried three times, no more.
+  const gone = makeEnv({ DISCORD_LIVE_WEBHOOK: HOOK });
+  gone.store.set(DISCORD_LEDGER_KEY, JSON.stringify({ helloAt: 1, plays: { 'atp:1:live_ml': { state: 'open', at: NOW, messageId: '555' } } }));
+  const d2 = fakeDiscord(() => ({ status: 404, body: {} }));
+  await run(gone.env, NOW, d2, { plays: [ml({ postedAt: NOW - 20 * 60e3 })] });
+  await run(gone.env, NOW + 60e3, d2, { plays: [ml({ postedAt: NOW - 20 * 60e3 })] });
+  assert.equal(d2.calls.length, 1);
+  const stuck = makeEnv({ DISCORD_LIVE_WEBHOOK: HOOK });
+  stuck.store.set(DISCORD_LEDGER_KEY, JSON.stringify({ helloAt: 1, plays: { 'atp:1:live_ml': { state: 'open', at: NOW, messageId: '666' } } }));
+  const d3 = fakeDiscord(() => ({ status: 500, body: {} }));
+  for (let i = 0; i < 6; i++) await run(stuck.env, NOW + i * 60e3, d3, { plays: [ml({ postedAt: NOW - 20 * 60e3 })] });
+  assert.equal(d3.calls.length, 3);
+});
+
+test('the site\'s play page: only an id and a book in the worker\'s own shapes are passed on, the worker\'s page is the one frame allowed, and its links open the whole window', () => {
+  const page = fs.readFileSync(new URL('../docs/play.html', import.meta.url), 'utf8');
+  const script = fs.readFileSync(new URL('../docs/play.js', import.meta.url), 'utf8');
+  assert.match(page, /script-src 'self';/, 'no inline script, as on every page');
+  assert.match(page, /frame-src https:\/\/pixel-pick-odds\.mgbouldering\.workers\.dev;/);
+  assert.match(page, /<script src="frame-guard\.js\?v=[\d.]+"><\/script>/);
+  assert.match(page, /<script type="module" src="play\.js\?v=[\d.]+"><\/script>/);
+  assert.doesNotMatch(page, /<script>(?!<)/, 'no inline script');
+  assert.match(script, /\/\^\[\\w:\.-\]\{1,120\}\$\/\.test\(id\)/, 'an id in the shape of a play\'s id');
+  assert.match(script, /\/\^\[a-z0-9_\]\{1,40\}\$\/\.test\(book\)/, 'a book in the shape of a book\'s id');
+  assert.match(script, /frame\.src = `\$\{CONFIG\.WORKER_URL\}\/play\/\$\{encodeURIComponent\(id\)\}`/);
+  assert.match(script, /window\.location\.replace\(`\$\{CONFIG\.WORKER_URL\}\/go\/\$\{encodeURIComponent\(id\)\}\/\$\{book\}`\)/);
+  // Every id the worker gives a play or a lean passes; anything with a slash, a space or a scheme does not.
+  for (const id of ['wta:186838:lean:live_ml:0', 'atp:1:live_ml', 'atp:2:live_set:2', 'test-live', 'test-lean-won']) assert.match(id, /^[\w:.-]{1,120}$/);
+  for (const bad of ['', 'a/b', 'a b', 'https://x.example', '../x', 'a?b']) assert.doesNotMatch(bad, /^[\w:.-]{1,120}$/);
+  // Inside the frame, a link has to open the whole window: a book's site will not show inside a frame.
+  const html = playPage(testPlays(NOW)['test-live']);
+  assert.ok((html.match(/<a /g) ?? []).length >= 4);
+  assert.equal((html.match(/<a /g) ?? []).length, (html.match(/<a [^>]*target="_top"/g) ?? []).length, 'every link opens the whole window');
+  const worker = fs.readFileSync(new URL('../worker/src/index.js', import.meta.url), 'utf8');
+  assert.match(worker, /frame-ancestors https:\/\/perpetualpicks\.com"/, 'and only the site may frame the play\'s page');
 });

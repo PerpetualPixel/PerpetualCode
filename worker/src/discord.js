@@ -32,7 +32,6 @@
  */
 import { etParts } from './potd.js';
 import { tennisLivePlaysKey, liveRecordOf, TENNIS_LIVE_PLAYS_INDEX } from './tennis-live-plays.js';
-import { CONFIG } from '../../docs/config.js';
 import { SPORTSBOOKS } from '../../docs/engine.js';
 import { needsState, withState, hardRockSelections, phoneSlipLink, isPhone } from '../../docs/book-links.js';
 
@@ -46,6 +45,16 @@ const LEDGER_KEEP_MS = 4 * 86400e3;
 const LEDGER_TTL = 14 * 86400;
 const HELLO_RETRY_MS = 30 * 60e3;
 const SITE = 'https://perpetualpicks.com/app.html';
+/**
+ * Every link a Discord message carries to something of ours is on the site's own name (2026-11-25, the owner, of a
+ * More info button that opened the worker's address, which has part of a personal email address in it: "I'd
+ * rather it not have my workers info"). The site's play.html shows a play's page and passes a book link on; the
+ * worker's address is never written into a message. LINK_VERSION is raised when that changes, and a message
+ * posted under an older one is edited once so the old links come off it.
+ */
+const PLAY_PAGE = 'https://perpetualpicks.com/play.html';
+export const LINK_VERSION = 2;
+const RELINK_A_TICK = 4;
 const WEBHOOK = /^https:\/\/(?:(?:canary|ptb)\.)?discord(?:app)?\.com\/api\/webhooks\/\d{5,25}\/[\w-]{20,200}$/;
 const SNOWFLAKE = /^\d{5,25}$/;
 // The site's own colours (docs/styles.css): magenta for a play that is live, its green and red for a result.
@@ -138,12 +147,12 @@ export const meter = (p) => { const n = Math.max(0, Math.min(10, Math.round(p * 
 /**
  * A book's bet-slip link as the card can carry it, or null. A complete https link goes as it is. One that needs
  * the reader's state ({state}: Caesars, BetMGM) or is Hard Rock's (a phone needs the shared-bet form) goes through
- * the worker's /go route, which finishes it for whoever taps it. Any other blank left in it cannot be filled.
+ * the site's play page (docs/play.js) to the worker's /go route, which finishes it for whoever taps it. Any other blank left in it cannot be filled.
  */
 export function cardLink(play, quote) {
   const raw = String(quote?.link ?? '');
   if (!/^https:\/\/[^\s<>()]+$/.test(raw) || !quote?.bookId) return null;
-  const viaWorker = `${CONFIG.WORKER_URL}/go/${encodeURIComponent(play.id)}/${encodeURIComponent(quote.bookId)}`;
+  const viaWorker = `${PLAY_PAGE}?id=${encodeURIComponent(play.id)}&go=${encodeURIComponent(quote.bookId)}`;
   if (needsState(raw)) return /[{}]|%7B/i.test(raw.replace(/\{state\}|%7Bstate%7D/gi, '')) ? null : viaWorker;
   if (/[{}]|%7B/i.test(raw)) return null;
   return hardRockSelections(raw) ? viaWorker : raw;
@@ -294,8 +303,8 @@ export function booksOf(play) {
   return quotes.filter((q) => q?.bookId && Number.isFinite(q.american)).sort((x, y) => y.american - x.american)
     .map((q) => ({ bookId: q.bookId, name: SPORTSBOOKS[q.bookId]?.name ?? q.book ?? q.bookId, american: q.american, url: cardLink(play, q.link ? q : { ...q, link: q.bookId === play.bookId ? play.link : null }) }));
 }
-/** The page with the numbers behind a play (GET /play/<id>, worker/src/play-page.js). */
-export const statsUrl = (play) => `${CONFIG.WORKER_URL}/play/${encodeURIComponent(play.id)}`;
+/** The page with the numbers behind a play: the site's play.html, which shows the worker's page for it (worker/src/play-page.js). */
+export const statsUrl = (play) => `${PLAY_PAGE}?id=${encodeURIComponent(play.id)}`;
 
 /**
  * The buttons under a card (2026-11-25: "allowing for the user to click one button and add to the sports book ...
@@ -575,7 +584,7 @@ export async function syncLiveDiscord(env, now = Date.now(), { deps = {} } = {})
       ledger.plays[p.id] = { state: 'sending', at: now, tries: 1 };
       await writeLedger(env, ledger);
       const r = await send(hook, card);
-      if (r.ok && r.id) { ledger.plays[p.id] = { state: 'open', at: now, messageId: String(r.id), tries: 1 }; ledger.lastPostAt = now; out.posted++; }
+      if (r.ok && r.id) { ledger.plays[p.id] = { state: 'open', at: now, messageId: String(r.id), tries: 1, lv: LINK_VERSION }; ledger.lastPostAt = now; out.posted++; }
       // No answer: it may be in the channel, so it is not sent again. Refused: it is not, so the next tick tries again.
       else if (r.unknown || r.ok) { ledger.plays[p.id] = { state: 'lost', at: now }; fail('post', r); }
       else { ledger.plays[p.id] = { state: 'retry', at: now, tries: 1 }; fail('post', r); }
@@ -588,7 +597,7 @@ export async function syncLiveDiscord(env, now = Date.now(), { deps = {} } = {})
       ledger.plays[p.id] = { state: 'sending', at: entry.at, tries: (entry.tries ?? 1) + 1 };
       await writeLedger(env, ledger);
       const r = await send(hook, card);
-      if (r.ok && r.id) { ledger.plays[p.id] = { state: 'open', at: entry.at, messageId: String(r.id) }; ledger.lastPostAt = now; out.posted++; }
+      if (r.ok && r.id) { ledger.plays[p.id] = { state: 'open', at: entry.at, messageId: String(r.id), lv: LINK_VERSION }; ledger.lastPostAt = now; out.posted++; }
       else if (r.unknown || r.ok) { ledger.plays[p.id] = { state: 'lost', at: entry.at }; fail('post', r); }
       else { ledger.plays[p.id] = { state: 'retry', at: entry.at, tries: (entry.tries ?? 1) + 1 }; fail('post', r); }
       dirty = true;
@@ -598,17 +607,33 @@ export async function syncLiveDiscord(env, now = Date.now(), { deps = {} } = {})
     if (entry.state === 'open' && entry.messageId && settled) {
       const r = await send(hook, await mine(), { messageId: entry.messageId });
       if (r.ok) {
-        ledger.plays[p.id] = { ...entry, state: 'done', doneAt: now };
+        ledger.plays[p.id] = { ...entry, state: 'done', doneAt: now, lv: LINK_VERSION };
         out.edited++;
         if (cfg.updates && !lean) { const u = await send(cfg.updates, await mine({ result: true })); if (!u.ok && !u.unknown) fail('update', u); }
       } else {
         const tries = (entry.editTries ?? 0) + 1;
         // The message is gone (deleted by hand) or the edit keeps failing: stop trying.
-        ledger.plays[p.id] = r.status === 404 || tries >= EDIT_TRIES ? { ...entry, state: 'done', doneAt: now, editFailed: true } : { ...entry, editTries: tries };
+        ledger.plays[p.id] = r.status === 404 || tries >= EDIT_TRIES ? { ...entry, state: 'done', doneAt: now, editFailed: true, lv: LINK_VERSION } : { ...entry, editTries: tries };
         fail('edit', r);
       }
       dirty = true;
     }
+  }
+  // A message posted with older links (the worker's own address under its buttons) is edited once, as it stands,
+  // so they come off it: a few a tick, open or settled, and never again once it has taken or the message is gone.
+  let relinked = 0;
+  for (const p of [...tracked, ...leans]) {
+    const entry = ledger.plays[p.id];
+    if (relinked >= RELINK_A_TICK || !entry?.messageId || (entry.lv ?? 1) >= LINK_VERSION || !['open', 'done'].includes(entry.state)) continue;
+    // An open message whose play has settled is the loop above's to edit, and that edit carries the new links.
+    if (entry.state === 'open' && (p.status === 'graded' || p.status === 'void')) continue;
+    relinked++;
+    const lean = Boolean(p.lean);
+    const r = await send(lean ? cfg.leans : cfg.live, await dress(p, { record: lean ? null : await recordFor(p), ...(lean ? { role: null } : {}) }), { messageId: entry.messageId });
+    const tries = (entry.lvTries ?? 0) + 1;
+    if (r.ok || r.status === 404 || tries >= 3) ledger.plays[p.id] = { ...entry, lv: LINK_VERSION };
+    else { ledger.plays[p.id] = { ...entry, lvTries: tries }; fail('relink', r); }
+    dirty = true;
   }
   // A marker left by a run that never finished: its post may or may not have landed, so it is closed, not repeated.
   for (const [id, e] of Object.entries(ledger.plays)) {
