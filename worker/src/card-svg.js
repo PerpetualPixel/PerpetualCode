@@ -276,3 +276,110 @@ export function cardSvg(play, { logo = null } = {}) {
   ${event.text ? text(W - M, H - 26, event.size, 400, SITE.muted, esc(event.text), end) : ''}
 </svg>`;
 }
+
+/**
+ * The card for a live slip with several legs (2026-11-25, the owner: a channel for the live NBA plays). The same
+ * look as a play's card: what it is and the price on top, then a panel with a line a leg (the player, the number
+ * to clear, where he stands now or where he finished), the game and the units; the site and the league at the foot.
+ * The card grows with its legs. `post` is worker/src/discord-nba.js's kept slip: {game, league, book, american,
+ * units, legs: [{player, team, label, point, price, current, final, hit}], score, detail, status, result, profit}.
+ */
+export const SLIP_LEG_H = 64;
+export const slipCardHeight = (legs) => 122 + 130 + SLIP_LEG_H * Math.max(1, legs) + 64;
+const scoreText = (score) => Object.entries(score ?? {}).map(([team, n]) => `${plain(team)} ${n}`).join(', ');
+export function slipCardSvg(post, { logo = null } = {}) {
+  const state = cardState(post);
+  const c = STATES[state];
+  const live = state === 'live';
+  const legs = (post.legs ?? []).slice(0, 8);
+  const W = CARD_W; const H = slipCardHeight(legs.length); const M = 36;
+  const panelX = 24; const panelY = 122; const panelW = W - 48; const panelH = 130 + SLIP_LEG_H * Math.max(1, legs.length); const pad = 26;
+  const left = panelX + pad; const right = panelX + panelW - pad;
+  const text = (x, y, size, weight, fill, body, extra = '') => `<text x="${x}" y="${y}" font-family="Roboto Condensed" font-size="${size}" font-weight="${weight}" fill="${fill}" ${extra}>${body}</text>`;
+  const end = 'text-anchor="end"';
+  const fromRight = (x, y, size, weight, fill, body, spacing = 0) => ({ svg: text(x, y, size, weight, fill, esc(body), `${end}${spacing ? ` letter-spacing="${spacing}"` : ''}`), width: Math.ceil(textWidth(body, size, { weight, spacing }) * ROOM) });
+
+  // The top: the price with the book under it, and the tag in the room that is left.
+  const priceText = Number.isFinite(post.american) ? fmt(post.american) : '';
+  const priceLine = fromRight(W - M, 76, 46, 700, SITE.text, priceText);
+  const under = fitLine(plain(post.book ?? '').toUpperCase(), 230, 18, { min: 14, weight: 500, spacing: 1.4 });
+  const tagX = logo ? M + 74 : M;
+  const tag = fitLine(c.tag.toUpperCase(), W - M - Math.max(priceLine.width, 120) - 28 - tagX - 36, 24, { min: 16, spacing: 2 });
+  const tagW = Math.ceil(textWidth(tag.text, tag.size, { spacing: 2 }) * ROOM) + 34;
+
+  // The panel's head: how many legs, and the game beside it.
+  const head = `${legs.length}-LEG PARLAY`;
+  const headW = Math.ceil(textWidth(head, 23, { spacing: 2 }) * ROOM);
+  const game = fitLine(plain(post.game), right - left - headW - 22, 21, { min: 15, weight: 500 });
+
+  // A line a leg: the player at the left in the room the number leaves; under them, where he stands or how he finished.
+  const top = panelY + 62;
+  const rows = legs.map((l, i) => {
+    const y = top + i * SLIP_LEG_H;
+    const ink = l.hit === true ? STATES.won.ink : l.hit === false ? STATES.lost.ink : c.ink;
+    const want = fromRight(right, y + 32, 26, 700, ink, `Over ${l.point} ${plain(l.label ?? '')}`.trim());
+    const name = bestForm(nameForms(plain(l.player) || 'Player'), right - left - want.width - 18, 26, { min: 18, comfy: 22 });
+    const noted = live ? (Number.isFinite(l.price) ? fmt(l.price) : '') : l.hit === true ? 'HIT' : l.hit === false ? 'MISS' : 'NO RESULT';
+    const note = fromRight(right, y + 55, 17, live ? 500 : 700, live ? SITE.muted : ink, noted, live ? 0 : 1);
+    const stands = [plain(l.team), live ? (l.current != null ? `now ${l.current}` : '') : (l.final != null ? `final ${l.final}` : '')].filter(Boolean).join('  •  ');
+    const sub = fitLine(stands, right - left - note.width - 18, 17, { min: 13, weight: 400 });
+    return `${text(left, y + 32, name.size, 700, SITE.text, esc(name.text))}
+  ${want.svg}
+  ${sub.text ? text(left, y + 55, sub.size, 400, SITE.muted, esc(sub.text)) : ''}
+  ${noted ? note.svg : ''}
+  ${i < legs.length - 1 ? `<line x1="${left}" y1="${y + SLIP_LEG_H + 2}" x2="${right}" y2="${y + SLIP_LEG_H + 2}" stroke="${SITE.violet}" stroke-opacity="0.16" stroke-width="1"/>` : ''}`;
+  });
+
+  // The foot of the panel: when it was taken (or the final score), and the units.
+  const rowY = top + Math.max(1, legs.length) * SLIP_LEG_H + 46;
+  const stake = `${Math.round((post.units ?? 1) * 100) / 100}u`;
+  const profit = Number.isFinite(post.profit) ? `${post.profit < 0 ? '-' : '+'}${Math.abs(post.profit).toFixed(2)}u` : '';
+  const value = fromRight(right, rowY, 30, 700, live ? SITE.text : c.ink, state === 'void' ? 'Stake back' : !live && profit ? profit : stake);
+  const unitsLabel = state === 'void' ? '' : !live && profit ? 'RESULT' : 'RECOMMENDED';
+  const labelLine = unitsLabel ? fromRight(right - value.width - 10, rowY - 2, 18, 500, SITE.muted, unitsLabel, 1.4) : { svg: '', width: 0 };
+  const points = scoreText(live ? post.score : post.finalScore ?? post.score);
+  const whenText = live ? [`Taken ${plain(post.detail ?? '')}`.trim(), points].filter((s) => s && s !== 'Taken').join('  •  ') || 'In play' : [state === 'void' ? 'Void' : 'Final', points].filter(Boolean).join('  •  ');
+  const when = fitLine(whenText, right - left - value.width - labelLine.width - (unitsLabel ? 10 : 0) - 22, 21, { min: 15, weight: 400 });
+
+  const [day, clock] = cardTime(post.postedAt).split(/\s+•\s+/);
+  const site = 'perpetualpicks.com';
+  const siteW = Math.ceil(textWidth(site, 19, { weight: 500 }) * ROOM);
+  const event = fitLine([plain(post.league ?? '').toUpperCase(), day, clock].filter(Boolean).join('  •  '), W - 2 * M - siteW - 24, 19, { min: 14, weight: 400 });
+
+  return `<svg xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink" width="${W}" height="${H}" viewBox="0 0 ${W} ${H}">
+  <defs>
+    <linearGradient id="edge" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="${c.a}"/><stop offset="1" stop-color="${c.b}"/></linearGradient>
+    <radialGradient id="glow" cx="0.06" cy="-0.1" r="0.9"><stop offset="0" stop-color="${c.ink}" stop-opacity="0.2"/><stop offset="0.6" stop-color="${c.ink}" stop-opacity="0"/></radialGradient>
+    <radialGradient id="far" cx="1" cy="1.1" r="0.8"><stop offset="0" stop-color="${SITE.violet}" stop-opacity="0.16"/><stop offset="0.6" stop-color="${SITE.violet}" stop-opacity="0"/></radialGradient>
+    <pattern id="grid" width="42" height="42" patternUnits="userSpaceOnUse"><path d="M 42 0 L 0 0 0 42" fill="none" stroke="${SITE.violet}" stroke-opacity="0.09" stroke-width="1"/></pattern>
+    <clipPath id="card"><rect x="5" y="5" width="${W - 10}" height="${H - 10}" rx="28"/></clipPath>
+    <filter id="bright" x="0" y="0" width="100%" height="100%"><feComponentTransfer><feFuncR type="linear" slope="2.4"/><feFuncG type="linear" slope="2.4"/><feFuncB type="linear" slope="2.4"/><feFuncA type="linear" slope="1.8"/></feComponentTransfer></filter>
+  </defs>
+  <g clip-path="url(#card)">
+    <rect x="0" y="0" width="${W}" height="${H}" fill="${SITE.bg}"/>
+    <rect x="0" y="0" width="${W}" height="${H}" fill="url(#grid)"/>
+    <rect x="0" y="0" width="${W}" height="${H}" fill="url(#glow)"/>
+    <rect x="0" y="0" width="${W}" height="${H}" fill="url(#far)"/>
+  </g>
+  <rect x="5" y="5" width="${W - 10}" height="${H - 10}" rx="28" fill="none" stroke="url(#edge)" stroke-width="3" stroke-opacity="0.85"/>
+
+  ${logo ? `<image x="${M}" y="34" width="58" height="58" xlink:href="${logo}" href="${logo}" filter="url(#bright)"/>` : ''}
+  <rect x="${tagX}" y="42" width="${tagW}" height="42" rx="21" fill="${c.ink}" fill-opacity="0.12" stroke="${c.ink}" stroke-opacity="0.6" stroke-width="2"/>
+  ${text(tagX + tagW / 2 + 1, 42 + 21 + Math.round(tag.size * 0.35), tag.size, 700, c.ink, esc(tag.text), 'text-anchor="middle" letter-spacing="2"')}
+  ${priceText ? priceLine.svg : ''}
+  ${under.text ? text(W - M, 101, under.size, 500, SITE.muted, esc(under.text), `${end} letter-spacing="1.4"`) : ''}
+
+  <rect x="${panelX}" y="${panelY}" width="${panelW}" height="${panelH}" rx="20" fill="#FFFFFF" fill-opacity="0.04" stroke="${SITE.violet}" stroke-opacity="0.32" stroke-width="1.5"/>
+  ${text(left, panelY + 40, 23, 700, c.ink, esc(head), 'letter-spacing="2"')}
+  ${game.text ? text(right, panelY + 40, game.size, 500, SITE.muted, esc(game.text), end) : ''}
+  <line x1="${left}" y1="${panelY + 58}" x2="${right}" y2="${panelY + 58}" stroke="${SITE.violet}" stroke-opacity="0.28" stroke-width="1.5"/>
+  ${rows.join('\n  ')}
+  <line x1="${left}" y1="${rowY - 38}" x2="${right}" y2="${rowY - 38}" stroke="${SITE.violet}" stroke-opacity="0.28" stroke-width="1.5"/>
+  ${text(left, rowY - 2, when.size, 400, SITE.muted, esc(when.text))}
+  ${labelLine.svg}
+  ${value.svg}
+
+  ${text(M, H - 26, 19, 500, SITE.text, site, 'fill-opacity="0.85"')}
+  ${event.text ? text(W - M, H - 26, event.size, 400, SITE.muted, esc(event.text), end) : ''}
+</svg>`;
+}
