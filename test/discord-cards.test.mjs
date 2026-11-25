@@ -457,7 +457,7 @@ test('a lean\'s card says Lean in its tag in every state, is violet while open, 
   assert.doesNotMatch(page, /\+0\.20u|record<\/h2>/);
 });
 
-test('the leans go to their own channel: posted as they open and edited when they settle, nobody pinged, nothing sent to the results channel, and never mixed with the plays', async () => {
+test('the leans go to their own channel: posted as they open and edited when they settle, nobody pinged, never mixed with the plays, and a settled lean\'s result goes to the results channel as a lean', async () => {
   assert.equal(discordConfig({ DISCORD_LIVE_LEAN_WEBHOOK: LEANS }).leans, LEANS);
   assert.equal(discordConfig({ DISCORD_LIVE_LEAN_WEBHOOK: 'https://example.com/hook' }).leans, null);
   const { env, store } = makeEnv({ DISCORD_LIVE_WEBHOOK: HOOK, DISCORD_UPDATES_WEBHOOK: UPDATES, DISCORD_LIVE_LEAN_WEBHOOK: LEANS, DISCORD_LIVE_ROLE_ID: ROLE });
@@ -476,9 +476,14 @@ test('the leans go to their own channel: posted as they open and edited when the
   // The same tick again: nothing more.
   await run(env, NOW + 60e3, d, { plays: [ml({ postedAt: NOW }), leanOf()] });
   assert.equal(d.calls.length, 2);
-  // The lean settles: its own message is edited, and the results channel hears nothing of it.
+  // The lean settles: its own message is edited, and the results channel gets its result, said as a lean's.
   await run(env, NOW + 3600e3, d, { plays: [ml({ postedAt: NOW }), leanOf({ status: 'graded', result: 'win', profit: 0.2, actual: '6-0 6-3', gradedAt: NOW + 3600e3 })] });
-  assert.deepEqual(d.calls.slice(2).map((c) => [c.method, c.url]), [['PATCH', `${LEANS}/messages/900000000000000002?with_components=true`]]);
+  assert.deepEqual(d.calls.slice(2).map((c) => [c.method, c.url]), [['PATCH', `${LEANS}/messages/900000000000000002?with_components=true`], ['POST', `${UPDATES}?wait=true&with_components=true`]]);
+  assert.equal(d.calls[3].body.content, '✅ **LEAN WON** · Veronika Erjavec to win the match · final 6-0 6-3');
+  assert.deepEqual([d.calls[3].body.allowed_mentions.roles, Boolean(d.calls[3].file), d.calls[3].body.components.map((r) => r.components.map((b) => b.label))], [[], true, [['More info']]]);
+  // Once: a later tick sends nothing more.
+  await run(env, NOW + 3660e3, d, { plays: [ml({ postedAt: NOW }), leanOf({ status: 'graded', result: 'win', profit: 0.2, actual: '6-0 6-3', gradedAt: NOW + 3600e3 })] });
+  assert.equal(d.calls.length, 4);
   assert.equal(d.calls[2].body.content, '✅ **LEAN WON** · Veronika Erjavec to win the match · final 6-0 6-3');
   const status = await discordStatus(env);
   assert.deepEqual([status.leans, status.leansSecretRejected, status.lastError], [true, false, null]);
@@ -578,17 +583,18 @@ test('a message posted with the old links is edited once so they come off it: op
   } }));
   const d = fakeDiscord();
   assert.deepEqual(await run(env, NOW, d, { plays }), { posted: 0, edited: 0, failed: 0 });
-  assert.deepEqual(d.calls.map((c) => [c.method, c.url]).sort(), [['PATCH', `${HOOK}/messages/333?with_components=true`], ['PATCH', `${LEANS}/messages/111?with_components=true`], ['PATCH', `${LEANS}/messages/222?with_components=true`]].sort());
+  assert.deepEqual(d.calls.filter((c) => c.method === 'PATCH').map((c) => c.url).sort(), [`${HOOK}/messages/333?with_components=true`, `${LEANS}/messages/111?with_components=true`, `${LEANS}/messages/222?with_components=true`].sort());
+  // The settled lean's result, which the results channel never had, goes there in the same tick.
+  assert.deepEqual(d.calls.filter((c) => c.method === 'POST').map((c) => [c.url.split('?')[0], c.body.content]), [[UPDATES, '✅ **LEAN WON** · Veronika Erjavec to win the match · final 6-0 6-3']]);
   for (const c of d.calls) {
     assert.doesNotMatch(JSON.stringify(c.body), /workers\.dev/);
     assert.ok(c.body.components.at(-1).components[0].url.startsWith(`${SITE_PLAY}?id=`), 'More info now opens the site');
   }
-  // The settled lean is redrawn as it stands; nobody is pinged by the edit, and the results channel hears nothing.
+  // The settled lean is redrawn as it stands, and nobody is pinged by the edit.
   assert.equal(d.calls.find((c) => c.url.includes('/222')).body.content, '✅ **LEAN WON** · Veronika Erjavec to win the match · final 6-0 6-3');
-  assert.ok(d.calls.every((c) => !c.url.startsWith(UPDATES)));
   assert.deepEqual(Object.values(ledgerOf(store).plays).map((e) => [e.state, e.lv]), [['open', LINK_VERSION], ['done', LINK_VERSION], ['open', LINK_VERSION], ['open', LINK_VERSION]]);
   await run(env, NOW + 60e3, d, { plays });
-  assert.equal(d.calls.length, 3, 'once');
+  assert.equal(d.calls.length, 4, 'once');
   // A message deleted by hand is let go; one Discord keeps refusing is tried three times, no more.
   const gone = makeEnv({ DISCORD_LIVE_WEBHOOK: HOOK });
   gone.store.set(DISCORD_LEDGER_KEY, JSON.stringify({ helloAt: 1, plays: { 'atp:1:live_ml': { state: 'open', at: NOW, messageId: '555' } } }));
@@ -624,4 +630,47 @@ test('the site\'s play page: only an id and a book in the worker\'s own shapes a
   assert.equal((html.match(/<a /g) ?? []).length, (html.match(/<a [^>]*target="_top"/g) ?? []).length, 'every link opens the whole window');
   const worker = fs.readFileSync(new URL('../worker/src/index.js', import.meta.url), 'utf8');
   assert.match(worker, /frame-ancestors https:\/\/perpetualpicks\.com"/, 'and only the site may frame the play\'s page');
+});
+
+// --- A settled lean's result in the results channel (2026-11-25: "the lean wasn't posted to the results channel") ---
+
+test('a lean that settled before leans went to the results channel is caught up once; a result Discord refused is tried again, three times at most; a play\'s is never sent twice', async () => {
+  const { env, store } = makeEnv({ DISCORD_LIVE_WEBHOOK: HOOK, DISCORD_UPDATES_WEBHOOK: UPDATES, DISCORD_LIVE_LEAN_WEBHOOK: LEANS, DISCORD_LIVE_ROLE_ID: ROLE });
+  const lost = leanOf({ id: 'wta:7:lean:live_set:1', market: 'live_set', set: 1, selection: 'Julia Riera to win set 1', a: 'Julia Riera', b: 'Ipek Oz', playable: -154, status: 'graded', result: 'loss', profit: -0.5, actual: '5-7' });
+  const oldLean = leanOf({ id: 'wta:8:lean:live_ml:0', status: 'graded', result: 'win', actual: '6-0 6-3' });
+  const play = ml({ postedAt: NOW - 3 * 3600e3, status: 'graded', result: 'win', profit: 0.57, actual: '6-0 6-3' });
+  store.set(DISCORD_LEDGER_KEY, JSON.stringify({ helloAt: 1, plays: {
+    // Settled half an hour ago, before this: its result is owed.
+    'wta:7:lean:live_set:1': { state: 'done', at: NOW - 3600e3, messageId: '111', doneAt: NOW - 30 * 60e3, lv: LINK_VERSION },
+    // Settled two days ago: too old to bring up now.
+    'wta:8:lean:live_ml:0': { state: 'done', at: NOW - 50 * 3600e3, messageId: '222', doneAt: NOW - 49 * 3600e3, lv: LINK_VERSION },
+    // A play settled before results were marked: its result went out at the time, and is not sent again.
+    'atp:1:live_ml': { state: 'done', at: NOW - 3 * 3600e3, messageId: '333', doneAt: NOW - 3600e3, lv: LINK_VERSION },
+  } }));
+  const d = fakeDiscord();
+  await run(env, NOW, d, { plays: [lost, oldLean, play] });
+  assert.deepEqual(d.calls.map((c) => [c.method, c.url]), [['POST', `${UPDATES}?wait=true&with_components=true`]]);
+  assert.equal(d.calls[0].body.content, '❌ **LEAN LOST** · Julia Riera to win set 1 · final 5-7');
+  assert.deepEqual(d.calls[0].body.allowed_mentions, { parse: [], roles: [] });
+  await run(env, NOW + 60e3, d, { plays: [lost, oldLean, play] });
+  assert.equal(d.calls.length, 1, 'once');
+
+  // The written form, for when there is no picture: a lean's result says it is a lean's and carries no units.
+  const written = cardMessage(lost, { result: true }).plain.embeds[0];
+  assert.deepEqual([written.author.name, written.title, written.footer.text], ['PERPETUAL PICKS · LIVE TENNIS LEAN', '❌ LEAN LOST · Julia Riera to win set 1', 'Lean · not on the record · perpetualpicks.com']);
+  assert.equal(written.description, '**Final 5-7**\nLeaned at −154 or better · recommended 0.5u\nJulia Riera vs Ipek Oz · WTA · IEB+ Argentina Open');
+
+  // A result Discord refuses when a play settles is tried again on later ticks, three times in all.
+  const flaky = makeEnv({ DISCORD_LIVE_WEBHOOK: HOOK, DISCORD_UPDATES_WEBHOOK: UPDATES });
+  flaky.store.set(DISCORD_LEDGER_KEY, JSON.stringify({ helloAt: 1, plays: { 'atp:1:live_ml': { state: 'open', at: NOW - 3600e3, messageId: '444', lv: LINK_VERSION } } }));
+  const d2 = fakeDiscord((c) => (c.url.startsWith(UPDATES) ? { status: 500, body: {} } : null));
+  for (let i = 0; i < 6; i++) await run(flaky.env, NOW + i * 60e3, d2, { plays: [play] });
+  assert.deepEqual(d2.calls.map((c) => c.url.split('?')[0].replace(/\/messages\/\d+$/, '')), [HOOK, UPDATES, UPDATES, UPDATES]);
+  // And one that lands on the second try is not sent a third time.
+  const once = makeEnv({ DISCORD_LIVE_WEBHOOK: HOOK, DISCORD_UPDATES_WEBHOOK: UPDATES });
+  once.store.set(DISCORD_LEDGER_KEY, JSON.stringify({ helloAt: 1, plays: { 'atp:1:live_ml': { state: 'open', at: NOW - 3600e3, messageId: '555', lv: LINK_VERSION } } }));
+  let updates = 0;
+  const d3 = fakeDiscord((c) => (c.url.startsWith(UPDATES) && ++updates === 1 ? { status: 500, body: {} } : null));
+  for (let i = 0; i < 5; i++) await run(once.env, NOW + i * 60e3, d3, { plays: [play] });
+  assert.equal(updates, 2);
 });

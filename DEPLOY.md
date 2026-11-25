@@ -344,8 +344,9 @@ and make a new one.
 - `DISCORD_LIVE_LEAN_WEBHOOK`: a webhook in a channel for the live leans (for
   example `tennis-leans`). A lean posts there when it opens and its message is
   edited when it settles. A lean is not a tracked play: its card says LEAN,
-  carries no stake or units, pings nobody, and never goes to the results
-  channel. With this unset, leans stay on the site only.
+  says so in its tag, and pings nobody. When it settles, its result goes to
+  the results channel too, marked as a lean and with no units, since a lean
+  is not on the record. With this unset, leans stay on the site only.
 - `DISCORD_UPDATES_WEBHOOK`: a second webhook, made the same way in another
   channel (for example `updates`), that gets one simple card per result: won, lost or void, the final score, the
   units, the price it was taken at, and the record.

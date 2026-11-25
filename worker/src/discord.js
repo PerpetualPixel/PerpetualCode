@@ -274,23 +274,25 @@ export function liveResultMessage(play, { record = null } = {}) {
   const take = String(play.selection ?? '').replace(/\s*\(live\)\s*$/i, '');
   const priced = Number.isFinite(play.american);
   const price = priced ? play.american : play.playable;
+  // A lean's result says it is a lean's, and carries no units: it is not on the record.
+  const lean = Boolean(play.lean);
   const lines = [
-    outcome === 'void' ? `**Stake returned**${play.actual ? ` · ${md(play.actual)}` : ''}` : `**Final ${md(play.actual ?? '')}**${Number.isFinite(play.profit) ? ` · **${signedUnits(play.profit)}**` : ''}`,
-    Number.isFinite(price) ? `Taken at ${priced ? fmt(play.american) : `${fmt(price)} or better`}${priced ? ` (${md(SPORTSBOOKS[play.bookId]?.name ?? play.book ?? 'the book')})` : ''} · ${unitsOf(play.units)} stake` : null,
+    outcome === 'void' ? `**${lean ? 'No result' : 'Stake returned'}**${play.actual ? ` · ${md(play.actual)}` : ''}` : `**Final ${md(play.actual ?? '')}**${!lean && Number.isFinite(play.profit) ? ` · **${signedUnits(play.profit)}**` : ''}`,
+    Number.isFinite(price) ? `${lean ? 'Leaned' : 'Taken'} at ${priced ? fmt(play.american) : `${fmt(price)} or better`}${priced ? ` (${md(SPORTSBOOKS[play.bookId]?.name ?? play.book ?? 'the book')})` : ''} · ${lean ? `recommended ${unitsOf(play.units)}` : `${unitsOf(play.units)} stake`}` : null,
     [`${md(play.a)} vs ${md(play.b)}`, TOUR[play.tour] ?? null, play.event ? md(play.event) : null].filter(Boolean).join(' · '),
   ].filter(Boolean);
-  const mark = { win: '✅ WON ·', loss: '❌ LOST ·', void: '⚪ VOID ·' }[outcome];
+  const mark = (lean ? { win: '✅ LEAN WON ·', loss: '❌ LEAN LOST ·', void: '⚪ LEAN VOID ·' } : { win: '✅ WON ·', loss: '❌ LOST ·', void: '⚪ VOID ·' })[outcome];
   return {
     content: '',
     allowed_mentions: { parse: [] },
     embeds: [{
-      author: { name: 'PERPETUAL PICKS · LIVE TENNIS', url: SITE, icon_url: LOGO },
+      author: { name: lean ? 'PERPETUAL PICKS · LIVE TENNIS LEAN' : 'PERPETUAL PICKS · LIVE TENNIS', url: SITE, icon_url: LOGO },
       title: `${mark} ${md(take)}`.slice(0, 250),
       url: SITE,
       description: lines.join('\n').slice(0, 1900),
       color: COLOR[outcome],
       image: { url: `${ART}/${{ win: 'won', loss: 'lost', void: 'void' }[outcome]}.png?v=${ART_VERSION}` },
-      footer: { text: record && record.wins + record.losses > 0 ? `Our ${kind.head(play).replace(/^Set \d+ /, 'Set ')} record: ${record.wins}-${record.losses} · ${signedUnits(record.units)}` : 'perpetualpicks.com', icon_url: LOGO },
+      footer: { text: lean ? 'Lean · not on the record · perpetualpicks.com' : record && record.wins + record.losses > 0 ? `Our ${kind.head(play).replace(/^Set \d+ /, 'Set ')} record: ${record.wins}-${record.losses} · ${signedUnits(record.units)}` : 'perpetualpicks.com', icon_url: LOGO },
       timestamp: new Date(play.gradedAt ?? Date.now()).toISOString(),
     }],
   };
@@ -568,7 +570,8 @@ export async function syncLiveDiscord(env, now = Date.now(), { deps = {} } = {})
   const recordFor = async (p) => { records ??= deps.records ? await deps.records() : await liveRecords(env, now).catch(() => ({})); return records?.[KIND[p.market].record] ?? null; };
 
   // The leans go to their own channel, when there is one: posted as they open and edited when they settle, like a
-  // play, but with nobody pinged, no record under them and nothing sent to the results channel.
+  // play, with nobody pinged and no record under them. A settled lean's result goes to the results channel too, said
+  // as a lean (2026-11-25, the owner, of a lean that lost: "the lean wasn't posted to the results channel").
   const leans = cfg.leans ? plays.filter((p) => p && p.lean && p.id && KIND[p.market]) : [];
   for (const p of [...tracked, ...leans]) {
     const lean = Boolean(p.lean);
@@ -609,7 +612,8 @@ export async function syncLiveDiscord(env, now = Date.now(), { deps = {} } = {})
       if (r.ok) {
         ledger.plays[p.id] = { ...entry, state: 'done', doneAt: now, lv: LINK_VERSION };
         out.edited++;
-        if (cfg.updates && !lean) { const u = await send(cfg.updates, await mine({ result: true })); if (!u.ok && !u.unknown) fail('update', u); }
+        // `res` says whether the result reached the results channel: one Discord refused is tried again below.
+        if (cfg.updates) { const u = await send(cfg.updates, await mine({ result: true })); ledger.plays[p.id].res = Boolean(u.ok || u.unknown); if (!u.ok && !u.unknown) { ledger.plays[p.id].resTries = 1; fail('update', u); } }
       } else {
         const tries = (entry.editTries ?? 0) + 1;
         // The message is gone (deleted by hand) or the edit keeps failing: stop trying.
@@ -618,6 +622,20 @@ export async function syncLiveDiscord(env, now = Date.now(), { deps = {} } = {})
       }
       dirty = true;
     }
+  }
+  // A result the results channel has not had: one Discord refused, or a lean that settled before leans went there.
+  // Sent once (three tries at most), a few a tick, and only for what settled in the last day.
+  let caughtUp = 0;
+  if (cfg.updates) for (const p of [...tracked, ...leans]) {
+    const entry = ledger.plays[p.id];
+    const owed = entry?.state === 'done' && !entry.editFailed && (entry.res === false || (p.lean && entry.res === undefined));
+    if (caughtUp >= 3 || !owed || !(p.status === 'graded' || p.status === 'void') || now - (entry.doneAt ?? 0) > 864e5 || (entry.resTries ?? 0) >= 3) continue;
+    caughtUp++;
+    const lean = Boolean(p.lean);
+    const u = await send(cfg.updates, await dress(p, { record: lean ? null : await recordFor(p), result: true, ...(lean ? { role: null } : {}) }));
+    ledger.plays[p.id] = u.ok || u.unknown ? { ...entry, res: true } : { ...entry, res: false, resTries: (entry.resTries ?? 0) + 1 };
+    if (!u.ok && !u.unknown) fail('update', u);
+    dirty = true;
   }
   // A message posted with older links (the worker's own address under its buttons) is edited once, as it stands,
   // so they come off it: a few a tick, open or settled, and never again once it has taken or the message is gone.
