@@ -10099,7 +10099,9 @@ const unitsText = (u) => `${u < 0 ? '-' : '+'}${Math.abs(u).toFixed(2)}u`;
 const roiText = (roi) => (roi == null ? 'ROI n/a' : `ROI ${roi < 0 ? '' : '+'}${(roi * 100).toFixed(1)}%`);
 const signedUnits = (units) => `${units < 0 ? '' : '+'}${units.toFixed(2)}`;
 const betMatches = (bet) => trendPicksState.filter === 'all' || bet.sportKey === trendPicksState.filter || (trendPicksState.filter === 'soccer' && String(bet.sportKey).startsWith('soccer_'));
-const betTypeLabel = (bet) => (bet.play ? bet.play.replace(/^PrizePicks /, '') : bet.type === 'parlay' ? `${bet.legs.length}-leg parlay` : 'Straight');
+const betTypeLabel = (bet) => `${bet.play ? bet.play.replace(/^PrizePicks /, '') : bet.type === 'parlay' ? `${bet.legs.length}-leg parlay` : 'Straight'}${bet.leagues?.length > 1 ? ` · ${bet.leagues.join(' + ')}` : ''}`;
+/** A ticket from the wider look (worker/src/trend-picks.js PICK_STRONG_RATE): strong, not perfect, and it says so. */
+const betTierNote = (bet) => (bet.tier === 'strong' ? `<p class="pick-note pick-tier"><strong>Strong, not perfect.</strong> No perfect line made a ticket today, so this is the best of the strong ones: each leg has landed in 90% or more of the last 20 and of the last 10, at a price that rate beats. Tracked like any ticket.</p>` : '');
 
 function betResultBadge(bet) {
   if (bet.status === 'graded' || bet.status === 'void') {
@@ -10398,6 +10400,7 @@ function renderBetCard(bet) {
       <span class="pick-bet-stake">${esc(String(bet.units))} unit</span>
       ${betResultBadge(bet)}
     </div>
+    ${betTierNote(bet)}
     <div class="pick-legs">${bet.legs.map((leg) => renderPickLeg(leg, bet)).join('')}</div>
     ${betOutcomeWhy(bet) ? `<p class="pick-note pick-why">${esc(betOutcomeWhy(bet))}</p>` : ''}
     ${ticketSlipFoot(bet)}
@@ -10459,6 +10462,26 @@ function renderPickGraph() {
     <p class="pick-graph-foot">Each dot is a day; hover or tap it for the day's tickets. ${esc(unitsText(last))} over ${days.length} day${days.length === 1 ? '' : 's'}, one unit a ticket.</p>`;
 }
 
+/**
+ * Why a day has no ticket, in the day's own numbers (2026-11-25, of "51 lines qualified and 0 passed on research, the
+ * rest had no usable price": "51 lines qualifying but nothing researched or making the pick?"). How many lines are
+ * perfect, how many of them a ticket could use at their price, what the research dropped, and whether the wider look
+ * (the strong lines) has run. When it has and still found nothing, it says there is nothing worth a tracked play.
+ */
+function noTicketText(today) {
+  const n = (count, word) => `${count} ${word}${count === 1 ? '' : 's'}`;
+  const perfect = today.considered ?? 0;
+  const dropped = today.passed?.length ?? 0;
+  const closed = Boolean(today.closedAt);
+  const parts = [];
+  if (perfect) parts.push(`${n(perfect, 'perfect line')} (every one of the last 20)${Number.isFinite(today.usable) ? `, ${today.usable} priced where a ticket can use ${today.usable === 1 ? 'it' : 'them'}` : ''}${dropped ? `, ${dropped} dropped on research` : ''}.`);
+  else parts.push('No perfect line (every one of the last 20) on the board.');
+  if (today.wide) parts.push(today.strong ? `The wider look had ${n(today.strong, 'strong line')} and none made a ticket at a fair price: nothing worth a tracked play.` : 'The wider look found no strong line at a fair price either: nothing worth a tracked play.');
+  else if (!closed) parts.push('The wider look (90%+ lines at a fair price) opens at 10 AM ET.');
+  if (today.checkedAt && !closed) parts.push(`Checked ${trendTimeFmt.format(new Date(today.checkedAt))}; it looks again every hour.`);
+  return `No ticket ${today.wide || closed ? 'today' : 'yet'}: ${parts.join(' ')}`;
+}
+
 function renderTrendPicks() {
   if (!el.trendPicksBody) return;
   const d = trendPicksState.data;
@@ -10507,14 +10530,7 @@ function renderTrendPicks() {
     el.trendPicksStatus.textContent = `${bets.length} ticket${bets.length === 1 ? '' : 's'} today${extraWord ? ` and ${extraWord}` : ''} · posted ${trendTimeFmt.format(new Date(bets[0].postedAt))} · one unit a ticket`;
     el.trendPicksBody.innerHTML = todayHtml + boardHtml + laterHtml + mvpTail;
   } else {
-    const checked = today?.checkedAt ? ` Last checked ${trendTimeFmt.format(new Date(today.checkedAt))}; it looks again every hour until the day's games start.` : '';
-    const noTicket = today
-      ? (today.bets?.length
-        ? 'No ticket in this league today.'
-        : today.considered
-          ? `No ticket today: ${today.considered} line${today.considered === 1 ? '' : 's'} qualified and ${today.passed?.length === today.considered ? 'all' : today.passed?.length ?? 0} passed on research${today.unused?.length ? ', the rest had no usable price at your books' : ''}.${checked}`
-          : `No ticket today: nothing is at 100% over the last 20 games yet.${checked}`)
-      : 'No tickets drawn yet today. The draw runs after each Trends build.';
+    const noTicket = today ? (today.bets?.length ? 'No ticket in this league today.' : noTicketText(today)) : 'No tickets drawn yet today. The draw runs after each Trends build.';
     const extras = extraWord ? ` ${extraWord[0].toUpperCase()}${extraWord.slice(1)} ${ufcToday || tennisToday ? 'today' : 'coming up'}.` : '';
     const notes = [...(today?.passed ?? []).map((x) => `<li><strong>${esc(x.selection)}</strong>: ${esc((x.reasons ?? []).join('; ') || 'the research came back against it')}</li>`), ...(today?.unused ?? []).map((x) => `<li><strong>${esc(x.selection)}</strong>: passed research, ${esc(x.reason)}</li>`)];
     const notesHtml = notes.length ? `<div class="pick-passed"><p class="row-sub">Qualified today:</p><ul>${notes.join('')}</ul></div>` : '';

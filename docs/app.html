@@ -21,10 +21,10 @@
      only page that reads the feed; the other pages' connect-src stays the
      worker alone. -->
 <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src 'self' https://fonts.gstatic.com; img-src 'self' data: https:; connect-src 'self' https://pixel-pick-odds.mgbouldering.workers.dev https://perpetualpixel.github.io; object-src 'none'; base-uri 'self'; form-action 'self'">
-<script src="frame-guard.js?v=1.380"></script>
+<script src="frame-guard.js?v=1.381"></script>
 <!-- The first board is asked for here, while the rest of the page is still arriving (docs/early.js). -->
 <link rel="preconnect" href="https://pixel-pick-odds.mgbouldering.workers.dev" crossorigin>
-<script src="early.js?v=1.380"></script>
+<script src="early.js?v=1.381"></script>
 <title>Perpetual Picks - App</title>
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <meta name="theme-color" content="#05050A">
@@ -40,7 +40,7 @@
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Syne:wght@600;700;800&family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
-<link rel="stylesheet" href="styles.css?v=1.380">
+<link rel="stylesheet" href="styles.css?v=1.381">
 <!-- modulepreload:start (written by update-version.js: every file app.js imports, fetched alongside it rather than one after another) -->
 <link rel="modulepreload" href="config.js">
 <link rel="modulepreload" href="demo.js">
@@ -71,7 +71,7 @@
 <link rel="modulepreload" href="take-or-fade.js">
 <!-- modulepreload:end -->
 <!-- Before first paint: a desktop reader who chose "Fit screen" gets the wide shell without a flash of the narrow one. -->
-<script src="wide.js?v=1.380"></script>
+<script src="wide.js?v=1.381"></script>
 </head>
 <body>
 
@@ -197,6 +197,7 @@
     <ul class="notice-list">
       <li><strong>UFC:</strong> a Recommended button on the parlay section opens ready-made builders, parlays and lottos for the card, each leg with its odds and why it was picked. Sort and filter them by confidence, payout, favorites, underdogs or type.</li>
       <li><strong>Tennis:</strong> each lean now shows set betting (-1.5 sets to win 2-0, +1.5 sets to win a set), the second set, and every book's price. Every play says the price to take it at or better.</li>
+      <li><strong>Pixel's Picks:</strong> on a day when no perfect line makes a ticket, a wider look at the strong lines (90% or more of the last 20) can post one tracked ticket, marked Strong. A parlay can now mix leagues.</li>
       <li><strong>Live:</strong> tap a game and the bet is the first thing you see. Finished games leave the list. Tennis matches in play can now carry an over or under on the games in the set.</li>
       <li><strong>Results:</strong> a new tab with every record in one place. Pregame first, Live on a toggle, a card for each sport with units played, net units, ROI and a graph by day, week, month or year. It now updates itself through the day, and live tennis leans have their own card there.</li>
       <li><strong>Filters:</strong> every on/off filter button is now filled with a tick when it is on and a plain outline when it is off. On Live, the sportsbook buttons show only slips at the books you have turned on.</li>
@@ -695,7 +696,8 @@
       <summary>Pixel's Picks</summary>
       <p>Pixel's Picks are the Trends lines that pass a fixed test, then a research check. The test does not change: the line must have landed in every one of the player's last 20 games, at least ten of them logged, and in every game against today's opponent if he has played them before. One line per player and stat qualifies, the best paying of his 100% lines, and a player is on one ticket a day.</p>
       <p>Each qualifying line is then researched before it can post. Is the player on limited minutes? Is he out, doubtful or questionable? Is he a starter or a bench player? Is a blowout expected that would sit him late? Is a teammate out, which changes who gets the ball? Is there a defender or a scheme that hinders this line? If any answer goes against the line, it passes and the tab says why. If everything comes back favorable, it posts, and anything still worth knowing goes in the note under the pick.</p>
-      <p>The lines that pass become the day's tickets: a two or three leg parlay on one book near even money when the lines allow, otherwise a straight bet. At most two tickets a day, one unit each. Some days it is none, and the tab says what qualified and what the research found.</p>
+      <p>The lines that pass become the day's tickets: a two or three leg parlay on one book near even money when the lines allow, otherwise a straight bet. A parlay can mix leagues. At most two tickets a day, one unit each.</p>
+      <p>A perfect line is often priced too short to use. When the perfect lines make no ticket, the day takes a wider look from 10 AM ET: lines the player has landed in 90% or more of his last 20 and his last 10, at a price that rate beats, researched the same way. That makes one ticket at most, marked <strong>Strong, not perfect</strong>, and it is tracked like any other. If that finds nothing either, the tab says there is nothing worth a tracked play, with the day's numbers.</p>
       <p><strong>Best on the board</strong> is the best play in each sport on today's games only; a game on another day is never on it. On a day with no pick it is the first thing on the tab, with its likeliest play opened up under it as <strong>Today's suggestion</strong>. Neither is tracked.</p>
       <p>Every ticket is graded after its last game ends, as one bet, the way the book settles it: a lost leg loses the ticket, a pushed or voided leg drops out and the ticket pays at the legs left. The strongest tennis leans and the UFC picks for the card show here too. The record, the graph and the history are on the Results tab.</p>
     </details>
@@ -1229,6 +1231,6 @@
   </div>
 </aside>
 
-<script type="module" src="app.js?v=1.380"></script>
+<script type="module" src="app.js?v=1.381"></script>
 </body>
 </html>
