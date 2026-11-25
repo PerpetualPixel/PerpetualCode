@@ -48,7 +48,7 @@ const num = (x) => (Number.isFinite(Number(x)) && x != null ? Number(x) : null);
 /**
  * Every settled result, newest first. Each argument is the body of a route
  * the app already reads, any of them null:
- *   trendPicks   /trend-picks   the league tickets, a unit each
+ *   trendPicks   /trend-picks   the league tickets, a unit each, and under `mvp` the tracked MVP Picks
  *   ufcPicks     /ufc/picks     the UFC picks, each at its own stake
  *   tennisPicks  /tennis/picks  the tennis plays before the match
  *   tennisLive   /tennis/live   the live tennis plays
@@ -67,6 +67,14 @@ export function resultEntries({ trendPicks = null, ufcPicks = null, tennisPicks 
     add({ id: `pre:${b.id}`, side: 'pre', sport: sportOfKey(b.sportKey), at: num(b.commenceMs) ?? num(b.postedAt), date: day.date,
       title: (b.legs ?? []).map((l) => l.selection).join(' + ') || 'Ticket', sub: `${(b.legs ?? []).length > 1 ? `${b.legs.length}-leg parlay` : 'Straight'}${b.book ? ` at ${b.book}` : ''}`,
       american: num(b.american), book: b.book ?? null, units: num(b.units) ?? 1, net: num(b.net), result: b.result });
+  }
+  // The MVP Picks (worker/src/mvp-picks.js) ride the same answer as the league tickets: the tracked ones, each at the price it said to take.
+  for (const day of trendPicks?.mvp?.history ?? []) for (const p of day.picks ?? []) {
+    if (!p.tracked || !p.bet) continue;
+    const b = p.bet;
+    add({ id: `pre:${b.id}`, side: 'pre', sport: 'nba', at: num(b.commenceMs) ?? num(b.postedAt), date: day.date, mvp: true,
+      title: (b.legs ?? []).map((l) => l.selection).join(' + ') || 'MVP pick', sub: `MVP pick · same-game parlay${b.book ? ` at ${b.book}` : ''}`,
+      american: num(b.american), orBetter: true, book: b.book ?? null, units: num(b.units) ?? 1, net: num(b.net), result: b.result });
   }
   for (const card of ufcPicks?.history ?? []) for (const b of card.bets ?? []) {
     const at = num(b.settledAt) ?? num(card.eventDate != null ? Date.parse(card.eventDate) || card.eventDate : null) ?? num(card.lockMs);

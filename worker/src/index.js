@@ -71,6 +71,7 @@ import { sendUfcTicketNotifications, sendUfcChangeNotifications } from './notifi
 import { legBreakdown } from './parlay-builder.js';
 import { lineCheck } from './line-check.js';
 import { runTrendPicksDaily, runTrendPicksGrading, getTrendPicks } from './trend-picks.js';
+import { runMvpPicksDaily, runMvpPicksGrading, getMvpPicks } from './mvp-picks.js';
 import { runLiveProbe, getLiveProbe } from './live-probe.js';
 import { getLiveBoard, getLiveRecap, archiveLiveResults, getLiveResults } from './live-board.js';
 
@@ -543,7 +544,12 @@ export default {
         // (worker/src/notifications.js's sendTicketNotifications sends
         // each ticket once, whatever tick posts it).
         .then((r) => (r && !r.skipped && r.posted > 0 ? sendTicketNotifications(env, now) : 0))
-        .catch((e) => console.error('Trends build failed:', e)));
+        .catch((e) => console.error('Trends build failed:', e))
+        // The MVP Picks (worker/src/mvp-picks.js): one player's same-game parlay, from the rows just built and the
+        // stored team records. KV only: no odds call and no model call. After the rest, and never in its way.
+        .then(() => runMvpPicksGrading(env, ctx, now))
+        .then(() => runMvpPicksDaily(env, ctx, now))
+        .catch((e) => console.error('MVP picks failed:', e)));
       // The UFC card's odds, breakdowns, picks and grading (worker/src/ufc-picks.js):
       // KV and the model, plus an odds read on its own cadence.
       ctx.waitUntil(runUfcTick(env, ctx, now)
@@ -1703,6 +1709,12 @@ export default {
     // The personal ticket is gone (2026-11-12 direction: every user sees the same Pixel's Pick): the route answers that plainly to an old client.
     if (pathname === '/trend-picks/mine') return json({ error: 'The personal ticket was retired; everyone sees the same Pixel\'s Pick.', retired: true }, { status: 410, headers: cors });
 
+    // The MVP Picks alone (they also ride /trend-picks): today's, the days before and the tracked record. Stored records only.
+    if (pathname === '/mvp-picks' && request.method === 'GET') {
+      try { return json(await getMvpPicks(env, Date.now()), { headers: { ...cors, 'Cache-Control': 'public, max-age=120' } }); }
+      catch (error) { return json({ today: null, history: [], record: null, error: String(error).slice(0, 120) }, { status: 500, headers: cors }); }
+    }
+
     if (pathname === '/trend-picks' && request.method === 'GET') {
       try {
         const data = await getTrendPicks(env, Date.now());
@@ -1711,6 +1723,8 @@ export default {
           const reports = Object.fromEntries(await Promise.all(TREND_ENABLED_SPORTS.map(async (k) => [k, await loadInjuries(env, k)])));
           data.today = { ...data.today, bets: data.today.bets.map((b) => ({ ...b, legs: b.legs.map((l) => ({ ...l, injury: injuryFor(reports[l.sportKey], l.athleteId) })) })) };
         }
+        // The MVP Picks ride the same answer: the tab and the Results board read them from here.
+        data.mvp = await getMvpPicks(env, Date.now()).catch(() => null);
         return json(data, { headers: { ...cors, 'Cache-Control': 'public, max-age=120' } });
       } catch (error) {
         return json({ today: null, history: [], record: null, error: String(error).slice(0, 120) }, { status: 500, headers: cors });
