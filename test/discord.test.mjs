@@ -6,7 +6,7 @@
  */
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { discordConfig, livePlayMessage, liveResultLine, syncLiveDiscord, discordStatus, testAlertMessage, TEST_ALERT_ID, DISCORD_LEDGER_KEY, FRESH_MS, POST_TRIES } from '../worker/src/discord.js';
+import { discordConfig, livePlayMessage, liveResultLine, syncLiveDiscord, discordStatus, testAlertMessage, whyLine, meter, cardLink, bookRedirect, TEST_ALERT_ID, DISCORD_LEDGER_KEY, FRESH_MS, POST_TRIES } from '../worker/src/discord.js';
 
 const NOW = Date.parse('2026-11-25T18:00:00Z');
 const HOOK = 'https://discord.com/api/webhooks/123456789012345678/abcDEF_ghi-jklMNOpqrSTUvwxYZ0123456789abcdefghijklmnopqrstuvwxyzABCDEF';
@@ -43,40 +43,101 @@ test('only a real Discord webhook address is used, and the role must be an id', 
   assert.equal(discordConfig({ DISCORD_LIVE_WEBHOOK: HOOK, DISCORD_LIVE_ROLE_ID: '@everyone' }).role, null);
 });
 
-test('the alert says what to take, at what price, where the match stood, and the site\'s record; settled, the same message leads with how it ended', () => {
-  const open = livePlayMessage(ml(), { role: '987654321098765432', record: { wins: 8, losses: 2, units: 3.29 } });
+const STATS = { holds: { a: { held: 6, served: 6 }, b: { held: 3, served: 5 } }, last: { of: 8, a: 5, b: 3 }, streak: null, setGames: null };
+const BOOKS = [
+  { bookId: 'fanduel', book: 'FanDuel', american: -175, link: 'https://sportsbook.fanduel.com/addToBetslip?marketId=1&selectionId=2' },
+  { bookId: 'caesars', book: 'Caesars', american: -180, link: 'https://sportsbook.caesars.com/us/{state}/bet?selectionIds=abc&dl=betslip' },
+  { bookId: 'hardrock', book: 'Hard Rock Bet', american: -185, link: 'https://app.hardrock.bet/?deep_link_value=betslip/3947887837145334180' },
+  { bookId: 'betrivers', book: 'BetRivers', american: -190, link: 'https://{state}.betrivers.com/?page=sportsbook#event/1?coupon={pickType}|2|{wagerAmount}' },
+];
+const GO = 'https://pixel-pick-odds.mgbouldering.workers.dev/go/atp%3A1%3Alive_ml';
+
+test('the card: TAKE and the bet, the price and where, why in a sentence, the chance as a number, every book that has it linked, in the site\'s colours', () => {
+  const open = livePlayMessage(ml({ stats: STATS, quotes: BOOKS }), { role: '987654321098765432', record: { wins: 8, losses: 2, units: 3.29 } });
   const e = open.embeds[0];
   assert.equal(open.content, '<@&987654321098765432>');
   assert.deepEqual(open.allowed_mentions, { parse: [], roles: ['987654321098765432'] }, 'the one role and nothing else can be pinged');
-  assert.equal(e.title, '🎾 Match Winner — Take M. Dellavedova to win the match');
-  assert.match(e.description, /^\*\*−175 at FanDuel\*\* · good to −190 · 1u\nM\. Dellavedova vs H\. Moriya\nATP · Challenger Playford 2 · 1\/8-finals\n\[Open at FanDuel\]\(https:\/\/sportsbook\.fanduel\.com\//);
-  assert.deepEqual(e.fields.map((f) => [f.name, f.value]), [['Price', '−175 · needs 64%'], ['Our read', '69%'], ['Score when taken', '6-0 3-4'], ['Our Match Winner record', '8-2 · +3.29u']]);
+  // What to take is the title, in the words on a bet slip.
+  assert.equal(e.title, '🎾 TAKE · M. Dellavedova to win the match');
+  assert.deepEqual([e.author.name, e.author.icon_url], ['PERPETUAL PICKS · LIVE TENNIS', 'https://perpetualpicks.com/assets/logo-icon-180.png']);
+  const lines = e.description.split('\n');
+  assert.equal(lines[0], '**−175** at **FanDuel** · good down to −190 · stake **1u**');
+  assert.equal(lines[1], 'Moneyline · M. Dellavedova vs H. Moriya');
+  assert.equal(lines[2], 'ATP · Challenger Playford 2 · 1/8-finals');
+  // Why, short, from the numbers kept with the play.
+  assert.equal(lines[4], '**Why:** Dellavedova has held 6 of 6 service games today; Moriya 3 of 5. Has won 5 of the last 8 games. We make it 69% to land; the price only needs 64%.');
+  // Every book with the line, best price first: a whole link as it is, one that needs the reader's state or is Hard Rock's through the worker, one with a blank nobody can fill as a price alone.
+  assert.equal(lines[6], `**Bet it:** [FanDuel −175](https://sportsbook.fanduel.com/addToBetslip?marketId=1&selectionId=2) · [Caesars −180](${GO}/caesars) · [Hard Rock −185](${GO}/hardrock) · BetRivers −190`);
+  // The stats behind it.
+  assert.deepEqual(e.fields.map((f) => [f.name, f.value]), [['Chance to land', '▰▰▰▰▰▰▰▱▱▱ **69%**'], ['Price needs', '64%'], ['Edge', '+5 pts'], ['Score when taken', '6-0 3-4'], ['Serve held today', 'Dellavedova 6/6 · Moriya 3/5'], ['Our Match Winner record', '8-2 · +3.29u']]);
+  assert.ok(e.fields.every((f) => f.inline));
+  assert.deepEqual([meter(0), meter(0.5), meter(1)], ['▱▱▱▱▱▱▱▱▱▱', '▰▰▰▰▰▱▱▱▱▱', '▰▰▰▰▰▰▰▰▰▰']);
+  // The look: the site's magenta, and the LIVE PLAY strip.
+  assert.equal(e.color, 0xff007a);
+  assert.match(e.image.url, /^https:\/\/perpetualpicks\.com\/assets\/discord\/live\.png\?v=\d+$/);
   assert.equal(e.url, 'https://perpetualpicks.com/app.html');
   assert.equal(e.timestamp, new Date(NOW - 60e3).toISOString());
 
-  // A set no book prices: the price to take it at, and no link.
-  const s = livePlayMessage(set(), { record: { wins: 31, losses: 6, units: 10.22 } });
-  assert.equal(s.content, '');
-  assert.equal(s.embeds[0].title, '🎾 Set 2 Winner — Take Carlos Alcaraz to win set 2');
-  assert.match(s.embeds[0].description, /^\*\*Take it at −186 or better\*\* · 1u\n/);
-  assert.ok(!/\]\(http/.test(s.embeds[0].description));
-  assert.deepEqual(s.embeds[0].fields.map((f) => f.name), ['Price to take', 'Our read', 'Score when taken', 'Our Set Winner record']);
+  // A set no book prices: the price to take it at, and it says no book has it.
+  const s = livePlayMessage(set({ stats: { ...STATS, streak: { side: 'a', n: 4 } } }), { record: { wins: 31, losses: 6, units: 10.22 } }).embeds[0];
+  assert.equal(s.title, '🎾 TAKE · Carlos Alcaraz to win set 2');
+  assert.match(s.description, /^\*\*−186 or better\*\* at your book · stake \*\*1u\*\*\nSet 2 winner · Carlos Alcaraz vs Alexander Zverev\n/);
+  assert.match(s.description, /\*\*Why:\*\* Alcaraz has held 6 of 6 service games today; Zverev 3 of 5\. Has won the last 4 games\. We make it 69% to land; the price only needs 65%\./);
+  assert.match(s.description, /\*\*Bet it:\*\* no book we read has this live\. Take it at −186 or better where you can find it\.$/);
+  assert.ok(!/\]\(http/.test(s.description));
+  assert.equal(s.fields.at(-1).name, 'Our Set Winner record');
+  // The games in a set: both players' holds and where the set is headed.
+  const games = livePlayMessage({ ...set({ id: 'atp:2:live_set_total:2', market: 'live_set_total', side: null, selection: 'Set 2 over 9.5 games', point: 9.5, sideWord: 'over', playable: -150, prob: 0.66 }), stats: { ...STATS, setGames: 10.4 } }, {}).embeds[0];
+  assert.equal(games.title, '🎾 TAKE · Set 2 over 9.5 games');
+  assert.match(games.description, /Set 2 total games · Carlos Alcaraz vs Alexander Zverev/);
+  assert.match(games.description, /\*\*Why:\*\* Alcaraz has held 6 of 6 service games and Zverev 3 of 5\. At those hold rates the set runs to about 10\.4 games\. We make it 66% to land; the price only needs 60%\./);
+  // A play from before the stats were kept still has its reason: the read against the price.
+  assert.equal(whyLine(ml()), 'We make it 69% to land; the price only needs 64%.');
 
-  // Settled.
-  const won = livePlayMessage(ml({ status: 'graded', result: 'win', profit: 0.57, actual: '6-0 4-6 7-6' }), {}).embeds[0];
-  assert.match(won.description, /^\*\*✅ WON · final 6-0 4-6 7-6 · \+0\.57u\*\*\n/);
-  assert.ok(!/Open at/.test(won.description), 'no link to a bet that is over');
+  // Settled: the title leads with it, the strip and the colour change, the links come off.
+  const won = livePlayMessage(ml({ stats: STATS, quotes: BOOKS, status: 'graded', result: 'win', profit: 0.57, actual: '6-0 4-6 7-6' }), {}).embeds[0];
+  assert.equal(won.title, '✅ WON · M. Dellavedova to win the match');
+  assert.match(won.description, /^\*\*Final 6-0 4-6 7-6 · \+0\.57u\*\*\nTaken at \*\*−175\*\* \(FanDuel\) · stake \*\*1u\*\*\n/);
+  assert.ok(!/Bet it|\]\(http/.test(won.description), 'no link to a bet that is over');
+  assert.match(won.image.url, /\/won\.png/);
   const lost = livePlayMessage(ml({ status: 'graded', result: 'loss', profit: -1, actual: '6-0 4-6 3-6' }), {}).embeds[0];
-  assert.match(lost.description, /^\*\*❌ LOST · final 6-0 4-6 3-6 · −1\.00u\*\*/);
+  assert.deepEqual([lost.title, lost.description.split('\n')[0]], ['❌ LOST · M. Dellavedova to win the match', '**Final 6-0 4-6 3-6 · −1.00u**']);
+  assert.match(lost.image.url, /\/lost\.png/);
   const voided = livePlayMessage(ml({ status: 'void', result: 'void', profit: 0, actual: '6-0 1-0: a retirement' }), {}).embeds[0];
-  assert.match(voided.description, /^\*\*⚪ VOID · final 6-0 1-0: a retirement · stake returned\*\*/);
-  assert.ok(won.color !== lost.color && lost.color !== voided.color && won.color !== livePlayMessage(ml()).embeds[0].color);
+  assert.deepEqual([voided.title, voided.description.split('\n')[0]], ['⚪ VOID · M. Dellavedova to win the match', '**Stake returned** · 6-0 1-0: a retirement']);
+  assert.match(voided.image.url, /\/void\.png/);
+  assert.equal(new Set([e.color, won.color, lost.color, voided.color]).size, 4);
 
-  // A name from the feed cannot write markdown or a mention, and a Caesars link with {state} left in it is not a link.
-  const odd = livePlayMessage(ml({ a: '@everyone **bold**', selection: '[x](http://evil.example) to win', link: 'https://sportsbook.caesars.com/us/{state}/bet?selectionIds=1' }), {});
-  assert.ok(!/\]\(https?:/.test(odd.embeds[0].description) && odd.embeds[0].description.includes('\\*\\*bold\\*\\*'));
+  // A name from the feed cannot write markdown or a mention.
+  const odd = livePlayMessage(ml({ a: '@everyone **bold**', selection: '[x](http://evil.example) to win', link: 'javascript:alert(1)' }), {});
+  assert.ok(!/\]\(https?:\/\/evil/.test(odd.embeds[0].description) && !/javascript:/.test(odd.embeds[0].description) && odd.embeds[0].description.includes('\\*\\*bold\\*\\*'));
   assert.deepEqual(odd.allowed_mentions, { parse: [], roles: [] });
   assert.equal(liveResultLine(ml({ status: 'graded', result: 'win', profit: 0.57, actual: '6-0 4-6 7-6' })).content, '✅ WON · M. Dellavedova to win the match · M. Dellavedova vs H. Moriya · 6-0 4-6 7-6 · +0.57u');
+});
+
+test('a book link on a card: whole links go straight; the worker finishes one for the reader\'s state and phone, and never sends anyone anywhere but a link the site stored', async () => {
+  const play = ml({ stats: STATS, quotes: BOOKS });
+  assert.equal(cardLink(play, BOOKS[0]), BOOKS[0].link);
+  assert.equal(cardLink(play, BOOKS[1]), `${GO}/caesars`);
+  assert.equal(cardLink(play, BOOKS[2]), `${GO}/hardrock`);
+  assert.equal(cardLink(play, BOOKS[3]), null, 'a blank other than the state cannot be filled');
+  for (const bad of ['http://sportsbook.fanduel.com/x', 'javascript:alert(1)', '', null, 'https://a.example/x y']) assert.equal(cardLink(play, { bookId: 'fanduel', link: bad }), null, String(bad));
+
+  const { env, store } = makeEnv();
+  const today = new Intl.DateTimeFormat('en-CA', { timeZone: 'America/New_York' }).format(NOW);
+  store.set(`tennis:liveplays:${today}`, JSON.stringify({ date: today, plays: [play] }));
+  const go = (book, opts) => bookRedirect(env, 'atp:1:live_ml', book, { now: NOW, ...opts });
+  assert.equal(await go('caesars', { region: 'NJ' }), 'https://sportsbook.caesars.com/us/nj/bet?selectionIds=abc&dl=betslip', 'the reader\'s state goes in');
+  assert.equal(await go('caesars', { region: null }), 'https://sportsbook.caesars.com/', 'no state known: the book\'s front page, not a broken link');
+  assert.equal(await go('hardrock', { userAgent: 'Mozilla/5.0 (iPhone; CPU iPhone OS 18_0 like Mac OS X)' }), 'https://share.hardrock.bet/Pt0T/bet?deep_link_value=hardrock://betslip/3947887837145334180', 'a phone gets Hard Rock\'s shared-bet link');
+  assert.equal(await go('hardrock', { userAgent: 'Mozilla/5.0 (Windows NT 10.0)' }), BOOKS[2].link);
+  assert.equal(await go('betrivers', { region: 'NJ' }), 'https://betrivers.com/', 'a link that cannot be finished: the front page');
+  assert.equal(await go('fanduel', {}), BOOKS[0].link);
+  // Nothing the site did not store: an unknown play, an unknown book, a made-up book id.
+  assert.equal(await bookRedirect(env, 'atp:999:live_ml', 'fanduel', { now: NOW }), 'https://sportsbook.fanduel.com/');
+  assert.equal(await go('draftkings', {}), 'https://sportsbook.draftkings.com/');
+  assert.equal(await go('evil_example', {}), 'https://perpetualpicks.com/app.html');
+  assert.equal(await bookRedirect(env, 'test', 'fanduel', { now: NOW }), 'https://sportsbook.fanduel.com/', 'the test alert\'s links go to the front page');
 });
 
 test('with no webhook nothing is sent; with one, the channel is told once that it is connected', async () => {
@@ -115,7 +176,8 @@ test('a tracked play is posted once when it opens, and its own message is edited
   plays = [ml({ status: 'graded', result: 'win', profit: 0.57, actual: '6-0 4-6 7-6' }), lean, stale, settledAlready];
   assert.deepEqual(await sync(env, NOW + 40 * 60e3, d, plays), { posted: 0, edited: 1, failed: 0 });
   assert.deepEqual(d.calls.slice(1).map((c) => [c.method, c.url]), [['PATCH', `${HOOK}/messages/900000000000000001`], ['POST', `${UPDATES}?wait=true`]]);
-  assert.match(d.calls[1].body.embeds[0].description, /^\*\*✅ WON · final 6-0 4-6 7-6 · \+0\.57u\*\*/);
+  assert.equal(d.calls[1].body.embeds[0].title, '✅ WON · M. Dellavedova to win the match');
+  assert.match(d.calls[1].body.embeds[0].description, /^\*\*Final 6-0 4-6 7-6 · \+0\.57u\*\*/);
   assert.match(d.calls[2].body.content, /^✅ WON · M\. Dellavedova to win the match/);
   assert.deepEqual(await sync(env, NOW + 41 * 60e3, d, plays), { posted: 0, edited: 0, failed: 0 });
   assert.equal(d.calls.length, 3, 'and never again');
@@ -196,13 +258,15 @@ test('a test alert goes out once per test id: a sample play marked TEST with the
   assert.equal(d.calls.length, 1);
   assert.equal(d.calls[0].method, 'POST');
   assert.equal(d.calls[0].body.content, '<@&987654321098765432>', 'a role pasted as a mention is read as its id, and the test pings it');
-  assert.match(d.calls[0].body.embeds[0].title, /^🧪 TEST · 🎾 Match Winner — Take Test Player/);
+  assert.equal(d.calls[0].body.embeds[0].title, '🧪 TEST · 🎾 TAKE · Test Player to win the match');
   assert.match(d.calls[0].body.embeds[0].footer.text, /TEST ALERT · not a real play/);
+  assert.match(d.calls[0].body.embeds[0].description, /\*\*Why:\*\* Player has held 6 of 6[^]*\*\*Bet it:\*\* \[FanDuel −175\]\(https:\/\/sportsbook\.fanduel\.com\/\) · \[DraftKings −180\]/, 'the test shows the whole card: the reason and the books');
   await run(NOW + 20e3);
   assert.equal(d.calls.length, 1, 'not edited within the same minute');
   await run(NOW + 60e3);
   assert.deepEqual([d.calls[1].method, d.calls[1].url], ['PATCH', `${HOOK}/messages/900000000000000001`]);
-  assert.match(d.calls[1].body.embeds[0].description, /^\*\*✅ WON · final 6-0 4-6 7-6 · \+0\.57u\*\*/);
+  assert.match(d.calls[1].body.embeds[0].title, /^🧪 TEST · ✅ WON · Test Player/);
+  assert.match(d.calls[1].body.embeds[0].description, /^\*\*Final 6-0 4-6 7-6 · \+0\.57u\*\*/);
   for (let i = 2; i < 6; i++) await run(NOW + i * 60e3);
   assert.equal(d.calls.length, 2, 'once per id');
   assert.deepEqual((await discordStatus(env)).test, { id: 't1', state: 'done', at: NOW });

@@ -281,10 +281,11 @@ const best = (quotes) => [...quotes].sort((x, y) => y.american - x.american)[0] 
  * best), and no slip links: these are the prices at the moment of posting,
  * read beside the play long after the links have gone stale.
  */
-export function bookPrices(quotes) {
+export function bookPrices(quotes, { links = false } = {}) {
   const by = new Map();
   for (const q of quotes ?? []) if (q?.bookId && Number.isFinite(q.american) && (!by.has(q.bookId) || q.american > by.get(q.bookId).american)) by.set(q.bookId, q);
-  return [...by.values()].sort((x, y) => y.american - x.american).map((q) => ({ bookId: q.bookId, book: q.book ?? null, american: q.american }));
+  // `links` keeps each book's bet-slip link beside its price (a live play's card links every book that has the line).
+  return [...by.values()].sort((x, y) => y.american - x.american).map((q) => ({ bookId: q.bookId, book: q.book ?? null, american: q.american, ...(links && q.link ? { link: q.link } : {}) }));
 }
 
 /**

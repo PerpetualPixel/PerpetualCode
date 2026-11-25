@@ -66,7 +66,7 @@ import { runUfcTick, getUfcPicks } from './ufc-picks.js';
 import { runTennisTick, getTennisPicks, getTennisParlay } from './tennis-picks.js';
 import { getTennisLive } from './tennis-live.js';
 import { runTennisLiveTick, getTennisLivePlays, TENNIS_LIVE_CRON } from './tennis-live-plays.js';
-import { syncLiveDiscord, discordStatus } from './discord.js';
+import { syncLiveDiscord, discordStatus, bookRedirect } from './discord.js';
 import { getTennisTrends } from './tennis-trends.js';
 import { sendUfcTicketNotifications, sendUfcChangeNotifications } from './notifications.js';
 import { legBreakdown } from './parlay-builder.js';
@@ -1717,6 +1717,14 @@ export default {
 
     // The US state this request came from, as Cloudflare reads it: the app writes it into Caesars' and BetMGM's
     // slip links, which are a site a state (docs/book-links.js withState). Nothing is stored.
+    // A book link on a Discord card (worker/src/discord.js bookRedirect): the play's own stored link for that book, finished for the reader's state and phone.
+    const go = request.method === 'GET' ? pathname.match(/^\/go\/([^/]{1,120})\/([a-z0-9_]{1,40})$/) : null;
+    if (go) {
+      let playId = ''; try { playId = decodeURIComponent(go[1]); } catch { playId = ''; }
+      const to = await bookRedirect(env, playId, go[2], { region: request.cf?.regionCode ?? null, userAgent: request.headers.get('User-Agent') ?? '' });
+      return new Response(null, { status: 302, headers: { Location: to, 'Cache-Control': 'no-store', 'Referrer-Policy': 'no-referrer' } });
+    }
+
     // Whether the Discord alerts are set up and working (worker/src/discord.js): yes or no and when, never the address.
     if (pathname === '/discord/status' && request.method === 'GET') {
       return json(await discordStatus(env), { headers: { ...cors, 'Cache-Control': 'no-store' } });
