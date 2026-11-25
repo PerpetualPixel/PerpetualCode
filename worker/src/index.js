@@ -66,6 +66,7 @@ import { runUfcTick, getUfcPicks } from './ufc-picks.js';
 import { runTennisTick, getTennisPicks, getTennisParlay } from './tennis-picks.js';
 import { getTennisLive } from './tennis-live.js';
 import { runTennisLiveTick, getTennisLivePlays, TENNIS_LIVE_CRON } from './tennis-live-plays.js';
+import { syncLiveDiscord, discordStatus } from './discord.js';
 import { getTennisTrends } from './tennis-trends.js';
 import { sendUfcTicketNotifications, sendUfcChangeNotifications } from './notifications.js';
 import { legBreakdown } from './parlay-builder.js';
@@ -514,7 +515,12 @@ export default {
     // a KV read and nothing else while no match is in play. Nothing below
     // runs on it.
     if (event.cron === TENNIS_LIVE_CRON) {
-      ctx.waitUntil(runTennisLiveTick(env, ctx, now).catch((e) => console.error('Tennis live tick failed:', e)));
+      // Then the owner's Discord (worker/src/discord.js): a tracked play goes up when it opens and its message is edited when it settles.
+      // A resting tick changed nothing, so there is nothing to send; with no webhook set this is a no-op.
+      ctx.waitUntil(runTennisLiveTick(env, ctx, now)
+        .catch((e) => { console.error('Tennis live tick failed:', e); return null; })
+        .then((r) => (r?.skipped ? null : syncLiveDiscord(env, now)))
+        .catch((e) => console.error('Discord sync failed:', String(e?.message ?? e).slice(0, 120))));
       return;
     }
 
@@ -1711,6 +1717,11 @@ export default {
 
     // The US state this request came from, as Cloudflare reads it: the app writes it into Caesars' and BetMGM's
     // slip links, which are a site a state (docs/book-links.js withState). Nothing is stored.
+    // Whether the Discord alerts are set up and working (worker/src/discord.js): yes or no and when, never the address.
+    if (pathname === '/discord/status' && request.method === 'GET') {
+      return json(await discordStatus(env), { headers: { ...cors, 'Cache-Control': 'no-store' } });
+    }
+
     if (pathname === '/region' && request.method === 'GET') {
       return json({ country: request.cf?.country ?? null, region: request.cf?.regionCode ?? null }, { headers: { ...cors, 'Cache-Control': 'private, no-store' } });
     }

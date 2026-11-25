@@ -307,3 +307,54 @@ per game on its own timeline, not a promised daily board.
 | Legs come back wrong | The model misread the image — low-confidence legs are flagged in the UI | Type the bet in instead; that path has no reader |
 
 Live logs: `cd worker && npx wrangler tail`
+
+## Discord live alerts (optional)
+
+The worker can post each tracked live tennis play to a Discord channel the
+moment it opens, and edit that same message with the result when it settles
+(`worker/src/discord.js`). It uses a channel webhook, so there is no bot to
+host. With no webhook set it does nothing.
+
+### One-time setup
+
+1. In Discord, open the channel the alerts should go to (for example
+   `live-alerts`) → **Edit Channel** → **Integrations** → **Webhooks** →
+   **New Webhook**. Give it the name and picture the posts should carry,
+   then **Copy Webhook URL**.
+2. In Cloudflare: **Workers & Pages** → `pixel-pick-odds` → **Settings** →
+   **Variables and Secrets** → **Add** → type **Secret**, name
+   `DISCORD_LIVE_WEBHOOK`, value the URL you copied → **Deploy**.
+   (Or from a terminal: `npx wrangler secret put DISCORD_LIVE_WEBHOOK`.)
+
+Within about five minutes the channel gets one message saying the alerts are
+connected. After that, every tracked live tennis play posts when it opens.
+
+The webhook URL is a password for that channel: anyone who has it can post
+there. Keep it in Cloudflare only. Do not put it in the repo, in
+`wrangler.toml`, or in a chat. If it leaks, delete the webhook in Discord
+and make a new one.
+
+### Optional extras (same place, same way)
+
+- `DISCORD_LIVE_ROLE_ID`: a role to ping on each new play (never on the
+  result edit). In Discord: **User Settings** → **Advanced** → turn on
+  **Developer Mode**, then right-click the role → **Copy Role ID**. The role
+  must allow being mentioned (**Server Settings** → **Roles** → the role →
+  "Allow anyone to @mention this role").
+- `DISCORD_UPDATES_WEBHOOK`: a second webhook, made the same way in another
+  channel (for example `updates`), that gets one short line per result.
+
+### Checking it
+
+`GET /discord/status` on the worker says whether a webhook is set, whether
+the value was rejected as not being a Discord webhook URL, when the last
+post went out, and the last error if there was one. It never returns the
+URL or a message id.
+
+### What posts, and what does not
+
+- Posts: tracked live tennis plays (match winner, set winner, set games).
+- Does not post: leans (they are not tracked), and a play that was already
+  more than 15 minutes old or already settled when the webhook was added.
+- A play is never posted twice. If Discord does not answer a post at all,
+  that play is skipped rather than risked twice.
