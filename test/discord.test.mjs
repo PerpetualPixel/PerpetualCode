@@ -216,4 +216,17 @@ test('a test alert goes out once per test id: a sample play marked TEST with the
   assert.deepEqual(await st({}), [false, false, false], 'not set under DISCORD_LIVE_ROLE_ID');
   assert.deepEqual(await st({ DISCORD_LIVE_ROLE_ID: 'Live Tennis' }), [false, true, true], 'set, but a name and not an id');
   assert.deepEqual(await st({ DISCORD_LIVE_ROLE_ID: ' 987654321098765432 ' }), [true, true, false]);
+  for (const pasted of ['"987654321098765432"', '@&987654321098765432', 'Role ID: 987654321098765432', '<@&987654321098765432>']) assert.equal(discordConfig({ DISCORD_LIVE_WEBHOOK: HOOK, DISCORD_LIVE_ROLE_ID: pasted }).role, '987654321098765432', pasted);
+  assert.equal(discordConfig({ DISCORD_LIVE_WEBHOOK: HOOK, DISCORD_LIVE_ROLE_ID: '987654321098765432 123456789012345678' }).role, null, 'two ids: which one is not ours to guess');
+
+  // With an updates channel set, the test's result line goes there too, marked as a test.
+  const both = makeEnv({ DISCORD_LIVE_WEBHOOK: HOOK, DISCORD_UPDATES_WEBHOOK: UPDATES });
+  both.store.set(DISCORD_LEDGER_KEY, JSON.stringify({ helloAt: NOW - 1, plays: {} }));
+  const d2 = fakeDiscord();
+  await sync(both.env, NOW, d2, [], undefined, 't9');
+  await sync(both.env, NOW + 60e3, d2, [], undefined, 't9');
+  await sync(both.env, NOW + 120e3, d2, [], undefined, 't9');
+  assert.deepEqual(d2.calls.map((c) => [c.method, c.url.split('?')[0].split('/messages')[0]]), [['POST', HOOK], ['PATCH', HOOK], ['POST', UPDATES]]);
+  assert.match(d2.calls[2].body.content, /^🧪 TEST \(not a real play\) · ✅ WON · Test Player to win the match/);
+  assert.equal((await discordStatus(both.env)).test.updates, 'sent');
 });

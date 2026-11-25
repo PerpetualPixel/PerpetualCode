@@ -54,7 +54,7 @@ const TOUR = { atp: 'ATP', wta: 'WTA' };
  * this value and the next tick posts one sample play, marked as a test, with the role ping; the tick after edits it
  * to its settled form. That is the whole path a real play takes.
  */
-export const TEST_ALERT_ID = '2026-11-25-1';
+export const TEST_ALERT_ID = '2026-11-25-2';
 const TEST_PLAY = { id: 'test', market: 'live_ml', tour: 'atp', event: 'Test alert', round: 'not a real play', a: 'Test Player', b: 'Sample Opponent', side: 'a', prob: 0.69, american: -175, playable: -190, book: 'FanDuel', units: 1, selection: 'Test Player to win the match (live)', score: '6-0 3-4', status: 'pending' };
 /** The sample alert: a real alert's shape, with TEST in its title and its footer so nobody takes it for a play. */
 export function testAlertMessage(now, { role = null, settled = false } = {}) {
@@ -65,8 +65,8 @@ export function testAlertMessage(now, { role = null, settled = false } = {}) {
   return msg;
 }
 
-/** The role id as Discord gives it, or as a pasted mention (<@&123>). */
-const roleOf = (v) => String(v ?? '').trim().replace(/^<@&(\d+)>$/, '$1');
+/** The role id as Discord gives it, or however it was pasted (a mention <@&123>, in quotes, after a label): the one long number in the value. A name has none. */
+const roleOf = (v) => { const ids = String(v ?? '').match(/\d{15,22}/g) ?? []; return ids.length === 1 ? ids[0] : String(v ?? '').trim(); };
 /** What is configured: the webhooks (null when unset or not a Discord webhook URL) and the role to ping. */
 export function discordConfig(env) {
   const hook = (v) => { const s = String(v ?? '').trim(); return WEBHOOK.test(s) ? s : null; };
@@ -216,6 +216,13 @@ export async function syncLiveDiscord(env, now = Date.now(), { deps = {} } = {})
     const r = await edit(fetcher, cfg.live, ledger.test.messageId, testAlertMessage(ledger.test.at, { role: cfg.role, settled: true }));
     ledger.test = { id: ledger.test.id, state: r.ok ? 'done' : 'edit failed', at: ledger.test.at, doneAt: now };
     if (!r.ok) fail('test edit', r);
+    // The updates channel gets the test's result line too, as it would a real play's, marked as a test.
+    if (cfg.updates) {
+      const line = liveResultLine({ ...TEST_PLAY, status: 'graded', result: 'win', profit: 0.57, actual: '6-0 4-6 7-6' });
+      const u = await post(fetcher, cfg.updates, { ...line, content: `🧪 TEST (not a real play) · ${line.content}` });
+      ledger.test.updates = u.ok ? 'sent' : 'failed';
+      if (!u.ok) fail('test update', u);
+    }
     dirty = true;
   }
 
@@ -290,7 +297,7 @@ export async function discordStatus(env) {
     // The role: found under its name at all, and if found, whether it is a role id (digits only).
     roleSecretFound: Boolean(String(env?.DISCORD_LIVE_ROLE_ID ?? '').trim()),
     roleSecretRejected: Boolean(String(env?.DISCORD_LIVE_ROLE_ID ?? '').trim()) && !cfg.role,
-    test: ledger.test ? { id: ledger.test.id, state: ledger.test.state, at: ledger.test.at ?? null } : null,
+    test: ledger.test ? { id: ledger.test.id, state: ledger.test.state, at: ledger.test.at ?? null, ...(ledger.test.updates ? { updates: ledger.test.updates } : {}) } : null,
     helloAt: ledger.helloAt ?? null, lastPostAt: ledger.lastPostAt ?? null, lastError: ledger.lastError ?? null, plays: counts,
   };
 }
