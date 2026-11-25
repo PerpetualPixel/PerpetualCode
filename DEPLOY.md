@@ -345,6 +345,21 @@ and make a new one.
   channel (for example `updates`), that gets one simple card per result: won, lost or void, the final score, the
   units, the price it was taken at, and the record.
 
+### What a post looks like
+
+Each play goes out as a picture of its card (`worker/src/card-svg.js` draws
+it, `worker/src/card-render.js` turns it into a PNG inside the worker) in one
+of four forms: live play, won, lost, void. Under an open play sit link
+buttons: one a book that has the line ("Add to slip"), and "Stats & why",
+which opens `GET /play/<id>` on the worker (`worker/src/play-page.js`): the
+price, the numbers, the reasons and the record for that play. A settled card
+keeps the stats button alone.
+
+If the picture cannot be drawn, or Discord will not take the buttons, the
+same play goes out as a written card with its links in the text, so an alert
+is never lost to the picture. `GET /discord/status` shows `pictures` and
+`buttons` as true or false, and `cardError` with the last reason.
+
 ### Checking it
 
 `GET /discord/status` on the worker says whether a webhook is set, whether

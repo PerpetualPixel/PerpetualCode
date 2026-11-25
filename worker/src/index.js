@@ -66,7 +66,8 @@ import { runUfcTick, getUfcPicks } from './ufc-picks.js';
 import { runTennisTick, getTennisPicks, getTennisParlay } from './tennis-picks.js';
 import { getTennisLive } from './tennis-live.js';
 import { runTennisLiveTick, getTennisLivePlays, TENNIS_LIVE_CRON } from './tennis-live-plays.js';
-import { syncLiveDiscord, discordStatus, bookRedirect } from './discord.js';
+import { syncLiveDiscord, discordStatus, bookRedirect, findLivePlay, recordForPlay } from './discord.js';
+import { playPage, missingPlayPage } from './play-page.js';
 import { getTennisTrends } from './tennis-trends.js';
 import { sendUfcTicketNotifications, sendUfcChangeNotifications } from './notifications.js';
 import { legBreakdown } from './parlay-builder.js';
@@ -1717,6 +1718,41 @@ export default {
 
     // The US state this request came from, as Cloudflare reads it: the app writes it into Caesars' and BetMGM's
     // slip links, which are a site a state (docs/book-links.js withState). Nothing is stored.
+    // The page behind a card's "Stats & why" button (worker/src/play-page.js): one play in full. No script, its own styles.
+    const playRoute = request.method === 'GET' ? pathname.match(/^\/play\/([^/]{1,120})$/) : null;
+    if (playRoute) {
+      let playId = ''; try { playId = decodeURIComponent(playRoute[1]); } catch { playId = ''; }
+      const play = await findLivePlay(env, playId);
+      const html = play ? playPage(play, { record: await recordForPlay(env, play) }) : missingPlayPage();
+      return new Response(html, { status: play ? 200 : 404, headers: { 'Content-Type': 'text/html; charset=utf-8', 'Cache-Control': 'public, max-age=60', 'Content-Security-Policy': "default-src 'none'; img-src https://perpetualpicks.com https://pixel-pick-odds.mgbouldering.workers.dev; style-src 'unsafe-inline'; base-uri 'none'; form-action 'none'", 'Referrer-Policy': 'no-referrer', 'X-Content-Type-Options': 'nosniff' } });
+    }
+    // A play's card as a picture (worker/src/card-svg.js draws it, card-render.js makes the PNG): for the stats page, and
+    // as .json a report that the renderer works here (its size and how long it took), which a probe can read.
+    const cardRoute = request.method === 'GET' ? pathname.match(/^\/card\/([^/]{1,120})\.(png|json)$/) : null;
+    if (cardRoute) {
+      let playId = ''; try { playId = decodeURIComponent(cardRoute[1]); } catch { playId = ''; }
+      const play = await findLivePlay(env, playId);
+      if (!play) return json({ error: 'no such play' }, { status: 404, headers: cors });
+      // Drawing costs CPU, so a drawn card is kept at the edge under the play and its state: a settled card for a day, an open one for ten minutes.
+      const settled = play.status === 'graded' || play.status === 'void';
+      const kept = new Request(`${new URL(request.url).origin}/card/${encodeURIComponent(play.id)}.png?s=${settled ? `${play.status}-${play.result ?? ''}` : 'open'}`);
+      const edge = globalThis.caches?.default ?? null;
+      try {
+        const hit = edge ? await edge.match(kept).catch(() => null) : null;
+        if (hit && cardRoute[2] === 'png') return hit;
+        if (hit) return json({ ok: true, id: play.id, status: play.status, kept: true }, { headers: { ...cors, 'Cache-Control': 'no-store' } });
+        const started = Date.now();
+        const { renderCardPng } = await import('./card-render.js');
+        const png = await renderCardPng(play);
+        const picture = new Response(png, { headers: { 'Content-Type': 'image/png', 'Cache-Control': `public, max-age=${settled ? 86400 : 600}`, 'X-Content-Type-Options': 'nosniff' } });
+        if (edge) ctx.waitUntil(edge.put(kept, picture.clone()).catch(() => {}));
+        if (cardRoute[2] === 'json') return json({ ok: true, id: play.id, status: play.status, bytes: png.length, ms: Date.now() - started, png: png[0] === 0x89 && png[1] === 0x50 }, { headers: { ...cors, 'Cache-Control': 'no-store' } });
+        return picture;
+      } catch (error) {
+        return json({ ok: false, error: String(error?.message ?? error).slice(0, 200) }, { status: 500, headers: cors });
+      }
+    }
+
     // A book link on a Discord card (worker/src/discord.js bookRedirect): the play's own stored link for that book, finished for the reader's state and phone.
     const go = request.method === 'GET' ? pathname.match(/^\/go\/([^/]{1,120})\/([a-z0-9_]{1,40})$/) : null;
     if (go) {
