@@ -463,13 +463,17 @@ export function legRecord(leg, research, now) {
  * shows one prop: the highest Pixel score among the lines a listed book
  * prices in range on a game not yet started, with why it is short of a
  * ticket. Chance rows (first basket, first touchdown) never stand here. Shown under an emblem and never tracked.
+ * Today's games only (2026-11-24: "the best on the board need to be that
+ * day. Not ... an NFL game on Friday"): a league with no game left today
+ * (Eastern) has no line here, however good Friday's looks.
  */
 export function bestOnBoard(rows, now, enabled = TREND_ENABLED_SPORTS) {
   const out = {};
+  const today = etParts(now).date;
   for (const sportKey of enabled) {
     let best = null;
     for (const row of rows ?? []) {
-      if (row.sportKey !== sportKey || !(row.commenceMs > now) || row.injury?.level === 'out') continue;
+      if (row.sportKey !== sportKey || !(row.commenceMs > now) || etParts(row.commenceMs).date !== today || row.injury?.level === 'out') continue;
       // A chance row (first basket, first touchdown) scores 5 for being its field's favorite, not for being likely.
       if (row.noLog || Number.isFinite(row.prob)) continue;
       const quote = pickQuotes(row).find((q) => inRange(q.american, LEG_RANGE));

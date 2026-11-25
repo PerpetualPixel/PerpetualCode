@@ -10152,11 +10152,17 @@ function renderBoardSuggestion(row) {
  * direction): the league boards' best lines, the best tennis leg and the
  * card's best fight prop, each with its stake by confidence. Not tracked.
  */
+/**
+ * On today's board: a game still to start, on today's Eastern date (2026-11-24, the owner, of a Friday NFL line shown
+ * on a Tuesday as "Today's suggestion": "I don't want today's suggestions to be something on another day ... the best
+ * on the board need to be that day. Not a ufc event a week from now or an NFL game on Friday").
+ */
+const onTodaysBoard = (ms, now = Date.now()) => Number.isFinite(ms) && ms > now && etDateString(ms) === etDateString(now);
 function pickBoardRows() {
   const today = trendPicksState.data?.today ?? null;
   const now = Date.now();
   const rows = [];
-  const legs = Object.values(today?.showcase ?? {}).filter((leg) => leg.commenceMs > now);
+  const legs = Object.values(today?.showcase ?? {}).filter((leg) => onTodaysBoard(leg.commenceMs, now));
   // The soccer leagues share one line: the best of them.
   const bySport = new Map();
   for (const leg of legs) { const k = String(leg.sportKey).startsWith('soccer_') ? 'soccer' : leg.sportKey; const cur = bySport.get(k); if (!cur || (leg.score ?? 0) > (cur.score ?? 0)) bySport.set(k, leg); }
@@ -10167,14 +10173,14 @@ function pickBoardRows() {
       title: leg.playerName, sub: `${lineText(leg)}${l20?.games ? ` · L20 ${l20.hits}/${l20.games}` : ''} · ${teamAbbr(leg.away)} @ ${teamAbbr(leg.home)}`,
       price: pricePill(leg.bookId, leg.book, leg.american, leg.link) });
   }
-  const tennis = (trendPicksState.tennisRows ?? []).filter((r) => r.commenceMs > now && Number.isFinite(r.american) && !(r.tennis?.flags ?? []).length)
+  const tennis = (trendPicksState.tennisRows ?? []).filter((r) => onTodaysBoard(r.commenceMs, now) && Number.isFinite(r.american) && !(r.tennis?.flags ?? []).length)
     .sort((a, b) => (b.tennis?.score ?? 0) - (a.tennis?.score ?? 0) || (b.tennis?.prob ?? 0) - (a.tennis?.prob ?? 0))[0];
-  const lean = (tennisState.data?.current?.leans ?? []).find((l) => l.commenceMs > now && Number.isFinite(l.main?.american));
+  const lean = (tennisState.data?.current?.leans ?? []).find((l) => onTodaysBoard(l.commenceMs, now) && Number.isFinite(l.main?.american));
   if (lean) rows.push({ key: 'tennis', sportKey: 'tennis', league: 'Tennis', confidence: lean.confidence, american: lean.main.american, units: lean.units ?? suggestedUnits({ prob: lean.confidence }), go: 'tennis',
     title: lean.main.short, sub: `${pct(lean.confidence)} to land · ${lean.how === 'straight' ? 'straight' : 'a parlay leg'} · ${lean.a} vs ${lean.b}`, price: pricePill(lean.main.bookId, lean.main.book, lean.main.american, lean.main.link) });
   else if (tennis) rows.push({ key: 'tennis', sportKey: 'tennis', league: 'Tennis', confidence: tennis.tennis?.prob ?? 0, american: tennis.american, units: suggestedUnits({ prob: tennis.tennis?.prob }), go: 'tennis',
     title: tennis.selection, sub: `${Number.isFinite(tennis.tennis?.prob) ? `${pct(tennis.tennis.prob)} by the model · ` : ''}${tennis.away} vs ${tennis.home}`, price: pricePill(tennis.bookKey, tennis.book, tennis.american, tennis.quotes?.[0]?.link ?? null) });
-  const ufc = (ufcState.picks?.current ? ufcParlayRows(ufcState.picks) : []).filter((r) => r.commenceMs > now && Number.isFinite(r.american) && r.bookKey !== 'engine' && Number.isFinite(r.ufc?.chance))
+  const ufc = (ufcState.picks?.current ? ufcParlayRows(ufcState.picks) : []).filter((r) => onTodaysBoard(r.commenceMs, now) && Number.isFinite(r.american) && r.bookKey !== 'engine' && Number.isFinite(r.ufc?.chance))
     .sort((a, b) => (b.ufc?.score ?? 0) - (a.ufc?.score ?? 0) || (b.ufc?.chance ?? 0) - (a.ufc?.chance ?? 0))[0];
   if (ufc) rows.push({ key: 'ufc', sportKey: UFC_SPORT_KEY, league: 'UFC', confidence: ufc.ufc?.chance ?? 0, american: ufc.american, units: suggestedUnits({ prob: ufc.ufc?.chance }), go: 'ufc',
     title: ufc.selection, sub: `${pct(ufc.ufc.chance)} chance · ${ufc.away} vs ${ufc.home}`, price: pricePill(ufc.bookKey, ufc.book, ufc.american, ufc.quotes?.find((q) => q.bookKey === ufc.bookKey)?.link ?? null) });
@@ -10184,7 +10190,7 @@ function pickBoardRows() {
 function renderPickBoard(rows) {
   if (!rows.length) return '';
   return `<section class="pick-board" aria-label="Best on the board by sport, not tracked">
-    <div class="pick-board-head"><h3>Best on the board</h3><small>one per sport · not tracked · stake by confidence</small></div>
+    <div class="pick-board-head"><h3>Best on the board</h3><small>today's games · one per sport · not tracked · stake by confidence</small></div>
     ${rows.map((r) => `<div class="pick-board-row" ${r.leg ? `data-pick-leg="showcase:${esc(r.sportKey)}|0"` : r.go ? `data-board-go="${esc(r.go)}"` : ''} role="button" tabindex="0" aria-label="${esc(`${r.league}: ${r.title}`)}">
       <span class="pick-board-league">${esc(r.league)}</span>
       <span class="pick-board-main"><strong>${esc(r.title)}</strong><small>${esc(r.sub)}</small></span>
@@ -10347,31 +10353,48 @@ function renderTrendPicks() {
   const ufcHtml = ufcPicks.length ? `<h3 class="tennis-h3">UFC Pixel's Picks <small>${esc(ufcState.picks.current.eventName ?? '')} · tracked in the UFC record</small></h3>${ufcPicks.map(renderUfcPickCard).join('')}` : '';
   const ufcWord = ufcPicks.length ? `${ufcPicks.length} UFC pick${ufcPicks.length === 1 ? '' : 's'}` : '';
   const extraWord = [ufcWord, tennisWord].filter(Boolean).join(' and ');
+  // What is today's, and what is a later day's (a UFC card stays on the tab all week; a tennis pick can be tomorrow's match).
+  const todayEt = etDateString(Date.now());
+  const isToday = (ms) => Number.isFinite(ms) && etDateString(ms) === todayEt;
+  const ufcToday = ufcPicks.length > 0 && (isToday(ufcState.picks?.current?.lockMs) || ufcPicks.some((p) => isToday(p.commenceMs)));
+  const tennisToday = tennisPicks.some(({ play, lean }) => isToday(play?.commenceMs ?? lean?.commenceMs));
+  // The MVP Picks, under All and under the NBA: the picks lead the tab; with none, the list of who fell short closes it.
+  const mvpOn = trendPicksState.filter === 'all' || trendPicksState.filter === 'basketball_nba';
+  const mvpHtml = mvpOn ? renderMvpSection() : '';
+  const mvpPicks = mvpOn ? (d?.mvp?.today?.picks ?? []).length : 0;
+  const picksToday = bets.length > 0 || mvpPicks > 0 || ufcToday || tennisToday;
+  const boardHtml = renderPickBoard(board);
+  const todayHtml = (mvpPicks ? mvpHtml : '') + bets.map(renderBetCard).join('') + (ufcToday ? ufcHtml : '') + (tennisToday ? tennisHtml : '');
+  const laterHtml = (ufcToday ? '' : ufcHtml) + (tennisToday ? '' : tennisHtml);
+  const mvpTail = mvpPicks ? '' : mvpHtml;
   if (bets.length) {
     el.trendPicksStatus.textContent = `${bets.length} ticket${bets.length === 1 ? '' : 's'} today${extraWord ? ` and ${extraWord}` : ''} · posted ${trendTimeFmt.format(new Date(bets[0].postedAt))} · one unit a ticket`;
-    el.trendPicksBody.innerHTML = bets.map(renderBetCard).join('') + ufcHtml + tennisHtml + renderPickBoard(board);
-  } else if (tennisPicks.length || ufcPicks.length) {
-    el.trendPicksStatus.textContent = `${extraWord[0].toUpperCase()}${extraWord.slice(1)} today, no league ticket.`;
-    el.trendPicksBody.innerHTML = ufcHtml + tennisHtml + renderPickBoard(board);
+    el.trendPicksBody.innerHTML = todayHtml + boardHtml + laterHtml + mvpTail;
   } else {
     const checked = today?.checkedAt ? ` Last checked ${trendTimeFmt.format(new Date(today.checkedAt))}; it looks again every hour until the day's games start.` : '';
-    el.trendPicksStatus.textContent = today
+    const noTicket = today
       ? (today.bets?.length
         ? 'No ticket in this league today.'
         : today.considered
           ? `No ticket today: ${today.considered} line${today.considered === 1 ? '' : 's'} qualified and ${today.passed?.length === today.considered ? 'all' : today.passed?.length ?? 0} passed on research${today.unused?.length ? ', the rest had no usable price at your books' : ''}.${checked}`
           : `No ticket today: nothing is at 100% over the last 20 games yet.${checked}`)
       : 'No tickets drawn yet today. The draw runs after each Trends build.';
+    const extras = extraWord ? ` ${extraWord[0].toUpperCase()}${extraWord.slice(1)} ${ufcToday || tennisToday ? 'today' : 'coming up'}.` : '';
     const notes = [...(today?.passed ?? []).map((x) => `<li><strong>${esc(x.selection)}</strong>: ${esc((x.reasons ?? []).join('; ') || 'the research came back against it')}</li>`), ...(today?.unused ?? []).map((x) => `<li><strong>${esc(x.selection)}</strong>: passed research, ${esc(x.reason)}</li>`)];
-    // No forced pick: the single best play on the board stands in as a suggestion, untracked, with the board card under it.
-    // The likeliest play stands in, but never one priced so short it pays nothing: -300 is the floor while anything else is on the board.
-    const fair = board.filter((r) => !(r.american < -300));
-    const top = [...(fair.length ? fair : board)].sort((a, b) => b.confidence - a.confidence || b.units - a.units)[0] ?? null;
-    if (top) el.trendPicksStatus.textContent = `${el.trendPicksStatus.textContent} The suggestion below is the likeliest play on the board at a fair price, and is not tracked.`;
-    el.trendPicksBody.innerHTML = (top ? (top.leg ? renderShowcaseCard(top.leg) : renderBoardSuggestion(top)) : '') + renderPickBoard(board) + (notes.length ? `<div class="pick-passed"><p class="row-sub">Qualified today:</p><ul>${notes.join('')}</ul></div>` : '');
+    const notesHtml = notes.length ? `<div class="pick-passed"><p class="row-sub">Qualified today:</p><ul>${notes.join('')}</ul></div>` : '';
+    if (picksToday) {
+      el.trendPicksStatus.textContent = `${noTicket}${extras}`;
+      el.trendPicksBody.innerHTML = todayHtml + boardHtml + laterHtml + notesHtml + mvpTail;
+    } else {
+      // No pick today: the board leads (2026-11-24: "I want the best on the board to be the first thing if there are no
+      // pixel picks"), then its likeliest play opened up as the day's suggestion, untracked. Never one priced so short it
+      // pays nothing: -300 is the floor while anything else is on the board.
+      const fair = board.filter((r) => !(r.american < -300));
+      const top = [...(fair.length ? fair : board)].sort((a, b) => b.confidence - a.confidence || b.units - a.units)[0] ?? null;
+      el.trendPicksStatus.textContent = `${noTicket}${extras}${top ? ' Today\'s suggestion, under the board, is the likeliest play on it at a fair price, and is not tracked.' : board.length ? '' : ' Nothing is left on today\'s board.'}`;
+      el.trendPicksBody.innerHTML = boardHtml + (top ? (top.leg ? renderShowcaseCard(top.leg) : renderBoardSuggestion(top)) : '') + laterHtml + notesHtml + mvpTail;
+    }
   }
-  // The MVP Picks lead the tab, under All and under the NBA.
-  if (trendPicksState.filter === 'all' || betMatches({ sportKey: 'basketball_nba' })) el.trendPicksBody.insertAdjacentHTML('afterbegin', renderMvpSection());
   const rec = trendPicksState.filter === 'all' ? d?.record : d?.bySport?.[trendPicksState.filter];
   if (el.trendPicksRecord) {
     el.trendPicksRecord.innerHTML = rec

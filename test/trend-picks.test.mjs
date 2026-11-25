@@ -463,3 +463,17 @@ test('a day with nothing posted keeps what its last real look found; a late look
   assert.deepEqual([kept.considered, kept.usable, kept.final, kept.checkedAt, kept.closedAt], [1, seen.usable, false, NOW + 10 * 3.6e6, NOW + 10 * 3.6e6]);
   assert.deepEqual(kept.unused, seen.unused);
 });
+
+test('bestOnBoard is today\'s board: a better line on Friday\'s game is not today\'s best, and a league with no game left today has none', () => {
+  const friday = NOW + 3 * 864e5;
+  const rows = [
+    row('today', { rate: 0.9, player: 'LaMelo Ball', books: { fanduel: -115 } }),
+    row('fri', { rate: 1, player: 'Collin Sexton', commenceMs: friday, books: { fanduel: -110 } }),
+    // Late tonight in the east is still today; one minute past Eastern midnight is tomorrow.
+    row('late', { rate: 0.85, player: 'Miles Bridges', commenceMs: Date.parse('2026-10-28T03:30:00Z'), books: { fanduel: -120 } }),
+    row('next', { rate: 1, player: 'Brandon Miller', commenceMs: Date.parse('2026-10-28T04:01:00Z'), books: { fanduel: -120 } }),
+  ];
+  assert.equal(bestOnBoard(rows, NOW).basketball_nba.playerName, 'LaMelo Ball');
+  assert.equal(bestOnBoard(rows.filter((r) => r.id !== rows[0].id), NOW).basketball_nba.playerName, 'Miles Bridges', 'tonight\'s late game is today\'s');
+  assert.deepEqual(bestOnBoard([rows[1], rows[3]], NOW), {}, 'nothing left today: no line, however good Friday\'s looks');
+});
