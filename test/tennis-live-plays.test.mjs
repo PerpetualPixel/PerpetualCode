@@ -184,7 +184,8 @@ test('runTennisLiveTick follows a match game by game, posts a play once, grades 
   assert.ok(ml.playable <= ml.american && ml.playable >= -350, String(ml.playable));
   assert.ok(ml.why.length >= 3);
   // The play keeps the moneyline at every book when it posted; the read carries both players' live prices at every book.
-  assert.deepEqual(ml.quotes, [{ bookId: 'draftkings', book: 'DraftKings', american: -320 }]);
+  assert.deepEqual(ml.quotes, [{ bookId: 'draftkings', book: 'DraftKings', american: -320, link: 'https://sportsbook.draftkings.com/x' }], 'the moneyline at every book when it posted, each with its bet-slip link (the Discord card links them)');
+  assert.deepEqual(Object.keys(ml.stats).sort(), ['holds', 'last', 'setGames', 'streak'], 'and the numbers behind it, for the card');
   assert.deepEqual(reads.matches[0].books, { a: [{ bookId: 'draftkings', book: 'DraftKings', american: -320 }], b: [{ bookId: 'draftkings', book: 'DraftKings', american: 250 }] });
   sets = [[4, 1]]; await runTennisLiveTick(env, {}, now, { deps }); now += 60e3;
   assert.equal(day().filter((p) => p.market === 'live_ml').length, 1, 'posted once, however long the edge lasts');
@@ -242,7 +243,7 @@ test('a set play takes the book\'s set price when it is good enough, is passed w
   const good = await run(async () => setFeed(-300, 230));
   assert.deepEqual([good.set, good.side, good.american, good.bookId, good.link], [1, 'a', -300, 'fanduel', 'https://sportsbook.fanduel.com/s1']);
   assert.ok(good.american >= good.playable, 'the book is at the price the read needs, or better');
-  assert.deepEqual(good.quotes, [{ bookId: 'fanduel', book: 'FanDuel', american: -300 }], 'the set at every book when it posted');
+  assert.deepEqual(good.quotes, [{ bookId: 'fanduel', book: 'FanDuel', american: -300, link: 'https://sportsbook.fanduel.com/s1' }], 'the set at every book when it posted, with its link');
   assert.equal(await run(async () => setFeed(-900, 550)), null, 'priced, and too short: no play');
   const none = await run(async () => ({ id: 'e1', bookmakers: [] }));
   assert.deepEqual([none.american ?? null, none.bookId ?? null, none.playable < 0], [null, null, true], 'no book on the set: the price to take it at');

@@ -175,7 +175,21 @@ async function setPriceFor(env, ctx, m, play, odds, read, now, deps) {
   if (!quotes || !quotes.length) return undefined;
   const best = [...quotes].filter((q) => Number.isFinite(q.american) && q.american >= LIVE_SET_PRICE[0] && q.american <= LIVE_SET_PRICE[1]).sort((x, y) => y.american - x.american)[0] ?? null;
   if (!best || best.american < play.playable) return null;
-  return { american: best.american, bookId: best.bookId, book: best.book, link: best.link ?? null, quotes: bookPrices(quotes) };
+  return { american: best.american, bookId: best.bookId, book: best.book, link: best.link ?? null, quotes: bookPrices(quotes, { links: true }) };
+}
+
+/**
+ * The numbers behind a play at the moment it posted, kept on it for the alert card (worker/src/discord.js): each
+ * player's service games held today, the run of recent games, and the games the set is expected to run to.
+ */
+export function playStats(read) {
+  const r1 = (x) => Math.round(x * 10) / 10;
+  return {
+    holds: read?.serve?.first ? { a: { held: read.serve.a.held, served: read.serve.a.served }, b: { held: read.serve.b.held, served: read.serve.b.served } } : null,
+    last: read?.momentum?.last?.of >= 4 ? { of: read.momentum.last.of, a: read.momentum.last.a, b: read.momentum.last.b } : null,
+    streak: read?.momentum?.streak?.n >= 3 ? { side: read.momentum.streak.side, n: read.momentum.streak.n } : null,
+    setGames: read?.model?.setGames && Number.isFinite(read.model.setGames.mean) ? r1(read.model.setGames.mean) : null,
+  };
 }
 
 /**
@@ -247,10 +261,10 @@ export async function runTennisLiveTick(env, ctx, now = Date.now(), { deps = {},
         }
         postedIds.add(playId);
         // The moneyline at every book when the play posted (a set play's come with its price, above).
-        if (play.market === 'live_ml') play.quotes = bookPrices(odds?.quotes?.[play.side]);
+        if (play.market === 'live_ml') play.quotes = bookPrices(odds?.quotes?.[play.side], { links: true });
         // A play the model was held back on says so among its reasons (livePlays' note).
         const { note, ...shown } = play;
-        records[today].plays.push({ id: playId, matchId: id, tour: m.tour, event: m.eventName, round: m.round, a: m.a.name, b: m.b.name, ...shown, ...(note ? { reason: note } : {}), score: scoreLine(m.sets), why: note ? [...read.why, note] : read.why, postedAt: now, status: 'pending', result: null, profit: null });
+        records[today].plays.push({ id: playId, matchId: id, tour: m.tour, event: m.eventName, round: m.round, a: m.a.name, b: m.b.name, ...shown, ...(note ? { reason: note } : {}), score: scoreLine(m.sets), why: note ? [...read.why, note] : read.why, stats: playStats(read), postedAt: now, status: 'pending', result: null, profit: null });
         posted++; dirty.add(today);
       }
       // The match's one line when no play or lean is open on it (liveCall): a lean is kept, a watch or a pass only shown.
