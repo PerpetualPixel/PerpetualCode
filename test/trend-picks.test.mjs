@@ -9,7 +9,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import {
   qualifyingRows, researchPick, runTrendPicksDaily, runTrendPicksGrading, getTrendPicks, settle, settleBet, parseVerdict, buildBets, pickQuotes, refreshLegs,
-  PICK_MIN_GAMES, PICK_MAX_BETS, PICK_BOOKS, TICKET_UNITS, bestOnBoard, PICK_RULES,
+  PICK_MIN_GAMES, PICK_MAX_BETS, PICK_BOOKS, TICKET_UNITS, bestOnBoard, PICK_RULES, wideLookOpen, strongEdge, PICK_STRONG_EDGE,
 } from '../worker/src/trend-picks.js';
 
 const NOW = Date.parse('2026-10-27T15:00:00Z'); // 11am ET Oct 27
@@ -20,13 +20,13 @@ function makeKvStore() {
 }
 const period = (rate, games) => ({ rate, hits: Math.round(rate * games), games, avg: 12, median: 12 });
 const dec = (american) => (american < 0 ? 1 + 100 / -american : 1 + american / 100);
-function row(id, { rate = 1, games = 20, h2h = period(1, 3), american = -140, player = 'Collin Sexton', commenceMs = NOW + 8 * 3.6e6, point = 9.5, side = 'over', statKey = 'points', books = { draftkings: american }, eventId = `e-${id}`, team = 'CHA' } = {}) {
+function row(id, { rate = 1, games = 20, h2h = period(1, 3), american = -140, player = 'Collin Sexton', commenceMs = NOW + 8 * 3.6e6, point = 9.5, side = 'over', statKey = 'points', books = { draftkings: american }, eventId = `e-${id}`, team = 'CHA', sportKey = 'basketball_nba', l10 = period(1, 10) } = {}) {
   const quotes = Object.entries(books).map(([bookKey, price]) => ({ bookKey, book: bookKey, american: price, decimal: dec(price), link: `https://${bookKey}.example/${id}` })).sort((a, b) => b.american - a.american);
   return {
-    id, eventId, sportKey: 'basketball_nba', sportTitle: 'NBA', commenceMs, home: 'Charlotte Hornets', away: 'Orlando Magic',
+    id, eventId, sportKey, sportTitle: sportKey === 'icehockey_nhl' ? 'NHL' : 'NBA', commenceMs, home: 'Charlotte Hornets', away: 'Orlando Magic',
     playerName: player, team, opponent: 'ORL', athleteId: '4', headshot: null, statKey, statLabel: 'Pts', marketLabel: 'Points', point, side,
     selection: `${player} ${side === 'over' ? 'Over' : 'Under'} ${point} Pts`, american, decimal: dec(american), book: 'DraftKings', quotes,
-    seasons: [2026, 2025], rates: { l20: rate, h2h: h2h.rate, s2026: 1 }, periods: { l5: period(1, 5), l10: period(1, 10), l20: period(rate, games), h2h, s2026: period(1, 5) }, series: [],
+    seasons: [2026, 2025], rates: { l20: rate, h2h: h2h.rate, s2026: 1 }, periods: { l5: period(1, 5), l10, l20: period(rate, games), h2h, s2026: period(1, 5) }, series: [],
   };
 }
 
@@ -235,7 +235,7 @@ test('the day researches the ranked groups, builds the tickets from the ones tha
 
   // A day with nothing qualifying is checked again in an hour, not every tick.
   const empty = makeKvStore();
-  const none = { ...deps, rowsFor: async () => [row('x', { rate: 0.9 })] };
+  const none = { ...deps, rowsFor: async () => [row('x', { rate: 0.8 })] };
   assert.equal((await runTrendPicksDaily(empty.env, ctx, NOW, { deps: none, enabled: ['basketball_nba'] })).posted, 0);
   assert.equal((await runTrendPicksDaily(empty.env, ctx, NOW + 10 * 60e3, { deps: none, enabled: ['basketball_nba'] })).reason, 'checked recently');
   assert.equal((await runTrendPicksDaily(empty.env, ctx, NOW + 61 * 60e3, { deps: none, enabled: ['basketball_nba'] })).skipped, false);
@@ -476,4 +476,100 @@ test('bestOnBoard is today\'s board: a better line on Friday\'s game is not toda
   assert.equal(bestOnBoard(rows, NOW).basketball_nba.playerName, 'LaMelo Ball');
   assert.equal(bestOnBoard(rows.filter((r) => r.id !== rows[0].id), NOW).basketball_nba.playerName, 'Miles Bridges', 'tonight\'s late game is today\'s');
   assert.deepEqual(bestOnBoard([rows[1], rows[3]], NOW), {}, 'nothing left today: no line, however good Friday\'s looks');
+});
+
+test('a parlay may mix leagues: two perfect lines priced too short to ride alone, one NHL and one NBA at one book, make the day\'s ticket', async () => {
+  // 2026-11-25: 51 perfect lines, 49 priced past -450, and the two left (an NHL shots line and an NBA assists line) made no ticket because a parlay stayed in one league.
+  const rows = [
+    row('leo', { player: 'Ryan Leonard', american: -320, books: { fanatics: -320 }, sportKey: 'icehockey_nhl', statKey: 'sog', point: 1.5, eventId: 'e-nhl' }),
+    row('max', { player: 'Tyrese Maxey', american: -330, books: { fanatics: -330 }, statKey: 'assists', point: 3.5, eventId: 'e-nba' }),
+    ...['A', 'B', 'C'].map((n) => row(`short${n}`, { player: `Short ${n}`, american: -900, books: { draftkings: -900 }, eventId: `e-s${n}` })),
+  ];
+  const groups = qualifyingRows(rows, '2026-10-27', NOW);
+  const bets = buildBets(groups);
+  assert.deepEqual(bets.map((b) => [b.type, b.american, b.legs.map((l) => l.group.playerName).sort()]), [['parlay', -141, ['Ryan Leonard', 'Tyrese Maxey']]]);
+  // With a same-league pair at much the same price, the same-league pair is the ticket (at these prices three legs pay past the band).
+  const same = buildBets(qualifyingRows([
+    row('leo2', { player: 'Ryan Leonard', american: -200, books: { fanatics: -200 }, sportKey: 'icehockey_nhl', eventId: 'e-nhl' }),
+    row('emb', { player: 'Joel Embiid', american: -205, books: { fanatics: -205 }, eventId: 'e-nba2' }),
+    row('max2', { player: 'Tyrese Maxey', american: -210, books: { fanatics: -210 }, eventId: 'e-nba' }),
+  ], '2026-10-27', NOW));
+  assert.deepEqual(same[0].legs.map((l) => l.group.playerName).sort(), ['Joel Embiid', 'Tyrese Maxey']);
+  // A PrizePicks lineup stays in one league.
+  const pp = buildBets(qualifyingRows([
+    row('p1', { player: 'Ryan Leonard', american: -137, books: { prizepicks: -137 }, sportKey: 'icehockey_nhl', team: 'WSH', eventId: 'e-nhl' }),
+    row('p2', { player: 'Tyrese Maxey', american: -137, books: { prizepicks: -137 }, team: 'PHI', eventId: 'e-nba' }),
+  ], '2026-10-27', NOW));
+  assert.deepEqual(pp, []);
+
+  // The day itself: the ticket posts, is perfect, and says which leagues it holds.
+  const { env, store } = makeKvStore();
+  const deps = { rowsFor: async (k) => rows.filter((r) => r.sportKey === k), minutes: async () => Array(20).fill(32), context: async () => null, model: async () => '{"verdict":"post","reason":"ok","note":"none"}' };
+  const r = await runTrendPicksDaily(env, ctx, NOW, { deps, enabled: ['basketball_nba', 'icehockey_nhl'] });
+  assert.equal(r.posted, 1);
+  const rec = JSON.parse(store.get('trendpicks:2026-10-27'));
+  assert.deepEqual([rec.rules, rec.considered, rec.usable, rec.wide, rec.bets[0].tier, rec.bets[0].american, rec.bets[0].book], [PICK_RULES, 5, 2, false, 'perfect', -141, 'Fanatics']);
+  assert.deepEqual([...rec.bets[0].leagues].sort(), ['NBA', 'NHL']);
+});
+
+test('the wider look: with no perfect ticket, strong lines (90% of the last 20 and the last 10, at a price the rate beats) are researched and make one ticket, marked strong', async () => {
+  // What qualifies as strong.
+  const strongOf = (rows) => qualifyingRows(rows, '2026-10-27', NOW, { strong: true }).map((g) => g.best.id);
+  assert.deepEqual(strongOf([
+    row('ok', { rate: 0.9, american: -300 }),
+    row('cold', { rate: 0.9, american: -300, player: 'Cold Lately', l10: period(0.8, 10) }),
+    row('low', { rate: 0.85, american: -300, player: 'Not Enough' }),
+    row('few', { rate: 0.9, games: 9, american: -300, player: 'Few Games' }),
+    row('opp', { rate: 0.9, american: -300, player: 'Bad Matchup', h2h: period(0.5, 2) }),
+    row('once', { rate: 0.9, american: -300, player: 'One Meeting', h2h: period(0, 1) }),
+    row('short', { rate: 0.9, american: -450, player: 'Too Short' }),
+    row('deep', { rate: 0.9, american: -600, player: 'Out Of Range' }),
+    row('out', { rate: 0.9, american: -300, player: 'Listed Out' }),
+  ].map((r) => (r.id === 'out' ? { ...r, injury: { level: 'out' } } : r))).sort(), ['ok', 'once'], 'a miss in the last ten, under 90%, under ten games, beaten by this opponent twice, a price the rate barely beats, a price no ticket can use and a player listed out are all left out; one meeting is not a pattern');
+  assert.ok(strongEdge({ hits: 18, games: 20 }, -450) < PICK_STRONG_EDGE && strongEdge({ hits: 18, games: 20 }, -300) > PICK_STRONG_EDGE);
+
+  // When it opens: ten in the morning Eastern, or three hours before the first game.
+  const at = (iso) => Date.parse(iso);
+  const game = (iso) => [{ commenceMs: at(iso) }];
+  assert.equal(wideLookOpen(game('2026-10-27T23:00:00Z'), '2026-10-27', at('2026-10-27T05:07:00Z')), false, '1:07 in the morning, games at seven in the evening');
+  assert.equal(wideLookOpen(game('2026-10-27T23:00:00Z'), '2026-10-27', at('2026-10-27T14:00:00Z')), true, 'ten in the morning');
+  assert.equal(wideLookOpen(game('2026-10-27T13:30:00Z'), '2026-10-27', at('2026-10-27T11:00:00Z')), true, 'seven in the morning with a 9:30 game');
+
+  // The day: every perfect line is priced out; the strong ones make a ticket.
+  const rows = [
+    ...['A', 'B'].map((n) => row(`short${n}`, { player: `Short ${n}`, american: -900, books: { draftkings: -900 }, eventId: `e-s${n}` })),
+    row('s1', { rate: 0.9, player: 'Strong One', american: -260, books: { draftkings: -260 }, eventId: 'e-1' }),
+    row('s2', { rate: 0.95, player: 'Strong Two', american: -240, books: { draftkings: -240 }, eventId: 'e-2' }),
+    row('s3', { rate: 0.9, player: 'Strong Three', american: -250, books: { draftkings: -250 }, eventId: 'e-3' }),
+    row('s4', { rate: 0.9, player: 'Sat Down', american: -230, books: { draftkings: -230 }, eventId: 'e-4' }),
+  ];
+  const researched = [];
+  const deps = { rowsFor: async () => rows, context: async () => null, model: async () => '{"verdict":"post","reason":"ok","note":"none"}',
+    minutes: async (r) => { researched.push(r.playerName); return r.playerName === 'Sat Down' ? [10, 12, 11, ...Array(17).fill(30)] : Array(20).fill(32); } };
+  // Overnight the wider look is shut: nothing posts, and the record says it has not looked wider yet.
+  const night = makeKvStore();
+  const early = Date.parse('2026-10-27T05:07:00Z');
+  assert.equal((await runTrendPicksDaily(night.env, ctx, early, { deps, enabled: ['basketball_nba'] })).posted, 0);
+  const nrec = JSON.parse(night.store.get('trendpicks:2026-10-27'));
+  assert.deepEqual([nrec.considered, nrec.usable, nrec.wide, nrec.strong, nrec.final], [2, 0, false, null, false]);
+  assert.deepEqual(researched, [], 'and no research call is spent');
+  // At eleven it is open.
+  const { env, store } = makeKvStore();
+  const r = await runTrendPicksDaily(env, ctx, NOW, { deps, enabled: ['basketball_nba'] });
+  assert.equal(r.posted, 1, 'one ticket from the wider look, never two');
+  const rec = JSON.parse(store.get('trendpicks:2026-10-27'));
+  assert.deepEqual([rec.wide, rec.strong, rec.final, rec.bets.length], [true, 4, true, 1]);
+  const bet = rec.bets[0];
+  assert.deepEqual([bet.tier, bet.type, bet.book, bet.units], ['strong', 'parlay', 'DraftKings', TICKET_UNITS]);
+  assert.ok(bet.american >= -150 && bet.american <= 150);
+  assert.ok(!bet.legs.some((l) => l.playerName === 'Sat Down'), 'a strong line is researched like any other: minutes down keeps it off');
+  assert.deepEqual(rec.passed.map((p) => p.selection), ['Sat Down Over 9.5 Pts']);
+  assert.ok(bet.legs.every((l) => l.periods.l20.rate >= 0.9));
+  assert.deepEqual(rec.unused.map((u) => u.reason), ['one ticket from the wider look']);
+
+  // Nothing strong either: no ticket, and the record says the wider look ran and found none.
+  const bare = makeKvStore();
+  await runTrendPicksDaily(bare.env, ctx, NOW, { deps: { ...deps, rowsFor: async () => rows.slice(0, 2) }, enabled: ['basketball_nba'] });
+  const brec = JSON.parse(bare.store.get('trendpicks:2026-10-27'));
+  assert.deepEqual([brec.wide, brec.strong, brec.bets.length, brec.final], [true, 0, 0, false]);
 });

@@ -25,7 +25,7 @@ import { fetchNflGamelog, gamelogStatIndex, nflStatRows } from './football-props
 import { bundlePlayer, loadBundleTeams, loadInjuries, injuryFor } from './espn-bundle.js';
 import { boxKey, boxLegKey } from './box-grading.js';
 import { seasonColumnRows } from '../../docs/prop-legs.js';
-import { overNeed, underNeed, attachSeries, legScore, hitFlags, isAltLine } from '../../docs/trends.js';
+import { overNeed, underNeed, attachSeries, legScore, hitFlags, isAltLine, winLikelihood } from '../../docs/trends.js';
 import { bookIdFor, SPORTSBOOKS, americanToDecimal } from '../../docs/engine.js';
 import { espnAbbr } from '../../docs/team-logos.js';
 
@@ -70,6 +70,38 @@ export const PARLAY_RANGE = [-150, 150];
 export const PARLAY_TARGET = 100;
 /** A parlay leg's own price: heavy favourites are what make a +100 ticket. */
 export const LEG_RANGE = [-450, 150];
+/**
+ * The wider look (2026-11-25, the owner, of a day with 51 perfect lines and no ticket: "surely something has got to be
+ * good enough, maybe adjusted and parlayed to have a tracked official play a day. If there really isn't anything worth
+ * playing, say so"). That day 49 of the 51 were priced past -450, where no ticket can use them, and the two left were
+ * one NHL line and one NBA line, which the builder would not put on one ticket. So:
+ *
+ *  - a parlay may mix leagues (a book takes it; legs from one league are still preferred);
+ *  - when the perfect lines make no ticket, the day looks again at the strong ones: a number the player has cleared
+ *    in PICK_STRONG_RATE of his last 20 and of his last 10 (so a higher number for a player whose perfect number is
+ *    priced out), not beaten by this opponent (PICK_STRONG_H2H of two or more meetings), at a price the hit rate beats
+ *    by PICK_STRONG_EDGE once it is shrunk toward the price (docs/trends.js winLikelihood). They are researched the
+ *    same way, inside the same day's research calls, and make one ticket at most, marked as strong, not perfect.
+ *
+ * The wider look opens at PICK_WIDE_HOUR Eastern, or PICK_WIDE_LEAD_HOURS before the day's first game if that is
+ * sooner: overnight the books have few lines up, and a perfect ticket that appears by morning is the better one.
+ */
+export const PICK_STRONG_RATE = 0.9;
+export const PICK_STRONG_H2H = 0.75;
+export const PICK_STRONG_EDGE = 0.07;
+export const PICK_STRONG_MAX_BETS = 1;
+export const PICK_WIDE_HOUR = 10;
+export const PICK_WIDE_LEAD_HOURS = 3;
+const impliedOf = (american) => (american > 0 ? 100 / (american + 100) : -american / (-american + 100));
+/** How far the hit rate, shrunk toward the price, stands above what the price implies. */
+export const strongEdge = (l20, american) => winLikelihood({ hits: l20.hits, games: l20.games, american }) - impliedOf(american);
+/** Whether the wider look is open: late enough in the morning, or close enough to the day's first game. */
+export function wideLookOpen(rows, dateKey, now) {
+  if (etParts(now).hour >= PICK_WIDE_HOUR) return true;
+  const first = (rows ?? []).reduce((m, r) => (r && r.commenceMs > now && etParts(r.commenceMs).date === dateKey && r.commenceMs < m ? r.commenceMs : m), Infinity);
+  return first - now <= PICK_WIDE_LEAD_HOURS * 3.6e6;
+}
+
 /** The stored record's shape; an older day is drawn again. */
 export const RECORD_VERSION = 6;
 /**
@@ -102,8 +134,10 @@ export const pickBookUrl = (bookId) => SPORTSBOOKS[bookId]?.url ?? null;
  * older rules is drawn again while none of its games has started.
  *   2: no PrizePicks ticket on an alternate number (a goblin or demon
  *      pays its own multiplier, not the Power Play table).
+ *   3: a parlay may mix leagues, and a day with no perfect ticket takes
+ *      the wider look (see PICK_STRONG_RATE).
  */
-export const PICK_RULES = 2;
+export const PICK_RULES = 3;
 
 /** A row's quotes at the listed books, best price first, each with its registry id. A PrizePicks quote on an alternate number is not one (see docs/trends.js's extractTrendLines). */
 export function pickQuotes(row) {
@@ -125,16 +159,31 @@ export const inRange = (american, [lo, hi]) => american >= lo && american <= hi;
  * number for the player (the bet builder picks the one that makes the
  * price), best paying first, and `best` is the line the research reads.
  * Groups are ranked by sample, then season rate, then price.
+ *
+ * `strong` is the wider look's test instead (see PICK_STRONG_RATE): 90% of
+ * the last 20 and of the last 10, the opponent not a problem, and only the
+ * quotes a ticket can use (inside LEG_RANGE) that the hit rate beats by
+ * PICK_STRONG_EDGE. Ranked by hit rate first.
  */
-export function qualifyingRows(rows, dateKey, now) {
+export function qualifyingRows(rows, dateKey, now, { strong = false } = {}) {
   const groups = new Map();
   for (const r of rows ?? []) {
     if (!r || r.commenceMs <= now || etParts(r.commenceMs).date !== dateKey) continue;
     const l20 = r.periods?.l20;
-    if (!l20 || l20.rate !== 1 || l20.games < PICK_MIN_GAMES) continue;
     const h2h = r.periods?.h2h;
-    if (h2h?.games > 0 && h2h.rate !== 1) continue;
-    const quotes = pickQuotes(r);
+    let quotes;
+    if (strong) {
+      // A chance row (first basket) has no log to speak of, and a player listed out is no leg.
+      if (r.noLog || Number.isFinite(r.prob) || r.injury?.level === 'out') continue;
+      if (!l20 || l20.games < PICK_MIN_GAMES || !(l20.rate >= PICK_STRONG_RATE)) continue;
+      if (!((r.periods?.l10?.rate ?? 0) >= PICK_STRONG_RATE)) continue;
+      if (h2h?.games >= 2 && h2h.rate < PICK_STRONG_H2H) continue;
+      quotes = pickQuotes(r).filter((q) => q.bookId === PRIZEPICKS || (inRange(q.american, LEG_RANGE) && strongEdge(l20, q.american) >= PICK_STRONG_EDGE));
+    } else {
+      if (!l20 || l20.rate !== 1 || l20.games < PICK_MIN_GAMES) continue;
+      if (h2h?.games > 0 && h2h.rate !== 1) continue;
+      quotes = pickQuotes(r);
+    }
     if (!quotes.length) continue;
     const line = { ...r, quotes, american: quotes[0].american, decimal: quotes[0].decimal ?? americanToDecimal(quotes[0].american), book: pickBookName(quotes[0].bookId), bookId: quotes[0].bookId, bookKey: quotes[0].bookKey, link: quotes[0].link ?? null };
     const k = `${fold(r.playerName)}|${r.statKey}|${r.side}`;
@@ -144,6 +193,7 @@ export function qualifyingRows(rows, dateKey, now) {
   const seasonRate = (r) => { const s = r.seasons?.[0]; return s ? (r.periods?.[`s${s}`]?.rate ?? 0) : 0; };
   const out = [...groups.values()];
   for (const g of out) { g.lines.sort((a, b) => b.american - a.american); g.best = g.lines[0]; }
+  if (strong) return out.sort((a, b) => (b.best.periods.l20.rate - a.best.periods.l20.rate) || (b.best.periods.l20.games - a.best.periods.l20.games) || (seasonRate(b.best) - seasonRate(a.best)) || (b.best.american - a.best.american));
   return out.sort((a, b) => (b.best.periods.l20.games - a.best.periods.l20.games) || (seasonRate(b.best) - seasonRate(a.best)) || (b.best.american - a.best.american));
 }
 
@@ -151,8 +201,9 @@ export function qualifyingRows(rows, dateKey, now) {
  * The day's bets from the groups that passed research, in rank order:
  * at most PICK_MAX_BETS, one unit each. A parlay first when one lands in
  * PARLAY_RANGE: two legs (three when that is what fits), every leg on the
- * same book, different players, the same sport, the price nearest
- * PARLAY_TARGET, legs from different games preferred. Then a second
+ * same book, different players, the price nearest PARLAY_TARGET, legs
+ * from different games and from one league preferred (a book takes a
+ * ticket across leagues; a PrizePicks lineup stays in one). Then a second
  * parlay from the groups left over, else the best straight in
  * STRAIGHT_RANGE. With no parlay, straights for the top groups. A group
  * with no line at a usable price is left alone.
@@ -172,7 +223,8 @@ export function buildBets(groups, { maxBets = PICK_MAX_BETS } = {}) {
       const american = toAmerican(decimal);
       if (!inRange(american, PARLAY_RANGE)) return;
       const games = new Set(legs.map((l) => l.group.eventId)).size;
-      const score = Math.abs(american - PARLAY_TARGET) + (legs.length - games) * 15 + (legs.length - 2) * 10 + legs.reduce((s, l) => s + l.group.rank, 0) * 2;
+      const leagues = new Set(legs.map((l) => l.group.sportKey)).size;
+      const score = Math.abs(american - PARLAY_TARGET) + (legs.length - games) * 15 + (legs.length - 2) * 10 + (leagues - 1) * 10 + legs.reduce((s, l) => s + l.group.rank, 0) * 2;
       if (!best || score < best.score) best = { legs, decimal, american, score };
     };
     // A PrizePicks lineup: two or three projections, different players
@@ -190,18 +242,21 @@ export function buildBets(groups, { maxBets = PICK_MAX_BETS } = {}) {
       if (!best || score < best.score) best = { legs, decimal, american, score, shape };
     };
     for (const bookId of books) {
-      const bySport = new Map();
+      const lineup = bookId === PRIZEPICKS;
+      const groupsOpts = [];
       for (const g of pool) {
-        const opts = bookId === PRIZEPICKS ? legOptions(g, bookId, [-Infinity, Infinity]).slice(0, 1) : legOptions(g, bookId, LEG_RANGE);
-        if (!opts.length) continue;
-        if (!bySport.has(g.sportKey)) bySport.set(g.sportKey, []);
-        bySport.get(g.sportKey).push(opts);
+        const opts = lineup ? legOptions(g, bookId, [-Infinity, Infinity]).slice(0, 1) : legOptions(g, bookId, LEG_RANGE);
+        if (opts.length) groupsOpts.push(opts);
       }
-      for (const groupsOpts of bySport.values()) {
-        for (let i = 0; i < groupsOpts.length; i++) for (let j = i + 1; j < groupsOpts.length; j++) {
-          const weigh = bookId === PRIZEPICKS ? considerLineup : consider;
-          for (const a of groupsOpts[i]) for (const b of groupsOpts[j]) weigh([a, b]);
-          for (let k = j + 1; k < groupsOpts.length; k++) for (const a of groupsOpts[i]) for (const b of groupsOpts[j]) for (const c of groupsOpts[k]) weigh([a, b, c]);
+      const weigh = lineup ? considerLineup : consider;
+      // A PrizePicks lineup stays in one league; a book's parlay need not.
+      const together = (...sets) => !lineup || sets.every((o) => o[0].group.sportKey === sets[0][0].group.sportKey);
+      for (let i = 0; i < groupsOpts.length; i++) for (let j = i + 1; j < groupsOpts.length; j++) {
+        if (!together(groupsOpts[i], groupsOpts[j])) continue;
+        for (const a of groupsOpts[i]) for (const b of groupsOpts[j]) weigh([a, b]);
+        for (let k = j + 1; k < groupsOpts.length; k++) {
+          if (!together(groupsOpts[i], groupsOpts[j], groupsOpts[k])) continue;
+          for (const a of groupsOpts[i]) for (const b of groupsOpts[j]) for (const c of groupsOpts[k]) weigh([a, b, c]);
         }
       }
     }
@@ -504,9 +559,15 @@ function showcaseShortOf(row) {
 function betRecord(bet, index, dateKey, research, now) {
   const legs = bet.legs.map((leg) => legRecord(leg, research.get(leg.group.key), now));
   const bookId = bet.legs[0].bookId;
+  // Perfect: every leg has landed in every one of the last 20. Strong: the wider look put it up (see PICK_STRONG_RATE).
+  const tier = legs.every((l) => l.periods?.l20?.rate === 1) ? 'perfect' : 'strong';
+  // A ticket across leagues is filed under its first leg's league and says which leagues it holds.
+  const leagues = [...new Set(legs.map((l) => l.sportTitle ?? l.sportKey))];
   return {
     id: `${dateKey}:${index + 1}`,
     postedAt: now,
+    tier,
+    ...(leagues.length > 1 ? { leagues } : {}),
     type: bet.type,
     shape: bet.shape ?? null,
     play: bet.shape && PRIZEPICKS_PLAYS[bet.shape] ? `PrizePicks ${PRIZEPICKS_PLAYS[bet.shape].label}` : null,
@@ -698,25 +759,44 @@ export async function runTrendPicksDaily(env, ctx, now = Date.now(), { deps = {}
   const research = new Map();
   const byPlayer = new Map();
   const passed = [];
-  const posted = [];
-  for (const g of usable.slice(0, PICK_MAX_RESEARCHED)) {
-    const who = fold(g.playerName);
-    let r = byPlayer.get(who);
-    if (!r) {
-      r = await researchPick(g.best, env, ctx, { now, deps });
-      byPlayer.set(who, r);
-      if (r.verdict !== 'post') passed.push({ selection: g.best.selection, reasons: r.flags.filter((f) => f.startsWith('pass:')).map((f) => f.slice(6)) });
+  // The day's research calls, PICK_MAX_RESEARCHED players in all, are shared by the perfect lines and the wider look.
+  const vet = async (list) => {
+    const ok = [];
+    for (const g of list) {
+      const who = fold(g.playerName);
+      let r = byPlayer.get(who);
+      if (!r) {
+        if (byPlayer.size >= PICK_MAX_RESEARCHED) continue;
+        r = await researchPick(g.best, env, ctx, { now, deps });
+        byPlayer.set(who, r);
+        if (r.verdict !== 'post') passed.push({ selection: g.best.selection, reasons: r.flags.filter((f) => f.startsWith('pass:')).map((f) => f.slice(6)) });
+      }
+      if (r.verdict === 'post') { research.set(g.key, r); ok.push(g); }
     }
-    if (r.verdict === 'post') { research.set(g.key, r); posted.push(g); }
+    return ok;
+  };
+  let posted = await vet(usable);
+  let built = buildBets(posted);
+  // No perfect ticket: the wider look (see PICK_STRONG_RATE), once it is open. The perfect lines that passed research
+  // stay in the pool, a player's strong numbers beside his perfect one, and it makes one ticket at most.
+  const wide = !built.length && wideLookOpen(rows, dateKey, now);
+  let strong = null;
+  if (wide) {
+    const strongGroups = qualifyingRows(rows, dateKey, now, { strong: true });
+    strong = strongGroups.length;
+    const keys = new Set(strongGroups.map((g) => g.key));
+    posted = [...posted.filter((g) => !keys.has(g.key)), ...await vet(strongGroups)];
+    built = buildBets(posted, { maxBets: PICK_STRONG_MAX_BETS });
   }
-  const bets = buildBets(posted).map((b, i) => betRecord(b, i, dateKey, research, now));
-  // A player who passed research but is on no ticket: the day's two
+  const bets = built.map((b, i) => betRecord(b, i, dateKey, research, now));
+  // A player who passed research but is on no ticket: the day's
   // bets were already full, or no listed book priced him in range.
   const betLegs = new Set(bets.flatMap((b) => b.legs.map((l) => fold(l.playerName))));
+  const full = bets.length >= (wide ? PICK_STRONG_MAX_BETS : PICK_MAX_BETS);
   const unused = [];
   for (const g of posted) {
     if (betLegs.has(fold(g.playerName)) || unused.some((u) => fold(u.player) === fold(g.playerName))) continue;
-    unused.push({ player: g.playerName, selection: g.best.selection, reason: bets.length >= PICK_MAX_BETS ? 'two bets a day' : 'no ticket at a usable price' });
+    unused.push({ player: g.playerName, selection: g.best.selection, reason: full ? (wide ? 'one ticket from the wider look' : 'two bets a day') : 'no ticket at a usable price' });
   }
   const record = {
     version: RECORD_VERSION,
@@ -728,6 +808,9 @@ export async function runTrendPicksDaily(env, ctx, now = Date.now(), { deps = {}
     final: bets.length > 0,
     considered: groups.length,
     usable: usable.length,
+    // Whether the wider look ran on this check, and how many strong lines it had to work with.
+    wide,
+    strong,
     bets,
     passed,
     unused,
