@@ -21,7 +21,7 @@
      only page that reads the feed; the other pages' connect-src stays the
      worker alone. -->
 <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src 'self' https://fonts.gstatic.com; img-src 'self' data: https:; connect-src 'self' https://pixel-pick-odds.mgbouldering.workers.dev https://perpetualpixel.github.io; object-src 'none'; base-uri 'self'; form-action 'self'">
-<script src="frame-guard.js?v=1.376"></script>
+<script src="frame-guard.js?v=1.377"></script>
 <title>Perpetual Picks - App</title>
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <meta name="theme-color" content="#05050A">
@@ -37,9 +37,9 @@
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Syne:wght@600;700;800&family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
-<link rel="stylesheet" href="styles.css?v=1.376">
+<link rel="stylesheet" href="styles.css?v=1.377">
 <!-- Before first paint: a desktop reader who chose "Fit screen" gets the wide shell without a flash of the narrow one. -->
-<script src="wide.js?v=1.376"></script>
+<script src="wide.js?v=1.377"></script>
 </head>
 <body>
 
@@ -167,6 +167,7 @@
       <li><strong>Tennis:</strong> each lean now shows set betting (-1.5 sets to win 2-0, +1.5 sets to win a set), the second set, and every book's price. Every play says the price to take it at or better.</li>
       <li><strong>Live:</strong> tap a game and the bet is the first thing you see. Finished games leave the list. Tennis matches in play can now carry an over or under on the games in the set.</li>
       <li><strong>Results:</strong> a new tab with every record in one place. Pregame first, Live on a toggle, a card for each sport with units played, net units, ROI and a graph by day, week, month or year. It now updates itself through the day, and live tennis leans have their own card there.</li>
+      <li><strong>Filters:</strong> every on/off filter button is now filled with a tick when it is on and a plain outline when it is off. On Live, the sportsbook buttons show only slips at the books you have turned on.</li>
       <li><strong>Caesars and BetMGM links:</strong> they now open your slip for your state, where before they opened the sportsbook's front page.</li>
       <li><strong>Live:</strong> a loading emblem while the plays load, and one card a bet with a single "Add to sportsbook" button. Tap it and pick your app from the sportsbooks that have the bet, each with its own price.</li>
       <li><strong>Best on the board:</strong> today's games only, and the first thing on Pixel's Picks on a day with no pick. Today's suggestion comes from it, never from another day.</li>
@@ -1196,6 +1197,6 @@
   </div>
 </aside>
 
-<script type="module" src="app.js?v=1.376"></script>
+<script type="module" src="app.js?v=1.377"></script>
 </body>
 </html>

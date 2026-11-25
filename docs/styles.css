@@ -8114,3 +8114,18 @@ a.tennis-book:hover { background: rgba(255, 255, 255, 0.06); }
 .line-check-list strong { font-size: 0.86rem; }
 .line-check-list span { color: var(--muted); font-size: 0.8rem; line-height: 1.45; overflow-wrap: anywhere; }
 .line-check-foot { margin: 0; color: var(--muted); font-size: 0.72rem; line-height: 1.45; }
+
+/* Every chip that turns a filter on or off reads the same way (2026-11-24, of the Live tab's books against the Trends
+   leagues: "All buttons that filter like this should be like that check mark ones. This is way easier to see what turned
+   on and off"): on is filled and ticked, off is a plain outline. The sport chips had it; the book chips, the Parlay
+   Builder's and Player search's option chips and the sportsbooks card now do too. A chip with no tick of its own gets one. */
+.league-chip.is-active, .rate-chip.is-active, .books-chip.is-active {
+  color: #fff; font-weight: 800; border-color: rgba(217, 70, 239, 0.9);
+  background: linear-gradient(135deg, rgba(217, 70, 239, 0.42), rgba(157, 78, 221, 0.42)) padding-box, var(--card-border-gradient) border-box;
+  box-shadow: 0 0 0 1px rgba(217, 70, 239, 0.35), var(--glow-magenta);
+}
+.league-chip:not(.is-active) { color: var(--muted); background: transparent; box-shadow: none; }
+.rate-chip:not(.is-active), .books-chip:not(.is-active) { color: var(--muted); box-shadow: none; }
+.league-chip.is-active:not(:has(.league-chip-on))::after, .rate-chip.is-active:not(:has(.league-chip-on))::after { content: '✓'; font-size: 0.72rem; font-weight: 900; margin-left: 6px; color: #fff; }
+.books-chip.is-active .league-chip-on { color: #fff; }
+.live-books-pick .league-chip:not(.is-active) .book-badge { opacity: 0.55; filter: saturate(0.6); }
