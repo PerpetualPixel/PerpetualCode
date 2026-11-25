@@ -6,10 +6,14 @@
  * play (worker/src/live-board.js: three to five player overs at a book, nearest +100), and a slip stands until one
  * of its lines leaves the board, when a new one takes its place.
  *
- * What is posted: one play at a time a game. The game's best slip goes up when it is first built; when the slip
- * being followed is replaced, the game's best slip then goes up as a new post. So every play the board makes for a
- * game is posted, each once, and never the same legs at five books at the same minute. A game is capped
- * (MAX_A_GAME) so a jumpy board cannot fill the channel.
+ * What is posted: the game's best slip, the one the Live tab shows as "Best slip", each time it is a slip that has
+ * not been posted before. So whatever play the app is showing for a game is in the channel, each once: a slip that
+ * still stands is never posted again, and the same legs are not posted at five books at the same minute.
+ *
+ * (It first followed one slip a game and stopped at six posts. On its first night, 2026-11-25, a game's slips were
+ * replaced every few minutes, the six were used in forty minutes, and the owner saw a play in the app that was not
+ * in the channel: "how come I see this play in the app but it wasn't posted to the discord?" The cap is now only a
+ * guard against a runaway board, far above what a game makes.)
  *
  * Playbook (docs/playbook.js) is the Discord bot that turns a written bet into a slip link at any book. It has no
  * API: it reads a message that tags it, with the book named and the legs written out, and replies in the channel.
@@ -43,8 +47,8 @@ export const LEAGUES = {
 export const DISCORD_NBA_LEDGER_KEY = LEAGUES.nba.ledger;
 /** A slip is posted only while the board that made it is this fresh: an older build's prices are gone. */
 export const NBA_FRESH_MS = 12 * 60e3;
-/** The most plays posted for one game. */
-export const MAX_A_GAME = 6;
+/** A guard, not a limit: far more plays than a game makes (a new one at most every few minutes for three hours). */
+export const MAX_A_GAME = 40;
 const POST_TRIES = 3;
 const LEDGER_KEEP_MS = 4 * 86400e3;
 const LEDGER_TTL = 14 * 86400;
@@ -225,12 +229,10 @@ export async function syncLeagueDiscord(env, now = Date.now(), league = 'nba', {
     const play = await playOf(gid);
     const state = ledger.games[gid] ?? { count: 0, tries: 0 };
 
-    // A new play: the slip being followed is no longer on the board (or none has been posted), and the board is fresh.
+    // A new play: the game's best slip is one that has not been posted, and the board that made it is fresh.
     if (play?.slips?.length && now - (play.builtAt ?? 0) <= NBA_FRESH_MS && state.count < MAX_A_GAME && (state.tries ?? 0) < POST_TRIES * MAX_A_GAME) {
-      const followed = state.current ? ledger.posts[state.current]?.post : null;
-      const standing = followed && play.slips.some((s) => s.bookId === followed.bookId && (s.postedAt ?? play.builtAt) === followed.postedAt);
-      const post = standing ? null : slipPost(g, play, play.slips[0], league);
-      if (post && !ledger.posts[post.id] && post.legs.length) {
+      const post = slipPost(g, play, play.slips[0], league);
+      if (!ledger.posts[post.id] && post.legs.length) {
         const card = slipMessage(post, { png: await picture(post), playbook: cfg.playbook, buttons: !ledger.noButtons });
         // Marked before it is sent: a run that dies mid-send does not send it again.
         ledger.posts[post.id] = { state: 'sending', at: now, post };

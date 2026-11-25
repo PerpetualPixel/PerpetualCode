@@ -83,7 +83,7 @@ test('a slip against the final box: won when every leg cleared, lost when one di
   assert.deepEqual(slipMessage(lost, { playbook: BOT }).payload.allowed_mentions.users, []);
 });
 
-test('one play at a time a game: the best slip is posted once, a slip that stands is not posted again, and a new one is posted when it is replaced', async () => {
+test('the game\'s best slip is posted each time it is one that has not been posted: what the app shows is in the channel, each play once', async () => {
   const { env, store } = makeEnv();
   const d = fakeDiscord();
   // Two books have a slip; the best is first.
@@ -92,15 +92,22 @@ test('one play at a time a game: the best slip is posted once, a slip that stand
   assert.deepEqual(d.calls.map((c) => [c.method, c.url]), [['POST', `${HOOK}?wait=true&with_components=true`]]);
   assert.equal(d.calls[0].body.content.split('\n')[0], `<@${BOT}> FanDuel`);
   assert.equal(d.calls[0].file.size, PNG.length, 'the card rides with it');
-  // Later ticks with the same slips standing (the order may change): nothing more.
-  await run(env, NOW + 8 * 60e3, d, { play: playOf([other, first], { builtAt: NOW + 8 * 60e3 }) });
+  // The same best slip on later ticks: nothing more.
+  await run(env, NOW + 8 * 60e3, d, { play: playOf([first, other], { builtAt: NOW + 8 * 60e3 }) });
   assert.equal(d.calls.length, 1);
-  // The followed slip is replaced at its book: the game's best slip now is posted as a new play.
-  const next = slip({ postedAt: NOW + 16 * 60e3, american: -110, legs: [leg('Jaylen Brown', 'BOS', 'points', 'Pts', 22.5, -170, 17), leg('Josh Hart', 'NY', 'rebounds', 'Reb', 8.5, -190, 6), leg('Derrick White', 'BOS', 'assists', 'Ast', 4.5, -150, 3)] });
-  await run(env, NOW + 16 * 60e3, d, { play: playOf([next, other], { builtAt: NOW + 16 * 60e3 }) });
+  // Another book's slip becomes the best: the app now shows it, so it is posted.
+  await run(env, NOW + 16 * 60e3, d, { play: playOf([other, first], { builtAt: NOW + 16 * 60e3 }) });
   assert.equal(d.calls.length, 2);
-  assert.match(d.calls[1].body.content, /Jaylen Brown Over 22\.5 Points/);
-  assert.deepEqual(Object.values(ledgerOf(store).posts).map((e) => e.state), ['open', 'open']);
+  assert.equal(d.calls[1].body.content.split('\n')[0], `<@${BOT}> DraftKings`);
+  // The first is best again: it has been posted, so it is not posted twice.
+  await run(env, NOW + 24 * 60e3, d, { play: playOf([first, other], { builtAt: NOW + 24 * 60e3 }) });
+  assert.equal(d.calls.length, 2);
+  // The best slip is replaced by a new one: posted as a new play.
+  const next = slip({ postedAt: NOW + 32 * 60e3, american: -110, legs: [leg('Jaylen Brown', 'BOS', 'points', 'Pts', 22.5, -170, 17), leg('Josh Hart', 'NY', 'rebounds', 'Reb', 8.5, -190, 6), leg('Derrick White', 'BOS', 'assists', 'Ast', 4.5, -150, 3)] });
+  await run(env, NOW + 32 * 60e3, d, { play: playOf([next, other], { builtAt: NOW + 32 * 60e3 }) });
+  assert.equal(d.calls.length, 3);
+  assert.match(d.calls[2].body.content, /Jaylen Brown Over 22\.5 Points/);
+  assert.deepEqual(Object.values(ledgerOf(store).posts).map((e) => e.state), ['open', 'open', 'open']);
   // A board that has not been rebuilt lately (a blowout holds it, the feed is quiet) posts nothing: its prices are gone.
   const stale = makeEnv(); const d2 = fakeDiscord();
   assert.deepEqual(await run(stale.env, NOW, d2, { play: playOf([first], { builtAt: NOW - NBA_FRESH_MS - 1000 }) }), { posted: 0, settled: 0, failed: 0 });
@@ -110,11 +117,20 @@ test('one play at a time a game: the best slip is posted once, a slip that stand
   assert.equal(d3.calls.length, 0);
 });
 
-test('a game cannot fill the channel: its posts are capped', async () => {
+test('a whole game\'s plays fit: a new play every few minutes for three hours is all posted, and only a runaway board is stopped', async () => {
   const { env } = makeEnv();
   const d = fakeDiscord();
-  for (let i = 0; i < MAX_A_GAME + 4; i++) {
-    const now = NOW + i * 8 * 60e3;
+  // Twenty-four plays, one every seven and a half minutes: every one is posted.
+  for (let i = 0; i < 24; i++) { const now = NOW + i * 7.5 * 60e3; await run(env, now, d, { play: playOf([slip({ postedAt: now })], { builtAt: now }) }); }
+  assert.equal(d.calls.length, 24);
+  assert.ok(MAX_A_GAME >= 30);
+});
+
+test('a runaway board cannot fill the channel: a game\'s posts stop at the guard', async () => {
+  const { env } = makeEnv();
+  const d = fakeDiscord();
+  for (let i = 0; i < MAX_A_GAME + 6; i++) {
+    const now = NOW + i * 5 * 60e3;
     await run(env, now, d, { play: playOf([slip({ postedAt: now })], { builtAt: now }) });
   }
   assert.equal(d.calls.length, MAX_A_GAME);
