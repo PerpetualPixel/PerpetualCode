@@ -265,13 +265,8 @@ body {
   font-weight: 700;
   cursor: pointer;
 }
-.update-banner .overlay-close-btn {
-  width: 28px;
-  height: 28px;
-  min-height: 28px;
-  font-size: 0.85rem;
-  flex: none;
-}
+/* The strip's X is the small one (the shared X rule at the end of this file sizes and centres it). */
+.update-banner .overlay-close-btn { --x: var(--x-size-sm); }
 @media (max-width: 480px) {
   .update-banner {
     left: 16px;
@@ -477,20 +472,7 @@ body {
    hover) so it's easy to spot at a glance instead of blending into the
    header, per the "circled in green, hard to find" feedback. */
 .overlay-close-btn {
-  width: 40px;
-  height: 40px;
-  min-height: 40px;
-  padding: 0;
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  font-size: 1.15rem;
-  /* Without this the ✕ inherits the page's line-height: 1.6, which pads
-     the line box unevenly around the glyph — flexbox centers that padded
-     box, not the glyph's own ink, so the X reads as off-center inside the
-     circle even though the button itself is centered correctly. */
-  line-height: 1;
-  border-radius: 50%;
+  /* Its size and its X are the shared X rule's, at the end of this file. */
   background: var(--accent-dim);
   border: 1px solid var(--accent);
   color: var(--accent);
@@ -611,6 +593,21 @@ body {
   .top-tabs { gap: 4px; }
   .top-tab { flex: none; padding: 12px 22px; }
   .top-tabs-gap:last-of-type { margin-left: auto; }
+}
+/* The row never makes the page wider than the window (2026-11-25: with nine tabs it ran past the right edge on any
+   window under about 1280px, the whole page scrolled sideways, and whatever sat at the right, the What's New strip's X
+   and the Account button among it, was cut off). Between a phone and a full desktop the tabs sit closer so they fit;
+   where they still cannot, the row scrolls inside itself, as it does on a phone, and the page stays the window's width.
+   The padding at the top, taken back by the margin, leaves the active tab's glow room inside the scrolling box. */
+.top-tabs { overflow-x: auto; scrollbar-width: none; padding-top: 12px; margin-top: -12px; }
+.top-tabs::-webkit-scrollbar { display: none; }
+@media (min-width: 620px) and (max-width: 1339px) {
+  .top-tab { padding: 12px 13px; }
+  .top-tabs-gap { margin-left: 3px; margin-right: 3px; }
+}
+@media (min-width: 620px) and (max-width: 1039px) {
+  .top-tabs { gap: 2px; }
+  .top-tab { padding: 10px 9px; font-size: 0.68rem; letter-spacing: 0.04em; }
 }
 
 /* A new day's Play of the Day / Pixel's Picks the user hasn't opened that
@@ -4513,14 +4510,9 @@ button, [role="tab"], .league-chip, .parlay-btn, .trend-price { touch-action: ma
    against the strip and sat on the border). */
 .notice-close {
   position: static;
-  width: 26px;
-  height: 26px;
-  min-height: 26px;
   margin-left: auto;
-  padding: 0;
-  line-height: 26px;
-  font-size: 0.8rem;
-  flex: none;
+  /* The small X (the shared X rule at the end of this file sizes and centres it). */
+  --x: var(--x-size-sm);
 }
 
 /* A correction notice, not a new-feature hint — amber rather than the
@@ -6618,8 +6610,8 @@ body:has(.history:not([hidden])) .trends-dock, body:has(.stats-panel:not([hidden
 }
 /* A line's sheet: its X. A full 44px to hit, and it stays at the top right of the sheet however far the sheet is scrolled
    (it used to scroll away with the top of the sheet). It takes no room of its own: the negative margin gives its height back. */
-.sheet-close-x { position: sticky; top: 0; z-index: 5; display: grid; place-items: center; width: 44px; height: 44px; margin: 0 -6px -44px auto; padding: 0; border-radius: 50%; border: 1px solid var(--line); background: #211e36; color: var(--text); cursor: pointer; touch-action: manipulation; }
-.sheet-close-x svg { pointer-events: none; }
+.sheet-close-x { position: sticky; top: 0; z-index: 5; margin: 0 -6px calc(-1 * var(--x-size)) auto; border: 1px solid var(--line); background: #211e36; color: var(--text); cursor: pointer; touch-action: manipulation; }
+.sheet-close-x svg { display: none; } /* the shared X rule draws it, the same as every other */
 .sheet-tiles { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
 .sheet-tile {
   position: relative; text-align: left; border-radius: 16px; border: 1px solid var(--line); background: var(--surface-2); color: var(--text);
@@ -6883,7 +6875,7 @@ a.trend-price:hover { background: rgba(255, 255, 255, 0.06); }
 .players-list .players-meta { margin-left: auto; color: var(--muted); font-size: 0.8rem; white-space: nowrap; }
 .players-card { display: flex; align-items: center; gap: 12px; padding: 12px 14px; border: 1px solid var(--line); border-radius: 16px; background: var(--surface); margin-bottom: 12px; }
 .players-card .trend-player { margin: 0; }
-.players-clear { margin-left: auto; width: 34px; height: 34px; border-radius: 50%; border: 1px solid var(--line); background: transparent; color: var(--muted); cursor: pointer; }
+.players-clear { --x: var(--x-size-sm); margin-left: auto; border: 1px solid var(--line); background: transparent; color: var(--muted); cursor: pointer; }
 .players-form { display: grid; grid-template-columns: 1fr 1fr 1fr auto; gap: 10px; align-items: end; margin-bottom: 10px; }
 .players-form label { display: grid; gap: 6px; font-size: 0.78rem; font-weight: 700; color: var(--muted); letter-spacing: 0.04em; text-transform: uppercase; }
 .players-form select, .players-form input { width: 100%; min-height: 44px; padding: 0 12px; border-radius: 12px; border: 1px solid var(--line); background: var(--surface-2); color: var(--text); font: inherit; font-size: 1rem; }
@@ -7228,7 +7220,7 @@ a.trend-price:hover { background: rgba(255, 255, 255, 0.06); }
 /* The sheet's top bar: Back on the left when there is somewhere to go back to, X on the right always */
 .sheet-bar { position: sticky; top: -1px; z-index: 2; display: flex; justify-content: space-between; align-items: center; margin: -4px -4px 6px; padding: 4px; background: inherit; }
 .sheet-x, .sheet-back { display: inline-flex; align-items: center; justify-content: center; white-space: nowrap; flex: none; border: 1px solid var(--line); background: var(--surface-2); color: var(--text); font: inherit; font-weight: 800; cursor: pointer; border-radius: 999px; height: 36px; }
-.sheet-x { width: 36px; font-size: 1.3rem; line-height: 1; padding: 0; }
+/* .sheet-x is sized and drawn by the shared X rule at the end of this file. */
 .sheet-back { padding: 0 14px 0 10px; font-size: 0.9rem; gap: 4px; }
 
 .parlay-card-top { padding: 12px 16px; border-bottom: 1px solid var(--line); }
@@ -7993,7 +7985,7 @@ a.tennis-book:hover { background: rgba(255, 255, 255, 0.06); }
 .parlay-preset-load:disabled { cursor: default; color: var(--muted); border-style: dashed; background: transparent; }
 .parlay-preset.is-active .parlay-preset-load { border-color: var(--success); background: rgba(94, 224, 122, 0.1); }
 .parlay-preset-save, .parlay-preset-clear { flex: none; width: 40px; border-radius: 12px; border: 1px solid var(--line); background: var(--surface); color: var(--text); font: inherit; cursor: pointer; }
-.parlay-preset-clear { color: var(--muted); font-size: 1.1rem; }
+.parlay-preset-clear { color: var(--muted); }
 .parlay-preset-load:active, .parlay-preset-save:active, .parlay-preset-clear:active { transform: scale(0.97); }
 
 /* Pixel's Picks: the best play per sport in one card, and the suggestion's stake */
@@ -8141,3 +8133,72 @@ a.tennis-book:hover { background: rgba(255, 255, 255, 0.06); }
 .league-chip.is-active:not(:has(.league-chip-on))::after, .rate-chip.is-active:not(:has(.league-chip-on))::after { content: '✓'; font-size: 0.72rem; font-weight: 900; margin-left: 6px; color: #fff; }
 .books-chip.is-active .league-chip-on { color: #fff; }
 .live-books-pick .league-chip:not(.is-active) .book-badge { opacity: 0.55; filter: saturate(0.6); }
+
+/* ---------------------------------------------------------------------------
+   The X: every close, dismiss and clear button in the app (2026-11-25, the
+   owner, of the What's New strip's X sitting off-centre and clipped: "fix
+   this x and check all others, they should be centered and the same size all
+   around within reason, of course adjusting for mobile and desktop").
+
+   There were six of these, each with its own size and its own way of
+   centring a text glyph ("✕" in some, "×" in others), and a glyph sits where
+   its font puts it, not in the middle. So the X is no longer text: the
+   button's own character is hidden and two bars are drawn across the middle
+   of the button, which is centred by construction at any size.
+
+   Two sizes, and a phone gets a larger one of each to hit with a thumb:
+     the X that closes a panel or a sheet        40px, 44px on a phone
+     the X on a strip or beside a field (--x)    30px, 34px on a phone
+   A rule above picks the small one with --x: var(--x-size-sm). Colours and
+   borders stay each button's own.
+
+   The slot's clear button in the Parlay Builder keeps its box (it is one of a
+   row of square buttons) and only takes the drawn X.
+   --------------------------------------------------------------------------- */
+:root { --x-size: 40px; --x-size-sm: 30px; }
+@media (max-width: 620px) { :root { --x-size: 44px; --x-size-sm: 34px; } }
+
+.overlay-close-btn, .notice-close, .sheet-x, .sheet-close-x, .players-clear, .parlay-preset-clear {
+  display: inline-grid;
+  /* The one cell holding the bars sits in the middle of the button, and the bars in the middle of the cell. */
+  place-content: center;
+  place-items: center;
+  padding: 0;
+  /* The character in the markup stays for a reader with the stylesheet off; here the bars below are the X. */
+  font-size: 0;
+  line-height: 0;
+  letter-spacing: 0;
+  gap: 0;
+  cursor: pointer;
+  touch-action: manipulation;
+}
+.overlay-close-btn, .notice-close, .sheet-x, .sheet-close-x, .players-clear {
+  box-sizing: border-box;
+  flex: none;
+  width: var(--x, var(--x-size));
+  height: var(--x, var(--x-size));
+  min-height: 0;
+  border-radius: 50%;
+}
+.overlay-close-btn::before, .overlay-close-btn::after,
+.notice-close::before, .notice-close::after,
+.sheet-x::before, .sheet-x::after,
+.sheet-close-x::before, .sheet-close-x::after,
+.players-clear::before, .players-clear::after,
+.parlay-preset-clear::before, .parlay-preset-clear::after {
+  content: '';
+  /* Both bars in the one cell of the button's grid: the middle. */
+  grid-area: 1 / 1;
+  width: 14px;
+  height: 2px;
+  border-radius: 2px;
+  background: currentColor;
+  transform: rotate(45deg);
+  pointer-events: none;
+}
+.overlay-close-btn::after, .notice-close::after, .sheet-x::after, .sheet-close-x::after, .players-clear::after, .parlay-preset-clear::after { transform: rotate(-45deg); }
+/* A line's sheet keeps its X at the right by an auto margin, which needs a block of its own. */
+.sheet-close-x { display: grid; }
+/* The large X carries a longer stroke. */
+.overlay-close-btn:not(.update-banner *)::before, .overlay-close-btn:not(.update-banner *)::after,
+.sheet-x::before, .sheet-x::after, .sheet-close-x::before, .sheet-close-x::after { width: 17px; height: 2.25px; }
