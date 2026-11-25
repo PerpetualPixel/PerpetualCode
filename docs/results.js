@@ -102,7 +102,7 @@ export function resultEntries({ trendPicks = null, ufcPicks = null, tennisPicks 
       american: priced ? num(p.american) : num(p.playable), orBetter: !priced && num(p.playable) != null, book: p.book ?? null,
       units: num(p.units) ?? 1, net: p.result === 'void' ? 0 : num(p.profit), result: p.result,
       // A lean (the best call on a match when nothing clears the bar for a tracked play) is on the board with its result and kept out of every total.
-      // It sits in the Leans card, which says what it is: the row does not repeat it.
+      // It sits under the Leans heading in its sport's card, which says what it is: the row does not repeat it.
       ...(p.lean ? { lean: true } : {}) });
   }
   for (const g of liveRecap?.games ?? []) {
