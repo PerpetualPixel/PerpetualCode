@@ -70,12 +70,23 @@ const fmt = (american) => (american > 0 ? `+${american}` : String(american).repl
 const md = (s) => String(s ?? '').replace(/([\\*_~`|>[\]()])/g, '\\$1').slice(0, 200);
 const signedUnits = (n) => `${n < 0 ? '−' : '+'}${Math.abs(n).toFixed(2)}u`;
 const num = (v) => { const n = Number(v); return Number.isFinite(n) ? n : null; };
-const userIdOf = (v) => String(v ?? '').trim().match(/^(?:<@!?)?(\d{15,22})>?$/)?.[1] ?? null;
+/**
+ * Who to tag for Playbook, from what was saved (2026-11-25, the owner, of a tag that came out as "@unknown-user":
+ * "another play was posted and it was not @Playbook, fix this"). A server has two things called Playbook: the bot
+ * itself, a member, and the role Discord gives it, and an id copied from the role is not a member's. So either is
+ * taken: a member's id as the number or <@number>, a role's as <@&number> or &number. What comes back is the
+ * inside of the mention, "123" for the member or "&123" for the role, so <@...> around it is right for both.
+ */
+const userIdOf = (v) => { const m = String(v ?? '').trim().match(/^(?:<@(?:!|(&))?)?(&)?(\d{15,22})>?$/); return m ? `${m[1] || m[2] ? '&' : ''}${m[3]}` : null; };
+/** Discord's leave to ping it: a member by users, a role by roles, and nothing else in the message can ping anyone. */
+const mayPing = (tag) => (!tag ? { parse: [], users: [] } : tag.startsWith('&') ? { parse: [], users: [], roles: [tag.slice(1)] } : { parse: [], users: [tag] });
 
 /** What is configured: the channel's webhook (null when unset or not a Discord webhook) and Playbook's user id. */
 export async function leagueConfig(env, league = 'nba') {
   const hook = webhookOf(env?.[LEAGUES[league].secret]);
-  let playbook = userIdOf(env?.DISCORD_PLAYBOOK_USER_ID);
+  // The role's own secret, when it is the role that was copied; else the member's (which also takes a role written as <@&id>).
+  let playbook = userIdOf(env?.DISCORD_PLAYBOOK_ROLE_ID) ?? userIdOf(env?.DISCORD_PLAYBOOK_USER_ID);
+  if (playbook && String(env?.DISCORD_PLAYBOOK_ROLE_ID ?? '').trim() && !playbook.startsWith('&') && userIdOf(env?.DISCORD_PLAYBOOK_ROLE_ID)) playbook = `&${playbook}`;
   // The id the owner saved in the app's Playbook settings stands in when the secret is not set.
   if (hook && !playbook) playbook = userIdOf((await getSettings(env, 'owner').catch(() => null))?.playbook?.mention);
   return { hook, playbook };
@@ -148,7 +159,7 @@ export function slipMessage(post, { png = null, playbook = null, buttons = true 
   const outcome = post.status === 'void' ? 'void' : post.status === 'graded' ? (post.result === 'win' ? 'win' : 'loss') : 'open';
   const content = slipLine(post, { playbook });
   // Only the bot can be tagged, and only on a new play: nothing else in the words can ping anyone.
-  const allowed_mentions = { parse: [], users: playbook && outcome === 'open' ? [playbook] : [] };
+  const allowed_mentions = mayPing(outcome === 'open' ? playbook : null);
   const components = [{ type: 1, components: [{ type: 2, style: 5, url: BOARD, label: 'Live board', emoji: { name: LEAGUES[post.league]?.emoji ?? '🏀' } }] }];
   const plain = { content, allowed_mentions, embeds: [slipWritten(post)] };
   if (!png) return { payload: buttons ? { ...plain, components } : plain, file: null, plain };
@@ -298,8 +309,8 @@ export async function leagueStatus(env, league = 'nba') {
     channel: Boolean(cfg.hook),
     // Set but not a Discord webhook address: the secret is there and wrong.
     secretRejected: Boolean(String(env?.[LEAGUES[league].secret] ?? '').trim()) && !cfg.hook,
-    // Whether Playbook's user id is known, so its tag is a real mention.
-    playbook: Boolean(cfg.playbook),
+    // Whether Playbook's id is known, so its tag is a real mention, and whether it is the bot itself or its role that is tagged.
+    playbook: Boolean(cfg.playbook), playbookTag: cfg.playbook ? (cfg.playbook.startsWith('&') ? 'role' : 'member') : null,
     test: ledger.test ? { id: ledger.test.id, state: ledger.test.state, at: ledger.test.at ?? null, picture: ledger.test.picture ?? null } : null,
     // Whether the last play posted started with Playbook's tag, and how many plays have (2026-11-25, the owner: "ensure
     // when football and basketball plays are posted, it ats @Playbook with the card so it can build the links").

@@ -332,3 +332,31 @@ test('a new play that shares a player with one already posted gives way to anoth
   await run(env, t2 + 60e3, d, { games: [other], play: playOf([slip({ postedAt: t2 + 60e3 })], { builtAt: t2 + 60e3 }) });
   assert.equal(d.calls.length, 4, 'the same names in another game are that game\'s first play');
 });
+
+// --- The bot or its role: either can be tagged (2026-11-25: a tag that came out as "@unknown-user") ---
+
+test('Playbook is tagged as the member it is or as its role, whichever id was saved, and Discord is told which may be pinged', async () => {
+  const ROLE_ID = '998877665544332211';
+  const { env } = makeEnv({ DISCORD_LIVE_BASKETBALL_WEBHOOK: HOOK });
+  // The member: the number, or the mention as Discord writes it.
+  for (const v of [BOT, `<@${BOT}>`, `<@!${BOT}>`]) assert.equal((await basketballConfig({ ...env, DISCORD_PLAYBOOK_USER_ID: v })).playbook, BOT, v);
+  // The role: its mention as Discord writes it, or the number with & before it, in the same secret; or the number in the role's own secret.
+  for (const v of [`<@&${ROLE_ID}>`, `&${ROLE_ID}`]) assert.equal((await basketballConfig({ ...env, DISCORD_PLAYBOOK_USER_ID: v })).playbook, `&${ROLE_ID}`, v);
+  assert.equal((await basketballConfig({ ...env, DISCORD_PLAYBOOK_ROLE_ID: ROLE_ID })).playbook, `&${ROLE_ID}`);
+  assert.equal((await basketballConfig({ ...env, DISCORD_PLAYBOOK_ROLE_ID: ROLE_ID, DISCORD_PLAYBOOK_USER_ID: BOT })).playbook, `&${ROLE_ID}`, 'the role\'s secret wins when both are set');
+  for (const bad of ['@Playbook', 'Playbook#3138', '12345', '<#123456789012345678>']) assert.equal((await basketballConfig({ ...env, DISCORD_PLAYBOOK_USER_ID: bad })).playbook, null, bad);
+
+  const post = slipPost(GAME, playOf([slip()]), slip());
+  const member = slipMessage(post, { png: PNG, playbook: BOT });
+  assert.ok(member.payload.content.startsWith(`<@${BOT}> FanDuel\n`));
+  assert.deepEqual(member.payload.allowed_mentions, { parse: [], users: [BOT] });
+  const role = slipMessage(post, { png: PNG, playbook: `&${ROLE_ID}` });
+  assert.ok(role.payload.content.startsWith(`<@&${ROLE_ID}> FanDuel\n`), 'a role is written as a role, which is what makes Discord show its name');
+  assert.deepEqual(role.payload.allowed_mentions, { parse: [], users: [], roles: [ROLE_ID] });
+  assert.deepEqual(slipMessage(post, { png: PNG }).payload.allowed_mentions, { parse: [], users: [] });
+  // The status says which is tagged, never the id.
+  const st = await basketballStatus({ ...env, DISCORD_PLAYBOOK_ROLE_ID: ROLE_ID });
+  assert.deepEqual([st.playbook, st.playbookTag], [true, 'role']);
+  assert.equal((await basketballStatus({ ...env, DISCORD_PLAYBOOK_USER_ID: BOT })).playbookTag, 'member');
+  assert.ok(!JSON.stringify(st).includes(ROLE_ID));
+});
