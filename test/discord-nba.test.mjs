@@ -259,3 +259,33 @@ test('football has its own channel, ledger and test card, and is told apart from
   assert.ok(!JSON.stringify(status).includes('nflDEF'));
   assert.deepEqual([testSlipPost(NOW, 'nfl').league, testSlipPost(NOW).league], ['nfl', 'nba']);
 });
+
+// --- Every new play tags Playbook, with its card (2026-11-25: "ensure ... it ats @Playbook with the card so it can build the links") ---
+
+test('with Playbook\'s id set, every new NBA and NFL play starts with its tag and carries the card in the same message, however the message goes out; the status says so', async () => {
+  for (const [league, secret, game, slipOf, sync, status] of [
+    ['nba', 'DISCORD_LIVE_BASKETBALL_WEBHOOK', GAME, slip, syncBasketballDiscord, basketballStatus],
+    ['nfl', 'DISCORD_FOOTBALL_WEBHOOK', NFL_GAME, nflSlip, syncFootballDiscord, footballStatus],
+  ]) {
+    // With the picture, without one, and when Discord refuses the buttons: the tag is the first thing in every form.
+    for (const [name, render, reply] of [['picture', async () => PNG, null], ['written', async () => null, null], ['no buttons', async () => PNG, (c) => (c.body.components?.length ? { status: 400, body: {} } : null)]]) {
+      const { env } = makeEnv({ [secret]: HOOK, DISCORD_PLAYBOOK_USER_ID: BOT });
+      const d = fakeDiscord(reply);
+      const play = { builtAt: NOW - 30e3, score: {}, detail: 'Q2', slips: [slipOf()] };
+      const out = await sync(env, NOW, { deps: { fetch: d.fetch, games: async () => [game], play: async () => play, watch: async () => null, render, testId: '' } });
+      assert.equal(out.posted, 1, `${league} ${name}`);
+      const sent = d.calls.at(-1);
+      assert.ok(sent.body.content.startsWith(`<@${BOT}> `), `${league} ${name}: the message starts with the tag`);
+      assert.deepEqual(sent.body.allowed_mentions, { parse: [], users: [BOT] }, `${league} ${name}: and Discord is told the tag may ping the bot`);
+      assert.equal(sent.body.content.split('\n').length, 1 + slipOf().legs.length, 'the book, then a line a leg');
+      if (name !== 'written') assert.ok(sent.file && sent.body.embeds[0].image.url === 'attachment://card.png', `${league} ${name}: the card rides in the same message`);
+      const st = await status(env);
+      assert.deepEqual([st.playbook, st.lastPostTagged, st.tagged], [true, true, 1]);
+    }
+    // Without the id nobody is tagged, and the status says that too.
+    const bare = makeEnv({ [secret]: HOOK });
+    const d2 = fakeDiscord();
+    await sync(bare.env, NOW, { deps: { fetch: d2.fetch, games: async () => [game], play: async () => ({ builtAt: NOW - 30e3, slips: [slipOf()] }), watch: async () => null, render: async () => PNG, testId: '' } });
+    assert.deepEqual([(await status(bare.env)).lastPostTagged, (await status(bare.env)).tagged, d2.calls[0].body.allowed_mentions.users], [false, 0, []]);
+  }
+});
