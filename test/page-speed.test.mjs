@@ -6,7 +6,7 @@
  */
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { readFileSync, existsSync, statSync } from 'node:fs';
+import { readFileSync, existsSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import path from 'node:path';
 import { CONFIG } from '../docs/config.js';
@@ -59,14 +59,67 @@ test('the early script runs in the head, after the frame guard and before the st
   assert.ok(at('src="early.js') < at('</head>'));
 });
 
-test('the loader film is small enough to be worth showing, and every loader on the page names it', () => {
-  const film = path.join(docs, 'assets/loader.mp4');
-  assert.ok(existsSync(film));
-  assert.ok(statSync(film).size < 300_000, 'the loader film should stay well under the size of the page it stands in for');
-  const html = read('app.html');
-  assert.ok(!html.includes('pp-loading'), 'the old spinning-logo loader is gone');
-  const films = [...html.matchAll(/<video class="pp-loader-video"[^>]*>/g)].map((m) => m[0]);
-  assert.ok(films.length >= 2);
-  // Silent, inline and looping, or a phone will not start it by itself.
-  for (const tag of films) for (const attr of ['src="assets/loader.mp4"', 'autoplay', 'muted', 'loop', 'playsinline']) assert.ok(tag.includes(attr), `${attr} missing on ${tag}`);
+/** docs/loader-fx.js run with a stand-in page: the canvas records what is drawn on it, as text. */
+function loaderFx({ reducedMotion = false } = {}) {
+  const frames = [];
+  const window = {};
+  const document = { readyState: 'complete', hidden: false, addEventListener() {}, querySelectorAll: () => [] };
+  // eslint-disable-next-line no-new-func
+  new Function('window', 'document', 'matchMedia', 'requestAnimationFrame', 'performance', read('loader-fx.js'))(window, document, () => ({ matches: reducedMotion }), (fn) => { frames.push(fn); }, { now: () => 0 });
+  const canvasOf = (w, h) => {
+    const log = [];
+    const grad = () => ({ addColorStop: (o, c) => log.push(`stop ${o} ${c}`) });
+    const ctx = new Proxy({}, {
+      get: (t, k) => (k === 'createLinearGradient' || k === 'createRadialGradient' ? (...a) => { log.push(`${k} ${a.map((v) => v.toFixed(3)).join(',')}`); return grad(); } : (...a) => { log.push(`${String(k)} ${a.map((v) => (typeof v === 'number' ? v.toFixed(3) : v)).join(',')}`); }),
+      set: (t, k, v) => { log.push(`${String(k)}=${typeof v === 'number' ? v.toFixed(4) : typeof v === 'string' ? v : 'gradient'}`); return true; },
+    });
+    return { width: w, height: h, getContext: () => ctx, log };
+  };
+  return { fx: window.ppLoaderFx, frames, canvasOf };
+}
+
+test('the loader is drawn on the page, not played as a film: a clear canvas in every loader, and its script in the head', () => {
+  assert.ok(!existsSync(path.join(docs, 'assets/loader.mp4')), 'the film is gone: a film is a rectangle, and its edges showed');
+  for (const page of ['app.html', 'account.html']) {
+    const html = read(page);
+    assert.ok(!/<video[^>]*loader/.test(html) && !html.includes('pp-loading'), `${page}: no film and no spinning logo`);
+    assert.match(html, /<script src="loader-fx\.js\?v=[^"]+" defer><\/script>/, `${page} loads the animation, deferred`);
+    assert.ok(html.indexOf('src="loader-fx.js') < html.indexOf('</head>'), `${page}: in the head`);
+  }
+  const statics = [...read('app.html').matchAll(/<span class="pp-loader-art"[^>]*>.*?<\/span>/g)].map((m) => m[0]);
+  assert.ok(statics.length >= 2);
+  // The drawn emblem first (it shows before any script has run), then the canvas the animation takes over on.
+  for (const art of statics) assert.match(art, /<svg[\s\S]*<\/svg><canvas class="pp-loader-fx"><\/canvas>/);
+  assert.match(read('app.js'), /globalThis\.ppLoaderFx\?\.start\(\)/, 'a loader put up by the app starts the animation');
+  assert.match(read('styles.css'), /\.pp-loader-art\.is-fx svg \{ opacity: 0; \}/);
+});
+
+test('the lap has no seam: the frame at the end of a lap is the frame at its start, and the orb is somewhere else in between', () => {
+  const { fx, canvasOf } = loaderFx();
+  const frame = (phase, w = 560, h = 280) => { const c = canvasOf(w, h); fx.draw(c, phase); return c.log.join('\n'); };
+  assert.equal(frame(1), frame(0), 'a whole lap on, the same picture');
+  assert.equal(frame(2.25), frame(0.25));
+  assert.notEqual(frame(0.5), frame(0));
+  assert.notEqual(frame(0.25), frame(0.75));
+  // The ground is cleared each frame and never painted: there is no rectangle to see.
+  const log = frame(0.3).split('\n');
+  assert.equal(log.filter((l) => l.startsWith('clearRect')).length, 1);
+  assert.ok(!log.some((l) => l.startsWith('fillRect') || l.startsWith('rect ')), 'nothing fills the canvas');
+  // The small size (a status line) draws less, not differently.
+  assert.ok(frame(0.3, 220, 110).split('\n').length < log.length);
+  assert.ok(fx.lapMs >= 1500 && fx.lapMs <= 4000);
+});
+
+test('the animation runs only while a loader is showing, and not at all for a reduced-motion user', () => {
+  const on = loaderFx();
+  assert.equal(on.frames.length, 1, 'it starts with the page');
+  // No canvas on show: it winds down by itself instead of running for ever.
+  let ticks = 0;
+  while (on.frames.length && ticks < 200) { const next = on.frames.shift(); next(ticks * 16); ticks++; }
+  assert.ok(ticks > 5 && ticks < 60, `stopped after ${ticks} empty frames`);
+  on.fx.start();
+  assert.equal(on.frames.length, 1, 'and starts again when a loader goes up');
+  const off = loaderFx({ reducedMotion: true });
+  off.fx.start();
+  assert.equal(off.frames.length, 0);
 });
