@@ -7751,10 +7751,18 @@ a.tennis-book:hover { background: rgba(255, 255, 255, 0.06); }
 .mvp-play-head .pick-bet-book { font-weight: 700; }
 .mvp-leg { border-bottom: 1px solid var(--line); }
 .mvp-leg > summary { list-style: none; cursor: pointer; display: flex; align-items: center; gap: 10px; padding: 10px 12px; min-height: 44px; font-size: 0.92rem; }
-.mvp-leg-stat { flex: 1 1 auto; white-space: nowrap; }
-.mvp-leg-rate { font-size: 0.86rem; }
-.mvp-leg-price { min-width: 54px; text-align: right; }
+/* A leg's row never crams (2026-11-25: on a phone the stat ran under the hit rate, "Points 15+12/13"). The stat is
+   the one part that gives: it takes the room that is left and wraps inside it. The rate, the price, the mark and
+   the caret keep their own width and are never squeezed. On a paired ticket the player's name sits on its own
+   short line above the stat, and on a phone the percentage sits under the count, so the stat has room to stay
+   on one line. */
+.mvp-leg-stat { flex: 1 1 0; overflow-wrap: anywhere; line-height: 1.25; }
+.mvp-leg-stat small { display: block; font-size: 0.72rem; letter-spacing: 0.02em; }
+.mvp-leg-rate { flex: none; font-size: 0.86rem; text-align: right; line-height: 1.2; }
+.mvp-leg-price { flex: none; min-width: 54px; text-align: right; }
+.mvp-leg > summary .ufc-leg-mark { flex: none; }
 .mvp-leg-caret { flex: none; }
+@media (max-width: 520px) { .mvp-leg-rate small { display: block; } }
 .mvp-onebyone { margin: 0; }
 .mvp-onebyone a { margin-left: 8px; white-space: nowrap; }
 .mvp-leg > summary::-webkit-details-marker { display: none; }

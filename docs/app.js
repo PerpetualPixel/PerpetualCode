@@ -10350,7 +10350,7 @@ function renderMvpCard(pick) {
   const legRow = (leg, i) => {
     const l = lines[i] ?? {};
     return `<details class="mvp-leg"><summary>
-        <span class="mvp-leg-stat">${pair ? `<small>${esc(String(leg.playerName).split(' ').at(-1))}</small> ` : ''}${esc(MVP_STAT[leg.statKey] ?? leg.statLabel)} <b>${esc(String(Math.ceil(leg.point)))}+</b></span>
+        <span class="mvp-leg-stat">${pair ? `<small>${esc(String(leg.playerName).split(' ').at(-1))}</small>` : ''}<span class="mvp-leg-what">${esc(MVP_STAT[leg.statKey] ?? leg.statLabel)} <b>${esc(String(Math.ceil(leg.point)))}+</b></span></span>
         <span class="mvp-leg-rate">${l.games ? `${esc(String(l.hits))}/${esc(String(l.games))} <small>${Math.round((l.rate ?? 0) * 100)}%</small>` : ''}</span>
         <span class="mvp-leg-price">${esc(formatAmerican(leg.american))}</span>${mark(leg)}<span class="mvp-leg-caret" aria-hidden="true"></span>
       </summary>${renderPickLeg(leg, bet)}</details>`;
