@@ -64,14 +64,14 @@ const TOUR = { atp: 'ATP', wta: 'WTA' };
  * this value and the next tick posts one sample play, marked as a test, with the role ping; the tick after edits it
  * to its settled form. That is the whole path a real play takes.
  */
-export const TEST_ALERT_ID = '2026-11-25-6';
+export const TEST_ALERT_ID = '2026-11-25-7';
 /**
  * What the test sends: 'cards' (one card for each template in the live channel: live play, won, lost, void, with
  * their buttons and no ping), 'all' (one alert with its ping, its edit, and the result card), 'results' (the
  * result cards alone, a win and a loss, in the results channel) or 'leans' (a lean as it opens and one that has
- * won, in the leans channel).
+ * won, in the leans channel), or 'cards+leans' (both of those: every template, each in its own channel).
  */
-export const TEST_SCOPE = 'leans';
+export const TEST_SCOPE = 'cards+leans';
 const TEST_BASE = { market: 'live_ml', tour: 'atp', event: 'Test alert', round: 'not a real play', a: 'Test Player', b: 'Sample Opponent', side: 'a', prob: 0.69, american: -150, playable: -165, bookId: 'fanduel', book: 'FanDuel', units: 1, selection: 'Test Player to win the match (live)', score: '6-0 3-4', status: 'pending',
   stats: { holds: { a: { held: 6, served: 6 }, b: { held: 3, served: 5 } }, last: { of: 8, a: 5, b: 3 }, streak: null, setGames: null },
   why: ['Score 6-0 3-4: from here the model gives Test Player 74% to win the match and 58% to win the set in play.', 'Test Player has held 6 of 6 service games; Sample Opponent has held 3 of 5 service games.', 'Last 8 games: Test Player 5, Sample Opponent 3.', 'The live price gives Test Player 60%; the read puts it at 69%.'],
@@ -205,7 +205,7 @@ export function livePlayMessage(play, { role = null, record = null } = {}) {
   const bookName = md(SPORTSBOOKS[play.bookId]?.name ?? play.book ?? 'the book');
   // A lean is a call, not a tracked play: it carries no stake and is never on the record, and every line of it says so.
   const lean = Boolean(play.lean);
-  const stake = lean ? '**lean · not tracked**' : `stake **${unitsOf(play.units)}**`;
+  const stake = lean ? `recommended **${unitsOf(play.units)}** · a lean, not on the record` : `${settled ? '' : 'recommended '}stake **${unitsOf(play.units)}**`;
   const betLine = priced
     ? `**${fmt(play.american)}** at **${bookName}**${Number.isFinite(play.playable) && play.playable < play.american ? ` · good down to ${fmt(play.playable)}` : ''} · ${stake}`
     : `**${fmt(price)} or better** at your book · ${stake}`;
@@ -308,7 +308,7 @@ export function cardButtons(play) {
     if (!b.url || books.length >= 3) continue;
     books.push({ type: 2, style: 5, url: b.url, label: `${books.length ? '' : 'Add to slip · '}${short(b.name)} ${fmt(b.american)}`.slice(0, 80), ...(books.length ? {} : { emoji: { name: '➕' } }) });
   }
-  const stats = { type: 2, style: 5, url: statsUrl(play), label: settled ? 'Stats behind the pick' : 'Stats & why', emoji: { name: '📊' } };
+  const stats = { type: 2, style: 5, url: statsUrl(play), label: 'More info', emoji: { name: '📊' } };
   // The books on one row and the stats on the row under it: the stats button is always in the same place, and a row is never crowded.
   return [...(books.length ? [{ type: 1, components: books }] : []), { type: 1, components: [stats] }];
 }
@@ -320,10 +320,10 @@ export function cardLine(play, { role = null } = {}) {
   const price = priced ? play.american : play.playable;
   const at = Number.isFinite(price) ? (priced ? ` · ${fmt(price)} at ${md(SPORTSBOOKS[play.bookId]?.name ?? play.book ?? 'the book')}` : ` · ${fmt(price)} or better`) : '';
   if (play.lean) {
-    // A lean says it is one first, and never carries units: it is not on the record.
+    // A lean says it is one first. It carries its recommended units while it is open and no result in units: it is not on the record.
     if (play.status === 'void') return `⚪ **LEAN VOID** · ${take}`;
-    if (play.status === 'graded') return `${play.result === 'win' ? '✅ **LEAN WON**' : '❌ **LEAN LOST**'} · ${take}${play.actual ? ` · final ${md(play.actual)}` : ''} · not tracked`;
-    return `💡 **LEAN · ${take}**${at} · not tracked`;
+    if (play.status === 'graded') return `${play.result === 'win' ? '✅ **LEAN WON**' : '❌ **LEAN LOST**'} · ${take}${play.actual ? ` · final ${md(play.actual)}` : ''}`;
+    return `💡 **LEAN · ${take}**${at} · ${unitsOf(play.units)}`;
   }
   if (play.status === 'void') return `⚪ **VOID** · ${take} · stake returned`;
   if (play.status === 'graded') return `${play.result === 'win' ? '✅ **WON**' : '❌ **LOST**'} · ${take}${play.actual ? ` · final ${md(play.actual)}` : ''}${Number.isFinite(play.profit) ? ` · ${signedUnits(play.profit)}` : ''}`;
@@ -477,10 +477,12 @@ export async function syncLiveDiscord(env, now = Date.now(), { deps = {} } = {})
   // The test alert (TEST_ALERT_ID): posted once per value, then edited on a later tick to its settled form.
   // Each card is drawn before the test is marked as sending: a run that dies drawing has sent nothing, and the next sends it written.
   const testRecord = { wins: 9, losses: 2, units: 3.86 };
-  if (testId && ledger.test?.id !== testId && testScope === 'cards') {
-    // One card for each template, in the live channel, with their buttons: nobody is pinged.
+  if (testId && ledger.test?.id !== testId && (testScope === 'cards' || testScope === 'cards+leans')) {
+    // One card for each template, in the live channel, with their buttons: nobody is pinged. With 'cards+leans' the two lean cards follow, in the leans channel.
     const cards = [];
     for (const play of Object.values(testPlays(now))) cards.push(await dress(play, { record: testRecord, role: null, test: true }));
+    const leanCards = [];
+    if (testScope === 'cards+leans' && cfg.leans) for (const play of Object.values(testLeans(now))) leanCards.push(await dress(play, { role: null, test: true }));
     ledger.test = { id: testId, state: 'sending', at: now };
     await writeLedger(env, ledger);
     let ok = 0; let pictures = 0;
@@ -488,7 +490,12 @@ export async function syncLiveDiscord(env, now = Date.now(), { deps = {} } = {})
       const r = await send(cfg.live, card);
       if (r.ok) { ok++; if (card.file && !r.noPicture) pictures++; } else fail('test card', r);
     }
-    ledger.test = { id: testId, state: ok === 4 ? 'done' : 'failed', at: now, cards: ok, pictures, buttons: !ledger.noButtons };
+    let leansOk = 0;
+    for (const card of leanCards) {
+      const r = await send(cfg.leans, card);
+      if (r.ok) { leansOk++; if (card.file && !r.noPicture) pictures++; } else fail('test lean', r);
+    }
+    ledger.test = { id: testId, state: ok === 4 && leansOk === leanCards.length ? 'done' : 'failed', at: now, cards: ok, pictures, buttons: !ledger.noButtons, ...(testScope === 'cards+leans' ? { leans: leansOk } : {}) };
     dirty = true;
   } else if (testId && ledger.test?.id !== testId && testScope === 'leans') {
     // The leans channel: a lean as it opens and one that has won, marked as a test. Nobody is pinged there.
@@ -664,7 +671,7 @@ export async function discordStatus(env) {
     // The role: found under its name at all, and if found, whether it is a role id (digits only).
     roleSecretFound: Boolean(String(env?.DISCORD_LIVE_ROLE_ID ?? '').trim()),
     roleSecretRejected: Boolean(String(env?.DISCORD_LIVE_ROLE_ID ?? '').trim()) && !cfg.role,
-    test: ledger.test ? { id: ledger.test.id, state: ledger.test.state, at: ledger.test.at ?? null, ...(ledger.test.updates ? { updates: ledger.test.updates } : {}), ...(ledger.test.cards != null ? { cards: ledger.test.cards, pictures: ledger.test.pictures, buttons: ledger.test.buttons } : {}), ...(ledger.test.leans != null ? { leans: ledger.test.leans, pictures: ledger.test.pictures, buttons: ledger.test.buttons } : {}) } : null,
+    test: ledger.test ? { id: ledger.test.id, state: ledger.test.state, at: ledger.test.at ?? null, ...(ledger.test.updates ? { updates: ledger.test.updates } : {}), ...(ledger.test.cards != null ? { cards: ledger.test.cards } : {}), ...(ledger.test.leans != null ? { leans: ledger.test.leans } : {}), ...(ledger.test.cards != null || ledger.test.leans != null ? { pictures: ledger.test.pictures, buttons: ledger.test.buttons } : {}) } : null,
     // Whether Discord took the buttons, and the last reason a card's picture could not be drawn.
     buttons: !ledger.noButtons, pictures: !ledger.noPictures, cardError: ledger.cardError ?? null,
     helloAt: ledger.helloAt ?? null, lastPostAt: ledger.lastPostAt ?? null, lastError: ledger.lastError ?? null, plays: counts,

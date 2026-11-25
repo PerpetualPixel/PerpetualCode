@@ -1,5 +1,5 @@
 /**
- * The page behind a card's "Stats & why" button (GET /play/<id>;
+ * The page behind a card's "More info" button (GET /play/<id>;
  * 2026-11-25, the owner: "allowing the user to click a button and find
  * more stats and data backing the pick"). One play, in full: the card,
  * the reason in a sentence, every line of the read it was made on, the
@@ -14,7 +14,7 @@
  */
 import { CONFIG } from '../../docs/config.js';
 import { whyLine, booksOf } from './discord.js';
-import { cardState, playLines, cardTime } from './card-svg.js';
+import { cardState, playLines, cardTime, CARD_W, CARD_H, CARD_VERSION } from './card-svg.js';
 
 const esc = (s) => String(s ?? '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;').replace(/'/g, '&#39;');
 const fmt = (american) => (american > 0 ? `+${american}` : String(american).replace('-', '−'));
@@ -44,7 +44,7 @@ const shell = (title, body, tone = '#7C3AED') => `<!doctype html>
   header img { width: 40px; height: 40px; }
   header b { font-weight: 800; letter-spacing: 0.14em; font-size: 0.95rem; }
   header b span { background: linear-gradient(90deg, #FF2BD6, #8B5CF6); -webkit-background-clip: text; background-clip: text; color: transparent; }
-  .card { display: block; width: 100%; max-width: 420px; height: auto; margin: 0 auto 20px; }
+  .card { display: block; width: 100%; height: auto; margin: 0 auto 20px; }
   h1 { font-size: 1.35rem; line-height: 1.25; margin: 0 0 4px; }
   h1 small { display: block; color: var(--tone); font-size: 0.78rem; letter-spacing: 0.14em; text-transform: uppercase; margin-bottom: 4px; }
   .sub { color: #9C98B8; margin: 0 0 16px; font-size: 0.92rem; }
@@ -88,7 +88,7 @@ export function playPage(play, { record = null } = {}) {
     Number.isFinite(play.prob) ? ['Chance to land', pct(play.prob), 'our read'] : null,
     needs != null ? ['Price needs', pct(needs), `to break even at ${fmt(price)}`] : null,
     edge != null ? ['Edge', `${edge >= 0 ? '+' : '−'}${Math.abs(edge)} pts`, 'read less price'] : null,
-    play.lean ? ['Stake', 'None', 'a lean is not tracked'] : ['Stake', `${Math.round((play.units ?? 1) * 100) / 100}u`, 'sized by confidence'],
+    ['Recommended', `${Math.round((play.units ?? 1) * 100) / 100}u`, play.lean ? 'a lean: not on the record' : 'sized by confidence'],
     play.score ? ['Score when taken', play.score, ''] : null,
     h ? [`${lastName(play.a)} serve`, `${h.a.held}/${h.a.served}`, 'games held today'] : null,
     h ? [`${lastName(play.b)} serve`, `${h.b.held}/${h.b.served}`, 'games held today'] : null,
@@ -100,7 +100,7 @@ export function playPage(play, { record = null } = {}) {
   const reasons = (play.why ?? []).map((w) => String(w)).filter(Boolean).slice(0, 8);
   const result = state === 'live' ? '' : `<section class="result"><h2>Result</h2><strong>${state === 'void' ? (play.lean ? 'Void · no result' : 'Void · stake returned') : `${play.lean ? 'Lean ' : ''}${state === 'won' ? (play.lean ? 'won' : 'Won') : (play.lean ? 'lost' : 'Lost')}${!play.lean && Number.isFinite(play.profit) ? ` · ${signedUnits(play.profit)}` : ''}`}</strong>${play.actual ? `<p class="note">Final ${esc(play.actual)}</p>` : ''}</section>`;
   const body = `
-<img class="card" src="${CONFIG.WORKER_URL}/card/${encodeURIComponent(play.id)}.png?s=${state}" alt="${esc(`${big} ${small}`)}" width="1080" height="1470">
+<img class="card" src="${CONFIG.WORKER_URL}/card/${encodeURIComponent(play.id)}.png?s=${state}&amp;v=${CARD_VERSION}" alt="${esc(`${big} ${small}`)}" width="${CARD_W}" height="${CARD_H}">
 <h1><small>${play.lean ? (state === 'live' ? 'Live lean · not tracked' : 'Live lean · not on the record') : state === 'live' ? 'Live play · take' : 'Tracked live play'}</small>${esc(String(play.selection ?? '').replace(/\s*\(live\)\s*$/i, ''))}</h1>
 <p class="sub">${esc(play.a)} vs ${esc(play.b)}${play.event ? ` · ${esc(play.event)}` : ''}${play.round ? ` · ${esc(play.round)}` : ''}${Number.isFinite(play.postedAt) ? ` · posted ${esc(cardTime(play.postedAt).replace(/\s+•\s+/, ', '))}` : ''}</p>
 ${result}

@@ -11,7 +11,6 @@
  */
 import { initWasm, Resvg } from '../vendor/resvg/index.mjs';
 import resvgWasm from '../vendor/resvg/index_bg.wasm';
-import syne from '../vendor/fonts/Syne-800.ttf';
 import condensedBold from '../vendor/fonts/RobotoCondensed-700.ttf';
 import condensedMedium from '../vendor/fonts/RobotoCondensed-500.ttf';
 import condensedRegular from '../vendor/fonts/RobotoCondensed-400.ttf';
@@ -24,7 +23,7 @@ export const CARD_PIXELS = 1080;
 let ready = null;
 let logoUri = null;
 const base64 = (buf) => { const u = new Uint8Array(buf); let s = ''; for (let i = 0; i < u.length; i += 0x8000) s += String.fromCharCode.apply(null, u.subarray(i, i + 0x8000)); return btoa(s); };
-const FONTS = [syne, condensedBold, condensedMedium, condensedRegular].map((f) => new Uint8Array(f));
+const FONTS = [condensedBold, condensedMedium, condensedRegular].map((f) => new Uint8Array(f));
 
 /** The card for a play as PNG bytes. */
 export async function renderCardPng(play) {

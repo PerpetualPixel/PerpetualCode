@@ -67,6 +67,7 @@ import { runTennisTick, getTennisPicks, getTennisParlay } from './tennis-picks.j
 import { getTennisLive } from './tennis-live.js';
 import { runTennisLiveTick, getTennisLivePlays, TENNIS_LIVE_CRON } from './tennis-live-plays.js';
 import { syncLiveDiscord, discordStatus, bookRedirect, findLivePlay, recordForPlay } from './discord.js';
+import { CARD_VERSION } from './card-svg.js';
 import { playPage, missingPlayPage } from './play-page.js';
 import { getTennisTrends } from './tennis-trends.js';
 import { sendUfcTicketNotifications, sendUfcChangeNotifications } from './notifications.js';
@@ -1718,7 +1719,7 @@ export default {
 
     // The US state this request came from, as Cloudflare reads it: the app writes it into Caesars' and BetMGM's
     // slip links, which are a site a state (docs/book-links.js withState). Nothing is stored.
-    // The page behind a card's "Stats & why" button (worker/src/play-page.js): one play in full. No script, its own styles.
+    // The page behind a card's "More info" button (worker/src/play-page.js): one play in full. No script, its own styles.
     const playRoute = request.method === 'GET' ? pathname.match(/^\/play\/([^/]{1,120})$/) : null;
     if (playRoute) {
       let playId = ''; try { playId = decodeURIComponent(playRoute[1]); } catch { playId = ''; }
@@ -1735,7 +1736,7 @@ export default {
       if (!play) return json({ error: 'no such play' }, { status: 404, headers: cors });
       // Drawing costs CPU, so a drawn card is kept at the edge under the play and its state: a settled card for a day, an open one for ten minutes.
       const settled = play.status === 'graded' || play.status === 'void';
-      const kept = new Request(`${new URL(request.url).origin}/card/${encodeURIComponent(play.id)}.png?s=${settled ? `${play.status}-${play.result ?? ''}` : 'open'}`);
+      const kept = new Request(`${new URL(request.url).origin}/card/${encodeURIComponent(play.id)}.png?s=${settled ? `${play.status}-${play.result ?? ''}` : 'open'}&v=${CARD_VERSION}`);
       const edge = globalThis.caches?.default ?? null;
       try {
         const hit = edge ? await edge.match(kept).catch(() => null) : null;
