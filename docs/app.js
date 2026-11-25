@@ -10545,7 +10545,7 @@ function renderPlayerResult() {
       <div class="players-filter"><span>Games</span><div class="rate-chips">${[['all', `All ${all.length}`], ['l5', 'Last 5'], ['l10', 'Last 10'], ['l20', 'Last 20']].map(([k, label]) => `<button type="button" class="rate-chip ${playersState.window === k ? 'is-active' : ''}" data-players-window="${k}">${esc(label)}</button>`).join('')}</div></div>
     </div>
     <div class="detail-summary players-summary">
-      <span class="big ${rate === null ? '' : rateTone(rate)}">${rate === null ? '—' : pct(rate)}<small>${hits}/${counted.length} games ${sideWord(side).toLowerCase()} ${esc(String(point))} ${esc(statLabel?.short ?? log.stat)}</small></span>
+      <span class="big ${rate === null ? '' : rateTone(rate)}">${rate === null ? '—' : pct(rate)}<small>${hits}/${counted.length} games ${side === 'record' ? `with ${esc(String(point))}+` : `${sideWord(side).toLowerCase()} ${esc(String(point))}`} ${esc(statLabel?.short ?? log.stat)}</small></span>
       <span class="stats">Avg <b>${avg === null ? '—' : esc(String(Math.round(avg * 10) / 10))}</b> ▪ Median <b>${median === null ? '—' : esc(String(median))}</b></span>
     </div>
     ${chart.length ? `<div class="detail-chart ${chart.length > 12 ? 'is-dense' : ''}">
@@ -10621,7 +10621,7 @@ el.playersView?.addEventListener('change', (event) => {
   const sel = event.target.closest('[data-players-opponent]');
   if (sel) { playersState.filters.opponent = sel.value; renderPlayerResult(); return; }
   if (event.target === el.playersStat) { playersState.stat = el.playersStat.value; playersState.log = null; renderPlayers(); }
-  if (event.target === el.playersSide) { playersState.side = el.playersSide.value; renderPlayerResult(); renderPlayers(); }
+  if (event.target === el.playersSide) { playersState.side = ['over', 'record', 'under'].includes(el.playersSide.value) ? el.playersSide.value : 'over'; renderPlayerResult(); renderPlayers(); }
 });
 el.playersPoint?.addEventListener('input', () => { playersState.point = el.playersPoint.value.trim(); el.playersSearchBtn.disabled = !(playersState.player && playersState.stat && playersState.point !== '' && Number.isFinite(Number(playersState.point))); if (playersState.log) renderPlayerResult(); });
 el.playersQuery?.addEventListener('input', () => { playersState.focus = -1; if (playersState.player && el.playersQuery.value !== playersState.player.name) { playersState.player = null; playersState.log = null; renderPlayers(); } renderPlayerList(); });
