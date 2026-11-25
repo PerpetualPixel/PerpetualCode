@@ -2,6 +2,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import {
   positionGroup, playerGames, teamUsage, usageLeader, defenseVsPosition, leagueTables, legsAtBook, togetherRate, landChance, estimateSameGame, mvpTicket, legFlags,
+  stepUpTicket, pairTicket, playable, ticketOf, MVP_TARGET_AMERICAN,
   mvpCandidates, runMvpPicksDaily, runMvpPicksGrading, getMvpPicks, MVP_MAX_TRACKED, MVP_EDGE, MVP_SHRINK_GAMES, MVP_PRIOR, MVP_INDEX_KEY,
 } from '../worker/src/mvp-picks.js';
 
@@ -216,7 +217,7 @@ test('the day: nothing in the window is not looked at; a price too short or a fl
   const a = await runMvpPicksDaily(env, {}, NOW, { deps: { ...base, rows: async () => shortRows } });
   assert.deepEqual([a.picks, a.tracked], [1, 0]);
   let rec = JSON.parse(m.get('mvp:picks:2026-11-24'));
-  assert.equal(rec.final, false); assert.match(rec.picks[0].why, /same-game price would be too short/);
+  assert.equal(rec.final, false); assert.match(rec.picks[0].why, /every way to play it is priced too short/);
   assert.equal((await runMvpPicksDaily(env, {}, NOW + 10 * 60e3, { deps: { ...base, rows: async () => ladder(luka) } })).reason, 'checked recently');
   const b = await runMvpPicksDaily(env, {}, NOW + 40 * 60e3, { deps: { ...base, rows: async () => ladder(luka), lineup: async () => [{ key: 'back:X', tone: 'bad', title: 'X is back', text: 'z' }] } });
   assert.equal(b.tracked, 0);
@@ -225,4 +226,83 @@ test('the day: nothing in the window is not looked at; a price too short or a fl
   const c = await runMvpPicksDaily(env, {}, NOW + 80 * 60e3, { deps: { ...base, rows: async () => ladder(luka) } });
   assert.equal(c.tracked, 1);
   assert.equal((await getMvpPicks(env, NOW + 2 * 3600e3)).today.picks[0].tracked, true);
+});
+
+// ---- a price worth playing: the same stats stepped up, or a second player
+const SHORT = (p, extra = []) => [
+  row(p, 'points', 24.5, PTS, LAST.pts, [q('draftkings', -1500)]), row(p, 'rebounds', 3.5, REB, LAST.reb, [q('draftkings', -1200)]), row(p, 'assists', 4.5, AST, LAST.ast, [q('draftkings', -2000)]), ...extra,
+];
+const RUNGS = (p) => [row(p, 'points', 26.5, PTS, LAST.pts, [q('draftkings', -200)]), row(p, 'rebounds', 4.5, REB, LAST.reb, [q('draftkings', -180)]), row(p, 'assists', 5.5, AST, LAST.ast, [q('draftkings', -210)]), row(p, 'points', 31.5, PTS, LAST.pts, [q('draftkings', 300)])];
+
+test('a ticket near -500 is not worth playing; stepped up, the same three stats at higher numbers are', () => {
+  const safe = mvpTicket(SHORT(luka, RUNGS(luka)), 2026);
+  assert.deepEqual(safe.legs.map((l) => l.row.point), [24.5, 3.5, 4.5], 'the 90% numbers are still the 90% numbers');
+  assert.ok(safe.est.american < MVP_TARGET_AMERICAN && !playable(safe), `about ${safe.est.american}: shorter than ${MVP_TARGET_AMERICAN}`);
+  const step = stepUpTicket(SHORT(luka, RUNGS(luka)), 2026, safe);
+  // Of the higher rungs still landing 70% of the time, the three that land together most often at a playable price: his assists number up one.
+  assert.deepEqual(step.legs.map((l) => [l.row.statKey, l.row.point]), [['points', 24.5], ['rebounds', 3.5], ['assists', 5.5]]);
+  assert.deepEqual(step.together, { hits: 10, games: 14, rate: 0.714 });
+  assert.ok(playable(step) && step.est.american >= MVP_TARGET_AMERICAN && step.chance < safe.chance, 'longer price, lower chance, and the price clears the price to take');
+  assert.ok(!step.legs.some((l) => l.row.point === 31.5), 'a number he clears a third of the time is no rung');
+  assert.equal(stepUpTicket(SHORT(luka), 2026, safe), null, 'no higher numbers on the board: nothing to step up to');
+  assert.equal(stepUpTicket(ladder(luka), 2026, mvpTicket(ladder(luka), 2026)) === null || playable(stepUpTicket(ladder(luka), 2026, mvpTicket(ladder(luka), 2026))), true);
+});
+
+test('two steady players on one slip: the chances multiplied, at a book that prices both, never two from one game', () => {
+  const steady = (p) => [row(p, 'points', 24.5, PTS.map((v) => Math.max(v, 26)), LAST.pts, [q('draftkings', -1500)]), row(p, 'rebounds', 3.5, REB.map((v) => Math.max(v, 4)), LAST.reb, [q('draftkings', -1200)]), row(p, 'assists', 4.5, AST, LAST.ast, [q('draftkings', -2000)])];
+  const b = { id: 'CCC1', name: 'CCC Guard', team: 'CCC', opponent: 'DDD' };
+  const A = { rows: steady(luka), ticket: mvpTicket(steady(luka), 2026) };
+  const B = { rows: steady(b).map((r) => ({ ...r, eventId: 'ev2' })), ticket: mvpTicket(steady(b).map((r) => ({ ...r, eventId: 'ev2' })), 2026) };
+  assert.ok(!playable(A.ticket) && !playable(B.ticket), 'neither is worth playing alone');
+  const pair = pairTicket(A, B, 2026);
+  assert.equal(pair.legs.length, 6); assert.equal(pair.bookId, 'draftkings');
+  assert.equal(pair.chance, Math.round(A.ticket.chance * B.ticket.chance * 1000) / 1000);
+  assert.ok(Math.abs(pair.est.decimal - A.ticket.est.decimal * B.ticket.est.decimal) < 0.001 && playable(pair), `together about ${pair.est.american}`);
+  assert.equal(pairTicket(A, { ...B, rows: steady(b), ticket: mvpTicket(steady(b), 2026) }, 2026), null, 'the same game is not a second game');
+  const fd = steady(b).map((r) => ({ ...r, eventId: 'ev2', quotes: [q('fanduel', -900)] }));
+  assert.equal(pairTicket(A, { rows: fd, ticket: mvpTicket(fd, 2026) }, 2026), null, 'no book prices both: no pair');
+  assert.equal(ticketOf(A.ticket.legs, 2026).chance, A.ticket.chance);
+});
+
+test('the day picks the first way to play at a price worth playing: the 90% numbers, then stepped up, then paired; a partner is not tracked twice', async () => {
+  const m = new Map(); const env = { POTD_KV: { get: async (k) => m.get(k) ?? null, put: async (k, v) => { m.set(k, v); } } };
+  const lg = tables(); lg.dvp.DDD.G.rank = 3; lg.dvp.EEE.G.rank = 9;
+  const steady = (p, ev) => [row(p, 'points', 24.5, PTS.map((v) => Math.max(v, 26)), LAST.pts, [q('draftkings', -1500)]), row(p, 'rebounds', 3.5, REB.map((v) => Math.max(v, 4)), LAST.reb, [q('draftkings', -1200)]), row(p, 'assists', 4.5, AST, LAST.ast, [q('draftkings', -2000)])].map((r) => ({ ...r, eventId: ev }));
+  const c = { id: 'CCC1', name: 'CCC Guard', team: 'CCC', opponent: 'BBB' };   // an MVP pick, too short alone, nothing to step up to
+  const e = { id: 'EEE1', name: 'EEE Guard', team: 'EEE', opponent: 'DDD' };   // an MVP pick, too short alone
+  const f = { id: 'FFF1', name: 'FFF Guard', team: 'FFF', opponent: 'EEE' };   // the defense rule keeps him off the list: a partner only
+  const stepper = { id: 'AAA1', name: 'AAA Guard', team: 'AAA', opponent: 'BBB' };
+  const rows = [...SHORT(stepper, RUNGS(stepper)).map((r) => ({ ...r, eventId: 'ev0' })), ...steady(c, 'ev1'), ...steady(e, 'ev2'), ...steady(f, 'ev3')];
+  const deps = { rows: async () => rows, league: async () => lg, report: async () => ({ players: {} }), lineup: async () => [] };
+  const res = await runMvpPicksDaily(env, {}, NOW, { deps });
+  const rec = JSON.parse(m.get('mvp:picks:2026-11-24'));
+  const by = Object.fromEntries(rec.picks.map((p) => [p.player, p]));
+  assert.deepEqual(rec.picks.map((p) => p.player).sort(), ['AAA Guard', 'CCC Guard', 'EEE Guard']);
+  // The two steady ones rank first; the first of them is played with the other, who is then not tracked again.
+  assert.deepEqual([rec.picks[0].play, rec.picks[0].tracked, rec.picks[0].partner.mvp, rec.picks[0].bet.legs.length], ['pair', true, true, 6]);
+  assert.match(rec.picks[1].why, /already on .* tracked ticket/); assert.equal(rec.picks[1].tracked, false);
+  assert.equal(rec.picks[0].partner.player, rec.picks[1].player);
+  // The third steps his own numbers up.
+  assert.deepEqual([by['AAA Guard'].play, by['AAA Guard'].tracked, by['AAA Guard'].bet.legs.map((l) => l.point).join()], ['step', true, '24.5,3.5,5.5']);
+  assert.equal(res.tracked, 2);
+  // Every way is kept on the pick, the chosen one's ticket once.
+  // (paired with the one leader left, his 79% and the other's 88% do not clear the price together: a way shown, not a way worth playing)
+  assert.deepEqual(by['AAA Guard'].options.map((o) => [o.kind, o.playable]), [['safe', false], ['step', true], ['pair', false]]);
+  assert.equal(by['AAA Guard'].options[2].partner.player, 'FFF Guard');
+  assert.equal(by['AAA Guard'].options[1].bet, null); assert.equal(by['AAA Guard'].options[0].bet.legs.length, 3);
+  assert.equal(by['AAA Guard'].options[0].bet.legs[0].series, undefined, 'a way not chosen keeps its links, not its game logs');
+  assert.deepEqual(by['AAA Guard'].options[0].lines.map((l) => [l.label, l.point, l.hits, l.games]), [['Pts', 24.5, 13, 14], ['Reb', 3.5, 13, 14], ['Ast', 4.5, 13, 14]]);
+  assert.equal(by['AAA Guard'].bet.american, by['AAA Guard'].take.american);
+  // A leader the defense rule kept off the list can still be the second player, and is said to be no MVP pick.
+  const m2 = new Map(); const env2 = { POTD_KV: { get: async (k) => m2.get(k) ?? null, put: async (k, v) => { m2.set(k, v); } } };
+  await runMvpPicksDaily(env2, {}, NOW, { deps: { ...deps, rows: async () => [...steady(c, 'ev1'), ...steady(f, 'ev3')] } });
+  const solo = JSON.parse(m2.get('mvp:picks:2026-11-24')).picks[0];
+  assert.deepEqual([solo.play, solo.partner.player, solo.partner.mvp, solo.tracked], ['pair', 'FFF Guard', false, true]);
+  assert.match(solo.partner.why, /not a bottom-5 defense/);
+  // Graded as one ticket: all six legs in pays at the price to take.
+  await runMvpPicksGrading(env2, {}, TIP + 5 * 3600e3, { deps: { actual: () => 40 } });
+  const done = JSON.parse(m2.get('mvp:picks:2026-11-24')).picks[0].bet;
+  assert.deepEqual([done.result, done.net], ['win', Math.round((done.decimal - 1) * 100) / 100]);
+  const view = await getMvpPicks(env2, TIP + 30 * 3600e3);
+  assert.equal(view.history[0].picks[0].options.every((o) => o.bet === undefined), true, 'a past day carries no spare tickets');
 });

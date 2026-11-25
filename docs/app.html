@@ -21,7 +21,7 @@
      only page that reads the feed; the other pages' connect-src stays the
      worker alone. -->
 <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src 'self' https://fonts.gstatic.com; img-src 'self' data: https:; connect-src 'self' https://pixel-pick-odds.mgbouldering.workers.dev https://perpetualpixel.github.io; object-src 'none'; base-uri 'self'; form-action 'self'">
-<script src="frame-guard.js?v=1.374"></script>
+<script src="frame-guard.js?v=1.375"></script>
 <title>Perpetual Picks - App</title>
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <meta name="theme-color" content="#05050A">
@@ -37,9 +37,9 @@
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Syne:wght@600;700;800&family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
-<link rel="stylesheet" href="styles.css?v=1.374">
+<link rel="stylesheet" href="styles.css?v=1.375">
 <!-- Before first paint: a desktop reader who chose "Fit screen" gets the wide shell without a flash of the narrow one. -->
-<script src="wide.js?v=1.374"></script>
+<script src="wide.js?v=1.375"></script>
 </head>
 <body>
 
@@ -169,7 +169,7 @@
       <li><strong>Results:</strong> a new tab with every record in one place. Pregame first, Live on a toggle, a card for each sport with units played, net units, ROI and a graph by day, week, month or year. It now updates itself through the day, and live tennis leans have their own card there.</li>
       <li><strong>Live:</strong> one card a bet with a single "Add to sportsbook" button. Tap it and pick your app from the sportsbooks that have the bet, each with its own price.</li>
       <li><strong>Best on the board:</strong> today's games only, and the first thing on Pixel's Picks on a day with no pick. Today's suggestion comes from it, never from another day.</li>
-      <li><strong>MVP Picks:</strong> on Pixel's Picks, one player's same-game parlay: his team's highest-usage player, a points, rebounds and assists number he clears in 90% of his games, against a bottom-five defense at his position. Listed most confident first, with the flags checked.</li>
+      <li><strong>MVP Picks:</strong> on Pixel's Picks, one player's same-game parlay: his team's highest-usage player, a points, rebounds and assists number he clears in 90% of his games, against a bottom-five defense at his position. The card is short, each stat opens on a tap, and one button adds every leg. When the price is too short it steps the numbers up or pairs a second player.</li>
       <li><strong>Player search:</strong> a new "To record" choice between Over and Under. Type 15 points and it shows the games with 15 or more.</li>
       <li><strong>Onyx:</strong> pick Onyx as one of your sportsbooks and every line and ticket gets a button that copies the pick and opens Onyx.</li>
       <li><strong>Hard Rock on a phone:</strong> Add to slip now opens the Hard Rock Bet app with the pick on your slip, and a whole ticket goes over in one link.</li>
@@ -668,7 +668,8 @@
     <details>
       <summary>MVP Picks</summary>
       <p>One player, one same-game parlay. A player makes the list only when all of this is true: he has the highest usage rate on his team, there is a number in each of points, rebounds and assists that he has cleared in 90% or more of his games this season, and tonight's opponent is one of the five worst teams in the league at guarding his position.</p>
-      <p>The card shows his usage, how the opponent ranks against his position, how many of his games this season had all three numbers cleared together, and the chance that gives the ticket. <strong>Take it at this price or better</strong> is the same-game parlay price worth taking: the sportsbook shows its own same-game price on the slip, and if that is worse than the price named, pass.</p>
+      <p>The card is short: a line of facts, then the three stats in three rows, each with its number, how often he has cleared it this season and its price. Tap a row to open that stat in full. One button adds all the legs to the sportsbook's slip as a parlay. <strong>Take it at this price or better</strong> is the parlay price worth taking: the sportsbook shows its own price on the slip, and if that is worse than the price named, pass.</p>
+      <p>When the three 90% numbers come to a price too short to be worth playing, the card plays it another way and says so: <strong>stepped up</strong> to higher numbers in the same three stats, or <strong>paired</strong> with a second player in a different game. "Other ways to play it" keeps every version, each with its own chance, price and link.</p>
       <p>Every pick is vetted like a "Too good to be true?" check: minutes, the injury report, his role, a teammate back or out, and blowout risk. Picks are listed most confident first. The best two with nothing against them are tracked, a unit each, at the price to take; the others are shown and graded but do not count. A list under the picks names the usage leaders who fell short and why.</p>
     </details>
 
@@ -1192,6 +1193,6 @@
   </div>
 </aside>
 
-<script type="module" src="app.js?v=1.374"></script>
+<script type="module" src="app.js?v=1.375"></script>
 </body>
 </html>

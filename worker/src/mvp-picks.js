@@ -54,6 +54,7 @@ import { legRecord, gradeBets, betRecordOf, pickQuotes, pickBookName, pickBookUr
 import { seasonColumnRows } from '../../docs/prop-legs.js';
 import { attachSeries, overNeed } from '../../docs/trends.js';
 import { lineFlags } from '../../docs/line-check.js';
+import { americanToDecimal } from '../../docs/engine.js';
 
 export const MVP_SPORT = 'basketball_nba';
 export const MVP_STATS = ['points', 'rebounds', 'assists'];
@@ -82,7 +83,16 @@ export const MVP_SGP_HAIRCUT = 0.1;
 export const MVP_WINDOW_HOURS = 9;
 /** Sportsbooks that take a same-game parlay (a pick'em app does not). */
 export const MVP_BOOKS = ['fanduel', 'draftkings', 'caesars', 'hardrock', 'bet365', 'fanatics', 'betmgm'];
-export const MVP_VERSION = 1;
+/**
+ * The shortest price worth playing (2026-11-24, the owner, of a ticket near -600: "this is not good enough, maybe have a
+ * suggestion to up the prop or suggest another player to parlay with"). A ticket whose same-game price would be shorter
+ * is stepped up to higher numbers, or paired with a second player, until it is not.
+ */
+export const MVP_TARGET_AMERICAN = -300;
+/** A stepped-up number has still landed this often this season, and is one of this many rungs above the 90% number. */
+export const MVP_STEP_RATE = 0.7;
+export const MVP_STEP_RUNGS = 7;
+export const MVP_VERSION = 2;
 
 const KV_TTL_SECONDS = 86400 * 90;
 const LEAGUE_HOURS = 12;
@@ -265,10 +275,21 @@ export function estimateSameGame(legs, together) {
   return { decimal: round(decimal, 4), american: toAmerican(decimal) };
 }
 
+/** A ticket's numbers from its legs: how often they land together this season and last, the chance, the estimate of the book's same-game price and the price to take it at. */
+export function ticketOf(legs, season) {
+  const together = togetherRate(legs, season);
+  const last = togetherRate(legs, season - 1);
+  const chance = landChance(together, last);
+  const takeDecimal = 1 / Math.max(0.05, chance - MVP_EDGE);
+  return { legs, together, last: last.games ? last : null, chance, est: estimateSameGame(legs, together), take: { decimal: round(takeDecimal, 4), american: toAmerican(takeDecimal) } };
+}
+
+/** Worth playing: the estimate of the book's price is no shorter than MVP_TARGET_AMERICAN and no shorter than the price to take. */
+export const playable = (t) => Boolean(t) && t.est.decimal >= americanToDecimal(MVP_TARGET_AMERICAN) && t.est.decimal >= t.take.decimal;
+
 /**
- * One player's ticket, or why there is none: the best-paying book's three
- * legs, how often they land together, the chance, the price to take it at
- * and the estimate of the book's own. {ok, reason} | {ok: true, bookId,
+ * One player's ticket at the 90% numbers, or why there is none: the
+ * best-paying book's three legs. {ok: false, reason} | {ok: true, bookId,
  * legs, together, last, chance, take, est}.
  */
 export function mvpTicket(rows, season) {
@@ -280,16 +301,59 @@ export function mvpTicket(rows, season) {
   for (const bookId of MVP_BOOKS) {
     const legs = legsAtBook(mine, bookId, season);
     if (!legs) continue;
-    const together = togetherRate(legs, season);
-    const est = estimateSameGame(legs, together);
-    if (!best || est.decimal > best.est.decimal) best = { bookId, legs, together, est };
+    const t = ticketOf(legs, season);
+    if (!best || t.est.decimal > best.est.decimal) best = { bookId, ...t };
   }
-  if (!best) return { ok: false, reason: 'no one sportsbook prices all three numbers' };
-  const last = togetherRate(best.legs, season - 1);
-  const chance = landChance(best.together, last);
-  const takeDecimal = 1 / Math.max(0.05, chance - MVP_EDGE);
-  const take = { decimal: round(takeDecimal, 4), american: toAmerican(takeDecimal) };
-  return { ok: true, ...best, last: last.games ? last : null, chance, take };
+  return best ? { ok: true, ...best } : { ok: false, reason: 'no one sportsbook prices all three numbers' };
+}
+
+/**
+ * The same three stats at higher numbers, for a price worth playing: among
+ * every book's rungs from the 90% number up (each still landing
+ * MVP_STEP_RATE of the time), the three that land together most often
+ * while the price stays playable. Null when no such three exist, or the
+ * 90% numbers are the answer already.
+ */
+export function stepUpTicket(rows, season, safe) {
+  const mine = (rows ?? []).filter((r) => MVP_STATS.includes(r.statKey) && r.side === 'over' && !r.yesNo && Number.isFinite(r.point));
+  const floor = Object.fromEntries((safe?.legs ?? []).map((l) => [l.row.statKey, l.row.point]));
+  let best = null;
+  for (const bookId of MVP_BOOKS) {
+    const ladders = MVP_STATS.map((stat) => mine.filter((r) => r.statKey === stat && r.point >= (floor[stat] ?? -Infinity))
+      .map((r) => ({ row: r, record: seasonOf(r, season), quote: pickQuotes(r).find((q) => q.bookId === bookId) }))
+      .filter((x) => x.quote && x.quote.american >= MVP_LEG_FLOOR && x.record && x.record.games >= MVP_MIN_GAMES && x.record.rate >= MVP_STEP_RATE)
+      .sort((x, y) => x.row.point - y.row.point).slice(0, MVP_STEP_RUNGS));
+    if (ladders.some((l) => !l.length)) continue;
+    for (const pts of ladders[0]) for (const reb of ladders[1]) for (const ast of ladders[2]) {
+      const legs = [pts, reb, ast];
+      if (legs.every((l) => l.row.point === floor[l.row.statKey])) continue;
+      const t = ticketOf(legs, season);
+      if (!playable(t)) continue;
+      if (!best || t.chance > best.chance || (t.chance === best.chance && t.est.decimal > best.est.decimal)) best = { bookId, ...t };
+    }
+  }
+  return best;
+}
+
+/**
+ * Two players' 90% tickets on one slip, at a book that prices both: the
+ * chances multiplied (the games are different games) and the prices too.
+ * `a` and `b` are {rows, ticket}; null when no book has both or the two
+ * are in the same game.
+ */
+export function pairTicket(a, b, season) {
+  if (!a?.ticket?.legs?.length || !b?.ticket?.legs?.length) return null;
+  if (a.ticket.legs[0].row.eventId === b.ticket.legs[0].row.eventId) return null;
+  for (const bookId of [a.ticket.bookId, b.ticket.bookId, ...MVP_BOOKS]) {
+    const la = legsAtBook(a.rows, bookId, season); const lb = legsAtBook(b.rows, bookId, season);
+    if (!la || !lb) continue;
+    const ta = ticketOf(la, season); const tb = ticketOf(lb, season);
+    const chance = round(ta.chance * tb.chance, 3);
+    const estDecimal = ta.est.decimal * tb.est.decimal;
+    const takeDecimal = 1 / Math.max(0.05, chance - MVP_EDGE);
+    return { bookId, legs: [...la, ...lb], together: null, last: null, chance, est: { decimal: round(estDecimal, 4), american: toAmerican(estDecimal) }, take: { decimal: round(takeDecimal, 4), american: toAmerican(takeDecimal) } };
+  }
+  return null;
 }
 
 /** The flags on a ticket: each leg's own (minutes, injury, role, a change of team, the opponent, form, thin margins), one of a kind, worst tone kept. */
@@ -309,28 +373,19 @@ export function legFlags(legs) {
 const ordinal = (n) => `${n}${n % 100 >= 11 && n % 100 <= 13 ? 'th' : ['th', 'st', 'nd', 'rd'][n % 10] ?? 'th'}`;
 const GROUP_WORD = { G: 'guards', F: 'forwards', C: 'centers' };
 
-/** The stored ticket for a pick, in the shape Pixel's Picks grades and draws (worker/src/trend-picks.js betRecord), priced at the price to take it at. */
-function mvpBet(pick, dateKey, now) {
-  const legs = pick.ticket.legs.map((l) => legRecord({ line: l.row, american: l.quote.american, decimal: l.quote.decimal, bookId: pick.ticket.bookId, link: l.quote.link ?? null }, { note: null, flags: [] }, now));
-  return {
-    id: `mvp:${dateKey}:${pick.athleteId}`, postedAt: now, type: 'parlay', shape: null, play: 'MVP same-game parlay', mvp: true,
-    sportKey: MVP_SPORT, sportTitle: 'NBA', bookId: pick.ticket.bookId, book: pickBookName(pick.ticket.bookId), bookUrl: pickBookUrl(pick.ticket.bookId), link: null,
-    american: pick.ticket.take.american, decimal: pick.ticket.take.decimal, estAmerican: pick.ticket.est.american, units: MVP_UNITS,
-    commenceMs: Math.min(...legs.map((l) => l.commenceMs)), legs, status: 'pending', result: null, net: null, settledAt: null,
-  };
-}
-
 /**
- * Every player on the slate who meets the system, most confident first.
+ * Every usage leader on the slate, read: {picks, near, partners}. A pick
+ * meets the whole system: {athleteId, player, team, opponent, position,
+ * group, usage, dvp, rows, ticket (the 90% numbers), step (higher numbers
+ * at a playable price, or null), flags, blocked, confidence}, most
+ * confident first. `near` names who fell short and why. `partners` are
+ * the leaders with a 90% ticket whom only the opponent's defense kept off
+ * the list: not MVP picks, but sound second players to pair one with.
  * `rows` are the NBA Trends rows with their series (games not started),
  * `league` the tables from leagueTables, `report` the injury report.
- * Returns {picks, near}: a pick is {athleteId, player, team, opponent,
- * position, group, usage, dvp, ticket, flags, confidence}; `near` names who
- * fell short and why (a usage leader with no ticket, or with an opponent
- * outside the bottom five).
  */
 export async function mvpCandidates(rows, league, { env = null, ctx = null, report = null, deps = {} } = {}) {
-  const picks = []; const near = [];
+  const picks = []; const near = []; const partners = [];
   const season = league?.season;
   const byTeam = new Map();
   for (const r of rows ?? []) { const t = up(r.team); if (!t) continue; if (!byTeam.has(t)) byTeam.set(t, []); byTeam.get(t).push(r); }
@@ -347,40 +402,56 @@ export async function mvpCandidates(rows, league, { env = null, ctx = null, repo
     const dvp = group ? league?.dvp?.[opponent]?.[group] ?? null : null;
     const ticket = mvpTicket(mine, season);
     if (!ticket.ok) { near.push({ ...who, why: ticket.reason }); continue; }
-    if (!dvp) { near.push({ ...who, why: `no read on how ${opponent} guards his position` }); continue; }
-    if (dvp.rank > MVP_BOTTOM) { near.push({ ...who, why: `${opponent} is ${ordinal(dvp.of - dvp.rank + 1)} of ${dvp.of} against ${GROUP_WORD[group]}, not a bottom-${MVP_BOTTOM} defense` }); continue; }
+    const withInjury = (legs) => legs.map((l) => ({ ...l, row: { ...l.row, injury: injury ?? l.row.injury ?? null } }));
+    if (!dvp || dvp.rank > MVP_BOTTOM) {
+      const why = dvp ? `${opponent} is ${ordinal(dvp.of - dvp.rank + 1)} of ${dvp.of} against ${GROUP_WORD[group]}, not a bottom-${MVP_BOTTOM} defense` : `no read on how ${opponent} guards his position`;
+      near.push({ ...who, why });
+      if (!legFlags(withInjury(ticket.legs)).some((f) => f.tone === 'bad')) partners.push({ ...who, opponent, why, rows: mine, ticket });
+      continue;
+    }
     const pointsRow = { ...(ticket.legs.find((l) => l.row.statKey === 'points') ?? ticket.legs[0]).row, injury: injury ?? null };
-    const flags = legFlags(ticket.legs.map((l) => ({ ...l, row: { ...l.row, injury: injury ?? l.row.injury ?? null } })));
+    const flags = legFlags(withInjury(ticket.legs));
     try { flags.push(...(deps.lineup ? await deps.lineup(pointsRow) : env ? await lineupFlags(env, pointsRow, ctx) : [])); } catch (e) { console.error('MVP picks, lineup flags:', e); }
     const warns = flags.filter((f) => f.tone === 'warn').length;
     picks.push({
       ...who, opponent, position: lead.position ?? null, group, mpg: lead.mpg, next: lead.next ?? null,
-      dvp: { group, rank: dvp.rank, of: dvp.of, pra: dvp.pra }, ticket, flags,
+      dvp: { group, rank: dvp.rank, of: dvp.of, pra: dvp.pra }, rows: mine, ticket, step: stepUpTicket(mine, season, ticket), flags,
       blocked: flags.some((f) => f.tone === 'bad'),
       confidence: round(ticket.chance - 0.02 * warns, 3),
     });
   }
   picks.sort((a, b) => b.confidence - a.confidence || a.dvp.rank - b.dvp.rank);
-  return { picks, near };
+  partners.sort((a, b) => b.ticket.chance - a.ticket.chance);
+  return { picks, near, partners };
 }
 
-/** A pick as the record keeps it: the numbers the card shows, why it is or is not tracked, and its ticket. */
-function pickRecord(pick, rank, tracked, why, dateKey, now) {
-  const t = pick.ticket;
+const PLAY_NAME = { safe: 'MVP same-game parlay', step: 'MVP same-game parlay · stepped up', pair: 'MVP parlay · two players' };
+
+/** A way to play a pick as the record keeps it: its numbers, its lines in brief, and its ticket in the shape Pixel's Picks grades and draws, priced at the price to take. */
+function optionRecord(kind, t, id, now, extra = {}) {
+  const legs = t.legs.map((l) => legRecord({ line: l.row, american: l.quote.american, decimal: l.quote.decimal, bookId: t.bookId, link: l.quote.link ?? null }, { note: null, flags: [] }, now));
   return {
-    rank, tracked, why, athleteId: pick.athleteId, player: pick.player, team: pick.team, opponent: pick.opponent, position: pick.position, group: pick.group,
-    usage: pick.usage, mpg: pick.mpg, next: pick.next, dvp: pick.dvp,
-    together: t.together, last: t.last, chance: t.chance, confidence: pick.confidence,
-    take: t.take, est: t.est, flags: pick.flags.map((f) => ({ key: f.key, tone: f.tone, title: f.title, text: f.text })),
-    bet: mvpBet(pick, dateKey, now),
+    kind, bookId: t.bookId, book: pickBookName(t.bookId), together: t.together, last: t.last, chance: t.chance, take: t.take, est: t.est, playable: playable(t), ...extra,
+    lines: t.legs.map((l) => ({ player: l.row.playerName, stat: l.row.statKey, label: l.row.statLabel, point: l.row.point, american: l.quote.american, hits: l.record.hits, games: l.record.games, rate: l.record.rate })),
+    bet: {
+      id, postedAt: now, type: 'parlay', shape: null, play: PLAY_NAME[kind], mvp: true, kind,
+      sportKey: MVP_SPORT, sportTitle: 'NBA', bookId: t.bookId, book: pickBookName(t.bookId), bookUrl: pickBookUrl(t.bookId), link: null,
+      american: t.take.american, decimal: t.take.decimal, estAmerican: t.est.american, units: MVP_UNITS,
+      commenceMs: Math.min(...legs.map((l) => l.commenceMs)), legs, status: 'pending', result: null, net: null, settledAt: null,
+    },
   };
 }
+/** A ticket with its legs' game logs dropped: enough to draw a line and build a slip link, for the ways not chosen. */
+const slim = (option) => ({ ...option, bet: { ...option.bet, legs: option.bet.legs.map(({ series, quotes, ...l }) => l) } });
 
 /**
  * The day's MVP Picks: looked for on every Trends tick from
  * MVP_WINDOW_HOURS before a game until something is tracked, then left to
- * stand. Writes mvp:picks:<date>. `deps` stands in for the stored rows,
- * the league tables and the injury report in tests.
+ * stand. Each pick carries the ways to play it (`options`: the 90% numbers,
+ * the same stats stepped up, and paired with a second player) and the one
+ * chosen (`play`, whose ticket is `bet`): the first of those at a price
+ * worth playing. Writes mvp:picks:<date>. `deps` stands in for the stored
+ * rows, the league tables and the injury report in tests.
  */
 export async function runMvpPicksDaily(env, ctx, now = Date.now(), { deps = {} } = {}) {
   const dateKey = etParts(now).date;
@@ -394,13 +465,32 @@ export async function runMvpPicksDaily(env, ctx, now = Date.now(), { deps = {} }
   const league = deps.league ? await deps.league() : await loadLeague(env, now);
   if (!league?.season) return { skipped: true, reason: 'no league tables', dateKey };
   const report = deps.report ? await deps.report() : await loadInjuries(env, MVP_SPORT).catch(() => ({ players: {} }));
-  const { picks, near } = await mvpCandidates(rows, league, { env, ctx, report, deps });
+  const { picks, near, partners } = await mvpCandidates(rows, league, { env, ctx, report, deps });
   let tracked = 0;
+  const used = new Map(); // athleteId -> the player whose tracked ticket he is on
   const out = picks.map((p, i) => {
-    const priced = p.ticket.est.decimal >= p.ticket.take.decimal;
-    const why = p.blocked ? 'a flag against it' : !priced ? 'the legs\' prices say the same-game price would be too short' : tracked >= MVP_MAX_TRACKED ? `the day's ${MVP_MAX_TRACKED} tracked picks rank above it` : null;
-    if (!why) tracked++;
-    return pickRecord(p, i + 1, !why, why, dateKey, now);
+    const id = `mvp:${dateKey}:${p.athleteId}`;
+    // A second player: another pick first (most confident), then a leader only the defense kept off the list. Never one already on a tracked ticket.
+    const others = [...picks.filter((x) => x !== p && !x.blocked).map((x) => ({ ...x, mvp: true })), ...partners.map((x) => ({ ...x, mvp: false }))].filter((x) => !used.has(x.athleteId));
+    let pair = null; let partner = null;
+    for (const x of others) { pair = pairTicket(p, x, league.season); if (pair) { partner = x; break; } }
+    const options = [
+      optionRecord('safe', p.ticket, `${id}:safe`, now),
+      p.step ? optionRecord('step', p.step, `${id}:step`, now) : null,
+      pair ? optionRecord('pair', pair, `${id}:pair`, now, { partner: { athleteId: partner.athleteId, player: partner.player, team: partner.team, opponent: partner.opponent, mvp: partner.mvp, why: partner.mvp ? null : partner.why } }) : null,
+    ].filter(Boolean);
+    const chosen = options.find((o) => o.playable) ?? null;
+    const play = chosen ?? options[0];
+    const why = p.blocked ? 'a flag against it' : used.has(p.athleteId) ? `already on ${used.get(p.athleteId)}'s tracked ticket` : !chosen ? 'every way to play it is priced too short' : tracked >= MVP_MAX_TRACKED ? `the day's ${MVP_MAX_TRACKED} tracked picks rank above it` : null;
+    if (!why) { tracked++; used.set(p.athleteId, p.player); if (play.kind === 'pair') used.set(play.partner.athleteId, p.player); }
+    return {
+      rank: i + 1, tracked: !why, why, athleteId: p.athleteId, player: p.player, team: p.team, opponent: p.opponent, position: p.position, group: p.group,
+      usage: p.usage, mpg: p.mpg, next: p.next, dvp: p.dvp, confidence: p.confidence,
+      play: play.kind, partner: play.partner ?? null, together: play.together, last: play.last, chance: play.chance, take: play.take, est: play.est,
+      flags: p.flags.map((f) => ({ key: f.key, tone: f.tone, title: f.title, text: f.text })),
+      options: options.map((o) => (o === play ? { ...o, bet: null } : slim(o))),
+      bet: { ...play.bet, id },
+    };
   });
   const record = { version: MVP_VERSION, date: dateKey, season: league.season, generatedAt: existing?.generatedAt ?? now, checkedAt: now, postedAt: tracked ? now : null, final: tracked > 0, teams: new Set(rows.map((r) => up(r.team))).size, picks: out, near: near.slice(0, 12) };
   await env.POTD_KV.put(key(dateKey), JSON.stringify(record), { expirationTtl: KV_TTL_SECONDS });
@@ -440,8 +530,9 @@ export async function getMvpPicks(env, now = Date.now(), { days = 60 } = {}) {
     const raw = await env.POTD_KV.get(key(dateKey));
     if (!raw) continue;
     const record = JSON.parse(raw);
-    if (record.version === MVP_VERSION && (record.picks?.length || record.date === today)) history.push(record);
+    if (record.version !== MVP_VERSION || !(record.picks?.length || record.date === today)) continue;
+    history.push(record.date === today ? record : { ...record, near: [], picks: record.picks.map((p) => ({ ...p, options: (p.options ?? []).map(({ bet, ...o }) => o) })) });
   }
   const tracked = history.flatMap((d) => (d.picks ?? []).filter((p) => p.tracked).map((p) => p.bet));
-  return { today: history.find((d) => d.date === today) ?? null, history, record: betRecordOf(tracked), rules: { rate: MVP_MIN_RATE, bottom: MVP_BOTTOM, tracked: MVP_MAX_TRACKED, edge: MVP_EDGE } };
+  return { today: history.find((d) => d.date === today) ?? null, history, record: betRecordOf(tracked), rules: { rate: MVP_MIN_RATE, bottom: MVP_BOTTOM, tracked: MVP_MAX_TRACKED, edge: MVP_EDGE, target: MVP_TARGET_AMERICAN } };
 }
