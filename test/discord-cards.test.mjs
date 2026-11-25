@@ -63,11 +63,15 @@ test('the card is laid out like a bet slip: what it is and the price on top; the
   assert.match(svg, new RegExp(`^<svg[^>]*viewBox="0 0 ${CARD_W} ${CARD_H}"`));
   assert.ok(CARD_W / CARD_H > 1.6, 'a wide, short card, like a slip');
   assert.match(svg, /<image[^>]*href="data:image\/png;base64,AAAA"/, 'the logo sits beside the tag');
-  assert.deepEqual(texts(svg), ['Live Play', '-150', 'FANDUEL', 'ATP', 'Test Player', 'MATCH WINNER', 'Test Player v Sample Opponent', 'RECOMMENDED', '1u', 'Taken at 6-0 3-4', '1:00 PM ET', 'perpetualpicks.com', 'ATP  •  Test alert  •  not a real play  •  Nov 25']);
+  assert.deepEqual(texts(svg), ['LIVE PLAY', '-150', 'FANDUEL', 'ATP', 'Test Player', 'MATCH WINNER', 'Test Player v Sample Opponent', 'RECOMMENDED', '1u', 'Taken at 6-0 3-4', '1:00 PM ET', 'perpetualpicks.com', 'ATP  •  Test alert  •  not a real play  •  Nov 25']);
   // The pick and the price are the two largest things on it; the pick is in the state's colour.
   const sized = [...svg.matchAll(/<text[^>]*font-size="([\d.]+)"[^>]*fill="([^"]+)"[^>]*>([^<]*)/g)].map((m) => [Number(m[1]), m[3], m[2]]).sort((x, y) => y[0] - x[0]);
   assert.deepEqual(sized.slice(0, 2).map((x) => x[1]).sort(), ['-150', 'Test Player']);
-  assert.equal(sized.find((x) => x[1] === 'Test Player')[2], '#57B6FF');
+  assert.equal(sized.find((x) => x[1] === 'Test Player')[2], '#5CE9F7');
+  // The website's look: its near-black ground and hairline grid, with the state as an accent, not a fill.
+  assert.match(svg, /<rect x="0" y="0" width="720" height="424" fill="#05050A"\/>/);
+  assert.match(svg, /<pattern id="grid" width="42" height="42"/);
+  assert.doesNotMatch(svg, /fill="url\(#edge\)"/, 'the state\'s colour is the border, never the whole card');
   // The market, in a slip's words.
   assert.deepEqual([{ market: 'live_ml' }, { market: 'live_set', set: 2 }, { market: 'live_set_total', set: 3 }].map(marketWords), ['Match Winner', 'Set 2 Winner', 'Set 3 Total Games']);
   // Without the logo the card still stands.
@@ -77,17 +81,17 @@ test('the card is laid out like a bet slip: what it is and the price on top; the
 test('the won, lost and void cards keep their own tag and colour, and show the final score and the result in units', () => {
   const t = testPlays(NOW);
   const won = cardSvg(t['test-won']); const lost = cardSvg(t['test-lost']); const voided = cardSvg(t['test-void']);
-  assert.deepEqual(texts(won), ['Won', '-150', 'FANDUEL', 'ATP', 'Test Player', 'MATCH WINNER', 'Test Player v Sample Opponent', 'RESULT', '+0.67u', 'Final 6-0 4-6 7-6', '1:00 PM ET', 'perpetualpicks.com', 'ATP  •  Test alert  •  not a real play  •  Nov 25']);
-  assert.deepEqual([texts(lost)[0], ...texts(lost).slice(7, 10)], ['Lost', 'RESULT', '-1.00u', 'Final 6-0 4-6 3-6']);
-  assert.deepEqual([texts(voided)[0], ...texts(voided).slice(7, 9)], ['Void', 'Stake back', 'Void: a retirement']);
+  assert.deepEqual(texts(won), ['WON', '-150', 'FANDUEL', 'ATP', 'Test Player', 'MATCH WINNER', 'Test Player v Sample Opponent', 'RESULT', '+0.67u', 'Final 6-0 4-6 7-6', '1:00 PM ET', 'perpetualpicks.com', 'ATP  •  Test alert  •  not a real play  •  Nov 25']);
+  assert.deepEqual([texts(lost)[0], ...texts(lost).slice(7, 10)], ['LOST', 'RESULT', '-1.00u', 'Final 6-0 4-6 3-6']);
+  assert.deepEqual([texts(voided)[0], ...texts(voided).slice(7, 9)], ['VOID', 'Stake back', 'Void: a retirement']);
   // Green, red and grey, and none of them the live card's blue.
-  assert.match(won, /#17A34A/); assert.match(lost, /#E11D48/); assert.match(voided, /#70758A/);
-  for (const s of [won, lost, voided]) assert.doesNotMatch(s, /#1E86FF/);
+  assert.match(won, /stroke="#34D399"/); assert.match(lost, /stroke="#F87171"/); assert.match(voided, /stroke="#B9B6CF"/);
+  for (const s of [won, lost, voided]) assert.doesNotMatch(s, /#5CE9F7|#00F0FF/);
 });
 
 test('a play no book priced says "or better" under its price; a name is folded to letters the card\'s font has, and nothing in a name can break the picture', () => {
   const svg = cardSvg({ id: 'x', market: 'live_set_total', set: 2, tour: 'wta', event: 'Open <b>', round: 'Final', a: 'Iga Świątek', b: 'A & B', side: null, prob: 0.6, playable: -120, units: 0.5, selection: 'Set 2 over 9.5 games', score: '6-2 2-1', status: 'pending', postedAt: NOW });
-  assert.deepEqual(texts(svg), ['Live Play', '-120', 'OR BETTER', 'WTA', 'Over 9.5 Games', 'SET 2 TOTAL GAMES', 'Iga Swiatek v A &amp; B', 'RECOMMENDED', '0.5u', 'Taken at 6-2 2-1', '1:00 PM ET', 'perpetualpicks.com', 'WTA  •  Open &lt;b&gt;  •  Final  •  Nov 25']);
+  assert.deepEqual(texts(svg), ['LIVE PLAY', '-120', 'OR BETTER', 'WTA', 'Over 9.5 Games', 'SET 2 TOTAL GAMES', 'Iga Swiatek v A &amp; B', 'RECOMMENDED', '0.5u', 'Taken at 6-2 2-1', '1:00 PM ET', 'perpetualpicks.com', 'WTA  •  Open &lt;b&gt;  •  Final  •  Nov 25']);
   assert.doesNotMatch(svg, /<b>|Ś|ą/);
 });
 
@@ -137,7 +141,7 @@ test('the line above the card says the bet outright, and the message carries the
 
   const card = cardMessage(t['test-live'], { role: ROLE, png: PNG });
   assert.deepEqual(card.file, { name: 'card.png', bytes: PNG });
-  assert.deepEqual(card.payload.embeds, [{ color: 0xff007a, image: { url: 'attachment://card.png' } }], 'the picture is the card: no words beside it to compete with the play');
+  assert.deepEqual(card.payload.embeds, [{ color: 0x00f0ff, image: { url: 'attachment://card.png' } }], 'the picture is the card: no words beside it to compete with the play');
   assert.deepEqual(card.payload.attachments, [{ id: 0, filename: 'card.png' }]);
   assert.deepEqual(card.payload.allowed_mentions, { parse: [], roles: [ROLE] });
   assert.deepEqual(card.payload.components.map((r) => r.components.length), [3, 1]);
@@ -173,7 +177,7 @@ test('the template test: one card for each of the four, in the live channel, eac
     assert.deepEqual(c.body.embeds[0].image, { url: 'attachment://card.png' });
   }
   assert.deepEqual(d.calls.map((c) => c.body.components.map((r) => r.components.length)), [[3, 1], [1], [1], [1]]);
-  assert.deepEqual(d.calls.map((c) => c.body.embeds[0].color), [0xff007a, 0x10b981, 0xef4444, 0x9c98b8]);
+  assert.deepEqual(d.calls.map((c) => c.body.embeds[0].color), [0x00f0ff, 0x10b981, 0xef4444, 0x9c98b8]);
   const status = await discordStatus(env);
   assert.deepEqual(status.test, { id: 't-cards', state: 'done', at: NOW, cards: 4, pictures: 4, buttons: true });
   assert.deepEqual([status.buttons, status.pictures, status.cardError, status.lastError], [true, true, null, null]);
@@ -430,19 +434,19 @@ const leanOf = (over = {}) => ({ id: 'wta:5:lean:live_ml:0', matchId: 'wta:5', t
 
 test('a lean\'s card says Lean in its tag in every state, is violet while open, carries its recommended units, and shows no result in units', () => {
   const open = cardSvg(leanOf());
-  assert.deepEqual(texts(open), ['Lean', '-245', 'OR BETTER', 'WTA', 'Veronika Erjavec', 'MATCH WINNER', 'Veronika Erjavec v Martina Trevisan', 'RECOMMENDED', '0.5u', 'Taken at 6-0', '1:00 PM ET', 'perpetualpicks.com', 'WTA  •  IEB+ Argentina Open  •  Round 2  •  Nov 25']);
-  assert.match(open, /#8B5CF6/, 'the violet of the site\'s lean box');
-  assert.doesNotMatch(open, /#1E86FF|Live Play/, 'nothing on it reads as a tracked play');
+  assert.deepEqual(texts(open), ['LEAN', '-245', 'OR BETTER', 'WTA', 'Veronika Erjavec', 'MATCH WINNER', 'Veronika Erjavec v Martina Trevisan', 'RECOMMENDED', '0.5u', 'Taken at 6-0', '1:00 PM ET', 'perpetualpicks.com', 'WTA  •  IEB+ Argentina Open  •  Round 2  •  Nov 25']);
+  assert.match(open, /stop-color="#7C3AED"/, 'the violet of the site\'s lean box');
+  assert.doesNotMatch(open, /#5CE9F7|#00F0FF|LIVE PLAY/, 'nothing on it reads as a tracked play');
   const won = cardSvg(leanOf({ status: 'graded', result: 'win', profit: 0.2, actual: '6-0 6-3' }));
-  assert.deepEqual([texts(won)[0], ...texts(won).slice(7, 10)], ['Lean • Won', 'RECOMMENDED', '0.5u', 'Final 6-0 6-3']);
-  assert.match(won, /#17A34A/);
+  assert.deepEqual([texts(won)[0], ...texts(won).slice(7, 10)], ['LEAN • WON', 'RECOMMENDED', '0.5u', 'Final 6-0 6-3']);
+  assert.match(won, /#34D399/);
   assert.doesNotMatch(won, /0\.20u|RESULT/, 'a lean shows no result in units: it is not on the record');
-  assert.deepEqual([cardSvg(leanOf({ status: 'graded', result: 'loss', actual: '6-0 3-6 2-6' })), cardSvg(leanOf({ status: 'void', actual: '6-0 1-0: a retirement' }))].map((s) => texts(s)[0]), ['Lean • Lost', 'Lean • Void']);
+  assert.deepEqual([cardSvg(leanOf({ status: 'graded', result: 'loss', actual: '6-0 3-6 2-6' })), cardSvg(leanOf({ status: 'void', actual: '6-0 1-0: a retirement' }))].map((s) => texts(s)[0]), ['LEAN • LOST', 'LEAN • VOID']);
   // The line above the card and the written card say the same.
   assert.equal(cardLine(leanOf(), { role: ROLE }), '💡 **LEAN · Veronika Erjavec to win the match** · −245 or better · 0.5u', 'the recommended units, and nobody is pinged for a lean');
   assert.equal(cardLine(leanOf({ status: 'graded', result: 'loss', profit: -0.5, actual: '6-0 3-6 2-6' })), '❌ **LEAN LOST** · Veronika Erjavec to win the match · final 6-0 3-6 2-6');
   const written = livePlayMessage(leanOf()).embeds[0];
-  assert.deepEqual([written.author.name, written.title, written.color, written.image, written.footer.text], ['PERPETUAL PICKS · LIVE TENNIS LEAN', '💡 LEAN · Veronika Erjavec to win the match', 0x8b5cf6, undefined, 'Lean · not a tracked play · not on the record · perpetualpicks.com']);
+  assert.deepEqual([written.author.name, written.title, written.color, written.image, written.footer.text], ['PERPETUAL PICKS · LIVE TENNIS LEAN', '💡 LEAN · Veronika Erjavec to win the match', 0x7c3aed, undefined, 'Lean · not a tracked play · not on the record · perpetualpicks.com']);
   assert.match(written.description, /^\*\*−245 or better\*\* at your book · recommended \*\*0\.5u\*\* · a lean, not on the record\n[^]*\*\*Why:\*\* Read from the score alone: no serve data on this match\. We make it 75% to land; the price only needs 71%\./);
   // The stats page too.
   const page = playPage(leanOf({ status: 'graded', result: 'win', profit: 0.2, actual: '6-0 6-3' }));
@@ -464,7 +468,7 @@ test('the leans go to their own channel: posted as they open and edited when the
   const lean = d.calls[1];
   assert.equal(lean.body.content, '💡 **LEAN · Veronika Erjavec to win the match** · −245 or better · 0.5u');
   assert.deepEqual(lean.body.allowed_mentions, { parse: [], roles: [] }, 'the role is for tracked plays');
-  assert.equal(lean.body.embeds[0].color, 0x8b5cf6);
+  assert.equal(lean.body.embeds[0].color, 0x7c3aed);
   assert.equal(lean.file.size, PNG.length);
   assert.deepEqual(lean.body.components.map((r) => r.components.map((b) => b.label)), [['More info']], 'no book has it, so the stats button alone');
   assert.match(d.calls[0].body.content, new RegExp(`^<@&${ROLE}> 🎾 \\*\\*TAKE`), 'the play still pings, in its own channel');
@@ -520,4 +524,14 @@ test('the full template test: the four play cards in the live channel and the tw
   assert.deepEqual((await discordStatus(env)).test, { id: 't-both', state: 'done', at: NOW, cards: 4, leans: 2, pictures: 6, buttons: true });
   await run(env, NOW + 60e3, d, { testId: 't-both', testScope: 'cards+leans' });
   assert.equal(d.calls.length, 6);
+});
+
+test('a look at a restyle: one live play card in the live channel and one lean card in the leans channel, and no more', async () => {
+  const { env, store } = makeEnv({ DISCORD_LIVE_WEBHOOK: HOOK, DISCORD_LIVE_LEAN_WEBHOOK: LEANS, DISCORD_LIVE_ROLE_ID: ROLE });
+  hello(store);
+  const d = fakeDiscord();
+  await run(env, NOW, d, { testId: 't-pair', testScope: 'pair' });
+  assert.deepEqual(d.calls.map((c) => [c.url.split('?')[0], c.body.content.split('\n')[1].split(' · ')[0]]), [[HOOK, '🎾 **TAKE'], [LEANS, '💡 **LEAN']]);
+  assert.ok(d.calls.every((c) => c.file && c.body.allowed_mentions.roles.length === 0));
+  assert.deepEqual((await discordStatus(env)).test, { id: 't-pair', state: 'done', at: NOW, cards: 1, leans: 1, pictures: 2, buttons: true });
 });

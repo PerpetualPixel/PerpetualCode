@@ -12,8 +12,12 @@
  *            the score when it was taken or the final score, and the time
  *   foot     the site, and the tour, event and round
  *
- * The whole card is the state's colour: blue to violet for a live play, violet for a lean, green for a win, red
- * for a loss, grey for a void.
+ * The card is the website's own look (2026-11-25, the owner, of a first version filled with colour: "too vibrant,
+ * make them more in line with my website's palette"): the site's near-black ground with its faint violet glow and
+ * hairline grid, a glass panel with a violet hairline, the site's text and muted greys. The state is an accent,
+ * not a fill: the card's border, the tag, the pick and the result take the state's colour, from the site's
+ * palette: laser blue for a live play (the site's "real edge" colour), violet for a lean (the site's lean box),
+ * the site's green for a win and red for a loss, its muted grey for a void.
  *
  * This file only writes the SVG (plain text, so it is tested as text). worker/src/card-render.js turns it into a
  * PNG. The font it names is the one that file loads, Roboto Condensed, cut to Latin letters: a name is folded to
@@ -23,17 +27,20 @@
 export const CARD_W = 720;
 export const CARD_H = 424;
 /** Raised whenever the card's look changes, so a picture kept at the edge or in a browser from the old look is not served for the new one. */
-export const CARD_VERSION = 2;
+export const CARD_VERSION = 3;
 
+/** The website's palette (docs/styles.css :root). */
+const SITE = { bg: '#05050A', text: '#F3F1FA', muted: '#9C98B8', violet: '#7C3AED', magenta: '#FF007A', laser: '#00F0FF', success: '#10B981', danger: '#EF4444' };
+/** A state's accent: `a` to `b` is the border, `ink` the tag, the pick and the result. */
 const STATES = {
-  live: { tag: 'Live Play', a: '#1E86FF', b: '#5B2BD9', ink: '#57B6FF' },
-  won: { tag: 'Won', a: '#17A34A', b: '#0A6B33', ink: '#3BF27A' },
-  lost: { tag: 'Lost', a: '#E11D48', b: '#8F1230', ink: '#FF6677' },
-  void: { tag: 'Void', a: '#70758A', b: '#3C4052', ink: '#C6C9D9' },
+  live: { tag: 'Live Play', a: SITE.violet, b: SITE.laser, ink: '#5CE9F7' },
+  won: { tag: 'Won', a: SITE.success, b: SITE.success, ink: '#34D399' },
+  lost: { tag: 'Lost', a: SITE.danger, b: SITE.danger, ink: '#F87171' },
+  void: { tag: 'Void', a: SITE.muted, b: SITE.muted, ink: '#B9B6CF' },
 };
-/** A lean's card: the same slip, violet while it is open, and Lean in the tag of every state. */
+/** A lean's card: the same slip, the site's violet while it is open, and Lean in the tag of every state. */
 const LEAN = {
-  live: { tag: 'Lean', a: '#8B5CF6', b: '#4C1D95', ink: '#BFA8FF' },
+  live: { tag: 'Lean', a: SITE.violet, b: SITE.violet, ink: '#A78BFA' },
   won: { tag: 'Lean • Won' },
   lost: { tag: 'Lean • Lost' },
   void: { tag: 'Lean • Void' },
@@ -173,10 +180,12 @@ export function cardSvg(play, { logo = null } = {}) {
 
   // The top: the price at the right with the book (or "or better") under it, and the tag in the room that is left.
   const priceText = Number.isFinite(price) ? fmt(price) : '';
-  const priceLine = fromRight(W - M, 76, 46, 700, '#FFFFFF', priceText);
+  const priceLine = fromRight(W - M, 76, 46, 700, SITE.text, priceText);
   const under = fitLine(priced ? plain(play.book ?? '').toUpperCase() : priceText ? 'OR BETTER' : '', 230, 18, { min: 14, weight: 500, spacing: 1.4 });
+  // The tag is a pill in the state's colour, like the site's own tags: upper case, spaced, on a tint of the colour.
   const tagX = logo ? M + 74 : M;
-  const tag = fitLine(c.tag, W - M - Math.max(priceLine.width, 120) - 28 - tagX, 38, { min: 24 });
+  const tag = fitLine(c.tag.toUpperCase(), W - M - Math.max(priceLine.width, 120) - 28 - tagX - 36, 24, { min: 16, spacing: 2 });
+  const tagW = Math.ceil(textWidth(tag.text, tag.size, { spacing: 2 }) * ROOM) + 34;
 
   // The pick, in the state's colour: a name shortens the way a scoreboard does, anything else is cut.
   const { big } = playLines(play);
@@ -194,8 +203,8 @@ export function cardSvg(play, { logo = null } = {}) {
   const unitsValue = state === 'void' && !lean ? 'Stake back' : settledPlay && profit ? profit : stake;
   const unitsLabel = state === 'void' && !lean ? '' : settledPlay && profit ? 'RESULT' : 'RECOMMENDED';
   const rowY = panelY + 168;
-  const value = fromRight(right, rowY, 30, 700, settledPlay ? c.ink : '#FFFFFF', unitsValue);
-  const labelLine = unitsLabel ? fromRight(right - value.width - 10, rowY - 2, 18, 500, '#8D90A6', unitsLabel, 1.4) : { svg: '', width: 0 };
+  const value = fromRight(right, rowY, 30, 700, settledPlay ? c.ink : SITE.text, unitsValue);
+  const labelLine = unitsLabel ? fromRight(right - value.width - 10, rowY - 2, 18, 500, SITE.muted, unitsLabel, 1.4) : { svg: '', width: 0 };
 
   // The two players, in the room left of the units: full names, then initials, then last names, then cut.
   const vsRoom = right - left - value.width - labelLine.width - (unitsLabel ? 10 : 0) - 22;
@@ -214,7 +223,7 @@ export function cardSvg(play, { logo = null } = {}) {
 
   // The last line: the score when it was taken, or how it ended; the time at the right.
   const [day, clock] = cardTime(play.postedAt).split(/\s+•\s+/);
-  const time = fromRight(right, panelY + 208, 21, 400, '#8D90A6', clock ?? '');
+  const time = fromRight(right, panelY + 208, 21, 400, SITE.muted, clock ?? '');
   const final = plain(play.actual).replace(/:.*$/, '');
   const whyVoid = plain(play.actual).replace(/^[^:]*:\s*/, '');
   const scoreText = live ? (plain(play.score) ? `Taken at ${plain(play.score)}` : 'In play')
@@ -230,32 +239,40 @@ export function cardSvg(play, { logo = null } = {}) {
 
   return `<svg xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink" width="${W}" height="${H}" viewBox="0 0 ${W} ${H}">
   <defs>
-    <linearGradient id="ground" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="${c.a}"/><stop offset="1" stop-color="${c.b}"/></linearGradient>
-    <linearGradient id="sheen" x1="0" y1="0" x2="1" y2="0.6"><stop offset="0" stop-color="#FFFFFF" stop-opacity="0.16"/><stop offset="0.6" stop-color="#FFFFFF" stop-opacity="0"/></linearGradient>
+    <linearGradient id="edge" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="${c.a}"/><stop offset="1" stop-color="${c.b}"/></linearGradient>
+    <radialGradient id="glow" cx="0.06" cy="-0.1" r="0.9"><stop offset="0" stop-color="${c.ink}" stop-opacity="0.2"/><stop offset="0.6" stop-color="${c.ink}" stop-opacity="0"/></radialGradient>
+    <radialGradient id="far" cx="1" cy="1.1" r="0.8"><stop offset="0" stop-color="${SITE.violet}" stop-opacity="0.16"/><stop offset="0.6" stop-color="${SITE.violet}" stop-opacity="0"/></radialGradient>
+    <pattern id="grid" width="42" height="42" patternUnits="userSpaceOnUse"><path d="M 42 0 L 0 0 0 42" fill="none" stroke="${SITE.violet}" stroke-opacity="0.09" stroke-width="1"/></pattern>
+    <clipPath id="card"><rect x="5" y="5" width="${W - 10}" height="${H - 10}" rx="28"/></clipPath>
     <filter id="bright" x="0" y="0" width="100%" height="100%"><feComponentTransfer><feFuncR type="linear" slope="2.4"/><feFuncG type="linear" slope="2.4"/><feFuncB type="linear" slope="2.4"/><feFuncA type="linear" slope="1.8"/></feComponentTransfer></filter>
   </defs>
-  <rect x="4" y="4" width="${W - 8}" height="${H - 8}" rx="30" fill="url(#ground)"/>
-  <rect x="4" y="4" width="${W - 8}" height="${H - 8}" rx="30" fill="url(#sheen)"/>
+  <g clip-path="url(#card)">
+    <rect x="0" y="0" width="${W}" height="${H}" fill="${SITE.bg}"/>
+    <rect x="0" y="0" width="${W}" height="${H}" fill="url(#grid)"/>
+    <rect x="0" y="0" width="${W}" height="${H}" fill="url(#glow)"/>
+    <rect x="0" y="0" width="${W}" height="${H}" fill="url(#far)"/>
+  </g>
+  <rect x="5" y="5" width="${W - 10}" height="${H - 10}" rx="28" fill="none" stroke="url(#edge)" stroke-width="3" stroke-opacity="0.85"/>
 
-  ${logo ? `<circle cx="${M + 28}" cy="62" r="29" fill="#0B0B14"/>
-  <image x="${M + 3}" y="37" width="50" height="50" xlink:href="${logo}" href="${logo}" filter="url(#bright)"/>` : ''}
-  ${text(tagX, 76, tag.size, 700, '#FFFFFF', esc(tag.text))}
+  ${logo ? `<image x="${M}" y="34" width="58" height="58" xlink:href="${logo}" href="${logo}" filter="url(#bright)"/>` : ''}
+  <rect x="${tagX}" y="42" width="${tagW}" height="42" rx="21" fill="${c.ink}" fill-opacity="0.12" stroke="${c.ink}" stroke-opacity="0.6" stroke-width="2"/>
+  ${text(tagX + tagW / 2 + 1, 42 + 21 + Math.round(tag.size * 0.35), tag.size, 700, c.ink, esc(tag.text), 'text-anchor="middle" letter-spacing="2"')}
   ${priceText ? priceLine.svg : ''}
-  ${under.text ? text(W - M, 101, under.size, 500, '#FFFFFF', esc(under.text), `${end} letter-spacing="1.4" fill-opacity="0.86"`) : ''}
+  ${under.text ? text(W - M, 101, under.size, 500, SITE.muted, esc(under.text), `${end} letter-spacing="1.4"`) : ''}
 
-  <rect x="${panelX}" y="${panelY}" width="${panelW}" height="${panelH}" rx="24" fill="#15151D"/>
-  <circle cx="${left + 30}" cy="${panelY + 64}" r="30" fill="#0B0B14" stroke="${c.ink}" stroke-width="3"/>
+  <rect x="${panelX}" y="${panelY}" width="${panelW}" height="${panelH}" rx="20" fill="#FFFFFF" fill-opacity="0.04" stroke="${SITE.violet}" stroke-opacity="0.32" stroke-width="1.5"/>
+  <circle cx="${left + 30}" cy="${panelY + 64}" r="30" fill="${c.ink}" fill-opacity="0.1" stroke="${c.ink}" stroke-opacity="0.7" stroke-width="2.5"/>
   ${text(left + 30, panelY + 71, 20, 700, c.ink, esc(badge), 'text-anchor="middle" letter-spacing="0.5"')}
   ${text(nameX, panelY + 62, pick.size, 700, c.ink, esc(pick.text))}
-  ${market.text ? text(nameX, panelY + 96, market.size, 500, '#9FA3B5', esc(market.text), 'letter-spacing="2"') : ''}
-  <line x1="${left}" y1="${panelY + 126}" x2="${right}" y2="${panelY + 126}" stroke="#2A2A38" stroke-width="2"/>
-  ${text(left, rowY, versus.size, 500, '#DDDEE9', esc(versus.text))}
+  ${market.text ? text(nameX, panelY + 96, market.size, 500, SITE.muted, esc(market.text), 'letter-spacing="2"') : ''}
+  <line x1="${left}" y1="${panelY + 126}" x2="${right}" y2="${panelY + 126}" stroke="${SITE.violet}" stroke-opacity="0.28" stroke-width="1.5"/>
+  ${text(left, rowY, versus.size, 500, SITE.text, esc(versus.text))}
   ${labelLine.svg}
   ${value.svg}
-  ${text(left, panelY + 208, score.size, 400, '#8D90A6', esc(score.text))}
+  ${text(left, panelY + 208, score.size, 400, SITE.muted, esc(score.text))}
   ${clock ? time.svg : ''}
 
-  ${text(M, H - 26, 19, 500, '#FFFFFF', site, 'fill-opacity="0.9"')}
-  ${event.text ? text(W - M, H - 26, event.size, 400, '#FFFFFF', esc(event.text), `${end} fill-opacity="0.82"`) : ''}
+  ${text(M, H - 26, 19, 500, SITE.text, site, 'fill-opacity="0.85"')}
+  ${event.text ? text(W - M, H - 26, event.size, 400, SITE.muted, esc(event.text), end) : ''}
 </svg>`;
 }
