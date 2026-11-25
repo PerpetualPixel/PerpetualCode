@@ -104,6 +104,9 @@ export function extractTrendLines(eventOdds, game, markets, { isRegistryBook = (
  */
 export function hitFlags(rows, point, side) {
   return rows.map(({ value }) => {
+    // "To record" a number (Player search, 2026-11-24: "this player to record 15 points instead of putting 14 and the
+    // over"): the number itself counts, so it lands at that number or more and there is no push.
+    if (side === 'record') return value >= point ? 1 : 0;
     if (Number.isInteger(point) && value === point) return null;
     return side === 'over' ? (value >= overNeed(point) ? 1 : 0) : (value <= underNeed(point) ? 1 : 0);
   });

@@ -452,3 +452,12 @@ test('livePace is PrizePicks\' pace: the line times the share of the game played
   assert.equal(livePace(3, 10, 0), null, 'no clock yet, no pace'); assert.equal(livePace(3, 0, 0.5), null); assert.equal(livePace(null, 10, 0.5), null);
   assert.equal(livePace(0, 10, 0.25).pct, 0);
 });
+
+test('hitFlags: "to record" a number counts the number itself and anything more, with no push', () => {
+  const rows = [{ value: 15 }, { value: 14 }, { value: 22 }, { value: 0 }];
+  assert.deepEqual(hitFlags(rows, 15, 'record'), [1, 0, 1, 0], 'to record 15: the game with exactly 15 counts');
+  assert.deepEqual(hitFlags(rows, 15, 'over'), [null, 0, 1, 0], 'over 15: exactly 15 is a push');
+  assert.deepEqual(hitFlags(rows, 14, 'over'), [1, null, 1, 0], 'what the owner had to type before: over 14');
+  assert.deepEqual(hitFlags(rows, 14.5, 'record'), hitFlags(rows, 14.5, 'over'), 'on a half number the two agree');
+  assert.deepEqual(hitFlags(rows, 0, 'record'), [1, 1, 1, 1]);
+});
