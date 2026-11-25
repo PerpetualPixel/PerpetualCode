@@ -6563,11 +6563,16 @@ button, [role="tab"], .league-chip, .parlay-btn, .trend-price { touch-action: ma
   /* Centred between the two edges of the screen and never wider than it: the Period button gives way (its label shortens)
      before the bar runs off either side. (Centred with left: 50% and a transform, it was sized against half the screen.) */
   position: fixed; left: max(8px, env(safe-area-inset-left, 0px)); right: max(8px, env(safe-area-inset-right, 0px)); margin: 0 auto; width: fit-content; max-width: calc(100% - 16px); box-sizing: border-box;
-  bottom: calc(14px + env(safe-area-inset-bottom, 0px)); z-index: 40;
+  /* Above the page and under every panel that opens over it (2026-11-24, of the Guide: "the filter thing is in the way ...
+     when the guide is pulled up or about or any menu like that, this should not be there"): the scrim is 20 and the panels
+     30, and this bar was 40, so it sat on top of them. */
+  bottom: calc(14px + env(safe-area-inset-bottom, 0px)); z-index: 15;
   display: flex; align-items: center; gap: 10px; padding: 6px; border-radius: 999px;
   background: rgba(12, 10, 24, 0.82); backdrop-filter: blur(14px); -webkit-backdrop-filter: blur(14px);
   border: 1px solid var(--line); box-shadow: 0 10px 30px rgba(0, 0, 0, 0.5);
 }
+/* And gone while one is open, so nothing of it shows beside a panel narrower than the screen. */
+body:has(.history:not([hidden])) .trends-dock, body:has(.stats-panel:not([hidden])) .trends-dock { display: none; }
 .trends-dock-btn {
   display: inline-flex; align-items: center; gap: 8px; min-height: 42px; padding: 0 16px; border-radius: 999px; border: 1px solid transparent;
   background: var(--surface-2); color: var(--text); font: inherit; font-weight: 700; font-size: 0.9rem; cursor: pointer; white-space: nowrap; position: relative;
