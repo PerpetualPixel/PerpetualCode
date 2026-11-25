@@ -10113,6 +10113,8 @@ function betResultBadge(bet) {
 function renderPickLeg(leg, bet) {
   const row = { ...leg, rates: leg.rates ?? {}, periods: leg.periods ?? {}, series: leg.series ?? [] };
   const h2h = leg.periods?.h2h;
+  // The leg's own rate over the last 20: every one for a perfect ticket, less for a strong one or the board's suggestion (this read "100%" on every card).
+  const l20Rate = leg.periods?.l20?.games ? leg.periods.l20.hits / leg.periods.l20.games : null;
   const legResult = leg.result
     ? `<span class="pick-leg-result is-${esc(leg.result)}">${esc(leg.result === 'void' ? legResultText(leg) : `${RESULT_LABEL[leg.result] ?? leg.result}${Number.isFinite(leg.actual) ? ` · ${leg.actual} ${leg.statLabel}` : ''}`)}</span>`
     : '';
@@ -10132,7 +10134,7 @@ function renderPickLeg(leg, bet) {
       ${bet.type === 'parlay' && !leg.link ? `<span class="pick-leg-price">${esc(formatAmerican(leg.american))}</span>` : pricePill(bet.bookId, bet.book, leg.american, leg.link)}
     </div>
     <div class="trend-rate-row">
-      <span class="trend-rate is-hot">100%<small>L20</small></span>
+      <span class="trend-rate ${rateTone(l20Rate ?? 1)}">${l20Rate == null ? '100%' : pct(l20Rate)}<small>L20</small></span>
       ${renderTrendBars(row, 'l20')}
       <span class="pick-h2h">${h2h?.games ? `${esc(String(h2h.hits))} of ${esc(String(h2h.games))} vs ${esc(leg.opponent ?? '')}` : 'no games vs ' + esc(leg.opponent ?? 'them')}</span>
     </div>
@@ -10165,7 +10167,10 @@ function legWhyLines(leg) {
     const likely = legLikelihood(leg);
     out.push(`${formatAmerican(leg.american)}${leg.book ? ` at ${leg.book}` : ''} asks for ${pct(impliedProb(leg.american))}${Number.isFinite(likely) ? `; the run pulled toward that price makes it about ${pct(likely)} to land` : ''}`);
   }
-  out.push(leg.note ? `Research before it posted: ${leg.note}` : 'Research before it posted: minutes steady, no injury listing, no blowout projected');
+  // What was looked at before it went up. A board line is not researched like a ticket: it is run through the flag
+  // check (worker/src/trend-picks.js vettedBoard), and says what that found, never "minutes steady" it did not read.
+  if (leg.check) out.push(leg.check.verdict === 'fair' ? 'Checked for flags before it went up: nothing against it' : `Checked for flags before it went up: no reason to stay off${leg.check.weigh?.length ? `, but weigh this: ${leg.check.weigh.join(', ').toLowerCase()}` : ''}`);
+  else if (!leg.shortOf) out.push(leg.note ? `Research before it posted: ${leg.note}` : 'Research before it posted: minutes steady, no injury listing, no blowout projected');
   return out;
 }
 function renderLegWhy(leg, bet) {
