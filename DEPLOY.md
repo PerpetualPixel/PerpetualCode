@@ -356,8 +356,13 @@ and make a new one.
 - `DISCORD_PLAYBOOK_USER_ID`: the Playbook bot's user id (one id serves both
   channels), so each new NBA or NFL play
   starts with a real tag of the bot and the legs written out for it to answer
-  with slip links. In Discord, with Developer Mode on, right-click Playbook →
-  **Copy User ID**. Without it the legs are still written out, and nobody is
+  with slip links. In Discord, with Developer Mode on, right-click Playbook in
+  the member list → **Copy User ID**. A server also has a role called Playbook,
+  and an id copied from the role shows as "@unknown-user" here. The sure way
+  to get it right: type `\@Playbook` in the channel, pick the member, send, and
+  paste exactly what appears (`<@123...>` for the member, `<@&123...>` for the
+  role; either works). The role's number alone can go in
+  `DISCORD_PLAYBOOK_ROLE_ID` instead. Without it the legs are still written out, and nobody is
   tagged. Playbook must be in the server and able to read and write in both
   channels.
 - `DISCORD_UPDATES_WEBHOOK`: a second webhook, made the same way in another
