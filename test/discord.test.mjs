@@ -63,7 +63,7 @@ test('the card: TAKE and the bet, the price and where, why in a sentence, the ch
   assert.equal(e.title, '🎾 TAKE · M. Dellavedova to win the match');
   assert.deepEqual([e.author.name, e.author.icon_url], ['PERPETUAL PICKS · LIVE TENNIS', 'https://perpetualpicks.com/assets/logo-icon-180.png']);
   const lines = e.description.split('\n');
-  assert.equal(lines[0], '**−175** at **FanDuel** · good down to −190 · stake **1u**');
+  assert.equal(lines[0], '**−175** at **FanDuel** · good down to −190 · recommended stake **1u**');
   assert.equal(lines[1], 'Moneyline · M. Dellavedova vs H. Moriya');
   assert.equal(lines[2], 'ATP · Challenger Playford 2 · 1/8-finals');
   // Why, short, from the numbers kept with the play.
@@ -83,7 +83,7 @@ test('the card: TAKE and the bet, the price and where, why in a sentence, the ch
   // A set no book prices: the price to take it at, and it says no book has it.
   const s = livePlayMessage(set({ stats: { ...STATS, streak: { side: 'a', n: 4 } } }), { record: { wins: 31, losses: 6, units: 10.22 } }).embeds[0];
   assert.equal(s.title, '🎾 TAKE · Carlos Alcaraz to win set 2');
-  assert.match(s.description, /^\*\*−186 or better\*\* at your book · stake \*\*1u\*\*\nSet 2 winner · Carlos Alcaraz vs Alexander Zverev\n/);
+  assert.match(s.description, /^\*\*−186 or better\*\* at your book · recommended stake \*\*1u\*\*\nSet 2 winner · Carlos Alcaraz vs Alexander Zverev\n/);
   assert.match(s.description, /\*\*Why:\*\* Alcaraz has held 6 of 6 service games today; Zverev 3 of 5\. Has won the last 4 games\. We make it 69% to land; the price only needs 65%\./);
   assert.match(s.description, /\*\*Bet it:\*\* no book we read has this live\. Take it at −186 or better where you can find it\.$/);
   assert.ok(!/\]\(http/.test(s.description));

@@ -1,47 +1,42 @@
 /**
- * The Discord card for a live tennis play, as a picture (2026-11-25, the
- * owner, with four templates: "I'd like the cards to follow this format
- * ... Make the live play the most outstanding thing on the card. So when
- * a user reads it, they're not looking for what they're betting on").
+ * The Discord card for a live tennis play or lean, as a picture.
  *
- * One layout in four states, each with its own colour:
+ * It is laid out like a bet slip (2026-11-25, the owner, with a book's slip beside it: "let's make the card simpler
+ * like this with a more info button. Keep the color codes and tags like leans, won, loss etc and also let's add
+ * recommended units to the live and lean takes"). Everything else a reader might want is behind the More info
+ * button (worker/src/play-page.js).
  *
- *   live   blue to violet   [ LIVE PLAY ]        the score when it was taken
- *   won    green            [ WON · GRADED ]     the final score and the units
- *   lost   red              [ LOST · GRADED ]    the final score and the units
- *   void   grey             [ VOID · GRADED ]    why, and the stake returned
+ *   top      the logo, what this is (Live Play, Lean, Won, Lost, Void) and the price, with the book under it
+ *   panel    who or what to take, in the state's colour, and the market under it in a slip's words;
+ *            the two players and the units (recommended while it is open, the result once it settles);
+ *            the score when it was taken or the final score, and the time
+ *   foot     the site, and the tour, event and round
  *
- * Top to bottom: the logo and the state; the event and round; the two
- * players; THE PLAY, the largest thing on the card (who or what to take,
- * the bet in the words on a slip, the price, the book and the stake); the
- * chance to land against what the price needs; the score or the result;
- * the site and the time.
+ * The whole card is the state's colour: blue to violet for a live play, violet for a lean, green for a win, red
+ * for a loss, grey for a void.
  *
- * This file only writes the SVG (plain text, so it is tested as text).
- * worker/src/card-render.js turns it into a PNG. The fonts it names are
- * the ones that file loads: Syne for the wordmark, Roboto Condensed for
- * everything else. Those are cut to Latin letters, so a name is folded to
+ * This file only writes the SVG (plain text, so it is tested as text). worker/src/card-render.js turns it into a
+ * PNG. The font it names is the one that file loads, Roboto Condensed, cut to Latin letters: a name is folded to
  * plain letters first and a minus is a hyphen.
  */
 
 export const CARD_W = 720;
-export const CARD_H = 980;
+export const CARD_H = 424;
+/** Raised whenever the card's look changes, so a picture kept at the edge or in a browser from the old look is not served for the new one. */
+export const CARD_VERSION = 2;
 
 const STATES = {
-  live: { tag: 'LIVE PLAY', a: '#22B8FF', b: '#7C3AED', ink: '#39BEFF' },
-  won: { tag: 'WON • GRADED', a: '#2EE86B', b: '#19B95A', ink: '#3BF27A' },
-  lost: { tag: 'LOST • GRADED', a: '#FF4545', b: '#C81E3A', ink: '#FF4D4D' },
-  void: { tag: 'VOID • GRADED', a: '#9A9DB2', b: '#5E6178', ink: '#B4B7CB' },
+  live: { tag: 'Live Play', a: '#1E86FF', b: '#5B2BD9', ink: '#57B6FF' },
+  won: { tag: 'Won', a: '#17A34A', b: '#0A6B33', ink: '#3BF27A' },
+  lost: { tag: 'Lost', a: '#E11D48', b: '#8F1230', ink: '#FF6677' },
+  void: { tag: 'Void', a: '#70758A', b: '#3C4052', ink: '#C6C9D9' },
 };
-/**
- * A lean's card (2026-11-25, the leans channel): the same layout, said as a lean everywhere a play says play. An
- * open lean is the violet of the site's lean box; a settled one keeps the result's colour with LEAN in its tag.
- */
+/** A lean's card: the same slip, violet while it is open, and Lean in the tag of every state. */
 const LEAN = {
-  live: { tag: 'LEAN', a: '#A78BFA', b: '#6D28D9', ink: '#B9A2FF' },
-  won: { tag: 'LEAN • WON' },
-  lost: { tag: 'LEAN • LOST' },
-  void: { tag: 'LEAN • VOID' },
+  live: { tag: 'Lean', a: '#8B5CF6', b: '#4C1D95', ink: '#BFA8FF' },
+  won: { tag: 'Lean • Won' },
+  lost: { tag: 'Lean • Lost' },
+  void: { tag: 'Lean • Void' },
 };
 const TOUR = { atp: 'ATP', wta: 'WTA' };
 
@@ -49,8 +44,6 @@ const TOUR = { atp: 'ATP', wta: 'WTA' };
 const plain = (s) => String(s ?? '').normalize('NFD').replace(/[̀-ͯ]/g, '').replace(/[−–—]/g, '-').replace(/[^\x20-\x7e•]/g, '').trim();
 const esc = (s) => plain(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
 const fmt = (american) => (american > 0 ? `+${american}` : String(american));
-const implied = (american) => (american > 0 ? 100 / (american + 100) : -american / (-american + 100));
-const ordinal = (n) => `${n}${['TH', 'ST', 'ND', 'RD'][n % 100 > 10 && n % 100 < 14 ? 0 : Math.min(n % 10, 4) % 4] ?? 'TH'}`;
 
 /**
  * How wide each letter is (2026-11-25, the owner: "ensure the words, text, and buttons won't overlap regardless of
@@ -150,166 +143,119 @@ export function cardTime(ms) {
   return `${d}  •  ${t} ET`;
 }
 
+/** The market in a slip's words: MATCH WINNER, SET 2 WINNER, SET 2 TOTAL GAMES. */
+export function marketWords(play) {
+  if (play.market === 'live_ml') return 'Match Winner';
+  if (play.market === 'live_set' && play.set != null) return `Set ${play.set} Winner`;
+  if (play.market === 'live_set_total' && play.set != null) return `Set ${play.set} Total Games`;
+  return playLines(play).small;
+}
+
 /**
- * The card as SVG. `logo` is the logo as a data: address (the worker and
- * the local preview each read the file their own way); without it the
- * wordmark stands alone.
+ * The card as SVG. `logo` is the logo as a data: address (the worker and the local preview each read the file
+ * their own way); without it the tag stands alone. Every line is measured and kept inside its own width: it comes
+ * down in size, then to a shorter form, then is cut with "...".
  */
 export function cardSvg(play, { logo = null } = {}) {
   const state = cardState(play);
   const lean = Boolean(play.lean);
   const c = { ...STATES[state], ...(lean ? LEAN[state] : {}) };
-  const W = CARD_W; const H = CARD_H; const M = 44; const inner = W - 2 * M;
-  const mid = W / 2;
+  const live = state === 'live';
+  const W = CARD_W; const H = CARD_H; const M = 36;
+  const panelX = 24; const panelY = 122; const panelW = W - 48; const panelH = 238; const pad = 26;
+  const left = panelX + pad; const right = panelX + panelW - pad;
   const priced = Number.isFinite(play.american);
   const price = priced ? play.american : play.playable;
-  const { big, small } = playLines(play);
   const text = (x, y, size, weight, fill, body, extra = '') => `<text x="${x}" y="${y}" font-family="Roboto Condensed" font-size="${size}" font-weight="${weight}" fill="${fill}" ${extra}>${body}</text>`;
-  const centre = 'text-anchor="middle"';
-  const label = (y, body) => text(mid, y, 25, 500, '#8D90A6', `[ ${esc(body).toUpperCase()} ]`, `${centre} letter-spacing="1.2"`);
-  // Every line below is measured and kept inside its own width: it comes down in size, then to a shorter form, then is cut with "...".
+  const end = 'text-anchor="end"';
+  // A line drawn from its right edge, placed by its own measured width (so the next thing to its left knows where it stops).
+  const fromRight = (x, y, size, weight, fill, body, spacing = 0) => ({ svg: text(x, y, size, weight, fill, esc(body), `${end}${spacing ? ` letter-spacing="${spacing}"` : ''}`), width: Math.ceil(textWidth(body, size, { weight, spacing }) * ROOM) });
 
-  // The event line: the tournament's name gives way first, so the tour and the round stay whole.
-  const eventOf = (name) => `[ ${[TOUR[play.tour] ?? null, name, play.round].filter(Boolean).map(plain).filter(Boolean).join('  •  ').toUpperCase()} ]`;
-  const eventOpts = { weight: 500, spacing: 1 };
-  const eventName = plain(play.event);
-  let event = { text: eventOf(eventName), size: 0 };
-  event.size = fitSize(event.text, inner, 28, { min: 19, ...eventOpts });
-  if (!fits(event.text, inner, event.size, eventOpts)) {
-    let n = eventName.length - 1;
-    while (n > 3 && !fits(eventOf(`${eventName.slice(0, n).trimEnd()}...`), inner, 19, eventOpts)) n--;
-    const shorter = eventOf(`${eventName.slice(0, n).trimEnd()}...`);
-    event = fits(shorter, inner, 19, eventOpts) ? { text: shorter, size: 19 } : fitLine(event.text.replace(/ \]$/, ''), inner, 19, { min: 19, ...eventOpts, tail: ' ]' });
-  }
+  // The top: the price at the right with the book (or "or better") under it, and the tag in the room that is left.
+  const priceText = Number.isFinite(price) ? fmt(price) : '';
+  const priceLine = fromRight(W - M, 76, 46, 700, '#FFFFFF', priceText);
+  const under = fitLine(priced ? plain(play.book ?? '').toUpperCase() : priceText ? 'OR BETTER' : '', 230, 18, { min: 14, weight: 500, spacing: 1.4 });
+  const tagX = logo ? M + 74 : M;
+  const tag = fitLine(c.tag, W - M - Math.max(priceLine.width, 120) - 28 - tagX, 38, { min: 24 });
 
-  // The players: full names when there is room, then initials, then last names.
-  const nameA = nameForms(plain(play.a) || 'Player A').map((n) => n.toUpperCase());
-  const nameB = nameForms(plain(play.b) || 'Player B').map((n) => n.toUpperCase());
-  const pairs = Array.from({ length: Math.max(nameA.length, nameB.length) }, (_, i) => [nameA[Math.min(i, nameA.length - 1)], nameB[Math.min(i, nameB.length - 1)]]);
-  const sizedPairs = pairs.map(([a, b]) => ({ a, b, size: fitSize(`${a} vs ${b}`, inner, 50, { min: 28 }) }));
-  let vs = sizedPairs.find((f) => f.size >= 36) ?? sizedPairs.find((f) => fits(`${f.a} vs ${f.b}`, inner, f.size));
-  if (!vs) {
-    // Two names too long for the line in any form: each is cut to the same length.
-    const [a, b] = pairs[pairs.length - 1];
+  // The pick, in the state's colour: a name shortens the way a scoreboard does, anything else is cut.
+  const { big } = playLines(play);
+  const sideName = play.side === 'a' ? plain(play.a) : play.side === 'b' ? plain(play.b) : null;
+  const nameX = left + 78;
+  const nameRoom = right - nameX;
+  const title = (t) => t.replace(/\b[a-z]/g, (ch) => ch.toUpperCase());
+  const pick = !big ? { text: 'The pick', size: 44 } : sideName && big === sideName ? bestForm(nameForms(sideName), nameRoom, 46, { min: 28, comfy: 36 }) : fitLine(title(big), nameRoom, 46, { min: 28 });
+  const market = fitLine(marketWords(play).toUpperCase(), nameRoom, 23, { min: 16, weight: 500, spacing: 2 });
+
+  // The units: recommended while it is open (and on a lean, which is never on the record), the result once a play settles.
+  const stake = `${Math.round((play.units ?? 1) * 100) / 100}u`;
+  const profit = Number.isFinite(play.profit) ? `${play.profit < 0 ? '-' : '+'}${Math.abs(play.profit).toFixed(2)}u` : '';
+  const settledPlay = !live && !lean;
+  const unitsValue = state === 'void' && !lean ? 'Stake back' : settledPlay && profit ? profit : stake;
+  const unitsLabel = state === 'void' && !lean ? '' : settledPlay && profit ? 'RESULT' : 'RECOMMENDED';
+  const rowY = panelY + 168;
+  const value = fromRight(right, rowY, 30, 700, settledPlay ? c.ink : '#FFFFFF', unitsValue);
+  const labelLine = unitsLabel ? fromRight(right - value.width - 10, rowY - 2, 18, 500, '#8D90A6', unitsLabel, 1.4) : { svg: '', width: 0 };
+
+  // The two players, in the room left of the units: full names, then initials, then last names, then cut.
+  const vsRoom = right - left - value.width - labelLine.width - (unitsLabel ? 10 : 0) - 22;
+  const nameA = nameForms(plain(play.a) || 'Player A'); const nameB = nameForms(plain(play.b) || 'Player B');
+  const pairs = Array.from({ length: Math.max(nameA.length, nameB.length) }, (_, i) => `${nameA[Math.min(i, nameA.length - 1)]} v ${nameB[Math.min(i, nameB.length - 1)]}`);
+  const sizedPairs = pairs.map((line) => ({ text: line, size: fitSize(line, vsRoom, 27, { min: 20, weight: 500 }) }));
+  let versus = sizedPairs.find((f) => f.size >= 24) ?? sizedPairs.find((f) => fits(f.text, vsRoom, f.size, { weight: 500 }));
+  if (!versus) {
+    // Two names too long for the line in any form: each is cut to the same length, so both players are still named.
+    const a = nameA[nameA.length - 1]; const b = nameB[nameB.length - 1];
     const cut = (name, n) => (name.length > n ? `${name.slice(0, n).trimEnd()}...` : name);
     let n = Math.max(a.length, b.length) - 1;
-    while (n > 3 && !fits(`${cut(a, n)} vs ${cut(b, n)}`, inner, 28)) n--;
-    vs = { a: cut(a, n), b: cut(b, n), size: 28 };
+    while (n > 2 && !fits(`${cut(a, n)} v ${cut(b, n)}`, vsRoom, 20, { weight: 500 })) n--;
+    versus = { text: `${cut(a, n)} v ${cut(b, n)}`, size: 20 };
   }
-  const versus = `${vs.a} vs ${vs.b}`;
-  const vsSize = vs.size;
 
-  // The play: the largest thing on the card.
-  const sideName = play.side === 'a' ? plain(play.a) : play.side === 'b' ? plain(play.b) : null;
-  const bigOpts = { min: 44, comfy: 60, spacing: 0.5 };
-  const bigLine = sideName && big === sideName ? bestForm(nameForms(sideName).map((n) => n.toUpperCase()), inner - 56, 92, bigOpts) : fitLine(big.toUpperCase(), inner - 56, 92, bigOpts);
-  const bigUp = bigLine.text;
-  const bigSize = bigLine.size;
-  const smallLine = fitLine(small.toUpperCase(), inner - 40, 44, { min: 26, spacing: 1.5 });
-  const smallUp = small ? smallLine.text : '';
-  const priceText = Number.isFinite(price) ? fmt(price) : '';
-  const stake = `${Math.round((play.units ?? 1) * 100) / 100}u`;
-  // A play no book priced says "or better": that number is the least to take it at, wherever it is found.
-  // The price and where to take it sit side by side inside the panel: a long book name comes down in size, then is cut.
-  const priceW = Math.max(150, Math.ceil(textWidth(priceText, 50) * ROOM) + 52);
-  const whereRoom = inner - 32 - priceW - 22;
-  // A lean has no stake: it is not a tracked play, and the card says so where a play shows its units.
-  const whereOf = (book) => [book, lean ? 'not tracked' : `${stake} stake`].filter(Boolean).join('  •  ');
-  const bookName = priced ? plain(play.book ?? '') : 'or better';
-  let whereLine = { text: whereOf(bookName), size: 0 };
-  whereLine.size = fitSize(whereLine.text, whereRoom, 31, { min: 23, weight: 500 });
-  if (!fits(whereLine.text, whereRoom, whereLine.size, { weight: 500 })) {
-    let n = bookName.length - 1;
-    while (n > 2 && !fits(whereOf(`${bookName.slice(0, n).trimEnd()}...`), whereRoom, 23, { weight: 500 })) n--;
-    const shorter = whereOf(`${bookName.slice(0, n).trimEnd()}...`);
-    whereLine = fits(shorter, whereRoom, 23, { weight: 500 }) ? { text: shorter, size: 23 } : fitLine(whereOf(''), whereRoom, 23, { min: 18, weight: 500 });
-  }
-  const where = whereLine.text;
-  const whereW = textWidth(where, whereLine.size, { weight: 500 });
-  const rowW = priceW + 22 + whereW;
-  const rowX = mid - rowW / 2;
-  const live = state === 'live';
-  const heroTop = 352; const heroH = 304;
+  // The last line: the score when it was taken, or how it ended; the time at the right.
+  const [day, clock] = cardTime(play.postedAt).split(/\s+•\s+/);
+  const time = fromRight(right, panelY + 208, 21, 400, '#8D90A6', clock ?? '');
+  const final = plain(play.actual).replace(/:.*$/, '');
+  const whyVoid = plain(play.actual).replace(/^[^:]*:\s*/, '');
+  const scoreText = live ? (plain(play.score) ? `Taken at ${plain(play.score)}` : 'In play')
+    : state === 'void' ? `Void${whyVoid && whyVoid !== final ? `: ${whyVoid}` : ''}` : final ? `Final ${final}` : 'Final';
+  const score = fitLine(scoreText, right - left - time.width - 22, 21, { min: 16, weight: 400 });
 
-  // The numbers behind it: the chance to land, what the price needs, the edge between them.
-  const needs = Number.isFinite(price) ? implied(price) : null;
-  const edge = Number.isFinite(play.prob) && needs != null ? Math.round((play.prob - needs) * 100) : null;
-  const stats = [
-    Number.isFinite(play.prob) ? [`${Math.round(play.prob * 100)}%`, 'CHANCE TO LAND'] : null,
-    needs != null ? [`${Math.round(needs * 100)}%`, 'PRICE NEEDS'] : null,
-    edge != null ? [`${edge >= 0 ? '+' : ''}${edge}`, 'EDGE, PTS'] : null,
-  ].filter(Boolean);
-  const cell = inner / Math.max(1, stats.length);
-  const statsTop = 686;
-
-  // The last block: where the match stood when it was taken, or how it ended.
-  const sets = plain(play.score).split(/\s+/).filter(Boolean);
-  let foot;
-  if (live) {
-    // The chip is as wide as its words; a long score comes down in size inside it.
-    // A score whose last set is over ("6-0") was taken between sets: it is said as "after 1 set", not as a set in play.
-    const [g1, g2] = (sets[sets.length - 1] ?? '').split('-').map(Number);
-    const between = Number.isFinite(g1) && Number.isFinite(g2) && Math.max(g1, g2) >= 6 && (Math.abs(g1 - g2) >= 2 || Math.max(g1, g2) === 7);
-    const lead = between ? `AFTER ${sets.length} SET${sets.length === 1 ? '' : 'S'}` : `${ordinal(sets.length)} SET`;
-    const chip = fitLine(sets.length ? `${lead}  •  ${sets.join('  ')}` : 'IN PLAY', inner - 56, 38, { min: 20, spacing: 0.6 });
-    const chipW = Math.min(inner, Math.ceil(textWidth(chip.text, chip.size, { spacing: 0.6 }) * ROOM) + 56);
-    foot = `${label(812, 'score when taken')}
-    <rect x="${mid - chipW / 2}" y="826" width="${chipW}" height="62" rx="14" fill="#1E1D2B" stroke="#34334A" stroke-width="2"/>
-    ${text(mid, 857 + Math.round(chip.size * 0.32), chip.size, 700, '#F3F1FA', esc(chip.text), `${centre} letter-spacing="0.6"`)}`;
-  } else {
-    const units = !lean && Number.isFinite(play.profit) ? `${play.profit < 0 ? '-' : '+'}${Math.abs(play.profit).toFixed(2)}u` : '';
-    const final = plain(play.actual).replace(/:.*$/, '');
-    // The units are never cut: a long final score comes down in size, and past that the score gives way.
-    const line = state === 'void' ? fitLine(lean ? 'VOID  •  NO RESULT' : 'VOID  •  STAKE RETURNED', inner, 56, { min: 30 }) : fitLine(`FINAL ${final}`.trim(), inner, 56, { min: 30, tail: units ? `  •  ${units}` : '' });
-    const why = state === 'void' ? plain(play.actual).replace(/^[^:]*:\s*/, '') : '';
-    const whyLine = fitLine(why.toUpperCase(), inner, 24, { min: 18, weight: 500 });
-    foot = `${label(812, state === 'void' ? 'no result' : 'result  •  final score')}
-    ${text(mid, 872, line.size, 700, c.ink, esc(line.text), centre)}
-    ${why && why !== final ? text(mid, 906, whyLine.size, 500, '#8D90A6', esc(whyLine.text), centre) : ''}`;
-  }
+  // The foot: the site, and the tour, event and round in the room beside it.
+  const site = 'perpetualpicks.com';
+  const siteW = Math.ceil(textWidth(site, 19, { weight: 500 }) * ROOM);
+  const eventText = [TOUR[play.tour] ?? null, play.event, play.round, day].map(plain).filter(Boolean).join('  •  ');
+  const event = fitLine(eventText, W - 2 * M - siteW - 24, 19, { min: 14, weight: 400 });
+  const badge = TOUR[play.tour] ?? 'TEN';
 
   return `<svg xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink" width="${W}" height="${H}" viewBox="0 0 ${W} ${H}">
   <defs>
-    <linearGradient id="edge" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="${c.a}"/><stop offset="1" stop-color="${c.b}"/></linearGradient>
-    <linearGradient id="ground" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#11111D"/><stop offset="1" stop-color="#08080F"/></linearGradient>
-    <linearGradient id="word" x1="0" y1="0" x2="1" y2="0"><stop offset="0" stop-color="#FF2BD6"/><stop offset="1" stop-color="#8B5CF6"/></linearGradient>
-    <linearGradient id="hero" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="${c.a}" stop-opacity="${live ? 0.20 : 0.10}"/><stop offset="1" stop-color="${c.b}" stop-opacity="${live ? 0.07 : 0.03}"/></linearGradient>
-    <filter id="glow" x="-10%" y="-10%" width="120%" height="120%"><feGaussianBlur stdDeviation="9"/></filter>
-    <filter id="bright" x="-10%" y="-10%" width="120%" height="120%"><feComponentTransfer><feFuncR type="linear" slope="2.1"/><feFuncG type="linear" slope="2.1"/><feFuncB type="linear" slope="2.1"/><feFuncA type="linear" slope="1.6"/></feComponentTransfer></filter>
-    <clipPath id="card"><rect x="10" y="10" width="${W - 20}" height="${H - 20}" rx="42"/></clipPath>
+    <linearGradient id="ground" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="${c.a}"/><stop offset="1" stop-color="${c.b}"/></linearGradient>
+    <linearGradient id="sheen" x1="0" y1="0" x2="1" y2="0.6"><stop offset="0" stop-color="#FFFFFF" stop-opacity="0.16"/><stop offset="0.6" stop-color="#FFFFFF" stop-opacity="0"/></linearGradient>
+    <filter id="bright" x="0" y="0" width="100%" height="100%"><feComponentTransfer><feFuncR type="linear" slope="2.4"/><feFuncG type="linear" slope="2.4"/><feFuncB type="linear" slope="2.4"/><feFuncA type="linear" slope="1.8"/></feComponentTransfer></filter>
   </defs>
-  <rect x="10" y="10" width="${W - 20}" height="${H - 20}" rx="42" fill="none" stroke="url(#edge)" stroke-width="10" opacity="0.55" filter="url(#glow)"/>
-  <rect x="10" y="10" width="${W - 20}" height="${H - 20}" rx="42" fill="url(#ground)"/>
-  <g clip-path="url(#card)">
-    <rect x="10" y="10" width="${W - 20}" height="154" fill="${c.a}" opacity="0.07"/>
-    <line x1="10" y1="164" x2="${W - 10}" y2="164" stroke="url(#edge)" stroke-width="3" opacity="0.75"/>
-  </g>
-  <rect x="10" y="10" width="${W - 20}" height="${H - 20}" rx="42" fill="none" stroke="url(#edge)" stroke-width="5"/>
+  <rect x="4" y="4" width="${W - 8}" height="${H - 8}" rx="30" fill="url(#ground)"/>
+  <rect x="4" y="4" width="${W - 8}" height="${H - 8}" rx="30" fill="url(#sheen)"/>
 
-  ${logo ? `<image x="${M - 8}" y="38" width="100" height="100" xlink:href="${logo}" href="${logo}" filter="url(#bright)"/>` : ''}
-  <text x="${logo ? M + 98 : M}" y="84" font-family="Syne" font-size="20" font-weight="800" fill="#FFFFFF" letter-spacing="0.5">PERPETUAL</text>
-  <text x="${logo ? M + 98 : M}" y="112" font-family="Syne" font-size="20" font-weight="800" fill="url(#word)" letter-spacing="0.5">PICKS</text>
-  ${(() => { const tag = `[ ${c.tag} ]`; const tw = Math.ceil(textWidth(tag, 27, { spacing: 0.6 }) * ROOM) + 36; return `<rect x="${W - M - tw}" y="62" width="${tw}" height="54" rx="12" fill="${c.a}" fill-opacity="0.14" stroke="${c.a}" stroke-opacity="0.8" stroke-width="2.5"/>
-  ${text(W - M - tw / 2, 99, 27, 700, c.ink, esc(tag), `${centre} letter-spacing="0.6"`)}`; })()}
+  ${logo ? `<circle cx="${M + 28}" cy="62" r="29" fill="#0B0B14"/>
+  <image x="${M + 3}" y="37" width="50" height="50" xlink:href="${logo}" href="${logo}" filter="url(#bright)"/>` : ''}
+  ${text(tagX, 76, tag.size, 700, '#FFFFFF', esc(tag.text))}
+  ${priceText ? priceLine.svg : ''}
+  ${under.text ? text(W - M, 101, under.size, 500, '#FFFFFF', esc(under.text), `${end} letter-spacing="1.4" fill-opacity="0.86"`) : ''}
 
-  ${text(mid, 226, event.size, 500, '#9EA1B6', esc(event.text), `${centre} letter-spacing="1"`)}
-  ${text(mid, 296, vsSize, 700, '#FFFFFF', esc(versus).replace(' vs ', `<tspan font-weight="400" fill="#B9BBCB"> vs </tspan>`), `${centre} xml:space="preserve"`)}
+  <rect x="${panelX}" y="${panelY}" width="${panelW}" height="${panelH}" rx="24" fill="#15151D"/>
+  <circle cx="${left + 30}" cy="${panelY + 64}" r="30" fill="#0B0B14" stroke="${c.ink}" stroke-width="3"/>
+  ${text(left + 30, panelY + 71, 20, 700, c.ink, esc(badge), 'text-anchor="middle" letter-spacing="0.5"')}
+  ${text(nameX, panelY + 62, pick.size, 700, c.ink, esc(pick.text))}
+  ${market.text ? text(nameX, panelY + 96, market.size, 500, '#9FA3B5', esc(market.text), 'letter-spacing="2"') : ''}
+  <line x1="${left}" y1="${panelY + 126}" x2="${right}" y2="${panelY + 126}" stroke="#2A2A38" stroke-width="2"/>
+  ${text(left, rowY, versus.size, 500, '#DDDEE9', esc(versus.text))}
+  ${labelLine.svg}
+  ${value.svg}
+  ${text(left, panelY + 208, score.size, 400, '#8D90A6', esc(score.text))}
+  ${clock ? time.svg : ''}
 
-  <rect x="${M - 8}" y="${heroTop}" width="${inner + 16}" height="${heroH}" rx="26" fill="url(#hero)" stroke="${c.a}" stroke-opacity="${live ? 0.55 : 0.28}" stroke-width="2.5"/>
-  ${text(mid, heroTop + 48, 26, 700, c.ink, lean ? (live ? 'THE LEAN  •  NOT TRACKED' : 'THE LEAN') : live ? 'THE PLAY  •  TAKE' : 'THE PLAY', `${centre} letter-spacing="3"`)}
-  ${text(mid, heroTop + 108 + Math.round(bigSize * 0.35), bigSize, 700, live ? '#FFFFFF' : '#E8E8F2', esc(bigUp), `${centre} letter-spacing="0.5"`)}
-  ${smallUp ? text(mid, heroTop + 190, smallLine.size, 700, c.ink, esc(smallUp), `${centre} letter-spacing="1.5"`) : ''}
-  ${priceText ? `<rect x="${rowX}" y="${heroTop + 214}" width="${priceW}" height="68" rx="16" fill="${live ? c.a : '#2A2A3A'}" fill-opacity="${live ? 0.95 : 1}"/>
-  ${text(rowX + priceW / 2, heroTop + 264, 50, 700, live ? '#06121C' : '#FFFFFF', esc(priceText), centre)}
-  ${text(rowX + priceW + 22, heroTop + 259, whereLine.size, 500, '#D6D7E4', esc(where), '')}` : ''}
-
-  ${stats.map(([value, name], i) => `${text(M + cell * i + cell / 2, statsTop + 40, 40, 700, '#F3F1FA', esc(value), centre)}
-  ${text(M + cell * i + cell / 2, statsTop + 68, 19, 500, '#8D90A6', esc(name), `${centre} letter-spacing="1.4"`)}`).join('\n  ')}
-  ${stats.length > 1 ? stats.slice(1).map((_, i) => `<line x1="${M + cell * (i + 1)}" y1="${statsTop + 8}" x2="${M + cell * (i + 1)}" y2="${statsTop + 70}" stroke="#2C2B3F" stroke-width="2"/>`).join('') : ''}
-
-  ${foot}
-
-  <line x1="${M}" y1="${H - 62}" x2="${W - M}" y2="${H - 62}" stroke="url(#edge)" stroke-width="2" opacity="0.45"/>
-  ${text(mid, H - 28, 24, 400, '#8D90A6', esc(['perpetualpicks.com', cardTime(play.postedAt)].filter(Boolean).join('  •  ')), centre)}
+  ${text(M, H - 26, 19, 500, '#FFFFFF', site, 'fill-opacity="0.9"')}
+  ${event.text ? text(W - M, H - 26, event.size, 400, '#FFFFFF', esc(event.text), `${end} fill-opacity="0.82"`) : ''}
 </svg>`;
 }

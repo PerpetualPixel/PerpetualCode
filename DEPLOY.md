@@ -353,12 +353,15 @@ and make a new one.
 ### What a post looks like
 
 Each play goes out as a picture of its card (`worker/src/card-svg.js` draws
-it, `worker/src/card-render.js` turns it into a PNG inside the worker) in one
-of four forms: live play, won, lost, void. Under an open play sit link
-buttons: one a book that has the line ("Add to slip"), and "Stats & why",
-which opens `GET /play/<id>` on the worker (`worker/src/play-page.js`): the
-price, the numbers, the reasons and the record for that play. A settled card
-keeps the stats button alone.
+it, `worker/src/card-render.js` turns it into a PNG inside the worker), laid
+out like a bet slip: what it is and the price on top, then the pick and its
+market, the two players, the recommended units (or the result once it
+settles), the score and the time. The whole card is the state's colour: blue
+for a live play, violet for a lean, green for a win, red for a loss, grey for
+a void. Under an open play sit link buttons: one a book that has the line
+("Add to slip"), and "More info", which opens `GET /play/<id>` on the worker
+(`worker/src/play-page.js`): the price, the numbers, the reasons and the
+record for that play. A settled card keeps the More info button alone.
 
 If the picture cannot be drawn, or Discord will not take the buttons, the
 same play goes out as a written card with its links in the text, so an alert
