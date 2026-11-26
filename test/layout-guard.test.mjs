@@ -55,3 +55,48 @@ test('an MVP leg\'s row: the stat takes the room that is left and wraps in it; t
   // On a phone the percentage sits under the count, so the stat keeps its line.
   assert.match(css, /@media \(max-width: 520px\) \{ \.mvp-leg-rate small \{ display: block; \} \}/);
 });
+
+// --- The X: every close, dismiss and clear button (2026-11-25: "fix this x and check all others, they should be centered and the same size all around within reason") ---
+
+const page = fs.readFileSync(new URL('../docs/app.html', import.meta.url), 'utf8');
+const X_CLASSES = ['overlay-close-btn', 'notice-close', 'sheet-x', 'sheet-close-x', 'players-clear', 'parlay-preset-clear'];
+
+test('every close, dismiss and clear button in the app is one of the shared X buttons', () => {
+  // A button whose whole label is an X, or that is labelled Close, Dismiss or Clear, in the page and in what the app draws.
+  const buttons = [...`${page}\n${app}`.matchAll(/<button\b[^>]*>(?:\s*[×✕]\s*|<svg[^]*?<\/svg>)<\/button>/g)].map((m) => m[0]).filter((b) => /[×✕]\s*<\/button>|aria-label="(Close|Dismiss|Clear)/.test(b));
+  assert.ok(buttons.length >= 13, `found ${buttons.length}`);
+  for (const b of buttons) assert.ok(X_CLASSES.some((c) => new RegExp(`class="[^"]*\\b${c}\\b`).test(b)), `not a shared X: ${b.slice(0, 120)}`);
+});
+
+test('the X is drawn, not typed: two bars in the middle of the button, in two sizes, each larger on a phone', () => {
+  const src = fs.readFileSync(new URL('../docs/styles.css', import.meta.url), 'utf8');
+  const block = src.slice(src.indexOf('The X: every close, dismiss and clear button'));
+  assert.ok(block.length > 500, 'the shared rule is in the stylesheet');
+  // The sizes: a panel's X and a strip's X, and the phone's larger pair.
+  assert.match(block, /:root \{ --x-size: 40px; --x-size-sm: 30px; \}/);
+  assert.match(block, /@media \(max-width: 620px\) \{ :root \{ --x-size: 44px; --x-size-sm: 34px; \} \}/);
+  for (const c of X_CLASSES) {
+    const d = rules.get(`.${c}`);
+    // The typed character is hidden and the button's one cell is centred in it.
+    assert.deepEqual([d['font-size'], d['place-content'], d['place-items'], d.padding], ['0', 'center', 'center', '0'], c);
+    // Both bars sit in that one cell, the same length, crossed.
+    const before = rules.get(`.${c}::before`); const after = rules.get(`.${c}::after`);
+    assert.deepEqual([before['grid-area'], before.background, after.transform], ['1 / 1', 'currentColor', 'rotate(-45deg)'], c);
+    // No rule of its own gives it a size or a font size that would fight the shared one.
+    assert.ok(!/\b(34|36|26|28)px\b/.test(`${d.width} ${d.height}`), `${c} takes its size from the shared rule`);
+  }
+  // Round ones are as tall as they are wide, from the one variable; the Parlay Builder's slot button keeps its own box.
+  for (const c of X_CLASSES.filter((x) => x !== 'parlay-preset-clear')) assert.deepEqual([rules.get(`.${c}`).width, rules.get(`.${c}`).height, rules.get(`.${c}`)['border-radius']], ['var(--x, var(--x-size))', 'var(--x, var(--x-size))', '50%'], c);
+  // The small ones say so.
+  for (const c of ['.notice-close', '.players-clear', '.update-banner .overlay-close-btn']) assert.equal(rules.get(c)['--x'], 'var(--x-size-sm)', c);
+});
+
+test('the tab row can never make the page wider than the window: it scrolls inside itself wherever its tabs do not fit', () => {
+  // With nine tabs it ran past the right edge under about 1280px and the whole page scrolled sideways, cutting off what sat at the right.
+  const row = rules.get('.top-tabs');
+  assert.equal(row['overflow-x'], 'auto');
+  assert.equal(row['scrollbar-width'], 'none');
+  assert.match(css, /\.top-tabs \{ overflow-x: auto; scrollbar-width: none; padding-top: 12px; margin-top: -12px; \}\n\.top-tabs::-webkit-scrollbar \{ display: none; \}/, 'at every width, not only on a phone');
+  // Between a phone and a full desktop the tabs sit closer, so they fit without scrolling where they can.
+  assert.match(css, /@media \(min-width: 620px\) and \(max-width: 1339px\) \{\s*\.top-tab \{ padding: 12px 13px; \}/);
+});
