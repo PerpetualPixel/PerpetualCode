@@ -30,6 +30,7 @@ import { safeUrl } from './safe-url.js';
 import { hardRockCombined, prizePicksCombined, phoneSlipLink, isPhone, pickText, withState, needsState, cleanState, US_STATES } from './book-links.js';
 import { groupLiveSlips, slipNumbers, parseLiveHash } from './live-slips.js';
 import { boardLegs, builderView, toggleLeg, BUILDER_MIN_LEGS, BUILDER_MAX_LEGS } from './live-builder.js';
+import { checkable as flagCheckable, nextFlagBatch, pickTicket, leftOutText, flaggedText, FLAG_ROUNDS, FLAG_TTL_MS } from './parlay-flags.js';
 import { summarizePicks, gradePick } from './learning.js';
 import { liveSetsLabel } from './tennis-results.js';
 import {
@@ -939,6 +940,8 @@ const el = {
   parlaySide: document.getElementById('parlaySide'),
   parlayStarters: document.getElementById('parlayStarters'),
   parlayStartersNote: document.getElementById('parlayStartersNote'),
+  parlayNoRed: document.getElementById('parlayNoRed'),
+  parlayNoRedNote: document.getElementById('parlayNoRedNote'),
   parlayTeam: document.getElementById('parlayTeam'),
   parlayBuild: document.getElementById('parlayBuild'),
   parlayStatus: document.getElementById('parlayStatus'),
@@ -10921,6 +10924,8 @@ const parlayState = {
   // The leagues toggled on; a ticket can mix legs from all of them.
   sports: new Set(['basketball_nba']), rows: {}, loading: false,
   book: (() => { try { const v = JSON.parse(localStorage.getItem('pixelpick.myBooks.v1') ?? 'null'); const first = Array.isArray(v) ? v.find((b) => ['draftkings', 'fanduel', 'caesars', 'fanatics', 'betmgm', 'prizepicks', 'hardrock', 'bet365', 'betrivers'].includes(b)) : null; return first ?? 'draftkings'; } catch { return 'draftkings'; } })(), legs: 4, minL5: 0, minL10: 0, l20: false, season: false, minH2H: 0, minScore: 2, stats: new Set(), odds: [-800, 800], games: new Set(), side: 'both', team: '', starters: false,
+  // Leave out the players with a red flag (docs/parlay-flags.js); off, they stay in and are marked. `flagInfo` is what the last build found.
+  noRed: false, flagInfo: null,
   // UFC only: the prop types the pieces come from (none chosen = every type).
   ufcProps: new Set(),
   built: null, locked: new Set(), seen: new Set(), breakdowns: {}, open: null, amount: 10, note: '', sprinkle: false,
@@ -11154,32 +11159,111 @@ function parlayCandidates() {
   return [...best.values()].sort((a, b) => better(b, a));
 }
 
-/** Build, or regenerate around the locked legs: the locked stay, the open slots take the best legs not shown before (the pool rotates). */
-function buildParlay({ regenerate = false } = {}) {
+/* Red flags (docs/parlay-flags.js; 2026-11-26): the reasons to stay off a line that the "Too good to be true?" card reads, asked of the
+   worker for a list of lines at a time and kept for ten minutes. A line the check does not cover (a fight, a tennis match) has none. */
+const parlayFlagCache = new Map();
+/** A line's red flags: a list, or undefined while the answer is not in. */
+function parlayFlagsOf(row) {
+  if (!flagCheckable(row)) return [];
+  const hit = parlayFlagCache.get(row.id);
+  return hit && Date.now() - hit.at < FLAG_TTL_MS ? hit.flags : undefined;
+}
+/** Ask the worker for one list of lines' red flags; true when the answer came. */
+async function fetchParlayFlags({ sportKey, ids }) {
+  try {
+    const url = new URL('/trends/flags', CONFIG.WORKER_URL); url.searchParams.set('sport', sportKey);
+    for (const id of ids) url.searchParams.append('id', id);
+    const res = await fetch(url, { headers: { Accept: 'application/json' } });
+    // A league the check does not run for: its lines have no flags to show.
+    if (res.status === 400) { for (const id of ids) parlayFlagCache.set(id, { at: Date.now(), flags: [] }); return true; }
+    if (!res.ok) return false;
+    const body = await res.json();
+    for (const id of ids) parlayFlagCache.set(id, { at: Date.now(), flags: Array.isArray(body.flags?.[id]) ? body.flags[id] : [] });
+    return true;
+  } catch { return false; }
+}
+/** Every line in `rows` answered, a list at a time; false when the worker could not be reached. */
+async function ensureParlayFlags(rows) {
+  for (let n = 0; n < 12; n++) {
+    const batch = nextFlagBatch(rows, (r) => parlayFlagsOf(r) !== undefined);
+    if (!batch) return true;
+    if (!(await fetchParlayFlags(batch))) return false;
+  }
+  return true;
+}
+
+/**
+ * Build, or regenerate around the locked legs: the locked stay, the open slots take the best legs not shown before (the pool rotates).
+ * With "Leave out red flags" on, a flagged player is passed over for the next clean one and counted; off, the ticket is built at once
+ * and its legs are checked after, so the flagged ones can be marked.
+ */
+let parlayBuildSeq = 0;
+async function buildParlay({ regenerate = false } = {}) {
   const s = parlayState;
+  const seq = ++parlayBuildSeq;
   const locked = (s.built ?? []).filter((l) => s.locked.has(l.row.id));
   if (!regenerate) { s.seen = new Set(); }
   const pool = parlayCandidates().filter((c) => !locked.some((l) => l.key === c.key || l.row.id === c.row.id));
   const want = Math.max(0, s.legs - locked.length);
   const pickem = s.book === 'prizepicks';
-  const chosen = [];
-  const take = (list) => {
-    for (const c of list) {
-      if (chosen.length >= want) break;
-      if (chosen.some((x) => x.key === c.key)) continue;
-      if (pickem && [...locked, ...chosen].length === s.legs - 1 && new Set([...locked, ...chosen, c].map((x) => x.row.team)).size < 2) continue;
-      chosen.push(c);
+  // A PrizePicks lineup needs two teams: the last slot does not go to a player who would leave it with one.
+  const fits = (c, picked) => !(pickem && locked.length + picked.length === s.legs - 1 && new Set([...locked, ...picked, c].map((x) => x.row.team)).size < 2);
+  const pick = (opts = {}) => pickTicket(pool, want, s.seen, { flagsOf: (c) => parlayFlagsOf(c.row), fits, ...opts });
+  let result;
+  let unchecked = false;
+  if (s.noRed && want > 0) {
+    s.flagInfo = { mode: 'out', checking: true };
+    renderParlay();
+    for (let round = 0; ; round++) {
+      result = pick({ noRed: true });
+      if (!result.pending) break;
+      // Enough rounds of asking: what is still unanswered is passed over, and the ticket is what the answered lines make.
+      if (round >= FLAG_ROUNDS) { result = pick({ noRed: true, skipUnknown: true }); break; }
+      // The answers still out: asked for from the candidate the walk stopped on, in the order it would take them.
+      const reached = await ensureParlayFlags(pool.slice(Math.max(0, pool.indexOf(result.pending)), undefined).slice(0, 30).map((c) => c.row));
+      if (seq !== parlayBuildSeq) return; // a newer build is under way
+      // The worker could not be reached: the ticket is built as it would be with the toggle off, and says nothing was left out.
+      if (!reached) { unchecked = true; result = pick(); break; }
     }
-  };
-  take(pool.filter((c) => !s.seen.has(c.row.id)));
-  if (chosen.length < want) { s.seen = new Set(locked.map((l) => l.row.id)); take(pool); }
+  } else result = pick();
+  const chosen = result.chosen;
+  if (result.rotated) s.seen = new Set(locked.map((l) => l.row.id));
   for (const c of chosen) s.seen.add(c.row.id);
   s.built = [...locked, ...chosen];
   s.open = null;
-  s.note = chosen.length < want ? `Only ${locked.length + chosen.length} line${locked.length + chosen.length === 1 ? '' : 's'} clear these filters at ${parlayBookName(s.book)}; loosen one for a ${s.legs}-leg ticket.` : '';
+  s.flagInfo = s.noRed ? { mode: 'out', leftOut: unchecked ? 0 : result.leftOut.length, unchecked } : { mode: 'mark', checking: s.built.some((l) => parlayFlagsOf(l.row) === undefined) };
+  const short = chosen.length < want;
+  s.note = short ? `Only ${locked.length + chosen.length} line${locked.length + chosen.length === 1 ? '' : 's'} clear these filters at ${parlayBookName(s.book)}${s.noRed && result.leftOut.length && !unchecked ? ' with the red-flagged players left out' : ''}; loosen one for a ${s.legs}-leg ticket.` : '';
   renderParlay();
   // On a phone the ticket sits below the whole configuration column.
   if (window.innerWidth <= 820) el.parlayResult?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+  // Flags off: the ticket is up; its legs are checked now, and the flagged ones marked when the answer lands.
+  if (!s.noRed && s.flagInfo.checking) {
+    const reached = await ensureParlayFlags(s.built.map((l) => l.row));
+    if (seq !== parlayBuildSeq) return;
+    s.flagInfo = { mode: 'mark', checking: false, unchecked: !reached };
+    renderParlay();
+  }
+}
+
+/** The ticket's line about red flags: how many players were left out (the toggle on), or how many of the results carry one (off). */
+function parlayFlagNote(legs) {
+  const s = parlayState; const info = s.flagInfo;
+  if (!info || !legs.length) return '';
+  if (info.checking) return '<p class="parlay-flag-note is-checking" role="status">Checking for red flags…</p>';
+  if (info.unchecked) return `<p class="parlay-flag-note is-checking" role="status">Red flags could not be checked right now${info.mode === 'out' ? ', so no player was left out' : ''}.</p>`;
+  const flagged = legs.filter((l) => (parlayFlagsOf(l.row) ?? []).length).length;
+  if (info.mode === 'out') {
+    const kept = flagged ? ` ${flagged} locked leg${flagged === 1 ? ' has' : 's have'} one and stay${flagged === 1 ? 's' : ''}.` : '';
+    return info.leftOut ? `<p class="parlay-flag-note is-out" role="status"><span aria-hidden="true">🚩</span> ${esc(leftOutText(info.leftOut))}${esc(kept)}</p>` : `<p class="parlay-flag-note is-clear" role="status">Red flags are left out: none came up in these results.${esc(kept)}</p>`;
+  }
+  return flagged ? `<p class="parlay-flag-note is-warn" role="status"><span aria-hidden="true">🚩</span> <strong>${esc(flaggedText(flagged, legs.length))}</strong> A red flag is a reason to stay off a line: open View stats for why. <button type="button" class="link-button" data-parlay-nored="on">Leave them out</button></p>` : '';
+}
+/** A leg's red flag on its card: what it is, with the reason on hover and in View stats. */
+function parlayLegFlag(row) {
+  const flags = parlayFlagsOf(row) ?? [];
+  if (!flags.length) return '';
+  return `<p class="parlay-leg-red" title="${esc(flags.map((f) => `${f.title}: ${f.text}`).join(' '))}"><span aria-hidden="true">🚩</span> <strong>Red flag:</strong> ${esc(flags.map((f) => f.title).join(' · '))}</p>`;
 }
 
 function parlayPriceOf(legs) {
@@ -11395,8 +11479,9 @@ function renderParlayLeg(leg) {
     </div>
   </div>`;
   }
-  return `<div class="parlay-leg ${locked ? 'is-locked' : ''}" data-parlay-leg="${esc(r.id)}">
-    <div class="parlay-leg-bar" style="--tone:${r.side === 'over' ? 'var(--success)' : '#60a5fa'}"></div>
+  const red = (parlayFlagsOf(r) ?? []).length > 0;
+  return `<div class="parlay-leg ${locked ? 'is-locked' : ''} ${red ? 'has-red' : ''}" data-parlay-leg="${esc(r.id)}">
+    <div class="parlay-leg-bar" style="--tone:${red ? 'var(--danger)' : r.side === 'over' ? 'var(--success)' : '#60a5fa'}"></div>
     <div class="parlay-leg-body">
       <div class="parlay-leg-head">
         ${avatarHtml(r)}
@@ -11405,6 +11490,7 @@ function renderParlayLeg(leg) {
         <button type="button" class="parlay-lock ${locked ? 'is-on' : ''}" data-parlay-lock="${esc(r.id)}" aria-pressed="${locked}" title="${locked ? 'Unlock' : 'Lock this leg'}">${locked ? '🔒' : '🔓'}</button>
       </div>
       <p class="parlay-leg-line">${esc(lineText(r))} <small>${esc(teamAbbr(r.away))} @ ${esc(teamAbbr(r.home))} · ${esc(trendTimeFmt.format(new Date(r.commenceMs)))}</small></p>
+      ${parlayLegFlag(r)}
       <div class="parlay-chips">${r.yesNo && Number.isFinite(r.prob) ? `<span class="parlay-chip">${esc(pct(r.prob))} chance</span><span class="parlay-chip">#${esc(String(r.fieldRank))} of ${esc(String(r.fieldSize))} ${r.statKey === 'firstTeamBasket' ? 'on the team' : 'in the game'}</span>` : `${chip('L5', p.l5)}${chip('L10', p.l10)}${chip(`vs ${r.opponent ?? ''}`, p.h2h?.games ? p.h2h : null)}${r.yesNo && Number.isFinite(q.decimal) && q.decimal > 1 ? `<span class="parlay-chip">priced at ${esc(pct(1 / q.decimal))}</span>` : ''}`}</div>
       <div class="parlay-leg-actions">
         <button type="button" class="parlay-btn" data-parlay-view="${esc(r.id)}">${open ? 'Hide breakdown' : 'Why this leg'}</button>
@@ -11502,6 +11588,10 @@ function renderParlay() {
       ? `On: today's lineup where it is posted (${inToday} of ${teamsToday.size} teams), else who started the team's last game${known ? ` (${starters} of ${known} lines)` : ''}${none.length ? `; no starter data for ${none.join(', ')} yet, so those lines all stay` : ''}`
       : `Off: every player with a line${known ? ` (${starters} starters, ${known - starters} bench; lineups in for ${inToday} of ${teamsToday.size} teams today)` : ''}`;
   }
+  if (el.parlayNoRed) {
+    el.parlayNoRed.classList.toggle('is-active', s.noRed); el.parlayNoRed.setAttribute('aria-pressed', String(s.noRed));
+    el.parlayNoRedNote.textContent = s.noRed ? 'On: a player with a reason to stay off (a teammate back, minutes down, a change of team) is left out, and the ticket says how many' : 'Off: flagged players stay in, marked with a red flag';
+  }
   const teams = [...new Set(live.map((r) => r.team).filter(Boolean))].sort();
   el.parlayTeam.innerHTML = `<option value="">${isTennisOnlyParlay() ? 'Both tours' : 'Any team'}</option>${teams.map((t) => `<option value="${esc(t)}" ${s.team === t ? 'selected' : ''}>${esc(t)}</option>`).join('')}`;
   const teamLabel = el.parlayTeam.closest('.parlay-field')?.querySelector('span'); if (teamLabel) teamLabel.textContent = isTennisOnlyParlay() ? 'Tour' : 'Team';
@@ -11541,6 +11631,7 @@ function renderParlay() {
     <div class="parlay-card">
       <div class="parlay-card-head"><strong>${legs.length}-leg ${s.book === 'prizepicks' ? 'Power Play' : 'parlay'}</strong> ${price ? `<span class="parlay-price">${esc(formatAmerican(price.american))}</span>` : ''}<span class="parlay-card-book">${bookBadge(s.book, parlayBookName(s.book))}${esc(parlayBookName(s.book))}</span></div>
       ${s.note ? `<p class="parlay-note">${esc(s.note)}</p>` : ''}
+      ${parlayFlagNote(legs)}
       ${price?.unpriced ? `<p class="parlay-note">${esc(String(price.unpriced))} leg${price.unpriced === 1 ? ' has' : 's have'} no line yet; the price covers the ${esc(String(price.priced))} priced leg${price.priced === 1 ? '' : 's'}.</p>` : legs.length && !price ? '<p class="parlay-note">No line on any of these legs yet; the price comes once a book posts them.</p>' : ''}
       <div class="parlay-card-top">${all ? `<a class="parlay-all" href="${escUrl(all)}" target="_blank" rel="noopener">Add all ${legs.length} legs to your ${esc(parlayBookName(s.book))} slip ↗</a>` : some ? `<a class="parlay-all" href="${escUrl(some)}" target="_blank" rel="noopener">Add ${slipLegs.length} of ${legs.length} legs to your ${esc(parlayBookName(s.book))} slip ↗</a><p class="row-sub">${esc(parlayBookName(s.book))} has no slip link for the other ${legs.length - slipLegs.length}: add ${legs.length - slipLegs.length === 1 ? 'it' : 'them'} by hand (${legs.filter((l) => !slipLegs.includes(l)).map((l) => esc(l.row?.selection ?? l.selection ?? '')).filter(Boolean).join('; ')}).</p>` : parlaySlipNote(s.book, legs)}</div>
       <div class="parlay-legs">${legs.map(renderParlayLeg).join('')}</div>
@@ -11599,6 +11690,9 @@ el.parlayView?.addEventListener('click', (event) => {
   if (t.closest('[data-parlay-season]')) { s.season = !s.season; renderParlay(); return; }
   if (t.closest('[data-parlay-l20]')) { s.l20 = !s.l20; renderParlay(); return; }
   if (t.closest('[data-parlay-starters]')) { s.starters = !s.starters; renderParlay(); return; }
+  // Red flags in or out: a ticket on screen is built again under the new choice (the locked legs stay).
+  const noRed = t.closest('[data-parlay-nored]');
+  if (noRed) { s.noRed = noRed.dataset.parlayNored === 'on' ? true : !s.noRed; s.flagInfo = null; queueParlaySave(); markParlayPresets(); if (s.built) buildParlay(); else renderParlay(); return; }
   const stat = t.closest('[data-parlay-stat]');
   if (stat) { const k = stat.dataset.parlayStat; if (s.stats.has(k)) s.stats.delete(k); else s.stats.add(k); renderParlay(); return; }
   const ufcProp = t.closest('[data-parlay-ufc-prop]');
@@ -11607,7 +11701,7 @@ el.parlayView?.addEventListener('click', (event) => {
   if (game) { const k = game.dataset.parlayGame; if (s.games.has(k)) s.games.delete(k); else s.games.add(k); renderParlay(); return; }
   if (t.closest('[data-parlay-build]')) { s.sprinkle = false; buildParlay({ regenerate: Boolean(s.built) }); return; }
   if (t.closest('[data-parlay-sprinkle]')) { s.sprinkle = !s.sprinkle; renderParlay(); if (s.sprinkle && window.innerWidth <= 820) el.parlayResult?.scrollIntoView({ behavior: 'smooth', block: 'start' }); return; }
-  if (t.closest('[data-parlay-reset]')) { Object.assign(s, { legs: 4, minL5: 0, minL10: 0, l20: false, season: false, minH2H: 0, minScore: 2, stats: new Set(), odds: [-800, 800], games: new Set(), side: 'both', team: '', starters: false, ufcProps: new Set(), built: null, locked: new Set(), seen: new Set(), open: null, note: '' }); renderParlay(); return; }
+  if (t.closest('[data-parlay-reset]')) { Object.assign(s, { legs: 4, minL5: 0, minL10: 0, l20: false, season: false, minH2H: 0, minScore: 2, stats: new Set(), odds: [-800, 800], games: new Set(), side: 'both', team: '', starters: false, noRed: false, flagInfo: null, ufcProps: new Set(), built: null, locked: new Set(), seen: new Set(), open: null, note: '' }); renderParlay(); return; }
   const lock = t.closest('[data-parlay-lock]');
   if (lock) { const id = lock.dataset.parlayLock; if (s.locked.has(id)) s.locked.delete(id); else s.locked.add(id); renderParlay(); return; }
   const view = t.closest('[data-parlay-view]');

@@ -74,7 +74,7 @@ import { playPage, missingPlayPage } from './play-page.js';
 import { getTennisTrends } from './tennis-trends.js';
 import { sendUfcTicketNotifications, sendUfcChangeNotifications } from './notifications.js';
 import { legBreakdown } from './parlay-builder.js';
-import { lineCheck } from './line-check.js';
+import { lineCheck, redFlags, RED_CHECK_LINES } from './line-check.js';
 import { runTrendPicksDaily, runTrendPicksGrading, getTrendPicks } from './trend-picks.js';
 import { runMvpPicksDaily, runMvpPicksGrading, getMvpPicks } from './mvp-picks.js';
 import { runLiveProbe, getLiveProbe } from './live-probe.js';
@@ -1709,6 +1709,20 @@ export default {
         const out = await lineCheck(env, sportKey, rowId, ctx);
         if (!out) return json({ error: 'that line is no longer on the board' }, { status: 404, headers: cors });
         return json(out, { headers: { ...cors, 'Cache-Control': 'public, max-age=600' } });
+      } catch (error) {
+        return json({ error: String(error).slice(0, 120) }, { status: 500, headers: cors });
+      }
+    }
+
+    // The red flags on a list of lines, for the Parlay Builder's "leave out red flags" (worker/src/line-check.js's redFlags):
+    // the same stored records the card above reads, once for the whole list. No odds call, no model call.
+    if (pathname === '/trends/flags' && request.method === 'GET') {
+      const q = new URL(request.url).searchParams;
+      const sportKey = q.get('sport') ?? 'basketball_nba';
+      const ids = q.getAll('id').filter((id) => id && id.length <= 300);
+      if (!TREND_ENABLED_SPORTS.includes(sportKey) || !ids.length || ids.length > RED_CHECK_LINES) return json({ error: `a sport and one to ${RED_CHECK_LINES} lines` }, { status: 400, headers: cors });
+      try {
+        return json(await redFlags(env, sportKey, ids, ctx), { headers: { ...cors, 'Cache-Control': 'public, max-age=600' } });
       } catch (error) {
         return json({ error: String(error).slice(0, 120) }, { status: 500, headers: cors });
       }

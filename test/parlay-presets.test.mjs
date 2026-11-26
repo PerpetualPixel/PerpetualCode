@@ -5,7 +5,10 @@ import { cleanParlaySettings, parlaySnapshot, applyParlaySnapshot, parlaySlotNam
 test('a snapshot keeps the settings a user means and drops the day\'s choices; junk falls back to the defaults', () => {
   const state = { sports: new Set(['basketball_nba', 'americanfootball_nfl']), book: 'fanduel', legs: 6, minL5: 4, minL10: 7, l20: true, season: true, minH2H: 0.7, minScore: 4, stats: new Set(['points', 'anyTd']), odds: [-400, 250], games: new Set(['g1']), side: 'over', team: 'BOS', starters: true, ufcProps: new Set(), amount: 25, built: [{}], rows: { x: [] } };
   const snap = parlaySnapshot(state);
-  assert.deepEqual(snap, { sports: ['basketball_nba', 'americanfootball_nfl'], book: 'fanduel', legs: 6, minL5: 4, minL10: 7, l20: true, season: true, minH2H: 0.7, minScore: 4, stats: ['points', 'anyTd'], odds: [-400, 250], side: 'over', starters: true, ufcProps: [], amount: 25 });
+  assert.deepEqual(snap, { sports: ['basketball_nba', 'americanfootball_nfl'], book: 'fanduel', legs: 6, minL5: 4, minL10: 7, l20: true, season: true, minH2H: 0.7, minScore: 4, stats: ['points', 'anyTd'], odds: [-400, 250], side: 'over', starters: true, noRed: false, ufcProps: [], amount: 25 });
+  // Leaving out red-flagged players is a setting like the rest: kept when on, off for anything else.
+  assert.equal(parlaySnapshot({ ...state, noRed: true }).noRed, true);
+  assert.equal(parlaySnapshot({ ...state, noRed: 'yes' }).noRed, false);
   assert.equal('games' in snap || 'team' in snap || 'built' in snap, false);
   const junk = cleanParlaySettings({ sports: ['<x>'], book: 'bookie', legs: 99, minL5: 9, minL10: -3, l20: 'yes', odds: [500, -500], side: 'sideways', stats: ['ok', 'no way!'], amount: 'abc' });
   assert.deepEqual([junk.sports, junk.book, junk.legs, junk.minL5, junk.minL10, junk.l20, junk.odds, junk.side, junk.stats, junk.amount], [['basketball_nba'], 'draftkings', 25, 5, 0, false, [-500, 500], 'both', ['ok'], 10]);

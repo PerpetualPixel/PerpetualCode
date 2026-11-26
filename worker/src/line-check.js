@@ -18,11 +18,13 @@
  * bundled game logs, the injury report) and ESPN's free game summary. No
  * odds call and no model call.
  */
-import { loadBundleTeams, loadInjuries } from './espn-bundle.js';
+import { loadBundleTeams, loadInjuries, injuryFor, loadRoles, roleFor } from './espn-bundle.js';
 import { basketballStatRows } from './basketball-props.js';
 import { nflStatRows } from './football-props.js';
 import { fetchContext, hasContext } from './context.js';
 import { findTrendRow } from './parlay-builder.js';
+import { getTrends } from './trends.js';
+import { attachSeries } from '../../docs/trends.js';
 import { lineFlags, lineVerdict, looksTooGood, baseWindow } from '../../docs/line-check.js';
 
 /** A teammate counts when he averages this share of the player's own number in the same stat. */
@@ -88,19 +90,27 @@ export function teammateChanges(row, team, report, { gamesOf = (p) => statGames(
   return out.sort((x, y) => y.avg - x.avg).slice(0, 4);
 }
 
+/** The teammates' flags for a row, from its team's record and the injury report: who is back, who may be, who is out. */
+export function teammateFlags(row, team, report, opts = {}) {
+  const flags = [];
+  const over = row.side !== 'under';
+  const stat = String(row.statLabel ?? row.marketLabel ?? 'this stat').toLowerCase();
+  for (const t of teammateChanges(row, team, report, opts)) {
+    if (t.kind === 'back') flags.push({ key: `back:${t.name}`, tone: over ? 'bad' : 'info', title: `${t.name} is back`, text: `He missed ${t.missed} of the team's ${t.of} games before the last one and averages ${t.avg} ${stat}. ${t.without} of this player's last ${t.sample} came without him, so the record ${over ? 'flatters the role he has tonight' : 'was set with more of the ball than he gets tonight'}.` });
+    else if (t.kind === 'due') flags.push({ key: `due:${t.name}`, tone: over ? 'warn' : 'info', title: `${t.name} may be back`, text: `He has missed the team's last ${t.missed} game${t.missed === 1 ? '' : 's'} and is ${t.status ? `listed ${t.status.toLowerCase()}` : 'not listed as out'}. ${t.without} of this player's last ${t.sample} came without him. Check the lineup: if he plays, the role shrinks.` });
+    else flags.push({ key: `out:${t.name}`, tone: 'info', title: `${t.name} is out`, text: `Listed ${t.status.toLowerCase()}, and averages ${t.avg} ${stat}. The usage shifts${t.without < t.of / 2 ? `: only ${t.without} of this player's last ${t.of} came without him` : ''}. It can lift an over as easily as it changes the role.` });
+  }
+  return flags;
+}
+
 /** The lineup flags for a row: teammates back, due back or out, and a likely blowout. `deps` stands in for the stored records in tests. */
 export async function lineupFlags(env, row, ctx, { deps = {} } = {}) {
   const flags = [];
   const over = row.side !== 'under';
-  const stat = String(row.statLabel ?? row.marketLabel ?? 'this stat').toLowerCase();
   try {
     const team = deps.team ? await deps.team(row) : (await loadBundleTeams(env, row.sportKey, [row.team])).get(String(row.team ?? '').toUpperCase());
     const report = deps.report ? await deps.report(row) : await loadInjuries(env, row.sportKey).catch(() => ({ players: {} }));
-    for (const t of teammateChanges(row, team, report, deps.gamesOf ? { gamesOf: deps.gamesOf } : {})) {
-      if (t.kind === 'back') flags.push({ key: `back:${t.name}`, tone: over ? 'bad' : 'info', title: `${t.name} is back`, text: `He missed ${t.missed} of the team's ${t.of} games before the last one and averages ${t.avg} ${stat}. ${t.without} of this player's last ${t.sample} came without him, so the record ${over ? 'flatters the role he has tonight' : 'was set with more of the ball than he gets tonight'}.` });
-      else if (t.kind === 'due') flags.push({ key: `due:${t.name}`, tone: over ? 'warn' : 'info', title: `${t.name} may be back`, text: `He has missed the team's last ${t.missed} game${t.missed === 1 ? '' : 's'} and is ${t.status ? `listed ${t.status.toLowerCase()}` : 'not listed as out'}. ${t.without} of this player's last ${t.sample} came without him. Check the lineup: if he plays, the role shrinks.` });
-      else flags.push({ key: `out:${t.name}`, tone: 'info', title: `${t.name} is out`, text: `Listed ${t.status.toLowerCase()}, and averages ${t.avg} ${stat}. The usage shifts${t.without < t.of / 2 ? `: only ${t.without} of this player's last ${t.of} came without him` : ''}. It can lift an over as easily as it changes the role.` });
-    }
+    flags.push(...teammateFlags(row, team, report, deps.gamesOf ? { gamesOf: deps.gamesOf } : {}));
   } catch (e) { console.error('Line check, teammates:', e); }
   try {
     const context = deps.context ? await deps.context(row) : (hasContext(row.sportKey) ? await fetchContext({ sportKey: row.sportKey, home: row.home, away: row.away }, ctx).catch(() => null) : null);
@@ -117,4 +127,46 @@ export async function lineCheck(env, sportKey, rowId, ctx, { now = Date.now(), d
   const flags = [...lineFlags(row), ...(await lineupFlags(env, row, ctx, { deps }))];
   const tooGood = looksTooGood(row);
   return { rowId, at: now, tooGood, verdict: lineVerdict(flags, { tooGood }), flags };
+}
+
+/** The most lines one red-flag request checks. */
+export const RED_CHECK_LINES = 40;
+
+/**
+ * The red flags on a list of stored lines (2026-11-26, the owner, of the
+ * Parlay Builder: "a toggle ... to include or exclude red flagged players
+ * ... 7 players left out due to red flag indicators"): for each line, the
+ * flags of the "Too good to be true?" card that are a reason to stay off
+ * (`tone: 'bad'`): minutes down, listed out, a change of team, a teammate
+ * back in the lineup. The same checks the card runs (lineFlags and
+ * teammateFlags), for many lines in one read: the board once, the injury
+ * report and the roles once, each team's record once. The blowout note is
+ * never a reason to stay off, so the game context is not fetched.
+ *
+ * Returns {sportKey, at, checked, flags}: the ids found on the board, and
+ * for the ones with a red flag, [{key, title, text}].
+ */
+export async function redFlags(env, sportKey, rowIds, ctx, { now = Date.now(), deps = {} } = {}) {
+  const ids = [...new Set((rowIds ?? []).map(String))].slice(0, RED_CHECK_LINES);
+  const t = deps.trends ? await deps.trends() : await getTrends(env, sportKey);
+  const want = new Set(ids);
+  const found = (t?.rows ?? []).filter((r) => want.has(r.id));
+  const rows = attachSeries(found, t?.logs);
+  const [report, roles] = await Promise.all([
+    deps.report ? deps.report() : loadInjuries(env, sportKey).catch(() => ({ players: {} })),
+    deps.roles ? deps.roles() : loadRoles(env, sportKey).catch(() => null),
+  ]);
+  const teams = deps.teams ? await deps.teams(rows) : await loadBundleTeams(env, sportKey, rows.map((r) => r.team)).catch(() => new Map());
+  // A player's games in a stat are read once, however many lines ask for them.
+  const memo = new Map();
+  const gamesIn = (statKey) => deps.gamesOf ?? ((p) => { const k = `${p.id ?? p.name}|${statKey}`; if (!memo.has(k)) memo.set(k, statGames(sportKey, p.log, statKey)); return memo.get(k); });
+  const flags = {};
+  for (const base of rows) {
+    const row = { ...base, injury: injuryFor(report, base.athleteId), role: roles ? roleFor(roles, base.athleteId) : null };
+    let bad = lineFlags(row);
+    try { bad = [...bad, ...teammateFlags(row, teams.get(String(row.team ?? '').toUpperCase()), report, { gamesOf: gamesIn(row.statKey) })]; } catch (e) { console.error('Red flags, teammates:', e); }
+    bad = bad.filter((f) => f.tone === 'bad').map(({ key, title, text }) => ({ key, title, text }));
+    if (bad.length) flags[row.id] = bad;
+  }
+  return { sportKey, at: now, checked: rows.map((r) => r.id), flags };
 }

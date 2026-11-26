@@ -9,7 +9,7 @@
  *
  * A snapshot holds what a user means by "my settings": the leagues, the
  * book, the legs, the bars, the prop types, the odds range, the side,
- * starters only and the stake. The games and the team are the day's and
+ * starters only, whether red-flagged players are left out, and the stake. The games and the team are the day's and
  * are left out.
  *
  * The hit bars (2026-11-21: "back to last 1-5 and then last 10, and then
@@ -49,6 +49,8 @@ export function cleanParlaySettings(value) {
     odds,
     side: ['both', 'over', 'under'].includes(value.side) ? value.side : 'both',
     starters: value.starters === true,
+    // Leave out the players with a red flag (docs/parlay-flags.js); off, they stay in and are marked.
+    noRed: value.noRed === true,
     ufcProps: list(value.ufcProps, STAT_RE, 30),
     amount: Math.round(num(value.amount, 0, 100000, 10) * 100) / 100,
   };

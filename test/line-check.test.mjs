@@ -102,3 +102,32 @@ test('a teammate still missing is "may be back" unless the report has him out; a
   const bare = await lineCheck({}, 'basketball_nba', 'r2', {}, { deps: { row: nbaRow, team: async () => null, report: async () => ({ players: {} }), context: async () => null } });
   assert.ok(bare.flags.some((f) => f.key === 'price'));
 });
+
+// --- The red flags on a list of lines (2026-11-26: the Parlay Builder's "leave out red flags") ---
+import { redFlags, teammateFlags, RED_CHECK_LINES } from '../worker/src/line-check.js';
+
+test('red flags for a list of lines: only the reasons to stay off, one read for the list, and a line off the board is not checked', async () => {
+  const murphy = nbaRow;
+  const under = { ...nbaRow, id: 'r3', side: 'under' };
+  // A player on the other team, whose lineup has not changed.
+  const clean = { ...nbaRow, id: 'r4', playerName: 'Another Starter', athleteId: '4', team: 'DEN', opponent: 'NO', periods: { l5: period(Array(5).fill(12), 9.5), l10: period(Array(10).fill(12), 9.5), l20: period(Array(20).fill(12), 9.5) }, point: 9.5, series: series(Array(20).fill(12), () => 'LAL') };
+  let reads = 0;
+  const deps = { trends: async () => { reads++; return { rows: [murphy, under, clean] }; }, report: async () => ({ players: {} }), roles: async () => null, teams: async () => new Map([['NO', team([1, 2, 3, 4, 5])]]), gamesOf };
+  const out = await redFlags({}, 'basketball_nba', ['r2', 'r3', 'r4', 'gone', 'r2'], {}, { now: 5, deps });
+  assert.equal(reads, 1);
+  assert.deepEqual([out.sportKey, out.at, out.checked], ['basketball_nba', 5, ['r2', 'r3', 'r4']]);
+  // Ingram back is a reason to stay off the over; on the under it is information, and the price flag is a warning: neither is red.
+  assert.deepEqual(Object.keys(out.flags), ['r2']);
+  assert.deepEqual(out.flags.r2.map((f) => [f.key, f.title]), [['back:Brandon Ingram', 'Brandon Ingram is back']]);
+  assert.deepEqual(Object.keys(out.flags.r2[0]).sort(), ['key', 'text', 'title']);
+  // The same flag the card shows.
+  assert.equal(teammateFlags(murphy, team([1, 2, 3, 4, 5]), { players: {} }, { gamesOf })[0].text, out.flags.r2[0].text);
+  // A player listed out is red off the line itself, with no team record to hand.
+  const listed = await redFlags({}, 'basketball_nba', ['r4'], {}, { deps: { ...deps, report: async () => ({ players: { 4: { name: 'Another Starter', team: 'DEN', status: 'Out' } } }), teams: async () => new Map() } });
+  assert.deepEqual(listed.flags.r4.map((f) => f.key), ['injury']);
+  // No more than the limit is checked in one go, and nothing asked is nothing checked.
+  const many = Array.from({ length: RED_CHECK_LINES + 5 }, (_, i) => ({ ...clean, id: `m${i}` }));
+  const capped = await redFlags({}, 'basketball_nba', many.map((r) => r.id), {}, { deps: { ...deps, trends: async () => ({ rows: many }) } });
+  assert.equal(capped.checked.length, RED_CHECK_LINES);
+  assert.deepEqual((await redFlags({}, 'basketball_nba', [], {}, { deps })).checked, []);
+});
