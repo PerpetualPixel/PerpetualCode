@@ -42,6 +42,15 @@ export const WEEKLY_WEEKDAY = 'Mon';
 export const DIGEST_DAY_KEY = (dateKey, source = 'tennis') => (source === 'tennis' ? `discord:digest:day:${dateKey}` : `discord:digest:${source}:day:${dateKey}`);
 export const DIGEST_WEEK_KEY = (dateKey, source = 'tennis') => (source === 'tennis' ? `discord:digest:week:${dateKey}` : `discord:digest:${source}:week:${dateKey}`);
 export const DIGEST_STATUS_KEY = 'discord:digest:status';
+/**
+ * A roll-up posted once, riding a deploy, for a day the hour has not reached or had already passed when the
+ * channel was set up (2026-11-25, the owner, the evening the NBA results channel went up: "Can you have it post the
+ * results from last night manually?"). {id, source, day}: a new id posts once more; null posts nothing. A day
+ * whose window is still open posts what has settled "so far" and leaves no day record, so the morning's roll-up
+ * still covers the whole day.
+ */
+export const ONE_OFF = { id: '2026-11-25-nba-1', source: 'nba', day: '2026-11-25' };
+export const DIGEST_ONE_OFF_KEY = (id) => `discord:digest:oneoff:${id}`;
 const RECORD_TTL = 35 * 86400;
 const SITE = 'https://perpetualpicks.com/app.html';
 const LOGO = 'https://perpetualpicks.com/assets/logo-icon-180.png';
@@ -198,11 +207,11 @@ export function packLines(lines, max = DESCRIPTION_MAX) {
  * is titled with the day and carries the record in its footer; a long day runs on into further embeds. `label`
  * names the sport ('TENNIS', 'NBA', 'NFL'); `line` writes a play.
  */
-export function dailyDigestMessage(playedDateKey, plays, { playbook = null, label = 'TENNIS', line = resultLine } = {}) {
+export function dailyDigestMessage(playedDateKey, plays, { playbook = null, label = 'TENNIS', line = resultLine, soFar = false } = {}) {
   const lines = plays.map(line);
   const pages = packLines(lines);
   const record = recordLine(plays);
-  const title = `📊 ${label} RESULTS · ${longDay(playedDateKey)} · ${plays.length} play${plays.length === 1 ? '' : 's'}`;
+  const title = `📊 ${label} RESULTS · ${longDay(playedDateKey)}${soFar ? ' · so far' : ''} · ${plays.length} play${plays.length === 1 ? '' : 's'}`;
   const embeds = pages.map((description, i) => ({
     ...(i === 0 ? { author: { name: `PERPETUAL PICKS · LIVE ${label}`, url: SITE, icon_url: LOGO }, title: title.slice(0, 250), url: SITE } : {}),
     description,
@@ -276,26 +285,34 @@ async function postAll(fetcher, hook, message) {
 
 const writeJson = (env, key, value) => env.POTD_KV.put(key, JSON.stringify(value), { expirationTtl: RECORD_TTL });
 
-/** One source's daily and weekly, on a tick inside the hour (or forced). */
-async function runSource(env, name, source, hook, now, clock, { fetcher, playbook, deps }) {
+/**
+ * One source's daily and weekly, on a tick inside the hour (or forced). With `day` (an ET date), that day's
+ * roll-up alone: its window as it stands when the window is still open (said "so far", and nothing recorded, so
+ * the morning's post still covers the whole day), the day as usual once it has closed.
+ */
+async function runSource(env, name, source, hook, now, clock, { fetcher, playbook, deps, day = null }) {
   const out = { daily: null, weekly: null };
-  const { startMs, endMs, playedDateKey } = digestWindow(clock.date);
-  if (await readJson(env, DIGEST_DAY_KEY(playedDateKey, name))) {
+  const win = day ? { playedDateKey: day, startMs: etInstant(day, DIGEST_HOUR), endMs: etInstant(shiftDate(day, 1), DIGEST_HOUR) } : digestWindow(clock.date);
+  const { playedDateKey } = win;
+  const soFar = Boolean(day) && now < win.endMs;
+  const startMs = win.startMs; const endMs = soFar ? now : win.endMs;
+  if (!soFar && await readJson(env, DIGEST_DAY_KEY(playedDateKey, name))) {
     out.daily = { skipped: 'posted', day: playedDateKey };
   } else {
     const plays = settledIn(await source.plays(env, startMs, endMs, deps), startMs, endMs);
     if (!plays.length) {
-      out.daily = { skipped: 'no plays', day: playedDateKey };
+      out.daily = { skipped: 'no plays', day: playedDateKey, ...(soFar ? { soFar: true } : {}) };
     } else {
-      const r = await postAll(fetcher, hook, dailyDigestMessage(playedDateKey, plays, { playbook, label: source.label, line: source.line }));
+      const r = await postAll(fetcher, hook, dailyDigestMessage(playedDateKey, plays, { playbook, label: source.label, line: source.line, soFar }));
       if (r.ok) {
-        await writeJson(env, DIGEST_DAY_KEY(playedDateKey, name), { at: now, plays: plays.length, ...talliesOf(plays), messageIds: r.ids });
-        out.daily = { posted: r.ids.length, day: playedDateKey, plays: plays.length };
+        if (!soFar) await writeJson(env, DIGEST_DAY_KEY(playedDateKey, name), { at: now, plays: plays.length, ...talliesOf(plays), messageIds: r.ids });
+        out.daily = { posted: r.ids.length, day: playedDateKey, plays: plays.length, ...(soFar ? { soFar: true } : {}) };
       } else {
         out.daily = { failed: r.status, day: playedDateKey };
       }
     }
   }
+  if (day) return out;
 
   if (clock.weekday === WEEKLY_WEEKDAY) {
     const weekStartKey = shiftDate(clock.date, -7); // last Monday: the week that ended this morning
@@ -338,20 +355,32 @@ async function runSource(env, name, source, hook, now, clock, { fetcher, playboo
  * name; {off} with no results webhook at all. `deps.fetch`, `deps.plays(date)` (tennis), `deps.ledger(league)`
  * and `deps.playbook` stand in for Discord and the stored plays in tests.
  */
-export async function runResultsDigest(env, now = Date.now(), { force = false, deps = {} } = {}) {
+export async function runResultsDigest(env, now = Date.now(), { force = false, day = null, deps = {} } = {}) {
   const hooks = Object.fromEntries(Object.entries(SOURCES).map(([name, src]) => [name, src.hook(env)]));
   if (!Object.values(hooks).some(Boolean)) return { off: true };
   const clock = etClock(now);
-  if (!force && clock.hour !== DIGEST_HOUR) return { skipped: 'hour' };
-  const fetcher = deps.fetch ?? fetch;
-  const playbook = deps.playbook !== undefined ? deps.playbook : await playbookTag(env);
-  const out = { date: clock.date, daily: null, weekly: null };
+  const io = { fetcher: deps.fetch ?? fetch, playbook: null, deps };
+  const tag = async () => (deps.playbook !== undefined ? deps.playbook : await playbookTag(env));
+  // The one-off first, on any tick: once, marked before it is sent so a run that dies mid-send does not send it again.
+  const oneOff = deps.oneOff !== undefined ? deps.oneOff : ONE_OFF;
+  let oneOffOut = null;
+  if (oneOff?.id && hooks[oneOff.source] && SOURCES[oneOff.source] && !(await readJson(env, DIGEST_ONE_OFF_KEY(oneOff.id)))) {
+    await writeJson(env, DIGEST_ONE_OFF_KEY(oneOff.id), { at: now, state: 'sending', ...oneOff });
+    io.playbook = await tag();
+    const r = await runSource(env, oneOff.source, SOURCES[oneOff.source], hooks[oneOff.source], now, clock, { ...io, day: oneOff.day });
+    await writeJson(env, DIGEST_ONE_OFF_KEY(oneOff.id), { at: now, state: r.daily?.posted ? 'done' : 'skipped', ...oneOff, result: r.daily });
+    oneOffOut = { id: oneOff.id, source: oneOff.source, ...r.daily };
+  }
+  if (!force && !day && clock.hour !== DIGEST_HOUR) return oneOffOut ? { skipped: 'hour', oneOff: oneOffOut } : { skipped: 'hour' };
+  io.playbook ??= await tag();
+  const { fetcher, playbook } = io;
+  const out = { date: clock.date, daily: null, weekly: null, ...(oneOffOut ? { oneOff: oneOffOut } : {}) };
   const status = (await readJson(env, DIGEST_STATUS_KEY)) ?? {};
   for (const [name, source] of Object.entries(SOURCES)) {
     if (!hooks[name]) { if (name !== 'tennis') out[name] = { off: true }; continue; }
-    const r = await runSource(env, name, source, hooks[name], now, clock, { fetcher, playbook, deps });
+    const r = await runSource(env, name, source, hooks[name], now, clock, { fetcher, playbook, deps, day });
     const slot = name === 'tennis' ? status : (status[name] ??= {});
-    if (r.daily?.posted) slot.lastDaily = { day: r.daily.day, at: now, plays: r.daily.plays, tagged: Boolean(playbook) };
+    if (r.daily?.posted && !r.daily.soFar) slot.lastDaily = { day: r.daily.day, at: now, plays: r.daily.plays, tagged: Boolean(playbook) };
     if (r.weekly?.posted) slot.lastWeekly = { week: r.weekly.week, at: now, plays: r.weekly.plays, tagged: Boolean(playbook) };
     if (name === 'tennis') Object.assign(out, r); else out[name] = r;
   }

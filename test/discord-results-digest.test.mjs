@@ -8,7 +8,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import {
-  DIGEST_HOUR, DIGEST_DAY_KEY, DIGEST_WEEK_KEY,
+  DIGEST_HOUR, DIGEST_DAY_KEY, DIGEST_WEEK_KEY, DIGEST_ONE_OFF_KEY, ONE_OFF,
   etClock, etInstant, shiftDate, digestWindow, settledIn, resultLine, slipResultLine, recordLine, packLines, sumTallies, talliesOf,
   dailyDigestMessage, weeklyDigestMessage, runResultsDigest, digestStatus, ledgerPlays,
 } from '../worker/src/discord-results-digest.js';
@@ -157,7 +157,7 @@ test('the run: yesterday posts once at 6am ET through the results webhook, with 
   stored(store, '2026-11-24', [play({ id: 'a', gradedAt: w.startMs + 3600e3 }), play({ id: 'early', gradedAt: w.startMs - 3600e3 })]);
   stored(store, '2026-11-25', [play({ id: 'b', gradedAt: w.endMs - 60e3, result: 'loss', profit: -1 }), play({ id: 'late', gradedAt: w.endMs + 60e3 })]);
   const d = fakeDiscord();
-  const r = await runResultsDigest(env, at('2026-11-25', 6, 7), { deps: { fetch: d.fetch } });
+  const r = await runResultsDigest(env, at('2026-11-25', 6, 7), { deps: { fetch: d.fetch, oneOff: null } });
   assert.deepEqual(r, { date: '2026-11-25', daily: { posted: 1, day: '2026-11-24', plays: 2 }, weekly: null, nba: { off: true }, nfl: { off: true } });
   assert.equal(d.calls.length, 1);
   assert.equal(d.calls[0].method, 'POST');
@@ -169,28 +169,28 @@ test('the run: yesterday posts once at 6am ET through the results webhook, with 
   const rec = JSON.parse(store.get(DIGEST_DAY_KEY('2026-11-24')));
   assert.deepEqual([rec.plays, rec.tally.wins, rec.tally.losses, rec.leans.wins], [2, 1, 1, 0], 'the day record keeps the tally for the week');
   // The other ticks of the hour, and a forced run later in the day: nothing more.
-  assert.equal((await runResultsDigest(env, at('2026-11-25', 6, 22), { deps: { fetch: d.fetch } })).daily.skipped, 'posted');
-  assert.equal((await runResultsDigest(env, at('2026-11-25', 14), { force: true, deps: { fetch: d.fetch } })).daily.skipped, 'posted');
+  assert.equal((await runResultsDigest(env, at('2026-11-25', 6, 22), { deps: { fetch: d.fetch, oneOff: null } })).daily.skipped, 'posted');
+  assert.equal((await runResultsDigest(env, at('2026-11-25', 14), { force: true, deps: { fetch: d.fetch, oneOff: null } })).daily.skipped, 'posted');
   assert.equal(d.calls.length, 1);
   const s = await digestStatus(env);
   assert.deepEqual(s, { on: true, hourEt: 6, lastDaily: { day: '2026-11-24', at: at('2026-11-25', 6, 7), plays: 2, tagged: true }, lastWeekly: null, nba: { on: false, lastDaily: null, lastWeekly: null }, nfl: { on: false, lastDaily: null, lastWeekly: null } });
 });
 
 test('the run: off with no results webhook, nothing outside the hour unless forced, nothing on a day with no settled play, and a refusal is tried again next tick', async () => {
-  assert.deepEqual(await runResultsDigest(makeEnv().env, at('2026-11-25', 6)), { off: true });
+  assert.deepEqual(await runResultsDigest(makeEnv().env, at('2026-11-25', 6), { deps: { oneOff: null } }), { off: true });
   const { env, store } = makeEnv({ DISCORD_UPDATES_WEBHOOK: UPDATES });
   const d = fakeDiscord();
-  assert.deepEqual(await runResultsDigest(env, at('2026-11-25', 12), { deps: { fetch: d.fetch } }), { skipped: 'hour' });
-  assert.equal((await runResultsDigest(env, at('2026-11-25', 12), { force: true, deps: { fetch: d.fetch } })).daily.skipped, 'no plays');
+  assert.deepEqual(await runResultsDigest(env, at('2026-11-25', 12), { deps: { fetch: d.fetch, oneOff: null } }), { skipped: 'hour' });
+  assert.equal((await runResultsDigest(env, at('2026-11-25', 12), { force: true, deps: { fetch: d.fetch, oneOff: null } })).daily.skipped, 'no plays');
   assert.equal(d.calls.length, 0);
   assert.ok(!store.has(DIGEST_DAY_KEY('2026-11-24')));
   // A play is there but Discord refuses: not recorded, so the next tick posts it.
   const w = digestWindow('2026-11-25');
   stored(store, '2026-11-24', [play({ id: 'a', gradedAt: w.startMs + 1 })]);
   const refusing = fakeDiscord((call, n) => (n === 1 ? { status: 400, body: { message: 'no' } } : null));
-  assert.deepEqual((await runResultsDigest(env, at('2026-11-25', 6, 7), { deps: { fetch: refusing.fetch } })).daily, { failed: 400, day: '2026-11-24' });
+  assert.deepEqual((await runResultsDigest(env, at('2026-11-25', 6, 7), { deps: { fetch: refusing.fetch, oneOff: null } })).daily, { failed: 400, day: '2026-11-24' });
   assert.ok(!store.has(DIGEST_DAY_KEY('2026-11-24')));
-  assert.deepEqual((await runResultsDigest(env, at('2026-11-25', 6, 22), { deps: { fetch: refusing.fetch } })).daily, { posted: 1, day: '2026-11-24', plays: 1 });
+  assert.deepEqual((await runResultsDigest(env, at('2026-11-25', 6, 22), { deps: { fetch: refusing.fetch, oneOff: null } })).daily, { posted: 1, day: '2026-11-24', plays: 1 });
   assert.equal(refusing.calls[1].body.content, '', 'nobody known to tag: no content, and the id saved in the app is not there either');
 });
 
@@ -204,7 +204,7 @@ test('the run: Monday posts the week that ended this morning, from the day recor
   // Monday's day record is on file with a different tally than its plays would give: the record wins.
   store.set(DIGEST_DAY_KEY('2026-11-16'), JSON.stringify({ at: 1, plays: 3, tally: { wins: 2, losses: 1, voids: 0, pending: 0, staked: 3, units: 0.14, roi: 0.047 }, leans: { wins: 0, losses: 0, voids: 0, pending: 0, staked: 0, units: 0, roi: null } }));
   const d = fakeDiscord();
-  const r = await runResultsDigest(env, at('2026-11-23', 6, 7), { deps: { fetch: d.fetch } });
+  const r = await runResultsDigest(env, at('2026-11-23', 6, 7), { deps: { fetch: d.fetch, oneOff: null } });
   assert.deepEqual(r.daily, { posted: 1, day: '2026-11-22', plays: 1 });
   assert.deepEqual(r.weekly, { posted: 1, week: '2026-11-16', plays: 5 });
   assert.equal(d.calls.length, 2);
@@ -219,11 +219,11 @@ test('the run: Monday posts the week that ended this morning, from the day recor
   assert.equal(week.embeds[0].footer.text, 'Week: Record 3-2 · −0.29u · ROI −5.8% · perpetualpicks.com');
   assert.ok(store.has(DIGEST_WEEK_KEY('2026-11-16')));
   // The next tick: both already posted.
-  const again = await runResultsDigest(env, at('2026-11-23', 6, 22), { deps: { fetch: d.fetch } });
+  const again = await runResultsDigest(env, at('2026-11-23', 6, 22), { deps: { fetch: d.fetch, oneOff: null } });
   assert.deepEqual([again.daily.skipped, again.weekly.skipped], ['posted', 'posted']);
   assert.equal(d.calls.length, 2);
   // Tuesday: no weekly.
-  assert.equal((await runResultsDigest(env, at('2026-11-24', 6, 7), { deps: { fetch: d.fetch } })).weekly, null);
+  assert.equal((await runResultsDigest(env, at('2026-11-24', 6, 7), { deps: { fetch: d.fetch, oneOff: null } })).weekly, null);
 });
 
 test('the NBA results channel gets its own daily from the channel ledger\'s settled posts, through its own webhook, with its own records', async () => {
@@ -239,7 +239,7 @@ test('the NBA results channel gets its own daily from the channel ledger\'s sett
   store.set(LEAGUES.nba.ledger, JSON.stringify({ posts, games: {} }));
   assert.deepEqual((await ledgerPlays(env, 'nba')).map((p) => p.id).sort(), ['a', 'b', 'old'], 'settled posts whose edit landed');
   const d = fakeDiscord();
-  const r = await runResultsDigest(env, at('2026-11-25', 6, 7), { deps: { fetch: d.fetch } });
+  const r = await runResultsDigest(env, at('2026-11-25', 6, 7), { deps: { fetch: d.fetch, oneOff: null } });
   assert.deepEqual(r, { date: '2026-11-25', daily: null, weekly: null, nba: { daily: { posted: 1, day: '2026-11-24', plays: 2 }, weekly: null }, nfl: { off: true } }, 'tennis is off: nothing at the top');
   assert.equal(d.calls.length, 1);
   assert.equal(d.calls[0].url, `${NBA_RESULTS}?wait=true`);
@@ -248,7 +248,7 @@ test('the NBA results channel gets its own daily from the channel ledger\'s sett
   assert.match(d.calls[0].body.embeds[0].description, /^✅ \*\*New York Knicks at Boston Celtics\*\* · Final NY 110, BOS 104 · 2 legs \+105 at FanDuel · \*\*\+1\.05u\*\* · Brunson Over 19\.5 Pts \(27\) ✓, Tatum Over 7\.5 Reb \(9\) ✓\n❌ /);
   assert.equal(d.calls[0].body.embeds[0].footer.text, 'Record 1-1 · +0.05u · ROI +2.5% · perpetualpicks.com');
   assert.ok(store.has(DIGEST_DAY_KEY('2026-11-24', 'nba')) && !store.has(DIGEST_DAY_KEY('2026-11-24')), 'its own day record, not tennis\'s');
-  assert.equal((await runResultsDigest(env, at('2026-11-25', 6, 22), { deps: { fetch: d.fetch } })).nba.daily.skipped, 'posted');
+  assert.equal((await runResultsDigest(env, at('2026-11-25', 6, 22), { deps: { fetch: d.fetch, oneOff: null } })).nba.daily.skipped, 'posted');
   assert.equal(d.calls.length, 1);
   const s = await digestStatus(env);
   assert.deepEqual([s.on, s.lastDaily, s.nba.on, s.nba.lastDaily.day, s.nba.lastDaily.plays, s.nfl.on], [false, null, true, '2026-11-24', 2, false]);
@@ -257,7 +257,7 @@ test('the NBA results channel gets its own daily from the channel ledger\'s sett
   mon.store.set(DIGEST_DAY_KEY('2026-11-20', 'nba'), JSON.stringify({ at: 1, plays: 4, tally: { wins: 3, losses: 1, voids: 0, pending: 0, staked: 4, units: 2.1, roi: 0.525 }, leans: null }));
   mon.store.set(LEAGUES.nba.ledger, JSON.stringify({ posts: {}, games: {} }));
   const d2 = fakeDiscord();
-  const r2 = await runResultsDigest(mon.env, at('2026-11-23', 6, 7), { deps: { fetch: d2.fetch } });
+  const r2 = await runResultsDigest(mon.env, at('2026-11-23', 6, 7), { deps: { fetch: d2.fetch, oneOff: null } });
   assert.deepEqual(r2.nba, { daily: { skipped: 'no plays', day: '2026-11-22' }, weekly: { posted: 1, week: '2026-11-16', plays: 4 } });
   assert.equal(d2.calls[0].body.embeds[0].title, '🗓️ WEEKLY NBA RESULTS · Nov 16 – Nov 22 · 4 plays');
   assert.equal(d2.calls[0].body.embeds[0].description.split('\n')[4], '**Fri, Nov 20** · 4 plays · Record 3-1 · +2.10u · ROI +52.5%');
@@ -267,7 +267,7 @@ test('the NBA results channel gets its own daily from the channel ledger\'s sett
   stored(both.store, '2026-11-24', [play({ id: 't', gradedAt: w.startMs + 1 })]);
   both.store.set(LEAGUES.nba.ledger, JSON.stringify({ posts: { a: posts.a }, games: {} }));
   const d3 = fakeDiscord();
-  const r3 = await runResultsDigest(both.env, at('2026-11-25', 6, 7), { deps: { fetch: d3.fetch } });
+  const r3 = await runResultsDigest(both.env, at('2026-11-25', 6, 7), { deps: { fetch: d3.fetch, oneOff: null } });
   assert.deepEqual([r3.daily.posted, r3.nba.daily.posted, d3.calls.map((c) => c.url.split('?')[0])], [1, 1, [UPDATES, NBA_RESULTS]]);
 });
 
@@ -277,4 +277,52 @@ test('playbookTag: the member id from the secret however it was pasted, the role
   assert.equal(await playbookTag({ DISCORD_PLAYBOOK_USER_ID: `<@${PLAYBOOK}>`, POTD_KV: kv }), PLAYBOOK);
   assert.equal(await playbookTag({ DISCORD_PLAYBOOK_ROLE_ID: PLAYBOOK, POTD_KV: kv }), `&${PLAYBOOK}`);
   assert.equal(await playbookTag({ DISCORD_PLAYBOOK_USER_ID: 'not an id', POTD_KV: kv }), null);
+});
+
+test('a day on request: "so far" while its window is open and nothing recorded; the whole day once it has closed, recorded; the weekly left alone', async () => {
+  const { env, store } = makeEnv({ DISCORD_NBA_RESULTS_WEBHOOK: NBA_RESULTS });
+  const w = { startMs: etInstant('2026-11-25', 6), endMs: etInstant('2026-11-26', 6) };
+  const posts = {
+    a: { state: 'done', doneAt: w.startMs + 3600e3, post: nbaPost({ id: 'a', gradedAt: w.startMs + 3600e3 }) },
+    b: { state: 'done', doneAt: w.startMs + 16 * 3600e3, post: nbaPost({ id: 'b', gradedAt: w.startMs + 16 * 3600e3, result: 'loss', profit: -1 }) },
+    c: { state: 'done', doneAt: w.startMs + 20 * 3600e3, post: nbaPost({ id: 'c', gradedAt: w.startMs + 20 * 3600e3 }) },
+  };
+  store.set(LEAGUES.nba.ledger, JSON.stringify({ posts, games: {} }));
+  const d = fakeDiscord();
+  // 10pm ET on the day: what settled so far (a and b), said so, outside the hour, nothing recorded.
+  const r = await runResultsDigest(env, at('2026-11-25', 22, 30), { day: '2026-11-25', deps: { fetch: d.fetch, oneOff: null } });
+  assert.deepEqual(r.nba, { daily: { posted: 1, day: '2026-11-25', plays: 2, soFar: true }, weekly: null });
+  assert.equal(d.calls[0].body.embeds[0].title, '📊 NBA RESULTS · Wed, Nov 25 · so far · 2 plays');
+  assert.ok(!store.has(DIGEST_DAY_KEY('2026-11-25', 'nba')), 'an open window leaves no record');
+  assert.equal((await digestStatus(env)).nba.lastDaily, null, 'and is not the day\'s post');
+  // Asked again: it posts again (a "so far" is on request).
+  await runResultsDigest(env, at('2026-11-25', 23), { day: '2026-11-25', deps: { fetch: d.fetch, oneOff: null } });
+  assert.equal(d.calls.length, 2);
+  // The morning after: the whole day (a, b and c), recorded, once.
+  const m = await runResultsDigest(env, at('2026-11-26', 6, 7), { deps: { fetch: d.fetch, oneOff: null } });
+  assert.deepEqual(m.nba.daily, { posted: 1, day: '2026-11-25', plays: 3 });
+  assert.equal(d.calls[2].body.embeds[0].title, '📊 NBA RESULTS · Wed, Nov 25 · 3 plays');
+  assert.ok(store.has(DIGEST_DAY_KEY('2026-11-25', 'nba')));
+  // The closed day on request again: already posted.
+  assert.equal((await runResultsDigest(env, at('2026-11-26', 9), { day: '2026-11-25', deps: { fetch: d.fetch, oneOff: null } })).nba.daily.skipped, 'posted');
+  assert.equal(d.calls.length, 3);
+});
+
+test('the one-off rides a deploy: posted once on the first tick whatever the hour, marked before it is sent, and never again', async () => {
+  const { env, store } = makeEnv({ DISCORD_NBA_RESULTS_WEBHOOK: NBA_RESULTS });
+  const start = etInstant('2026-11-25', 6);
+  store.set(LEAGUES.nba.ledger, JSON.stringify({ posts: { a: { state: 'done', doneAt: start + 3600e3, post: nbaPost({ id: 'a', gradedAt: start + 3600e3 }) } }, games: {} }));
+  const d = fakeDiscord();
+  const oneOff = { id: 'x-1', source: 'nba', day: '2026-11-25' };
+  const r = await runResultsDigest(env, at('2026-11-25', 21, 52), { deps: { fetch: d.fetch, oneOff } });
+  assert.deepEqual(r, { skipped: 'hour', oneOff: { id: 'x-1', source: 'nba', posted: 1, day: '2026-11-25', plays: 1, soFar: true } });
+  assert.equal(d.calls[0].body.embeds[0].title, '📊 NBA RESULTS · Wed, Nov 25 · so far · 1 play');
+  assert.equal(JSON.parse(store.get(DIGEST_ONE_OFF_KEY('x-1'))).state, 'done');
+  assert.deepEqual(await runResultsDigest(env, at('2026-11-25', 22, 7), { deps: { fetch: d.fetch, oneOff } }), { skipped: 'hour' });
+  assert.equal(d.calls.length, 1, 'once');
+  // A one-off for a channel that is not set up, or with no id, posts nothing and marks nothing.
+  assert.deepEqual(await runResultsDigest(env, at('2026-11-25', 22, 7), { deps: { fetch: d.fetch, oneOff: { id: 'y', source: 'nfl', day: '2026-11-25' } } }), { skipped: 'hour' });
+  assert.ok(!store.has(DIGEST_ONE_OFF_KEY('y')));
+  // The one in the code is for the NBA channel on the day it went up.
+  assert.deepEqual(ONE_OFF, { id: '2026-11-25-nba-1', source: 'nba', day: '2026-11-25' });
 });

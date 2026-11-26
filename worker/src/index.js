@@ -586,9 +586,9 @@ export default {
       // 6am ET, the first tick of the hour: yesterday's live tennis results in one post to the results channel,
       // and on Monday the week's (worker/src/discord-results-digest.js). KV and the webhook only; with no results
       // webhook set it is a no-op. Its own waitUntil, as the weekly report above.
-      if (clock.hour === RESULTS_DIGEST_HOUR && clock.minute < 15) {
-        ctx.waitUntil(runResultsDigest(env, now).catch((e) => console.error('Results digest failed:', String(e?.message ?? e).slice(0, 120))));
-      }
+      // Every tick of this schedule: the digest gates itself to the hour (a day or week already posted is a KV read
+      // and a skip) and posts a one-off riding a deploy (discord-results-digest.js's ONE_OFF) on the first tick.
+      ctx.waitUntil(runResultsDigest(env, now).catch((e) => console.error('Results digest failed:', String(e?.message ?? e).slice(0, 120))));
       return;
     }
     // Trends only: the main tick does nothing (see TRENDS_ONLY).
@@ -1788,7 +1788,11 @@ export default {
       const auth = authorizeSettings(request, env);
       if (!auth.ok) return json({ error: auth.error }, { status: auth.status, headers: cors });
       try {
-        return json(await runResultsDigest(env, Date.now(), { force: true }), { headers: { ...cors, 'Cache-Control': 'no-store' } });
+        // `day` (an ET date, YYYY-MM-DD, in the body or the query): that day's roll-up alone, "so far" while its window is open.
+        let day = url.searchParams.get('day');
+        if (!day && request.headers.get('content-type')?.includes('application/json')) { try { day = (await request.json())?.day ?? null; } catch { day = null; } }
+        day = /^\d{4}-\d{2}-\d{2}$/.test(String(day ?? '')) ? String(day) : null;
+        return json(await runResultsDigest(env, Date.now(), { force: true, day }), { headers: { ...cors, 'Cache-Control': 'no-store' } });
       } catch (e) {
         return json({ error: String(e?.message ?? e).slice(0, 200) }, { status: 502, headers: cors });
       }
