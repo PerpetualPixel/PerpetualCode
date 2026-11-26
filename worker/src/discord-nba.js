@@ -79,16 +79,26 @@ const num = (v) => { const n = Number(v); return Number.isFinite(n) ? n : null; 
  */
 const userIdOf = (v) => { const m = String(v ?? '').trim().match(/^(?:<@(?:!|(&))?)?(&)?(\d{15,22})>?$/); return m ? `${m[1] || m[2] ? '&' : ''}${m[3]}` : null; };
 /** Discord's leave to ping it: a member by users, a role by roles, and nothing else in the message can ping anyone. */
-const mayPing = (tag) => (!tag ? { parse: [], users: [] } : tag.startsWith('&') ? { parse: [], users: [], roles: [tag.slice(1)] } : { parse: [], users: [tag] });
+export const mayPing = (tag) => (!tag ? { parse: [], users: [] } : tag.startsWith('&') ? { parse: [], users: [], roles: [tag.slice(1)] } : { parse: [], users: [tag] });
+
+/**
+ * Playbook's tag as the secrets give it ("123" for the member, "&123" for the role), or, with none set, the id the
+ * owner saved in the app's Playbook settings; null when nothing is known. Shared with the results channel's
+ * roll-ups (worker/src/discord-results-digest.js), which tag Playbook the same way.
+ */
+export async function playbookTag(env) {
+  // The role's own secret, when it is the role that was copied; else the member's (which also takes a role written as <@&id>).
+  let playbook = userIdOf(env?.DISCORD_PLAYBOOK_ROLE_ID) ?? userIdOf(env?.DISCORD_PLAYBOOK_USER_ID);
+  if (playbook && String(env?.DISCORD_PLAYBOOK_ROLE_ID ?? '').trim() && !playbook.startsWith('&') && userIdOf(env?.DISCORD_PLAYBOOK_ROLE_ID)) playbook = `&${playbook}`;
+  if (!playbook) playbook = userIdOf((await getSettings(env, 'owner').catch(() => null))?.playbook?.mention);
+  return playbook;
+}
 
 /** What is configured: the channel's webhook (null when unset or not a Discord webhook) and Playbook's user id. */
 export async function leagueConfig(env, league = 'nba') {
   const hook = webhookOf(env?.[LEAGUES[league].secret]);
-  // The role's own secret, when it is the role that was copied; else the member's (which also takes a role written as <@&id>).
-  let playbook = userIdOf(env?.DISCORD_PLAYBOOK_ROLE_ID) ?? userIdOf(env?.DISCORD_PLAYBOOK_USER_ID);
-  if (playbook && String(env?.DISCORD_PLAYBOOK_ROLE_ID ?? '').trim() && !playbook.startsWith('&') && userIdOf(env?.DISCORD_PLAYBOOK_ROLE_ID)) playbook = `&${playbook}`;
-  // The id the owner saved in the app's Playbook settings stands in when the secret is not set.
-  if (hook && !playbook) playbook = userIdOf((await getSettings(env, 'owner').catch(() => null))?.playbook?.mention);
+  // The id the owner saved in the app's Playbook settings stands in when the secret is not set — read only with a channel to post to.
+  const playbook = hook ? await playbookTag(env) : (userIdOf(env?.DISCORD_PLAYBOOK_ROLE_ID) ?? userIdOf(env?.DISCORD_PLAYBOOK_USER_ID));
   return { hook, playbook };
 }
 

@@ -12,6 +12,12 @@ import { buildTrends, buildLeagueChunk, runTrendsBuild, getTrends, STAMPS_VERSIO
 import { gamelogStatIndex, NFL_TREND_MARKETS } from '../worker/src/football-props.js';
 import { espnAbbr } from '../docs/team-logos.js';
 
+// No network in these tests. A run reaches the odds feed and ESPN wherever a dependency is not stubbed (the events
+// listing behind an empty slate, a game log), and what the feed answers with no key decided the result: every run
+// after 2026-11-26 00:00 UTC wrote an odds diagnostic and skipped a build that the runs before it did not. Each test
+// file is its own process, so this reaches nothing else.
+globalThis.fetch = async (url) => { throw new Error(`no network in tests: ${String(url?.url ?? url).slice(0, 100)}`); };
+
 const NOW = Date.parse('2026-10-22T15:00:00Z');
 const ctx = { waitUntil: (p) => p };
 const game = { eventId: 'n1', sportKey: 'basketball_nba', sportTitle: 'NBA', commenceMs: NOW + 5 * 3.6e6, home: 'New York Knicks', away: 'Boston Celtics' };

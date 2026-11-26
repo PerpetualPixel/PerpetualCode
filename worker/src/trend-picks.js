@@ -29,6 +29,7 @@ import { boxKey, boxLegKey } from './box-grading.js';
 import { seasonColumnRows } from '../../docs/prop-legs.js';
 import { overNeed, underNeed, attachSeries, legScore, hitFlags, isAltLine, winLikelihood } from '../../docs/trends.js';
 import { bookIdFor, SPORTSBOOKS, americanToDecimal } from '../../docs/engine.js';
+import { ticketAtBooks } from '../../docs/book-ways.js';
 import { espnAbbr } from '../../docs/team-logos.js';
 
 /** A line needs this many logged games at 100% before it is a pick: ten 100%s is a pattern, three is a start. */
@@ -608,10 +609,13 @@ function showcaseShortOf(row) {
   return out;
 }
 
-/** The stored bet: one ticket, one unit, graded as a whole. */
-function betRecord(bet, index, dateKey, research, now) {
+/** The stored bet: one ticket, one unit, graded as a whole. `rows` is the board, for the ticket's versions at every other book (docs/book-ways.js). */
+function betRecord(bet, index, dateKey, research, now, rows = []) {
   const legs = bet.legs.map((leg) => legRecord(leg, research.get(leg.group.key), now));
   const bookId = bet.legs[0].bookId;
+  // The same legs at every other book that prices them (2026-11-25: a reader without this book): the same number
+  // where the book has it, else the nearest easier number on the board, a leg the book lacks dropped and named.
+  const books = ticketAtBooks(legs, rows, { exclude: bookId });
   // Perfect: every leg has landed in every one of the last 20. Strong: the wider look put it up (see PICK_STRONG_RATE).
   const tier = legs.every((l) => l.periods?.l20?.rate === 1) ? 'perfect' : 'strong';
   // A ticket across leagues is filed under its first leg's league and says which leagues it holds.
@@ -635,6 +639,7 @@ function betRecord(bet, index, dateKey, research, now) {
     units: TICKET_UNITS,
     commenceMs: Math.min(...legs.map((l) => l.commenceMs)),
     legs,
+    books,
     status: 'pending',
     result: null,
     net: null,
@@ -847,7 +852,7 @@ export async function runTrendPicksDaily(env, ctx, now = Date.now(), { deps = {}
     posted = [...posted.filter((g) => !keys.has(g.key)), ...await vet(strongGroups)];
     built = buildBets(posted, { maxBets: PICK_STRONG_MAX_BETS });
   }
-  const bets = built.map((b, i) => betRecord(b, i, dateKey, research, now));
+  const bets = built.map((b, i) => betRecord(b, i, dateKey, research, now, rows));
   // A player who passed research but is on no ticket: the day's
   // bets were already full, or no listed book priced him in range.
   const betLegs = new Set(bets.flatMap((b) => b.legs.map((l) => fold(l.playerName))));

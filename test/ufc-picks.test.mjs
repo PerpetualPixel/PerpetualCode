@@ -8,6 +8,10 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { oddsTtlMs, boutOdds, matchSide, parseUfcBreakdown, straightQuote, settleUfcPick, settleUfcTicket, buildUfcParlays, runUfcTick, getUfcPicks, methodClass, UFC_MAX_PICKS } from '../worker/src/ufc-picks.js';
 
+// No network in these tests (see test/potd.test.mjs): what the odds feed or a GitHub page answers must never decide a
+// result, and a test file is its own process, so this reaches nothing else.
+globalThis.fetch = async (url) => { throw new Error(`no network in tests: ${String(url?.url ?? url).slice(0, 100)}`); };
+
 const NOW = Date.UTC(2026, 9, 30, 18);
 const ctx = { waitUntil: (p) => p };
 const kv = () => { const m = new Map(); return { env: { POTD_KV: { get: async (k) => m.get(k) ?? null, put: async (k, v) => { m.set(k, v); } }, ANTHROPIC_API_KEY: null }, store: m }; };

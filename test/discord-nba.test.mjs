@@ -217,7 +217,7 @@ test('the slip card: a line a leg, the card as tall as its legs, and nothing ove
 test('the worker runs the basketball channel after each live probe, and its status rides the Discord status route', () => {
   const worker = fs.readFileSync(new URL('../worker/src/index.js', import.meta.url), 'utf8');
   assert.match(worker, /runLiveProbe\(env, ctx, now\)\.catch\([^]*?\)\s*\.then\(\(\) => syncBasketballDiscord\(env, now\)\)/);
-  assert.match(worker, /\{ \.\.\.\(await discordStatus\(env\)\), basketball: await basketballStatus\(env\), football: await footballStatus\(env\) \}/);
+  assert.match(worker, /\{ \.\.\.\(await discordStatus\(env\)\), basketball: await basketballStatus\(env\), football: await footballStatus\(env\), digest: await digestStatus\(env\) \}/);
   assert.match(worker, /\.then\(\(\) => syncFootballDiscord\(env, now\)\)/);
 });
 

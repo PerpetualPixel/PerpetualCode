@@ -20,6 +20,10 @@ import { UNSETTLEABLE_TENNIS_GAME_MARKET } from '../docs/learning.js';
 // The tennis form gate (docs/qualitative.js) reads the static archive; unit
 // tests must never hit the network, and a null archive is the honest
 // degraded mode (favorites pass unscored, unsupported dogs are blocked).
+// No network in these tests (see test/potd.test.mjs): what the odds feed or a GitHub page answers must never decide a
+// result, and a test file is its own process, so this reaches nothing else.
+globalThis.fetch = async (url) => { throw new Error(`no network in tests: ${String(url?.url ?? url).slice(0, 100)}`); };
+
 seedTennisArchiveCacheForTests({ atp: null, wta: null });
 import { seedTeamContextCacheForTests } from '../worker/src/team-form.js';
 // Same reasoning for team sports: seeding SEALS the memo, so no fixture in
