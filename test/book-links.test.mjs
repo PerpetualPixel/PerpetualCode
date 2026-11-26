@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { hardRockSelections, hardRockSlipLink, hardRockCombined, phoneSlipLink, isPhone, pickText, HARDROCK_SHARE, withState, needsState, cleanState } from '../docs/book-links.js';
+import { hardRockSelections, hardRockSlipLink, hardRockCombined, prizePicksPicks, prizePicksCombined, PRIZEPICKS_MAX_PICKS, phoneSlipLink, isPhone, pickText, HARDROCK_SHARE, withState, needsState, cleanState } from '../docs/book-links.js';
 import { SPORTSBOOKS, pricedBooks, bookIdFor } from '../docs/engine.js';
 
 const FEED = 'https://app.hardrock.bet/?deep_link_value=betslip/5962328190182621608';
@@ -68,4 +68,33 @@ test('a Caesars or BetMGM link gets the user\'s state written in; without one it
   assert.equal(withState('https://sportsbook.fanduel.com/addToBetslip?marketId=1', null), 'https://sportsbook.fanduel.com/addToBetslip?marketId=1', 'a link with no placeholder is left alone');
   assert.deepEqual([needsState(czr), needsState(mgm), needsState('https://sportsbook.draftkings.com/'), needsState(null)], [true, true, false, false]);
   assert.deepEqual([cleanState('nj'), cleanState('US-NY'), cleanState('Ontario'), cleanState('')], ['NJ', 'NY', null, null]);
+});
+
+test('PrizePicks: a lineup\'s picks ride one link, joined by commas', () => {
+  const A = 'https://app.prizepicks.com/?projections=17335581-o-67.5';
+  const B = 'https://app.prizepicks.com/?projections=17335491-o-95.5';
+  const C = 'https://app.prizepicks.com/?projections=17473792-u-2';
+  assert.deepEqual(prizePicksPicks(A), ['17335581-o-67.5']);
+  assert.deepEqual(prizePicksPicks(C), ['17473792-u-2']);
+  // The link the owner opened on 2026-11-26: both picks landed on the lineup.
+  assert.equal(prizePicksCombined([A, B]), 'https://app.prizepicks.com/?projections=17335581-o-67.5,17335491-o-95.5');
+  assert.equal(prizePicksCombined([A, B, C]), 'https://app.prizepicks.com/?projections=17335581-o-67.5,17335491-o-95.5,17473792-u-2');
+  // A link that already carries a list joins the same way, and a pick listed twice is kept once.
+  assert.equal(prizePicksCombined([prizePicksCombined([A, B]), C, A]), 'https://app.prizepicks.com/?projections=17335581-o-67.5,17335491-o-95.5,17473792-u-2');
+  assert.equal(prizePicksCombined([A]), A, 'one pick: its own link');
+});
+
+test('PrizePicks: no one link when a leg has no pick, the same projection is taken both ways, or the lineup is too long', () => {
+  const A = 'https://app.prizepicks.com/?projections=17335581-o-67.5';
+  for (const bad of [null, '', 'https://app.prizepicks.com/', 'https://app.prizepicks.com/?projections=', 'https://app.prizepicks.com/?projections=abc', 'https://app.prizepicks.com/?projections=1-x-2',
+    'https://app.prizepicks.com/?projections=1-o-2.5%22onload', 'http://app.prizepicks.com/?projections=1-o-2.5', 'https://app.prizepicks.com.evil.example/?projections=1-o-2.5',
+    'https://sportsbook.draftkings.com/?outcomes=1']) {
+    assert.equal(prizePicksPicks(bad), null, String(bad));
+    assert.equal(prizePicksCombined([A, bad]), null, String(bad));
+  }
+  assert.equal(prizePicksCombined([]), null);
+  assert.equal(prizePicksCombined([A, 'https://app.prizepicks.com/?projections=17335581-u-67.5']), null, 'More and Less on one projection');
+  const many = Array.from({ length: PRIZEPICKS_MAX_PICKS + 1 }, (_, n) => `https://app.prizepicks.com/?projections=${100 + n}-o-1.5`);
+  assert.ok(prizePicksCombined(many.slice(0, PRIZEPICKS_MAX_PICKS)));
+  assert.equal(prizePicksCombined(many), null);
 });
