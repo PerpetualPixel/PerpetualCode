@@ -7893,7 +7893,10 @@ a.tennis-book:hover { background: rgba(255, 255, 255, 0.06); }
 .book-ways-how { margin: 4px 0 2px; }
 .book-way strong { display: inline-flex; align-items: center; gap: 6px; flex-wrap: wrap; }
 .book-way strong small { font-weight: 500; }
-.book-way-acts { display: inline-flex; align-items: center; gap: 6px; flex: none; }
+/* A book's row keeps its words readable: they hold at least 200px, and the buttons drop under them where the two do not fit side by side (a phone). */
+.book-way { flex-wrap: wrap; }
+.book-way > div { flex: 1 1 200px; }
+.book-way-acts { display: inline-flex; flex-wrap: wrap; align-items: center; gap: 6px; flex: none; max-width: 100%; }
 .book-way-acts .pb-btn { min-height: 32px; padding: 0 10px; }
 /* The slip (or game) a Discord link landed on (docs/app.js liveFocusScroll): lit for a moment so the eye finds it. */
 .live-play.is-focus, .live-game.is-focus { animation: liveFocus 2.4s ease-out 1; }

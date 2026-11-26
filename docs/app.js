@@ -62,7 +62,7 @@ import { parseLeg as parseSlipLeg, parseSlipText, parseAmerican as parseSlipAmer
 import { VIABILITY_LABEL } from './slip-viability.js';
 import { parlaySnapshot, applyParlaySnapshot, cleanParlayStore, withParlaySlot, PARLAY_SLOTS, passesHitBars, l20Floor, hitBarText, nextMinScore } from './parlay-presets.js';
 import { playbookText, playbookKey, playbookUserId, discordChannelUrl, cleanPlaybookLink, PLAYBOOK_SITE } from './playbook.js';
-import { ticketAtBooks, bookWayNote } from './book-ways.js';
+import { ticketAtBooks, ticketBookRows, bookWayNote } from './book-ways.js';
 import { hitFlags as slipHitFlags } from './trends.js';
 import { lineFlags, lineVerdict, looksTooGood } from './line-check.js';
 import { RESULT_SIDES, RESULT_SPORTS, RESULT_BUCKETS, resultEntries, countedResults, summarize, bucketize, unitTicks } from './results.js';
@@ -10392,21 +10392,36 @@ function renderMvpCard(pick) {
  * drops, one link for the slip where the book takes one, and Playbook's copy for every book, FanDuel included.
  * Stored on the ticket when it posted; a ticket from before that is read off its legs' own quotes.
  */
-function otherBooksFold(bet) {
+function otherBooksFold(bet, { open = false } = {}) {
   if (!bet || bet.status === 'graded' || bet.status === 'void') return '';
   const legs = (bet.legs ?? []).filter((l) => l.selection);
   const ways = Array.isArray(bet.books) ? bet.books : ticketAtBooks(legs, [], { exclude: bet.bookId });
-  if (!ways.length) return '';
+  // Every sportsbook, not only the ones the odds feed prices the whole ticket at (2026-11-26: a ticket the feed had at Hard Rock
+  // alone was whole at DraftKings and Fanatics): a book the feed has part of it at, or none, still gets the whole ticket for Playbook.
+  const rows = ticketBookRows(legs, ways, { exclude: bookIdFor(bet.bookId) ?? bet.bookId });
+  if (!rows.length) return '';
   const sameGame = Boolean(bet.mvp);
+  const n = legs.length;
   const row = (w) => {
-    const all = w.legs.length > 1 ? combinedSlipLink(w.bookId, w.legs.map((l) => l.link)) : (w.legs[0]?.link ?? null);
-    const note = bookWayNote(w);
-    const text = playbookText({ legs: w.legs.map((l) => ({ selection: l.selection, game: l.game })), book: w.bookId, mention: playbookSettings().mention });
-    const key = playbookKey(w.bookId, w.legs.map((l) => l.legId ?? l.selection));
-    const count = w.complete ? `all ${w.legs.length} leg${w.legs.length === 1 ? '' : 's'}` : `${w.legs.length} of ${legs.length} legs`;
-    return `<div class="mvp-way book-way"><div><strong>${bookBadge(w.bookId, w.book)}${esc(w.book)} <small>${esc(count)} · about ${esc(formatAmerican(w.american))}${sameGame ? ' with the legs multiplied' : ''}</small></strong>${note ? `<small>${esc(note)}</small>` : '<small>the ticket as drawn</small>'}</div><span class="book-way-acts">${all ? `<a class="parlay-btn is-slip" href="${escUrl(all)}" target="_blank" rel="noopener">Add ↗</a>` : ''}${text ? `<span class="pb-block is-compact" data-pb-key="${esc(key)}" data-pb-text="${esc(text)}" data-pb-book="${esc(w.book)}"><button type="button" class="pb-btn" data-pb-copy title="Copy the lines for Playbook, the Discord bot that makes a ${esc(w.book)} slip">Playbook</button><span class="pb-status" data-pb-status hidden></span></span>` : ''}</span></div>`;
+    const k = w.legs.length;
+    const all = k > 1 ? combinedSlipLink(w.bookId, w.legs.map((l) => l.link)) : (w.legs[0]?.link ?? null);
+    const moved = bookWayNote({ legs: w.legs, dropped: [] });
+    const text = playbookText({ legs: w.ask, book: w.bookId, mention: playbookSettings().mention });
+    const key = playbookKey(w.bookId, w.ask.map((l) => l.selection));
+    const count = w.unpriced ? 'not in our odds feed' : w.complete ? `all ${k} leg${k === 1 ? '' : 's'} · about ${formatAmerican(w.american)}${sameGame ? ' with the legs multiplied' : ''}` : `${k} of ${n} legs in our odds feed · ${formatAmerican(w.american)} for ${k === 1 ? 'that one' : 'those'}`;
+    // A book the feed has only part of the ticket at may still have all of it: Playbook reads the book itself.
+    const note = w.unpriced ? `Playbook checks ${w.book} itself for the ticket.`
+      : w.complete ? (moved || 'the ticket as drawn')
+        : `${moved ? `${moved} · ` : ''}No ${w.dropped.map((d) => d.selection).join(' or ')} in our feed here. Playbook checks ${w.book} itself.`;
+    const add = all ? `<a class="parlay-btn is-slip" href="${escUrl(all)}" target="_blank" rel="noopener" title="${esc(w.complete ? `Open ${w.book} with the ticket on your slip` : `Open ${w.book} with the ${k === 1 ? 'leg' : `${k} legs`} our feed has there`)}">${w.complete ? 'Add ↗' : `Add ${k} of ${n} ↗`}</a>` : '';
+    return `<div class="mvp-way book-way ${w.complete ? 'is-whole' : ''}"><div><strong>${bookBadge(w.bookId, w.book)}${esc(w.book)} <small>${esc(count)}</small></strong><small>${esc(note)}</small></div><span class="book-way-acts">${add}${text ? `<span class="pb-block is-compact" data-pb-key="${esc(key)}" data-pb-text="${esc(text)}" data-pb-book="${esc(w.book)}"><button type="button" class="pb-btn" data-pb-copy title="Copy the whole ticket for Playbook, the Discord bot that makes a ${esc(w.book)} slip">Playbook</button><span class="pb-status" data-pb-status hidden></span></span>` : ''}</span></div>`;
   };
-  return `<details class="mvp-fold book-ways"><summary>Other books (${ways.length})</summary><p class="row-sub book-ways-how">The same legs at each book: its number where it has one, else the nearest lower one, and a leg it does not price left off. Tap Playbook to copy the lines for its Discord bot, which replies with a slip for that book.</p>${ways.map(row).join('')}</details>`;
+  const whole = rows.filter((w) => w.complete).length;
+  // The books the feed has none of the ticket at share one row: a Playbook button each.
+  const priced = rows.filter((w) => !w.unpriced);
+  const rest = rows.filter((w) => w.unpriced);
+  const restRow = rest.length ? `<div class="mvp-way book-way is-rest"><div><strong>Not in our odds feed</strong><small>Playbook checks each of these itself for the ticket.</small></div><span class="book-way-acts">${rest.map((w) => { const text = playbookText({ legs: w.ask, book: w.bookId, mention: playbookSettings().mention }); return text ? `<span class="pb-block is-compact" data-pb-key="${esc(playbookKey(w.bookId, w.ask.map((l) => l.selection)))}" data-pb-text="${esc(text)}" data-pb-book="${esc(w.book)}"><button type="button" class="pb-btn" data-pb-copy title="Copy the whole ticket for Playbook, the Discord bot that makes a ${esc(w.book)} slip">${esc(w.book)}</button><span class="pb-status" data-pb-status hidden></span></span>` : ''; }).join('')}</span></div>` : '';
+  return `<details class="mvp-fold book-ways" ${open ? 'open' : ''}><summary>Other sportsbooks (${rows.length})${whole ? ` · ${whole} with the whole ticket` : ''}</summary><p class="row-sub book-ways-how">Add opens the book with the legs our odds feed has there: its number where it has one, else the nearest lower one. The feed does not carry every number a book posts, so a book can have the whole ticket when we show part of it or none. Playbook copies the whole ticket for its Discord bot, which checks the book itself and replies with a slip.</p>${priced.map(row).join('')}${restRow}</details>`;
 }
 
 /** The day's MVP Picks for the Pixel's Picks tab: every player who met the system, then who fell short and why. */
@@ -10438,7 +10453,7 @@ function renderBetCard(bet) {
     <div class="pick-legs">${bet.legs.map((leg) => renderPickLeg(leg, bet)).join('')}</div>
     ${betOutcomeWhy(bet) ? `<p class="pick-note pick-why">${esc(betOutcomeWhy(bet))}</p>` : ''}
     ${ticketSlipFoot(bet)}
-    ${otherBooksFold(bet)}
+    ${otherBooksFold(bet, { open: true })}
   </article>`;
 }
 

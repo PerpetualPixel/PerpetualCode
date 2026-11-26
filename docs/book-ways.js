@@ -103,6 +103,47 @@ export function ticketAtBooks(legs, rows = [], { exclude = null, books = null } 
   return out.sort((a, b) => (b.complete - a.complete) || (a.dropped.length - b.dropped.length) || (b.decimal - a.decimal));
 }
 
+/** The sportsbooks a ticket is offered at, in the order they are listed (a pick'em app's ticket is a lineup at its own payout, not these legs at a price). */
+export const TICKET_BOOKS = ['draftkings', 'fanduel', 'fanatics', 'caesars', 'betmgm', 'hardrock', 'bet365', 'betrivers', 'espnbet'];
+
+/**
+ * A row for every sportsbook a ticket could be played at (2026-11-26, the
+ * owner, of a ticket drawn at Hard Rock that Playbook found whole at
+ * DraftKings and Fanatics: "When the pick is offered on the website, it
+ * should have links for all sportsbooks that it's available").
+ *
+ * The odds feed does not carry every number a book posts: that day's
+ * Caleb Williams Under 2.5 passing touchdowns was in the feed at Hard
+ * Rock alone, since the other books' own line was 1.5 and their 2.5 sat
+ * on a ladder the feed is not asked for. So a book the feed prices only
+ * part of the ticket at, or none of it, may still have all of it, and
+ * Playbook (docs/playbook.js), which reads the book itself, is how a
+ * reader finds out.
+ *
+ * `ways` is ticketAtBooks' list. Each comes back with `ask`, the legs to
+ * hand Playbook for that book: the book's own numbers for the legs the
+ * feed prices there and the ticket's own for the rest, in the ticket's
+ * order. After them, every listed book the feed prices none of the
+ * ticket at, `unpriced: true`, asking for the whole ticket as drawn.
+ */
+export function ticketBookRows(legs, ways, { exclude = null, books = TICKET_BOOKS } = {}) {
+  const list = (legs ?? []).filter((l) => l && l.selection);
+  if (!list.length) return [];
+  const idOf = (leg) => leg.id ?? leg.selection ?? null;
+  const drawn = (leg) => ({ selection: leg.selection, game: gameOf(leg) });
+  const rows = (ways ?? []).filter((w) => w && w.bookId && w.bookId !== exclude).map((w) => ({
+    ...w,
+    unpriced: false,
+    ask: list.map((leg) => { const kept = (w.legs ?? []).find((l) => l.legId === idOf(leg)); return kept ? { selection: kept.selection, game: kept.game ?? gameOf(leg) } : drawn(leg); }),
+  }));
+  const have = new Set(rows.map((r) => r.bookId));
+  for (const bookId of books ?? []) {
+    if (!bookId || bookId === exclude || have.has(bookId) || LINEUP_BOOKS.includes(bookId)) continue;
+    rows.push({ bookId, book: bookNameOf(bookId), legs: [], dropped: list.map((leg) => ({ selection: leg.selection, playerName: leg.playerName ?? null, legId: idOf(leg) })), complete: false, moved: 0, decimal: null, american: null, unpriced: true, ask: list.map(drawn) });
+  }
+  return rows;
+}
+
 /** A number as a line reads it: "15+" for Over 14.5 or to record 15, "under 15" for Under 15.5. */
 export const lineWord = (point, side = 'over') => (side === 'under' ? `under ${Math.floor(point) === point ? point : Math.floor(point) + 1}` : `${Number.isInteger(point) ? point + 1 : Math.ceil(point)}+`);
 

@@ -21,12 +21,12 @@
      only page that reads the feed; the other pages' connect-src stays the
      worker alone. -->
 <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src 'self' https://fonts.gstatic.com; img-src 'self' data: https:; connect-src 'self' https://pixel-pick-odds.mgbouldering.workers.dev https://perpetualpixel.github.io; object-src 'none'; base-uri 'self'; form-action 'self'">
-<script src="frame-guard.js?v=1.404"></script>
+<script src="frame-guard.js?v=1.405"></script>
 <!-- The first board is asked for here, while the rest of the page is still arriving (docs/early.js). -->
 <link rel="preconnect" href="https://pixel-pick-odds.mgbouldering.workers.dev" crossorigin>
-<script src="early.js?v=1.404"></script>
+<script src="early.js?v=1.405"></script>
 <!-- The loader's animation (docs/loader-fx.js): deferred, it draws the loaders already in the page as soon as the page has arrived. -->
-<script src="loader-fx.js?v=1.404" defer></script>
+<script src="loader-fx.js?v=1.405" defer></script>
 <title>Perpetual Picks - App</title>
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <meta name="theme-color" content="#05050A">
@@ -42,7 +42,7 @@
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Syne:wght@600;700;800&family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
-<link rel="stylesheet" href="styles.css?v=1.404">
+<link rel="stylesheet" href="styles.css?v=1.405">
 <!-- modulepreload:start (written by update-version.js: every file app.js imports, fetched alongside it rather than one after another) -->
 <link rel="modulepreload" href="config.js">
 <link rel="modulepreload" href="demo.js">
@@ -75,7 +75,7 @@
 <link rel="modulepreload" href="take-or-fade.js">
 <!-- modulepreload:end -->
 <!-- Before first paint: a desktop reader who chose "Fit screen" gets the wide shell without a flash of the narrow one. -->
-<script src="wide.js?v=1.404"></script>
+<script src="wide.js?v=1.405"></script>
 </head>
 <body>
 
@@ -211,6 +211,7 @@
       <li><strong>MVP Picks:</strong> on Pixel's Picks, one player's same-game parlay: his team's highest-usage player, a points, rebounds and assists number he clears in 90% of his games, against a bottom-five defense at his position. The card is short, each stat opens on a tap, and one button adds every leg. When the price is too short it steps the numbers up or pairs a second player.</li>
       <li><strong>Player search:</strong> a new "To record" choice between Over and Under. Type 15 points and it shows the games with 15 or more.</li>
       <li><strong>Onyx:</strong> pick Onyx as one of your sportsbooks and every line and ticket gets a button that copies the pick and opens Onyx.</li>
+      <li><strong>Pixel's Picks, other sportsbooks:</strong> every ticket now lists every sportsbook under it, open. Where our odds feed has the legs you get an Add button. Where it has only some, or none, a Playbook button copies the whole ticket so Playbook can check that sportsbook itself.</li>
       <li><strong>Live, custom parlay mode:</strong> a switch on the Live tab turns the slips into a board of single live legs at one sportsbook, the furthest ahead of pace first. Tick the ones you want and one button puts them all on that sportsbook's slip.</li>
       <li><strong>PrizePicks:</strong> a whole lineup now goes over in one link. Where a ticket, a parlay or a live slip is at PrizePicks, one button adds every pick.</li>
       <li><strong>Hard Rock on a phone:</strong> Add to slip now opens the Hard Rock Bet app with the pick on your slip, and a whole ticket goes over in one link.</li>
@@ -747,6 +748,7 @@
       <summary>Parlay</summary>
       <p>Build a ticket from the props on the board. Choose the sport, the number of legs, the odds range, the prop types, over or under, and the sportsbook. The sliders set how often a leg must have hit in the player's last 5 and last 10 games; the Last 20 switch asks for the same form over twenty. Score is the star rating a leg must reach: tap a star for a whole star, tap it again for a half.</p>
       <p>Generate, and the builder returns tickets that fit, each leg with its hit rates and price. Save a setup as a preset to reuse it.</p>
+      <p><strong>Other sportsbooks</strong> sits under every Pixel's Pick and MVP pick. A ticket is drawn at one sportsbook, and this lists the rest. <strong>Add</strong> opens a sportsbook with the legs our odds feed has there. The feed does not carry every number a sportsbook posts, so a sportsbook can have the whole ticket when the list shows part of it or says it is not in the feed. <strong>Playbook</strong> copies the whole ticket for the Playbook bot on Discord, which checks that sportsbook itself and replies with a slip.</p>
       <p><strong>Onyx</strong> has no slip links, so it works differently. Choose Onyx as one of your sportsbooks and a line's sheet and every ticket get a <strong>Copy pick &amp; open Onyx</strong> button: it copies the pick as text and opens Onyx, so you can find it there. Prices shown are from the other books.</p>
       <p><strong>Add to slip</strong> opens the sportsbook with the pick on your slip, where the book allows it. On a phone, Hard Rock takes bets only in its app, so a Hard Rock link opens the Hard Rock Bet app with the pick on the slip; the app has to be installed and you have to be signed in. A whole Hard Rock ticket goes over in one link, and so does a whole PrizePicks lineup.</p>
       <p>Caesars and BetMGM run a separate site in each state, so their links are written for yours. It is filled in from your connection; if a link asks, choose your state once and tap again.</p>
@@ -1238,6 +1240,6 @@
   </div>
 </aside>
 
-<script type="module" src="app.js?v=1.404"></script>
+<script type="module" src="app.js?v=1.405"></script>
 </body>
 </html>
