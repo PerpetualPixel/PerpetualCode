@@ -7734,6 +7734,11 @@ a.tennis-book:hover { background: rgba(255, 255, 255, 0.06); }
 .lb-board-head { display: flex; align-items: baseline; justify-content: space-between; flex-wrap: wrap; gap: 4px 12px; padding: 8px 0; color: var(--muted); font-size: 0.85rem; }
 .lb-board-head b { color: var(--text); font-weight: 700; }
 .lb-board .empty { margin: 6px 0 10px; }
+/* The order of the board, and the rest of a long one. */
+.lb-sort { display: inline-flex; align-items: center; gap: 8px; flex: 1 1 100%; color: var(--muted); font-size: 0.82rem; }
+.lb-sort select { flex: 1 1 auto; min-width: 0; max-width: 280px; min-height: 40px; padding: 6px 10px; border-radius: 10px; border: 1px solid var(--line); background: var(--surface-2); color: var(--text); font: inherit; }
+.lb-more { display: block; width: 100%; margin: 10px 0 6px; padding: 11px 14px; border-radius: 12px; border: 1px solid var(--line); background: var(--surface-2); color: var(--text); font: inherit; font-weight: 700; cursor: pointer; touch-action: manipulation; }
+.lb-pick { padding: 1px 7px; border-radius: 999px; border: 1px solid rgba(124, 58, 237, 0.6); color: #c4b5fd; font-size: 0.66rem; font-weight: 800; letter-spacing: 0.04em; text-transform: uppercase; white-space: nowrap; }
 .lb-leg { display: grid; grid-template-columns: minmax(0, 1fr) auto; grid-template-areas: "who price" "bar pace" "why why"; column-gap: 12px; row-gap: 2px; align-items: center; padding: 10px 0; border-top: 1px solid var(--line); cursor: pointer; }
 .lb-leg.is-checked { background: linear-gradient(90deg, rgba(124, 58, 237, 0.14), rgba(124, 58, 237, 0) 75%); }
 .lb-leg.is-blocked { cursor: not-allowed; }

@@ -29,7 +29,7 @@ import { BUILD_INFO } from './version.js';
 import { safeUrl } from './safe-url.js';
 import { hardRockCombined, prizePicksCombined, phoneSlipLink, isPhone, pickText, withState, needsState, cleanState, US_STATES } from './book-links.js';
 import { groupLiveSlips, slipNumbers, parseLiveHash } from './live-slips.js';
-import { boardLegs, builderView, toggleLeg, BUILDER_MIN_LEGS, BUILDER_MAX_LEGS } from './live-builder.js';
+import { boardLegs, builderView, toggleLeg, sortBoard, BOARD_SORTS, BUILDER_MAX_LEGS } from './live-builder.js';
 import { checkable as flagCheckable, nextFlagBatch, pickTicket, leftOutText, flaggedText, FLAG_ROUNDS, FLAG_TTL_MS } from './parlay-flags.js';
 import { summarizePicks, gradePick } from './learning.js';
 import { liveSetsLabel } from './tennis-results.js';
@@ -12339,7 +12339,12 @@ if (!liveState.leagues.size) LIVE_LEAGUES_DEFAULT.forEach((k) => liveState.leagu
  * device; the ticked legs last the visit. `board` is the last board read for `boardBook`, so a re-read does not blank it.
  */
 const LIVE_BUILDER_KEY = 'pixelpick.liveBuilder.v1';
-const liveBuilder = { on: false, book: (() => { const v = loadJSON(LIVE_BUILDER_KEY, null)?.book; return LIVE_BOOKS.includes(v) ? v : null; })(), picked: [], drawer: false, board: null, boardBook: null };
+const liveBuilder = { on: false, book: (() => { const v = loadJSON(LIVE_BUILDER_KEY, null)?.book; return LIVE_BOOKS.includes(v) ? v : null; })(), picked: [], drawer: false, board: null, boardBook: null,
+  // The order the board is read in (docs/live-builder.js BOARD_SORTS), kept on this device; and whether a long board is drawn in full.
+  sort: (() => { const v = loadJSON(LIVE_BUILDER_KEY, null)?.sort; return BOARD_SORTS.some(([k]) => k === v) ? v : 'pace'; })(), showAll: false };
+/** The rows of a long board drawn before "Show all": every line a book has up can be several hundred. */
+const LIVE_BUILDER_FIRST = 60;
+const saveLiveBuilder = () => saveJSON(LIVE_BUILDER_KEY, { book: liveBuilder.book, sort: liveBuilder.sort });
 const liveBuilderName = (id) => SPORTSBOOKS[id]?.name ?? id;
 /** The most legs a ticket takes at a book (a PrizePicks lineup stops at six). */
 const liveBuilderMax = (id) => PARLAY_MAX_LEGS[id] ?? BUILDER_MAX_LEGS;
@@ -12788,7 +12793,7 @@ function liveBuilderRow(r, book) {
   const why = liveBuilderWhy(r, book);
   return `<div class="lb-leg ${r.checked ? 'is-checked' : ''} ${r.blocked ? 'is-blocked' : ''}" data-lb-row="${esc(r.id)}" title="${esc(r.game)}">
     <label class="lb-check"><input type="checkbox" data-lb-leg="${esc(r.id)}" ${r.checked ? 'checked' : ''} ${r.blocked ? 'disabled' : ''}><span class="lb-box" aria-hidden="true"></span>
-      <span class="lb-who"><strong>${esc(r.player)}</strong>${r.team ? ` <small>${esc(r.team)}</small>` : ''} <span class="lb-line">${esc(String(r.point))}+ ${esc(r.label)}</span>${r.clock ? ` <small class="lb-clock">${esc(r.clock)}</small>` : ''}</span></label>
+      <span class="lb-who"><strong>${esc(r.player)}</strong>${r.team ? ` <small>${esc(r.team)}</small>` : ''} <span class="lb-line">${esc(String(r.point))}+ ${esc(r.label)}</span>${r.clock ? ` <small class="lb-clock">${esc(r.clock)}</small>` : ''}${r.pick ? ' <span class="lb-pick" title="This line clears the bar our own live slips are built from">Our pick</span>' : ''}</span></label>
     <div class="lb-track">${liveBar(r.current, r.point)}</div>
     <span class="lb-pace is-${esc(r.paceLevel ?? 'none')}"><b>${Number.isFinite(r.pacePct) ? `${esc(String(r.pacePct))}%` : '–'}</b><small>Pace %</small></span>
     <span class="lb-price">${esc(formatAmerican(r.price))}</span>
@@ -12803,12 +12808,14 @@ function liveBuilderPanel(view, book, { loading = false } = {}) {
   const legLabel = (c) => `${c.point}+ ${c.label ?? ''}`.trim();
   const list = view.chosen.length
     ? `<ul class="lb-picked">${view.chosen.map((c) => `<li class="${c.gone && !loading ? 'is-gone' : ''}"><span class="lb-picked-who"><strong>${esc(c.player)}</strong><small>${esc(legLabel(c))} · ${c.gone && !loading ? 'no longer offered' : esc(formatAmerican(c.price))}</small></span><button type="button" class="lb-remove" data-lb-remove="${esc(c.id)}" aria-label="Remove ${esc(c.player)} ${esc(legLabel(c))}">×</button></li>`).join('')}</ul>`
-    : '<p class="row-sub lb-none">Tick two or more legs on the board.</p>';
-  const all = n >= BUILDER_MIN_LEGS ? combinedSlipLink(book, view.live.map((l) => l.link)) : null;
+    : `<p class="row-sub lb-none">${view.minLegs > 1 ? 'Tick two or more legs on the board.' : 'Tick a leg on the board: one is a straight bet, two or more a parlay.'}</p>`;
+  // One leg is a straight: its own link is the slip. More are the book's one link for the list.
+  const what = n === 1 ? 'bet' : 'parlay';
+  const all = !view.ready ? null : n === 1 ? (view.live[0].link ?? null) : combinedSlipLink(book, view.live.map((l) => l.link));
   let cta;
   if (loading) cta = `<button type="button" class="lb-cta" disabled>Reading ${esc(name)}…</button>`;
-  else if (n < BUILDER_MIN_LEGS) cta = `<button type="button" class="lb-cta" disabled>Create parlay link for ${esc(name)}</button><p class="row-sub lb-hint">${n === 1 ? 'One more leg makes a parlay.' : 'Tick at least two legs.'}</p>`;
-  else if (all) cta = `<a class="lb-cta" href="${escUrl(all)}" target="_blank" rel="noopener" data-lb-go>Create parlay link for ${esc(name)} ↗</a>`;
+  else if (!view.ready) cta = `<button type="button" class="lb-cta" disabled>Create ${view.minLegs > 1 ? 'parlay' : 'bet'} link for ${esc(name)}</button><p class="row-sub lb-hint">${view.minLegs > 1 ? (n === 1 ? `One more: a ${esc(name)} lineup starts at two.` : 'Tick at least two legs.') : 'Tick a leg to start.'}</p>`;
+  else if (all) cta = `<a class="lb-cta" href="${escUrl(all)}" target="_blank" rel="noopener" data-lb-go>Create ${what} link for ${esc(name)} ↗</a>`;
   else {
     // A book with no one link for a ticket: its legs one at a time where it links them, the book itself where it does not; and Playbook's slip for any of them.
     const linked = view.live.filter((l) => l.link);
@@ -12824,7 +12831,7 @@ function liveBuilderPanel(view, book, { loading = false } = {}) {
         <p class="lb-kicker">Your custom live parlay</p>
         <p class="lb-count">${n} leg${n === 1 ? '' : 's'} selected${gone && !loading ? ` · ${gone} no longer offered` : ''}${view.chosen.length ? ' · <button type="button" class="link-button" data-lb-clear>Clear</button>' : ''}</p>
         ${list}
-        <div class="lb-odds"><span>Estimated odds</span><b>${price ? esc(price) : '–'}</b></div>
+        <div class="lb-odds"><span>${n === 1 ? 'Odds' : 'Estimated odds'}</span><b>${price ? esc(price) : '–'}</b></div>
         ${view.sameGame && book !== 'prizepicks' ? `<p class="row-sub lb-hint">Two of these are from one game: ${esc(name)} sets a same-game price of its own on the slip.</p>` : ''}
       </div>
       ${cta}
@@ -12843,15 +12850,19 @@ function renderLiveBuilder(all) {
   const name = liveBuilderName(book);
   const view = builderView(board ?? [], liveBuilder.picked, { maxLegs: liveBuilderMax(book), pickem: book === 'prizepicks' });
   const leagues = [...liveState.leagues].filter((k) => k !== 'tennis');
-  const rows = view.rows.filter((r) => leagues.includes(r.league));
+  const rows = sortBoard(view.rows.filter((r) => leagues.includes(r.league)), liveBuilder.sort);
   const inPlay = all.filter((g) => g.tick?.state === 'in' && leagues.includes(g.league)).length;
+  // A long board draws its first rows and a button for the rest; a ticked row further down is drawn with them, so it can be unticked.
+  const shown = liveBuilder.showAll || rows.length <= LIVE_BUILDER_FIRST ? rows : rows.filter((r, i) => i < LIVE_BUILDER_FIRST || r.checked);
+  const more = rows.length - shown.length;
   const list = !board ? liveLoaderHtml(`${name} legs are loading`, { small: true })
-    : rows.length ? rows.map((r) => liveBuilderRow(r, book)).join('')
-      : `<p class="empty">${!leagues.length ? 'Turn a league on above to see its legs.' : inPlay ? `No live leg at ${esc(name)} clears the bar right now. The board re-reads every minute.` : 'No game in play right now. Legs show here once a game is under way.'}</p>`;
+    : rows.length ? `${shown.map((r) => liveBuilderRow(r, book)).join('')}${more > 0 ? `<button type="button" class="lb-more" data-lb-more>Show all ${rows.length} legs</button>` : ''}`
+      : `<p class="empty">${!leagues.length ? 'Turn a league on above to see its legs.' : inPlay ? `${esc(name)} has no live player line up right now. The board re-reads every minute.` : 'No game in play right now. Legs show here once a game is under way.'}</p>`;
+  const sorter = `<label class="lb-sort"><span>Sort</span><select data-lb-sort aria-label="Sort the legs">${BOARD_SORTS.map(([k, label]) => `<option value="${esc(k)}" ${k === liveBuilder.sort ? 'selected' : ''}>${esc(label)}</option>`).join('')}</select></label>`;
   // The minute's re-read redraws the tab under a reader who is part-way down the board: the page stays where it was.
   const scrollY = window.scrollY;
   el.liveBody.innerHTML = `${head}<div class="lb-wrap"><div class="lb">
-    <section class="lb-board" aria-label="Live props board"><div class="lb-board-head"><span>Live props board · furthest ahead of pace first</span><b>${board ? `${rows.length} live leg${rows.length === 1 ? '' : 's'} available` : ''}</b></div>${list}</section>
+    <section class="lb-board" aria-label="Live props board"><div class="lb-board-head"><span>Live props board · every line ${esc(name)} has up</span><b>${board ? `${rows.length} live leg${rows.length === 1 ? '' : 's'} available` : ''}</b>${board && rows.length > 1 ? sorter : ''}</div>${list}</section>
     ${liveBuilderPanel(view, book, { loading: !board })}
   </div></div>`;
   if (Math.abs(window.scrollY - scrollY) > 1) window.scrollTo(window.scrollX, scrollY);
@@ -12946,7 +12957,7 @@ el.liveView?.addEventListener('click', (event) => {
   if (event.target.closest('[data-lb-mode]')) {
     liveBuilder.on = !liveBuilder.on;
     // The one live book already chosen is the parlay's book until another is picked.
-    if (liveBuilder.on && !liveBuilder.book && liveState.books.size === 1) { liveBuilder.book = [...liveState.books][0]; saveJSON(LIVE_BUILDER_KEY, { book: liveBuilder.book }); }
+    if (liveBuilder.on && !liveBuilder.book && liveState.books.size === 1) { liveBuilder.book = [...liveState.books][0]; saveLiveBuilder(); }
     renderLive();
     if (liveBuilder.on && liveBuilder.book) loadLive({ force: true });
     return;
@@ -12958,12 +12969,14 @@ el.liveView?.addEventListener('click', (event) => {
     // Legs are one book's: another book starts another ticket.
     if (liveBuilder.picked.length && !window.confirm('Changing sportsbooks will reset your parlay selection. Continue?')) return;
     liveBuilder.book = id; liveBuilder.picked = []; liveBuilder.board = null; liveBuilder.boardBook = null;
-    saveJSON(LIVE_BUILDER_KEY, { book: id });
+    liveBuilder.showAll = false;
+    saveLiveBuilder();
     renderLive(); loadLive({ force: true }); return;
   }
   const lbRemove = event.target.closest('[data-lb-remove]');
   if (lbRemove) { liveBuilder.picked = liveBuilder.picked.filter((p) => p.id !== lbRemove.dataset.lbRemove); liveBuilderRedraw(); return; }
   if (event.target.closest('[data-lb-clear]')) { liveBuilder.picked = []; liveBuilderRedraw(); return; }
+  if (event.target.closest('[data-lb-more]')) { liveBuilder.showAll = true; renderLive(); return; }
   if (event.target.closest('[data-lb-drawer]')) { liveBuilder.drawer = !liveBuilder.drawer; liveBuilderRedraw(); return; }
   // A tap anywhere on a leg's row ticks it; the box itself is handled as it changes (below).
   const lbRow = event.target.closest('[data-lb-row]');
@@ -13004,7 +13017,10 @@ el.liveView?.addEventListener('click', (event) => {
 
 el.liveView?.addEventListener('change', (event) => {
   const box = event.target?.closest?.('input[data-lb-leg]');
-  if (box) liveBuilderToggle(box.dataset.lbLeg);
+  if (box) { liveBuilderToggle(box.dataset.lbLeg); return; }
+  // The order the board is read in: kept, and the board drawn again in it from its top.
+  const sort = event.target?.closest?.('select[data-lb-sort]');
+  if (sort && BOARD_SORTS.some(([k]) => k === sort.value)) { liveBuilder.sort = sort.value; saveLiveBuilder(); renderLive(); el.liveBody.querySelector('select[data-lb-sort]')?.focus({ preventScroll: true }); }
 });
 
 /* "Fit screen" on desktop: the shell follows the window while it is on; the choice is remembered per browser (docs/wide.js applies it before first paint). */

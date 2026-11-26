@@ -26,7 +26,7 @@ import { fetchWeather } from './weather.js';
 import { gameReads } from './live-game.js';
 import { SOCCER_LIVE, LIVE_SPORT, isSoccer, LIVE_ON, liveDay } from './live-leagues.js';
 import { espnAbbr } from '../../docs/team-logos.js';
-import { builderLegs } from '../../docs/live-builder.js';
+import { BUILDER_GAME_LEGS } from '../../docs/live-builder.js';
 
 /** The box-score key each market settles on, per league. */
 export const LIVE_STAT = {
@@ -778,8 +778,45 @@ export function playSummary(slips, reads) {
 }
 
 /**
- * The board. `legsBook` (a registry book id) adds each game's legs at that one book, for the Live tab's custom parlay
- * (docs/live-builder.js): the same candidates the slips are built from, so nothing more is read for them.
+ * Every live line one book has up for a game, for the custom parlay
+ * (docs/live-builder.js; 2026-11-26, the owner: "show all legs. Not just
+ * good pacing legs"): each Over on a player in the box that he has not
+ * already cleared, at any price, one row a player, stat and number at the
+ * book's best price for it. A player with nothing in a stat yet stands at
+ * zero. `candidates` are the legs that clear the slips' bar: a line among
+ * them at this book is marked `pick`. The list is cut at BUILDER_GAME_LEGS,
+ * the picks kept first and then the lines nearest their number.
+ */
+export function bookLegs(payload, tick, league, bookId, candidates = []) {
+  if (!bookId) return [];
+  const stats = LIVE_STAT[league] ?? {};
+  const box = new Map((tick?.box ?? []).map((p) => [String(p.name ?? '').toLowerCase(), p]));
+  const keyOf = (player, stat, point) => `${String(player ?? '').toLowerCase()}|${stat}|${point}`;
+  const picks = new Set((candidates ?? []).filter((c) => c.bookId === bookId).map((c) => keyOf(c.player, c.stat, c.point)));
+  const best = new Map();
+  for (const b of payload?.bookmakers ?? []) {
+    if ((bookIdFor(b.key) ?? b.key) !== bookId) continue;
+    for (const m of b.markets ?? []) {
+      const stat = stats[m.key]; if (!stat) continue;
+      for (const o of m.outcomes ?? []) {
+        if (o.name !== 'Over' || !Number.isFinite(o.point) || !Number.isFinite(o.price)) continue;
+        const p = box.get(String(o.description ?? '').toLowerCase()); if (!p) continue;
+        const current = boxValue(p, stat) ?? 0;
+        if (current >= o.point) continue; // already there
+        const key = keyOf(o.description, stat, o.point);
+        const had = best.get(key);
+        if (had && had.price >= o.price) continue;
+        best.set(key, { bookId, book: SPORTSBOOKS[bookId]?.name ?? b.key, player: o.description, team: p.team ?? null, stat, label: LIVE_LABEL[stat] ?? stat, point: o.point, price: o.price, current, link: o.link ?? null, pick: picks.has(key) });
+      }
+    }
+  }
+  const left = (l) => (l.point > 0 ? (l.point - l.current) / l.point : 1);
+  return [...best.values()].sort((a, b) => Number(b.pick) - Number(a.pick) || left(a) - left(b) || a.price - b.price).slice(0, BUILDER_GAME_LEGS);
+}
+
+/**
+ * The board. `legsBook` (a registry book id) adds each game's lines at that one book, for the Live tab's custom parlay
+ * (bookLegs): read off the same stored board the slips are built from, so nothing more is read for them.
  */
 export async function getLiveBoard(env, now = Date.now(), { ctx = null, legsBook = null } = {}) {
   const { games } = await readWatchIndex(env);
@@ -833,8 +870,9 @@ export async function getLiveBoard(env, now = Date.now(), { ctx = null, legsBook
       players: playerLines(tick, league),
       watch: whoToWatch(tick, candidates, league, { weather }),
       candidates: candidates.slice(0, 12),
-      // One book's legs for the custom parlay: none while the game is not in play, and none in a blowout, like the slips.
-      ...(legsBook ? { legs: tick?.state === 'in' && !withheld ? builderLegs(candidates, legsBook) : [] } : {}),
+      // One book's lines for the custom parlay: every one it has up while the game is in play. In a blowout the slips are withheld,
+      // so no line is marked as one of theirs.
+      ...(legsBook ? { legs: tick?.state === 'in' ? bookLegs(payload, tick, league, legsBook, withheld ? [] : candidates) : [] } : {}),
       slips: plays && !withheld ? { builtAt: plays.builtAt, firstBuiltAt: plays.firstBuiltAt ?? plays.builtAt, builds: plays.builds ?? 1, score: plays.score, detail: plays.detail ?? null, period: plays.period ?? null, clock: plays.clock ?? null, list: slipList } : null,
     });
   }

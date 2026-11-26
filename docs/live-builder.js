@@ -5,21 +5,32 @@
  * parlay for a specific, single sportsbook ... Users cannot mix and match
  * legs from different books").
  *
- * The board builds a slip a game at each book. Here the legs those slips
- * are drawn from are listed one a row, at one sportsbook, the furthest
- * ahead of pace first, and the reader ticks the ones to put on one ticket.
+ * The board builds a slip a game at each book. Here every live line a
+ * sportsbook has up is listed one a row, in the order the reader chooses,
+ * and the reader ticks the ones to put on one ticket: one for a straight
+ * bet, more for a parlay.
  *
- * Pure and shared: the worker cuts a game's legs down to one book's
- * (builderLegs, worker/src/live-board.js), and the app lists them, keeps
- * the ticked ones and prices the ticket (docs/app.js).
+ * It first listed only the legs the slips are drawn from. A user saw one
+ * or two (2026-11-26, the owner: "show all legs. Not just good pacing
+ * legs"), so it is every line now, the ones that clear the slips' bar
+ * marked `pick`.
+ *
+ * Pure and shared: the worker lists a game's lines at one book
+ * (worker/src/live-board.js bookLegs), and the app sorts them, keeps the
+ * ticked ones and prices the ticket (docs/app.js).
  */
 import { americanToDecimal, decimalToAmerican } from './engine.js';
 import { livePace, parlayDecimal } from './trends.js';
 
-/** The most legs of one game the worker sends for a book. */
-export const BUILDER_GAME_LEGS = 30;
-/** The fewest legs a parlay has. */
-export const BUILDER_MIN_LEGS = 2;
+/** The most legs of one game the worker sends for a book: every line a book has up, short of a list too long for a phone to draw. */
+export const BUILDER_GAME_LEGS = 250;
+/**
+ * The fewest legs a ticket has: one, a straight bet (2026-11-26, the
+ * owner: "remove the requirement to have two legs. This could be a
+ * straight as well"). A pick'em lineup still starts at two.
+ */
+export const BUILDER_MIN_LEGS = 1;
+export const PICKEM_MIN_LEGS = 2;
 /** The most legs one ticket takes when a book has no limit of its own listed. */
 export const BUILDER_MAX_LEGS = 20;
 
@@ -28,26 +39,6 @@ const low = (s) => String(s ?? '').toLowerCase().trim();
 export const legLine = (l) => `${low(l?.player)}|${low(l?.stat ?? l?.label)}`;
 /** A leg's name on the board: its game, its line and its number. */
 export const legId = (gameId, l) => `${gameId}|${legLine(l)}|${l?.point}`;
-
-/**
- * One book's legs of a game, from the game's candidates (every leg that
- * clears the board's bar at every book): one row a player, stat and number
- * at the book's best price for it, the widest cushion first.
- */
-export function builderLegs(candidates, bookId, { limit = BUILDER_GAME_LEGS } = {}) {
-  if (!bookId) return [];
-  const best = new Map();
-  for (const c of candidates ?? []) {
-    if (!c || c.bookId !== bookId || !Number.isFinite(c.point) || !Number.isFinite(c.price) || !Number.isFinite(c.current) || !c.player) continue;
-    const key = `${legLine(c)}|${c.point}`;
-    const had = best.get(key);
-    if (!had || c.price > had.price) best.set(key, c);
-  }
-  return [...best.values()]
-    .sort((a, b) => (Number(b.cushion) || 0) - (Number(a.cushion) || 0) || b.price - a.price)
-    .slice(0, limit)
-    .map((c) => ({ bookId: c.bookId, book: c.book ?? c.bookId, player: c.player, team: c.team ?? null, stat: c.stat ?? null, label: c.label ?? c.stat ?? '', point: c.point, price: c.price, current: c.current, pace: c.pace ?? null, cushion: c.cushion ?? null, link: c.link ?? null }));
-}
 
 /**
  * The board at one book: every in-play game's legs there, each with its
@@ -61,11 +52,45 @@ export function boardLegs(games, bookId) {
     for (const l of g.legs ?? []) {
       if (!l || l.bookId !== bookId || !Number.isFinite(l.point) || !Number.isFinite(l.price)) continue;
       const pace = livePace(l.current, l.point, g.elapsed);
-      rows.push({ ...l, id: legId(g.espnEventId, l), gameId: g.espnEventId, game: g.name ?? '', league: g.league ?? null, elapsed: g.elapsed ?? null, clock: g.tick?.detail ?? null, pacePct: pace?.pct ?? null, paceLevel: pace?.level ?? null, decimal: americanToDecimal(l.price) });
+      rows.push({ ...l, id: legId(g.espnEventId, l), gameId: g.espnEventId, game: g.name ?? '', league: g.league ?? null, elapsed: g.elapsed ?? null, clock: g.tick?.detail ?? null, pacePct: pace?.pct ?? null, paceLevel: pace?.level ?? null, decimal: americanToDecimal(l.price), pick: l.pick === true, need: Number.isFinite(l.current) ? Math.max(0, l.point - l.current) : null });
     }
   }
+  return sortBoard(rows, 'pace');
+}
+
+/**
+ * The orders the board can be read in (2026-11-26, the owner: "since
+ * we're showing all legs ... introduce a sorting button to sort them by
+ * pace percentage and other things like odds"): [key, label].
+ */
+export const BOARD_SORTS = [
+  ['pace', 'Pace %, highest first'],
+  ['close', 'Closest to the number'],
+  ['short', 'Shortest odds first'],
+  ['long', 'Longest odds first'],
+  ['pick', 'Our picks first'],
+  ['player', 'Player, A to Z'],
+];
+/**
+ * The board in one of those orders; an unknown key reads as pace. Ties
+ * fall to pace, then the shorter price, then the player and the number,
+ * so the order is the same every time it is drawn.
+ */
+export function sortBoard(rows, key = 'pace') {
   const pct = (r) => (Number.isFinite(r.pacePct) ? r.pacePct : -Infinity);
-  return rows.sort((a, b) => pct(b) - pct(a) || (Number(b.cushion) || 0) - (Number(a.cushion) || 0) || b.price - a.price || low(a.player).localeCompare(low(b.player)));
+  // How much of the number is still to come: a yard short of 59.5 is closer than a catch short of 1.5.
+  const left = (r) => (Number.isFinite(r.need) && r.point > 0 ? r.need / r.point : Infinity);
+  const name = (a, b) => low(a.player).localeCompare(low(b.player)) || low(a.stat).localeCompare(low(b.stat)) || a.point - b.point;
+  const base = (a, b) => pct(b) - pct(a) || a.price - b.price || name(a, b);
+  const by = {
+    pace: base,
+    close: (a, b) => left(a) - left(b) || base(a, b),
+    short: (a, b) => a.price - b.price || base(a, b),
+    long: (a, b) => b.price - a.price || base(a, b),
+    pick: (a, b) => Number(b.pick === true) - Number(a.pick === true) || base(a, b),
+    player: (a, b) => name(a, b) || base(a, b),
+  };
+  return [...(rows ?? [])].sort(by[key] ?? by.pace);
 }
 
 /** Two legs on the same line of the same game: a ticket takes one of them. */
@@ -86,7 +111,7 @@ export const sameLine = (a, b) => Boolean(a && b) && a.gameId === b.gameId && le
  * multiplied (a pick'em app's own table for a lineup), null under two
  * legs; and whether two of them are from one game.
  */
-export function builderView(board, picked, { maxLegs = BUILDER_MAX_LEGS, pickem = false } = {}) {
+export function builderView(board, picked, { maxLegs = BUILDER_MAX_LEGS, pickem = false, minLegs = pickem ? PICKEM_MIN_LEGS : BUILDER_MIN_LEGS } = {}) {
   const byId = new Map((board ?? []).map((r) => [r.id, r]));
   const chosen = (picked ?? []).map((p) => (byId.has(p.id) ? { ...byId.get(p.id), gone: false } : { ...p, gone: true }));
   const live = chosen.filter((c) => !c.gone);
@@ -97,10 +122,11 @@ export function builderView(board, picked, { maxLegs = BUILDER_MAX_LEGS, pickem 
     const blocked = checked ? null : live.some((c) => sameLine(c, r)) ? 'line' : full ? 'full' : null;
     return { ...r, checked, blocked };
   });
-  const decimal = live.length >= BUILDER_MIN_LEGS ? parlayDecimal(live.map((l) => l.decimal ?? americanToDecimal(l.price)), { pickem }) : null;
-  const price = Number.isFinite(decimal) && decimal > 1 ? { decimal: Math.round(decimal * 10000) / 10000, american: decimalToAmerican(decimal) } : null;
+  // One leg is a straight at its own price; more are the legs multiplied (a pick'em lineup pays its table, from two).
+  const decimal = live.length >= minLegs ? parlayDecimal(live.map((l) => l.decimal ?? americanToDecimal(l.price)), { pickem }) : null;
+  const price = Number.isFinite(decimal) && decimal > 1 ? { decimal: Math.round(decimal * 10000) / 10000, american: live.length === 1 && !pickem ? live[0].price : decimalToAmerican(decimal) } : null;
   const sameGame = new Set(live.map((l) => l.gameId)).size < live.length;
-  return { rows, chosen, live, price, sameGame, full };
+  return { rows, chosen, live, price, sameGame, full, minLegs, ready: live.length >= minLegs };
 }
 
 /**
