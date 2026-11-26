@@ -47,8 +47,8 @@ import { getSettings } from './settings.js';
 
 /** A league's channel: its webhook secret, its ledger, how it is named, and its test card's id (a new value sends one more). */
 export const LEAGUES = {
-  nba: { secret: 'DISCORD_LIVE_BASKETBALL_WEBHOOK', ledger: 'discord:nba:ledger', name: 'NBA', emoji: '🏀', testId: '2026-11-25-nba-1' },
-  nfl: { secret: 'DISCORD_FOOTBALL_WEBHOOK', ledger: 'discord:nfl:ledger', name: 'NFL', emoji: '🏈', testId: '2026-11-25-nfl-1' },
+  nba: { secret: 'DISCORD_LIVE_BASKETBALL_WEBHOOK', results: 'DISCORD_NBA_RESULTS_WEBHOOK', ledger: 'discord:nba:ledger', name: 'NBA', emoji: '🏀', testId: '2026-11-25-nba-1' },
+  nfl: { secret: 'DISCORD_FOOTBALL_WEBHOOK', results: 'DISCORD_NFL_RESULTS_WEBHOOK', ledger: 'discord:nfl:ledger', name: 'NFL', emoji: '🏈', testId: '2026-11-25-nfl-1' },
 };
 export const DISCORD_NBA_LEDGER_KEY = LEAGUES.nba.ledger;
 /** A slip is posted only while the board that made it is this fresh: an older build's prices are gone. */
@@ -100,12 +100,17 @@ export async function playbookTag(env) {
   return playbookTagFromSecrets(env) ?? userIdOf((await getSettings(env, 'owner').catch(() => null))?.playbook?.mention);
 }
 
-/** What is configured: the channel's webhook (null when unset or not a Discord webhook) and Playbook's user id. */
+/**
+ * What is configured: the channel's webhook (null when unset or not a Discord webhook), Playbook's user id, and the
+ * results channel's webhook (2026-11-25, the owner: "create a basketball results channel as well posting the same as
+ * tennis results but for nba"): every settled play's card goes there too, and the day's and the week's roll-ups
+ * (worker/src/discord-results-digest.js).
+ */
 export async function leagueConfig(env, league = 'nba') {
   const hook = webhookOf(env?.[LEAGUES[league].secret]);
   // The id the owner saved in the app's Playbook settings stands in when the secret is not set — read only with a channel to post to.
   const playbook = hook ? await playbookTag(env) : playbookTagFromSecrets(env);
-  return { hook, playbook };
+  return { hook, playbook, results: webhookOf(env?.[LEAGUES[league].results]) };
 }
 
 export const basketballConfig = (env) => leagueConfig(env, 'nba');
@@ -238,6 +243,13 @@ export async function syncLeagueDiscord(env, now = Date.now(), league = 'nba', {
     if (r.refused && r.ok) { ledger.noButtons = true; dirty = true; }
     return r;
   };
+  /** A settled play's card to the results channel; the entry's `res` says whether it landed, `resTries` how often it was refused. */
+  const sendResult = async (entry, png) => {
+    const u = await deliver(fetcher, cfg.results, slipMessage(entry.post, { png, buttons: false }));
+    entry.res = Boolean(u.ok || u.unknown);
+    if (!entry.res) { entry.resTries = (entry.resTries ?? 0) + 1; entry.resAt = now; fail('result', u); }
+    else ledger.lastResultAt = now;
+  };
 
   // The test card, once per test id.
   const testId = deps.testId ?? sport.testId;
@@ -301,11 +313,26 @@ export async function syncLeagueDiscord(env, now = Date.now(), league = 'nba', {
     if (fin?.state !== 'post') continue;
     for (const e of open) {
       const graded = gradePost(e.post, fin);
-      const r = await send(slipMessage(graded, { png: await picture(graded), buttons: !ledger.noButtons }), { messageId: e.messageId });
+      const png = await picture(graded);
+      const r = await send(slipMessage(graded, { png, buttons: !ledger.noButtons }), { messageId: e.messageId });
       const tries = (e.editTries ?? 0) + 1;
-      if (r.ok) { ledger.posts[graded.id] = { ...e, state: 'done', doneAt: now, post: graded }; out.settled++; }
+      if (r.ok) {
+        ledger.posts[graded.id] = { ...e, state: 'done', doneAt: now, post: graded }; out.settled++;
+        // The same settled card to the results channel, when there is one. `res` says whether it got there: one
+        // Discord refused is tried again below, a few ticks, and never one Discord gave no answer about.
+        if (cfg.results) await sendResult(ledger.posts[graded.id], png);
+      }
       else { ledger.posts[graded.id] = r.status === 404 || tries >= 6 ? { ...e, state: 'done', doneAt: now, editFailed: true } : { ...e, editTries: tries }; fail('edit', r); }
       dirty = true;
+    }
+  }
+  // A result the results channel has not had (one Discord refused): sent again, three tries at most, a few a tick, for a day.
+  if (cfg.results) {
+    let caughtUp = 0;
+    for (const e of Object.values(ledger.posts)) {
+      // Not one refused on this very tick: the next tick is soon enough.
+      if (caughtUp >= 3 || e.state !== 'done' || e.editFailed || e.res !== false || e.resAt === now || (e.resTries ?? 0) >= 3 || now - (e.doneAt ?? 0) > 864e5) continue;
+      caughtUp++; await sendResult(e, await picture(e.post)); dirty = true;
     }
   }
 
@@ -339,6 +366,10 @@ export async function leagueStatus(env, league = 'nba') {
     // when football and basketball plays are posted, it ats @Playbook with the card so it can build the links").
     lastPostTagged: ledger.lastPostTagged ?? null, tagged: ledger.tagged ?? 0,
     lastPostAt: ledger.lastPostAt ?? null, lastError: ledger.lastError ?? null, cardError: ledger.cardError ?? null, games: Object.keys(ledger.games ?? {}).length, posts: counts,
+    // The results channel: whether it is set up, whether its secret is there and wrong, how many settled plays reached it and when the last did.
+    results: Boolean(cfg.results),
+    resultsSecretRejected: Boolean(String(env?.[LEAGUES[league].results] ?? '').trim()) && !cfg.results,
+    resultsPosted: Object.values(ledger.posts ?? {}).filter((e) => e.res === true).length, lastResultAt: ledger.lastResultAt ?? null,
   };
 }
 export const basketballStatus = (env) => leagueStatus(env, 'nba');

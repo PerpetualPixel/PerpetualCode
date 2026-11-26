@@ -40,10 +40,10 @@ const ledgerOf = (store) => JSON.parse(store.get(DISCORD_NBA_LEDGER_KEY));
 
 test('the channel is used only with a real Discord webhook; Playbook\'s id comes from its secret, or from the id the owner saved in the app', async () => {
   const { env, store } = makeEnv();
-  assert.deepEqual(await basketballConfig(env), { hook: null, playbook: null });
+  assert.deepEqual(await basketballConfig(env), { hook: null, playbook: null, results: null });
   assert.deepEqual(await syncBasketballDiscord(env, NOW), { off: true }, 'with no webhook nothing is read or sent');
-  assert.deepEqual(await basketballConfig({ ...env, DISCORD_LIVE_BASKETBALL_WEBHOOK: 'https://example.com/hook' }), { hook: null, playbook: null });
-  assert.deepEqual(await basketballConfig({ ...env, DISCORD_LIVE_BASKETBALL_WEBHOOK: HOOK, DISCORD_PLAYBOOK_USER_ID: `<@${BOT}>` }), { hook: HOOK, playbook: BOT }, 'pasted as a mention or as the number');
+  assert.deepEqual(await basketballConfig({ ...env, DISCORD_LIVE_BASKETBALL_WEBHOOK: 'https://example.com/hook' }), { hook: null, playbook: null, results: null });
+  assert.deepEqual(await basketballConfig({ ...env, DISCORD_LIVE_BASKETBALL_WEBHOOK: HOOK, DISCORD_PLAYBOOK_USER_ID: `<@${BOT}>` }), { hook: HOOK, playbook: BOT, results: null }, 'pasted as a mention or as the number');
   assert.equal((await basketballConfig({ ...env, DISCORD_LIVE_BASKETBALL_WEBHOOK: HOOK, DISCORD_PLAYBOOK_USER_ID: '@Playbook' })).playbook, null, 'a name is not an id');
   store.set('settings:owner', JSON.stringify({ playbook: { channel: '', mention: '223456789012345678' } }));
   const saved = await basketballConfig({ ...env, DISCORD_LIVE_BASKETBALL_WEBHOOK: HOOK });
@@ -237,7 +237,7 @@ test('football has its own channel, ledger and test card, and is told apart from
   assert.deepEqual([LEAGUES.nfl.secret, LEAGUES.nba.secret], ['DISCORD_FOOTBALL_WEBHOOK', 'DISCORD_LIVE_BASKETBALL_WEBHOOK']);
   assert.notEqual(LEAGUES.nfl.ledger, LEAGUES.nba.ledger);
   const { env, store } = makeEnv({ DISCORD_FOOTBALL_WEBHOOK: FOOT, DISCORD_PLAYBOOK_USER_ID: BOT });
-  assert.deepEqual(await leagueConfig(env, 'nfl'), { hook: FOOT, playbook: BOT }, 'one Playbook id serves both channels');
+  assert.deepEqual(await leagueConfig(env, 'nfl'), { hook: FOOT, playbook: BOT, results: null }, 'one Playbook id serves both channels');
   assert.deepEqual(await syncBasketballDiscord(env, NOW), { off: true }, 'the football webhook does not switch basketball on');
   const play = { espnEventId: '901', name: NFL_GAME.name, builtAt: NOW - 30e3, score: { DAL: 10, PHI: 14 }, detail: '8:40 - 2nd Quarter', slips: [nflSlip()] };
   const d = fakeDiscord();
@@ -367,4 +367,39 @@ test('Playbook is tagged as the member it is or as its role, whichever id was sa
   assert.deepEqual([st.playbook, st.playbookTag], [true, 'role']);
   assert.equal((await basketballStatus({ ...env, DISCORD_PLAYBOOK_USER_ID: BOT })).playbookTag, 'member');
   assert.ok(!JSON.stringify(st).includes(ROLE_ID));
+});
+
+test('with a results webhook, each settled play\'s card goes to the results channel too, once; one Discord refused is tried again next tick', async () => {
+  const RESULTS = 'https://discord.com/api/webhooks/523456789012345678/resDEF_ghi-jklMNOpqrSTUvwxYZ0123456789abcdefghijklmnopqrstuvwxyzABCDEF';
+  const { env, store } = makeEnv({ DISCORD_LIVE_BASKETBALL_WEBHOOK: HOOK, DISCORD_NBA_RESULTS_WEBHOOK: RESULTS });
+  // The file's runner pins a config with no results hook; this one carries it.
+  const runR = (e, now, dd, { play = null, watch = null } = {}) => syncBasketballDiscord(e, now, { deps: { fetch: dd.fetch, games: async () => [GAME], play: async () => play, watch: async () => watch, config: { hook: HOOK, playbook: BOT, results: RESULTS }, testId: '', render: async () => PNG } });
+  const d = fakeDiscord();
+  await runR(env, NOW, d, { play: playOf([slip()]) });
+  assert.equal(d.calls.length, 1, 'an open play goes to the live channel only');
+  const watch = finalTick({ 'Jalen Brunson': { points: 27 }, 'Jayson Tatum': { rebounds: 9 }, 'Karl-Anthony Towns': { rebounds: 12 } });
+  assert.deepEqual(await runR(env, NOW + 2 * 3600e3, d, { play: playOf([slip()], { builtAt: NOW }), watch }), { posted: 0, settled: 1, failed: 0 });
+  assert.deepEqual(d.calls.slice(1).map((c) => [c.method, c.url.split('?')[0].replace(/\/messages\/\d+$/, '/messages/<id>')]), [['PATCH', `${HOOK}/messages/<id>`], ['POST', RESULTS]], 'the edit, then the same settled card to the results channel');
+  assert.match(d.calls[2].body.content, /^✅ \*\*WON\*\*/);
+  assert.equal(d.calls[2].body.components, undefined, 'the results card carries no button');
+  const entry = Object.values(ledgerOf(store).posts)[0];
+  assert.deepEqual([entry.state, entry.res], ['done', true]);
+  await runR(env, NOW + 3 * 3600e3, d, { play: playOf([slip()], { builtAt: NOW }), watch });
+  assert.equal(d.calls.length, 3, 'and never again');
+  const status = await basketballStatus(env);
+  assert.deepEqual([status.results, status.resultsSecretRejected, status.resultsPosted, status.lastResultAt], [true, false, 1, NOW + 2 * 3600e3]);
+  assert.ok(!JSON.stringify(status).includes('resDEF'));
+
+  // Refused by the results channel: tried again on a later tick, then it lands.
+  const r2 = makeEnv({ DISCORD_LIVE_BASKETBALL_WEBHOOK: HOOK, DISCORD_NBA_RESULTS_WEBHOOK: RESULTS });
+  const d2 = fakeDiscord((call) => (call.url.startsWith(RESULTS) && d2.calls.filter((c) => c.url.startsWith(RESULTS)).length === 1 ? { status: 500, body: {} } : null));
+  await runR(r2.env, NOW, d2, { play: playOf([slip()]) });
+  assert.deepEqual(await runR(r2.env, NOW + 2 * 3600e3, d2, { play: playOf([slip()], { builtAt: NOW }), watch }), { posted: 0, settled: 1, failed: 1 });
+  assert.equal(Object.values(ledgerOf(r2.store).posts)[0].res, false);
+  await runR(r2.env, NOW + 2 * 3600e3 + 60e3, d2, { play: playOf([slip()], { builtAt: NOW }), watch });
+  assert.equal(Object.values(ledgerOf(r2.store).posts)[0].res, true);
+  assert.equal(d2.calls.filter((c) => c.url.startsWith(RESULTS)).length, 2);
+  // Without the secret: nothing goes anywhere else, and the status says so.
+  assert.equal((await basketballStatus({ ...env, DISCORD_NBA_RESULTS_WEBHOOK: '' })).results, false);
+  assert.equal((await basketballStatus({ ...env, DISCORD_NBA_RESULTS_WEBHOOK: 'nope' })).resultsSecretRejected, true);
 });
