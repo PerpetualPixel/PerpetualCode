@@ -132,3 +132,22 @@ test('the styles: the ticket sits beside the board only with room for it, and th
   assert.match(css, /#liveView a\.lb-cta, #liveView a\.lb-cta:hover, #liveView a\.lb-cta:visited \{ color: #fff; text-decoration: none; \}/);
   assert.match(css, /\.lb-panel \{ position: sticky; bottom: calc\(8px \+ env\(safe-area-inset-bottom, 0px\)\);/);
 });
+
+test('a tick is drawn in place: the board is not redrawn, the tapped row stays where it is, and nothing is focused by hand', () => {
+  // 2026-11-26, the owner, on a phone: "When I click the check boxes, the screen jumps to the top ... The screen should not move".
+  const at = app.indexOf('function liveBuilderToggle(id) {');
+  const toggle = app.slice(at, app.indexOf('\n}\n', at));
+  assert.match(toggle, /if \(!liveBuilderRefresh\(\)\) \{ renderLive\(\); return; \}/, 'the whole tab is drawn only when there is no board to draw onto');
+  assert.match(toggle, /const shift = tapped\.getBoundingClientRect\(\)\.top - top; if \(Math\.abs\(shift\) >= 1\) window\.scrollBy\(0, shift\);/);
+  assert.doesNotMatch(toggle, /\.focus\(/, 'the box that was tapped is still the same box: no focus call to scroll to');
+  const rat = app.indexOf('function liveBuilderRefresh() {');
+  const refresh = app.slice(rat, app.indexOf('\n}\n', rat));
+  assert.doesNotMatch(refresh, /liveBody\.innerHTML/);
+  assert.match(refresh, /if \(panel\) panel\.outerHTML = liveBuilderPanel\(view, book\);/, 'only the ticket is drawn again');
+  // The ticket's own buttons, and the minute's re-read, leave the page where it is.
+  assert.match(app, /if \(lbRemove\) \{ liveBuilder\.picked = liveBuilder\.picked\.filter\(\(p\) => p\.id !== lbRemove\.dataset\.lbRemove\); liveBuilderRedraw\(\); return; \}/);
+  assert.match(app, /if \(Math\.abs\(window\.scrollY - scrollY\) > 1\) window\.scrollTo\(window\.scrollX, scrollY\);/);
+  // The hidden box is held inside its own label.
+  assert.match(css, /\.lb-check \{ position: relative;/);
+  assert.match(css, /\.lb-check input \{ position: absolute; left: 0; top: 0; width: 1px; height: 1px;/);
+});
