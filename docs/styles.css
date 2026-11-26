@@ -7792,6 +7792,14 @@ a.tennis-book:hover { background: rgba(255, 255, 255, 0.06); }
 .mvp-way > div { display: grid; gap: 2px; min-width: 0; }
 .mvp-way small { color: var(--muted); line-height: 1.35; }
 .mvp-way .parlay-btn { flex: none; text-decoration: none; }
+/* The ticket at every other book (docs/book-ways.js): a row a book, its slip link and Playbook's copy beside it. */
+.book-ways { margin-left: 0; margin-right: 0; }
+.pick-bet-card:not(.mvp-card) > .book-ways { margin: 8px 14px 0; }
+.book-ways-how { margin: 4px 0 2px; }
+.book-way strong { display: inline-flex; align-items: center; gap: 6px; flex-wrap: wrap; }
+.book-way strong small { font-weight: 500; }
+.book-way-acts { display: inline-flex; align-items: center; gap: 6px; flex: none; }
+.book-way-acts .pb-btn { min-height: 32px; padding: 0 10px; }
 .mvp-near { margin: 0 0 14px; font-size: 0.86rem; }
 .mvp-near summary { cursor: pointer; font-weight: 700; color: var(--muted); padding: 6px 0; }
 .mvp-near ul { margin: 6px 0 0; padding-left: 18px; display: grid; gap: 4px; }

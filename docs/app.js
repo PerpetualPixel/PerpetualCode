@@ -61,6 +61,7 @@ import { parseLeg as parseSlipLeg, parseSlipText, parseAmerican as parseSlipAmer
 import { VIABILITY_LABEL } from './slip-viability.js';
 import { parlaySnapshot, applyParlaySnapshot, cleanParlayStore, withParlaySlot, PARLAY_SLOTS, passesHitBars, l20Floor, hitBarText, nextMinScore } from './parlay-presets.js';
 import { playbookText, playbookKey, playbookUserId, discordChannelUrl, cleanPlaybookLink, PLAYBOOK_SITE } from './playbook.js';
+import { ticketAtBooks, bookWayNote } from './book-ways.js';
 import { hitFlags as slipHitFlags } from './trends.js';
 import { lineFlags, lineVerdict, looksTooGood } from './line-check.js';
 import { RESULT_SIDES, RESULT_SPORTS, RESULT_BUCKETS, resultEntries, countedResults, summarize, bucketize, unitTicks } from './results.js';
@@ -10376,11 +10377,35 @@ function renderMvpCard(pick) {
       ${note ? `<p class="row-sub mvp-note">${esc(note)}</p>` : ''}
     </div>
     ${settled ? '' : mvpSlipFoot(bet)}
+    ${settled ? '' : otherBooksFold(bet)}
     ${flags.length ? `<details class="mvp-fold"><summary>${flags.length} thing${flags.length === 1 ? '' : 's'} to weigh: ${esc(flags.map((f) => f.title).join(', '))}</summary><ul class="mvp-flags">${flags.map((f) => `<li class="is-${esc(f.tone)}"><strong>${esc(f.title)}.</strong> ${esc(f.text)}</li>`).join('')}</ul></details>` : '<p class="row-sub mvp-clear" title="Minutes, the injury report, his role, lineup changes and blowout risk">Vetted: nothing against it.</p>'}
     ${!pick.tracked && pick.why ? `<p class="row-sub mvp-why">Not tracked: ${esc(pick.why)}.</p>` : ''}
     ${ways.length ? `<details class="mvp-fold"><summary>Other ways to play it (${ways.length})</summary>${ways.map(wayRow).join('')}</details>` : ''}
   </article>`;
 }
+/**
+ * The ticket at every other book (docs/book-ways.js; 2026-11-25, the owner, of a reader with neither of the books
+ * the tickets named): a row a book, with the price of its legs multiplied, what moved to a lower number and what it
+ * drops, one link for the slip where the book takes one, and Playbook's copy for every book, FanDuel included.
+ * Stored on the ticket when it posted; a ticket from before that is read off its legs' own quotes.
+ */
+function otherBooksFold(bet) {
+  if (!bet || bet.status === 'graded' || bet.status === 'void') return '';
+  const legs = (bet.legs ?? []).filter((l) => l.selection);
+  const ways = Array.isArray(bet.books) ? bet.books : ticketAtBooks(legs, [], { exclude: bet.bookId });
+  if (!ways.length) return '';
+  const sameGame = Boolean(bet.mvp);
+  const row = (w) => {
+    const all = w.legs.length > 1 ? combinedSlipLink(w.bookId, w.legs.map((l) => l.link)) : (w.legs[0]?.link ?? null);
+    const note = bookWayNote(w);
+    const text = playbookText({ legs: w.legs.map((l) => ({ selection: l.selection, game: l.game })), book: w.bookId, mention: playbookSettings().mention });
+    const key = playbookKey(w.bookId, w.legs.map((l) => l.legId ?? l.selection));
+    const count = w.complete ? `all ${w.legs.length} leg${w.legs.length === 1 ? '' : 's'}` : `${w.legs.length} of ${legs.length} legs`;
+    return `<div class="mvp-way book-way"><div><strong>${bookBadge(w.bookId, w.book)}${esc(w.book)} <small>${esc(count)} · about ${esc(formatAmerican(w.american))}${sameGame ? ' with the legs multiplied' : ''}</small></strong>${note ? `<small>${esc(note)}</small>` : '<small>the ticket as drawn</small>'}</div><span class="book-way-acts">${all ? `<a class="parlay-btn is-slip" href="${escUrl(all)}" target="_blank" rel="noopener">Add ↗</a>` : ''}${text ? `<span class="pb-block is-compact" data-pb-key="${esc(key)}" data-pb-text="${esc(text)}" data-pb-book="${esc(w.book)}"><button type="button" class="pb-btn" data-pb-copy title="Copy the lines for Playbook, the Discord bot that makes a ${esc(w.book)} slip">Playbook</button><span class="pb-status" data-pb-status hidden></span></span>` : ''}</span></div>`;
+  };
+  return `<details class="mvp-fold book-ways"><summary>Other books (${ways.length})</summary><p class="row-sub book-ways-how">The same legs at each book: its number where it has one, else the nearest lower one, and a leg it does not price left off. Tap Playbook to copy the lines for its Discord bot, which replies with a slip for that book.</p>${ways.map(row).join('')}</details>`;
+}
+
 /** The day's MVP Picks for the Pixel's Picks tab: every player who met the system, then who fell short and why. */
 function renderMvpSection() {
   const mvp = trendPicksState.data?.mvp;
@@ -10410,6 +10435,7 @@ function renderBetCard(bet) {
     <div class="pick-legs">${bet.legs.map((leg) => renderPickLeg(leg, bet)).join('')}</div>
     ${betOutcomeWhy(bet) ? `<p class="pick-note pick-why">${esc(betOutcomeWhy(bet))}</p>` : ''}
     ${ticketSlipFoot(bet)}
+    ${otherBooksFold(bet)}
   </article>`;
 }
 

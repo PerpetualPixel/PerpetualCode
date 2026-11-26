@@ -55,6 +55,7 @@ import { seasonColumnRows } from '../../docs/prop-legs.js';
 import { attachSeries, overNeed } from '../../docs/trends.js';
 import { lineFlags } from '../../docs/line-check.js';
 import { americanToDecimal } from '../../docs/engine.js';
+import { ticketAtBooks } from '../../docs/book-ways.js';
 
 export const MVP_SPORT = 'basketball_nba';
 export const MVP_STATS = ['points', 'rebounds', 'assists'];
@@ -428,8 +429,10 @@ export async function mvpCandidates(rows, league, { env = null, ctx = null, repo
 const PLAY_NAME = { safe: 'MVP same-game parlay', step: 'MVP same-game parlay · stepped up', pair: 'MVP parlay · two players' };
 
 /** A way to play a pick as the record keeps it: its numbers, its lines in brief, and its ticket in the shape Pixel's Picks grades and draws, priced at the price to take. */
-function optionRecord(kind, t, id, now, extra = {}) {
+function optionRecord(kind, t, id, now, extra = {}, rows = []) {
   const legs = t.legs.map((l) => legRecord({ line: l.row, american: l.quote.american, decimal: l.quote.decimal, bookId: t.bookId, link: l.quote.link ?? null }, { note: null, flags: [] }, now));
+  // The same legs at every other book (docs/book-ways.js): the number the book has, else its nearest lower one, a stat it lacks dropped.
+  const books = ticketAtBooks(legs, rows, { exclude: t.bookId });
   return {
     kind, bookId: t.bookId, book: pickBookName(t.bookId), together: t.together, last: t.last, chance: t.chance, take: t.take, est: t.est, playable: playable(t), ...extra,
     lines: t.legs.map((l) => ({ player: l.row.playerName, stat: l.row.statKey, label: l.row.statLabel, point: l.row.point, american: l.quote.american, hits: l.record.hits, games: l.record.games, rate: l.record.rate })),
@@ -437,7 +440,7 @@ function optionRecord(kind, t, id, now, extra = {}) {
       id, postedAt: now, type: 'parlay', shape: null, play: PLAY_NAME[kind], mvp: true, kind,
       sportKey: MVP_SPORT, sportTitle: 'NBA', bookId: t.bookId, book: pickBookName(t.bookId), bookUrl: pickBookUrl(t.bookId), link: null,
       american: t.take.american, decimal: t.take.decimal, estAmerican: t.est.american, units: MVP_UNITS,
-      commenceMs: Math.min(...legs.map((l) => l.commenceMs)), legs, status: 'pending', result: null, net: null, settledAt: null,
+      commenceMs: Math.min(...legs.map((l) => l.commenceMs)), legs, books, status: 'pending', result: null, net: null, settledAt: null,
     },
   };
 }
@@ -475,9 +478,9 @@ export async function runMvpPicksDaily(env, ctx, now = Date.now(), { deps = {} }
     let pair = null; let partner = null;
     for (const x of others) { pair = pairTicket(p, x, league.season); if (pair) { partner = x; break; } }
     const options = [
-      optionRecord('safe', p.ticket, `${id}:safe`, now),
-      p.step ? optionRecord('step', p.step, `${id}:step`, now) : null,
-      pair ? optionRecord('pair', pair, `${id}:pair`, now, { partner: { athleteId: partner.athleteId, player: partner.player, team: partner.team, opponent: partner.opponent, mvp: partner.mvp, why: partner.mvp ? null : partner.why } }) : null,
+      optionRecord('safe', p.ticket, `${id}:safe`, now, {}, rows),
+      p.step ? optionRecord('step', p.step, `${id}:step`, now, {}, rows) : null,
+      pair ? optionRecord('pair', pair, `${id}:pair`, now, { partner: { athleteId: partner.athleteId, player: partner.player, team: partner.team, opponent: partner.opponent, mvp: partner.mvp, why: partner.mvp ? null : partner.why } }, rows) : null,
     ].filter(Boolean);
     const chosen = options.find((o) => o.playable) ?? null;
     const play = chosen ?? options[0];
