@@ -27,7 +27,7 @@ import { sortTrends, sortQuotes, bestQuote, attachSeries, hitFlags, nflWeek, leg
 import { enhanceSelect } from './custom-select.js';
 import { BUILD_INFO } from './version.js';
 import { safeUrl } from './safe-url.js';
-import { hardRockCombined, phoneSlipLink, isPhone, pickText, withState, needsState, cleanState, US_STATES } from './book-links.js';
+import { hardRockCombined, prizePicksCombined, phoneSlipLink, isPhone, pickText, withState, needsState, cleanState, US_STATES } from './book-links.js';
 import { groupLiveSlips, slipNumbers, parseLiveHash } from './live-slips.js';
 import { summarizePicks, gradePick } from './learning.js';
 import { liveSetsLabel } from './tennis-results.js';
@@ -11196,6 +11196,8 @@ function combinedSlipLink(bookId, legLinks) {
     }
     // Hard Rock's slip link takes its selections joined by commas (docs/book-links.js); on a phone the tap turns it into the one its app opens.
     if (bookId === 'hardrock') return hardRockCombined(links);
+    // PrizePicks' pick link takes a lineup's picks joined by commas (docs/book-links.js).
+    if (bookId === 'prizepicks') return prizePicksCombined(links);
     if (bookId === 'fanatics') {
       // Fanatics' share-a-bet link carries its legs as a list ({"legs": [{eventId, marketId, selectionId}]}): every leg's entry on one link.
       const legs = [];

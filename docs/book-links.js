@@ -41,6 +41,49 @@ export function hardRockCombined(links) {
   return ids.length && ids.every(Boolean) ? hardRockSlipLink(ids.flat()) : null;
 }
 
+/**
+ * PrizePicks (2026-11-26, the owner: "Is there a way to get prizepicks to
+ * add the whole parlay slip like the other books?"; and of a two-pick link,
+ * "That copied both lines"). The feed's link for a projection is
+ *
+ *   https://app.prizepicks.com/?projections=<projection>-<o|u>-<line>
+ *
+ * and the same link takes several picks joined by commas, which is one link
+ * for a whole lineup.
+ */
+const PRIZEPICKS_APP = 'https://app.prizepicks.com/';
+const PP_PICK = /^(\d+)-([ou])-(\d+(?:\.\d+)?)$/;
+/** The most picks a PrizePicks lineup holds. */
+export const PRIZEPICKS_MAX_PICKS = 6;
+
+/** The picks a PrizePicks link carries (each "<projection>-<o|u>-<line>"), or null when it is not a pick link. */
+export function prizePicksPicks(link) {
+  let url;
+  try { url = new URL(String(link ?? '')); } catch { return null; }
+  if (url.protocol !== 'https:' || url.hostname !== 'app.prizepicks.com') return null;
+  const picks = (url.searchParams.get('projections') ?? '').split(',').filter(Boolean);
+  return picks.length && picks.every((x) => PP_PICK.test(x)) ? picks : null;
+}
+
+/**
+ * One link for every pick of a PrizePicks lineup, or null when a leg's link
+ * carries no pick, when two legs are the same projection taken both ways, or
+ * when there are more picks than a lineup holds. A projection listed twice
+ * the same way is kept once.
+ */
+export function prizePicksCombined(links) {
+  const each = (links ?? []).map(prizePicksPicks);
+  if (!each.length || !each.every(Boolean)) return null;
+  const byProjection = new Map();
+  for (const pick of each.flat()) {
+    const id = PP_PICK.exec(pick)[1];
+    if (byProjection.has(id) && byProjection.get(id) !== pick) return null;
+    byProjection.set(id, pick);
+  }
+  const picks = [...byProjection.values()];
+  return picks.length <= PRIZEPICKS_MAX_PICKS ? `${PRIZEPICKS_APP}?projections=${picks.join(',')}` : null;
+}
+
 /** A slip link as a phone should be given it: Hard Rock's becomes the one its app opens; every other link is returned as it came. */
 export function phoneSlipLink(link) {
   const ids = hardRockSelections(link);
