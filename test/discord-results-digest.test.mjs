@@ -26,7 +26,8 @@ function fakeDiscord(reply = null) {
   const calls = [];
   let n = 0;
   const fetch = async (url, init) => {
-    const call = { url, method: init.method, body: JSON.parse(init.body) };
+    const form = typeof init.body !== 'string';
+    const call = { url, method: init.method, body: JSON.parse(form ? init.body.get('payload_json') : init.body), file: form ? init.body.get('files[0]') : null };
     calls.push(call);
     const r = reply ? reply(call, calls.length) : null;
     const status = r?.status ?? 200;
@@ -158,7 +159,7 @@ test('the run: yesterday posts once at 6am ET through the results webhook, with 
   stored(store, '2026-11-25', [play({ id: 'b', gradedAt: w.endMs - 60e3, result: 'loss', profit: -1 }), play({ id: 'late', gradedAt: w.endMs + 60e3 })]);
   const d = fakeDiscord();
   const r = await runResultsDigest(env, at('2026-11-25', 6, 7), { deps: { fetch: d.fetch, oneOff: null } });
-  assert.deepEqual(r, { date: '2026-11-25', daily: { posted: 1, day: '2026-11-24', plays: 2 }, weekly: null, nba: { off: true }, nfl: { off: true } });
+  assert.deepEqual(r, { date: '2026-11-25', daily: { posted: 1, day: '2026-11-24', plays: 2, card: false }, weekly: null, nba: { off: true }, nfl: { off: true } });
   assert.equal(d.calls.length, 1);
   assert.equal(d.calls[0].method, 'POST');
   assert.equal(d.calls[0].url, `${UPDATES}?wait=true`);
@@ -190,7 +191,7 @@ test('the run: off with no results webhook, nothing outside the hour unless forc
   const refusing = fakeDiscord((call, n) => (n === 1 ? { status: 400, body: { message: 'no' } } : null));
   assert.deepEqual((await runResultsDigest(env, at('2026-11-25', 6, 7), { deps: { fetch: refusing.fetch, oneOff: null } })).daily, { failed: 400, day: '2026-11-24' });
   assert.ok(!store.has(DIGEST_DAY_KEY('2026-11-24')));
-  assert.deepEqual((await runResultsDigest(env, at('2026-11-25', 6, 22), { deps: { fetch: refusing.fetch, oneOff: null } })).daily, { posted: 1, day: '2026-11-24', plays: 1 });
+  assert.deepEqual((await runResultsDigest(env, at('2026-11-25', 6, 22), { deps: { fetch: refusing.fetch, oneOff: null } })).daily, { posted: 1, day: '2026-11-24', plays: 1, card: false });
   assert.equal(refusing.calls[1].body.content, '', 'nobody known to tag: no content, and the id saved in the app is not there either');
 });
 
@@ -205,8 +206,8 @@ test('the run: Monday posts the week that ended this morning, from the day recor
   store.set(DIGEST_DAY_KEY('2026-11-16'), JSON.stringify({ at: 1, plays: 3, tally: { wins: 2, losses: 1, voids: 0, pending: 0, staked: 3, units: 0.14, roi: 0.047 }, leans: { wins: 0, losses: 0, voids: 0, pending: 0, staked: 0, units: 0, roi: null } }));
   const d = fakeDiscord();
   const r = await runResultsDigest(env, at('2026-11-23', 6, 7), { deps: { fetch: d.fetch, oneOff: null } });
-  assert.deepEqual(r.daily, { posted: 1, day: '2026-11-22', plays: 1 });
-  assert.deepEqual(r.weekly, { posted: 1, week: '2026-11-16', plays: 5 });
+  assert.deepEqual(r.daily, { posted: 1, day: '2026-11-22', plays: 1, card: false });
+  assert.deepEqual(r.weekly, { posted: 1, week: '2026-11-16', plays: 5, card: false });
   assert.equal(d.calls.length, 2);
   const week = d.calls[1].body;
   assert.equal(week.content, `<@&${PLAYBOOK}> Week of Nov 16`);
@@ -240,7 +241,7 @@ test('the NBA results channel gets its own daily from the channel ledger\'s sett
   assert.deepEqual((await ledgerPlays(env, 'nba')).map((p) => p.id).sort(), ['a', 'b', 'old'], 'settled posts whose edit landed');
   const d = fakeDiscord();
   const r = await runResultsDigest(env, at('2026-11-25', 6, 7), { deps: { fetch: d.fetch, oneOff: null } });
-  assert.deepEqual(r, { date: '2026-11-25', daily: null, weekly: null, nba: { daily: { posted: 1, day: '2026-11-24', plays: 2 }, weekly: null }, nfl: { off: true } }, 'tennis is off: nothing at the top');
+  assert.deepEqual(r, { date: '2026-11-25', daily: null, weekly: null, nba: { daily: { posted: 1, day: '2026-11-24', plays: 2, card: false }, weekly: null }, nfl: { off: true } }, 'tennis is off: nothing at the top');
   assert.equal(d.calls.length, 1);
   assert.equal(d.calls[0].url, `${NBA_RESULTS}?wait=true`);
   assert.equal(d.calls[0].body.content, `<@${PLAYBOOK}> Results for Tue, Nov 24`);
@@ -258,7 +259,7 @@ test('the NBA results channel gets its own daily from the channel ledger\'s sett
   mon.store.set(LEAGUES.nba.ledger, JSON.stringify({ posts: {}, games: {} }));
   const d2 = fakeDiscord();
   const r2 = await runResultsDigest(mon.env, at('2026-11-23', 6, 7), { deps: { fetch: d2.fetch, oneOff: null } });
-  assert.deepEqual(r2.nba, { daily: { skipped: 'no plays', day: '2026-11-22' }, weekly: { posted: 1, week: '2026-11-16', plays: 4 } });
+  assert.deepEqual(r2.nba, { daily: { skipped: 'no plays', day: '2026-11-22' }, weekly: { posted: 1, week: '2026-11-16', plays: 4, card: false } });
   assert.equal(d2.calls[0].body.embeds[0].title, '🗓️ WEEKLY NBA RESULTS · Nov 16 – Nov 22 · 4 plays');
   assert.equal(d2.calls[0].body.embeds[0].description.split('\n')[4], '**Fri, Nov 20** · 4 plays · Record 3-1 · +2.10u · ROI +52.5%');
   assert.equal(d2.calls[0].body.embeds[0].footer.text, 'Week: Record 3-1 · +2.10u · ROI +52.5% · perpetualpicks.com');
@@ -291,7 +292,7 @@ test('a day on request: "so far" while its window is open and nothing recorded; 
   const d = fakeDiscord();
   // 10pm ET on the day: what settled so far (a and b), said so, outside the hour, nothing recorded.
   const r = await runResultsDigest(env, at('2026-11-25', 22, 30), { day: '2026-11-25', deps: { fetch: d.fetch, oneOff: null } });
-  assert.deepEqual(r.nba, { daily: { posted: 1, day: '2026-11-25', plays: 2, soFar: true }, weekly: null });
+  assert.deepEqual(r.nba, { daily: { posted: 1, day: '2026-11-25', plays: 2, card: false, soFar: true }, weekly: null });
   assert.equal(d.calls[0].body.embeds[0].title, '📊 NBA RESULTS · Wed, Nov 25 · so far · 2 plays');
   assert.ok(!store.has(DIGEST_DAY_KEY('2026-11-25', 'nba')), 'an open window leaves no record');
   assert.equal((await digestStatus(env)).nba.lastDaily, null, 'and is not the day\'s post');
@@ -300,7 +301,7 @@ test('a day on request: "so far" while its window is open and nothing recorded; 
   assert.equal(d.calls.length, 2);
   // The morning after: the whole day (a, b and c), recorded, once.
   const m = await runResultsDigest(env, at('2026-11-26', 6, 7), { deps: { fetch: d.fetch, oneOff: null } });
-  assert.deepEqual(m.nba.daily, { posted: 1, day: '2026-11-25', plays: 3 });
+  assert.deepEqual(m.nba.daily, { posted: 1, day: '2026-11-25', plays: 3, card: false });
   assert.equal(d.calls[2].body.embeds[0].title, '📊 NBA RESULTS · Wed, Nov 25 · 3 plays');
   assert.ok(store.has(DIGEST_DAY_KEY('2026-11-25', 'nba')));
   // The closed day on request again: already posted.
@@ -315,7 +316,7 @@ test('the one-off rides a deploy: posted once on the first tick whatever the hou
   const d = fakeDiscord();
   const oneOff = { id: 'x-1', source: 'nba', day: '2026-11-25' };
   const r = await runResultsDigest(env, at('2026-11-25', 21, 52), { deps: { fetch: d.fetch, oneOff } });
-  assert.deepEqual(r, { skipped: 'hour', oneOff: { id: 'x-1', source: 'nba', posted: 1, day: '2026-11-25', plays: 1, soFar: true } });
+  assert.deepEqual(r, { skipped: 'hour', oneOff: { id: 'x-1', source: 'nba', posted: 1, day: '2026-11-25', plays: 1, card: false, soFar: true } });
   assert.equal(d.calls[0].body.embeds[0].title, '📊 NBA RESULTS · Wed, Nov 25 · so far · 1 play');
   assert.equal(JSON.parse(store.get(DIGEST_ONE_OFF_KEY('x-1'))).state, 'done');
   assert.deepEqual(await runResultsDigest(env, at('2026-11-25', 22, 7), { deps: { fetch: d.fetch, oneOff } }), { skipped: 'hour' });
@@ -323,6 +324,53 @@ test('the one-off rides a deploy: posted once on the first tick whatever the hou
   // A one-off for a channel that is not set up, or with no id, posts nothing and marks nothing.
   assert.deepEqual(await runResultsDigest(env, at('2026-11-25', 22, 7), { deps: { fetch: d.fetch, oneOff: { id: 'y', source: 'nfl', day: '2026-11-25' } } }), { skipped: 'hour' });
   assert.ok(!store.has(DIGEST_ONE_OFF_KEY('y')));
-  // The one in the code is for the NBA channel on the day it went up.
-  assert.deepEqual(ONE_OFF, { id: '2026-11-25-nba-1', source: 'nba', day: '2026-11-25' });
+  // None is pending in the code.
+  assert.equal(ONE_OFF, null);
+});
+
+test('the roll-up goes as its card: the picture as the one embed with the tag in the content, the day recorded as drawn; the written roll-up when the picture cannot be drawn or Discord refuses it', async () => {
+  const PNG = new Uint8Array([0x89, 0x50, 0x4e, 0x47, 1, 2, 3]);
+  const { env, store } = makeEnv({ DISCORD_UPDATES_WEBHOOK: UPDATES, DISCORD_PLAYBOOK_USER_ID: PLAYBOOK });
+  const w = digestWindow('2026-11-25');
+  stored(store, '2026-11-24', [play({ id: 'a', gradedAt: w.startMs + 3600e3 }), play({ id: 'b', gradedAt: w.startMs + 7200e3, result: 'loss', profit: -1 })]);
+  const models = [];
+  const d = fakeDiscord();
+  const r = await runResultsDigest(env, at('2026-11-25', 6, 7), { deps: { fetch: d.fetch, oneOff: null, render: async (m) => { models.push(m); return PNG; } } });
+  assert.deepEqual(r.daily, { posted: 1, day: '2026-11-24', plays: 2, card: true });
+  assert.equal(models.length, 1);
+  assert.deepEqual([models[0].kind, models[0].sport, models[0].when, models[0].state, models[0].plays, models[0].tiles[0].value], ['daily', 'tennis', 'TUESDAY • NOVEMBER 24', 'final', 2, '1-1']);
+  assert.equal(d.calls.length, 1);
+  assert.ok(d.calls[0].file, 'the picture rides with the message');
+  assert.equal(d.calls[0].body.content, `<@${PLAYBOOK}> Results for Tue, Nov 24`);
+  assert.deepEqual(d.calls[0].body.embeds.map((e) => e.image?.url), ['attachment://results.png']);
+  assert.deepEqual(d.calls[0].body.attachments, [{ id: 0, filename: 'results.png' }]);
+  assert.equal(JSON.parse(store.get(DIGEST_DAY_KEY('2026-11-24'))).card, true);
+  // Monday: the week's card, from the day records.
+  const mon = makeEnv({ DISCORD_UPDATES_WEBHOOK: UPDATES });
+  mon.store.set(DIGEST_DAY_KEY('2026-11-20'), JSON.stringify({ at: 1, plays: 4, tally: { wins: 3, losses: 1, voids: 0, pending: 0, staked: 4, units: 2.1, roi: 0.525 }, leans: { wins: 1, losses: 0, voids: 0, pending: 0, staked: 0.5, units: 0, roi: null } }));
+  const weekly = [];
+  const d2 = fakeDiscord();
+  const r2 = await runResultsDigest(mon.env, at('2026-11-23', 6, 7), { deps: { fetch: d2.fetch, oneOff: null, render: async (m) => { weekly.push(m); return PNG; } } });
+  assert.deepEqual(r2.weekly, { posted: 1, week: '2026-11-16', plays: 4, card: true });
+  assert.deepEqual([weekly[0].kind, weekly[0].when, weekly[0].sections[0].rows.length, weekly[0].sections[0].rows[4].record, weekly[0].tiles[2].value], ['weekly', 'NOV 16 - NOV 22', 8, '3-1', '1-0']);
+  assert.ok(d2.calls[0].file);
+  // The renderer throws, or is turned off: the written roll-up, as before.
+  for (const render of [async () => { throw new Error('no wasm'); }, null]) {
+    const t = makeEnv({ DISCORD_UPDATES_WEBHOOK: UPDATES });
+    stored(t.store, '2026-11-24', [play({ id: 'a', gradedAt: w.startMs + 3600e3 })]);
+    const d3 = fakeDiscord();
+    const r3 = await runResultsDigest(t.env, at('2026-11-25', 6, 7), { deps: { fetch: d3.fetch, oneOff: null, render } });
+    assert.deepEqual(r3.daily, { posted: 1, day: '2026-11-24', plays: 1, card: false });
+    assert.equal(d3.calls[0].file, null);
+    assert.equal(d3.calls[0].body.embeds[0].title, '📊 TENNIS RESULTS · Tue, Nov 24 · 1 play');
+  }
+  // Discord refuses the picture: the written roll-up goes in its place, and the day is recorded as written.
+  const u = makeEnv({ DISCORD_UPDATES_WEBHOOK: UPDATES });
+  stored(u.store, '2026-11-24', [play({ id: 'a', gradedAt: w.startMs + 3600e3 })]);
+  const d4 = fakeDiscord((call) => (call.file ? { status: 400, body: {} } : null));
+  const r4 = await runResultsDigest(u.env, at('2026-11-25', 6, 7), { deps: { fetch: d4.fetch, oneOff: null, render: async () => PNG } });
+  assert.deepEqual(r4.daily, { posted: 1, day: '2026-11-24', plays: 1, card: false });
+  assert.deepEqual(d4.calls.map((c) => Boolean(c.file)), [true, false]);
+  assert.equal(d4.calls[1].body.embeds[0].title, '📊 TENNIS RESULTS · Tue, Nov 24 · 1 play');
+  assert.equal(JSON.parse(u.store.get(DIGEST_DAY_KEY('2026-11-24'))).card, false);
 });

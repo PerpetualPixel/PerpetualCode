@@ -31,11 +31,19 @@
  * records nothing. The day record keeps the day's tally, and the weekly
  * roll-up is built from the day records first — a channel ledger keeps
  * only a few days of posts — and from the plays for a day with no record.
+ *
+ * Each roll-up is a picture (2026-11-26, the owner: "quick, concise data
+ * points ... to look like my aesthetic for my website ... a logo of
+ * tennis and a logo of basketball"): worker/src/results-card.js says what
+ * it shows and draws it, worker/src/card-render.js makes the PNG. The
+ * written roll-up, every play in a line, is what goes when the picture
+ * cannot be drawn or Discord will not take it.
  */
 import { deliver, readJson, discordConfig, webhookOf } from './discord.js';
 import { playbookTag, mayPing, LEAGUES } from './discord-nba.js';
 import { tennisLivePlaysKey, liveRecordOf } from './tennis-live-plays.js';
 import { SPORTSBOOKS } from '../../docs/engine.js';
+import { resultsCardModel, weeklyCardModel } from './results-card.js';
 
 export const DIGEST_HOUR = 6; // 6am ET, every day; the weekly on Monday
 export const WEEKLY_WEEKDAY = 'Mon';
@@ -49,7 +57,7 @@ export const DIGEST_STATUS_KEY = 'discord:digest:status';
  * whose window is still open posts what has settled "so far" and leaves no day record, so the morning's roll-up
  * still covers the whole day.
  */
-export const ONE_OFF = { id: '2026-11-25-nba-1', source: 'nba', day: '2026-11-25' };
+export const ONE_OFF = null; // the last: { id: '2026-11-25-nba-1', source: 'nba', day: '2026-11-25' }, the NBA channel's first evening
 export const DIGEST_ONE_OFF_KEY = (id) => `discord:digest:oneoff:${id}`;
 const RECORD_TTL = 35 * 86400;
 const SITE = 'https://perpetualpicks.com/app.html';
@@ -283,6 +291,28 @@ async function postAll(fetcher, hook, message) {
   return { ok: true, ids };
 }
 
+/**
+ * The roll-up as its picture: the card as the message's one embed, the tag in the content; the written roll-up
+ * (`fallback`) is what deliver sends when Discord refuses the picture, and its further pages follow it then.
+ * Without a picture, the written roll-up goes as it is.
+ */
+async function postCard(fetcher, hook, model, png, fallback) {
+  if (!png) return { ...(await postAll(fetcher, hook, fallback)), card: false };
+  const pages = split(fallback);
+  const payload = { content: fallback.content, allowed_mentions: fallback.allowed_mentions, embeds: [{ color: model.kind === 'weekly' ? COLOR.week : fallback.embeds[0]?.color ?? COLOR.flat, image: { url: 'attachment://results.png' } }], attachments: [{ id: 0, filename: 'results.png' }] };
+  const r = await deliver(fetcher, hook, { payload, file: { name: 'results.png', bytes: png }, plain: pages[0] });
+  if (!r.ok && !r.unknown) return { ok: false, status: r.status ?? null, ids: [], card: false };
+  const ids = [r.id ? String(r.id) : null];
+  if (r.noPicture) for (const page of pages.slice(1)) { const u = await deliver(fetcher, hook, { payload: page, file: null, plain: page }); ids.push(u.id ? String(u.id) : null); }
+  return { ok: true, ids, card: !r.noPicture };
+}
+
+/** The card drawn for a model, or null when it cannot be (the written roll-up goes then). `deps.render` stands in for the renderer; null turns pictures off. */
+function pictureWith(deps) {
+  const render = deps.render !== undefined ? deps.render : async (model) => (await import('./card-render.js')).renderResultsPng(model);
+  return async (model) => { if (!render) return null; try { return (await render(model)) ?? null; } catch { return null; } };
+}
+
 const writeJson = (env, key, value) => env.POTD_KV.put(key, JSON.stringify(value), { expirationTtl: RECORD_TTL });
 
 /**
@@ -290,7 +320,7 @@ const writeJson = (env, key, value) => env.POTD_KV.put(key, JSON.stringify(value
  * roll-up alone: its window as it stands when the window is still open (said "so far", and nothing recorded, so
  * the morning's post still covers the whole day), the day as usual once it has closed.
  */
-async function runSource(env, name, source, hook, now, clock, { fetcher, playbook, deps, day = null }) {
+async function runSource(env, name, source, hook, now, clock, { fetcher, playbook, deps, picture, day = null }) {
   const out = { daily: null, weekly: null };
   const win = day ? { playedDateKey: day, startMs: etInstant(day, DIGEST_HOUR), endMs: etInstant(shiftDate(day, 1), DIGEST_HOUR) } : digestWindow(clock.date);
   const { playedDateKey } = win;
@@ -303,10 +333,11 @@ async function runSource(env, name, source, hook, now, clock, { fetcher, playboo
     if (!plays.length) {
       out.daily = { skipped: 'no plays', day: playedDateKey, ...(soFar ? { soFar: true } : {}) };
     } else {
-      const r = await postAll(fetcher, hook, dailyDigestMessage(playedDateKey, plays, { playbook, label: source.label, line: source.line, soFar }));
+      const model = resultsCardModel(name, playedDateKey, plays, { soFar, drawnAt: now });
+      const r = await postCard(fetcher, hook, model, await picture(model), dailyDigestMessage(playedDateKey, plays, { playbook, label: source.label, line: source.line, soFar }));
       if (r.ok) {
-        if (!soFar) await writeJson(env, DIGEST_DAY_KEY(playedDateKey, name), { at: now, plays: plays.length, ...talliesOf(plays), messageIds: r.ids });
-        out.daily = { posted: r.ids.length, day: playedDateKey, plays: plays.length, ...(soFar ? { soFar: true } : {}) };
+        if (!soFar) await writeJson(env, DIGEST_DAY_KEY(playedDateKey, name), { at: now, plays: plays.length, ...talliesOf(plays), messageIds: r.ids, card: r.card });
+        out.daily = { posted: r.ids.length, day: playedDateKey, plays: plays.length, card: r.card, ...(soFar ? { soFar: true } : {}) };
       } else {
         out.daily = { failed: r.status, day: playedDateKey };
       }
@@ -335,10 +366,11 @@ async function runSource(env, name, source, hook, now, clock, { fetcher, playboo
       if (!count) {
         out.weekly = { skipped: 'no plays', week: weekStartKey };
       } else {
-        const r = await postAll(fetcher, hook, weeklyDigestMessage(weekStartKey, days, { playbook, label: source.label }));
+        const model = weeklyCardModel(name, weekStartKey, days, { drawnAt: now });
+        const r = await postCard(fetcher, hook, model, await picture(model), weeklyDigestMessage(weekStartKey, days, { playbook, label: source.label }));
         if (r.ok) {
-          await writeJson(env, DIGEST_WEEK_KEY(weekStartKey, name), { at: now, plays: count, ...sumTallies(days), messageIds: r.ids });
-          out.weekly = { posted: r.ids.length, week: weekStartKey, plays: count };
+          await writeJson(env, DIGEST_WEEK_KEY(weekStartKey, name), { at: now, plays: count, ...sumTallies(days), messageIds: r.ids, card: r.card });
+          out.weekly = { posted: r.ids.length, week: weekStartKey, plays: count, card: r.card };
         } else {
           out.weekly = { failed: r.status, week: weekStartKey };
         }
@@ -352,14 +384,14 @@ async function runSource(env, name, source, hook, now, clock, { fetcher, playboo
  * Post what is due to every results channel that is set up: yesterday's roll-up if this morning's is not on
  * record, and on Monday the week's. Runs on any tick in DIGEST_HOUR ET (`force` runs it at any hour — the owner's
  * route). Returns what it did, the tennis channel's at the top (`daily`, `weekly`) and each league's under its
- * name; {off} with no results webhook at all. `deps.fetch`, `deps.plays(date)` (tennis), `deps.ledger(league)`
- * and `deps.playbook` stand in for Discord and the stored plays in tests.
+ * name; {off} with no results webhook at all. `deps.fetch`, `deps.plays(date)` (tennis), `deps.ledger(league)`,
+ * `deps.playbook` and `deps.render` stand in for Discord, the stored plays and the card renderer in tests.
  */
 export async function runResultsDigest(env, now = Date.now(), { force = false, day = null, deps = {} } = {}) {
   const hooks = Object.fromEntries(Object.entries(SOURCES).map(([name, src]) => [name, src.hook(env)]));
   if (!Object.values(hooks).some(Boolean)) return { off: true };
   const clock = etClock(now);
-  const io = { fetcher: deps.fetch ?? fetch, playbook: null, deps };
+  const io = { fetcher: deps.fetch ?? fetch, playbook: null, deps, picture: pictureWith(deps) };
   const tag = async () => (deps.playbook !== undefined ? deps.playbook : await playbookTag(env));
   // The one-off first, on any tick: once, marked before it is sent so a run that dies mid-send does not send it again.
   const oneOff = deps.oneOff !== undefined ? deps.oneOff : ONE_OFF;
@@ -373,12 +405,12 @@ export async function runResultsDigest(env, now = Date.now(), { force = false, d
   }
   if (!force && !day && clock.hour !== DIGEST_HOUR) return oneOffOut ? { skipped: 'hour', oneOff: oneOffOut } : { skipped: 'hour' };
   io.playbook ??= await tag();
-  const { fetcher, playbook } = io;
+  const { playbook } = io;
   const out = { date: clock.date, daily: null, weekly: null, ...(oneOffOut ? { oneOff: oneOffOut } : {}) };
   const status = (await readJson(env, DIGEST_STATUS_KEY)) ?? {};
   for (const [name, source] of Object.entries(SOURCES)) {
     if (!hooks[name]) { if (name !== 'tennis') out[name] = { off: true }; continue; }
-    const r = await runSource(env, name, source, hooks[name], now, clock, { fetcher, playbook, deps, day });
+    const r = await runSource(env, name, source, hooks[name], now, clock, { ...io, day });
     const slot = name === 'tennis' ? status : (status[name] ??= {});
     if (r.daily?.posted && !r.daily.soFar) slot.lastDaily = { day: r.daily.day, at: now, plays: r.daily.plays, tagged: Boolean(playbook) };
     if (r.weekly?.posted) slot.lastWeekly = { week: r.weekly.week, at: now, plays: r.weekly.plays, tagged: Boolean(playbook) };

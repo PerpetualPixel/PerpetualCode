@@ -16,6 +16,7 @@ import condensedMedium from '../vendor/fonts/RobotoCondensed-500.ttf';
 import condensedRegular from '../vendor/fonts/RobotoCondensed-400.ttf';
 import logoPng from '../../docs/assets/logo-icon-180.png';
 import { cardSvg, slipCardSvg } from './card-svg.js';
+import { resultsCardSvg } from './results-card.js';
 
 /** The picture's width in pixels: sharp on a phone, and well under Discord's limits. */
 export const CARD_PIXELS = 1080;
@@ -37,3 +38,5 @@ async function drawPng(svgOf) {
 export const renderCardPng = (play) => drawPng((logo) => cardSvg(play, { logo }));
 /** The card for a slip of several legs (the live NBA plays) as PNG bytes. */
 export const renderSlipPng = (post) => drawPng((logo) => slipCardSvg(post, { logo }));
+/** The results card (a day's or a week's record, worker/src/results-card.js) as PNG bytes. */
+export const renderResultsPng = (model) => drawPng((logo) => resultsCardSvg(model, { logo }));
