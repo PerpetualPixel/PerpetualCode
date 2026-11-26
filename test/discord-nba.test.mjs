@@ -98,19 +98,19 @@ test('the game\'s best slip is posted each time it is one that has not been post
   // The same best slip on later ticks: nothing more.
   await run(env, NOW + 8 * 60e3, d, { play: playOf([first, other], { builtAt: NOW + 8 * 60e3 }) });
   assert.equal(d.calls.length, 1);
-  // Another book's slip becomes the best: the app now shows it, so it is posted.
+  // Another book's slip becomes the best. It is the same players on the same stats, already in the channel: since 2026-11-26 a
+  // player is not taken twice on a stat in a game, so it is not posted (the card's button lists every book that has the bet).
   await run(env, NOW + 16 * 60e3, d, { play: playOf([other, first], { builtAt: NOW + 16 * 60e3 }) });
-  assert.equal(d.calls.length, 2);
-  assert.equal(d.calls[1].body.content.split('\n')[0], `<@${BOT}> DraftKings`);
+  assert.equal(d.calls.length, 1);
   // The first is best again: it has been posted, so it is not posted twice.
   await run(env, NOW + 24 * 60e3, d, { play: playOf([first, other], { builtAt: NOW + 24 * 60e3 }) });
-  assert.equal(d.calls.length, 2);
-  // The best slip is replaced by a new one: posted as a new play.
+  assert.equal(d.calls.length, 1);
+  // The best slip is replaced by a new one on other players: posted as a new play.
   const next = slip({ postedAt: NOW + 32 * 60e3, american: -110, legs: [leg('Jaylen Brown', 'BOS', 'points', 'Pts', 22.5, -170, 17), leg('Josh Hart', 'NY', 'rebounds', 'Reb', 8.5, -190, 6), leg('Derrick White', 'BOS', 'assists', 'Ast', 4.5, -150, 3)] });
   await run(env, NOW + 32 * 60e3, d, { play: playOf([next, other], { builtAt: NOW + 32 * 60e3 }) });
-  assert.equal(d.calls.length, 3);
-  assert.match(d.calls[2].body.content, /Jaylen Brown Over 22\.5 Points/);
-  assert.deepEqual(Object.values(ledgerOf(store).posts).map((e) => e.state), ['open', 'open', 'open']);
+  assert.equal(d.calls.length, 2);
+  assert.match(d.calls[1].body.content, /Jaylen Brown Over 22\.5 Points/);
+  assert.deepEqual(Object.values(ledgerOf(store).posts).map((e) => e.state), ['open', 'open']);
   // A board that has not been rebuilt lately (a blowout holds it, the feed is quiet) posts nothing: its prices are gone.
   const stale = makeEnv(); const d2 = fakeDiscord();
   assert.deepEqual(await run(stale.env, NOW, d2, { play: playOf([first], { builtAt: NOW - NBA_FRESH_MS - 1000 }) }), { posted: 0, settled: 0, failed: 0 });
@@ -123,14 +123,40 @@ test('the game\'s best slip is posted each time it is one that has not been post
 test('there is no cap: every play the board makes for a game is posted, however many that is', async () => {
   const { env } = makeEnv();
   const d = fakeDiscord();
-  // Sixty plays in one game, a new one every three minutes: every one is posted, each once.
-  for (let i = 0; i < 60; i++) { const now = NOW + i * 3 * 60e3; await run(env, now, d, { play: playOf([slip({ postedAt: now })], { builtAt: now }) }); }
+  // Sixty plays in one game, a new one every three minutes, each on players not yet taken: every one is posted, each once.
+  const fresh = (i, now) => slip({ postedAt: now, legs: [leg(`Guard ${i}`, 'NY', 'points', 'Pts', 19.5, -180, 14), leg(`Wing ${i}`, 'BOS', 'rebounds', 'Reb', 7.5, -170, 5), leg(`Big ${i}`, 'NY', 'rebounds', 'Reb', 9.5, -160, 7)] });
+  for (let i = 0; i < 60; i++) { const now = NOW + i * 3 * 60e3; await run(env, now, d, { play: playOf([fresh(i, now)], { builtAt: now }) }); }
   assert.equal(d.calls.length, 60);
-  assert.equal(new Set(d.calls.map((c) => c.body.content)).size >= 1, true);
+  assert.equal(new Set(d.calls.map((c) => c.body.content)).size, 60);
   // Running the last tick again posts nothing new.
   const last = NOW + 59 * 3 * 60e3;
-  await run(env, last + 30e3, d, { play: playOf([slip({ postedAt: last })], { builtAt: last }) });
+  await run(env, last + 30e3, d, { play: playOf([fresh(59, last)], { builtAt: last }) });
   assert.equal(d.calls.length, 60);
+});
+
+test('a player is not taken twice on a stat in a game: the same player for more is not posted, a slip without him is, and another stat of his still goes', async () => {
+  // The owner's case, 2026-11-26: St. Brown over 119.5 receiving yards in the first quarter, then over 124.5 with a new partner at the half.
+  const { env, store } = makeEnv();
+  const d = fakeDiscord();
+  const early = slip({ bookId: 'draftkings', book: 'DraftKings', american: 180, legs: [leg('Amon-Ra St. Brown', 'DET', 'receivingYards', 'Rec Yds', 119.5, -165, 69), leg("D'Andre Swift", 'CHI', 'receivingYards', 'Rec Yds', 24.5, -135, 14)] });
+  assert.equal((await run(env, NOW, d, { play: playOf([early]) })).posted, 1);
+  const half = NOW + 60 * 60e3;
+  const again = slip({ postedAt: half, american: 171, legs: [leg('Jahmyr Gibbs', 'DET', 'receivingYards', 'Rec Yds', 49.5, -158, 41), leg('Amon-Ra St. Brown', 'DET', 'receivingYards', 'Rec Yds', 124.5, -152, 97)] });
+  // The only slip takes St. Brown again for more: nothing is posted, on this tick or the next.
+  assert.deepEqual(await run(env, half, d, { play: playOf([again, early], { builtAt: half }) }), { posted: 0, settled: 0, failed: 0 });
+  await run(env, half + 60e3, d, { play: playOf([again, early], { builtAt: half + 60e3 }) });
+  assert.equal(d.calls.length, 1);
+  // Another book's slip shares a player but takes nobody again on the same stat: it stands in, and the best is passed over for good.
+  const clean = slip({ bookId: 'betrivers', book: 'BetRivers', postedAt: half, american: 150, legs: [leg('Jahmyr Gibbs', 'DET', 'receivingYards', 'Rec Yds', 49.5, -160, 41), leg("D'Andre Swift", 'CHI', 'rushingYards', 'Rush Yds', 39.5, -150, 30)] });
+  assert.equal((await run(env, half + 2 * 60e3, d, { play: playOf([again, clean, early], { builtAt: half + 2 * 60e3 }) })).posted, 1);
+  assert.equal(d.calls.length, 2);
+  assert.match(d.calls[1].body.content, /BetRivers\nJahmyr Gibbs Over 49\.5 Receiving Yards[^\n]*\nD'Andre Swift Over 39\.5 Rushing Yards/);
+  assert.deepEqual(Object.values(ledgerOf(store).posts).map((e) => e.state).sort(), ['open', 'open', 'skipped']);
+  // Every slip shares a player and none takes one again on the same stat: the best goes, as before (a play is still a play).
+  const s2 = makeEnv(); const d2 = fakeDiscord();
+  await run(s2.env, NOW, d2, { play: playOf([early]) });
+  const otherStat = slip({ postedAt: half, american: 140, legs: [leg('Amon-Ra St. Brown', 'DET', 'rushingYards', 'Rush Yds', 9.5, -150, 6), leg('Jahmyr Gibbs', 'DET', 'rushingYards', 'Rush Yds', 59.5, -160, 44)] });
+  assert.equal((await run(s2.env, half, d2, { play: playOf([otherStat, early], { builtAt: half }) })).posted, 1);
 });
 
 test('when the game ends each open post is edited to how it finished, once; a post with no answer is not sent again', async () => {
