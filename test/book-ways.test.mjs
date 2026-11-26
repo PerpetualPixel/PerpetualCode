@@ -58,3 +58,43 @@ test('the words: a moved leg says both numbers, a dropped leg is named, a versio
   assert.deepEqual([bookIdOf('williamhill_us'), bookIdOf('underdog'), bookIdOf(''), bookNameOf('caesars'), bookNameOf('underdog'), bookNameOf('zzz')], ['caesars', 'underdog', null, 'Caesars', 'Underdog', 'zzz']);
   assert.deepEqual(LINEUP_BOOKS, ['prizepicks', 'underdog', 'sleeper']);
 });
+
+// --- Every sportsbook's row (2026-11-26: a ticket the feed had at Hard Rock alone was whole at DraftKings and Fanatics) ---
+import { ticketBookRows, TICKET_BOOKS } from '../docs/book-ways.js';
+
+test('every sportsbook gets a row: the feed\'s whole versions, its partial ones asking Playbook for the whole ticket, and the books it has nothing for', () => {
+  const q = (bookId, american, link = `https://book.example/${bookId}`) => ({ bookId, american, decimal: american > 0 ? 1 + american / 100 : 1 + 100 / -american, link });
+  // The ticket of 2026-11-26, at Hard Rock: the feed had the first leg there alone.
+  const williams = { id: 'e1:passTds:caleb williams:2.5:under', playerName: 'Caleb Williams', statKey: 'passTds', statLabel: 'Pass TD', point: 2.5, side: 'under', selection: 'Caleb Williams Under 2.5 Pass TD', away: 'Chicago Bears', home: 'Detroit Lions', eventId: 'e1', quotes: [q('hardrock', -225)] };
+  const worthy = { id: 'e2:receptions:xavier worthy:1.5:over', playerName: 'Xavier Worthy', statKey: 'receptions', statLabel: 'Rec', point: 1.5, side: 'over', selection: 'Xavier Worthy Over 1.5 Rec', away: 'Kansas City Chiefs', home: 'Buffalo Bills', eventId: 'e2', quotes: [q('hardrock', -230), q('fanatics', -235), q('caesars', -240), q('prizepicks', -137)] };
+  const legs = [williams, worthy];
+  const ways = ticketAtBooks(legs, [], { exclude: 'hardrock' });
+  assert.deepEqual(ways.map((w) => [w.bookId, w.complete, w.legs.length]), [['fanatics', false, 1], ['caesars', false, 1]]);
+  const rows = ticketBookRows(legs, ways, { exclude: 'hardrock' });
+  // The feed's rows first, then every other sportsbook; the ticket's own book and the pick'em apps are not rows.
+  assert.deepEqual(rows.map((r) => r.bookId), ['fanatics', 'caesars', 'draftkings', 'fanduel', 'betmgm', 'bet365', 'betrivers', 'espnbet']);
+  assert.ok(!rows.some((r) => r.bookId === 'hardrock' || r.bookId === 'prizepicks'));
+  const fanatics = rows[0];
+  assert.deepEqual([fanatics.unpriced, fanatics.complete, fanatics.legs.length, fanatics.dropped.map((d) => d.selection)], [false, false, 1, ['Caleb Williams Under 2.5 Pass TD']]);
+  // Playbook is asked for the whole ticket, in the ticket's order, each leg with its game.
+  assert.deepEqual(fanatics.ask, [{ selection: 'Caleb Williams Under 2.5 Pass TD', game: 'Chicago Bears @ Detroit Lions' }, { selection: 'Xavier Worthy Over 1.5 Rec', game: 'Kansas City Chiefs @ Buffalo Bills' }]);
+  const dk = rows.find((r) => r.bookId === 'draftkings');
+  assert.deepEqual([dk.unpriced, dk.complete, dk.legs, dk.american, dk.book], [true, false, [], null, 'DraftKings']);
+  assert.deepEqual(dk.ask, fanatics.ask);
+  assert.equal(dk.dropped.length, 2);
+});
+
+test('a book whose number was moved is asked for its own number, and a whole version asks for what it holds', () => {
+  const q = (bookId, american) => ({ bookId, american, decimal: 1.5, link: `https://book.example/${bookId}` });
+  const a = { id: 'a', playerName: 'Ty Jerome', statKey: 'assists', statLabel: 'Ast', point: 3.5, side: 'over', selection: 'Ty Jerome Over 3.5 Ast', away: 'A', home: 'B', eventId: 'e1', sportKey: 'basketball_nba', quotes: [q('draftkings', -150), q('fanduel', -160)] };
+  const b = { id: 'b', playerName: 'Tyrese Maxey', statKey: 'points', statLabel: 'Pts', point: 19.5, side: 'over', selection: 'Tyrese Maxey Over 19.5 Pts', away: 'C', home: 'D', eventId: 'e2', sportKey: 'basketball_nba', quotes: [q('draftkings', -200)] };
+  // FanDuel has Maxey at a lower number on the board.
+  const board = [{ statKey: 'points', playerName: 'Tyrese Maxey', eventId: 'e2', sportKey: 'basketball_nba', side: 'over', point: 17.5, selection: 'Tyrese Maxey Over 17.5 Pts', quotes: [q('fanduel', -300)] }];
+  const ways = ticketAtBooks([a, b], board, { exclude: 'draftkings' });
+  const rows = ticketBookRows([a, b], ways, { exclude: 'draftkings', books: ['fanduel', 'draftkings', 'betmgm'] });
+  assert.deepEqual(rows.map((r) => [r.bookId, r.complete, r.unpriced]), [['fanduel', true, false], ['betmgm', false, true]]);
+  assert.deepEqual(rows[0].ask.map((l) => l.selection), ['Ty Jerome Over 3.5 Ast', 'Tyrese Maxey Over 17.5 Pts']);
+  assert.deepEqual(ticketBookRows([], ways), []);
+  assert.deepEqual(ticketBookRows([a, b], null, { exclude: 'draftkings', books: [] }), []);
+  assert.ok(TICKET_BOOKS.includes('fanatics') && TICKET_BOOKS.includes('espnbet') && !TICKET_BOOKS.includes('prizepicks'));
+});
