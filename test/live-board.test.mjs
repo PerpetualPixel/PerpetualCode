@@ -625,3 +625,47 @@ test('archiveLiveResults keeps each finished game\'s slips for good, once, and g
   await archiveLiveResults(env, Date.parse('2026-12-01T12:00:00Z'));
   assert.ok(JSON.parse(m.get(liveResultsKey('2026-11'))).games.some((g) => g.id === '20'));
 });
+
+test('a player is taken once on a stat in a game: a replaced slip is not rebuilt on the same player at the next number', async () => {
+  const { takenLegs, takenKey } = await import('../worker/src/live-board.js');
+  const m = new Map(); const env = { POTD_KV: { get: async (k) => m.get(k) ?? null, put: async (k, v) => { m.set(k, v); } } };
+  const game = { id: 'tk', name: 'Washington Commanders at Philadelphia Eagles' };
+  const t = tick({ score: { PHI: 14, WSH: 10 } });
+  const first = await ensureLivePlays(env, game, marketPayload, t, { league: 'nfl', now: 100 });
+  const names = first.slips[0].legs.map((l) => l.player).sort();
+  assert.deepEqual(names, ['Jacory Croskey-Merritt', 'Jalen Hurts']);
+  assert.deepEqual(first.taken.map((x) => [x.player, x.stat, x.point, x.at]).sort(), [['Jacory Croskey-Merritt', 'rushingYards', 49.5, 100], ['Jalen Hurts', 'passingYards', 199.5, 100]]);
+  // The books move both players up a number (still priced out of line at DraftKings), and Barkley is out of line as before.
+  // Before the rule this was a new slip on the same two players for more. Now only Barkley is open, one leg is no slip, and the first stays.
+  const up = { bookmakers: [
+    { key: 'draftkings', markets: [
+      { key: 'player_rush_yds_alternate', outcomes: [...ladder('Saquon Barkley', [89.5], [-140]), ...ladder('Jacory Croskey-Merritt', [54.5], [-150])] },
+      { key: 'player_pass_yds_alternate', outcomes: ladder('Jalen Hurts', [209.5], [-150]) },
+    ] },
+    { key: 'betrivers', markets: [
+      { key: 'player_rush_yds_alternate', outcomes: [...ladder('Saquon Barkley', [89.5], [-240]), ...ladder('Jacory Croskey-Merritt', [54.5], [-220])] },
+      { key: 'player_pass_yds_alternate', outcomes: ladder('Jalen Hurts', [209.5], [-230]) },
+    ] },
+  ] };
+  const { slipCandidates } = await import('../worker/src/live-board.js');
+  assert.deepEqual(slipCandidates(liveCandidates(up, t, 'nfl'), 'nfl').map((c) => c.player).sort(), ['Jacory Croskey-Merritt', 'Jalen Hurts', 'Saquon Barkley'], 'all three would make a slip, were two of them not taken');
+  const second = await ensureLivePlays(env, game, up, t, { league: 'nfl', now: 200 });
+  assert.deepEqual([second.builtAt, second.slips.length, second.slips[0].legs.map((l) => `${l.player} ${l.point}`).sort()], [100, 1, ['Jacory Croskey-Merritt 49.5', 'Jalen Hurts 199.5']], 'no new slip: the first stands as it was posted');
+  // A second open player at the book: a new slip, on the two not taken.
+  const wider = { bookmakers: [
+    { ...up.bookmakers[0], markets: [...up.bookmakers[0].markets, { key: 'player_reception_yds_alternate', outcomes: ladder('Terry McLaurin', [69.5], [-180]) }] },
+    { ...up.bookmakers[1], markets: [...up.bookmakers[1].markets, { key: 'player_reception_yds_alternate', outcomes: ladder('Terry McLaurin', [69.5], [-260]) }] },
+  ] };
+  const box = t.box.map((p) => (p.name === 'Terry McLaurin' ? { ...p, stats: { receptions: '7', receivingYards: '58' } } : p));
+  const third = await ensureLivePlays(env, game, wider, { ...t, box }, { league: 'nfl', now: 300 });
+  assert.deepEqual(third.slips.map((s) => s.legs.map((l) => l.player).sort()), [['Saquon Barkley', 'Terry McLaurin']]);
+  assert.equal(third.slips[0].postedAt, 300);
+  assert.deepEqual(third.taken.map((x) => x.player).sort(), ['Jacory Croskey-Merritt', 'Jalen Hurts', 'Saquon Barkley', 'Terry McLaurin'], 'the replaced slip\'s players stay taken');
+  // The same player on another stat is another bet.
+  assert.notEqual(takenKey({ player: 'Saquon Barkley', stat: 'rushingYards' }), takenKey({ player: 'saquon barkley', stat: 'receivingYards' }));
+  assert.equal(takenKey({ player: 'Saquon Barkley', stat: 'rushingYards' }), takenKey({ player: 'saquon barkley', stat: 'rushingYards' }));
+  // A record from before the rule: what its slips hold is what is taken, at the lowest number.
+  const old = takenLegs({ slips: [{ postedAt: 5, legs: [{ player: 'A', stat: 'points', point: 19.5 }] }, { postedAt: 9, legs: [{ player: 'a', stat: 'points', point: 17.5 }, { player: 'B', stat: 'rebounds', point: 7.5, postedAt: 7 }] }] });
+  assert.deepEqual([...old.values()], [{ player: 'A', stat: 'points', point: 17.5, at: 5 }, { player: 'B', stat: 'rebounds', point: 7.5, at: 7 }]);
+  assert.equal(takenLegs(null).size, 0);
+});

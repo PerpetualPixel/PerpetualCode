@@ -589,6 +589,38 @@ export function carrySlips(prev, next, candidates, tick, { now = Date.now(), lea
   return out;
 }
 
+/**
+ * A player on a stat is taken once a game (2026-11-26, the owner, of a
+ * second card posted at the half with Amon-Ra St. Brown over 124.5
+ * receiving yards an hour after the first had him over 119.5: "there
+ * should be some type of logic to not retake a player for more yards if
+ * it's already posted for previous yards earlier in the game ... I
+ * wouldn't repost the same card for the same amount of unit for more
+ * yardage after you caught the line at an earlier state for less yards").
+ *
+ * A book moves a player's number up as he gains, so a slip that no longer
+ * stands used to be rebuilt on the same player at the next number: the
+ * same call again, at a worse number, for the same unit. Now every
+ * player-and-stat a game's slips have carried is remembered with the
+ * game's plays (`taken`), and a new slip is built only from the legs on
+ * players not yet taken on that stat. The same player on another stat is
+ * a different bet and is not held back.
+ */
+export const takenKey = (l) => `${String(l?.player ?? '').toLowerCase()}|${l?.stat ?? ''}`;
+/** The player-and-stats a game's plays have taken: what the record remembers, and every leg of the slips it holds. Each with the lowest number taken and when. */
+export function takenLegs(stored) {
+  const out = new Map();
+  const add = (l, at) => {
+    if (!l?.player || !l.stat) return;
+    const k = takenKey(l); const had = out.get(k);
+    if (!had) out.set(k, { player: l.player, stat: l.stat, point: l.point ?? null, at: at ?? null });
+    else if (Number.isFinite(l.point) && (!Number.isFinite(had.point) || l.point < had.point)) out.set(k, { ...had, point: l.point });
+  };
+  for (const t of stored?.taken ?? []) add(t, t.at);
+  for (const s of stored?.slips ?? []) for (const l of s.legs ?? []) add(l, l.postedAt ?? s.postedAt);
+  return out;
+}
+
 /** Slips build once this much of the game is played (a quarter and a bit, enough pace to project from) and stop this far in (books pull ladders late). */
 export const BUILD_FROM = 0.03;
 export const BUILD_UNTIL = 0.9;
@@ -613,12 +645,17 @@ export async function ensureLivePlays(env, game, payload, tick, { league = 'nfl'
   const candidates = liveCandidates(payload, tick, league, { weather });
   // A slip is built from the legs it may take (in the NFL, the ones priced out of line with the other books); one already posted
   // stands while its legs are still reachable, whatever the other books have done to the price since.
-  const built = buildLiveSlips(slipCandidates(candidates, league), { league });
+  // And only from players not already taken on that stat in this game (takenLegs): no second call on the same player for more.
+  const taken = takenLegs(stored);
+  const open = candidates.filter((c) => !taken.has(takenKey(c)));
+  const built = buildLiveSlips(slipCandidates(open, league), { league });
   const slips = carrySlips(stored?.slips, built, candidates, tick, { now, league });
   if (!slips.length) return stored;
   const record = {
     espnEventId: game.id, name: game.name, builtAt: now, firstBuiltAt: stored?.firstBuiltAt ?? now, builds: (stored?.builds ?? 0) + 1,
     score: tick.score ?? null, detail: tick.detail ?? null, period: tick.period ?? null, clock: tick.clock ?? null, elapsed, slips,
+    // Everything taken so far in the game, the slips just kept or built included: a slip that is replaced later leaves its players here.
+    taken: [...takenLegs({ taken: [...taken.values()], slips }).values()],
   };
   await env.POTD_KV.put(key, JSON.stringify(record), { expirationTtl: 3 * 86400 }).catch(() => {});
   return record;

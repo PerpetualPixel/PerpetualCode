@@ -10,7 +10,8 @@
  * not been posted before. So whatever play the app is showing for a game is in the channel, each once: a slip that
  * still stands is never posted again, and the same legs are not posted at five books at the same minute. Where the
  * best slip shares a player with a play already posted for that game, another book's slip that shares none is posted
- * in its place when there is one.
+ * in its place when there is one. And a player is never posted twice on the same stat in a game (2026-11-26): a slip
+ * that takes him again, for the same number or more, is not posted.
  *
  * (It first followed one slip a game and stopped at six posts. On its first night, 2026-11-25, a game's slips were
  * replaced every few minutes, the six were used in forty minutes, and the owner saw a play in the app that was not
@@ -283,12 +284,22 @@ export async function syncLeagueDiscord(env, now = Date.now(), league = 'nba', {
       // if possible"). A play posted earlier is still someone's bet until the game ends, so its players count. When
       // the best slip shares a player with one, another book's slip that shares none is posted in its place; when
       // every slip shares one, the best slip goes, since a play is still a play.
-      const taken = new Set(mine.filter((e) => e.state !== 'skipped').flatMap((e) => (e.post?.legs ?? []).map((l) => String(l.player).toLowerCase())));
+      const posted = mine.filter((e) => e.state !== 'skipped').flatMap((e) => e.post?.legs ?? []);
+      const taken = new Set(posted.map((l) => String(l.player).toLowerCase()));
       const shares = (p) => p.legs.some((l) => taken.has(String(l.player).toLowerCase()));
+      // And never the same player on the same stat twice (2026-11-26, the owner, of St. Brown over 124.5 receiving yards posted an
+      // hour after his 119.5: "not retake a player for more yards if it's already posted for previous yards earlier in the game").
+      // The board no longer builds such a slip (worker/src/live-board.js takenLegs); this holds for what it built before.
+      const lineOf = (l) => `${String(l.player).toLowerCase()}|${l.stat ?? ''}`;
+      const lines = new Set(posted.map(lineOf));
+      const retakes = (p) => p.legs.some((l) => lines.has(lineOf(l)));
       const fresh = !ledger.posts[best.id] && best.legs.length > 0;
-      const other = fresh && shares(best) ? play.slips.slice(1).map((sl) => slipPost(g, play, sl, league)).find((p) => p.legs.length && !ledger.posts[p.id] && !shares(p)) ?? null : null;
-      const post = other ?? best;
-      if (fresh) {
+      const others = fresh && shares(best) ? play.slips.slice(1).map((sl) => slipPost(g, play, sl, league)).filter((p) => p.legs.length && !ledger.posts[p.id]) : [];
+      // In place of a best slip that shares a player: a slip that shares none; failing that the best itself, unless it takes a
+      // player again on the same stat, when a slip that does not stands in, or nothing is posted.
+      const other = others.find((p) => !shares(p)) ?? (fresh && retakes(best) ? others.find((p) => !retakes(p)) ?? null : null);
+      const post = other ?? (fresh && retakes(best) ? null : best);
+      if (fresh && post) {
         const card = slipMessage(post, { png: await picture(post), playbook: cfg.playbook, buttons: !ledger.noButtons });
         // Marked before it is sent: a run that dies mid-send does not send it again.
         ledger.posts[post.id] = { state: 'sending', at: now, post };
