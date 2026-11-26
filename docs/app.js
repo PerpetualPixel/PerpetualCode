@@ -8033,7 +8033,9 @@ const TRENDS_ONLY = true;
     // declared further down); one turn of the microtask queue lets the
     // module finish evaluating before the tab is opened.
     await null;
-    setActiveTab('trends');
+    // A link to one live slip (docs/live-slips.js's liveSlipHash, the button on a Discord post) opened the Live tab
+    // at the module's end (openLiveFromHash); this boot runs after that, and must not put Trends over it.
+    if (!parseLiveHash(location.hash)) setActiveTab('trends');
     // The account's sportsbooks first, so the first render is already
     // filtered to the books the user plays at.
     const loaded = await loadSettings();
