@@ -12620,6 +12620,8 @@ function liveNoSlipWhy(g) {
   if (g.blowout?.blowout) return `No live slips: ${g.blowout.leader} is up ${g.blowout.margin} with ${g.blowout.minutesLeft} minutes left, so the starters may sit and the pace no longer holds. Slips come back if the game tightens.`;
   if (g.elapsed < 0.03) return 'Slips build from the first minutes in play, one at every book that prices one, and rebuild as the game moves.';
   if (g.elapsed > 0.9) return 'Too late in the game for a new slip: the books pull their ladders from here.';
+  // An NFL slip is two yardage legs at a sportsbook priced better than the others (worker/src/live-board.js, 2026-11-26), so most minutes have none.
+  if (g.league === 'nfl') return 'No NFL slip right now. One is posted only when two yardage legs at one sportsbook are each priced better than the other sportsbooks have them, so most of a game has none; checked again every few minutes.';
   return 'Nothing on the board clears the pace with margin at a usable price right now; checked again every few minutes.';
 }
 

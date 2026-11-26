@@ -3,7 +3,7 @@
  * DISCORD_LIVE_BASKETBALL_WEBHOOK ... allow this to post all live NBA plays and @playbook for the links").
  *
  * What a live NBA play is: worker/src/live-probe.js rebuilds each game's slips every few minutes while it is in
- * play (worker/src/live-board.js: three to five player overs at a book, nearest +100), and a slip stands until one
+ * play (worker/src/live-board.js: three to five player overs at a book, nearest +100; two in the NFL since 2026-11-26), and a slip stands until one
  * of its lines leaves the board, when a new one takes its place.
  *
  * What is posted: the game's best slip, the one the Live tab shows as "Best slip", each time it is a slip that has

@@ -111,6 +111,11 @@ export const COUNT_HIGH_LINE = 5.5;
  * the NBA's legs (72%, priced as 69%) were fine. So a reception leg needs
  * RECEPTION_MIN_CHANCE of the catches still to come, and a receiving-yards
  * leg needs YARDS_MIN_CATCH_CHANCE of at least one more catch.
+ *
+ * Both bars were replaced on 2026-11-26 (the four changes further down):
+ * a reception leg is no longer taken at all, and a yardage leg is judged
+ * by yardsChance against its price. They are kept here with the review
+ * they came from.
  */
 export const RECEPTION_MIN_CHANCE = 0.85;
 export const YARDS_MIN_CATCH_CHANCE = 0.8;
@@ -126,6 +131,85 @@ export function catchChance(catches, point, elapsed) {
 export const marginFor = (stat, point, league = 'nfl') => (
   league === 'nba' && (stat === 'rebounds' || stat === 'assists') ? (point > COUNT_HIGH_LINE ? COUNT_MARGIN_HIGH : COUNT_MARGIN) : MARGIN
 );
+
+/**
+ * The NFL's live slips, rebuilt (2026-11-26, the owner, of the four
+ * changes put to him after the review of the same day: "do the four
+ * changes for NFL live").
+ *
+ * The record: twelve games, two won, 4.89 units down (35 slips across the
+ * books: 5 won, 17.42 down), while the NBA on the same build was up. The
+ * 58 distinct legs hit 55% where their prices said 67%: receptions 10 of
+ * 23, receiving yards 13 of 23, rushing yards 8 of 11. Every one was a
+ * "one more" line, hung by the book just over where the player stood late
+ * in the game (a 4.5 on four catches, a 59.5 on 58 yards), and the test
+ * they passed could not fail them: full-game pace against the line reads
+ * any number within about a seventh of the current one as cleared by a
+ * quarter once 70% of the game is played. So the legs were the book's own
+ * coin at the book's price, and three of them multiplied its cut.
+ *
+ * 1. Two legs, not three (NFL_SLIP_LEGS): the cut is multiplied twice.
+ * 2. No reception-count legs: one catch, yes or no, at -130 to -300.
+ * 3. A yardage leg is judged on what is left, against its price
+ *    (yardsChance): the touches still to come at the rate so far, slowed
+ *    by NFL_LATE, each worth what his have been worth, must make the
+ *    yards he needs more often than the price implies.
+ * 4. A slip takes a leg only at a book pricing it out of line with the
+ *    others (NFL_MARKET_EDGE): the one edge there is on a line every book
+ *    hangs is a book that hangs it cheaper.
+ */
+export const NFL_SLIP_LEGS = [2];
+/**
+ * How much of his game-long rate a player keeps for the rest of the game.
+ * The reception legs of the record (a catch still needed, 23 of them) hit
+ * 10 times; the game-long rate said 15, and half of it says 10. The fit
+ * is flat from 0.4 to 0.6 on a sample this small, so the top of that.
+ */
+export const NFL_LATE = 0.6;
+/**
+ * How far below the middle of the other books a leg's implied chance must
+ * sit for a slip to take it: four points, about a book's cut on one side
+ * of a line like these, so the price is the others' fair number or better.
+ */
+export const NFL_MARKET_EDGE = 0.04;
+/** The touches a yardage stat is gained on: catches, carries, completions. */
+const NFL_TOUCHES = {
+  receivingYards: (p) => boxValue(p, 'receptions'),
+  rushingYards: (p) => (p?.stats?.rushingAttempts == null ? null : num(p.stats.rushingAttempts)),
+  passingYards: (p) => { const m = String(p?.stats?.['completions/passingAttempts'] ?? '').match(/^(\d+)\s*\//); return m ? Number(m[1]) : null; },
+};
+export const nflTouches = (p, stat) => NFL_TOUCHES[stat]?.(p) ?? null;
+const impliedOf = (american) => (american < 0 ? -american / (-american + 100) : 100 / (american + 100));
+const median = (list) => { const v = [...list].sort((a, b) => a - b); const m = v.length >> 1; return v.length % 2 ? v[m] : (v[m - 1] + v[m]) / 2; };
+
+/**
+ * The chance a player gains `need` more yards in what is left of the game.
+ *
+ * His touches so far, over the time left, slowed by NFL_LATE and turned by
+ * `factor` (the game script, the weather), are how many more he can expect
+ * (a Poisson count); each is worth what his have averaged, spread the way
+ * a single catch or carry is (most short, a few long: an exponential). No
+ * touches so far is no chance: there is no rate to read.
+ */
+export function yardsChance(touches, yards, need, elapsed, { factor = 1 } = {}) {
+  if (!(need > 0)) return 1;
+  if (!(touches > 0) || !(yards > 0) || !(elapsed > 0) || elapsed >= 1) return 0;
+  const rate = touchesLeft(touches, elapsed, factor);
+  const x = need / (yards / touches);
+  // Over k more touches: the chance of exactly k, times the chance k of them add up to the yards (an Erlang tail). The sum runs
+  // well past the expected count, so a busy player early in a game is not cut short.
+  const last = Math.ceil(rate + 10 * Math.sqrt(rate) + 20);
+  let count = Math.exp(-rate); let tail = 0; let term = Math.exp(-x); let total = 0;
+  for (let k = 1; k <= last; k++) { count *= rate / k; tail += term; term *= x / k; total += count * Math.min(1, tail); }
+  return Math.min(1, Math.max(0, total));
+}
+/**
+ * The touches a player can expect in what is left: his so far over the time left, at NFL_LATE of the rate. In the first quarter
+ * the rate is read as if a quarter had been played (EARLY_BLEND): three catches on the opening drive are not thirty by the end.
+ */
+const touchesLeft = (touches, elapsed, factor = 1) => ((touches * (1 - elapsed)) / Math.max(elapsed, EARLY_BLEND)) * NFL_LATE * factor;
+/** What is expected of him by the end at that rate: where he is, plus the touches still to come at his average. */
+const yardsExpected = (touches, yards, elapsed, factor = 1) => yards + touchesLeft(touches, elapsed, factor) * (yards / touches);
 const BLOWOUT = 17;
 export const livePlayKey = (espnEventId) => `live:play:${espnEventId}`;
 
@@ -287,6 +371,23 @@ export function liveCandidates(payload, tick, league = 'nfl', { weather = null }
   const elapsed = elapsedFraction(tick, league);
   if (!elapsed || elapsed >= 1) return [];
   const script = gameScript(tick, league);
+  const nfl = league === 'nfl';
+  // The NFL's market: every book's best price on each player, stat and number, whatever the price, to hold a leg's own price against.
+  const market = new Map();
+  const lineKey = (player, stat, point) => `${String(player ?? '').toLowerCase()}|${stat}|${point}`;
+  if (nfl) for (const b of payload?.bookmakers ?? []) {
+    const bookId = bookIdFor(b.key) ?? b.key;
+    for (const m of b.markets ?? []) {
+      const stat = stats[m.key]; if (!stat) continue;
+      for (const o of m.outcomes ?? []) {
+        if (o.name !== 'Over' || !Number.isFinite(o.point) || !Number.isFinite(o.price)) continue;
+        const k = lineKey(o.description, stat, o.point);
+        if (!market.has(k)) market.set(k, new Map());
+        const at = market.get(k);
+        if (!at.has(bookId) || o.price > at.get(bookId)) at.set(bookId, o.price);
+      }
+    }
+  }
   const out = [];
   for (const b of payload?.bookmakers ?? []) {
     const bookId = bookIdFor(b.key) ?? b.key;
@@ -302,18 +403,34 @@ export function liveCandidates(payload, tick, league = 'nfl', { weather = null }
         if (script.leader && p.team === script.leader && /passing|receiving|receptions/.test(stat)) continue;
         if (script.trailer && p.team === script.trailer && stat === 'rushingYards') continue;
         if (stat === 'passingYards' && roughWeather(weather)) continue;
+        const base = { bookId, book: SPORTSBOOKS[bookId]?.name ?? b.key, market: m.key, stat, label: LIVE_LABEL[stat] ?? stat, player: o.description, team: p.team ?? null, athleteId: p.id ?? null, point: o.point, price: o.price, decimal: americanToDecimal(o.price), current: cur, link: o.link ?? null };
+        if (nfl) {
+          // The NFL (the four changes above): no reception counts, and a yardage leg on what is left against its price.
+          if (stat === 'receptions') continue;
+          const touches = nflTouches(p, stat);
+          if (!(touches > 0) || !(cur > 0)) continue;
+          const passing = /passing|receiving/.test(stat);
+          const factor = (script.leader && p.team === script.leader ? (passing ? 0.8 : 1.15) : script.trailer && p.team === script.trailer ? (passing ? 1.15 : 0.8) : 1) * (passing && roughWeather(weather) ? 0.85 : 1);
+          const chance = yardsChance(touches, cur, o.point - cur, elapsed, { factor });
+          const implied = impliedOf(o.price);
+          if (!(chance > implied)) continue;
+          const pace = Math.round(yardsExpected(touches, cur, elapsed, factor));
+          // The other books on this same number: the middle of their implied chances against this one's.
+          const others = [...(market.get(lineKey(o.description, stat, o.point)) ?? new Map())].filter(([id]) => id !== bookId).map(([, price]) => impliedOf(price));
+          const marketEdge = others.length ? Math.round((median(others) - implied) * 1000) / 1000 : null;
+          out.push({ ...base, pace, cushion: Math.round(((pace - o.point) / o.point) * 100) / 100, chance: Math.round(chance * 1000) / 1000, edge: Math.round((chance - implied) * 1000) / 1000, marketEdge, marketBooks: others.length });
+          continue;
+        }
         const proj = projectStat(cur, elapsed, stat, { team: p.team, script, weather, league, prior: o.point });
         if (proj < o.point * marginFor(stat, o.point, league)) continue;
-        // A catch comes whole (catchChance): the catches a reception line still needs must be likely, and a receiving-yards
-        // line must be on a player likely to catch another ball at all.
-        if (league === 'nfl' && stat === 'receptions' && catchChance(cur, o.point, elapsed) < RECEPTION_MIN_CHANCE) continue;
-        if (league === 'nfl' && stat === 'receivingYards') { const caught = boxValue(p, 'receptions'); if (caught != null && catchChance(caught, caught + 0.5, elapsed) < YARDS_MIN_CATCH_CHANCE) continue; }
-        out.push({ bookId, book: SPORTSBOOKS[bookId]?.name ?? b.key, market: m.key, stat, label: LIVE_LABEL[stat] ?? stat, player: o.description, team: p.team ?? null, athleteId: p.id ?? null, point: o.point, price: o.price, decimal: americanToDecimal(o.price), current: cur, pace: proj, cushion: Math.round(((proj - o.point) / o.point) * 100) / 100, link: o.link ?? null });
+        out.push({ ...base, pace: proj, cushion: Math.round(((proj - o.point) / o.point) * 100) / 100 });
       }
     }
   }
   return out.sort((x, y) => y.cushion - x.cushion || y.price - x.price);
 }
+/** The candidates a slip may be built from: all of them, but in the NFL only a leg priced out of line with the other books (NFL_MARKET_EDGE). */
+export const slipCandidates = (candidates, league = 'nfl') => (league === 'nfl' ? (candidates ?? []).filter((c) => Number.isFinite(c.marketEdge) && c.marketEdge >= NFL_MARKET_EDGE - 1e-9) : (candidates ?? []));
 
 /**
  * Who to watch: the players with the most projected output per stat,
@@ -394,15 +511,17 @@ export function buildLivePlay(candidates, { legs = [3, 4, 5], books = null } = {
  * half does not sink every slip. A player still on more than one slip
  * is counted on each leg (onSlips) so the card can say so.
  */
-export function buildLiveSlips(candidates) {
+export function buildLiveSlips(candidates, { league = null } = {}) {
+  // An NFL slip is two legs (NFL_SLIP_LEGS); every other league's is three to five.
+  const legs = league === 'nfl' ? NFL_SLIP_LEGS : undefined;
   const books = [...new Set(candidates.map((c) => c.bookId))];
-  const slips = books.map((b) => buildLivePlay(candidates, { books: [b] })).filter(Boolean).sort((x, y) => x.score - y.score);
+  const slips = books.map((b) => buildLivePlay(candidates, { books: [b], legs })).filter(Boolean).sort((x, y) => x.score - y.score);
   if (!slips.length) return [];
   const core = new Set(slips[0].legs.map((l) => l.player));
   const out = [slips[0]];
   for (const s of slips.slice(1)) {
     const shares = s.legs.some((l) => core.has(l.player));
-    const alt = shares ? buildLivePlay(candidates.filter((c) => !core.has(c.player)), { books: [s.bookId] }) : null;
+    const alt = shares ? buildLivePlay(candidates.filter((c) => !core.has(c.player)), { books: [s.bookId], legs }) : null;
     out.push(alt ? { ...alt, diversified: true } : s);
   }
   const counts = new Map();
@@ -492,7 +611,9 @@ export async function ensureLivePlays(env, game, payload, tick, { league = 'nfl'
   if (!tick || tick.state !== 'in' || elapsed < BUILD_FROM || elapsed > BUILD_UNTIL || !payload) return stored;
   if (blowoutRisk(tick, league)?.blowout) return stored; // no live bets on a blowout: the starters may sit (the board withholds what stands)
   const candidates = liveCandidates(payload, tick, league, { weather });
-  const built = buildLiveSlips(candidates);
+  // A slip is built from the legs it may take (in the NFL, the ones priced out of line with the other books); one already posted
+  // stands while its legs are still reachable, whatever the other books have done to the price since.
+  const built = buildLiveSlips(slipCandidates(candidates, league), { league });
   const slips = carrySlips(stored?.slips, built, candidates, tick, { now, league });
   if (!slips.length) return stored;
   const record = {
