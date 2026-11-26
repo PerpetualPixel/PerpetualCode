@@ -7738,10 +7738,11 @@ a.tennis-book:hover { background: rgba(255, 255, 255, 0.06); }
 .lb-leg.is-checked { background: linear-gradient(90deg, rgba(124, 58, 237, 0.14), rgba(124, 58, 237, 0) 75%); }
 .lb-leg.is-blocked { cursor: not-allowed; }
 .lb-leg.is-blocked > :not(.lb-why) { opacity: 0.45; }
-.lb-check { grid-area: who; display: flex; align-items: center; gap: 10px; min-width: 0; cursor: pointer; }
+.lb-check { position: relative; grid-area: who; display: flex; align-items: center; gap: 10px; min-width: 0; cursor: pointer; }
 .lb-leg.is-blocked .lb-check { cursor: not-allowed; }
 /* The real box is kept for the keyboard and a screen reader; the drawn one beside it is what shows. */
-.lb-check input { position: absolute; width: 1px; height: 1px; margin: 0; opacity: 0; pointer-events: none; }
+/* Held to the label's own corner (the label is its containing block), so no browser places it, or scrolls to it, anywhere else on the page. */
+.lb-check input { position: absolute; left: 0; top: 0; width: 1px; height: 1px; margin: 0; opacity: 0; pointer-events: none; }
 .lb-box { flex: none; display: grid; place-items: center; width: 24px; height: 24px; border-radius: 7px; border: 2px solid rgba(124, 58, 237, 0.65); background: rgba(255, 255, 255, 0.02); }
 .lb-check input:checked + .lb-box { border-color: transparent; background: linear-gradient(135deg, var(--magenta), var(--accent)); box-shadow: var(--glow-violet); }
 .lb-check input:checked + .lb-box::after { content: ''; width: 11px; height: 6px; margin-top: -3px; border-left: 2.5px solid #fff; border-bottom: 2.5px solid #fff; transform: rotate(-45deg); }

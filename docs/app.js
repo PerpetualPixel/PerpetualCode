@@ -12782,8 +12782,10 @@ function liveBuilderBooks() {
   return `<div class="live-books-pick" role="radiogroup" aria-label="The sportsbook for your parlay"><span class="row-sub">Parlay at</span>${LIVE_BOOKS.map((id) => { const on = liveBuilder.book === id; return `<button type="button" role="radio" class="league-chip is-sport ${on ? 'is-active' : ''}" data-lb-book="${esc(id)}" aria-checked="${on}" title="${esc(liveBuilderName(id))}">${bookBadge(id, id)}<span class="league-chip-label">${esc(liveBuilderName(id))}</span>${chipTick(on)}</button>`; }).join('')}</div>`;
 }
 /** One leg on the board: its tick box, the player and the number, where he is against it, his pace and the price. */
+/** Why a leg cannot be ticked: another number of its line is on the ticket, or the ticket is full. */
+const liveBuilderWhy = (r, book) => (r.blocked === 'line' ? 'Another number for this player and stat is ticked.' : r.blocked === 'full' ? `${liveBuilderMax(book)} legs is the most ${liveBuilderName(book)} takes.` : '');
 function liveBuilderRow(r, book) {
-  const why = r.blocked === 'line' ? 'Another number for this player and stat is ticked.' : r.blocked === 'full' ? `${liveBuilderMax(book)} legs is the most ${liveBuilderName(book)} takes.` : '';
+  const why = liveBuilderWhy(r, book);
   return `<div class="lb-leg ${r.checked ? 'is-checked' : ''} ${r.blocked ? 'is-blocked' : ''}" data-lb-row="${esc(r.id)}" title="${esc(r.game)}">
     <label class="lb-check"><input type="checkbox" data-lb-leg="${esc(r.id)}" ${r.checked ? 'checked' : ''} ${r.blocked ? 'disabled' : ''}><span class="lb-box" aria-hidden="true"></span>
       <span class="lb-who"><strong>${esc(r.player)}</strong>${r.team ? ` <small>${esc(r.team)}</small>` : ''} <span class="lb-line">${esc(String(r.point))}+ ${esc(r.label)}</span>${r.clock ? ` <small class="lb-clock">${esc(r.clock)}</small>` : ''}</span></label>
@@ -12846,19 +12848,62 @@ function renderLiveBuilder(all) {
   const list = !board ? liveLoaderHtml(`${name} legs are loading`, { small: true })
     : rows.length ? rows.map((r) => liveBuilderRow(r, book)).join('')
       : `<p class="empty">${!leagues.length ? 'Turn a league on above to see its legs.' : inPlay ? `No live leg at ${esc(name)} clears the bar right now. The board re-reads every minute.` : 'No game in play right now. Legs show here once a game is under way.'}</p>`;
+  // The minute's re-read redraws the tab under a reader who is part-way down the board: the page stays where it was.
+  const scrollY = window.scrollY;
   el.liveBody.innerHTML = `${head}<div class="lb-wrap"><div class="lb">
     <section class="lb-board" aria-label="Live props board"><div class="lb-board-head"><span>Live props board · furthest ahead of pace first</span><b>${board ? `${rows.length} live leg${rows.length === 1 ? '' : 's'} available` : ''}</b></div>${list}</section>
     ${liveBuilderPanel(view, book, { loading: !board })}
   </div></div>`;
+  if (Math.abs(window.scrollY - scrollY) > 1) window.scrollTo(window.scrollX, scrollY);
 }
-/** A tap on a leg: on the ticket or off it, drawn at once, with the keyboard left on the same box. */
+/**
+ * The ticks drawn onto the board that is already on screen (2026-11-26, the owner, on a phone: "When I click the check boxes, the
+ * screen jumps to the top ... The screen should not move when I hit a checkbox"). A tick used to redraw the whole tab, which is
+ * what moved the page. Now nothing on the board is replaced: each row's box, its shading and its note are set where they stand,
+ * and only the ticket under the board is drawn again. False when there is no board on screen to draw onto.
+ */
+function liveBuilderRefresh() {
+  const book = liveBuilder.book;
+  const wrap = el.liveBody?.querySelector('.lb');
+  const board = liveBuilder.boardBook === book ? liveBuilder.board : null;
+  if (!wrap || !board) return false;
+  const view = builderView(board, liveBuilder.picked, { maxLegs: liveBuilderMax(book), pickem: book === 'prizepicks' });
+  const byId = new Map(view.rows.map((r) => [r.id, r]));
+  for (const node of wrap.querySelectorAll('.lb-leg[data-lb-row]')) {
+    const r = byId.get(node.dataset.lbRow);
+    if (!r) continue;
+    node.classList.toggle('is-checked', r.checked);
+    node.classList.toggle('is-blocked', Boolean(r.blocked));
+    const input = node.querySelector('input[data-lb-leg]');
+    if (input) { input.checked = r.checked; input.disabled = Boolean(r.blocked); }
+    const why = liveBuilderWhy(r, book);
+    let note = node.querySelector('.lb-why');
+    if (why) { if (!note) { note = document.createElement('small'); note.className = 'lb-why'; node.appendChild(note); } note.textContent = why; } else note?.remove();
+  }
+  const panel = wrap.querySelector('.lb-panel');
+  if (panel) panel.outerHTML = liveBuilderPanel(view, book);
+  return true;
+}
+/** A change to the ticket from the ticket itself (a leg removed, cleared, the drawer opened or shut): drawn in place, the page where it was. */
+function liveBuilderRedraw() {
+  const y = window.scrollY;
+  if (!liveBuilderRefresh()) renderLive();
+  if (Math.abs(window.scrollY - y) > 1) window.scrollTo(window.scrollX, y);
+}
+/** A tap on a leg: on the ticket or off it, with the row that was tapped left exactly where it is on the screen. */
 function liveBuilderToggle(id) {
   const board = liveBuilder.boardBook === liveBuilder.book ? (liveBuilder.board ?? []) : [];
   const row = board.find((r) => r.id === id);
   liveBuilder.picked = row ? toggleLeg(liveBuilder.picked, row, board, { maxLegs: liveBuilderMax(liveBuilder.book) }) : liveBuilder.picked.filter((p) => p.id !== id);
-  renderLive();
   const esc1 = (v) => (window.CSS?.escape ? CSS.escape(v) : String(v).replace(/["\\]/g, '\\$&'));
-  el.liveBody.querySelector(`input[data-lb-leg="${esc1(id)}"]`)?.focus({ preventScroll: true });
+  const tapped = el.liveBody.querySelector(`[data-lb-row="${esc1(id)}"]`);
+  const top = tapped?.getBoundingClientRect().top;
+  const y = window.scrollY;
+  if (!liveBuilderRefresh()) { renderLive(); return; }
+  // A note added to or taken off a row above (the other number of the same player) shifts what is below it by a line: the page
+  // is moved by the same, so the row under the finger does not move. Anything else that moved the page is put back.
+  if (tapped?.isConnected && Number.isFinite(top)) { const shift = tapped.getBoundingClientRect().top - top; if (Math.abs(shift) >= 1) window.scrollBy(0, shift); }
+  else if (Math.abs(window.scrollY - y) > 1) window.scrollTo(window.scrollX, y);
 }
 
 /**
@@ -12917,9 +12962,9 @@ el.liveView?.addEventListener('click', (event) => {
     renderLive(); loadLive({ force: true }); return;
   }
   const lbRemove = event.target.closest('[data-lb-remove]');
-  if (lbRemove) { liveBuilder.picked = liveBuilder.picked.filter((p) => p.id !== lbRemove.dataset.lbRemove); renderLive(); return; }
-  if (event.target.closest('[data-lb-clear]')) { liveBuilder.picked = []; renderLive(); return; }
-  if (event.target.closest('[data-lb-drawer]')) { liveBuilder.drawer = !liveBuilder.drawer; renderLive(); return; }
+  if (lbRemove) { liveBuilder.picked = liveBuilder.picked.filter((p) => p.id !== lbRemove.dataset.lbRemove); liveBuilderRedraw(); return; }
+  if (event.target.closest('[data-lb-clear]')) { liveBuilder.picked = []; liveBuilderRedraw(); return; }
+  if (event.target.closest('[data-lb-drawer]')) { liveBuilder.drawer = !liveBuilder.drawer; liveBuilderRedraw(); return; }
   // A tap anywhere on a leg's row ticks it; the box itself is handled as it changes (below).
   const lbRow = event.target.closest('[data-lb-row]');
   if (lbRow) { if (!event.target.closest('label, a, button, input') && !lbRow.classList.contains('is-blocked')) liveBuilderToggle(lbRow.dataset.lbRow); return; }
