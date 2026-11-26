@@ -19,6 +19,11 @@ import { seedTennisArchiveCacheForTests } from '../worker/src/tennis-archive.js'
 // degraded mode (favorites pass unscored, unsupported dogs are blocked).
 seedTennisArchiveCacheForTests({ atp: null, wta: null });
 import { seedTeamContextCacheForTests } from '../worker/src/team-form.js';
+// No network in these tests. A run reaches the odds feed and ESPN wherever a dependency is not stubbed (the events
+// listing behind an empty slate, a game log), and what the feed answers with no key decided the result: every run
+// after 2026-11-26 00:00 UTC wrote an odds diagnostic and skipped a build that the runs before it did not. Each test
+// file is its own process, so this reaches nothing else.
+globalThis.fetch = async (url) => { throw new Error(`no network in tests: ${String(url?.url ?? url).slice(0, 100)}`); };
 // Same reasoning for team sports: seeding SEALS the memo, so no fixture in
 // these slates reaches cdn.espn.com. An empty seed is the honest degraded
 // mode — no context, so no form re-score and no underdog gate, exactly what
