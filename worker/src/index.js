@@ -126,7 +126,7 @@ import {
   clearTrackedDay,
   GENERATION_HOUR_ET,
 } from './tracking.js';
-import { authorize as authorizeSettings, getSettings, putSettings } from './settings.js';
+import { authorize as authorizeSettings, getSettings, putSettings, LIVE_BOOKS } from './settings.js';
 import {
   runAlgoHealthReview,
   getAlgoConfig,
@@ -1632,7 +1632,10 @@ export default {
     if (pathname === '/live' && request.method === 'GET') {
       // The board, and tennis beside it (worker/src/tennis-live.js: the day's singles from ESPN with the Tennis tab's plays on them).
       const now = Date.now();
-      const [board, tennis, tennisLive] = await Promise.all([getLiveBoard(env, now, { ctx }), getTennisLive(env, now).catch((e) => { console.error('Tennis live failed:', e); return null; }), getTennisLivePlays(env, now).catch((e) => { console.error('Tennis live plays failed:', e); return null; })]);
+      // ?legs=<book>: the board also carries each game's legs at that one book (the custom parlay, docs/live-builder.js). A book not on the live list asks for nothing.
+      const asked = new URL(request.url).searchParams.get('legs');
+      const legsBook = asked && LIVE_BOOKS.includes(asked) ? asked : null;
+      const [board, tennis, tennisLive] = await Promise.all([getLiveBoard(env, now, { ctx, legsBook }), getTennisLive(env, now).catch((e) => { console.error('Tennis live failed:', e); return null; }), getTennisLivePlays(env, now).catch((e) => { console.error('Tennis live plays failed:', e); return null; })]);
       // tennisLive: the matches in play read game by game, the live plays and their record (worker/src/tennis-live-plays.js).
       return json({ ...board, tennis, tennisLive }, { headers: { ...cors, 'Cache-Control': 'no-store' } });
     }

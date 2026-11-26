@@ -59,7 +59,7 @@ test('an MVP leg\'s row: the stat takes the room that is left and wraps in it; t
 // --- The X: every close, dismiss and clear button (2026-11-25: "fix this x and check all others, they should be centered and the same size all around within reason") ---
 
 const page = fs.readFileSync(new URL('../docs/app.html', import.meta.url), 'utf8');
-const X_CLASSES = ['overlay-close-btn', 'notice-close', 'sheet-x', 'sheet-close-x', 'players-clear', 'parlay-preset-clear'];
+const X_CLASSES = ['overlay-close-btn', 'notice-close', 'sheet-x', 'sheet-close-x', 'players-clear', 'parlay-preset-clear', 'lb-remove'];
 
 test('every close, dismiss and clear button in the app is one of the shared X buttons', () => {
   // A button whose whole label is an X, or that is labelled Close, Dismiss or Clear, in the page and in what the app draws.

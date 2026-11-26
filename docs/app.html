@@ -21,12 +21,12 @@
      only page that reads the feed; the other pages' connect-src stays the
      worker alone. -->
 <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src 'self' https://fonts.gstatic.com; img-src 'self' data: https:; connect-src 'self' https://pixel-pick-odds.mgbouldering.workers.dev https://perpetualpixel.github.io; object-src 'none'; base-uri 'self'; form-action 'self'">
-<script src="frame-guard.js?v=1.402"></script>
+<script src="frame-guard.js?v=1.404"></script>
 <!-- The first board is asked for here, while the rest of the page is still arriving (docs/early.js). -->
 <link rel="preconnect" href="https://pixel-pick-odds.mgbouldering.workers.dev" crossorigin>
-<script src="early.js?v=1.402"></script>
+<script src="early.js?v=1.404"></script>
 <!-- The loader's animation (docs/loader-fx.js): deferred, it draws the loaders already in the page as soon as the page has arrived. -->
-<script src="loader-fx.js?v=1.402" defer></script>
+<script src="loader-fx.js?v=1.404" defer></script>
 <title>Perpetual Picks - App</title>
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <meta name="theme-color" content="#05050A">
@@ -42,7 +42,7 @@
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Syne:wght@600;700;800&family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
-<link rel="stylesheet" href="styles.css?v=1.402">
+<link rel="stylesheet" href="styles.css?v=1.404">
 <!-- modulepreload:start (written by update-version.js: every file app.js imports, fetched alongside it rather than one after another) -->
 <link rel="modulepreload" href="config.js">
 <link rel="modulepreload" href="demo.js">
@@ -54,6 +54,7 @@
 <link rel="modulepreload" href="safe-url.js">
 <link rel="modulepreload" href="book-links.js">
 <link rel="modulepreload" href="live-slips.js">
+<link rel="modulepreload" href="live-builder.js">
 <link rel="modulepreload" href="learning.js">
 <link rel="modulepreload" href="tennis-results.js">
 <link rel="modulepreload" href="engine.js">
@@ -74,7 +75,7 @@
 <link rel="modulepreload" href="take-or-fade.js">
 <!-- modulepreload:end -->
 <!-- Before first paint: a desktop reader who chose "Fit screen" gets the wide shell without a flash of the narrow one. -->
-<script src="wide.js?v=1.402"></script>
+<script src="wide.js?v=1.404"></script>
 </head>
 <body>
 
@@ -210,6 +211,7 @@
       <li><strong>MVP Picks:</strong> on Pixel's Picks, one player's same-game parlay: his team's highest-usage player, a points, rebounds and assists number he clears in 90% of his games, against a bottom-five defense at his position. The card is short, each stat opens on a tap, and one button adds every leg. When the price is too short it steps the numbers up or pairs a second player.</li>
       <li><strong>Player search:</strong> a new "To record" choice between Over and Under. Type 15 points and it shows the games with 15 or more.</li>
       <li><strong>Onyx:</strong> pick Onyx as one of your sportsbooks and every line and ticket gets a button that copies the pick and opens Onyx.</li>
+      <li><strong>Live, custom parlay mode:</strong> a switch on the Live tab turns the slips into a board of single live legs at one sportsbook, the furthest ahead of pace first. Tick the ones you want and one button puts them all on that sportsbook's slip.</li>
       <li><strong>PrizePicks:</strong> a whole lineup now goes over in one link. Where a ticket, a parlay or a live slip is at PrizePicks, one button adds every pick.</li>
       <li><strong>Hard Rock on a phone:</strong> Add to slip now opens the Hard Rock Bet app with the pick on your slip, and a whole ticket goes over in one link.</li>
       <li><strong>Too good to be true?</strong> Open any Trends line and a new box says whether it is a good or bad take and why: the price against the record, recent form, minutes, injuries, a change of team, a teammate back or out.</li>
@@ -736,6 +738,7 @@
       <summary>Live</summary>
       <p>The games and matches in play or about to start. Tap a game to open it: the slips come first, one card for each bet, with each leg showing what the player has now, his pace, and where he projects to finish. The game lines sit under the slips and the box score is folded below them.</p>
       <p>Each slip has one button, <strong>Add to sportsbook</strong>. Tap it and a bubble lists every sportsbook that has the bet, with its own price, best first. Pick your app and the slip opens there with the legs on it. A sportsbook that takes legs one at a time lists them in the bubble.</p>
+      <p><strong>Custom parlay mode</strong> is a switch at the top of the Live tab. Turn it on, pick one sportsbook, and the tab lists that sportsbook's live legs one a row, the furthest ahead of pace first, each with where the player is now, the pace and the price. Tick two or more and the builder shows your legs, the estimated odds with the prices multiplied, and one button that opens that sportsbook with every leg on the slip. Legs are one sportsbook's only: picking another sportsbook starts a new ticket. A sportsbook sets its own price when two legs are from the same game, so the estimate can differ from the slip. A leg that is no longer offered is marked on your ticket and left off the link.</p>
       <p>Slips build from the first minutes of a game and are rebuilt as it moves. In a blowout, or very late in a game, there may be none, and the card says why. A game leaves the list when it ends.</p>
       <p>Tennis sits on the same tab. A match in play shows each player's chance of winning and one call. <strong>Play</strong> is a tracked play with its stake. <strong>Lean</strong> is the best call on the match when nothing clears the bar for a tracked play; it is graded but not counted in the record. <strong>Watch</strong> means it is too early, with what to look for. <strong>No call</strong> gives the reason in a few words, such as too close, volatile or poorly priced. Each play and lean says the price to take it at or better. Tap More for the serving, the games expected in the set and the reasons.</p>
     </details>
@@ -1235,6 +1238,6 @@
   </div>
 </aside>
 
-<script type="module" src="app.js?v=1.402"></script>
+<script type="module" src="app.js?v=1.404"></script>
 </body>
 </html>
