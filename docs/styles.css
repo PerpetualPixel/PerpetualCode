@@ -7695,6 +7695,109 @@ a.tennis-book:hover { background: rgba(255, 255, 255, 0.06); }
 .live-pace.is-near .is-pct b { color: var(--warn, #fbbf24); }
 .live-pace.is-behind .is-pct { border-color: var(--danger, #ff5c7a); }
 .live-pace.is-behind .is-pct b { color: var(--danger, #ff5c7a); }
+
+/* ---------------------------------------------------------------------------
+   Live: the custom parlay (docs/live-builder.js; 2026-11-26). The Live tab as
+   a board of single legs at one sportsbook, ticked onto one ticket.
+
+   Two containers decide the layout by the room there is, not by the screen:
+   the wrap puts the ticket beside the board from 900px (the "Fit screen"
+   shell on a desktop), else under it as a drawer held to the bottom of the
+   screen; the board puts a leg on one line from 640px, else on two.
+   --------------------------------------------------------------------------- */
+.lb-switch { display: flex; align-items: center; gap: 12px; width: 100%; margin: 2px 0 10px; padding: 10px 14px; border-radius: 14px; border: 1px solid var(--line); background: var(--surface-2); color: var(--text); font: inherit; text-align: left; cursor: pointer; touch-action: manipulation; }
+.lb-switch.is-on { border-color: var(--accent); background: linear-gradient(180deg, var(--accent-dim), var(--surface-2)); box-shadow: var(--glow-violet); }
+.lb-switch-track { flex: none; position: relative; width: 44px; height: 26px; border-radius: 999px; background: rgba(255, 255, 255, 0.1); border: 1px solid var(--line); transition: background 0.2s ease, border-color 0.2s ease; }
+.lb-switch-knob { position: absolute; top: 2px; left: 2px; width: 20px; height: 20px; border-radius: 50%; background: var(--muted); transition: transform 0.2s ease, background 0.2s ease; }
+.lb-switch.is-on .lb-switch-track { background: var(--accent); border-color: var(--accent); }
+.lb-switch.is-on .lb-switch-knob { transform: translateX(18px); background: #fff; }
+.lb-switch-text { display: grid; gap: 1px; min-width: 0; }
+.lb-switch-text strong { font-size: 0.95rem; }
+.lb-switch-text small { color: var(--muted); font-size: 0.78rem; line-height: 1.3; }
+@media (prefers-reduced-motion: reduce) { .lb-switch-track, .lb-switch-knob { transition: none; } }
+
+.lb-wait { margin-top: 10px; padding: 28px 16px; border: 1px dashed var(--line); border-radius: var(--radius); text-align: center; color: var(--muted); }
+.lb-wait p { margin: 0; }
+.lb-wrap { container-type: inline-size; container-name: lbwrap; margin-top: 10px; }
+.lb { display: grid; grid-template-columns: minmax(0, 1fr); gap: 12px; align-items: start; }
+
+.lb-board { container-type: inline-size; container-name: lbboard; min-width: 0; padding: 4px 12px 6px; border: 1px solid var(--line); border-radius: var(--radius); background: var(--surface); }
+.lb-board-head { display: flex; align-items: baseline; justify-content: space-between; flex-wrap: wrap; gap: 4px 12px; padding: 8px 0; color: var(--muted); font-size: 0.85rem; }
+.lb-board-head b { color: var(--text); font-weight: 700; }
+.lb-board .empty { margin: 6px 0 10px; }
+.lb-leg { display: grid; grid-template-columns: minmax(0, 1fr) auto; grid-template-areas: "who price" "bar pace" "why why"; column-gap: 12px; row-gap: 2px; align-items: center; padding: 10px 0; border-top: 1px solid var(--line); cursor: pointer; }
+.lb-leg.is-checked { background: linear-gradient(90deg, rgba(124, 58, 237, 0.14), rgba(124, 58, 237, 0) 75%); }
+.lb-leg.is-blocked { cursor: not-allowed; }
+.lb-leg.is-blocked > :not(.lb-why) { opacity: 0.45; }
+.lb-check { grid-area: who; display: flex; align-items: center; gap: 10px; min-width: 0; cursor: pointer; }
+.lb-leg.is-blocked .lb-check { cursor: not-allowed; }
+/* The real box is kept for the keyboard and a screen reader; the drawn one beside it is what shows. */
+.lb-check input { position: absolute; width: 1px; height: 1px; margin: 0; opacity: 0; pointer-events: none; }
+.lb-box { flex: none; display: grid; place-items: center; width: 24px; height: 24px; border-radius: 7px; border: 2px solid rgba(124, 58, 237, 0.65); background: rgba(255, 255, 255, 0.02); }
+.lb-check input:checked + .lb-box { border-color: transparent; background: linear-gradient(135deg, var(--magenta), var(--accent)); box-shadow: var(--glow-violet); }
+.lb-check input:checked + .lb-box::after { content: ''; width: 11px; height: 6px; margin-top: -3px; border-left: 2.5px solid #fff; border-bottom: 2.5px solid #fff; transform: rotate(-45deg); }
+.lb-check input:focus-visible + .lb-box { outline: 2px solid var(--laser); outline-offset: 2px; }
+.lb-who { display: flex; flex-wrap: wrap; align-items: baseline; gap: 0 7px; min-width: 0; }
+.lb-who strong { font-size: 0.98rem; overflow-wrap: anywhere; }
+.lb-who small { color: var(--muted); font-size: 0.78rem; font-weight: 700; }
+.lb-line { color: var(--muted); font-size: 0.8rem; font-weight: 700; letter-spacing: 0.03em; text-transform: uppercase; }
+.lb-who .lb-clock { font-weight: 500; opacity: 0.8; }
+.lb-track { grid-area: bar; min-width: 0; padding: 0 6px; }
+.lb-track .live-bar { margin: 4px 0 0; }
+.lb-pace { grid-area: pace; display: grid; justify-items: center; min-width: 64px; padding: 4px 8px; border-radius: 9px; border: 1px solid var(--line); background: var(--surface-2); }
+.lb-pace b { font-family: var(--mono); font-size: 0.98rem; font-variant-numeric: tabular-nums; line-height: 1.15; }
+.lb-pace small { color: var(--muted); font-size: 0.56rem; font-weight: 700; letter-spacing: 0.05em; text-transform: uppercase; line-height: 1.2; }
+.lb-pace.is-ahead { border-color: var(--success); background: rgba(16, 185, 129, 0.14); }
+.lb-pace.is-ahead b { color: var(--success); }
+.lb-pace.is-near { border-color: rgba(251, 191, 36, 0.6); }
+.lb-pace.is-near b { color: var(--warn); }
+.lb-pace.is-behind { border-color: var(--danger); }
+.lb-pace.is-behind b { color: var(--danger); }
+.lb-price { grid-area: price; font-family: var(--mono); font-size: 1rem; font-weight: 800; font-variant-numeric: tabular-nums; text-align: right; }
+.lb-why { grid-area: why; color: var(--muted); font-size: 0.74rem; }
+@container lbboard (min-width: 640px) {
+  .lb-leg { grid-template-columns: minmax(0, 1fr) minmax(0, 1.25fr) auto 62px; grid-template-areas: "who bar pace price" "why why why why"; }
+  .lb-track { padding: 0 10px; }
+}
+
+.lb-panel { position: sticky; bottom: calc(8px + env(safe-area-inset-bottom, 0px)); z-index: 6; min-width: 0; border: 1px solid var(--line); border-radius: var(--radius); background: var(--panel-bg); box-shadow: var(--shadow); }
+.lb-panel-head { display: flex; align-items: center; gap: 10px; width: 100%; padding: 12px 14px; border: 0; border-bottom: 1px solid var(--line); background: none; color: var(--text); font: inherit; text-align: left; cursor: pointer; touch-action: manipulation; }
+.lb-panel-head strong { flex: 1 1 auto; font-size: 0.95rem; }
+.lb-panel-sum { flex: none; margin-left: auto; color: var(--muted); font-size: 0.85rem; font-variant-numeric: tabular-nums; white-space: nowrap; }
+.lb-panel-sum b { color: var(--success); }
+.lb-caret { flex: none; width: 9px; height: 9px; margin: 4px 2px 0; border-left: 2px solid var(--muted); border-top: 2px solid var(--muted); transform: rotate(45deg); }
+.lb-panel.is-open .lb-caret { margin-top: -4px; transform: rotate(225deg); }
+.lb-panel-body { display: grid; gap: 10px; padding: 12px 14px 14px; }
+.lb-panel-list { display: none; gap: 8px; }
+.lb-panel.is-open .lb-panel-list { display: grid; }
+.lb-kicker { margin: 0; font-size: 0.8rem; font-weight: 800; letter-spacing: 0.04em; text-transform: uppercase; }
+.lb-count { margin: 0; padding-bottom: 8px; border-bottom: 1px solid var(--line); color: var(--muted); font-size: 0.9rem; }
+.lb-none, .lb-hint { margin: 0; }
+.lb-picked { display: grid; gap: 6px; max-height: 38vh; margin: 0; padding: 0; overflow-y: auto; list-style: none; }
+.lb-picked li { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+.lb-picked-who { display: grid; min-width: 0; }
+.lb-picked-who strong { overflow-wrap: anywhere; }
+.lb-picked-who small { color: var(--muted); font-size: 0.76rem; }
+.lb-picked li.is-gone strong { color: var(--muted); text-decoration: line-through; }
+.lb-picked li.is-gone small { color: var(--warn); }
+.lb-remove { --x: var(--x-size-sm); border: 1px solid var(--line); background: transparent; color: var(--muted); }
+.lb-odds { display: flex; align-items: baseline; justify-content: space-between; gap: 10px; padding-top: 8px; border-top: 1px solid var(--line); color: var(--muted); }
+.lb-odds b { color: var(--text); font-family: var(--mono); font-size: 1.15rem; font-variant-numeric: tabular-nums; }
+/* Named through the tab, whose own rule gives its links a muted colour and an underline (#liveView a): the button keeps neither. */
+#liveView a.lb-cta, #liveView a.lb-cta:hover, #liveView a.lb-cta:visited { color: #fff; text-decoration: none; }
+#liveView .lb-onebyone a { text-decoration: none; }
+.lb-cta { box-sizing: border-box; display: flex; align-items: center; justify-content: center; width: 100%; min-height: 48px; padding: 12px 14px; border: 0; border-radius: 12px; background: linear-gradient(135deg, var(--accent), #5b21b6); color: #fff; font: inherit; font-weight: 800; text-align: center; text-decoration: none; cursor: pointer; box-shadow: var(--glow-violet); touch-action: manipulation; }
+.lb-cta:hover { filter: brightness(1.1); }
+.lb-cta:disabled { opacity: 0.45; box-shadow: none; filter: none; cursor: not-allowed; }
+.lb-onebyone { display: flex; flex-wrap: wrap; gap: 8px; }
+@container lbwrap (min-width: 900px) {
+  .lb { grid-template-columns: minmax(0, 1fr) 320px; }
+  .lb-panel { top: 12px; bottom: auto; }
+  .lb-panel-head { cursor: default; }
+  .lb-panel-sum, .lb-caret { display: none; }
+  .lb-panel-list { display: grid; }
+  .lb-picked { max-height: 50vh; }
+}
 .live-watch-pace.is-ahead b { color: var(--success); }
 .live-watch-pace.is-near b { color: var(--warn, #fbbf24); }
 .live-watch-pace.is-behind b { color: var(--danger, #ff5c7a); }
@@ -8169,7 +8272,7 @@ a.tennis-book:hover { background: rgba(255, 255, 255, 0.06); }
 :root { --x-size: 40px; --x-size-sm: 30px; }
 @media (max-width: 620px) { :root { --x-size: 44px; --x-size-sm: 34px; } }
 
-.overlay-close-btn, .notice-close, .sheet-x, .sheet-close-x, .players-clear, .parlay-preset-clear {
+.overlay-close-btn, .notice-close, .sheet-x, .sheet-close-x, .players-clear, .parlay-preset-clear, .lb-remove {
   display: inline-grid;
   /* The one cell holding the bars sits in the middle of the button, and the bars in the middle of the cell. */
   place-content: center;
@@ -8183,7 +8286,7 @@ a.tennis-book:hover { background: rgba(255, 255, 255, 0.06); }
   cursor: pointer;
   touch-action: manipulation;
 }
-.overlay-close-btn, .notice-close, .sheet-x, .sheet-close-x, .players-clear {
+.overlay-close-btn, .notice-close, .sheet-x, .sheet-close-x, .players-clear, .lb-remove {
   box-sizing: border-box;
   flex: none;
   width: var(--x, var(--x-size));
@@ -8196,6 +8299,7 @@ a.tennis-book:hover { background: rgba(255, 255, 255, 0.06); }
 .sheet-x::before, .sheet-x::after,
 .sheet-close-x::before, .sheet-close-x::after,
 .players-clear::before, .players-clear::after,
+.lb-remove::before, .lb-remove::after,
 .parlay-preset-clear::before, .parlay-preset-clear::after {
   content: '';
   /* Both bars in the one cell of the button's grid: the middle. */
@@ -8207,7 +8311,7 @@ a.tennis-book:hover { background: rgba(255, 255, 255, 0.06); }
   transform: rotate(45deg);
   pointer-events: none;
 }
-.overlay-close-btn::after, .notice-close::after, .sheet-x::after, .sheet-close-x::after, .players-clear::after, .parlay-preset-clear::after { transform: rotate(-45deg); }
+.overlay-close-btn::after, .notice-close::after, .sheet-x::after, .sheet-close-x::after, .players-clear::after, .lb-remove::after, .parlay-preset-clear::after { transform: rotate(-45deg); }
 /* A line's sheet keeps its X at the right by an auto margin, which needs a block of its own. */
 .sheet-close-x { display: grid; }
 /* The large X carries a longer stroke. */

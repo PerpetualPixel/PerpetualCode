@@ -167,6 +167,35 @@ test('the board is today only, Eastern, and only what is still to play: a game t
   assert.deepEqual((await getLiveBoard(env, Date.UTC(2026, 10, 6, 4, 0))).games.map((g) => g.espnEventId).sort(), ['early', 'late']);
 });
 
+test('the board carries one book\'s legs when asked: the game in play at that book, nothing for a game still to start, and nothing unasked', async () => {
+  const { getLiveBoard } = await import('../worker/src/live-board.js');
+  const now = Date.UTC(2026, 10, 3, 2, 45);
+  const m = new Map(); const env = { POTD_KV: { get: async (k) => m.get(k) ?? null, put: async (k, v) => { m.set(k, v); } } };
+  m.set('live:watch:index', JSON.stringify({ games: [{ id: 'mnf', name: 'Philadelphia Eagles at Washington Commanders', date: '2026-11-03T01:15Z', league: 'nfl' }, { id: 'later', name: 'Chicago Bears at Seattle Seahawks', date: '2026-11-03T04:15Z', league: 'nfl' }] }));
+  // A close game at the half (a blowout withholds its plays, and its legs with them).
+  m.set('live:watch:mnf', JSON.stringify({ ticks: [tick({ at: now - 60e3, score: { PHI: 14, WSH: 10 } })] }));
+  m.set('live:probe:for:mnf', 'ev1');
+  m.set('live:probe:ev1:latest', JSON.stringify(payload));
+  const plain = await getLiveBoard(env, now);
+  assert.equal('legs' in plain.games[0], false, 'unasked: no legs on the board');
+  assert.equal('legsBook' in plain, false);
+  const board = await getLiveBoard(env, now, { legsBook: 'draftkings' });
+  assert.equal(board.legsBook, 'draftkings');
+  const mnf = board.games.find((g) => g.espnEventId === 'mnf');
+  assert.ok(mnf.legs.length >= 3, `the game's legs at the book: ${mnf.legs.length}`);
+  assert.ok(mnf.legs.every((l) => l.bookId === 'draftkings' && l.price <= -130 && l.price >= -300 && l.current < l.point));
+  assert.ok(mnf.legs.some((l) => l.player === 'Saquon Barkley' && l.point === 79.5 && l.price === -250));
+  assert.equal(new Set(mnf.legs.map((l) => `${l.player}|${l.stat}|${l.point}`)).size, mnf.legs.length, 'one row a player, stat and number');
+  assert.deepEqual(board.games.find((g) => g.espnEventId === 'later').legs, [], 'not in play: no legs');
+  const fd = await getLiveBoard(env, now, { legsBook: 'fanduel' });
+  assert.deepEqual(fd.games.find((g) => g.espnEventId === 'mnf').legs.map((l) => [l.player, l.point, l.price]), [['Saquon Barkley', 79.5, -230]]);
+  // A blowout: the plays are withheld, and so are the legs.
+  m.set('live:watch:mnf', JSON.stringify({ ticks: [tick({ at: now - 60e3, detail: '5:00 - 4th', period: 4, clock: '5:00', score: { PHI: 34, WSH: 3 } })] }));
+  const blown = (await getLiveBoard(env, now, { legsBook: 'draftkings' })).games.find((g) => g.espnEventId === 'mnf');
+  assert.equal(blown.blowout.blowout, true);
+  assert.deepEqual(blown.legs, []);
+});
+
 test('a deep ladder is read from its cheap end too: the three-leg at +100 comes from the low rungs, not the plus-money ones alone', async () => {
   const { buildLivePlay, liveCandidates } = await import('../worker/src/live-board.js');
   const t = tick({ detail: '7:00 - 2nd Quarter', period: 2, clock: '7:00', score: { PHI: 14, WSH: 10 } }); // close: no script rules anyone out

@@ -26,6 +26,7 @@ import { fetchWeather } from './weather.js';
 import { gameReads } from './live-game.js';
 import { SOCCER_LIVE, LIVE_SPORT, isSoccer, LIVE_ON, liveDay } from './live-leagues.js';
 import { espnAbbr } from '../../docs/team-logos.js';
+import { builderLegs } from '../../docs/live-builder.js';
 
 /** The box-score key each market settles on, per league. */
 export const LIVE_STAT = {
@@ -618,7 +619,11 @@ export function playSummary(slips, reads) {
   return { playable, score: Math.round(score * 100) / 100, stars, slips: slips?.length ?? 0, reads: reads?.length ?? 0 };
 }
 
-export async function getLiveBoard(env, now = Date.now(), { ctx = null } = {}) {
+/**
+ * The board. `legsBook` (a registry book id) adds each game's legs at that one book, for the Live tab's custom parlay
+ * (docs/live-builder.js): the same candidates the slips are built from, so nothing more is read for them.
+ */
+export async function getLiveBoard(env, now = Date.now(), { ctx = null, legsBook = null } = {}) {
   const { games } = await readWatchIndex(env);
   const out = [];
   const today = liveDay(now);
@@ -670,11 +675,13 @@ export async function getLiveBoard(env, now = Date.now(), { ctx = null } = {}) {
       players: playerLines(tick, league),
       watch: whoToWatch(tick, candidates, league, { weather }),
       candidates: candidates.slice(0, 12),
+      // One book's legs for the custom parlay: none while the game is not in play, and none in a blowout, like the slips.
+      ...(legsBook ? { legs: tick?.state === 'in' && !withheld ? builderLegs(candidates, legsBook) : [] } : {}),
       slips: plays && !withheld ? { builtAt: plays.builtAt, firstBuiltAt: plays.firstBuiltAt ?? plays.builtAt, builds: plays.builds ?? 1, score: plays.score, detail: plays.detail ?? null, period: plays.period ?? null, clock: plays.clock ?? null, list: slipList } : null,
     });
   }
   // The watchers' heartbeats (scripts/live-watch.mjs): when each league's runner last looked at the scoreboard.
   const watcher = {};
   for (const league of LIVE_ON) { const raw = await env.POTD_KV.get(`live:watch:beat:${league}`).catch(() => null); if (raw) { try { watcher[league] = JSON.parse(raw); } catch { /* a bad beat is no beat */ } } }
-  return { at: now, day: today, leagues: LIVE_ON, watcher, games: out };
+  return { at: now, day: today, leagues: LIVE_ON, watcher, ...(legsBook ? { legsBook } : {}), games: out };
 }

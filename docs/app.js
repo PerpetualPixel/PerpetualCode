@@ -29,6 +29,7 @@ import { BUILD_INFO } from './version.js';
 import { safeUrl } from './safe-url.js';
 import { hardRockCombined, prizePicksCombined, phoneSlipLink, isPhone, pickText, withState, needsState, cleanState, US_STATES } from './book-links.js';
 import { groupLiveSlips, slipNumbers, parseLiveHash } from './live-slips.js';
+import { boardLegs, builderView, toggleLeg, BUILDER_MIN_LEGS, BUILDER_MAX_LEGS } from './live-builder.js';
 import { summarizePicks, gradePick } from './learning.js';
 import { liveSetsLabel } from './tennis-results.js';
 import {
@@ -12223,6 +12224,16 @@ const LIVE_LEAGUES_DEFAULT = ['nba', 'nfl', 'tennis'];
 const LIVE_BOOKS = ['draftkings', 'fanduel', 'caesars', 'betmgm', 'fanatics', 'hardrock', 'bet365', 'betrivers', 'espnbet', 'prizepicks'];
 const liveState = { data: null, loading: false, timer: null, open: {}, books: new Set(loadJSON(LIVE_BOOKS_KEY, []) ?? []), leagues: new Set((loadJSON(LIVE_LEAGUES_KEY, null) ?? LIVE_LEAGUES_DEFAULT).filter((k) => LIVE_LEAGUES_DEFAULT.includes(k))), showAll: false, expandAll: false };
 if (!liveState.leagues.size) LIVE_LEAGUES_DEFAULT.forEach((k) => liveState.leagues.add(k));
+/**
+ * The custom parlay (docs/live-builder.js; 2026-11-26): the Live tab as a board of single legs at one sportsbook, ticked
+ * onto one ticket. The mode is off at every visit (a link to a slip must land on the slips); its book is kept on this
+ * device; the ticked legs last the visit. `board` is the last board read for `boardBook`, so a re-read does not blank it.
+ */
+const LIVE_BUILDER_KEY = 'pixelpick.liveBuilder.v1';
+const liveBuilder = { on: false, book: (() => { const v = loadJSON(LIVE_BUILDER_KEY, null)?.book; return LIVE_BOOKS.includes(v) ? v : null; })(), picked: [], drawer: false, board: null, boardBook: null };
+const liveBuilderName = (id) => SPORTSBOOKS[id]?.name ?? id;
+/** The most legs a ticket takes at a book (a PrizePicks lineup stops at six). */
+const liveBuilderMax = (id) => PARLAY_MAX_LEGS[id] ?? BUILDER_MAX_LEGS;
 /** How a game starts, by league: the tip in basketball, the puck drop in hockey, the kick-off in football and soccer. */
 const liveStartWord = (lg) => (lg === 'nba' ? 'Tips off' : lg === 'nhl' ? 'Drops' : 'Kicks off');
 /** Whether a game's card is open: tapped open, or every card opened at once. */
@@ -12263,8 +12274,9 @@ function persistLiveBooks() {
 /** The slips the user's books leave standing (all of them with no books chosen, or while "show all" is on). */
 const liveSlipsFor = (g) => { const all = g.slips?.list ?? []; return liveState.books.size && !liveState.showAll ? all.filter((s) => liveState.books.has(s.bookId)) : all; };
 /** The league toggles (2026-11-06): NBA, NFL and tennis, each on or off; the last one on stays on. */
-function liveLeaguePicker(all) {
-  const leagues = [...(liveState.data?.leagues ?? LIVE_LEAGUES_DEFAULT.filter((k) => k !== 'tennis')), 'tennis'];
+function liveLeaguePicker(all, { tennis = true } = {}) {
+  // The custom parlay is on player props, which tennis has none of: its chip is left off there.
+  const leagues = [...(liveState.data?.leagues ?? LIVE_LEAGUES_DEFAULT.filter((k) => k !== 'tennis')), ...(tennis ? ['tennis'] : [])];
   return `<div class="live-books-pick live-leagues-pick" role="group" aria-label="Leagues on the board">${leagues.map((k) => { const n = k === 'tennis' ? (liveState.data?.tennis?.matches?.length ?? 0) : all.filter((g) => g.league === k).length; const on = liveState.leagues.has(k); return `<button type="button" class="league-chip is-sport ${on ? 'is-active' : ''}" data-live-league="${esc(k)}" aria-pressed="${on}">${sportIcon(k)}<span class="league-chip-label">${esc(league(k))}</span><small class="live-league-n">${n}</small>${chipTick(on)}</button>`; }).join('')}</div>`;
 }
 function liveBooksPicker() {
@@ -12293,8 +12305,15 @@ async function loadLive({ force = false, announce = false } = {}) {
   if (!liveState.data) { el.liveStatus.textContent = ''; el.liveBody.innerHTML = liveLoaderHtml(); }
   else if (announce) el.liveStatus.innerHTML = liveLoaderHtml('Live plays are loading', { small: true });
   try {
-    const res = await fetch(new URL('/live', CONFIG.WORKER_URL), { headers: { Accept: 'application/json' } });
-    liveState.data = await res.json();
+    // The custom parlay's board: the same read, with each game's legs at the one book chosen.
+    const url = new URL('/live', CONFIG.WORKER_URL);
+    if (liveBuilder.on && liveBuilder.book) url.searchParams.set('legs', liveBuilder.book);
+    const seq = (liveState.seq = (liveState.seq ?? 0) + 1);
+    const res = await fetch(url, { headers: { Accept: 'application/json' } });
+    const body = await res.json();
+    // A newer read went out while this one was on its way (the book was changed): that one draws the board.
+    if (seq !== liveState.seq) return;
+    liveState.data = body;
     el.liveStatus.textContent = '';
   } catch {
     el.liveStatus.textContent = "Couldn't load this right now. Try again in a moment.";
@@ -12618,6 +12637,7 @@ function renderLive() {
   const tennis = tennisOn ? (d?.tennis ?? null) : null;
   const tennisHtml = tennisOn ? renderLiveTennis(d?.tennis ?? null) : '';
   setLiveGlow(all.some((g) => g.tick?.state === 'in') || (d?.tennis?.inPlay ?? 0) > 0);
+  if (liveBuilder.on) { renderLiveBuilder(all); return; }
   const beats = Object.values(d?.watcher ?? {}); const lastBeat = beats.length ? Math.max(...beats.map((b) => b.at ?? 0)) : 0;
   const watcherNote = lastBeat ? (Date.now() - lastBeat < 12 * 60e3 ? `Watcher on, looked ${esc(ago(lastBeat))}` : `Watcher quiet since ${esc(ago(lastBeat))}`) : 'Watcher not started today';
   if (!games.length) {
@@ -12634,8 +12654,100 @@ function renderLive() {
   const reads = games.reduce((n, g) => n + (g.game ?? []).filter((r) => !liveState.books.size || liveState.showAll || r.lines.some((l) => liveState.books.has(l.bookId))).length, 0);
   const ordered = liveOrder(games);
   const playable = ordered.filter((g) => g.tick?.state === 'in' && g.play?.playable).length;
-  el.liveBody.innerHTML = `<div class="live-top"><span class="live-count ${slips || reads ? 'is-on' : ''}">${slips ? `${slips} live slip${slips === 1 ? '' : 's'} ready${where}` : elsewhere ? `No live slip${where}` : inPlay ? 'No live slip yet: they build from the first minutes and rebuild as the game moves' : 'No live slip'}${reads ? ` · ${reads} game line${reads === 1 ? '' : 's'} with an edge` : ''}</span><span class="row-sub">Today's games still to play · board read ${esc(liveTimeFmt.format(new Date(d.at)))}, re-read every minute while open · ${watcherNote}</span></div>${liveLeaguePicker(all)}${liveBooksPicker()}<div class="live-list-head"><span class="row-sub">${playable ? `${playable} playable now, most confident first` : inPlay ? `${inPlay} in play, nothing playable yet` : `${games.length} game${games.length === 1 ? '' : 's'} on the slate`} · ${games.length} listed. Tap a game to open it.</span><button type="button" class="link-button" data-live-expand="1">${liveState.expandAll ? 'Collapse all' : 'Expand all'}</button></div>${ordered.map(renderLiveGame).join('')}${tennisHtml}`;
+  el.liveBody.innerHTML = `<div class="live-top"><span class="live-count ${slips || reads ? 'is-on' : ''}">${slips ? `${slips} live slip${slips === 1 ? '' : 's'} ready${where}` : elsewhere ? `No live slip${where}` : inPlay ? 'No live slip yet: they build from the first minutes and rebuild as the game moves' : 'No live slip'}${reads ? ` · ${reads} game line${reads === 1 ? '' : 's'} with an edge` : ''}</span><span class="row-sub">Today's games still to play · board read ${esc(liveTimeFmt.format(new Date(d.at)))}, re-read every minute while open · ${watcherNote}</span></div>${liveBuilderSwitch()}${liveLeaguePicker(all)}${liveBooksPicker()}<div class="live-list-head"><span class="row-sub">${playable ? `${playable} playable now, most confident first` : inPlay ? `${inPlay} in play, nothing playable yet` : `${games.length} game${games.length === 1 ? '' : 's'} on the slate`} · ${games.length} listed. Tap a game to open it.</span><button type="button" class="link-button" data-live-expand="1">${liveState.expandAll ? 'Collapse all' : 'Expand all'}</button></div>${ordered.map(renderLiveGame).join('')}${tennisHtml}`;
   liveFocusScroll();
+}
+
+/* ---------------------------------------------------------------- */
+/* Live: the custom parlay (docs/live-builder.js; 2026-11-26)        */
+/* ---------------------------------------------------------------- */
+/** The switch between the slips and the custom parlay. */
+function liveBuilderSwitch() {
+  const on = liveBuilder.on;
+  return `<button type="button" class="lb-switch ${on ? 'is-on' : ''}" role="switch" aria-checked="${on}" data-lb-mode><span class="lb-switch-track" aria-hidden="true"><span class="lb-switch-knob"></span></span><span class="lb-switch-text"><strong>Custom parlay mode</strong><small>${on ? 'On. Turn it off to see the slips again.' : 'Tick live legs at one sportsbook and add them all in one go.'}</small></span></button>`;
+}
+/** The one sportsbook a custom parlay is at: one on at a time. */
+function liveBuilderBooks() {
+  return `<div class="live-books-pick" role="radiogroup" aria-label="The sportsbook for your parlay"><span class="row-sub">Parlay at</span>${LIVE_BOOKS.map((id) => { const on = liveBuilder.book === id; return `<button type="button" role="radio" class="league-chip is-sport ${on ? 'is-active' : ''}" data-lb-book="${esc(id)}" aria-checked="${on}" title="${esc(liveBuilderName(id))}">${bookBadge(id, id)}<span class="league-chip-label">${esc(liveBuilderName(id))}</span>${chipTick(on)}</button>`; }).join('')}</div>`;
+}
+/** One leg on the board: its tick box, the player and the number, where he is against it, his pace and the price. */
+function liveBuilderRow(r, book) {
+  const why = r.blocked === 'line' ? 'Another number for this player and stat is ticked.' : r.blocked === 'full' ? `${liveBuilderMax(book)} legs is the most ${liveBuilderName(book)} takes.` : '';
+  return `<div class="lb-leg ${r.checked ? 'is-checked' : ''} ${r.blocked ? 'is-blocked' : ''}" data-lb-row="${esc(r.id)}" title="${esc(r.game)}">
+    <label class="lb-check"><input type="checkbox" data-lb-leg="${esc(r.id)}" ${r.checked ? 'checked' : ''} ${r.blocked ? 'disabled' : ''}><span class="lb-box" aria-hidden="true"></span>
+      <span class="lb-who"><strong>${esc(r.player)}</strong>${r.team ? ` <small>${esc(r.team)}</small>` : ''} <span class="lb-line">${esc(String(r.point))}+ ${esc(r.label)}</span>${r.clock ? ` <small class="lb-clock">${esc(r.clock)}</small>` : ''}</span></label>
+    <div class="lb-track">${liveBar(r.current, r.point)}</div>
+    <span class="lb-pace is-${esc(r.paceLevel ?? 'none')}"><b>${Number.isFinite(r.pacePct) ? `${esc(String(r.pacePct))}%` : '–'}</b><small>Pace %</small></span>
+    <span class="lb-price">${esc(formatAmerican(r.price))}</span>
+    ${why ? `<small class="lb-why">${esc(why)}</small>` : ''}
+  </div>`;
+}
+/** The ticket: what is ticked, its price with the legs multiplied, and the one link that puts it on the book's slip. */
+function liveBuilderPanel(view, book, { loading = false } = {}) {
+  const name = liveBuilderName(book);
+  const n = view.live.length;
+  const price = view.price ? formatAmerican(view.price.american) : null;
+  const legLabel = (c) => `${c.point}+ ${c.label ?? ''}`.trim();
+  const list = view.chosen.length
+    ? `<ul class="lb-picked">${view.chosen.map((c) => `<li class="${c.gone && !loading ? 'is-gone' : ''}"><span class="lb-picked-who"><strong>${esc(c.player)}</strong><small>${esc(legLabel(c))} · ${c.gone && !loading ? 'no longer offered' : esc(formatAmerican(c.price))}</small></span><button type="button" class="lb-remove" data-lb-remove="${esc(c.id)}" aria-label="Remove ${esc(c.player)} ${esc(legLabel(c))}">×</button></li>`).join('')}</ul>`
+    : '<p class="row-sub lb-none">Tick two or more legs on the board.</p>';
+  const all = n >= BUILDER_MIN_LEGS ? combinedSlipLink(book, view.live.map((l) => l.link)) : null;
+  let cta;
+  if (loading) cta = `<button type="button" class="lb-cta" disabled>Reading ${esc(name)}…</button>`;
+  else if (n < BUILDER_MIN_LEGS) cta = `<button type="button" class="lb-cta" disabled>Create parlay link for ${esc(name)}</button><p class="row-sub lb-hint">${n === 1 ? 'One more leg makes a parlay.' : 'Tick at least two legs.'}</p>`;
+  else if (all) cta = `<a class="lb-cta" href="${escUrl(all)}" target="_blank" rel="noopener" data-lb-go>Create parlay link for ${esc(name)} ↗</a>`;
+  else {
+    // A book with no one link for a ticket: its legs one at a time where it links them, the book itself where it does not; and Playbook's slip for any of them.
+    const linked = view.live.filter((l) => l.link);
+    const bookUrl = SPORTSBOOKS[book]?.url ?? null;
+    const pb = playbookBlock({ key: playbookKey(book, view.live.map((l) => l.id)), legs: view.live.map((l) => ({ selection: `${l.player} Over ${l.point} ${l.label ?? ''}`.trim(), game: l.game })), book, bookName: name });
+    cta = `${linked.length ? `<p class="row-sub lb-hint">${esc(name)} takes legs one at a time:</p><div class="lb-onebyone">${linked.map((l) => `<a class="parlay-btn is-slip" href="${escUrl(l.link)}" target="_blank" rel="noopener">${esc(String(l.player).split(' ').at(-1))} ${esc(String(l.point))}+ ↗</a>`).join('')}</div>` : `<p class="row-sub lb-hint">${esc(name)} gives out no slip links: add the ${n} legs by hand.</p>${bookUrl ? `<a class="lb-cta" href="${escUrl(bookUrl)}" target="_blank" rel="noopener">Open ${esc(name)} ↗</a>` : ''}`}${pb}`;
+  }
+  const gone = view.chosen.length - n;
+  return `<aside class="lb-panel ${liveBuilder.drawer ? 'is-open' : ''}" aria-label="Custom parlay builder">
+    <button type="button" class="lb-panel-head" data-lb-drawer aria-expanded="${liveBuilder.drawer}"><strong>Custom Parlay Builder</strong><span class="lb-panel-sum">${n} leg${n === 1 ? '' : 's'}${price ? ` · <b>${esc(price)}</b>` : ''}</span><span class="lb-caret" aria-hidden="true"></span></button>
+    <div class="lb-panel-body">
+      <div class="lb-panel-list">
+        <p class="lb-kicker">Your custom live parlay</p>
+        <p class="lb-count">${n} leg${n === 1 ? '' : 's'} selected${gone && !loading ? ` · ${gone} no longer offered` : ''}${view.chosen.length ? ' · <button type="button" class="link-button" data-lb-clear>Clear</button>' : ''}</p>
+        ${list}
+        <div class="lb-odds"><span>Estimated odds</span><b>${price ? esc(price) : '–'}</b></div>
+        ${view.sameGame && book !== 'prizepicks' ? `<p class="row-sub lb-hint">Two of these are from one game: ${esc(name)} sets a same-game price of its own on the slip.</p>` : ''}
+      </div>
+      ${cta}
+    </div>
+  </aside>`;
+}
+/** The Live tab as the custom parlay: the switch, the leagues, the one book, the board of legs and the ticket. */
+function renderLiveBuilder(all) {
+  const d = liveState.data;
+  const book = liveBuilder.book;
+  const head = `<div class="live-top"><span class="live-count is-on">Custom parlay</span><span class="row-sub">${d?.at ? `Board read ${esc(liveTimeFmt.format(new Date(d.at)))}, re-read every minute while open` : 'Reading the board'}</span></div>${liveBuilderSwitch()}${liveLeaguePicker(all, { tennis: false })}${liveBuilderBooks()}`;
+  if (!book) { el.liveBody.innerHTML = `${head}<div class="lb-wait"><p>Please select a single sportsbook to start building your custom parlay.</p></div>`; return; }
+  // The read on screen may be one made without this book's legs (the glow's own read, or the one before the book was picked): the last board for the book stands until the next read lands.
+  if (d?.legsBook === book) { liveBuilder.board = boardLegs(all, book); liveBuilder.boardBook = book; }
+  const board = liveBuilder.boardBook === book ? liveBuilder.board : null;
+  const name = liveBuilderName(book);
+  const view = builderView(board ?? [], liveBuilder.picked, { maxLegs: liveBuilderMax(book), pickem: book === 'prizepicks' });
+  const leagues = [...liveState.leagues].filter((k) => k !== 'tennis');
+  const rows = view.rows.filter((r) => leagues.includes(r.league));
+  const inPlay = all.filter((g) => g.tick?.state === 'in' && leagues.includes(g.league)).length;
+  const list = !board ? liveLoaderHtml(`${name} legs are loading`, { small: true })
+    : rows.length ? rows.map((r) => liveBuilderRow(r, book)).join('')
+      : `<p class="empty">${!leagues.length ? 'Turn a league on above to see its legs.' : inPlay ? `No live leg at ${esc(name)} clears the bar right now. The board re-reads every minute.` : 'No game in play right now. Legs show here once a game is under way.'}</p>`;
+  el.liveBody.innerHTML = `${head}<div class="lb-wrap"><div class="lb">
+    <section class="lb-board" aria-label="Live props board"><div class="lb-board-head"><span>Live props board · furthest ahead of pace first</span><b>${board ? `${rows.length} live leg${rows.length === 1 ? '' : 's'} available` : ''}</b></div>${list}</section>
+    ${liveBuilderPanel(view, book, { loading: !board })}
+  </div></div>`;
+}
+/** A tap on a leg: on the ticket or off it, drawn at once, with the keyboard left on the same box. */
+function liveBuilderToggle(id) {
+  const board = liveBuilder.boardBook === liveBuilder.book ? (liveBuilder.board ?? []) : [];
+  const row = board.find((r) => r.id === id);
+  liveBuilder.picked = row ? toggleLeg(liveBuilder.picked, row, board, { maxLegs: liveBuilderMax(liveBuilder.book) }) : liveBuilder.picked.filter((p) => p.id !== id);
+  renderLive();
+  const esc1 = (v) => (window.CSS?.escape ? CSS.escape(v) : String(v).replace(/["\\]/g, '\\$&'));
+  el.liveBody.querySelector(`input[data-lb-leg="${esc1(id)}"]`)?.focus({ preventScroll: true });
 }
 
 /**
@@ -12650,6 +12762,7 @@ function openLiveFromHash() {
   if (LIVE_LEAGUES_DEFAULT.includes(link.league) && !liveState.leagues.has(link.league)) { liveState.leagues.add(link.league); saveJSON(LIVE_LEAGUES_KEY, [...liveState.leagues]); }
   liveState.open[`game:${link.gameId}`] = true;
   liveState.open[`add:${link.gameId}:${link.key}`] = true;
+  liveBuilder.on = false; // the slip a link names is on the slips view
   liveState.focus = { gameId: link.gameId, key: link.key, since: Date.now() };
   setActiveTab('live');
   return true;
@@ -12673,6 +12786,32 @@ window.addEventListener('hashchange', () => { openLiveFromHash(); });
 el.liveView?.addEventListener('click', (event) => {
   // A settled play lives on the Results tab, on its Live side.
   if (event.target.closest('[data-live-results]')) { resultsState.side = 'live'; setActiveTab('results'); return; }
+  // The custom parlay (docs/live-builder.js).
+  if (event.target.closest('[data-lb-mode]')) {
+    liveBuilder.on = !liveBuilder.on;
+    // The one live book already chosen is the parlay's book until another is picked.
+    if (liveBuilder.on && !liveBuilder.book && liveState.books.size === 1) { liveBuilder.book = [...liveState.books][0]; saveJSON(LIVE_BUILDER_KEY, { book: liveBuilder.book }); }
+    renderLive();
+    if (liveBuilder.on && liveBuilder.book) loadLive({ force: true });
+    return;
+  }
+  const lbBook = event.target.closest('[data-lb-book]');
+  if (lbBook) {
+    const id = lbBook.dataset.lbBook;
+    if (id === liveBuilder.book || !LIVE_BOOKS.includes(id)) return;
+    // Legs are one book's: another book starts another ticket.
+    if (liveBuilder.picked.length && !window.confirm('Changing sportsbooks will reset your parlay selection. Continue?')) return;
+    liveBuilder.book = id; liveBuilder.picked = []; liveBuilder.board = null; liveBuilder.boardBook = null;
+    saveJSON(LIVE_BUILDER_KEY, { book: id });
+    renderLive(); loadLive({ force: true }); return;
+  }
+  const lbRemove = event.target.closest('[data-lb-remove]');
+  if (lbRemove) { liveBuilder.picked = liveBuilder.picked.filter((p) => p.id !== lbRemove.dataset.lbRemove); renderLive(); return; }
+  if (event.target.closest('[data-lb-clear]')) { liveBuilder.picked = []; renderLive(); return; }
+  if (event.target.closest('[data-lb-drawer]')) { liveBuilder.drawer = !liveBuilder.drawer; renderLive(); return; }
+  // A tap anywhere on a leg's row ticks it; the box itself is handled as it changes (below).
+  const lbRow = event.target.closest('[data-lb-row]');
+  if (lbRow) { if (!event.target.closest('label, a, button, input') && !lbRow.classList.contains('is-blocked')) liveBuilderToggle(lbRow.dataset.lbRow); return; }
   const book = event.target.closest('[data-live-book]');
   if (book) {
     const id = book.dataset.liveBook;
@@ -12705,6 +12844,11 @@ el.liveView?.addEventListener('click', (event) => {
   if (toggle) { const k = `game:${toggle.dataset.liveToggle}`; if (liveState.expandAll) { liveState.expandAll = false; liveState.data?.games?.forEach((g) => { liveState.open[`game:${g.espnEventId}`] = true; }); } liveState.open[k] = !liveState.open[k]; renderLive(); return; }
   const more = event.target.closest('[data-live-more]');
   if (more) { const k = more.dataset.liveMore; liveState.open[k] = !liveState.open[k]; renderLive(); }
+});
+
+el.liveView?.addEventListener('change', (event) => {
+  const box = event.target?.closest?.('input[data-lb-leg]');
+  if (box) liveBuilderToggle(box.dataset.lbLeg);
 });
 
 /* "Fit screen" on desktop: the shell follows the window while it is on; the choice is remembered per browser (docs/wide.js applies it before first paint). */
