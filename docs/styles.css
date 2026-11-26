@@ -7696,6 +7696,15 @@ a.tennis-book:hover { background: rgba(255, 255, 255, 0.06); }
 .live-pace.is-behind .is-pct { border-color: var(--danger, #ff5c7a); }
 .live-pace.is-behind .is-pct b { color: var(--danger, #ff5c7a); }
 
+/* The Parlay Builder's red flags (docs/parlay-flags.js; 2026-11-26): the ticket's line about them, and the mark on a flagged leg. */
+.parlay-flag-note { margin: 8px 14px 0; padding: 9px 12px; border-radius: 10px; border: 1px solid var(--line); background: var(--surface-2); font-size: 0.88rem; line-height: 1.4; }
+.parlay-flag-note.is-warn, .parlay-flag-note.is-out { border-color: rgba(239, 68, 68, 0.55); background: rgba(239, 68, 68, 0.1); }
+.parlay-flag-note.is-clear, .parlay-flag-note.is-checking { color: var(--muted); }
+.parlay-flag-note .link-button { margin-left: 4px; }
+.parlay-leg.has-red { background: linear-gradient(90deg, rgba(239, 68, 68, 0.1), rgba(239, 68, 68, 0) 70%); }
+.parlay-leg-red { margin: 4px 0 0; color: #fca5a5; font-size: 0.82rem; line-height: 1.35; }
+.parlay-leg-red strong { color: var(--danger); }
+
 /* ---------------------------------------------------------------------------
    Live: the custom parlay (docs/live-builder.js; 2026-11-26). The Live tab as
    a board of single legs at one sportsbook, ticked onto one ticket.
