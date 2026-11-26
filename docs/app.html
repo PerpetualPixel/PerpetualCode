@@ -21,12 +21,12 @@
      only page that reads the feed; the other pages' connect-src stays the
      worker alone. -->
 <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src 'self' https://fonts.gstatic.com; img-src 'self' data: https:; connect-src 'self' https://pixel-pick-odds.mgbouldering.workers.dev https://perpetualpixel.github.io; object-src 'none'; base-uri 'self'; form-action 'self'">
-<script src="frame-guard.js?v=1.408"></script>
+<script src="frame-guard.js?v=1.409"></script>
 <!-- The first board is asked for here, while the rest of the page is still arriving (docs/early.js). -->
 <link rel="preconnect" href="https://pixel-pick-odds.mgbouldering.workers.dev" crossorigin>
-<script src="early.js?v=1.408"></script>
+<script src="early.js?v=1.409"></script>
 <!-- The loader's animation (docs/loader-fx.js): deferred, it draws the loaders already in the page as soon as the page has arrived. -->
-<script src="loader-fx.js?v=1.408" defer></script>
+<script src="loader-fx.js?v=1.409" defer></script>
 <title>Perpetual Picks - App</title>
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <meta name="theme-color" content="#05050A">
@@ -42,7 +42,7 @@
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Syne:wght@600;700;800&family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
-<link rel="stylesheet" href="styles.css?v=1.408">
+<link rel="stylesheet" href="styles.css?v=1.409">
 <!-- modulepreload:start (written by update-version.js: every file app.js imports, fetched alongside it rather than one after another) -->
 <link rel="modulepreload" href="config.js">
 <link rel="modulepreload" href="demo.js">
@@ -76,7 +76,7 @@
 <link rel="modulepreload" href="take-or-fade.js">
 <!-- modulepreload:end -->
 <!-- Before first paint: a desktop reader who chose "Fit screen" gets the wide shell without a flash of the narrow one. -->
-<script src="wide.js?v=1.408"></script>
+<script src="wide.js?v=1.409"></script>
 </head>
 <body>
 
@@ -212,6 +212,7 @@
       <li><strong>MVP Picks:</strong> on Pixel's Picks, one player's same-game parlay: his team's highest-usage player, a points, rebounds and assists number he clears in 90% of his games, against a bottom-five defense at his position. The card is short, each stat opens on a tap, and one button adds every leg. When the price is too short it steps the numbers up or pairs a second player.</li>
       <li><strong>Player search:</strong> a new "To record" choice between Over and Under. Type 15 points and it shows the games with 15 or more.</li>
       <li><strong>Onyx:</strong> pick Onyx as one of your sportsbooks and every line and ticket gets a button that copies the pick and opens Onyx.</li>
+      <li><strong>Live, NFL slips:</strong> rebuilt after a losing start. An NFL slip is now two legs, on yards only (no catch counts), and is posted only when a sportsbook prices both legs better than the other sportsbooks do. Expect far fewer NFL slips.</li>
       <li><strong>Parlay, red flags:</strong> a new "Leave out red flags" switch. Off, a player with a red flag stays in your results with a flag on the card, and the ticket says how many have one. On, those players are left out and the ticket says how many.</li>
       <li><strong>Pixel's Picks, other sportsbooks:</strong> every ticket now lists every sportsbook under it, open. Where our odds feed has the legs you get an Add button. Where it has only some, or none, a Playbook button copies the whole ticket so Playbook can check that sportsbook itself.</li>
       <li><strong>Live, custom parlay mode:</strong> a switch on the Live tab turns the slips into a board of single live legs at one sportsbook, the furthest ahead of pace first. Tick the ones you want and one button puts them all on that sportsbook's slip.</li>
@@ -742,6 +743,7 @@
     <details>
       <summary>Live</summary>
       <p>The games and matches in play or about to start. Tap a game to open it: the slips come first, one card for each bet, with each leg showing what the player has now, his pace, and where he projects to finish. The game lines sit under the slips and the box score is folded below them.</p>
+      <p><strong>NFL slips</strong> are held to a stricter test than the rest. A slip is two legs, both on yards (passing, rushing or receiving). Each leg has to be likelier than its price says on what the player still has time to do, and each has to be priced better at that sportsbook than the other sportsbooks have it. Most of a game has no NFL slip, and that is intended.</p>
       <p>Each slip has one button, <strong>Add to sportsbook</strong>. Tap it and a bubble lists every sportsbook that has the bet, with its own price, best first. Pick your app and the slip opens there with the legs on it. A sportsbook that takes legs one at a time lists them in the bubble.</p>
       <p><strong>Custom parlay mode</strong> is a switch at the top of the Live tab. Turn it on, pick one sportsbook, and the tab lists that sportsbook's live legs one a row, the furthest ahead of pace first, each with where the player is now, the pace and the price. Tick two or more and the builder shows your legs, the estimated odds with the prices multiplied, and one button that opens that sportsbook with every leg on the slip. Legs are one sportsbook's only: picking another sportsbook starts a new ticket. A sportsbook sets its own price when two legs are from the same game, so the estimate can differ from the slip. A leg that is no longer offered is marked on your ticket and left off the link.</p>
       <p>Slips build from the first minutes of a game and are rebuilt as it moves. In a blowout, or very late in a game, there may be none, and the card says why. A game leaves the list when it ends.</p>
@@ -1244,6 +1246,6 @@
   </div>
 </aside>
 
-<script type="module" src="app.js?v=1.408"></script>
+<script type="module" src="app.js?v=1.409"></script>
 </body>
 </html>

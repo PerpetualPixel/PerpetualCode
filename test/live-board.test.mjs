@@ -3,10 +3,10 @@ import assert from 'node:assert/strict';
 import { elapsedFraction, isHalftime, liveCandidates, buildLivePlay, getLiveRecap, blowoutRisk, ensureLivePlays, livePlayKey } from '../worker/src/live-board.js';
 
 const tick = (over = {}) => ({ at: 1, state: 'in', detail: 'Halftime', period: 2, clock: '0:00', score: { PHI: 24, WSH: 3 }, box: [
-  { id: '1', name: 'Saquon Barkley', team: 'PHI', stats: { rushingYards: '68', receptions: '2', receivingYards: '11' } },
+  { id: '1', name: 'Saquon Barkley', team: 'PHI', stats: { rushingAttempts: '14', rushingYards: '68', receptions: '2', receivingYards: '11' } },
   { id: '2', name: 'Jalen Hurts', team: 'PHI', stats: { 'completions/passingAttempts': '12/16', passingYards: '150' } },
   { id: '3', name: 'Terry McLaurin', team: 'WSH', stats: { receptions: '4', receivingYards: '58' } },
-  { id: '4', name: 'Jacory Croskey-Merritt', team: 'WSH', stats: { rushingYards: '40' } },
+  { id: '4', name: 'Jacory Croskey-Merritt', team: 'WSH', stats: { rushingAttempts: '10', rushingYards: '40' } },
 ], ...over });
 const ladder = (player, pts, prices) => pts.map((point, i) => ({ name: 'Over', description: player, point, price: prices[i] }));
 const payload = { bookmakers: [
@@ -17,6 +17,13 @@ const payload = { bookmakers: [
   ] },
   { key: 'fanduel', markets: [{ key: 'player_rush_yds_alternate', outcomes: ladder('Saquon Barkley', [79.5, 89.5], [-230, -125]) }] },
 ] };
+
+// The same ladders with a third book priced well short of DraftKings on three players: since 2026-11-26 an NFL slip takes a leg
+// only at a book priced out of line with the others, so this is the board an NFL slip builds from.
+const marketPayload = { bookmakers: [...payload.bookmakers, { key: 'betrivers', markets: [
+  { key: 'player_rush_yds_alternate', outcomes: [...ladder('Saquon Barkley', [89.5], [-240]), ...ladder('Jacory Croskey-Merritt', [49.5], [-260])] },
+  { key: 'player_pass_yds_alternate', outcomes: ladder('Jalen Hurts', [199.5], [-340]) },
+] }] };
 
 test('the clock reads as a fraction of the game, and the half is the half', () => {
   assert.equal(elapsedFraction({ state: 'pre' }), 0);
@@ -37,11 +44,13 @@ test('the clock reads as a fraction of the game, and the half is the half', () =
 test('candidates are the Overs the pace clears with margin, in range, with the game script applied: the side up big leans on the run', () => {
   const c = liveCandidates(payload, tick());
   const sel = (p) => c.filter((x) => x.player === p).map((x) => [x.bookId, x.point, x.price]);
-  assert.deepEqual(sel('Saquon Barkley'), [['fanduel', 79.5, -230], ['draftkings', 79.5, -250], ['draftkings', 89.5, -140]], 'on pace for 136: 79.5 to 99.5 clear by a quarter and 119.5 does not; -500 is too short for a leg, and the two priced longer than -130 (FanDuel 89.5 at -125, DraftKings 99.5 at +110) are left out since the 2026-11-18 review');
+  assert.deepEqual(sel('Saquon Barkley'), [['fanduel', 79.5, -230], ['draftkings', 79.5, -250], ['draftkings', 89.5, -140]], '68 on fourteen carries at the half: the eleven and the twenty-one yards still needed are likelier than their prices say; -500 is too short for a leg, and the two priced longer than -130 (FanDuel 89.5 at -125, DraftKings 99.5 at +110) are left out since the 2026-11-18 review');
   assert.deepEqual(sel('Jalen Hurts'), [], 'the side up 21 sits its passing game');
   assert.deepEqual(sel('Jacory Croskey-Merritt'), [], 'the side down 21 throws: its rushing lines are passed over');
-  assert.deepEqual(sel('Terry McLaurin'), [['draftkings', 69.5, -280], ['draftkings', 79.5, -150]], 'on pace for 116, lifted to 133 by the side down big throwing: 99.5 clears too, but at +130 it is not a leg');
-  assert.equal(c[0].current, 68); assert.equal(c[0].pace, 156, 'up big: 136 on pace, lifted a sixth for the run game');
+  assert.deepEqual(sel('Terry McLaurin'), [['draftkings', 69.5, -280], ['draftkings', 79.5, -150]], '58 on four catches, the side down big throwing: both are a little likelier than their prices say; 99.5 at +130 is not a leg');
+  // What is expected of him by the end: 68, and fourteen carries' worth of the half to come at 0.6 of his rate, lifted a sixth for the run game: about 47 more.
+  assert.equal(c[0].current, 68); assert.equal(c[0].pace, 115);
+  assert.ok(c.every((x) => x.chance > 0 && x.edge > 0 && Number.isFinite(x.cushion)), 'every NFL leg carries its chance and how far that sits over its price');
   const close = liveCandidates(payload, tick({ score: { PHI: 14, WSH: 10 } }));
   assert.ok(close.some((x) => x.player === 'Jalen Hurts'), 'a close game: the passing lines are in');
   assert.deepEqual(liveCandidates(payload, { state: 'pre', box: [] }), []);
@@ -79,16 +88,18 @@ test('the projection follows pace, script and weather; who to watch lists the bi
   const slips = buildLiveSlips(c);
   assert.deepEqual(slips.map((s) => s.bookId), ['draftkings'], 'FanDuel prices only one player: no slip there');
   const m = new Map(); const env = { POTD_KV: { get: async (k) => m.get(k) ?? null, put: async (k, v) => { m.set(k, v); } } };
-  assert.equal(await ensureLivePlays(env, { id: 'g', name: 'A at B' }, payload, { ...t, detail: '14:50 - 1st Quarter', period: 1, clock: '14:50' }), null, 'the first seconds: nothing to build on yet');
-  assert.ok((await ensureLivePlays(env, { id: 'g', name: 'A at B' }, payload, { ...t, detail: '10:00 - 1st Quarter', period: 1, clock: '10:00' }))?.slips, 'five minutes in: a slip builds, the early pace tempered by the book numbers (2026-11-05: not by the quarter)');
+  assert.equal(await ensureLivePlays(env, { id: 'g', name: 'A at B' }, marketPayload, { ...t, detail: '14:50 - 1st Quarter', period: 1, clock: '14:50' }), null, 'the first seconds: nothing to build on yet');
+  assert.ok((await ensureLivePlays(env, { id: 'g', name: 'A at B' }, marketPayload, { ...t, detail: '10:00 - 1st Quarter', period: 1, clock: '10:00' }))?.slips, 'five minutes in: a slip builds (2026-11-05: not by the quarter)');
   m.clear();
-  const q2 = await ensureLivePlays(env, { id: 'g', name: 'A at B' }, payload, { ...t, detail: '7:00 - 2nd Quarter', period: 2, clock: '7:00' }, { now: 8 });
+  const q2 = await ensureLivePlays(env, { id: 'g', name: 'A at B' }, marketPayload, { ...t, detail: '7:00 - 2nd Quarter', period: 2, clock: '7:00' }, { now: 8 });
   assert.equal(q2.slips.length, 1); assert.deepEqual([q2.builtAt, q2.firstBuiltAt, q2.builds, q2.period, q2.clock], [8, 8, 1, 2, '7:00'], 'built in the second quarter, not only at the half');
-  const built = await ensureLivePlays(env, { id: 'g', name: 'A at B' }, payload, t, { now: 9 });
+  assert.deepEqual([q2.slips[0].bookId, q2.slips[0].legs.length], ['draftkings', 2], 'an NFL slip is two legs, at the book priced out of line with the others');
+  assert.ok(q2.slips[0].legs.every((l) => l.marketEdge >= 0.04 && l.stat !== 'receptions'));
+  const built = await ensureLivePlays(env, { id: 'g', name: 'A at B' }, marketPayload, t, { now: 9 });
   assert.deepEqual([built.builtAt, built.firstBuiltAt, built.builds, built.detail], [9, 8, 2, 'Halftime'], 'rebuilt at the half from the ladders now');
   const again = await ensureLivePlays(env, { id: 'g', name: 'A at B' }, { bookmakers: [] }, t, { now: 10 });
   assert.equal(again.builtAt, 9, 'no ladders this tick: the last build stands');
-  const late = await ensureLivePlays(env, { id: 'g', name: 'A at B' }, payload, { ...t, detail: '2:00 - 4th Quarter', period: 4, clock: '2:00' }, { now: 11 });
+  const late = await ensureLivePlays(env, { id: 'g', name: 'A at B' }, marketPayload, { ...t, detail: '2:00 - 4th Quarter', period: 4, clock: '2:00' }, { now: 11 });
   assert.equal(late.builtAt, 9, 'two minutes left: no new build, the last stands');
 });
 
@@ -104,7 +115,7 @@ test('later slips are built without the best slip\'s players when the ladders al
     { key: 'player_reception_yds_alternate', outcomes: [...fd('Terry McLaurin', [69.5, 79.5], [-280, -150]), ...extra] },
     { key: 'player_pass_yds_alternate', outcomes: fd('Jalen Hurts', [199.5, 224.5], [-250, -130]) },
   ] }] };
-  const box = [...t.box, { id: '5', name: 'Deebo Samuel', team: 'WSH', stats: { receptions: '3', receivingYards: '48' } }, { id: '6', name: 'Zach Ertz', team: 'WSH', stats: { receptions: '3', receivingYards: '26' } }, { id: '7', name: 'Dallas Goedert', team: 'PHI', stats: { receptions: '4', receivingYards: '31' } }];
+  const box = [...t.box, { id: '5', name: 'Deebo Samuel', team: 'WSH', stats: { receptions: '3', receivingYards: '48' } }, { id: '6', name: 'Zach Ertz', team: 'WSH', stats: { receptions: '9', receivingYards: '26' } }, { id: '7', name: 'Dallas Goedert', team: 'PHI', stats: { receptions: '8', receivingYards: '31' } }];
   const c = liveCandidates(wide, { ...t, box });
   const slips = buildLiveSlips(c);
   assert.equal(slips.length, 2);
@@ -333,10 +344,10 @@ test('ensureLivePlays: a blowout builds no slip', async () => {
   const m = new Map(); const env = { POTD_KV: { get: async (k) => m.get(k) ?? null, put: async (k, v) => { m.set(k, v); } } };
   const game = { id: '77', name: 'Washington Commanders at Philadelphia Eagles' };
   const rout = tick({ state: 'in', period: 4, clock: '10:00', detail: '10:00 - 4th Quarter', score: { PHI: 31, WSH: 10 } });
-  assert.equal(await ensureLivePlays(env, game, payload, rout, { league: 'nfl', now: 5 }), null);
+  assert.equal(await ensureLivePlays(env, game, marketPayload, rout, { league: 'nfl', now: 5 }), null);
   assert.equal(m.has(livePlayKey('77')), false, 'nothing stored');
   const close = tick({ state: 'in', period: 3, clock: '10:00', detail: '10:00 - 3rd Quarter', score: { PHI: 17, WSH: 14 } });
-  const built = await ensureLivePlays(env, game, payload, close, { league: 'nfl', now: 6 });
+  const built = await ensureLivePlays(env, game, marketPayload, close, { league: 'nfl', now: 6 });
   assert.ok(built && built.slips.length, 'a close game builds');
 });
 
@@ -469,7 +480,7 @@ test('NBA rebound and assist legs need more cushion than points, more again abov
   assert.deepEqual(nhl.map((x) => [x.point, x.price]), [[2.5, -115]]);
 });
 
-test('a catch comes whole: an NFL reception leg needs the catches still to come to be likely, and a receiving-yards leg a player likely to catch again', async () => {
+test('a catch comes whole (the 2026-11-23 bars, kept with their review); since 2026-11-26 no reception leg is taken and a yardage leg is judged on what is left against its price', async () => {
   const { catchChance, RECEPTION_MIN_CHANCE, YARDS_MIN_CATCH_CHANCE } = await import('../worker/src/live-board.js');
   assert.deepEqual([RECEPTION_MIN_CHANCE, YARDS_MIN_CATCH_CHANCE], [0.85, 0.8]);
   // One catch after 64% of the game, needing a second: about 43%, whatever the pace says. (2026-11-22: seven such legs, one hit.)
@@ -481,23 +492,86 @@ test('a catch comes whole: an NFL reception leg needs the catches still to come 
   assert.ok(catchChance(4, 5.5, 0.5) < catchChance(4, 4.5, 0.5));
   assert.deepEqual([catchChance(3, 3.5, 1), catchChance(3, 3.5, 0), catchChance(0, 0.5, 0.5)], [0, 0, 0]);
 
-  // Third quarter, 6:00 left: 60% of the game in. The pace clears every line below by 25% and more.
+  // Third quarter, 6:00 left: 60% of the game in. Full-game pace clears every line below by a quarter and more, which is what took them all before.
   const t = { at: 1, state: 'in', detail: '6:00 - 3rd Quarter', period: 3, clock: '6:00', score: { PHI: 17, WSH: 17 }, box: [
     { id: '1', name: 'One Catch', team: 'PHI', stats: { receptions: '1', receivingYards: '9' } },
     { id: '2', name: 'Busy Hands', team: 'PHI', stats: { receptions: '7', receivingYards: '79' } },
     { id: '3', name: 'Two Deep', team: 'WSH', stats: { receptions: '2', receivingYards: '58' } },
-    { id: '4', name: 'Ground Game', team: 'WSH', stats: { rushingYards: '58', receptions: '1', receivingYards: '4' } },
+    { id: '4', name: 'Ground Game', team: 'WSH', stats: { rushingAttempts: '14', rushingYards: '58', receptions: '1', receivingYards: '4' } },
+    { id: '5', name: 'No Carries', team: 'WSH', stats: { rushingYards: '58' } },
   ] };
   const over = (player, point, price) => ({ name: 'Over', description: player, point, price });
-  const c = liveCandidates({ bookmakers: [{ key: 'draftkings', markets: [
+  const board = { bookmakers: [{ key: 'draftkings', markets: [
     { key: 'player_receptions_alternate', outcomes: [over('One Catch', 1.5, -200), over('Busy Hands', 7.5, -180)] },
     { key: 'player_reception_yds_alternate', outcomes: [over('One Catch', 9.5, -210), over('Busy Hands', 89.5, -160), over('Two Deep', 69.5, -150)] },
-    { key: 'player_rush_yds_alternate', outcomes: [over('Ground Game', 69.5, -170)] },
-  ] }] }, t, 'nfl');
+    { key: 'player_rush_yds_alternate', outcomes: [over('Ground Game', 69.5, -170), over('No Carries', 69.5, -170)] },
+  ] }] };
+  const c = liveCandidates(board, t, 'nfl');
   const got = c.map((x) => `${x.player} ${x.stat} ${x.point}`).sort();
-  // One catch all day: no reception leg and no yards leg on him. Seven catches: both. Two catches (74% to catch again): no yards leg.
-  // A rushing line does not hang on a catch.
-  assert.deepEqual(got, ['Busy Hands receivingYards 89.5', 'Busy Hands receptions 7.5', 'Ground Game rushingYards 69.5']);
+  // No reception count at all, Busy Hands's eighth catch included. One catch all day and half a yard to go: one more catch is about
+  // one in five, far short of -210. Two catches for 58: the eleven yards hang on a third catch, under an even chance. Seven catches
+  // for 79 and fourteen carries for 58 have the touches coming to make their yards more often than their prices say. And a back with
+  // no carries in the box cannot be judged, so is not a leg.
+  assert.deepEqual(got, ['Busy Hands receivingYards 89.5', 'Ground Game rushingYards 69.5']);
+  const busy = c.find((x) => x.player === 'Busy Hands');
+  assert.ok(busy.chance > 0.615 && busy.chance < 0.85 && Math.abs(busy.edge - (busy.chance - 160 / 260)) < 2e-3, `${busy.chance} against -160`);
+  assert.deepEqual([busy.marketEdge, busy.marketBooks], [null, 0], 'one book alone on the number: no market to hold its price against');
+  // The same board in the NBA's way of reading it does not exist: the rule is the NFL's.
+  assert.equal(liveCandidates(board, t, 'nba').length, 0);
+});
+
+test('what is left, as a chance: more touches to come and fewer yards to go are likelier, and nothing is read from no touches', async () => {
+  const { yardsChance, NFL_LATE, nflTouches } = await import('../worker/src/live-board.js');
+  assert.equal(NFL_LATE, 0.6);
+  // Five catches for 58, a yard and a half to go, 79% of the game gone (Carnell Tate, 2026-11-22, at -300; he did not catch another):
+  // 0.8 more catches expected, so a little under an even chance, where pace had him 41% over the line.
+  const tate = yardsChance(5, 58, 1.5, 0.79);
+  assert.ok(tate > 0.4 && tate < 0.55, String(tate));
+  assert.ok(tate < 300 / 400, 'short of what -300 implies');
+  // The same need earlier in the game, or with more catches behind him, is likelier; a longer way to go is less likely.
+  assert.ok(yardsChance(5, 58, 1.5, 0.5) > tate && yardsChance(9, 58, 1.5, 0.79) > tate && yardsChance(5, 58, 21.5, 0.79) < tate);
+  // The game script and the weather turn the rate.
+  assert.ok(yardsChance(5, 58, 11.5, 0.6, { factor: 0.8 }) < yardsChance(5, 58, 11.5, 0.6) && yardsChance(5, 58, 11.5, 0.6, { factor: 1.15 }) > yardsChance(5, 58, 11.5, 0.6));
+  // A quarterback with thirty completions to come is summed all the way out.
+  assert.ok(yardsChance(12, 150, 40, 0.1) > 0.99);
+  // Already there, or nothing to read from, or no game left.
+  assert.deepEqual([yardsChance(5, 58, 0, 0.5), yardsChance(0, 0, 9.5, 0.5), yardsChance(3, 0, 9.5, 0.5), yardsChance(5, 58, 1.5, 1), yardsChance(5, 58, 1.5, 0)], [1, 0, 0, 0, 0]);
+  // Touches by stat, from the box.
+  const p = { stats: { receptions: '4', rushingAttempts: '11', 'completions/passingAttempts': '18/27' } };
+  assert.deepEqual([nflTouches(p, 'receivingYards'), nflTouches(p, 'rushingYards'), nflTouches(p, 'passingYards'), nflTouches(p, 'receptions'), nflTouches({ stats: {} }, 'rushingYards')], [4, 11, 18, null, null]);
+});
+
+test('an NFL slip takes a leg only at a book priced out of line with the others, is two legs, and stands while its legs are reachable', async () => {
+  const { slipCandidates, buildLiveSlips, NFL_MARKET_EDGE, NFL_SLIP_LEGS } = await import('../worker/src/live-board.js');
+  assert.deepEqual([NFL_MARKET_EDGE, NFL_SLIP_LEGS], [0.04, [2]]);
+  const t = tick({ score: { PHI: 14, WSH: 10 } });
+  const all = liveCandidates(marketPayload, t, 'nfl');
+  const at = (book, player, point) => all.find((x) => x.bookId === book && x.player === player && x.point === point);
+  // Barkley 89.5: DraftKings -140 (58%) against FanDuel -125 (56%) and BetRivers -240 (71%): the middle of the others is 63%, five points over.
+  assert.deepEqual([at('draftkings', 'Saquon Barkley', 89.5).marketEdge, at('draftkings', 'Saquon Barkley', 89.5).marketBooks], [0.047, 2]);
+  // The same number at BetRivers is the dear one, and a leg there is not for a slip. (FanDuel's -125 counts in the market though it is too long to be a leg.)
+  assert.ok(at('betrivers', 'Saquon Barkley', 89.5).marketEdge < 0);
+  // 79.5 at FanDuel is better than DraftKings by under two points: not out of line.
+  assert.equal(at('fanduel', 'Saquon Barkley', 79.5).marketEdge, 0.017);
+  // McLaurin is at one book only: nothing to hold the price against.
+  const picks = slipCandidates(all, 'nfl');
+  assert.deepEqual(picks.map((x) => `${x.bookId} ${x.player} ${x.point}`).sort(), ['draftkings Jacory Croskey-Merritt 49.5', 'draftkings Jalen Hurts 199.5', 'draftkings Saquon Barkley 89.5']);
+  assert.equal(slipCandidates(all, 'nba').length, all.length, 'every other league builds from all of its legs');
+  const slips = buildLiveSlips(picks, { league: 'nfl' });
+  assert.deepEqual([slips.length, slips[0].bookId, slips[0].legs.length], [1, 'draftkings', 2]);
+  assert.ok(slips[0].american >= -160 && slips[0].american <= 300);
+  // The plain board, where no book is out of line: every leg is still a leg (the custom parlay lists them), and there is no slip.
+  const plain = liveCandidates(payload, t, 'nfl');
+  assert.ok(plain.length >= 5);
+  assert.deepEqual(buildLiveSlips(slipCandidates(plain, 'nfl'), { league: 'nfl' }), []);
+  // Posted, then the other books come into line: the slip stands on its legs still being reachable, at the price now.
+  const m = new Map(); const env = { POTD_KV: { get: async (k) => m.get(k) ?? null, put: async (k, v) => { m.set(k, v); } } };
+  const game = { id: 'mk', name: 'Washington Commanders at Philadelphia Eagles' };
+  const first = await ensureLivePlays(env, game, marketPayload, t, { league: 'nfl', now: 100 });
+  assert.equal(first.slips.length, 1);
+  const names = first.slips[0].legs.map((l) => l.player).sort();
+  const second = await ensureLivePlays(env, game, payload, t, { league: 'nfl', now: 200 });
+  assert.deepEqual([second.slips.length, second.slips[0].postedAt, second.slips[0].legs.map((l) => l.player).sort()], [1, 100, names], 'the same slip, posted when it was');
 });
 
 test('archiveLiveResults keeps each finished game\'s slips for good, once, and getLiveResults reads them back', async () => {
