@@ -1,27 +1,8 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { builderLegs, boardLegs, builderView, toggleLeg, legId, legLine, sameLine, BUILDER_GAME_LEGS } from '../docs/live-builder.js';
+import { boardLegs, builderView, toggleLeg, sortBoard, BOARD_SORTS, legId, legLine, sameLine, BUILDER_GAME_LEGS, BUILDER_MIN_LEGS, PICKEM_MIN_LEGS } from '../docs/live-builder.js';
 
 const cand = (bookId, player, stat, point, price, over = {}) => ({ bookId, book: bookId === 'fanduel' ? 'FanDuel' : 'DraftKings', market: 'm', stat, label: stat === 'rushingYards' ? 'Rush Yds' : stat === 'receptions' ? 'Rec' : 'Rec Yds', player, team: 'GB', athleteId: '9', point, price, decimal: 1.5, current: 4, pace: 9, cushion: 0.4, link: `https://book.example/${bookId}/${point}`, ...over });
-
-test('one book\'s legs of a game: that book only, one row a player, stat and number at its best price, the widest cushion first', () => {
-  const candidates = [
-    cand('fanduel', 'Chris Brooks', 'rushingYards', 4.5, -280, { cushion: 0.9 }),
-    cand('draftkings', 'Chris Brooks', 'rushingYards', 4.5, -260, { cushion: 0.9 }),
-    cand('fanduel', 'Chris Brooks', 'rushingYards', 4.5, -250, { cushion: 0.9 }),
-    cand('fanduel', 'Chris Brooks', 'rushingYards', 9.5, -140, { cushion: 0.3 }),
-    cand('fanduel', 'Davis Allen', 'receptions', 2.5, -235, { cushion: 1.2 }),
-    cand('fanduel', 'No Number', 'receptions', NaN, -200),
-  ];
-  const legs = builderLegs(candidates, 'fanduel');
-  assert.deepEqual(legs.map((l) => [l.player, l.point, l.price]), [['Davis Allen', 2.5, -235], ['Chris Brooks', 4.5, -250], ['Chris Brooks', 9.5, -140]]);
-  assert.deepEqual(Object.keys(legs[0]).sort(), ['book', 'bookId', 'current', 'cushion', 'label', 'link', 'pace', 'player', 'point', 'price', 'stat', 'team']);
-  assert.deepEqual(builderLegs(candidates, 'betmgm'), []);
-  assert.deepEqual(builderLegs(candidates, null), []);
-  assert.deepEqual(builderLegs(null, 'fanduel'), []);
-  const many = Array.from({ length: 50 }, (_, n) => cand('fanduel', `Player ${n}`, 'receptions', 2.5, -200));
-  assert.equal(builderLegs(many, 'fanduel').length, BUILDER_GAME_LEGS);
-});
 
 const game = (id, legs, over = {}) => ({ espnEventId: id, name: 'Los Angeles Rams at Green Bay Packers', league: 'nfl', elapsed: 0.5, tick: { state: 'in', detail: '15:00 - 3rd' }, legs, ...over });
 const leg = (player, stat, point, price, current, over = {}) => ({ bookId: 'fanduel', book: 'FanDuel', player, team: 'GB', stat, label: stat === 'rushingYards' ? 'Rush Yds' : 'Rec', point, price, current, pace: current * 2, cushion: 0.3, link: `https://sportsbook.fanduel.com/addToBetslip?marketId=${point}&selectionId=${current}`, ...over });
@@ -47,7 +28,11 @@ test('ticks: a parlay is priced from two legs, a second number of one line is bl
   const board = boardLegs(games, 'fanduel');
   const row = (player, point) => board.find((r) => r.player === player && r.point === point);
   let picked = toggleLeg([], row('Chris Brooks', 4.5), board);
-  assert.equal(builderView(board, picked).price, null, 'one leg is not a parlay');
+  // One leg is a straight bet at its own price (2026-11-26: "remove the requirement to have two legs").
+  const one = builderView(board, picked);
+  assert.deepEqual([one.ready, one.minLegs, one.price.american, one.live.length], [true, 1, -280, 1]);
+  assert.equal(builderView(board, []).price, null);
+  assert.equal(builderView(board, []).ready, false);
   picked = toggleLeg(picked, row('Davis Allen', 2.5), board);
   const view = builderView(board, picked);
   assert.deepEqual(view.live.map((l) => l.player), ['Chris Brooks', 'Davis Allen']);
@@ -90,10 +75,45 @@ test('a pick\'em lineup pays its own table, and has no price past six', () => {
   const board = boardLegs([game('g1', legs)], 'prizepicks');
   let picked = [];
   for (const r of board.slice(0, 3)) picked = toggleLeg(picked, r, board, { maxLegs: 6 });
+  const lone = builderView(board, picked.slice(0, 1), { maxLegs: 6, pickem: true });
+  assert.deepEqual([lone.ready, lone.minLegs, lone.price], [false, 2, null], 'one pick is not a lineup');
   assert.deepEqual(builderView(board, picked, { maxLegs: 6, pickem: true }).price, { decimal: 5, american: 400 });
   for (const r of board.slice(3)) picked = toggleLeg(picked, r, board, { maxLegs: 6 });
   assert.equal(picked.length, 6, 'the seventh does not go on');
   assert.deepEqual(builderView(board, picked, { maxLegs: 6, pickem: true }).price, { decimal: 25, american: 2400 });
+});
+
+test('the board sorts by pace, how close, the odds either way, our picks, or the player, the same way every time', () => {
+  assert.deepEqual(BOARD_SORTS.map(([k]) => k), ['pace', 'close', 'short', 'long', 'pick', 'player']);
+  assert.deepEqual([BUILDER_MIN_LEGS, PICKEM_MIN_LEGS, BUILDER_GAME_LEGS], [1, 2, 250]);
+  const g = game('g1', [
+    leg('Chris Brooks', 'rushingYards', 4.5, -280, 4),            // 178% of pace, half a yard short of 4.5 (11% to go)
+    leg('Davis Allen', 'receptions', 2.5, 140, 1),                 // 80%, 60% to go
+    leg('Kyren Williams', 'receptions', 5.5, -245, 4, { pick: true }), // 145%, 27% to go
+    leg('Aaron Jones', 'rushingYards', 99.5, 320, 30),            // 60%, 70% to go
+    leg('Chris Brooks', 'rushingYards', 9.5, -110, 4),             // 84%, 58% to go
+  ]);
+  const board = boardLegs([g], 'fanduel');
+  const names = (key) => sortBoard(board, key).map((r) => `${r.player.split(' ')[1]} ${r.point}`);
+  assert.deepEqual(names('pace'), ['Brooks 4.5', 'Williams 5.5', 'Brooks 9.5', 'Allen 2.5', 'Jones 99.5']);
+  assert.deepEqual(board.map((r) => r.id), sortBoard(board, 'pace').map((r) => r.id), 'the board comes by pace');
+  assert.deepEqual(names('close'), ['Brooks 4.5', 'Williams 5.5', 'Brooks 9.5', 'Allen 2.5', 'Jones 99.5']);
+  assert.deepEqual(names('short'), ['Brooks 4.5', 'Williams 5.5', 'Brooks 9.5', 'Allen 2.5', 'Jones 99.5']);
+  assert.deepEqual(names('long'), ['Jones 99.5', 'Allen 2.5', 'Brooks 9.5', 'Williams 5.5', 'Brooks 4.5']);
+  assert.deepEqual(names('pick'), ['Williams 5.5', 'Brooks 4.5', 'Brooks 9.5', 'Allen 2.5', 'Jones 99.5']);
+  assert.deepEqual(names('player'), ['Jones 99.5', 'Brooks 4.5', 'Brooks 9.5', 'Allen 2.5', 'Williams 5.5']);
+  assert.deepEqual(names('nonsense'), names('pace'));
+  // Closest and pace part ways when a player is near a big number at a slow pace.
+  const far = boardLegs([game('g2', [leg('Slow Burn', 'rushingYards', 99.5, -150, 95), leg('Fast Start', 'rushingYards', 19.5, -150, 15)], { elapsed: 0.9 })], 'fanduel');
+  assert.deepEqual([sortBoard(far, 'pace')[0].player, sortBoard(far, 'close')[0].player], ['Slow Burn', 'Slow Burn']);
+  assert.deepEqual(sortBoard(far, 'close').map((r) => Math.round((r.need / r.point) * 100)), [5, 23]);
+  // The list is not changed in place, and nothing is nothing.
+  const before = board.map((r) => r.id);
+  sortBoard(board, 'long');
+  assert.deepEqual(board.map((r) => r.id), before);
+  assert.deepEqual(sortBoard(null, 'pace'), []);
+  // A row carries what the sorts read.
+  assert.deepEqual([board[0].pick, board.find((r) => r.player === 'Kyren Williams').pick, board[0].need], [false, true, 0.5]);
 });
 
 test('ids and lines', () => {
@@ -116,9 +136,14 @@ test('the Live tab: the mode asks the board for one book\'s legs, a change of bo
   assert.match(app, /window\.confirm\('Changing sportsbooks will reset your parlay selection\. Continue\?'\)/);
   assert.match(app, /Please select a single sportsbook to start building your custom parlay\./);
   assert.match(app, /liveBuilder\.on = false; \/\/ the slip a link names is on the slips view/);
-  // The button is the book's own one link for the ticked legs, and is off under two legs.
-  assert.match(app, /const all = n >= BUILDER_MIN_LEGS \? combinedSlipLink\(book, view\.live\.map\(\(l\) => l\.link\)\) : null;/);
-  assert.match(app, /<button type="button" class="lb-cta" disabled>Create parlay link for \$\{esc\(name\)\}<\/button>/);
+  // The button is the book's own link for what is ticked.
+  assert.match(app, /const all = !view\.ready \? null : n === 1 \? \(view\.live\[0\]\.link \?\? null\) : combinedSlipLink\(book, view\.live\.map\(\(l\) => l\.link\)\);/, 'one leg is its own link, more are the book\'s one link');
+  assert.match(app, /else if \(!view\.ready\) cta = `<button type="button" class="lb-cta" disabled>/, 'off until there is a ticket: one leg, or two at a pick\'em app');
+  // Every line is listed, in the order chosen, a long board in two goes.
+  assert.match(app, /const rows = sortBoard\(view\.rows\.filter\(\(r\) => leagues\.includes\(r\.league\)\), liveBuilder\.sort\);/);
+  assert.match(app, /<select data-lb-sort aria-label="Sort the legs">/);
+  assert.match(app, /const LIVE_BUILDER_FIRST = 60;/);
+  assert.match(app, /if \(event\.target\.closest\('\[data-lb-more\]'\)\) \{ liveBuilder\.showAll = true; renderLive\(\); return; \}/);
 });
 
 test('the worker gives legs only for a book on the live list', () => {
