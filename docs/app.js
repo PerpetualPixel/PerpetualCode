@@ -28,7 +28,7 @@ import { enhanceSelect } from './custom-select.js';
 import { BUILD_INFO } from './version.js';
 import { safeUrl } from './safe-url.js';
 import { hardRockCombined, phoneSlipLink, isPhone, pickText, withState, needsState, cleanState, US_STATES } from './book-links.js';
-import { groupLiveSlips, slipNumbers } from './live-slips.js';
+import { groupLiveSlips, slipNumbers, parseLiveHash } from './live-slips.js';
 import { summarizePicks, gradePick } from './learning.js';
 import { liveSetsLabel } from './tennis-results.js';
 import {
@@ -12631,7 +12631,40 @@ function renderLive() {
   const ordered = liveOrder(games);
   const playable = ordered.filter((g) => g.tick?.state === 'in' && g.play?.playable).length;
   el.liveBody.innerHTML = `<div class="live-top"><span class="live-count ${slips || reads ? 'is-on' : ''}">${slips ? `${slips} live slip${slips === 1 ? '' : 's'} ready${where}` : elsewhere ? `No live slip${where}` : inPlay ? 'No live slip yet: they build from the first minutes and rebuild as the game moves' : 'No live slip'}${reads ? ` · ${reads} game line${reads === 1 ? '' : 's'} with an edge` : ''}</span><span class="row-sub">Today's games still to play · board read ${esc(liveTimeFmt.format(new Date(d.at)))}, re-read every minute while open · ${watcherNote}</span></div>${liveLeaguePicker(all)}${liveBooksPicker()}<div class="live-list-head"><span class="row-sub">${playable ? `${playable} playable now, most confident first` : inPlay ? `${inPlay} in play, nothing playable yet` : `${games.length} game${games.length === 1 ? '' : 's'} on the slate`} · ${games.length} listed. Tap a game to open it.</span><button type="button" class="link-button" data-live-expand="1">${liveState.expandAll ? 'Collapse all' : 'Expand all'}</button></div>${ordered.map(renderLiveGame).join('')}${tennisHtml}`;
+  liveFocusScroll();
 }
+
+/**
+ * A link straight to one slip (docs/live-slips.js's liveSlipHash, the button on a Discord post): the Live tab on
+ * that league, the game unfolded, the slip's "Add to sportsbook" picker open, and the page scrolled to it. Read at
+ * load and whenever the hash changes; the scroll happens on the first render that has the slip (or, failing that,
+ * the game), then the mark is dropped so later refreshes leave the reader where they are.
+ */
+function openLiveFromHash() {
+  const link = parseLiveHash(location.hash);
+  if (!link) return false;
+  if (LIVE_LEAGUES_DEFAULT.includes(link.league) && !liveState.leagues.has(link.league)) { liveState.leagues.add(link.league); saveJSON(LIVE_LEAGUES_KEY, [...liveState.leagues]); }
+  liveState.open[`game:${link.gameId}`] = true;
+  liveState.open[`add:${link.gameId}:${link.key}`] = true;
+  liveState.focus = { gameId: link.gameId, key: link.key, since: Date.now() };
+  setActiveTab('live');
+  return true;
+}
+function liveFocusScroll() {
+  const f = liveState.focus;
+  if (!f || !el.liveBody) return;
+  const esc1 = (v) => (window.CSS?.escape ? CSS.escape(v) : String(v).replace(/["\\]/g, '\\$&'));
+  const slip = el.liveBody.querySelector(`details[data-live-details="${esc1(`add:${f.gameId}:${f.key}`)}"]`);
+  const game = slip ? null : el.liveBody.querySelector(`[data-live-toggle="${esc1(f.gameId)}"]`);
+  const target = slip?.closest('.live-play') ?? game?.closest('.live-game') ?? null;
+  // Nothing drawn for it yet: the board may still be loading. Give up after a minute so a slip that is gone does not keep looking.
+  if (!target) { if (liveState.data && Date.now() - f.since > 60e3) liveState.focus = null; return; }
+  liveState.focus = null;
+  if (slip) slip.open = true;
+  target.classList.add('is-focus');
+  requestAnimationFrame(() => target.scrollIntoView({ behavior: 'smooth', block: slip ? 'center' : 'start' }));
+}
+window.addEventListener('hashchange', () => { openLiveFromHash(); });
 
 el.liveView?.addEventListener('click', (event) => {
   // A settled play lives on the Results tab, on its Live side.
@@ -13568,3 +13601,6 @@ el.resultsView?.addEventListener('focusout', (event) => { const box = event.targ
 // A graph is drawn to the width of its card, so it is drawn again when the window changes size.
 let resultsResizeTimer = null;
 window.addEventListener('resize', () => { if (el.resultsView?.hidden !== false) return; clearTimeout(resultsResizeTimer); resultsResizeTimer = setTimeout(drawResultsCharts, 150); });
+
+// A Discord post's button names one live slip (docs/live-slips.js's liveSlipHash): open the Live tab on it.
+if (parseLiveHash(location.hash)) openLiveFromHash();

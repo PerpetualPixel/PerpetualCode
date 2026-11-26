@@ -42,6 +42,7 @@ import { readWatchIndex, liveWatchKey } from './live-probe.js';
 import { livePlayKey, boxValue } from './live-board.js';
 import { SPORTSBOOKS } from '../../docs/engine.js';
 import { PLAYBOOK_BOOK_NAMES } from '../../docs/playbook.js';
+import { liveSlipHash } from '../../docs/live-slips.js';
 import { getSettings } from './settings.js';
 
 /** A league's channel: its webhook secret, its ledger, how it is named, and its test card's id (a new value sends one more). */
@@ -163,7 +164,7 @@ function slipWritten(post) {
   const points = Object.entries((outcome === 'open' ? post.score : post.finalScore ?? post.score) ?? {}).map(([t, n]) => `${md(t)} ${n}`).join(', ');
   return {
     title: `${mark} ${post.legs.length} legs · ${fmt(post.american)} at ${md(post.book)}`.slice(0, 250),
-    url: BOARD,
+    url: outcome === 'open' ? `${BOARD}${liveSlipHash(post.league, post.gameId, post)}` : BOARD,
     author: { name: `PERPETUAL PICKS · LIVE ${sport.name}`, url: BOARD, icon_url: LOGO },
     description: [`${md(post.game)}${points ? ` · ${points}` : ''}`, ...legs, outcome === 'open' ? 'Recommended **1u**' : outcome === 'void' ? '**Stake returned**' : `**${signedUnits(post.profit ?? 0)}**`].join('\n').slice(0, 3900),
     color: COLOR[outcome],
@@ -178,7 +179,10 @@ export function slipMessage(post, { png = null, playbook = null, buttons = true 
   const content = slipLine(post, { playbook });
   // Only the bot can be tagged, and only on a new play: nothing else in the words can ping anyone.
   const allowed_mentions = mayPing(outcome === 'open' ? playbook : null);
-  const components = [{ type: 1, components: [{ type: 2, style: 5, url: BOARD, label: 'Live board', emoji: { name: LEAGUES[post.league]?.emoji ?? '🏀' } }] }];
+  // An open play's button lands on this slip with its "Add to sportsbook" picker open (docs/live-slips.js's
+  // liveSlipHash): one tap here, one tap on the book. A settled play's goes to the board.
+  const target = outcome === 'open' ? `${BOARD}${liveSlipHash(post.league, post.gameId, post)}` : BOARD;
+  const components = [{ type: 1, components: [{ type: 2, style: 5, url: target, label: outcome === 'open' ? 'Add to sportsbook' : 'Live board', emoji: { name: LEAGUES[post.league]?.emoji ?? '🏀' } }] }];
   const plain = { content, allowed_mentions, embeds: [slipWritten(post)] };
   if (!png) return { payload: buttons ? { ...plain, components } : plain, file: null, plain };
   const picture = { color: COLOR[outcome], image: { url: 'attachment://card.png' }, ...(outcome === 'open' ? { footer: { text: REPLY_HINT, icon_url: LOGO } } : {}) };

@@ -7792,6 +7792,9 @@ a.tennis-book:hover { background: rgba(255, 255, 255, 0.06); }
 .book-way strong small { font-weight: 500; }
 .book-way-acts { display: inline-flex; align-items: center; gap: 6px; flex: none; }
 .book-way-acts .pb-btn { min-height: 32px; padding: 0 10px; }
+/* The slip (or game) a Discord link landed on (docs/app.js liveFocusScroll): lit for a moment so the eye finds it. */
+.live-play.is-focus, .live-game.is-focus { animation: liveFocus 2.4s ease-out 1; }
+@keyframes liveFocus { 0%, 60% { box-shadow: 0 0 0 2px var(--laser), var(--glow-laser); } 100% { box-shadow: none; } }
 .mvp-near { margin: 0 0 14px; font-size: 0.86rem; }
 .mvp-near summary { cursor: pointer; font-weight: 700; color: var(--muted); padding: 6px 0; }
 .mvp-near ul { margin: 6px 0 0; padding-left: 18px; display: grid; gap: 4px; }

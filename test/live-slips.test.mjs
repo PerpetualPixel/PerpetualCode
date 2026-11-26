@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { groupLiveSlips, slipKey, slipNumbers } from '../docs/live-slips.js';
+import { groupLiveSlips, slipKey, slipNumbers, liveSlipHash, parseLiveHash, LIVE_HASH_PREFIX } from '../docs/live-slips.js';
 
 const leg = (player, stat, point, label = stat) => ({ player, stat, label, point, price: -280 });
 const slip = (bookId, american, legs) => ({ bookId, book: bookId, american, legs });
@@ -28,4 +28,16 @@ test('the board\'s order stands, and an empty board is no bets', () => {
   assert.deepEqual(groupLiveSlips([one, two]).map((g) => g.lead.legs[0].player), ['A', 'B'], 'the board\'s best stays first, whatever its price');
   assert.deepEqual(groupLiveSlips([]), []); assert.deepEqual(groupLiveSlips(null), []);
   assert.deepEqual(groupLiveSlips([{ bookId: 'x', legs: [] }]), []);
+});
+
+test('a Discord post\'s link names one slip by league, game and key, and the app reads it back; anything else is no link', () => {
+  const slip = { legs: [{ player: 'Kris Dunn', stat: 'rebounds', point: 4.5 }, { player: 'Jaylen Wells', stat: 'points', point: 7.5 }] };
+  const hash = liveSlipHash('nba', '401810393', slip);
+  assert.ok(hash.startsWith(LIVE_HASH_PREFIX));
+  assert.equal(hash, `#live/nba/401810393/${encodeURIComponent(slipKey(slip))}`);
+  assert.deepEqual(parseLiveHash(hash), { league: 'nba', gameId: '401810393', key: slipKey(slip) });
+  assert.equal(liveSlipHash('nba', '401810393', slipKey(slip)), hash, 'a key is taken as given');
+  assert.equal(liveSlipHash('nba', '', slip), '');
+  assert.equal(liveSlipHash('nba', '1', { legs: [] }), '');
+  for (const h of ['', '#', '#live', '#live/nba', '#live/nba/1', '#other/nba/1/x', '#live/nba/1/%E0%A4%A']) assert.equal(parseLiveHash(h), null, `${h} is not a slip link`);
 });

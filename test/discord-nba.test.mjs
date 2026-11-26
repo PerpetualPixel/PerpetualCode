@@ -4,6 +4,7 @@
  * legs written out, and each edited to how it finished when the game ends.
  */
 import { test } from 'node:test';
+import { liveSlipHash } from '../docs/live-slips.js';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import { syncBasketballDiscord, syncFootballDiscord, syncLeagueDiscord, leagueConfig, footballStatus, LEAGUES, basketballConfig, basketballStatus, slipPost, gradePost, slipLine, slipMessage, playbookLines, testSlipPost, DISCORD_NBA_LEDGER_KEY, NBA_FRESH_MS, REPLY_HINT } from '../worker/src/discord-nba.js';
@@ -61,7 +62,9 @@ test('a play\'s message starts with Playbook\'s tag and the book, then a leg a l
   assert.deepEqual(tagged.payload.allowed_mentions, { parse: [], users: [BOT] });
   assert.deepEqual(slipMessage(post, { png: PNG }).payload.allowed_mentions, { parse: [], users: [] });
   assert.deepEqual(tagged.payload.embeds, [{ color: 0x00f0ff, image: { url: 'attachment://card.png' }, footer: { text: REPLY_HINT, icon_url: 'https://perpetualpicks.com/assets/logo-icon-180.png' } }], 'an open card carries the reply step under the picture');
-  assert.deepEqual(tagged.payload.components[0].components.map((b) => [b.label, b.url]), [['Live board', 'https://perpetualpicks.com/app.html']]);
+  assert.deepEqual(tagged.payload.components[0].components.map((b) => [b.label, b.url]), [['Add to sportsbook', `https://perpetualpicks.com/app.html${liveSlipHash('nba', post.gameId, post)}`]], 'an open play\'s button lands on its slip with the picker open');
+  assert.match(tagged.payload.components[0].components[0].url, /#live\/nba\//);
+  assert.deepEqual(slipMessage({ ...post, status: 'graded', result: 'win', profit: 1 }).payload.components[0].components.map((b) => [b.label, b.url]), [['Live board', 'https://perpetualpicks.com/app.html']], 'a settled play\'s goes to the board');
   // A name that carries Discord's own marks, or a mention, cannot style the message or ping anyone.
   const sharp = slipPost({ ...GAME, name: '@everyone at **Bold**' }, playOf([slip()]), slip({ legs: [leg('<@&999> `x` _y_', 'NY', 'points', 'Pts', 19.5, -180, 14)] }));
   assert.equal(playbookLines(sharp)[0], '@&999 x y Over 19.5 Points (@everyone at Bold)');

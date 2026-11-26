@@ -39,3 +39,23 @@ export function groupLiveSlips(slips) {
     return { key, lead, slips: sorted.map((s) => ({ ...s, differs: s !== lead && s.legs.some((l) => leadPoints.get(legKey(l)) !== l.point) })) };
   });
 }
+
+/**
+ * The link from a Discord post straight to one slip on the Live tab (2026-11-25, the owner: "one click from
+ * discord ... and import the live play fast"): app.html#live/<league>/<ESPN event id>/<slip key>. The app opens the
+ * Live tab on that league, unfolds the game, opens the slip's "Add to sportsbook" picker and scrolls to it, so the
+ * reader's next tap is their book. The slip is named by its key (the players and stats), which is the same at every
+ * book and outlives a price change; a slip the board no longer has lands the reader on the game instead.
+ */
+export const LIVE_HASH_PREFIX = '#live/';
+export function liveSlipHash(league, gameId, slipOrKey) {
+  const key = typeof slipOrKey === 'string' ? slipOrKey : slipKey(slipOrKey);
+  if (!league || !gameId || !key) return '';
+  return `${LIVE_HASH_PREFIX}${encodeURIComponent(String(league))}/${encodeURIComponent(String(gameId))}/${encodeURIComponent(key)}`;
+}
+/** {league, gameId, key} from a hash liveSlipHash made, or null for any other hash. */
+export function parseLiveHash(hash) {
+  const m = String(hash ?? '').match(/^#live\/([^/]+)\/([^/]+)\/(.+)$/);
+  if (!m) return null;
+  try { return { league: decodeURIComponent(m[1]), gameId: decodeURIComponent(m[2]), key: decodeURIComponent(m[3]) }; } catch { return null; }
+}
