@@ -69,6 +69,7 @@ import { runTennisLiveTick, getTennisLivePlays, TENNIS_LIVE_CRON } from './tenni
 import { syncLiveDiscord, discordStatus, bookRedirect, findLivePlay, recordForPlay } from './discord.js';
 import { CARD_VERSION } from './card-svg.js';
 import { syncBasketballDiscord, syncFootballDiscord, basketballStatus, footballStatus } from './discord-nba.js';
+import { runResultsDigest, digestStatus, DIGEST_HOUR as RESULTS_DIGEST_HOUR } from './discord-results-digest.js';
 import { playPage, missingPlayPage } from './play-page.js';
 import { getTennisTrends } from './tennis-trends.js';
 import { sendUfcTicketNotifications, sendUfcChangeNotifications } from './notifications.js';
@@ -581,6 +582,12 @@ export default {
       const clock = etClock(now);
       if (clock.weekday === 'Mon' && clock.hour === 9 && clock.minute < 15) {
         ctx.waitUntil(sendWeeklyTrackingReport(env, now).catch((e) => console.error('Weekly tracking report failed:', e)));
+      }
+      // 6am ET, the first tick of the hour: yesterday's live tennis results in one post to the results channel,
+      // and on Monday the week's (worker/src/discord-results-digest.js). KV and the webhook only; with no results
+      // webhook set it is a no-op. Its own waitUntil, as the weekly report above.
+      if (clock.hour === RESULTS_DIGEST_HOUR && clock.minute < 15) {
+        ctx.waitUntil(runResultsDigest(env, now).catch((e) => console.error('Results digest failed:', String(e?.message ?? e).slice(0, 120))));
       }
       return;
     }
@@ -1772,7 +1779,19 @@ export default {
 
     // Whether the Discord alerts are set up and working (worker/src/discord.js): yes or no and when, never the address.
     if (pathname === '/discord/status' && request.method === 'GET') {
-      return json({ ...(await discordStatus(env)), basketball: await basketballStatus(env), football: await footballStatus(env) }, { headers: { ...cors, 'Cache-Control': 'no-store' } });
+      return json({ ...(await discordStatus(env)), basketball: await basketballStatus(env), football: await footballStatus(env), digest: await digestStatus(env) }, { headers: { ...cors, 'Cache-Control': 'no-store' } });
+    }
+
+    // Owner-only (the settings key): post the results channel's roll-ups now rather than at 6am ET
+    // (worker/src/discord-results-digest.js). A day or week already posted is skipped and said so.
+    if (pathname === '/discord/digest/run' && request.method === 'POST') {
+      const auth = authorizeSettings(request, env);
+      if (!auth.ok) return json({ error: auth.error }, { status: auth.status, headers: cors });
+      try {
+        return json(await runResultsDigest(env, Date.now(), { force: true }), { headers: { ...cors, 'Cache-Control': 'no-store' } });
+      } catch (e) {
+        return json({ error: String(e?.message ?? e).slice(0, 200) }, { status: 502, headers: cors });
+      }
     }
 
     if (pathname === '/region' && request.method === 'GET') {
