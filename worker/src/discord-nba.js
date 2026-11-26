@@ -22,8 +22,10 @@
  * API: it reads a message that tags it, with the book named and the legs written out, and replies in the channel.
  * So each new play's message starts with that tag and those lines. A pasted "@Playbook" pings nothing: the tag is
  * a real mention only when the bot's user id is known (the DISCORD_PLAYBOOK_USER_ID secret, or the id the owner
- * saved in the app's Playbook settings). Whether the bot answers a message posted by a webhook is the bot's own
- * rule and is not known here.
+ * saved in the app's Playbook settings). Playbook does not answer a message posted by a webhook or by a bot account
+ * (tried both, 2026-11-25: no reply either way), only a person: a reader replies to the post with "@Playbook" and
+ * their book, and Playbook reads the post it was replied to. So every open post says so in its footer, and the tag
+ * line stays, since it is the post Playbook then reads.
  *
  * When the game ends, each post's message is edited to how it finished: every leg against the final box score,
  * won or lost, and the units at one unit a play.
@@ -149,6 +151,9 @@ export function slipLine(post, { playbook = null } = {}) {
   return [head, ...playbookLines(post)].join('\n').slice(0, 1900);
 }
 
+/** Under every open post: how a reader gets their slip, since Playbook answers a person's reply and never the bot's own post. */
+export const REPLY_HINT = 'Reply to this message with @Playbook and your book (e.g. "@Playbook FanDuel") for your slip · perpetualpicks.com';
+
 /** The written card, for when there is no picture: the same play in words. */
 function slipWritten(post) {
   const outcome = post.status === 'void' ? 'void' : post.status === 'graded' ? (post.result === 'win' ? 'win' : 'loss') : 'open';
@@ -162,7 +167,7 @@ function slipWritten(post) {
     author: { name: `PERPETUAL PICKS · LIVE ${sport.name}`, url: BOARD, icon_url: LOGO },
     description: [`${md(post.game)}${points ? ` · ${points}` : ''}`, ...legs, outcome === 'open' ? 'Recommended **1u**' : outcome === 'void' ? '**Stake returned**' : `**${signedUnits(post.profit ?? 0)}**`].join('\n').slice(0, 3900),
     color: COLOR[outcome],
-    footer: { text: 'Live play · perpetualpicks.com', icon_url: LOGO },
+    footer: { text: outcome === 'open' ? REPLY_HINT : 'Live play · perpetualpicks.com', icon_url: LOGO },
     timestamp: new Date(post.postedAt ?? Date.now()).toISOString(),
   };
 }
@@ -176,7 +181,8 @@ export function slipMessage(post, { png = null, playbook = null, buttons = true 
   const components = [{ type: 1, components: [{ type: 2, style: 5, url: BOARD, label: 'Live board', emoji: { name: LEAGUES[post.league]?.emoji ?? '🏀' } }] }];
   const plain = { content, allowed_mentions, embeds: [slipWritten(post)] };
   if (!png) return { payload: buttons ? { ...plain, components } : plain, file: null, plain };
-  return { payload: { content, allowed_mentions, embeds: [{ color: COLOR[outcome], image: { url: 'attachment://card.png' } }], attachments: [{ id: 0, filename: 'card.png' }], ...(buttons ? { components } : {}) }, file: { name: 'card.png', bytes: png }, plain };
+  const picture = { color: COLOR[outcome], image: { url: 'attachment://card.png' }, ...(outcome === 'open' ? { footer: { text: REPLY_HINT, icon_url: LOGO } } : {}) };
+  return { payload: { content, allowed_mentions, embeds: [picture], attachments: [{ id: 0, filename: 'card.png' }], ...(buttons ? { components } : {}) }, file: { name: 'card.png', bytes: png }, plain };
 }
 
 /** The test slip: made-up players, in the shape of a real one. */

@@ -255,6 +255,11 @@ test('football has its own channel, ledger and test card, and is told apart from
   assert.match(slipCardSvg(post), />NFL  •  Nov 25  •  8:11 PM ET</);
   assert.match(slipCardSvg(post), />Over 224\.5 Pass Yds</);
   assert.equal(slipMessage(post).plain.embeds[0].author.name, 'PERPETUAL PICKS · LIVE NFL');
+  // Playbook answers a person's reply, never the bot's own post: every open card says so, settled ones do not.
+  assert.match(slipMessage(post).plain.embeds[0].footer.text, /^Reply to this message with @Playbook and your book/);
+  assert.match(slipMessage(post, { png: new Uint8Array([1]) }).payload.embeds[0].footer.text, /^Reply to this message with @Playbook/);
+  assert.equal(slipMessage({ ...post, status: 'graded', result: 'win', profit: 1.1 }).plain.embeds[0].footer.text, 'Live play · perpetualpicks.com');
+  assert.equal(slipMessage({ ...post, status: 'graded', result: 'win', profit: 1.1 }, { png: new Uint8Array([1]) }).payload.embeds[0].footer, undefined);
   assert.equal(slipLine(post).split('\n')[0], '🏈 **LIVE PLAY** · +110 at DraftKings · 1u');
 
   // The test card, once, in the football channel, and the status for it.
