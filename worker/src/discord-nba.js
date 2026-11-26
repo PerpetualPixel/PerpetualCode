@@ -86,19 +86,22 @@ export const mayPing = (tag) => (!tag ? { parse: [], users: [] } : tag.startsWit
  * owner saved in the app's Playbook settings; null when nothing is known. Shared with the results channel's
  * roll-ups (worker/src/discord-results-digest.js), which tag Playbook the same way.
  */
-export async function playbookTag(env) {
-  // The role's own secret, when it is the role that was copied; else the member's (which also takes a role written as <@&id>).
+/** Playbook's tag from the secrets alone: the role's own secret when it is the role that was copied, else the member's (which also takes a role written as <@&id>); null with neither. */
+export function playbookTagFromSecrets(env) {
   let playbook = userIdOf(env?.DISCORD_PLAYBOOK_ROLE_ID) ?? userIdOf(env?.DISCORD_PLAYBOOK_USER_ID);
   if (playbook && String(env?.DISCORD_PLAYBOOK_ROLE_ID ?? '').trim() && !playbook.startsWith('&') && userIdOf(env?.DISCORD_PLAYBOOK_ROLE_ID)) playbook = `&${playbook}`;
-  if (!playbook) playbook = userIdOf((await getSettings(env, 'owner').catch(() => null))?.playbook?.mention);
   return playbook;
+}
+
+export async function playbookTag(env) {
+  return playbookTagFromSecrets(env) ?? userIdOf((await getSettings(env, 'owner').catch(() => null))?.playbook?.mention);
 }
 
 /** What is configured: the channel's webhook (null when unset or not a Discord webhook) and Playbook's user id. */
 export async function leagueConfig(env, league = 'nba') {
   const hook = webhookOf(env?.[LEAGUES[league].secret]);
   // The id the owner saved in the app's Playbook settings stands in when the secret is not set — read only with a channel to post to.
-  const playbook = hook ? await playbookTag(env) : (userIdOf(env?.DISCORD_PLAYBOOK_ROLE_ID) ?? userIdOf(env?.DISCORD_PLAYBOOK_USER_ID));
+  const playbook = hook ? await playbookTag(env) : playbookTagFromSecrets(env);
   return { hook, playbook };
 }
 
