@@ -6,7 +6,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
-import { syncBasketballDiscord, syncFootballDiscord, syncLeagueDiscord, leagueConfig, footballStatus, LEAGUES, basketballConfig, basketballStatus, slipPost, gradePost, slipLine, slipMessage, playbookLines, testSlipPost, DISCORD_NBA_LEDGER_KEY, NBA_FRESH_MS } from '../worker/src/discord-nba.js';
+import { syncBasketballDiscord, syncFootballDiscord, syncLeagueDiscord, leagueConfig, footballStatus, LEAGUES, basketballConfig, basketballStatus, slipPost, gradePost, slipLine, slipMessage, playbookLines, testSlipPost, DISCORD_NBA_LEDGER_KEY, NBA_FRESH_MS, REPLY_HINT } from '../worker/src/discord-nba.js';
 import { slipCardSvg, slipCardHeight, textWidth, CARD_W } from '../worker/src/card-svg.js';
 
 const NOW = Date.parse('2026-11-26T01:12:00Z');
@@ -60,7 +60,7 @@ test('a play\'s message starts with Playbook\'s tag and the book, then a leg a l
   const tagged = slipMessage(post, { png: PNG, playbook: BOT });
   assert.deepEqual(tagged.payload.allowed_mentions, { parse: [], users: [BOT] });
   assert.deepEqual(slipMessage(post, { png: PNG }).payload.allowed_mentions, { parse: [], users: [] });
-  assert.deepEqual(tagged.payload.embeds, [{ color: 0x00f0ff, image: { url: 'attachment://card.png' } }]);
+  assert.deepEqual(tagged.payload.embeds, [{ color: 0x00f0ff, image: { url: 'attachment://card.png' }, footer: { text: REPLY_HINT, icon_url: 'https://perpetualpicks.com/assets/logo-icon-180.png' } }], 'an open card carries the reply step under the picture');
   assert.deepEqual(tagged.payload.components[0].components.map((b) => [b.label, b.url]), [['Live board', 'https://perpetualpicks.com/app.html']]);
   // A name that carries Discord's own marks, or a mention, cannot style the message or ping anyone.
   const sharp = slipPost({ ...GAME, name: '@everyone at **Bold**' }, playOf([slip()]), slip({ legs: [leg('<@&999> `x` _y_', 'NY', 'points', 'Pts', 19.5, -180, 14)] }));
