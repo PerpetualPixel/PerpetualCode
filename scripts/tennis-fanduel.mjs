@@ -64,21 +64,23 @@ function moneyline(market, [pa, pb]) {
 /** The Challenger and ITF singles on the page with their moneylines, folded into the log (KV tennis:lower). Never stops the card's own read. */
 async function readLower({ att, comps, now, dry, list, say }) {
   const pageMoney = new Map();
-  for (const m of Object.values(att.markets ?? {})) { if (!MONEYLINE.test(String(m.marketType ?? ''))) continue; const t = trimFanduelMarket(m); if (t && m.eventId != null && !pageMoney.has(String(m.eventId))) pageMoney.set(String(m.eventId), t); }
+  // An event carries no word on whether it is in play; its market does.
+  const inPlay = new Set();
+  for (const m of Object.values(att.markets ?? {})) { if (!MONEYLINE.test(String(m.marketType ?? ''))) continue; if (m.inPlay === true && m.eventId != null) inPlay.add(String(m.eventId)); const t = trimFanduelMarket(m); if (t && m.eventId != null && !pageMoney.has(String(m.eventId))) pageMoney.set(String(m.eventId), t); }
   const events = Object.values(att.events ?? {}).filter((e) => fanduelPlayers(e.name) && lowerTierOf(comps[e.competitionId]?.name) && Date.parse(e.openDate) > now - LOWER_BACK_MS && Date.parse(e.openDate) < now + LOOKAHEAD_MS)
     .sort((x, y) => Date.parse(x.openDate) - Date.parse(y.openDate));
   let own = 0;
   const board = [];
   for (const e of events) {
     const players = fanduelPlayers(e.name); const start = Date.parse(e.openDate);
-    const started = e.inPlay === true || start <= now;
+    const started = inPlay.has(String(e.eventId)) || start <= now;
     let market = pageMoney.get(String(e.eventId)) ?? null;
     if (!market && !started && own < LOWER_OWN_READS) {
       own += 1;
       try { const body = await getJson(`${API}/event-page?_ak=${AK}&eventId=${e.eventId}&timezone=America%2FNew_York`); const found = Object.values((body.attachments ?? body).markets ?? {}).find((m) => MONEYLINE.test(String(m.marketType ?? ''))); market = found ? trimFanduelMarket(found) : null; } catch (err) { say(`  ! ${e.name}: ${err.message}`); }
       await pause(500);
     }
-    board.push({ id: String(e.eventId), comp: comps[e.competitionId]?.name ?? null, compId: e.competitionId ?? null, a: players[0], b: players[1], start, inPlay: e.inPlay === true, ml: market && !started ? moneyline(market, players) : null });
+    board.push({ id: String(e.eventId), comp: comps[e.competitionId]?.name ?? null, compId: e.competitionId ?? null, a: players[0], b: players[1], start, inPlay: started, ml: market && !started ? moneyline(market, players) : null });
   }
   // A log that cannot be read is not written over (its tally is the only copy): a dry run alone goes on without one.
   let before = null;
@@ -92,6 +94,7 @@ async function readLower({ att, comps, now, dry, list, say }) {
     const types = [...new Set(Object.values(att.markets ?? {}).map((m) => m.marketType))];
     console.log(`    markets on the page: ${Object.keys(att.markets ?? {}).length} [${types.slice(0, 12).join(' | ')}]; an event's fields: ${Object.keys(events[0] ?? {}).join(', ')}`);
     for (const m of view.matches) console.log(`    ${m.comp} | ${m.a} v ${m.b} | ${new Date(m.start).toISOString().slice(0, 16)} | ${m.ml ? `${m.ml.a} / ${m.ml.b}` : 'no price'} | ${m.call.kind === 'lean' ? `LEAN ${m.call.name} ${m.call.american} (${m.call.how}, ${Math.round(m.call.share * 100)}%)` : m.call.text}`);
+    console.log(`    in play by the page's markets: ${inPlay.size}; a market's fields: ${Object.keys(Object.values(att.markets ?? {}).find((m) => MONEYLINE.test(String(m.marketType ?? ''))) ?? {}).join(', ')}`);
   }
   const bytes = JSON.stringify(log).length;
   if (dry) { say(`dry run: would write ${TENNIS_LOWER_KEY} (${bytes} bytes, ${Object.keys(log.matches).length} matches)`); return; }

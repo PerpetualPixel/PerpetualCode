@@ -7529,6 +7529,22 @@ a.live-add-book:hover, a.live-add-book:focus-visible { border-color: var(--accen
 .tennis-flag { display: inline-block; margin-right: 4px; padding: 1px 7px; border-radius: 999px; border: 1px solid var(--line); font-size: 0.68rem; font-weight: 800; letter-spacing: 0.04em; text-transform: uppercase; color: var(--muted); }
 /* The Tennis tab's leans (2026-11-12): only the matches worth a bet, the likeliest first, each with how to play it and why. */
 .tennis-h3 { margin: 22px 0 10px; font-size: 1rem; font-weight: 800; }
+/* Tennis below the tours (docs/app.js renderTennisLower): a tournament's matches one a row, the call beside the names. */
+.tennis-lower { display: grid; gap: 6px; margin-top: 12px; padding: 10px 12px; border-radius: 14px; background: var(--surface); border: 1px solid var(--line); min-width: 0; }
+.tennis-lower-h { margin: 0 0 2px; font-size: 0.9rem; font-weight: 800; }
+.tennis-lower-h small { margin-left: 6px; color: var(--muted); font-weight: 600; font-size: 0.76rem; }
+.tennis-lower-row { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 12px; padding: 8px 10px; border-radius: 10px; background: var(--surface-2); border-left: 3px solid var(--line); min-width: 0; }
+.tennis-lower-row.is-lean { border-left-color: var(--success); }
+.tennis-lower-row.is-short .tennis-lower-call b { color: var(--muted); }
+.tennis-lower-match { flex: 1 1 220px; display: grid; gap: 1px; min-width: 0; overflow-wrap: anywhere; }
+.tennis-lower-match small, .tennis-lower-call small { color: var(--muted); font-size: 0.78rem; font-weight: 600; }
+.tennis-lower-call { flex: 1 1 240px; display: flex; flex-wrap: wrap; align-items: center; gap: 4px 8px; font-size: 0.9rem; min-width: 0; overflow-wrap: anywhere; }
+.tennis-lower-call b { font-size: 0.7rem; text-transform: uppercase; letter-spacing: 0.04em; color: var(--success); }
+.tennis-lower-call.is-none b { color: var(--muted); }
+.tennis-lower-row .tennis-why-list { flex: 1 1 100%; margin: 2px 0 0; }
+.tennis-lower-pick { margin-top: 8px; }
+.tennis-lower-pick .parlay-btn[aria-pressed="true"] { background: var(--accent-dim); color: var(--text); border-color: var(--accent); }
+.tennis-lower-tally b { color: var(--text); }
 .tennis-h3 small { margin-left: 8px; color: var(--muted); font-weight: 600; font-size: 0.78rem; }
 .tennis-lean.is-high { border-color: rgba(251, 191, 36, 0.55); }
 .tennis-rank { display: inline-grid; place-items: center; min-width: 26px; height: 26px; padding: 0 6px; border-radius: 999px; background: var(--accent, #c084fc); color: var(--on-accent, #12081f); font-family: var(--mono); font-weight: 800; font-size: 0.82rem; }

@@ -18,11 +18,13 @@
  * the two prices with the book's cut taken out give each player's share,
  * and the price as first seen against the price now says which way the
  * money has gone. A match gets a lean on the favourite when that share is
- * clear of a coin flip and the money has not gone against it. A match is
- * left alone, with the reason, when the book has it near even, when the
- * favourite's price has drifted, when the favourite is priced as all but
- * won, or when the book's cut is too wide to bet into. A lean is never a
- * tracked play and never counts in the day's units.
+ * clear of a coin flip and the money has not gone against it: to take
+ * alone at a price that pays, as a parlay piece at a shorter one, and
+ * named with no bet in it when the favourite is priced as all but won. A
+ * match is left with no lean, and the reason, when the book has it near
+ * even, when the favourite's price has drifted, or when the book's cut is
+ * too wide to bet into. A lean is never a tracked play and never counts
+ * in the day's units.
  *
  * Whether the leans are any good is kept as a tally of their own. FanDuel
  * shows no results, but a knockout draw does: the player who is listed
@@ -44,7 +46,7 @@ export const LOWER_GIVE_UP_MS = 4 * 864e5;
 export const LOWER_MAX = 600;
 /** Under this share for the favourite the book has it near even: no lean. */
 export const LOWER_CLOSE = 0.57;
-/** A favourite shorter than the first is a parlay piece, not a bet alone; shorter than the second is no bet at all (the Tennis tab's own floors). */
+/** A favourite shorter than the first is a parlay piece, not a bet alone; shorter than the second is named with no bet in it (the Tennis tab's own floors). */
 export const LOWER_STRAIGHT_FLOOR = -250;
 export const LOWER_SHORT = -700;
 /** The favourite's share fallen this far since the price was first seen: the money is against it, no lean. */
@@ -81,9 +83,10 @@ export function lowerShares(ml) {
 
 /**
  * The call on one match: {kind: 'lean', side, name, opponent, american,
- * share, implied, how: 'straight'|'parlay', moved, why} or {kind: 'none',
- * reason, text, why}. `m` is a logged match: {a, b, ml: {a, b}, open: {a,
- * b}}, the prices American.
+ * share, implied, how: 'straight'|'parlay'|'short', moved, why} or {kind:
+ * 'none', reason, text, why}. `m` is a logged match: {a, b, ml: {a, b},
+ * open: {a, b}}, the prices American. A 'short' lean is the winner named
+ * at a price with no bet in it.
  */
 export function lowerCall(m) {
   const now = lowerShares(m?.ml);
@@ -99,11 +102,10 @@ export function lowerCall(m) {
   if (now.cut > LOWER_CUT_MAX) return none('cut', `Poorly priced: the book keeps ${pct(now.cut)} on this match`);
   if (moved != null && moved <= -LOWER_DRIFT) return none('drift', `The money is against ${name}: ${signed(m.open[side])} when first seen, ${signed(american)} now`, [`A favourite whose price lengthens this far before the start is one to leave alone`]);
   if (share < LOWER_CLOSE) return none('close', `Too close to call: ${pct(share)} to ${pct(1 - share)} by the price`);
-  if (american < LOWER_SHORT) return none('short', `${name} is priced as all but won at ${signed(american)}: nothing to take`);
-  const how = american >= LOWER_STRAIGHT_FLOOR ? 'straight' : 'parlay';
+  const how = american >= LOWER_STRAIGHT_FLOOR ? 'straight' : american >= LOWER_SHORT ? 'parlay' : 'short';
   const why = [...base];
   if (moved != null && moved >= LOWER_STEAM) why.push(`The price has shortened since it was first seen, ${signed(m.open[side])} to ${signed(american)}: the money agrees`);
-  why.push(how === 'straight' ? `Playable alone at ${signed(american)} or better, half a unit at most: a lean off the price, not a tracked play` : `Too short to take alone at ${signed(american)}: a parlay piece`);
+  why.push(how === 'straight' ? `Playable alone at ${signed(american)} or better, half a unit at most: a lean off the price, not a tracked play` : how === 'parlay' ? `Too short to take alone at ${signed(american)}: a parlay piece` : `Priced as all but won at ${signed(american)}: the lean is plain, and there is no bet in it, alone or in a parlay`);
   return { kind: 'lean', side, name, opponent, american, share: round3(share), implied: round3(1 / decimalOf(american)), how, moved, why };
 }
 
@@ -128,7 +130,7 @@ export function winnerFromDraw(m, all) {
   return a === b ? null : a ? 'a' : 'b';
 }
 
-const emptyTally = () => ({ straight: { wins: 0, losses: 0, units: 0 }, parlay: { wins: 0, losses: 0 }, since: null });
+const emptyTally = () => ({ straight: { wins: 0, losses: 0, units: 0 }, parlay: { wins: 0, losses: 0 }, short: { wins: 0, losses: 0 }, since: null });
 
 /**
  * The log with one read of the page folded in.
@@ -144,7 +146,7 @@ const emptyTally = () => ({ straight: { wins: 0, losses: 0, units: 0 }, parlay: 
 export function mergeLower(log, board, now = Date.now()) {
   const matches = { ...(log?.matches ?? {}) };
   const tally = { ...emptyTally(), ...(log?.tally ?? {}) };
-  tally.straight = { ...emptyTally().straight, ...tally.straight }; tally.parlay = { ...emptyTally().parlay, ...tally.parlay };
+  tally.straight = { ...emptyTally().straight, ...tally.straight }; tally.parlay = { ...emptyTally().parlay, ...tally.parlay }; tally.short = { ...emptyTally().short, ...tally.short };
   for (const e of board ?? []) {
     if (!e?.id || !e.a || !e.b || !Number.isFinite(e.start)) continue;
     const tier = lowerTierOf(e.comp); if (!tier) continue;
@@ -170,7 +172,7 @@ export function mergeLower(log, board, now = Date.now()) {
     const won = m.call.side === winner;
     m.call = { ...m.call, result: won ? 'win' : 'loss' };
     tally.since = tally.since ?? now;
-    if (m.call.how === 'straight') { const t = tally.straight; if (won) { t.wins += 1; t.units = Math.round((t.units + decimalOf(m.call.american) - 1) * 100) / 100; } else { t.losses += 1; t.units = Math.round((t.units - 1) * 100) / 100; } } else if (won) tally.parlay.wins += 1; else tally.parlay.losses += 1;
+    if (m.call.how === 'straight') { const t = tally.straight; if (won) { t.wins += 1; t.units = Math.round((t.units + decimalOf(m.call.american) - 1) * 100) / 100; } else { t.losses += 1; t.units = Math.round((t.units - 1) * 100) / 100; } } else { const t = m.call.how === 'short' ? tally.short : tally.parlay; if (won) t.wins += 1; else t.losses += 1; }
   }
   const kept = all.filter((m) => m.start > now - LOWER_KEEP_MS).sort((x, y) => y.start - x.start).slice(0, LOWER_MAX);
   return { at: now, matches: Object.fromEntries(kept.map((m) => [m.id, m])), tally };

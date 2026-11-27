@@ -47,13 +47,15 @@ test('the favourite on the second side is leaned the same way', () => {
   assert.equal(c.opponent, 'A One');
 });
 
-test('a short favourite is a parlay piece, and one priced as won is no lean', () => {
+test('a short favourite is a parlay piece, and one priced as won is a lean with no bet in it', () => {
   const piece = lowerCall({ a: 'A One', b: 'B Two', ml: { a: -400, b: 280 } });
   assert.equal(piece.kind, 'lean');
   assert.equal(piece.how, 'parlay');
   const won = lowerCall({ a: 'A One', b: 'B Two', ml: { a: -1200, b: 650 } });
-  assert.equal(won.kind, 'none');
-  assert.equal(won.reason, 'short');
+  assert.equal(won.kind, 'lean');
+  assert.equal(won.how, 'short');
+  assert.equal(won.name, 'A One');
+  assert.ok(won.why.some((w) => /no bet in it/.test(w)));
 });
 
 test('a match the book has near even is too close to call', () => {
@@ -144,6 +146,7 @@ test('a lean is graded when the draw shows who went through, and goes on the tal
   assert.equal(log.matches['3'].call.result, undefined);
   assert.deepEqual(log.tally.straight, { wins: 1, losses: 0, units: 0.53 });
   assert.deepEqual(log.tally.parlay, { wins: 0, losses: 1 });
+  assert.deepEqual(log.tally.short, { wins: 0, losses: 0 });
   // Read again: nothing is counted twice.
   log = mergeLower(log, next, NOW + 7 * H);
   assert.deepEqual(log.tally.straight, { wins: 1, losses: 0, units: 0.53 });
