@@ -62,6 +62,7 @@ import { ensureTennisTrends } from './tennis-trends.js';
 import { TENNIS_FANDUEL_KEY, fanduelEventFor, fanduelFeedEvent, withFanduel } from './tennis-fanduel.js';
 import { leanFor, propFor, sortLeans, pairSuggestions, LEAN_MIN_PROB, LEAN_MIN_EDGE, STRAIGHT_FLOOR, CONVICTION_PROB, CONVICTION_EDGE } from './tennis-leans.js';
 import { suggestedUnits } from '../../docs/trends.js';
+import { getTennisLower } from './tennis-lower.js';
 
 export { surfaceOf, setDone };
 
@@ -858,5 +859,7 @@ export async function getTennisPicks(env, now = Date.now(), { days = 45 } = {}) 
   const all = history.flatMap((r) => r.plays ?? []);
   const current = history.find((r) => r.date === today) ?? null;
   const card = await readJson(env, TENNIS_CARD_KEY);
-  return { date: today, current, history: history.map((r) => ({ date: r.date, plays: r.plays, refreshedAt: r.refreshedAt ?? null })), record: betRecordOf(all), byTour: Object.fromEntries(TOURS.map((t) => [t, betRecordOf(all.filter((p) => p.tour === t))])), byMarket: Object.fromEntries(Object.keys(TENNIS_MARKETS).map((k) => [k, betRecordOf(all.filter((p) => p.market === k))])), markets: TENNIS_MARKETS, cardAt: card?.at ?? null, slate: (card?.slate ?? []).filter((m) => !m.qualifying).map((m) => ({ id: `${m.tour}:${m.id}`, tour: m.tour, event: m.eventName, tier: m.tier, round: m.round, date: m.date, state: m.state, a: m.a.name, b: m.b.name, sets: m.sets, winner: m.winner })), bar: { minProb: MIN_PROB, minEdge: MIN_EDGE, aceProb: ACE_PROB, band: PRICE_BAND, maxUnits: MAX_UNITS_DAY, parlayLegProb: PARLAY_LEG_PROB, parlayLegs: PARLAY_LEGS, leanProb: LEAN_MIN_PROB, leanEdge: LEAN_MIN_EDGE, straightFloor: STRAIGHT_FLOOR, convictionProb: CONVICTION_PROB, convictionEdge: CONVICTION_EDGE }, unitsToday: unitsPosted(current?.plays) };
+  return { date: today, current, history: history.map((r) => ({ date: r.date, plays: r.plays, refreshedAt: r.refreshedAt ?? null })), record: betRecordOf(all), byTour: Object.fromEntries(TOURS.map((t) => [t, betRecordOf(all.filter((p) => p.tour === t))])), byMarket: Object.fromEntries(Object.keys(TENNIS_MARKETS).map((k) => [k, betRecordOf(all.filter((p) => p.market === k))])), markets: TENNIS_MARKETS, cardAt: card?.at ?? null, slate: (card?.slate ?? []).filter((m) => !m.qualifying).map((m) => ({ id: `${m.tour}:${m.id}`, tour: m.tour, event: m.eventName, tier: m.tier, round: m.round, date: m.date, state: m.state, a: m.a.name, b: m.b.name, sets: m.sets, winner: m.winner })), bar: { minProb: MIN_PROB, minEdge: MIN_EDGE, aceProb: ACE_PROB, band: PRICE_BAND, maxUnits: MAX_UNITS_DAY, parlayLegProb: PARLAY_LEG_PROB, parlayLegs: PARLAY_LEGS, leanProb: LEAN_MIN_PROB, leanEdge: LEAN_MIN_EDGE, straightFloor: STRAIGHT_FLOOR, convictionProb: CONVICTION_PROB, convictionEdge: CONVICTION_EDGE }, unitsToday: unitsPosted(current?.plays),
+    // The matches below the tours (worker/src/tennis-lower.js): every Challenger and ITF singles match on FanDuel's page with its call.
+    lower: await getTennisLower(env, now).catch(() => null) };
 }

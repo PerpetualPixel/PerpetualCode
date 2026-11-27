@@ -13049,7 +13049,7 @@ renderWide();
    model clears the bar; the tab shows those, the matches it read and
    why each passed, and keeps its own record in Pixel's Picks. */
 const TENNIS_TOURS_KEY = 'pixelpick.tennisTours.v1';
-const tennisState = { data: null, loading: false, tours: new Set((loadJSON(TENNIS_TOURS_KEY, null) ?? ['atp', 'wta']).filter((t) => t === 'atp' || t === 'wta')), open: {}, reads: false, graphHover: null };
+const tennisState = { data: null, loading: false, tours: new Set((loadJSON(TENNIS_TOURS_KEY, null) ?? ['atp', 'wta']).filter((t) => t === 'atp' || t === 'wta')), open: {}, reads: false, graphHover: null, lowerLeans: false };
 if (!tennisState.tours.size) { tennisState.tours.add('atp'); tennisState.tours.add('wta'); }
 const TENNIS_TOUR_LABEL = { atp: 'ATP', wta: 'WTA' };
 const tennisTimeFmt = new Intl.DateTimeFormat(undefined, { weekday: 'short', hour: 'numeric', minute: '2-digit' });
@@ -13275,6 +13275,50 @@ function tennisLeansShown() {
   return { leans, suggestions };
 }
 
+/**
+ * Tennis below the tours (2026-11-27, the owner, on a sportsbook's list of
+ * Challenger and ITF matches: "I'd like all the matches to have a lean
+ * unless it's a truly unpredictable match"): every Challenger and ITF
+ * singles match FanDuel lists, by tournament, each with its call
+ * (worker/src/tennis-lower.js). The price is the only read there is at
+ * this level, so a lean is the favourite when the price is clear of a coin
+ * flip, and a match with none says why. Never tracked, never in the day's
+ * units; the leans keep a tally of their own.
+ */
+function renderTennisLower() {
+  const lower = tennisState.data?.lower;
+  const all = (lower?.matches ?? []).filter((m) => tennisState.tours.has(m.tour) && m.start > Date.now());
+  const t = lower?.tally;
+  const graded = ['straight', 'parlay', 'short'].reduce((n, k) => n + (t?.[k]?.wins ?? 0) + (t?.[k]?.losses ?? 0), 0);
+  if (!all.length && !graded) return '';
+  const leans = all.filter((m) => m.call?.kind === 'lean');
+  const shown = tennisState.lowerLeans ? leans : all;
+  const row = (m) => {
+    const c = m.call ?? {}; const key = `lower:${m.id}`; const open = Boolean(tennisState.open[key]);
+    const lean = c.kind === 'lean';
+    const prices = m.ml ? `${formatAmerican(m.ml.a)} / ${formatAmerican(m.ml.b)}` : '';
+    const call = lean
+      ? `<span class="tennis-lower-call"><b>Lean</b> <strong>${esc(c.name)}</strong> ${pricePill('fanduel', 'FanDuel', c.american, c.link)} <small>${pct(c.share)} by the price · ${c.how === 'straight' ? 'half a unit at most' : c.how === 'parlay' ? 'parlay piece, too short alone' : 'priced as all but won: no bet in it'}</small></span>`
+      : `<span class="tennis-lower-call is-none"><b>No lean</b> <small>${esc(c.text ?? 'No price up yet')}</small></span>`;
+    return `<div class="tennis-lower-row ${lean ? (c.how === 'short' ? 'is-short' : 'is-lean') : ''}">
+      <span class="tennis-lower-match"><strong>${esc(m.a)} vs ${esc(m.b)}</strong><small>${esc(tennisTimeFmt.format(new Date(m.start)))}${prices ? ` · ${esc(prices)}` : ''}</small></span>
+      ${call}
+      ${c.why?.length ? `<button type="button" class="parlay-btn tennis-why" data-tennis-why="${esc(key)}" data-tennis-why-default="shut" aria-expanded="${open}">${open ? 'Hide' : 'Why'}</button>` : ''}
+      ${open && c.why?.length ? `<ul class="tennis-why-list">${c.why.map((w) => `<li>${esc(w)}</li>`).join('')}</ul>` : ''}
+    </div>`;
+  };
+  const comps = [];
+  for (const m of shown) { let g = comps.find((x) => x.comp === m.comp); if (!g) { g = { comp: m.comp, rows: [] }; comps.push(g); } g.rows.push(m); }
+  const s = t?.straight ?? { wins: 0, losses: 0, units: 0 }; const p = t?.parlay ?? { wins: 0, losses: 0 }; const w = t?.short ?? { wins: 0, losses: 0 };
+  const parts = [s.wins + s.losses ? `${s.wins}-${s.losses} taken alone, ${signedUnits(s.units ?? 0)}u at a unit each` : '', p.wins + p.losses ? `${p.wins}-${p.losses} as parlay pieces` : '', w.wins + w.losses ? `${w.wins}-${w.losses} priced as all but won` : ''].filter(Boolean);
+  const tally = graded ? `<p class="row-sub tennis-lower-tally"><b>The leans so far</b> ${esc(parts.join(' · '))}. A result is read from the draw: the player listed in the next round went through, so a final is never counted.</p>` : '';
+  return `<h3 class="tennis-h3">Challenger and ITF <small>${all.length} match${all.length === 1 ? '' : 'es'} to come · ${leans.length} lean${leans.length === 1 ? '' : 's'}${lower?.at ? ` · prices read ${esc(ago(lower.at))}` : ''}</small></h3>
+    <p class="row-sub tennis-bar">Below the tours the price is the only read: no serve numbers or results are on file. Each match gets a lean on the favourite, or the reason there is none. These are leans off the price, not tracked plays: half a unit at most. Tap Why for the numbers.</p>
+    ${tally}
+    ${all.length ? `<div class="tennis-actions tennis-lower-pick"><button type="button" class="parlay-btn" data-tennis-lower="all" aria-pressed="${!tennisState.lowerLeans}">Every match (${all.length})</button><button type="button" class="parlay-btn" data-tennis-lower="leans" aria-pressed="${tennisState.lowerLeans}">Leans only (${leans.length})</button></div>` : ''}
+    ${comps.map((g) => `<section class="tennis-lower" aria-label="${esc(g.comp ?? 'Tournament')}"><h4 class="tennis-lower-h">${esc(g.comp ?? 'Tournament')} <small>${g.rows.length} match${g.rows.length === 1 ? '' : 'es'}</small></h4>${g.rows.map(row).join('')}</section>`).join('') || (all.length ? '<p class="empty">No match with a lean right now.</p>' : '<p class="empty">No Challenger or ITF match is listed in the next day and a half.</p>')}`;
+}
+
 function renderTennis() {
   if (!el.tennisBody) return;
   const d = tennisState.data;
@@ -13303,6 +13347,7 @@ function renderTennis() {
     ${leans.length ? leans.map((l, i) => renderTennisLean(l, i + 1)).join('') : empty}
     ${suggestions.length ? `<h3 class="tennis-h3">Parlay it <small>the leans together, priced at one book</small></h3>${suggestions.map(renderTennisSuggestion).join('')}` : ''}
     ${plays.length ? `<h3 class="tennis-h3">On the record today <small>the day's parlay, aces, and plays already under way or settled</small></h3>${plays.map(renderTennisPlay).join('')}` : ''}
+    ${renderTennisLower()}
     ${readsHtml}`;
 }
 
@@ -13678,6 +13723,8 @@ el.tennisView?.addEventListener('click', (event) => {
   if (stats) { openPlayerByName(stats.dataset.tennisPlayer, 'tennis'); return; }
   const why = event.target.closest('[data-tennis-why]');
   if (why) { toggleTennisWhy(why); renderTennis(); return; }
+  const lower = event.target.closest('[data-tennis-lower]');
+  if (lower) { tennisState.lowerLeans = lower.dataset.tennisLower === 'leans'; renderTennis(); return; }
   const reads = event.target.closest('details.tennis-reads');
   if (reads) setTimeout(() => { tennisState.reads = reads.open; }, 0);
 });
