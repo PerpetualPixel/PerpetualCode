@@ -21,12 +21,12 @@
      only page that reads the feed; the other pages' connect-src stays the
      worker alone. -->
 <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src 'self' https://fonts.gstatic.com; img-src 'self' data: https:; connect-src 'self' https://pixel-pick-odds.mgbouldering.workers.dev https://perpetualpixel.github.io; object-src 'none'; base-uri 'self'; form-action 'self'">
-<script src="frame-guard.js?v=1.414"></script>
+<script src="frame-guard.js?v=1.415"></script>
 <!-- The first board is asked for here, while the rest of the page is still arriving (docs/early.js). -->
 <link rel="preconnect" href="https://pixel-pick-odds.mgbouldering.workers.dev" crossorigin>
-<script src="early.js?v=1.414"></script>
+<script src="early.js?v=1.415"></script>
 <!-- The loader's animation (docs/loader-fx.js): deferred, it draws the loaders already in the page as soon as the page has arrived. -->
-<script src="loader-fx.js?v=1.414" defer></script>
+<script src="loader-fx.js?v=1.415" defer></script>
 <title>Perpetual Picks - App</title>
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <meta name="theme-color" content="#05050A">
@@ -42,7 +42,7 @@
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Syne:wght@600;700;800&family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
-<link rel="stylesheet" href="styles.css?v=1.414">
+<link rel="stylesheet" href="styles.css?v=1.415">
 <!-- modulepreload:start (written by update-version.js: every file app.js imports, fetched alongside it rather than one after another) -->
 <link rel="modulepreload" href="config.js">
 <link rel="modulepreload" href="demo.js">
@@ -76,7 +76,7 @@
 <link rel="modulepreload" href="take-or-fade.js">
 <!-- modulepreload:end -->
 <!-- Before first paint: a desktop reader who chose "Fit screen" gets the wide shell without a flash of the narrow one. -->
-<script src="wide.js?v=1.414"></script>
+<script src="wide.js?v=1.415"></script>
 </head>
 <body>
 
@@ -214,6 +214,7 @@
       <li><strong>Onyx:</strong> pick Onyx as one of your sportsbooks and every line and ticket gets a button that copies the pick and opens Onyx.</li>
       <li><strong>Live, custom parlay mode:</strong> it now lists every live line the sportsbook has up, not only the well-paced ones, with a Sort menu (pace, closest to the number, shortest or longest odds, our picks, player). The lines our own slips would take are marked "Our pick". One leg is enough now: a single leg makes a straight bet link.</li>
       <li><strong>Tennis, Challenger and ITF:</strong> the Tennis tab now lists every Challenger and ITF singles match FanDuel has up, by tournament, each with a lean or the reason there is none. These are leans off the price, not tracked plays.</li>
+      <li><strong>Live, Challenger and ITF:</strong> those matches now show on the Live tab while they are in play, each with its score and one call: a lean with the price to take it at, what to watch for, or why there is no call. The block says how old its scores are.</li>
       <li><strong>Live, no repeats:</strong> once a player is on a live slip for a stat, he is not put on another slip for that stat later in the same game, at the same number or a higher one.</li>
       <li><strong>Live, NFL slips:</strong> rebuilt after a losing start. An NFL slip is now two legs, on yards only (no catch counts), and is posted only when a sportsbook prices both legs better than the other sportsbooks do. Expect far fewer NFL slips.</li>
       <li><strong>Parlay, red flags:</strong> a new "Leave out red flags" switch. Off, a player with a red flag stays in your results with a flag on the card, and the ticket says how many have one. On, those players are left out and the ticket says how many.</li>
@@ -753,6 +754,7 @@
       <p><strong>Custom parlay mode</strong> is a switch at the top of the Live tab. Turn it on, pick one sportsbook, and the tab lists every live line that sportsbook has up, one a row, each with where the player is now, the pace and the price. <strong>Sort</strong> orders them by pace, by how close the player is to the number, by the shortest or the longest odds, by our picks, or by player. A line marked <strong>Our pick</strong> clears the bar our own live slips are built from; the rest are simply what the sportsbook is offering. Tick one leg for a straight bet or more for a parlay, and the builder shows your legs, the odds, and one button that opens that sportsbook with them on the slip. Legs are one sportsbook's only: picking another sportsbook starts a new ticket. A sportsbook sets its own price when two legs are from the same game, so the estimate can differ from the slip. A leg that is no longer offered is marked on your ticket and left off the link.</p>
       <p>Slips build from the first minutes of a game and are rebuilt as it moves. In a blowout, or very late in a game, there may be none, and the card says why. A game leaves the list when it ends.</p>
       <p>Tennis sits on the same tab. A match in play shows each player's chance of winning and one call. <strong>Play</strong> is a tracked play with its stake. <strong>Lean</strong> is the best call on the match when nothing clears the bar for a tracked play; it is graded but not counted in the record. <strong>Watch</strong> means it is too early, with what to look for. <strong>No call</strong> gives the reason in a few words, such as too close, volatile or poorly priced. Each play and lean says the price to take it at or better. Tap More for the serving, the games expected in the set and the reasons.</p>
+      <p><strong>Challenger and ITF</strong> matches have their own block under it while they are in play. Each shows its score and one call, read the same way as a tour match: a lean with the price to take it at or better, what to watch for early in a set, or why there is no call. No live price is read for these matches, so a lean never shows a sportsbook's price, only the price worth taking. Their scores are read less often than a tour match's, and the block says how old they are: check the live score before you bet. These leans keep a tally of their own and are never counted in a record.</p>
     </details>
 
     <details>
@@ -1252,6 +1254,6 @@
   </div>
 </aside>
 
-<script type="module" src="app.js?v=1.414"></script>
+<script type="module" src="app.js?v=1.415"></script>
 </body>
 </html>
