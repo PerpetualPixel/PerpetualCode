@@ -97,6 +97,9 @@ async function readLower({ att, comps, now, dry, list, say }) {
     const types = [...new Set(Object.values(att.markets ?? {}).map((m) => m.marketType))];
     console.log(`    markets on the page: ${Object.keys(att.markets ?? {}).length} [${types.slice(0, 12).join(' | ')}]; an event's fields: ${Object.keys(events[0] ?? {}).join(', ')}`);
     for (const m of view.matches) console.log(`    ${m.comp} | ${m.a} v ${m.b} | ${new Date(m.start).toISOString().slice(0, 16)} | ${m.ml ? `${m.ml.a} / ${m.ml.b}` : 'no price'} | ${m.call.kind === 'lean' ? `LEAN ${m.call.name} ${m.call.american} (${m.call.how}, ${Math.round(m.call.share * 100)}%${m.call.basis === 'rank' ? `, rank ${Math.round(m.call.rankShare * 100)}% price ${Math.round(m.call.market * 100)}%${m.call.value ? ', ROOM' : ''}` : ', price only'})` : m.call.text}`);
+    // One moneyline market as the page sends it, cut short: for holding the slip link's ids to it.
+    const sample = Object.values(att.markets ?? {}).find((m) => MONEYLINE.test(String(m.marketType ?? '')) && events.some((e) => String(e.eventId) === String(m.eventId)));
+    if (sample) console.log(`    a moneyline market as sent: ${JSON.stringify({ ...sample, runners: (sample.runners ?? []).map((r) => ({ ...r, previousWinRunnerOdds: undefined, runnerOrder: undefined })) }).slice(0, 2200)}`);
     console.log(`    in play by the page's markets: ${inPlay.size}; a market's fields: ${Object.keys(Object.values(att.markets ?? {}).find((m) => MONEYLINE.test(String(m.marketType ?? ''))) ?? {}).join(', ')}`);
   }
   const bytes = JSON.stringify(log).length;
