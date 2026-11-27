@@ -98,3 +98,24 @@ test('PrizePicks: no one link when a leg has no pick, the same projection is tak
   assert.ok(prizePicksCombined(many.slice(0, PRIZEPICKS_MAX_PICKS)));
   assert.equal(prizePicksCombined(many), null);
 });
+
+// --- a book whose app an iPhone will not open from a link ---
+import { opensInBrowser, isApple, IPHONE_BROWSER_BOOKS } from '../docs/book-links.js';
+test('BetMGM on an iPhone is a book that opens in the browser, and nowhere else', () => {
+  const iphone = { userAgent: 'Mozilla/5.0 (iPhone; CPU iPhone OS 19_1 like Mac OS X) AppleWebKit/605.1.15 Version/19.1 Mobile/15E148 Safari/604.1', maxTouchPoints: 5 };
+  const ipad = { userAgent: 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 Version/19.1 Safari/605.1.15', maxTouchPoints: 5 };
+  const mac = { userAgent: 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 Version/19.1 Safari/605.1.15', maxTouchPoints: 0 };
+  const android = { userAgent: 'Mozilla/5.0 (Linux; Android 16; Pixel 10) AppleWebKit/537.36 Chrome/140.0 Mobile Safari/537.36', maxTouchPoints: 5 };
+  assert.deepEqual(IPHONE_BROWSER_BOOKS, ['betmgm']);
+  assert.equal(isApple(iphone), true);
+  assert.equal(isApple(ipad), true);
+  assert.equal(isApple(mac), false);
+  assert.equal(isApple(android), false);
+  assert.equal(opensInBrowser('betmgm', iphone), true);
+  assert.equal(opensInBrowser('BetMGM', ipad), true);
+  // Untested on Android, and a desktop has no app to open: neither is told anything.
+  assert.equal(opensInBrowser('betmgm', android), false);
+  assert.equal(opensInBrowser('betmgm', mac), false);
+  assert.equal(opensInBrowser('fanduel', iphone), false);
+  assert.equal(opensInBrowser(null, iphone), false);
+});

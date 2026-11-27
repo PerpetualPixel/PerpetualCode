@@ -27,7 +27,7 @@ import { sortTrends, sortQuotes, bestQuote, attachSeries, hitFlags, nflWeek, leg
 import { enhanceSelect } from './custom-select.js';
 import { BUILD_INFO } from './version.js';
 import { safeUrl } from './safe-url.js';
-import { hardRockCombined, prizePicksCombined, phoneSlipLink, isPhone, pickText, withState, needsState, cleanState, US_STATES } from './book-links.js';
+import { hardRockCombined, prizePicksCombined, phoneSlipLink, isPhone, pickText, withState, needsState, cleanState, US_STATES, opensInBrowser } from './book-links.js';
 import { groupLiveSlips, slipNumbers, parseLiveHash } from './live-slips.js';
 import { boardLegs, builderView, toggleLeg, sortBoard, BOARD_SORTS, BUILDER_MAX_LEGS } from './live-builder.js';
 import { checkable as flagCheckable, nextFlagBatch, pickTicket, leftOutText, flaggedText, FLAG_ROUNDS, FLAG_TTL_MS } from './parlay-flags.js';
@@ -11336,9 +11336,12 @@ function ticketSlipFoot(bet) {
   const pb = legs.length ? playbookBlock({ key: playbookKey(bet.bookId ?? bet.book, legs.map((l) => l.id ?? l.selection)), legs: legs.map((l) => ({ selection: l.selection, game: l.away && l.home ? `${l.away} @ ${l.home}` : '' })), book: bookIdFor(bet.bookId) ?? bet.bookId ?? bet.book, bookName: bet.book }) : '';
   const onyx = onyxQuick(legs.map((l) => ({ selection: l.selection, game: l.away && l.home ? `${l.away} @ ${l.home}` : '' })));
   if (!href) return pb || onyx ? `<div class="pick-bet-foot">${onyx}${pb}</div>` : '';
-  const label = all ? `Add all ${bet.legs.length} legs to your ${esc(bet.book)} slip ↗` : bet.link ? `Open on your ${esc(bet.book)} slip ↗` : `Open ${esc(bet.book)}`;
+  // On an iPhone a book whose app takes no link (BetMGM) opens its slip in the browser: the button says so.
+  const web = opensInBrowser(bookIdFor(bet.bookId) ?? bet.bookId);
+  const label = all ? `Add all ${bet.legs.length} legs to your ${esc(bet.book)} slip${web ? ' in the browser' : ''} ↗` : bet.link ? `Open on your ${esc(bet.book)} slip${web ? ' in the browser' : ''} ↗` : `Open ${esc(bet.book)}`;
+  const webNote = web && (all || bet.link) ? `<p class="row-sub">${esc(bet.book)}'s iPhone app cannot be opened by a link, so this opens ${esc(bet.book)}'s website with the bet on the slip.</p>` : '';
   const perLeg = !all && bet.type === 'parlay' ? (bet.legs.some((l) => l.link) ? `<p class="row-sub">${esc(bet.book)} takes legs one at a time: tap each leg's price to add it.</p>` : `<p class="row-sub">${esc(bet.book)} gives out no slip links: add the legs by hand.</p>`) : '';
-  return `<div class="pick-bet-foot">${perLeg}<a class="pick-bet-link" href="${escUrl(href)}" target="_blank" rel="noopener">${label}</a>${onyx}${pb}</div>`;
+  return `<div class="pick-bet-foot">${perLeg}${webNote}<a class="pick-bet-link" href="${escUrl(href)}" target="_blank" rel="noopener">${label}</a>${onyx}${pb}</div>`;
 }
 
 /* ---------------------------------------------------------------- */

@@ -109,6 +109,27 @@ export function pickText(legs) {
 }
 
 /**
+ * The books whose app an iPhone will not open from a link, so the link
+ * opens the book's website in the browser (2026-11-27, the owner, on an
+ * iPhone in Virginia: "Anytime I click on bet mgm, it opens the browser
+ * and not the app").
+ *
+ * BetMGM: Safari's menu on the slip link has no "Open in BetMGM", and
+ * three forms of the address were tapped (the slip on sports.<st>, the
+ * game's page on sports.<st>, and both on www.<st>): none opened the app.
+ * Its app claims no address a slip can be written to, so the browser's
+ * slip is as far as a link goes. A button there says so, where it would
+ * otherwise read as though it opens the app like the other books'.
+ */
+export const IPHONE_BROWSER_BOOKS = ['betmgm'];
+/** Is this an iPhone or an iPad (an iPad says it is a Mac; its touch screen gives it away). */
+export function isApple({ userAgent = globalThis.navigator?.userAgent ?? '', maxTouchPoints = globalThis.navigator?.maxTouchPoints ?? 0 } = {}) {
+  return /iPhone|iPad|iPod/i.test(userAgent) || (/Macintosh/i.test(userAgent) && maxTouchPoints > 1);
+}
+/** Whether a book's slip link opens in the browser on this device, never in the book's app. */
+export const opensInBrowser = (bookId, device) => IPHONE_BROWSER_BOOKS.includes(String(bookId ?? '').toLowerCase()) && isApple(device);
+
+/**
  * The state a book's link is for (2026-11-24, the owner, of Caesars: "Open
  * the books URL, not the app, fix that"). Caesars and BetMGM run a site a
  * state, and the feed writes their slip links with the state left as a
