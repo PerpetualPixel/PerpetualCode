@@ -7543,6 +7543,8 @@ a.live-add-book:hover, a.live-add-book:focus-visible { border-color: var(--accen
 .tennis-lower-call.is-none b { color: var(--muted); }
 .tennis-lower-row .tennis-why-list { flex: 1 1 100%; margin: 2px 0 0; }
 .tennis-lower-pick { margin-top: 8px; }
+.tennis-lower-split { white-space: nowrap; opacity: 0.85; }
+.tennis-lower-call .tennis-tag { margin: 0; }
 .tennis-lower-pick .parlay-btn[aria-pressed="true"] { background: var(--accent-dim); color: var(--text); border-color: var(--accent); }
 .tennis-lower-tally b { color: var(--text); }
 .tennis-h3 small { margin-left: 8px; color: var(--muted); font-weight: 600; font-size: 0.78rem; }
