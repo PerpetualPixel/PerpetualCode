@@ -45,6 +45,15 @@ export function parseSets(score) {
   return out;
 }
 
+/** The rows of the source's answer: {success, results: [...], count} as it comes (seen 2026-11-27), or a bare list, or a list under another name. */
+export function liveRows(body) {
+  if (Array.isArray(body)) return body;
+  for (const k of ['results', 'data', 'result', 'events']) if (Array.isArray(body?.[k])) return body[k];
+  return Object.values(body ?? {}).find(Array.isArray) ?? [];
+}
+/** The shape on file was read by this version of the reader; a newer reader takes one fresh read for its own. */
+const SHAPE_VERSION = 2;
+
 const text = (...vals) => { for (const v of vals) { if (typeof v === 'string' && v.trim()) return v.trim(); if (v && typeof v === 'object' && typeof v.name === 'string' && v.name.trim()) return v.name.trim(); } return null; };
 
 /**
@@ -53,9 +62,8 @@ const text = (...vals) => { for (const v of vals) { if (typeof v === 'string' &&
  * 'b' or null. A doubles pair or a row without two names is left out.
  */
 export function parseLiveEvents(body) {
-  const list = Array.isArray(body) ? body : Array.isArray(body?.data) ? body.data : Array.isArray(body?.result) ? body.result : Array.isArray(body?.events) ? body.events : [];
   const out = [];
-  for (const e of list) {
+  for (const e of liveRows(body)) {
     if (!e || typeof e !== 'object') continue;
     const a = text(e.player1, e.player1Name, e.home, e.homeName, e.team1, e.participant1);
     const b = text(e.player2, e.player2Name, e.away, e.awayName, e.team2, e.participant2);
@@ -98,7 +106,7 @@ export async function runLowerLiveTick(env, now = Date.now(), { deps = {} } = {}
   const log = await readJson(env, TENNIS_LOWER_KEY);
   const playing = lowerInPlay(log, now);
   // The first read is made with nothing in play too, once, so the shape of the source is on file.
-  if (!playing.length && state.fetchedAt) return rest(now + 5 * 60e3, 'nothing in play');
+  if (!playing.length && state.shape?.v === SHAPE_VERSION) return rest(now + 5 * 60e3, 'nothing in play');
   const key = (env.RAPIDAPI_TENNIS_KEY ?? '').trim();
   if (!key && !deps.fetchLive) return rest(now + 30 * 60e3, 'no key');
   let body = null; let error = null;
@@ -107,12 +115,12 @@ export async function runLowerLiveTick(env, now = Date.now(), { deps = {} } = {}
     else { const res = await fetch(LIVE_URL, { headers: { 'x-rapidapi-host': HOST, 'x-rapidapi-key': key, Accept: 'application/json' } }); if (res.ok) body = await res.json(); else error = `HTTP ${res.status}`; }
   } catch (e) { error = String(e?.message ?? e).slice(0, 120); }
   const events = body ? parseLiveEvents(body) : [];
-  const raw = Array.isArray(body) ? body : body?.data ?? body?.result ?? body?.events ?? [];
+  const raw = liveRows(body);
   const next = {
     at: now, fetchedAt: now, day, calls: calls + 1, error,
     events: body ? events : state.events ?? [], eventsAt: body ? now : state.eventsAt ?? null,
     // What the source sent, cut short: the top-level fields, how many rows, and the first rows as they came.
-    shape: body ? { top: Array.isArray(body) ? 'array' : Object.keys(body ?? {}).slice(0, 20), rows: Array.isArray(raw) ? raw.length : null, parsed: events.length, first: (Array.isArray(raw) ? raw : []).slice(0, 3).map((r) => JSON.stringify(r).slice(0, 1500)) } : state.shape ?? null,
+    shape: body ? { v: SHAPE_VERSION, top: Array.isArray(body) ? 'array' : Object.entries(body ?? {}).slice(0, 12).map(([k, v]) => `${k}:${Array.isArray(v) ? `list of ${v.length}` : v && typeof v === 'object' ? `{${Object.keys(v).slice(0, 12).join(',')}}` : JSON.stringify(v)?.slice(0, 60)}`), rows: raw.length, parsed: events.length, first: raw.slice(0, 3).map((r) => JSON.stringify(r).slice(0, 1500)) } : state.shape ?? null,
     playing: playing.length,
   };
   await env.POTD_KV.put(LOWER_LIVE_KEY, JSON.stringify(next), { expirationTtl: STATE_TTL });
