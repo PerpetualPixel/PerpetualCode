@@ -21,7 +21,14 @@ export const FANDUEL_TABS = [/method/i, /round/i, /strike/i, /takedown/i, /stat/
 /** A tab's title as the page's own address for it: "Method of Victory" is method-of-victory. */
 export const fanduelTabSlug = (title) => String(title ?? '').toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '');
 
-/** One market trimmed to what a leg needs: its ids, its name and type, and each open runner's id, name, handicap and price. Null for a closed or empty market. */
+/**
+ * One market trimmed to what a leg needs: its ids, its name and type, and each open runner's id, name, handicap and price. Null for a closed or empty market.
+ *
+ * A market has two ids. `marketId` ("734.199858730") is the page's own; `slipId` ("42.629110703", the page's
+ * associatedMarkets[].externalMarketId) is the one the slip link takes. 2026-11-27, the owner, with the FanDuel app's
+ * "Selection not added" on a tennis moneyline that was on the book: every link had been built from the page's own id,
+ * while the odds feed's FanDuel links, which do open a slip, carry the other one.
+ */
 export function trimFanduelMarket(m) {
   if (!m?.marketId || (m.marketStatus && m.marketStatus !== 'OPEN')) return null;
   const runners = (m.runners ?? []).filter((r) => r?.selectionId != null && (!r.runnerStatus || r.runnerStatus === 'ACTIVE')).map((r) => {
@@ -29,8 +36,12 @@ export function trimFanduelMarket(m) {
     return { selectionId: r.selectionId, runnerName: r.runnerName ?? '', handicap: Number(r.handicap) || 0, american: Number.isFinite(american) ? american : null };
   });
   if (!runners.length) return null;
-  return { marketId: String(m.marketId), marketName: m.marketName ?? '', marketType: m.marketType ?? '', sgm: Boolean(m.sgmMarket), runners };
+  const slipId = (m.associatedMarkets ?? []).map((x) => x?.externalMarketId).find((id) => typeof id === 'string' && id.trim());
+  return { marketId: String(m.marketId), ...(slipId ? { slipId: slipId.trim() } : {}), marketName: m.marketName ?? '', marketType: m.marketType ?? '', sgm: Boolean(m.sgmMarket), runners };
 }
+
+/** The id of a trimmed market that a slip link takes: the external one, and the page's own for a market read before it was kept. */
+export const fanduelSlipId = (market) => market?.slipId ?? market?.marketId ?? null;
 
 /** The card from KV, or null. */
 export async function readFanduel(env) {
@@ -127,7 +138,7 @@ export function quoteSharpPlays(plays, bout, card) {
   for (const play of plays ?? []) {
     const found = hit ? fanduelSharpRunner(play, hit.fight, hit.names) : null;
     if (found && Number.isFinite(found.runner.american)) {
-      play.quote = { bookId: 'fanduel', book: 'FanDuel', american: found.runner.american, link: fanduelSlipLink(found.market.marketId, found.runner.selectionId) };
+      play.quote = { bookId: 'fanduel', book: 'FanDuel', american: found.runner.american, link: fanduelSlipLink(fanduelSlipId(found.market), found.runner.selectionId) };
     } else {
       delete play.quote;
     }
@@ -151,7 +162,7 @@ export function priceLegsFromFanduel(legs, bout, card) {
   const out = legs.map((leg) => {
     const found = fanduelRunnerFor(leg, fight, leg.side ? names[leg.side] : null);
     if (!found || !Number.isFinite(found.runner.american)) return leg;
-    const quote = { bookId: 'fanduel', book: 'FanDuel', american: found.runner.american, decimal: americanToDecimal(found.runner.american), link: fanduelSlipLink(found.market.marketId, found.runner.selectionId), source: 'fanduel', sgm: found.market.sgm };
+    const quote = { bookId: 'fanduel', book: 'FanDuel', american: found.runner.american, decimal: americanToDecimal(found.runner.american), link: fanduelSlipLink(fanduelSlipId(found.market), found.runner.selectionId), source: 'fanduel', sgm: found.market.sgm };
     const quotes = [...(leg.quotes ?? []).filter((q) => q.bookId !== 'fanduel' && q.bookId !== 'engine'), quote].sort((x, y) => y.american - x.american);
     linked++;
     return { ...leg, quotes, priced: true, note: null };
