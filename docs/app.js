@@ -12762,12 +12762,19 @@ function renderLiveTennisLower(lw) {
     </div>`;
   };
   const slow = (lw.everyMin ?? 1) > 2;
-  const note = slow ? `<p class="row-sub">Scores here are read every ${esc(String(lw.everyMin))} minutes${lw.readsLeft === 0 ? ", and today's reads are used up" : ''}. Check the live score before you bet: a lean stands on the score shown.</p>` : '';
+  // "every hour from 10 AM ET" on the free plan's schedule; "every 5 minutes" on a quicker one.
+  const hour12 = (h) => `${h % 12 || 12} ${h < 12 ? 'AM' : 'PM'}`;
+  const cadence = lw.everyMin === 60 ? 'every hour' : `every ${lw.everyMin} minutes`;
+  const schedule = `${cadence}${Number.isInteger(lw.fromHour) ? ` from ${hour12(lw.fromHour)} ET` : ''}`;
+  // Scores past their read are not shown as in play: the block says when they come back.
+  const note = lw.stale
+    ? `<p class="row-sub">No fresh scores right now${lw.at ? `: the last read was ${esc(ago(lw.at))}` : ''}. ${lw.readsLeft === 0 ? "Today's reads are used up; they start again tomorrow." : `Scores are read ${esc(schedule)}.`} Live calls come back with the next read.</p>`
+    : slow ? `<p class="row-sub">Scores here are read ${esc(schedule)}${lw.readsLeft === 0 ? ", and today's reads are used up" : ''}. Check the live score before you bet: a lean stands on the score shown.</p>` : '';
   const tally = graded ? `<p class="row-sub"><strong>Leans</strong> · ${t.wins}-${t.losses} <small>${esc(signedUnits(t.units ?? 0))}u at half a unit each · not counted in any record</small></p>` : '';
   return `<div class="live-tennis live-tennis-lower">
-    <p class="live-sub">Challenger and ITF <small>${matches.length} in play${lw.at ? ` · scores read ${esc(ago(lw.at))}` : ''}</small></p>
+    <p class="live-sub">Challenger and ITF <small>${lw.stale ? 'waiting on the next score read' : `${matches.length} in play${lw.at ? ` · scores read ${esc(ago(lw.at))}` : ''}`}</small></p>
     ${note}${tally}
-    ${matches.map(row).join('') || '<p class="row-sub">None in play at the last read.</p>'}
+    ${lw.stale ? '' : matches.map(row).join('') || '<p class="row-sub">None in play at the last read.</p>'}
   </div>`;
 }
 /** Tennis on the Live tab: the day's parlay with each leg's standing, the matches in play, the matches with a play, the rest folded. */

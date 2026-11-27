@@ -9,8 +9,8 @@
  *
  * The cost is the whole design (the owner: "keep API calls cost low"). The
  * free plan is 50 calls a day, the grading keeps 30 of them and the
- * weekly rankings up to 10, so this reads at most LOWER_LIVE_DAILY times a day, no more often than every
- * LOWER_LIVE_EVERY_MIN minutes, and only while a match on the lower board
+ * weekly rankings up to 10, so this reads at most LOWER_LIVE_DAILY times a day, from LOWER_LIVE_FROM_HOUR
+ * Eastern, no more often than every LOWER_LIVE_EVERY_MIN minutes, and only while a match on the lower board
  * (worker/src/tennis-lower.js) should be in play. A paid plan lifts both
  * numbers from the worker's variables (TENNIS_LOWER_LIVE_DAILY,
  * TENNIS_LOWER_LIVE_EVERY_MIN) with no change here: one call a minute is
@@ -38,7 +38,14 @@ const HOST = 'tennis-api-atp-wta-itf.p.rapidapi.com';
 const LIVE_URL = `https://${HOST}/tennis/v2/extend/api/events/live`;
 /** The free plan's share: with the grading's 30 and the rankings' 10 (worker/src/tennis-lower-ranks.js) this stays at the provider's 50 a day. */
 export const LOWER_LIVE_DAILY = 10;
-export const LOWER_LIVE_EVERY_MIN = 30;
+export const LOWER_LIVE_EVERY_MIN = 60;
+/**
+ * The hour of the day (US Eastern) from which the free plan's reads are made. The day's count starts at midnight
+ * Eastern, and matches are in play then (Europe's morning): on 2026-11-27 all ten reads were spent by 5:30 AM, the
+ * Live tab showed those scores at noon, and nothing would have reached Discord while anyone was awake to see it. So
+ * the reads wait for the morning and are an hour apart: ten of them run from 10 AM to 7 PM.
+ */
+export const LOWER_LIVE_FROM_HOUR = 10;
 /** From this many calls a day the source is read whether or not the board has a match in play: matches the board never listed are followed too. */
 const ALWAYS_FROM = 500;
 /** A match is taken to be in play from its listed start for this long. */
@@ -47,7 +54,9 @@ const STATE_TTL = 2 * 86400;
 
 const num = (v, fallback) => { const n = Number(v); return Number.isFinite(n) && n > 0 ? n : fallback; };
 /** The plan's two numbers: the worker's variables when set, the free plan's otherwise. */
-export const lowerLiveBudget = (env) => ({ daily: num(env?.TENNIS_LOWER_LIVE_DAILY, LOWER_LIVE_DAILY), everyMs: num(env?.TENNIS_LOWER_LIVE_EVERY_MIN, LOWER_LIVE_EVERY_MIN) * 60e3 });
+export const lowerLiveBudget = (env) => { const h = Number(env?.TENNIS_LOWER_LIVE_FROM_HOUR); return { daily: num(env?.TENNIS_LOWER_LIVE_DAILY, LOWER_LIVE_DAILY), everyMs: num(env?.TENNIS_LOWER_LIVE_EVERY_MIN, LOWER_LIVE_EVERY_MIN) * 60e3, fromHour: env?.TENNIS_LOWER_LIVE_FROM_HOUR != null && env.TENNIS_LOWER_LIVE_FROM_HOUR !== '' && Number.isInteger(h) && h >= 0 && h <= 23 ? h : LOWER_LIVE_FROM_HOUR }; };
+/** The hour of the day in US Eastern time. */
+export const etHour = (ms) => Number(new Intl.DateTimeFormat('en-US', { timeZone: 'America/New_York', hour: 'numeric', hourCycle: 'h23' }).format(ms));
 
 /** "6-4,3-2" as [[6, 4], [3, 2]]; a tiebreak's points in brackets are dropped. Empty for a score that will not read. */
 export function parseSets(score) {
@@ -177,6 +186,8 @@ const leanStats = (read) => ({
   streak: read?.momentum?.streak?.n >= 3 ? { side: read.momentum.streak.side, n: read.momentum.streak.n } : null,
 });
 
+/** How long past a read's interval its scores are still shown. */
+const STALE_GRACE_MS = 10 * 60e3;
 /** A match stays on file this long after its listed start; a match lean with no result by LEAN_VOID_MS after it is void. */
 const MATCH_KEEP_MS = 14 * 3600e3;
 const LEAN_VOID_MS = 8 * 3600e3;
@@ -264,7 +275,9 @@ let restUntil = 0;
  */
 export async function runLowerLiveTick(env, now = Date.now(), { deps = {} } = {}) {
   if (!deps.noRest && now < restUntil) return { skipped: true, reason: 'resting' };
-  const { daily, everyMs } = lowerLiveBudget(env);
+  const { daily, everyMs, fromHour } = lowerLiveBudget(env);
+  // Before the day's first hour on the free plan: nothing is read, and nothing is asked of storage either.
+  if (daily < ALWAYS_FROM && etHour(now) < fromHour) { if (!deps.noRest) restUntil = now + 5 * 60e3; return { skipped: true, reason: 'before the day\'s first read' }; }
   const state = (await readJson(env, LOWER_LIVE_KEY)) ?? {};
   const day = etDay(now);
   const calls = state.day === day ? state.calls ?? 0 : 0;
@@ -307,13 +320,15 @@ export async function runLowerLiveTick(env, now = Date.now(), { deps = {} } = {}
  */
 export function lowerLiveView(state, env, now = Date.now()) {
   if (!state) return null;
-  const { daily, everyMs } = lowerLiveBudget(env);
+  const { daily, everyMs, fromHour } = lowerLiveBudget(env);
   const all = Object.values(state.matches ?? {});
+  // Scores older than a read and a little are not shown as in play: the next read is overdue (the day's are spent, or it is before the first hour).
+  const stale = !(now - (state.eventsAt ?? 0) <= everyMs + STALE_GRACE_MS);
   const view = (m) => ({ id: m.id, comp: m.comp, tour: m.tour, tier: m.tier, a: m.a, b: m.b, start: m.start, priced: m.priced, sets: m.sets, points: m.points, server: m.server, read: m.read, call: m.call, lean: m.lean });
-  const matches = all.filter((m) => m.live && m.seenAt === state.eventsAt).sort((x, y) => x.start - y.start || String(x.a).localeCompare(String(y.a))).map(view);
+  const matches = stale ? [] : all.filter((m) => m.live && m.seenAt === state.eventsAt).sort((x, y) => x.start - y.start || String(x.a).localeCompare(String(y.a))).map(view);
   const settled = all.flatMap((m) => [...(m.past ?? []), m.lean].filter((l) => l?.result).map((l) => ({ ...l, id: m.id, comp: m.comp, a: m.a, b: m.b }))).sort((x, y) => (y.settledAt ?? 0) - (x.settledAt ?? 0)).slice(0, 8);
   const used = state.day === etDay(now) ? state.calls ?? 0 : 0;
-  return { at: state.eventsAt ?? null, everyMin: Math.round(everyMs / 60e3), readsLeft: Math.max(0, daily - used), error: state.error ?? null, matches, settled, tally: state.tally ?? { wins: 0, losses: 0, voids: 0, units: 0 } };
+  return { at: state.eventsAt ?? null, everyMin: Math.round(everyMs / 60e3), fromHour: daily < ALWAYS_FROM ? fromHour : null, readsLeft: Math.max(0, daily - used), stale, error: state.error ?? null, matches, settled, tally: state.tally ?? { wins: 0, losses: 0, voids: 0, units: 0 } };
 }
 
 /** The name the leans' tally goes by where it is said beside one of them. */

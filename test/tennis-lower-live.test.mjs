@@ -1,9 +1,10 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { parseSets, parseLiveEvents, lowerLiveBudget, lowerInPlay, runLowerLiveTick, getLowerLive, eventFor, matchWinner, settleLean, advanceLower, lowerLiveView, lowerSourceTier, nearPlayer, samePair, LOWER_LIVE_KEY, LOWER_LIVE_DAILY } from '../worker/src/tennis-lower-live.js';
+import { parseSets, parseLiveEvents, lowerLiveBudget, lowerInPlay, runLowerLiveTick, getLowerLive, eventFor, matchWinner, settleLean, advanceLower, lowerLiveView, lowerSourceTier, nearPlayer, samePair, etHour, LOWER_LIVE_KEY, LOWER_LIVE_DAILY } from '../worker/src/tennis-lower-live.js';
 import { TENNIS_LOWER_KEY } from '../worker/src/tennis-lower.js';
 
-const NOW = Date.parse('2026-11-27T09:00:00Z');
+// 11 AM Eastern: inside the free plan's reading hours.
+const NOW = Date.parse('2026-11-27T16:00:00Z');
 const kv = (init = {}) => { const m = new Map(Object.entries(init).map(([k, v]) => [k, JSON.stringify(v)])); return { m, get: async (k) => m.get(k) ?? null, put: async (k, v) => { m.set(k, v); } }; };
 const log = (startMs, extra = {}) => ({ matches: { 1: { id: '1', comp: 'Monastir Challenger 2026', tour: 'atp', tier: 'challenger', a: 'Kimmer Coppejans', b: 'Dali Blanch', start: startMs, ml: { a: -188, b: 140 }, ...extra } } });
 const row = (score, extra = {}) => ({ id: '9', a: 'Kimmer Coppejans', b: 'Dali Blanch', tour: 'atp', status: 'InPlay', sets: parseSets(score), points: '30-15', server: 'a', tournament: null, ...extra });
@@ -30,8 +31,11 @@ test('the source\'s rows are read as singles matches with the server', () => {
 });
 
 test('the budget is the free plan\'s unless the worker says otherwise', () => {
-  assert.deepEqual(lowerLiveBudget({}), { daily: LOWER_LIVE_DAILY, everyMs: 30 * 60e3 });
-  assert.deepEqual(lowerLiveBudget({ TENNIS_LOWER_LIVE_DAILY: '1400', TENNIS_LOWER_LIVE_EVERY_MIN: '1' }), { daily: 1400, everyMs: 60e3 });
+  assert.deepEqual(lowerLiveBudget({}), { daily: LOWER_LIVE_DAILY, everyMs: 60 * 60e3, fromHour: 10 });
+  assert.deepEqual(lowerLiveBudget({ TENNIS_LOWER_LIVE_DAILY: '1400', TENNIS_LOWER_LIVE_EVERY_MIN: '1' }), { daily: 1400, everyMs: 60e3, fromHour: 10 });
+  assert.equal(lowerLiveBudget({ TENNIS_LOWER_LIVE_FROM_HOUR: '8' }).fromHour, 8);
+  assert.equal(lowerLiveBudget({ TENNIS_LOWER_LIVE_FROM_HOUR: '0' }).fromHour, 0);
+  assert.equal(lowerLiveBudget({ TENNIS_LOWER_LIVE_FROM_HOUR: 'noon' }).fromHour, 10);
 });
 
 test('a match is in play from its start for a few hours, until it has a result', () => {
@@ -53,14 +57,14 @@ test('the tick reads when a match is in play, then waits out the interval and th
   assert.equal(r.reason, 'read not long ago');
   assert.equal(asked, 1);
   // Past the interval it reads again.
-  r = await runLowerLiveTick(env, NOW + 31 * 60e3, { deps });
+  r = await runLowerLiveTick(env, NOW + 61 * 60e3, { deps });
   assert.equal(r.calls, 2);
-  const seen = await getLowerLive(env, NOW + 31 * 60e3, { debug: true });
+  const seen = await getLowerLive(env, NOW + 61 * 60e3, { debug: true });
   assert.equal(seen.matches[0].a, 'Kimmer Coppejans');
   assert.deepEqual(seen.matches[0].sets, [[6, 4], [3, 2]]);
   assert.equal(seen.shape.rows, 2);
   assert.equal(seen.readsLeft, LOWER_LIVE_DAILY - 2);
-  assert.equal((await getLowerLive(env, NOW + 31 * 60e3)).shape, undefined);
+  assert.equal((await getLowerLive(env, NOW + 61 * 60e3)).shape, undefined);
   // The day's calls spent: no read.
   const state = JSON.parse(POTD_KV.m.get(LOWER_LIVE_KEY));
   POTD_KV.m.set(LOWER_LIVE_KEY, JSON.stringify({ ...state, calls: LOWER_LIVE_DAILY, fetchedAt: NOW }));
@@ -74,7 +78,7 @@ test('with nothing in play the source is read once, for its shape, and not again
   let asked = 0;
   const deps = { noRest: true, fetchLive: async () => { asked += 1; return body; } };
   await runLowerLiveTick({ POTD_KV }, NOW, { deps });
-  const r = await runLowerLiveTick({ POTD_KV }, NOW + 30 * 60e3, { deps });
+  const r = await runLowerLiveTick({ POTD_KV }, NOW + 61 * 60e3, { deps });
   assert.equal(r.reason, 'nothing in play');
   assert.equal(asked, 1);
 });
@@ -82,10 +86,10 @@ test('with nothing in play the source is read once, for its shape, and not again
 test('a failed read keeps the last scores and still counts against the day', async () => {
   const POTD_KV = kv({ [TENNIS_LOWER_KEY]: log(NOW - 3600e3) });
   await runLowerLiveTick({ POTD_KV }, NOW, { deps: { noRest: true, fetchLive: async () => body } });
-  const r = await runLowerLiveTick({ POTD_KV }, NOW + 31 * 60e3, { deps: { noRest: true, fetchLive: async () => { throw new Error('down'); } } });
+  const r = await runLowerLiveTick({ POTD_KV }, NOW + 61 * 60e3, { deps: { noRest: true, fetchLive: async () => { throw new Error('down'); } } });
   assert.equal(r.error, 'down');
   assert.equal(r.calls, 2);
-  const seen = await getLowerLive({ POTD_KV }, NOW + 31 * 60e3);
+  const seen = await getLowerLive({ POTD_KV }, NOW + 61 * 60e3);
   assert.equal(seen.matches.length, 1);
   assert.equal(seen.at, NOW);
   assert.equal(seen.error, 'down');
@@ -166,11 +170,13 @@ test('the view lists the matches in play at the last read, with the tally and ho
   const v = lowerLiveView({ ...st, eventsAt: NOW, day: 'x', calls: 3 }, {}, NOW + 5 * 60e3);
   assert.equal(v.matches.length, 1);
   assert.equal(v.matches[0].timeline, undefined);
-  assert.equal(v.everyMin, 30);
+  assert.equal(v.everyMin, 60);
+  assert.equal(v.fromHour, 10);
+  assert.equal(v.stale, false);
   assert.deepEqual(v.tally, { wins: 0, losses: 0, voids: 0, units: 0 });
   // A later read without the match: it is off the list.
   const later = advanceLower(st.matches, st.tally, log(NOW - 3600e3), [], NOW + 20 * 60e3);
-  assert.equal(lowerLiveView({ ...later, eventsAt: NOW + 20 * 60e3 }, {}, NOW + 31 * 60e3).matches.length, 0);
+  assert.equal(lowerLiveView({ ...later, eventsAt: NOW + 20 * 60e3 }, {}, NOW + 61 * 60e3).matches.length, 0);
   assert.equal(lowerLiveView(null, {}), null);
 });
 
@@ -245,4 +251,39 @@ test('a near spelling of one player pairs a match when the other player fits, an
   // The lean opened while it was followed from the source alone goes with it.
   assert.equal(next.matches['7'].lean.selection, 'Ani Amiraghyan to win the match');
   assert.equal(next.matches['7'].lean.at, NOW - 1800e3);
+});
+
+test('on the free plan nothing is read before 10 AM Eastern, so the day\'s reads are not spent overnight', async () => {
+  assert.equal(etHour(Date.parse('2026-11-27T14:59:00Z')), 9);
+  assert.equal(etHour(Date.parse('2026-11-27T15:00:00Z')), 10);
+  assert.equal(etHour(Date.parse('2026-11-27T05:00:00Z')), 0);
+  const early = Date.parse('2026-11-27T09:00:00Z'); // 4 AM Eastern, Europe's matches in play
+  const POTD_KV = kv({ [TENNIS_LOWER_KEY]: log(early - 3600e3) });
+  let asked = 0;
+  const deps = { noRest: true, fetchLive: async () => { asked += 1; return body; } };
+  let r = await runLowerLiveTick({ POTD_KV }, early, { deps });
+  assert.equal(r.reason, 'before the day\'s first read');
+  assert.equal(asked, 0);
+  // The hour can be moved, and a plan with calls to spare reads the clock round.
+  r = await runLowerLiveTick({ POTD_KV, TENNIS_LOWER_LIVE_FROM_HOUR: '4' }, early, { deps });
+  assert.equal(r.skipped, false);
+  const paid = kv({ [TENNIS_LOWER_KEY]: log(early - 3600e3) });
+  r = await runLowerLiveTick({ POTD_KV: paid, TENNIS_LOWER_LIVE_DAILY: '1400', TENNIS_LOWER_LIVE_EVERY_MIN: '1' }, early, { deps });
+  assert.equal(r.skipped, false);
+});
+
+test('scores past their read are not shown as in play, and the view says so', () => {
+  const st = advanceLower(null, null, log(NOW - 3600e3), [row('4-2')], NOW);
+  const state = { ...st, eventsAt: NOW, day: '2026-11-27', calls: 10 };
+  // Inside the hour and a little: shown.
+  assert.equal(lowerLiveView(state, {}, NOW + 65 * 60e3).matches.length, 1);
+  // Seven hours on, the day's reads spent (2026-11-27: scores read at 5:30 AM shown as in play at noon).
+  const late = lowerLiveView(state, {}, NOW + 7 * 3600e3);
+  assert.equal(late.stale, true);
+  assert.equal(late.matches.length, 0);
+  assert.equal(late.readsLeft, 0);
+  assert.deepEqual(late.tally, { wins: 0, losses: 0, voids: 0, units: 0 });
+  // A plan that reads every minute goes stale in minutes, not hours.
+  assert.equal(lowerLiveView(state, { TENNIS_LOWER_LIVE_DAILY: '1400', TENNIS_LOWER_LIVE_EVERY_MIN: '1' }, NOW + 12 * 60e3).stale, true);
+  assert.equal(lowerLiveView(state, { TENNIS_LOWER_LIVE_DAILY: '1400', TENNIS_LOWER_LIVE_EVERY_MIN: '1' }, NOW + 5 * 60e3).fromHour, null);
 });
