@@ -19,10 +19,17 @@
  *   node scripts/tennis-fanduel.mjs --dry-run  read and print, write nothing
  *   node scripts/tennis-fanduel.mjs --dump     print every market and runner name read
  *   node scripts/tennis-fanduel.mjs --list     print every singles match on FanDuel's page and whether the card has it
+ *
+ * The same read of the page also keeps the board of the matches below the
+ * tours (2026-11-27, worker/src/tennis-lower.js): every Challenger and ITF
+ * singles match with its moneyline, which the page itself carries, so it
+ * costs no read of its own. A match the page lists without its moneyline
+ * is read from its own page, the soonest first, a few a run.
  */
 import { readKv, writeKv } from './lib/kv.mjs';
 import { trimFanduelMarket } from '../worker/src/ufc-fanduel.js';
 import { TENNIS_FANDUEL_KEY, FANDUEL_TENNIS_TABS, FANDUEL_TENNIS_TYPES, fanduelPlayers, samePlayer } from '../worker/src/tennis-fanduel.js';
+import { TENNIS_LOWER_KEY, lowerTierOf, mergeLower, lowerBoard } from '../worker/src/tennis-lower.js';
 
 const API = 'https://sbapi.nj.sportsbook.fanduel.com/api';
 // The key FanDuel's own web page sends with every read of its public page data.
@@ -42,6 +49,56 @@ async function getJson(url) {
   return body;
 }
 const pause = (ms) => new Promise((r) => setTimeout(r, ms));
+
+// The lower tiers: how far back a started match is still noted as in play, the most matches read from their own page for a moneyline in one run.
+const LOWER_BACK_MS = 12 * 3600e3;
+const LOWER_OWN_READS = 25;
+const MONEYLINE = /^(MATCH_BETTING|MONEY_LINE|MATCH_ODDS)$/;
+
+/** A match's moneyline as the lower board keeps it: both prices and the ids a slip link needs; null unless both players are priced. */
+function moneyline(market, [pa, pb]) {
+  const ra = market.runners.find((r) => samePlayer(r.runnerName, pa)); const rb = market.runners.find((r) => r !== ra && samePlayer(r.runnerName, pb));
+  return ra && rb && Number.isFinite(ra.american) && Number.isFinite(rb.american) ? { a: ra.american, b: rb.american, market: market.marketId, selA: ra.selectionId, selB: rb.selectionId } : null;
+}
+
+/** The Challenger and ITF singles on the page with their moneylines, folded into the log (KV tennis:lower). Never stops the card's own read. */
+async function readLower({ att, comps, now, dry, list, say }) {
+  const pageMoney = new Map();
+  for (const m of Object.values(att.markets ?? {})) { if (!MONEYLINE.test(String(m.marketType ?? ''))) continue; const t = trimFanduelMarket(m); if (t && m.eventId != null && !pageMoney.has(String(m.eventId))) pageMoney.set(String(m.eventId), t); }
+  const events = Object.values(att.events ?? {}).filter((e) => fanduelPlayers(e.name) && lowerTierOf(comps[e.competitionId]?.name) && Date.parse(e.openDate) > now - LOWER_BACK_MS && Date.parse(e.openDate) < now + LOOKAHEAD_MS)
+    .sort((x, y) => Date.parse(x.openDate) - Date.parse(y.openDate));
+  let own = 0;
+  const board = [];
+  for (const e of events) {
+    const players = fanduelPlayers(e.name); const start = Date.parse(e.openDate);
+    const started = e.inPlay === true || start <= now;
+    let market = pageMoney.get(String(e.eventId)) ?? null;
+    if (!market && !started && own < LOWER_OWN_READS) {
+      own += 1;
+      try { const body = await getJson(`${API}/event-page?_ak=${AK}&eventId=${e.eventId}&timezone=America%2FNew_York`); const found = Object.values((body.attachments ?? body).markets ?? {}).find((m) => MONEYLINE.test(String(m.marketType ?? ''))); market = found ? trimFanduelMarket(found) : null; } catch (err) { say(`  ! ${e.name}: ${err.message}`); }
+      await pause(500);
+    }
+    board.push({ id: String(e.eventId), comp: comps[e.competitionId]?.name ?? null, compId: e.competitionId ?? null, a: players[0], b: players[1], start, inPlay: e.inPlay === true, ml: market && !started ? moneyline(market, players) : null });
+  }
+  // A log that cannot be read is not written over (its tally is the only copy): a dry run alone goes on without one.
+  let before = null;
+  try { before = await readKv(TENNIS_LOWER_KEY); } catch (err) { if (!dry) throw err; }
+  const log = mergeLower(before, board, now);
+  const view = lowerBoard(log, now);
+  const leans = view.matches.filter((m) => m.call.kind === 'lean');
+  const graded = Object.values(log.matches).filter((m) => m.gradedAt === now && m.result && m.result !== 'unknown').length;
+  say(`lower tiers: ${events.length} singles on the page (${pageMoney.size} moneylines on the page itself, ${own} matches read from their own page), ${view.matches.length} to come, ${leans.length} leans, ${graded} results read from the draw; tally ${JSON.stringify(log.tally)}`);
+  if (list) {
+    const types = [...new Set(Object.values(att.markets ?? {}).map((m) => m.marketType))];
+    console.log(`    markets on the page: ${Object.keys(att.markets ?? {}).length} [${types.slice(0, 12).join(' | ')}]; an event's fields: ${Object.keys(events[0] ?? {}).join(', ')}`);
+    for (const m of view.matches) console.log(`    ${m.comp} | ${m.a} v ${m.b} | ${new Date(m.start).toISOString().slice(0, 16)} | ${m.ml ? `${m.ml.a} / ${m.ml.b}` : 'no price'} | ${m.call.kind === 'lean' ? `LEAN ${m.call.name} ${m.call.american} (${m.call.how}, ${Math.round(m.call.share * 100)}%)` : m.call.text}`);
+  }
+  const bytes = JSON.stringify(log).length;
+  if (dry) { say(`dry run: would write ${TENNIS_LOWER_KEY} (${bytes} bytes, ${Object.keys(log.matches).length} matches)`); return; }
+  if (!board.length && !before) return;
+  await writeKv([{ key: TENNIS_LOWER_KEY, value: log }], { ttlSeconds: 14 * 86400, say });
+  say(`wrote ${TENNIS_LOWER_KEY}: ${Object.keys(log.matches).length} matches, ${bytes} bytes`);
+}
 
 async function main() {
   const args = process.argv.slice(2);
@@ -66,6 +123,7 @@ async function main() {
     for (const m of slate) console.log(`    card: ${m.tour} ${m.eventName} [${m.tier}] ${m.round} | ${m.a.name} v ${m.b.name} | ${m.date}`);
     const all = Object.values(att.events ?? {}); console.log(`    events on the page: ${all.length}; competitions: ${[...new Set(all.map((e) => comps[e.competitionId]?.name ?? '?'))].join(' | ')}`);
   }
+  try { await readLower({ att, comps, now, dry, list: args.includes('--list'), say }); } catch (e) { say(`! lower tiers: ${e.message}`); }
   const events = [];
   for (const f of wanted) {
     const markets = new Map();
