@@ -222,6 +222,8 @@ test('a ranking that agrees on the favourite and is less sure moves the read a l
   assert.ok(Math.abs(c.share - (c.market + LOWER_RANK_WEIGHT_UNDER * (c.rankShare - c.market))) < 0.002);
   assert.equal(c.value, false);
   assert.ok(c.why.some((w) => /agree on the side and are less sure than the price/.test(w)));
+  // A gap this wide is not the book's cut alone, and is not called it.
+  assert.ok(c.why.some((w) => /no room at this price/.test(w)) && !c.why.some((w) => /book's cut$/.test(w)));
 });
 
 test('a near-even price with the ranking the other way is read half way, and can lean the ranking\'s player', () => {
