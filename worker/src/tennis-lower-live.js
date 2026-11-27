@@ -166,6 +166,17 @@ export function settleLean(lean, sets, { ended = false, drawWinner = null } = {}
 /** A tournament below the tours by the source's own name for it ("Playford Challenger", "M15 Orlando", "W75 Playford"); the tours and the team events are not. */
 export const lowerSourceTier = (name) => { const n = String(name ?? ''); return /challenger/i.test(n) ? 'challenger' : /\bitf\b|^[MW]\d{2,3}\b/i.test(n) ? 'itf' : /\b125k?\b/i.test(n) ? '125' : null; };
 
+/** A lean's name: its match, what it is on and when it opened. It never changes, so what is posted of it is posted once. */
+export const leanIdOf = (matchId, lean) => `lower:${matchId}:${lean.market}:${lean.set ?? 0}:${lean.at}`;
+/** The settled leans kept beside a match's newest. */
+const PAST_LEANS = 3;
+/** What a lean keeps of the read for its card: the holds, the run of games, as a tour match's play does (worker/src/tennis-live-plays.js playStats). */
+const leanStats = (read) => ({
+  holds: read?.serve?.first ? { a: { held: read.serve.a.held, served: read.serve.a.served }, b: { held: read.serve.b.held, served: read.serve.b.served } } : null,
+  last: read?.momentum?.last?.of >= 4 ? { of: read.momentum.last.of, a: read.momentum.last.a, b: read.momentum.last.b } : null,
+  streak: read?.momentum?.streak?.n >= 3 ? { side: read.momentum.streak.side, n: read.momentum.streak.n } : null,
+});
+
 /** A match stays on file this long after its listed start; a match lean with no result by LEAN_VOID_MS after it is void. */
 const MATCH_KEEP_MS = 14 * 3600e3;
 const LEAN_VOID_MS = 8 * 3600e3;
@@ -208,6 +219,9 @@ export function advanceLower(prevMatches, prevTally, log, events, now = Date.now
     const serve = prev?.serve ?? serveFromMarket(share ?? 0.5, { tour: m.tour });
     const names = { a: m.a, b: m.b };
     let lean = prev?.lean ?? null;
+    // A lean opened before leans carried an id takes one now, from when it opened.
+    if (lean && !lean.id) lean = { ...lean, id: leanIdOf(m.id, lean) };
+    let past = prev?.past ?? [];
     if (lean && !lean.result) {
       let r = settleLean(lean, sets, { drawWinner });
       // Off the court: a set lean not seen to finish is void at once; a match lean waits for the draw, then is void.
@@ -222,9 +236,14 @@ export function advanceLower(prevMatches, prevTally, log, events, now = Date.now
       const r = liveRead({ sets, games: timeline.games, serve, market: null, bestOf: 3, names });
       call = liveCall(r, { names, gamesSeen: timeline.games.length, thin: share == null });
       read = { prob: round3(r.prob), set: round3(r.model.set), setNumber: r.state.setNumber, inSet: r.state.inSet, why: r.why.slice(0, 4) };
-      if (call.kind === 'lean' && (!lean || lean.result)) lean = { market: call.market, side: call.side, set: call.set ?? null, selection: call.selection, prob: call.prob, playable: call.playable, basis: call.basis, score: lineOf(sets), at: now };
+      if (call.kind === 'lean' && (!lean || lean.result)) {
+        // The lean that has settled gives way to the new one and is kept beside it: Discord still has its result to say.
+        if (lean) past = [...past, lean].slice(-PAST_LEANS);
+        const fresh = { market: call.market, side: call.side, set: call.set ?? null, selection: call.selection, prob: call.prob, playable: call.playable, basis: call.basis, score: lineOf(sets), at: now, why: r.why.slice(0, 4), stats: leanStats(r) };
+        lean = { id: leanIdOf(m.id, fresh), ...fresh };
+      }
     }
-    matches[m.id] = { id: m.id, comp: m.comp ?? null, tour: m.tour, tier: m.tier, a: m.a, b: m.b, start: m.start, priced: share != null, ...(m.source ? { source: true } : {}), sets, points: e?.points ?? null, server: e?.server ?? null, live, seenAt: e ? now : prev.seenAt ?? null, timeline, serve, read, call, lean };
+    matches[m.id] = { id: m.id, comp: m.comp ?? null, tour: m.tour, tier: m.tier, a: m.a, b: m.b, start: m.start, priced: share != null, ...(m.source ? { source: true } : {}), sets, points: e?.points ?? null, server: e?.server ?? null, live, seenAt: e ? now : prev.seenAt ?? null, timeline, serve, read, call, lean, ...(past.length ? { past } : {}) };
   }
   return { matches, tally };
 }
@@ -250,7 +269,8 @@ export async function runLowerLiveTick(env, now = Date.now(), { deps = {} } = {}
   const day = etDay(now);
   const calls = state.day === day ? state.calls ?? 0 : 0;
   const rest = (until, reason) => { restUntil = until; return { skipped: true, reason }; };
-  if (state.fetchedAt && now - state.fetchedAt < everyMs) return rest(state.fetchedAt + everyMs, 'read not long ago');
+  // `fetchedAt` goes back with it: a run on another instance learns from it that a read was just made (the Discord sync follows a read for a few minutes).
+  if (state.fetchedAt && now - state.fetchedAt < everyMs) return { ...rest(state.fetchedAt + everyMs, 'read not long ago'), fetchedAt: state.fetchedAt };
   if (calls >= daily) return rest(now + 10 * 60e3, 'the day\'s calls are spent');
   const log = await readJson(env, TENNIS_LOWER_KEY);
   const playing = lowerInPlay(log, now);
@@ -291,10 +311,41 @@ export function lowerLiveView(state, env, now = Date.now()) {
   const all = Object.values(state.matches ?? {});
   const view = (m) => ({ id: m.id, comp: m.comp, tour: m.tour, tier: m.tier, a: m.a, b: m.b, start: m.start, priced: m.priced, sets: m.sets, points: m.points, server: m.server, read: m.read, call: m.call, lean: m.lean });
   const matches = all.filter((m) => m.live && m.seenAt === state.eventsAt).sort((x, y) => x.start - y.start || String(x.a).localeCompare(String(y.a))).map(view);
-  const settled = all.filter((m) => m.lean?.result).sort((x, y) => (y.lean.settledAt ?? 0) - (x.lean.settledAt ?? 0)).slice(0, 8).map((m) => ({ id: m.id, comp: m.comp, a: m.a, b: m.b, ...m.lean }));
+  const settled = all.flatMap((m) => [...(m.past ?? []), m.lean].filter((l) => l?.result).map((l) => ({ ...l, id: m.id, comp: m.comp, a: m.a, b: m.b }))).sort((x, y) => (y.settledAt ?? 0) - (x.settledAt ?? 0)).slice(0, 8);
   const used = state.day === etDay(now) ? state.calls ?? 0 : 0;
   return { at: state.eventsAt ?? null, everyMin: Math.round(everyMs / 60e3), readsLeft: Math.max(0, daily - used), error: state.error ?? null, matches, settled, tally: state.tally ?? { wins: 0, losses: 0, voids: 0, units: 0 } };
 }
+
+/** The name the leans' tally goes by where it is said beside one of them. */
+export const LOWER_TALLY_NAME = 'Challenger & ITF live leans';
+/**
+ * The leans as the Discord cards read a play (worker/src/discord.js; 2026-11-27, the owner, of the Challenger and
+ * ITF leans on the Live tab: "I see all these leans live but none posted in discord. Let's have these posted and
+ * tracked in discord too"): each match's newest lean and the settled ones kept beside it, in a live play's shape.
+ * A lean is half a unit at the price to take it at or better; `tally` names the tally it is counted on, and
+ * `profit` is what it added to it. No tour is given: an ITF match is neither tour's, and the event's name says what it is.
+ */
+export function lowerLeanPlays(state) {
+  const out = [];
+  for (const m of Object.values(state?.matches ?? {})) {
+    for (const l of [...(m.past ?? []), m.lean]) {
+      if (!l?.id) continue;
+      const profit = l.result === 'win' ? Math.round(LIVE_LEAN_UNITS * (decimalOf(l.playable) - 1) * 100) / 100 : l.result === 'loss' ? -LIVE_LEAN_UNITS : null;
+      out.push({
+        id: l.id, matchId: m.id, lean: true, tally: LOWER_TALLY_NAME, market: l.market, ...(l.set != null ? { set: l.set } : {}), side: l.side, selection: l.selection,
+        prob: l.prob, playable: l.playable, american: null, basis: l.basis, units: LIVE_LEAN_UNITS, tour: null, event: m.comp ?? null, round: null, a: m.a, b: m.b,
+        score: l.score ?? null, why: l.why ?? [], stats: l.stats ?? null, quotes: [], postedAt: l.at,
+        status: !l.result ? 'pending' : l.result === 'void' ? 'void' : 'graded', result: l.result === 'win' || l.result === 'loss' ? l.result : null,
+        actual: l.result === 'void' ? 'not seen to a finish' : l.final ?? null, profit, gradedAt: l.settledAt ?? null,
+      });
+    }
+  }
+  return out;
+}
+/** The stored state, for the Discord sync. */
+export const readLowerLive = (env) => readJson(env, LOWER_LIVE_KEY);
+/** The leans' tally as a record a card can show: {wins, losses, units}, or null before the first result. */
+export const lowerTallyRecord = (state) => { const t = state?.tally; return t && (t.wins ?? 0) + (t.losses ?? 0) > 0 ? { wins: t.wins ?? 0, losses: t.losses ?? 0, units: t.units ?? 0 } : null; };
 
 /** What the last read holds, for the Live tab; `debug` adds the source's rows as they came. */
 export async function getLowerLive(env, now = Date.now(), { debug = false } = {}) {

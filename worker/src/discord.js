@@ -24,6 +24,16 @@
  *   - A play that was already old or settled when the webhook was added is
  *     not posted late: an alert is for a play that can still be taken.
  *
+ * The Challenger and ITF live leans (2026-11-27, the owner, of the leans on
+ * the Live tab: "I see all these leans live but none posted in discord.
+ * Let's have these posted and tracked in discord too"; worker/src/
+ * tennis-lower-live.js) go the way a tour match's lean goes: to the leans
+ * channel as they open, the same message edited when they settle, the
+ * result to the results channel. They are tracked on a tally of their own,
+ * and unlike a tour lean each card carries it: the units a settled one
+ * added and the tally as it stands. A few are posted a run (a card's
+ * picture is the heavy part), the rest on the runs that follow.
+ *
  * Optional: DISCORD_LIVE_ROLE_ID pings a role on each new play (never on an
  * edit), and DISCORD_UPDATES_WEBHOOK gets one simple card per result.
  *
@@ -34,10 +44,13 @@ import { etParts } from './potd.js';
 import { tennisLivePlaysKey, liveRecordOf, TENNIS_LIVE_PLAYS_INDEX } from './tennis-live-plays.js';
 import { SPORTSBOOKS } from '../../docs/engine.js';
 import { needsState, withState, hardRockSelections, phoneSlipLink, isPhone } from '../../docs/book-links.js';
+import { lowerLeanPlays, lowerTallyRecord, readLowerLive } from './tennis-lower-live.js';
 
 export const DISCORD_LEDGER_KEY = 'discord:live:ledger';
 /** A play older than this when first seen is not posted: the price it names has moved on. */
 export const FRESH_MS = 15 * 60e3;
+/** The most new leans posted in one run. */
+export const NEW_LEANS_A_RUN = 3;
 /** Posts Discord refused are tried this many times; edits this many. */
 export const POST_TRIES = 3;
 export const EDIT_TRIES = 6;
@@ -220,14 +233,16 @@ export function livePlayMessage(play, { role = null, record = null } = {}) {
   const bookName = md(SPORTSBOOKS[play.bookId]?.name ?? play.book ?? 'the book');
   // A lean is a call, not a tracked play: it carries no stake and is never on the record, and every line of it says so.
   const lean = Boolean(play.lean);
-  const stake = lean ? `recommended **${unitsOf(play.units)}** · a lean, not on the record` : `${settled ? '' : 'recommended '}stake **${unitsOf(play.units)}**`;
+  // A lean kept on a tally of its own (`play.tally` names it) says so, and says what it added to it once it settles.
+  const tallied = lean && Boolean(play.tally);
+  const stake = lean ? `recommended **${unitsOf(play.units)}** · a lean, ${tallied ? 'kept on its own tally' : 'not on the record'}` : `${settled ? '' : 'recommended '}stake **${unitsOf(play.units)}**`;
   const betLine = priced
     ? `**${fmt(play.american)}** at **${bookName}**${Number.isFinite(play.playable) && play.playable < play.american ? ` · good down to ${fmt(play.playable)}` : ''} · ${stake}`
     : `**${fmt(price)} or better** at your book · ${stake}`;
   const why = whyLine(play);
   const links = settled ? [] : bookLinks(play);
   const lines = [
-    settled ? (outcome === 'void' ? `**${lean ? 'No result' : 'Stake returned'}**${play.actual ? ` · ${md(play.actual)}` : ''}` : `**Final ${md(play.actual ?? '')}${!lean && Number.isFinite(play.profit) ? ` · ${signedUnits(play.profit)}` : ''}**`) : null,
+    settled ? (outcome === 'void' ? `**${lean ? 'No result' : 'Stake returned'}**${play.actual ? ` · ${md(play.actual)}` : ''}` : `**Final ${md(play.actual ?? '')}${(!lean || tallied) && Number.isFinite(play.profit) ? ` · ${signedUnits(play.profit)}` : ''}**`) : null,
     settled ? `${lean ? 'Leaned' : 'Taken'} at **${priced ? fmt(play.american) : `${fmt(price)} or better`}**${priced ? ` (${bookName})` : ''} · ${stake}` : betLine,
     `${kind.label(play)} · ${md(play.a)} vs ${md(play.b)}`,
     [TOUR[play.tour] ?? null, play.event ? md(play.event) : null, play.round ? md(play.round) : null].filter(Boolean).join(' · ') || null,
@@ -242,7 +257,7 @@ export function livePlayMessage(play, { role = null, record = null } = {}) {
     edge != null ? { name: 'Edge', value: `${edge >= 0 ? '+' : '−'}${Math.abs(edge)} pts`, inline: true } : null,
     play.score ? { name: 'Score when taken', value: md(play.score), inline: true } : null,
     h ? { name: 'Serve held today', value: `${md(lastName(play.a))} ${h.a.held}/${h.a.served} · ${md(lastName(play.b))} ${h.b.held}/${h.b.served}`, inline: true } : null,
-    record && record.wins + record.losses > 0 ? { name: `Our ${kind.head(play).replace(/^Set \d+ /, 'Set ')} record`, value: `${record.wins}-${record.losses} · ${signedUnits(record.units)}`, inline: true } : null,
+    record && record.wins + record.losses > 0 ? { name: tallied ? md(play.tally) : `Our ${kind.head(play).replace(/^Set \d+ /, 'Set ')} record`, value: `${record.wins}-${record.losses} · ${signedUnits(record.units)}`, inline: true } : null,
   ].filter(Boolean);
   const mark = (lean ? { open: '💡 LEAN ·', win: '✅ LEAN WON ·', loss: '❌ LEAN LOST ·', void: '⚪ LEAN VOID ·' } : { open: '🎾 TAKE ·', win: '✅ WON ·', loss: '❌ LOST ·', void: '⚪ VOID ·' })[outcome];
   return {
@@ -258,7 +273,7 @@ export function livePlayMessage(play, { role = null, record = null } = {}) {
       fields,
       // The strips say LIVE PLAY, WON, LOST and VOID: a lean is none of the first, so an open lean carries no strip.
       ...(lean && outcome === 'open' ? {} : { image: { url: `${ART}/${{ open: 'live', win: 'won', loss: 'lost', void: 'void' }[outcome]}.png?v=${ART_VERSION}` } }),
-      footer: { text: lean ? 'Lean · not a tracked play · not on the record · perpetualpicks.com' : 'Tracked play · graded automatically · perpetualpicks.com', icon_url: LOGO },
+      footer: { text: tallied ? 'Lean · graded automatically on its own tally · not on the site record · perpetualpicks.com' : lean ? 'Lean · not a tracked play · not on the record · perpetualpicks.com' : 'Tracked play · graded automatically · perpetualpicks.com', icon_url: LOGO },
       timestamp: new Date(play.postedAt ?? Date.now()).toISOString(),
     }],
   };
@@ -278,8 +293,9 @@ export function liveResultMessage(play, { record = null } = {}) {
   const price = priced ? play.american : play.playable;
   // A lean's result says it is a lean's, and carries no units: it is not on the record.
   const lean = Boolean(play.lean);
+  const tallied = lean && Boolean(play.tally);
   const lines = [
-    outcome === 'void' ? `**${lean ? 'No result' : 'Stake returned'}**${play.actual ? ` · ${md(play.actual)}` : ''}` : `**Final ${md(play.actual ?? '')}**${!lean && Number.isFinite(play.profit) ? ` · **${signedUnits(play.profit)}**` : ''}`,
+    outcome === 'void' ? `**${lean ? 'No result' : 'Stake returned'}**${play.actual ? ` · ${md(play.actual)}` : ''}` : `**Final ${md(play.actual ?? '')}**${(!lean || tallied) && Number.isFinite(play.profit) ? ` · **${signedUnits(play.profit)}**` : ''}`,
     Number.isFinite(price) ? `${lean ? 'Leaned' : 'Taken'} at ${priced ? fmt(play.american) : `${fmt(price)} or better`}${priced ? ` (${md(SPORTSBOOKS[play.bookId]?.name ?? play.book ?? 'the book')})` : ''} · ${lean ? `recommended ${unitsOf(play.units)}` : `${unitsOf(play.units)} stake`}` : null,
     [`${md(play.a)} vs ${md(play.b)}`, TOUR[play.tour] ?? null, play.event ? md(play.event) : null].filter(Boolean).join(' · '),
   ].filter(Boolean);
@@ -294,7 +310,7 @@ export function liveResultMessage(play, { record = null } = {}) {
       description: lines.join('\n').slice(0, 1900),
       color: COLOR[outcome],
       image: { url: `${ART}/${{ win: 'won', loss: 'lost', void: 'void' }[outcome]}.png?v=${ART_VERSION}` },
-      footer: { text: lean ? 'Lean · not on the record · perpetualpicks.com' : record && record.wins + record.losses > 0 ? `Our ${kind.head(play).replace(/^Set \d+ /, 'Set ')} record: ${record.wins}-${record.losses} · ${signedUnits(record.units)}` : 'perpetualpicks.com', icon_url: LOGO },
+      footer: { text: tallied && record && record.wins + record.losses > 0 ? `${play.tally}: ${record.wins}-${record.losses} · ${signedUnits(record.units)}` : tallied ? `${play.tally} · perpetualpicks.com` : lean ? 'Lean · not on the record · perpetualpicks.com' : record && record.wins + record.losses > 0 ? `Our ${kind.head(play).replace(/^Set \d+ /, 'Set ')} record: ${record.wins}-${record.losses} · ${signedUnits(record.units)}` : 'perpetualpicks.com', icon_url: LOGO },
       timestamp: new Date(play.gradedAt ?? Date.now()).toISOString(),
     }],
   };
@@ -339,7 +355,7 @@ export function cardLine(play, { role = null } = {}) {
   if (play.lean) {
     // A lean says it is one first. It carries its recommended units while it is open and no result in units: it is not on the record.
     if (play.status === 'void') return `⚪ **LEAN VOID** · ${take}`;
-    if (play.status === 'graded') return `${play.result === 'win' ? '✅ **LEAN WON**' : '❌ **LEAN LOST**'} · ${take}${play.actual ? ` · final ${md(play.actual)}` : ''}`;
+    if (play.status === 'graded') return `${play.result === 'win' ? '✅ **LEAN WON**' : '❌ **LEAN LOST**'} · ${take}${play.actual ? ` · final ${md(play.actual)}` : ''}${play.tally && Number.isFinite(play.profit) ? ` · ${signedUnits(play.profit)}` : ''}`;
     return `💡 **LEAN · ${take}**${at} · ${unitsOf(play.units)}`;
   }
   if (play.status === 'void') return `⚪ **VOID** · ${take} · stake returned`;
@@ -574,16 +590,24 @@ export async function syncLiveDiscord(env, now = Date.now(), { deps = {} } = {})
   // The leans go to their own channel, when there is one: posted as they open and edited when they settle, like a
   // play, with nobody pinged and no record under them. A settled lean's result goes to the results channel too, said
   // as a lean (2026-11-25, the owner, of a lean that lost: "the lean wasn't posted to the results channel").
-  const leans = cfg.leans ? plays.filter((p) => p && p.lean && p.id && KIND[p.market]) : [];
+  // The Challenger and ITF leans beside them (worker/src/tennis-lower-live.js), read only when there is a channel for them. Their tally rides on each card.
+  const lowerState = cfg.leans ? (deps.lower ? await deps.lower() : await readLowerLive(env).catch(() => null)) : null;
+  const lowerRecord = lowerTallyRecord(lowerState);
+  const leans = cfg.leans ? [...plays, ...lowerLeanPlays(lowerState)].filter((p) => p && p.lean && p.id && KIND[p.market]) : [];
+  const recordOf = async (p) => (p.lean ? (p.tally ? lowerRecord : null) : recordFor(p));
+  let freshLeans = 0;
   for (const p of [...tracked, ...leans]) {
     const lean = Boolean(p.lean);
     const hook = lean ? cfg.leans : cfg.live;
-    const mine = async (more = {}) => dress(p, { record: lean ? null : await recordFor(p), ...(lean ? { role: null } : {}), ...more });
+    const mine = async (more = {}) => dress(p, { record: await recordOf(p), ...(lean ? { role: null } : {}), ...more });
     const entry = ledger.plays[p.id];
     const settled = p.status === 'graded' || p.status === 'void';
     if (!entry) {
       // A new alert: open, and fresh enough that its price is still there to take.
       if (settled || p.status !== 'pending' || now - (p.postedAt ?? 0) > FRESH_MS) continue;
+      // A read below the tours can open several leans at once, and a card's picture is the heavy part: a few a run, the rest on the next.
+      if (lean && freshLeans >= NEW_LEANS_A_RUN) continue;
+      if (lean) freshLeans++;
       // Drawn first, then marked as sending: a run that dies drawing has posted nothing, and the next tick posts it written.
       const card = await mine();
       ledger.plays[p.id] = { state: 'sending', at: now, tries: 1 };
@@ -634,7 +658,7 @@ export async function syncLiveDiscord(env, now = Date.now(), { deps = {} } = {})
     if (caughtUp >= 3 || !owed || !(p.status === 'graded' || p.status === 'void') || now - (entry.doneAt ?? 0) > 864e5 || (entry.resTries ?? 0) >= 3) continue;
     caughtUp++;
     const lean = Boolean(p.lean);
-    const u = await send(cfg.updates, await dress(p, { record: lean ? null : await recordFor(p), result: true, ...(lean ? { role: null } : {}) }));
+    const u = await send(cfg.updates, await dress(p, { record: await recordOf(p), result: true, ...(lean ? { role: null } : {}) }));
     ledger.plays[p.id] = u.ok || u.unknown ? { ...entry, res: true } : { ...entry, res: false, resTries: (entry.resTries ?? 0) + 1 };
     if (!u.ok && !u.unknown) fail('update', u);
     dirty = true;
@@ -649,7 +673,7 @@ export async function syncLiveDiscord(env, now = Date.now(), { deps = {} } = {})
     if (entry.state === 'open' && (p.status === 'graded' || p.status === 'void')) continue;
     relinked++;
     const lean = Boolean(p.lean);
-    const r = await send(lean ? cfg.leans : cfg.live, await dress(p, { record: lean ? null : await recordFor(p), ...(lean ? { role: null } : {}) }), { messageId: entry.messageId });
+    const r = await send(lean ? cfg.leans : cfg.live, await dress(p, { record: await recordOf(p), ...(lean ? { role: null } : {}) }), { messageId: entry.messageId });
     const tries = (entry.lvTries ?? 0) + 1;
     if (r.ok || r.status === 404 || tries >= 3) ledger.plays[p.id] = { ...entry, lv: LINK_VERSION };
     else { ledger.plays[p.id] = { ...entry, lvTries: tries }; fail('relink', r); }
@@ -679,6 +703,8 @@ export async function findLivePlay(env, playId, now = Date.now()) {
   const id = String(playId ?? '');
   if (isTestId(id)) return testPlays(now)[id] ?? testLeans(now)[id] ?? null;
   if (!id || id.length > 120) return null;
+  // A Challenger or ITF live lean is kept with its match, not in the day's plays.
+  if (id.startsWith('lower:')) return lowerLeanPlays(await readLowerLive(env).catch(() => null)).find((p) => p.id === id) ?? null;
   const tried = new Set();
   const look = async (date) => { if (tried.has(date)) return null; tried.add(date); return ((await readJson(env, tennisLivePlaysKey(date)))?.plays ?? []).find((p) => p.id === id) ?? null; };
   for (const d of [etParts(now).date, etParts(now - 864e5).date]) { const hit = await look(d); if (hit) return hit; }
@@ -688,8 +714,8 @@ export async function findLivePlay(env, playId, now = Date.now()) {
 }
 /** The site's record for the kind of play this is ({wins, losses, units}), or null. */
 export async function recordForPlay(env, play, now = Date.now()) {
-  // A lean is on no record.
-  if (play?.lean) return null;
+  // A lean is on no record, but one kept on a tally of its own shows that.
+  if (play?.lean) return play.tally ? lowerTallyRecord(await readLowerLive(env).catch(() => null)) : null;
   if (isTestId(play?.id)) return { wins: 9, losses: 2, units: 3.86 };
   const records = await liveRecords(env, now).catch(() => null);
   return records?.[KIND[play?.market]?.record] ?? null;

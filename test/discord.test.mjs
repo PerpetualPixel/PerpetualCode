@@ -338,3 +338,126 @@ test('the result card: won or lost and the bet, the final score and the units, t
   assert.equal(quiet.calls.length, 0);
   assert.equal((await discordStatus(none.env)).test.updates, 'no results channel');
 });
+
+// --- the Challenger and ITF live leans (worker/src/tennis-lower-live.js) ---
+import { advanceLower, lowerLeanPlays, LOWER_LIVE_KEY, LOWER_TALLY_NAME } from '../worker/src/tennis-lower-live.js';
+import { findLivePlay, recordForPlay, NEW_LEANS_A_RUN } from '../worker/src/discord.js';
+const LEANS = 'https://discord.com/api/webhooks/323456789012345678/leaDEF_ghi-jklMNOpqrSTUvwxYZ0123456789abcdefghijklmnopqrstuvwxyzABCDEF';
+const lowerLog = (n = 1) => ({ matches: Object.fromEntries(Array.from({ length: n }, (_, i) => [`m${i}`, { id: `m${i}`, comp: 'ITF M15 Heraklion GRE', tour: 'atp', tier: 'itf', a: `Odysseas Geladaris${i || ''}`, b: `Liam Delicata${i || ''}`, start: NOW - 3600e3, ml: { a: -154, b: 116 } }])) });
+const lowerRow = (i, score, extra = {}) => ({ id: `e${i}`, a: `Odysseas Geladaris${i || ''}`, b: `Liam Delicata${i || ''}`, tour: 'atp', status: 'InPlay', sets: score.split(' ').map((x) => x.split('-').map(Number)), points: '0-0', server: 'b', tournament: 'M15 Heraklion', ...extra });
+const lowerEnv = () => { const made = makeEnv({ DISCORD_LIVE_WEBHOOK: HOOK, DISCORD_UPDATES_WEBHOOK: UPDATES, DISCORD_LIVE_LEAN_WEBHOOK: LEANS }); made.store.set(DISCORD_LEDGER_KEY, JSON.stringify({ plays: {}, helloAt: 1 })); return made; };
+const lowerSync = (env, now, d, state) => syncLiveDiscord(env, now, { deps: { fetch: d.fetch, plays: async () => [], records: async () => ({}), testId: '', testScope: 'all', render: async () => null, lower: async () => state } });
+
+test('a Challenger or ITF live lean is a play the cards can read: half a unit at the price to take, on a tally of its own', () => {
+  const st = advanceLower(null, { wins: 8, losses: 2, voids: 0, units: 0.97 }, lowerLog(), [lowerRow(0, '1-4')], NOW);
+  const [p] = lowerLeanPlays(st);
+  assert.equal(p.lean, true);
+  assert.equal(p.tally, LOWER_TALLY_NAME);
+  assert.match(p.id, /^lower:m0:live_(ml|set):\d+:\d+$/);
+  assert.equal(p.status, 'pending');
+  assert.equal(p.units, 0.5);
+  assert.equal(p.american, null);
+  assert.ok(Number.isFinite(p.playable) && Number.isFinite(p.prob));
+  assert.equal(p.event, 'ITF M15 Heraklion GRE');
+  assert.equal(p.tour, null, 'an ITF match is neither tour\'s');
+  assert.equal(p.score, '1-4');
+  assert.equal(p.postedAt, NOW);
+  assert.equal(lowerLeanPlays(null).length, 0);
+});
+
+test('it is posted once to the leans channel as it opens, with the tally, nobody pinged, and never from the worker\'s own address', async () => {
+  const { env } = lowerEnv();
+  const st = advanceLower(null, { wins: 8, losses: 2, voids: 0, units: 0.97 }, lowerLog(), [lowerRow(0, '1-4')], NOW);
+  const d = fakeDiscord();
+  let out = await lowerSync(env, NOW + 30e3, d, st);
+  assert.equal(out.posted, 1);
+  assert.equal(d.calls.length, 1);
+  assert.ok(d.calls[0].url.startsWith(LEANS));
+  const body = JSON.stringify(d.calls[0].body);
+  assert.match(body, /LEAN/);
+  assert.match(body, /kept on its own tally/);
+  assert.match(body, /Challenger & ITF live leans/);
+  assert.match(body, /8-2/);
+  assert.doesNotMatch(body, /workers\.dev/);
+  assert.doesNotMatch(body, /<@&/);
+  assert.match(body, /ITF M15 Heraklion GRE/);
+  assert.doesNotMatch(body, /ATP ·|· ATP/);
+  // The next run: nothing new.
+  out = await lowerSync(env, NOW + 90e3, d, st);
+  assert.equal(out.posted, 0);
+  assert.equal(d.calls.length, 1);
+});
+
+test('when it settles the same message is edited, the result goes to the results channel with its units and the tally, and a new lean on the match is its own post', async () => {
+  const { env } = lowerEnv();
+  let st = advanceLower(null, null, lowerLog(), [lowerRow(0, '1-4')], NOW);
+  const first = lowerLeanPlays(st)[0];
+  const d = fakeDiscord();
+  await lowerSync(env, NOW + 30e3, d, st);
+  // Half an hour on: the first set went the lean's way (or the match did), and the read may open another.
+  const later = NOW + 30 * 60e3;
+  st = advanceLower(st.matches, st.tally, lowerLog(), [lowerRow(0, first.market === 'live_set' ? '1-6 1-1' : '1-6 2-6', first.market === 'live_set' ? {} : { status: 'Ended' })], later);
+  const plays = lowerLeanPlays(st);
+  const settled = plays.find((p) => p.id === first.id);
+  assert.equal(settled.status, 'graded');
+  assert.equal(settled.result, 'win');
+  assert.ok(settled.profit > 0);
+  const out = await lowerSync(env, later + 30e3, d, st);
+  assert.equal(out.edited, 1);
+  const edit = d.calls.find((c) => c.method === 'PATCH');
+  assert.ok(edit.url.startsWith(`${LEANS}/messages/`));
+  assert.match(JSON.stringify(edit.body), /LEAN WON/);
+  const result = d.calls.find((c) => c.url.startsWith(UPDATES));
+  assert.ok(result, 'the results channel has it');
+  const text = JSON.stringify(result.body);
+  assert.match(text, /LEAN WON/);
+  assert.match(text, /\+0\.\d\du/);
+  assert.match(text, /Challenger & ITF live leans: 1-0/);
+  // A lean opened on the same read is posted under its own id; the settled one is not lost to it.
+  assert.equal(out.posted, plays.filter((p) => p.status === 'pending').length);
+  // Again: nothing more.
+  const before = d.calls.length;
+  await lowerSync(env, later + 90e3, d, st);
+  assert.equal(d.calls.length, before);
+});
+
+test('a read that opens many leans posts a few a run and the rest on the next, and an old lean is never posted late', async () => {
+  const { env } = lowerEnv();
+  const n = NEW_LEANS_A_RUN + 2;
+  const st = advanceLower(null, null, lowerLog(n), Array.from({ length: n }, (_, i) => lowerRow(i, '1-4')), NOW);
+  assert.equal(lowerLeanPlays(st).length, n);
+  const d = fakeDiscord();
+  let out = await lowerSync(env, NOW + 30e3, d, st);
+  assert.equal(out.posted, NEW_LEANS_A_RUN);
+  out = await lowerSync(env, NOW + 90e3, d, st);
+  assert.equal(out.posted, 2);
+  assert.equal(new Set(d.calls.map((c) => JSON.stringify(c.body))).size, n, 'each lean once');
+  // A lean first seen long after it opened (the channel was added later, or the run was missed) stays off the channel.
+  const late = lowerEnv();
+  const d2 = fakeDiscord();
+  out = await lowerSync(late.env, NOW + FRESH_MS + 60e3, d2, st);
+  assert.equal(out.posted, 0);
+  assert.equal(d2.calls.length, 0);
+});
+
+test('with no leans channel nothing of them is read or posted', async () => {
+  const made = makeEnv({ DISCORD_LIVE_WEBHOOK: HOOK });
+  made.store.set(DISCORD_LEDGER_KEY, JSON.stringify({ plays: {}, helloAt: 1 }));
+  let read = 0;
+  const d = fakeDiscord();
+  const out = await syncLiveDiscord(made.env, NOW, { deps: { fetch: d.fetch, plays: async () => [], records: async () => ({}), testId: '', testScope: 'all', render: async () => null, lower: async () => { read += 1; return null; } } });
+  assert.equal(out.posted, 0);
+  assert.equal(read, 0);
+});
+
+test('the lean\'s page and its tally are found by its id', async () => {
+  const { env, store } = lowerEnv();
+  const st = advanceLower(null, { wins: 8, losses: 2, voids: 0, units: 0.97 }, lowerLog(), [lowerRow(0, '1-4')], NOW);
+  store.set(LOWER_LIVE_KEY, JSON.stringify({ ...st, eventsAt: NOW }));
+  const id = lowerLeanPlays(st)[0].id;
+  const play = await findLivePlay(env, id, NOW);
+  assert.equal(play.id, id);
+  assert.equal(play.a, 'Odysseas Geladaris');
+  assert.deepEqual(await recordForPlay(env, play, NOW), { wins: 8, losses: 2, units: 0.97 });
+  assert.equal(await findLivePlay(env, 'lower:nothing:live_ml:0:1', NOW), null);
+});

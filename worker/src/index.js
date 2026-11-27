@@ -68,6 +68,9 @@ import { getTennisLive } from './tennis-live.js';
 import { runTennisLiveTick, getTennisLivePlays, TENNIS_LIVE_CRON } from './tennis-live-plays.js';
 import { runLowerLiveTick, getLowerLive } from './tennis-lower-live.js';
 import { runLowerRanksTick, lowerRanksStatus } from './tennis-lower-ranks.js';
+// After a read of the Challenger and ITF scores the Discord sync runs each minute for this long, so every lean it opened is posted and a refused post is tried again.
+const LOWER_SYNC_MS = 6 * 60e3;
+let lowerSyncUntil = 0;
 import { syncLiveDiscord, discordStatus, bookRedirect, findLivePlay, recordForPlay } from './discord.js';
 import { CARD_VERSION } from './card-svg.js';
 import { syncBasketballDiscord, syncFootballDiscord, basketballStatus, footballStatus } from './discord-nba.js';
@@ -521,14 +524,18 @@ export default {
     // a KV read and nothing else while no match is in play. Nothing below
     // runs on it.
     if (event.cron === TENNIS_LIVE_CRON) {
-      // Then the owner's Discord (worker/src/discord.js): a tracked play goes up when it opens and its message is edited when it settles.
-      // A resting tick changed nothing, so there is nothing to send; with no webhook set this is a no-op.
-      ctx.waitUntil(runTennisLiveTick(env, ctx, now)
-        .catch((e) => { console.error('Tennis live tick failed:', e); return null; })
-        .then((r) => (r?.skipped ? null : syncLiveDiscord(env, now)))
-        .catch((e) => console.error('Discord sync failed:', String(e?.message ?? e).slice(0, 120))));
-      // The scores of the Challenger and ITF matches in play (worker/src/tennis-lower-live.js): a metered read, a few a day, resting in memory between them.
-      ctx.waitUntil(runLowerLiveTick(env, now).catch((e) => console.error('Lower-tier live tick failed:', String(e?.message ?? e).slice(0, 120))));
+      // The two live tennis ticks in turn, then the owner's Discord once for both (worker/src/discord.js): a tracked play or a lean goes up when it
+      // opens and its message is edited when it settles. One sync, never two side by side: each would post what the other had not yet marked.
+      // A resting tick changed nothing, so there is nothing to send; with no webhook set the sync is a no-op.
+      ctx.waitUntil((async () => {
+        const live = await runTennisLiveTick(env, ctx, now).catch((e) => { console.error('Tennis live tick failed:', e); return null; });
+        // The scores of the Challenger and ITF matches in play (worker/src/tennis-lower-live.js): a metered read, a few a day, resting in memory between them.
+        const lower = await runLowerLiveTick(env, now).catch((e) => { console.error('Lower-tier live tick failed:', String(e?.message ?? e).slice(0, 120)); return null; });
+        // A read below the tours can open more leans than one run posts: the sync keeps going for a few minutes after it.
+        if (lower && !lower.skipped) lowerSyncUntil = now + LOWER_SYNC_MS;
+        else if (lower?.fetchedAt && now - lower.fetchedAt < LOWER_SYNC_MS) lowerSyncUntil = Math.max(lowerSyncUntil, lower.fetchedAt + LOWER_SYNC_MS);
+        if ((live && !live.skipped) || now < lowerSyncUntil) await syncLiveDiscord(env, now).catch((e) => console.error('Discord sync failed:', String(e?.message ?? e).slice(0, 120)));
+      })());
       // The week's world rankings for the Challenger and ITF leans (worker/src/tennis-lower-ranks.js): a page a minute once a week, resting in memory otherwise.
       ctx.waitUntil(runLowerRanksTick(env, now).catch((e) => console.error('Lower-tier rankings tick failed:', String(e?.message ?? e).slice(0, 120))));
       return;
