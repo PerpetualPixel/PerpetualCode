@@ -6,7 +6,7 @@ import { TENNIS_LOWER_KEY } from '../worker/src/tennis-lower.js';
 const NOW = Date.parse('2026-11-27T09:00:00Z');
 const kv = (init = {}) => { const m = new Map(Object.entries(init).map(([k, v]) => [k, JSON.stringify(v)])); return { m, get: async (k) => m.get(k) ?? null, put: async (k, v) => { m.set(k, v); } }; };
 const log = (startMs) => ({ matches: { 1: { id: '1', a: 'Kimmer Coppejans', b: 'Dali Blanch', start: startMs } } });
-const body = { data: [
+const body = { success: true, count: 2, results: [
   { id: 9, player1: { name: 'Kimmer Coppejans' }, player2: { name: 'Dali Blanch' }, score: '6-4,3-2', points: '30-15', indicator: '1,0', status: 'InPlay', tourType: 'atp' },
   { id: 10, player1: { name: 'A One / B Two' }, player2: { name: 'C Three / D Four' }, score: '2-1', status: 'InPlay', tourType: 'atp' },
 ] };
@@ -24,6 +24,8 @@ test('the source\'s rows are read as singles matches with the server', () => {
   assert.deepEqual(events[0], { id: '9', a: 'Kimmer Coppejans', b: 'Dali Blanch', tour: 'atp', status: 'InPlay', sets: [[6, 4], [3, 2]], points: '30-15', server: 'a', tournament: null });
   assert.deepEqual(parseLiveEvents(null), []);
   assert.deepEqual(parseLiveEvents({ data: 'no' }), []);
+  assert.equal(parseLiveEvents({ data: body.results }).length, 1);
+  assert.equal(parseLiveEvents(body.results).length, 1);
 });
 
 test('the budget is the free plan\'s unless the worker says otherwise', () => {
