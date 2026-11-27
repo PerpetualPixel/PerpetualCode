@@ -26,7 +26,7 @@
  * The two set markets read that way only in a best of three; a best of
  * five leaves them out.
  */
-import { fanduelSlipLink } from './ufc-fanduel.js';
+import { fanduelSlipLink, fanduelSlipId } from './ufc-fanduel.js';
 import { nameKey } from './tennis-card-parse.js';
 
 export const TENNIS_FANDUEL_KEY = 'tennis:fanduel';
@@ -71,7 +71,7 @@ export function fanduelFeedEvent(e, { bestOf = 3 } = {}) {
   const players = fanduelPlayers(e?.name); if (!players) return null;
   const [pa, pb] = players;
   const board = []; const deep = [];
-  const out = (market, runner, name, point = null) => ({ name, ...(point != null ? { point } : {}), price: runner.american, link: fanduelSlipLink(market.marketId, runner.selectionId) });
+  const out = (market, runner, name, point = null) => ({ name, ...(point != null ? { point } : {}), price: runner.american, link: fanduelSlipLink(fanduelSlipId(market), runner.selectionId) });
   const priced = (m) => (m.runners ?? []).filter((r) => Number.isFinite(r.american));
   const five = bestOf === 5 || (e.markets ?? []).some((m) => m.marketType === 'SET_BETTING' && (m.runners ?? []).some((r) => /\b3-[012]\b/.test(r.runnerName)));
   const setSpreads = []; const aces = []; const s1 = []; const s2 = [];

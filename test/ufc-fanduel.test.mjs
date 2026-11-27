@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { trimFanduelMarket, fanduelTabSlug, FANDUEL_TABS, fanduelRunnerFor, priceLegsFromFanduel, fanduelSlipLink } from '../worker/src/ufc-fanduel.js';
+import { trimFanduelMarket, fanduelTabSlug, FANDUEL_TABS, fanduelRunnerFor, priceLegsFromFanduel, fanduelSlipLink, fanduelSlipId } from '../worker/src/ufc-fanduel.js';
 import { ufcCardProps } from '../worker/src/ufc-props.js';
 
 let sel = 1000;
@@ -32,6 +32,15 @@ test('trimFanduelMarket keeps what a slip link needs and drops a closed market; 
     { selectionId: 3, runnerName: 'No Price', runnerStatus: 'ACTIVE' }] };
   assert.deepEqual(trimFanduelMarket(raw), { marketId: '734.1', marketName: 'Moneyline', marketType: 'MATCH_BETTING', sgm: true, runners: [{ selectionId: 26525711, runnerName: 'Ciryl Gane', handicap: 0, american: -188 }, { selectionId: 3, runnerName: 'No Price', handicap: 0, american: null }] });
   assert.equal(trimFanduelMarket({ ...raw, marketStatus: 'SUSPENDED' }), null);
+  // The id a slip link takes is the market's external one, as the page sends it (2026-11-27: a link built from the page's own id opened "Selection not added").
+  const withExternal = trimFanduelMarket({ ...raw, marketId: '734.199860128', associatedMarkets: [{ eventId: 36368630, eventTypeId: 2, externalMarketId: '42.629110703' }] });
+  assert.equal(withExternal.marketId, '734.199860128');
+  assert.equal(withExternal.slipId, '42.629110703');
+  assert.equal(fanduelSlipId(withExternal), '42.629110703');
+  assert.equal(fanduelSlipLink(fanduelSlipId(withExternal), 26525711), 'https://sportsbook.fanduel.com/addToBetslip?marketId=42.629110703&selectionId=26525711');
+  // A market kept before the external id was read falls back to its own.
+  assert.equal(fanduelSlipId(trimFanduelMarket(raw)), '734.1');
+  assert.equal(fanduelSlipId(null), null);
   assert.equal(trimFanduelMarket({ marketId: '1', runners: [] }), null);
   assert.equal(fanduelTabSlug('Method of Victory'), 'method-of-victory');
   assert.equal(fanduelTabSlug('Round Props'), 'round-props');

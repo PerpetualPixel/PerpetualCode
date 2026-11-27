@@ -27,7 +27,7 @@
  * is read from its own page, the soonest first, a few a run.
  */
 import { readKv, writeKv } from './lib/kv.mjs';
-import { trimFanduelMarket } from '../worker/src/ufc-fanduel.js';
+import { trimFanduelMarket, fanduelSlipId } from '../worker/src/ufc-fanduel.js';
 import { TENNIS_FANDUEL_KEY, FANDUEL_TENNIS_TABS, FANDUEL_TENNIS_TYPES, fanduelPlayers, samePlayer } from '../worker/src/tennis-fanduel.js';
 import { TENNIS_LOWER_KEY, lowerTierOf, mergeLower, lowerBoard } from '../worker/src/tennis-lower.js';
 import { LOWER_RANKS_KEY } from '../worker/src/tennis-lower-ranks.js';
@@ -56,10 +56,10 @@ const LOWER_BACK_MS = 12 * 3600e3;
 const LOWER_OWN_READS = 25;
 const MONEYLINE = /^(MATCH_BETTING|MONEY_LINE|MATCH_ODDS)$/;
 
-/** A match's moneyline as the lower board keeps it: both prices and the ids a slip link needs; null unless both players are priced. */
+/** A match's moneyline as the lower board keeps it: both prices and the ids a slip link needs (the market's external id, which is the one the link takes); null unless both players are priced. */
 function moneyline(market, [pa, pb]) {
   const ra = market.runners.find((r) => samePlayer(r.runnerName, pa)); const rb = market.runners.find((r) => r !== ra && samePlayer(r.runnerName, pb));
-  return ra && rb && Number.isFinite(ra.american) && Number.isFinite(rb.american) ? { a: ra.american, b: rb.american, market: market.marketId, selA: ra.selectionId, selB: rb.selectionId } : null;
+  return ra && rb && Number.isFinite(ra.american) && Number.isFinite(rb.american) ? { a: ra.american, b: rb.american, market: fanduelSlipId(market), selA: ra.selectionId, selB: rb.selectionId } : null;
 }
 
 /** The Challenger and ITF singles on the page with their moneylines, folded into the log (KV tennis:lower). Never stops the card's own read. */
@@ -97,6 +97,9 @@ async function readLower({ att, comps, now, dry, list, say }) {
     const types = [...new Set(Object.values(att.markets ?? {}).map((m) => m.marketType))];
     console.log(`    markets on the page: ${Object.keys(att.markets ?? {}).length} [${types.slice(0, 12).join(' | ')}]; an event's fields: ${Object.keys(events[0] ?? {}).join(', ')}`);
     for (const m of view.matches) console.log(`    ${m.comp} | ${m.a} v ${m.b} | ${new Date(m.start).toISOString().slice(0, 16)} | ${m.ml ? `${m.ml.a} / ${m.ml.b}` : 'no price'} | ${m.call.kind === 'lean' ? `LEAN ${m.call.name} ${m.call.american} (${m.call.how}, ${Math.round(m.call.share * 100)}%${m.call.basis === 'rank' ? `, rank ${Math.round(m.call.rankShare * 100)}% price ${Math.round(m.call.market * 100)}%${m.call.value ? ', ROOM' : ''}` : ', price only'})` : m.call.text}`);
+    // One moneyline market as the page sends it, cut short: for holding the slip link's ids to it.
+    const sample = Object.values(att.markets ?? {}).find((m) => MONEYLINE.test(String(m.marketType ?? '')) && events.some((e) => String(e.eventId) === String(m.eventId)));
+    if (sample) console.log(`    a moneyline market as sent: ${JSON.stringify({ ...sample, runners: (sample.runners ?? []).map((r) => ({ ...r, previousWinRunnerOdds: undefined, runnerOrder: undefined })) }).slice(0, 2200)}`);
     console.log(`    in play by the page's markets: ${inPlay.size}; a market's fields: ${Object.keys(Object.values(att.markets ?? {}).find((m) => MONEYLINE.test(String(m.marketType ?? ''))) ?? {}).join(', ')}`);
   }
   const bytes = JSON.stringify(log).length;
