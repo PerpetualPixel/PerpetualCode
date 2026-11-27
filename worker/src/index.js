@@ -1640,7 +1640,9 @@ export default {
       const legsBook = asked && LIVE_BOOKS.includes(asked) ? asked : null;
       const [board, tennis, tennisLive] = await Promise.all([getLiveBoard(env, now, { ctx, legsBook }), getTennisLive(env, now).catch((e) => { console.error('Tennis live failed:', e); return null; }), getTennisLivePlays(env, now).catch((e) => { console.error('Tennis live plays failed:', e); return null; })]);
       // tennisLive: the matches in play read game by game, the live plays and their record (worker/src/tennis-live-plays.js).
-      return json({ ...board, tennis, tennisLive }, { headers: { ...cors, 'Cache-Control': 'no-store' } });
+      // tennisLower: the Challenger and ITF matches in play at the last metered read, each with its call (worker/src/tennis-lower-live.js).
+      const tennisLower = await getLowerLive(env, now).catch(() => null);
+      return json({ ...board, tennis, tennisLive, tennisLower }, { headers: { ...cors, 'Cache-Control': 'no-store' } });
     }
     // Last night's slips graded against the final box scores (worker/src/live-board.js): read-only.
     if (pathname === '/live/recap' && request.method === 'GET') {
@@ -1685,7 +1687,7 @@ export default {
     // Tennis in the Parlay Builder (worker/src/tennis-picks.js builderLegs): every priced leg on the matches read, scored.
     // Live tennis on its own: the reads of the matches in play, the live plays and their record.
     if (pathname === '/tennis/live' && request.method === 'GET') {
-      return json({ ...(await getTennisLivePlays(env)), lower: await getLowerLive(env).catch(() => null) }, { headers: { ...cors, 'Cache-Control': 'no-store' } });
+      return json({ ...(await getTennisLivePlays(env)), lower: await getLowerLive(env, Date.now(), { debug: true }).catch(() => null) }, { headers: { ...cors, 'Cache-Control': 'no-store' } });
     }
     if (pathname === '/tennis/parlay' && request.method === 'GET') {
       return json(await getTennisParlay(env), { headers: { ...cors, 'Cache-Control': 'public, max-age=120' } });

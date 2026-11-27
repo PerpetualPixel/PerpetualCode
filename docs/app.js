@@ -12721,6 +12721,52 @@ function renderTennisLiveLedger(tl, inPlayIds) {
   return `<div class="live-tennis-ledger">${lines.length ? `<p class="row-sub"><strong>Live plays</strong> · ${lines.join(' · ')} · ${results}</p>` : ''}${openHtml}</div>`;
 }
 const liveWhenFmt = new Intl.DateTimeFormat('en-US', { weekday: 'short', month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' });
+/**
+ * The Challenger and ITF matches in play (2026-11-27, the owner, of the Challenger and ITF board: "for live leans";
+ * worker/src/tennis-lower-live.js): each with its score at the last read and one call, the way a tour match has one.
+ * The scores come from a metered read, so the block says how old they are; a lean names the price to take it at or
+ * better, since no live price is read. Leans are graded on a tally of their own and never counted in a record.
+ */
+function renderLiveTennisLower(lw) {
+  if (!lw) return '';
+  const matches = lw.matches ?? [];
+  const t = lw.tally ?? {}; const graded = (t.wins ?? 0) + (t.losses ?? 0);
+  if (!matches.length && !graded) return '';
+  const row = (m) => {
+    const score = liveSetScore(m);
+    const lean = m.lean && !m.lean.result ? m.lean : null;
+    const c = m.call ?? { kind: 'pass', text: 'No call right now.' };
+    const open = Boolean(liveState.open[`tl:lower:${m.id}`]);
+    const call = lean
+      ? `<div class="live-call is-lean">
+        <span class="live-call-tag" title="A lean: the best call on this match. Graded on its own tally, not counted in the record.">Lean</span>
+        <strong class="live-call-text">Take ${esc(lean.selection)}</strong>
+        <span class="live-call-price"><span class="trend-price live-tennis-fair" title="No live price is read for this match: take it at this price or better">${esc(formatAmerican(lean.playable))} or better</span></span>
+        <small class="live-call-sub">${esc(pct(lean.prob))} · called at ${esc(lean.score ?? '')}${score && score !== lean.score ? `, now ${esc(score)}` : ''} · ${lean.basis === 'score' ? 'from the score alone' : 'from the score and the pre-match price'}</small>
+      </div>`
+      : `<div class="live-call is-${c.kind === 'watch' ? 'watch' : 'pass'}"><span class="live-call-tag">${c.kind === 'watch' ? 'Watch' : 'No call'}</span><strong class="live-call-text">${esc(String(c.text ?? '').replace(/^No call: /, ''))}</strong>${c.watch ? `<small class="live-call-sub">${esc(c.watch)}</small>` : ''}</div>`;
+    const a = Math.round((m.read?.prob ?? 0.5) * 100);
+    const why = m.read?.why ?? [];
+    return `<div class="live-tennis-match is-live">
+      <div class="live-tennis-row"><strong>${esc(m.a)} <small>vs</small> ${esc(m.b)}</strong><span class="live-state is-on"><i class="live-dot"></i>${m.points ? esc(m.points) : 'In play'}</span><span class="live-score">${esc(score)}</span></div>
+      <small class="row-sub">${esc(m.comp ?? '')}${m.server ? ` · ${esc(lastName(m[m.server]))} serving` : ''}</small>
+      <div class="live-tennis-read">
+        ${m.read ? `<div class="live-tennis-bar" role="img" aria-label="${esc(m.a)} ${a}% to win, ${esc(m.b)} ${100 - a}%"><span class="is-a" style="width:${a}%">${a >= 12 ? `${a}%` : ''}</span><span class="is-b">${100 - a >= 12 ? `${100 - a}%` : ''}</span></div>` : ''}
+        ${call}
+        ${why.length ? `<button type="button" class="parlay-btn sc-why" data-tennis-live-why="lower:${esc(m.id)}" aria-expanded="${open}">${open ? 'Less' : 'More'}</button>` : ''}
+        ${open && why.length ? `<div class="live-tennis-more"><span class="tennis-ways-h">The read</span><ul class="tennis-why-list">${why.map((w) => `<li>${esc(w)}</li>`).join('')}<li>${m.priced ? 'Serve numbers are solved from the pre-match price: none are on file for players at this level.' : 'No pre-match price and no serve numbers on file: the read is from the score and the holds alone.'}</li></ul></div>` : ''}
+      </div>
+    </div>`;
+  };
+  const slow = (lw.everyMin ?? 1) > 2;
+  const note = slow ? `<p class="row-sub">Scores here are read every ${esc(String(lw.everyMin))} minutes${lw.readsLeft === 0 ? ", and today's reads are used up" : ''}. Check the live score before you bet: a lean stands on the score shown.</p>` : '';
+  const tally = graded ? `<p class="row-sub"><strong>Leans</strong> · ${t.wins}-${t.losses} <small>${esc(signedUnits(t.units ?? 0))}u at half a unit each · not counted in any record</small></p>` : '';
+  return `<div class="live-tennis live-tennis-lower">
+    <p class="live-sub">Challenger and ITF <small>${matches.length} in play${lw.at ? ` · scores read ${esc(ago(lw.at))}` : ''}</small></p>
+    ${note}${tally}
+    ${matches.map(row).join('') || '<p class="row-sub">None in play at the last read.</p>'}
+  </div>`;
+}
 /** Tennis on the Live tab: the day's parlay with each leg's standing, the matches in play, the matches with a play, the rest folded. */
 function renderLiveTennis(t) {
   if (!t) return '<p class="row-sub">The tennis scoreboard did not come through.</p>';
@@ -12751,7 +12797,7 @@ function renderLive() {
   const games = all.filter((g) => liveState.leagues.has(g.league));
   const tennisOn = liveState.leagues.has('tennis');
   const tennis = tennisOn ? (d?.tennis ?? null) : null;
-  const tennisHtml = tennisOn ? renderLiveTennis(d?.tennis ?? null) : '';
+  const tennisHtml = tennisOn ? `${renderLiveTennis(d?.tennis ?? null)}${renderLiveTennisLower(d?.tennisLower ?? null)}` : '';
   setLiveGlow(all.some((g) => g.tick?.state === 'in') || (d?.tennis?.inPlay ?? 0) > 0);
   if (liveBuilder.on) { renderLiveBuilder(all); return; }
   const beats = Object.values(d?.watcher ?? {}); const lastBeat = beats.length ? Math.max(...beats.map((b) => b.at ?? 0)) : 0;

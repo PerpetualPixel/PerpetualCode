@@ -1,11 +1,12 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { parseSets, parseLiveEvents, lowerLiveBudget, lowerInPlay, runLowerLiveTick, getLowerLive, LOWER_LIVE_KEY, LOWER_LIVE_DAILY } from '../worker/src/tennis-lower-live.js';
+import { parseSets, parseLiveEvents, lowerLiveBudget, lowerInPlay, runLowerLiveTick, getLowerLive, eventFor, matchWinner, settleLean, advanceLower, lowerLiveView, LOWER_LIVE_KEY, LOWER_LIVE_DAILY } from '../worker/src/tennis-lower-live.js';
 import { TENNIS_LOWER_KEY } from '../worker/src/tennis-lower.js';
 
 const NOW = Date.parse('2026-11-27T09:00:00Z');
 const kv = (init = {}) => { const m = new Map(Object.entries(init).map(([k, v]) => [k, JSON.stringify(v)])); return { m, get: async (k) => m.get(k) ?? null, put: async (k, v) => { m.set(k, v); } }; };
-const log = (startMs) => ({ matches: { 1: { id: '1', a: 'Kimmer Coppejans', b: 'Dali Blanch', start: startMs } } });
+const log = (startMs, extra = {}) => ({ matches: { 1: { id: '1', comp: 'Monastir Challenger 2026', tour: 'atp', tier: 'challenger', a: 'Kimmer Coppejans', b: 'Dali Blanch', start: startMs, ml: { a: -188, b: 140 }, ...extra } } });
+const row = (score, extra = {}) => ({ id: '9', a: 'Kimmer Coppejans', b: 'Dali Blanch', tour: 'atp', status: 'InPlay', sets: parseSets(score), points: '30-15', server: 'a', tournament: null, ...extra });
 const body = { success: true, count: 2, results: [
   { id: 9, player1: { name: 'Kimmer Coppejans' }, player2: { name: 'Dali Blanch' }, score: '6-4,3-2', points: '30-15', indicator: '1,0', status: 'InPlay', tourType: 'atp' },
   { id: 10, player1: { name: 'A One / B Two' }, player2: { name: 'C Three / D Four' }, score: '2-1', status: 'InPlay', tourType: 'atp' },
@@ -54,9 +55,12 @@ test('the tick reads when a match is in play, then waits out the interval and th
   // Past the interval it reads again.
   r = await runLowerLiveTick(env, NOW + 21 * 60e3, { deps });
   assert.equal(r.calls, 2);
-  const seen = await getLowerLive(env);
-  assert.equal(seen.events[0].a, 'Kimmer Coppejans');
+  const seen = await getLowerLive(env, NOW + 21 * 60e3, { debug: true });
+  assert.equal(seen.matches[0].a, 'Kimmer Coppejans');
+  assert.deepEqual(seen.matches[0].sets, [[6, 4], [3, 2]]);
   assert.equal(seen.shape.rows, 2);
+  assert.equal(seen.readsLeft, LOWER_LIVE_DAILY - 2);
+  assert.equal((await getLowerLive(env, NOW + 21 * 60e3)).shape, undefined);
   // The day's calls spent: no read.
   const state = JSON.parse(POTD_KV.m.get(LOWER_LIVE_KEY));
   POTD_KV.m.set(LOWER_LIVE_KEY, JSON.stringify({ ...state, calls: LOWER_LIVE_DAILY, fetchedAt: NOW }));
@@ -81,7 +85,91 @@ test('a failed read keeps the last scores and still counts against the day', asy
   const r = await runLowerLiveTick({ POTD_KV }, NOW + 21 * 60e3, { deps: { noRest: true, fetchLive: async () => { throw new Error('down'); } } });
   assert.equal(r.error, 'down');
   assert.equal(r.calls, 2);
-  const seen = await getLowerLive({ POTD_KV });
-  assert.equal(seen.events.length, 1);
+  const seen = await getLowerLive({ POTD_KV }, NOW + 21 * 60e3);
+  assert.equal(seen.matches.length, 1);
   assert.equal(seen.at, NOW);
+  assert.equal(seen.error, 'down');
+});
+
+test('the source\'s row is turned to the board\'s own order of players', () => {
+  const m = { a: 'Dali Blanch', b: 'Kimmer Coppejans' };
+  const e = eventFor(m, [row('6-4,3-2')]);
+  assert.deepEqual(e.sets, [[4, 6], [2, 3]]);
+  assert.equal(e.points, '15-30');
+  assert.equal(e.server, 'b');
+  assert.equal(eventFor({ a: 'Someone Else', b: 'Kimmer Coppejans' }, [row('6-4')]), null);
+  assert.equal(eventFor({ a: 'Kimmer Coppejans', b: 'Dali Blanch' }, [row('1-0')]).server, 'a');
+});
+
+test('a match is won with two sets, and a lean settles with its set or the match', () => {
+  assert.equal(matchWinner([[6, 4], [3, 2]]), null);
+  assert.equal(matchWinner([[6, 4], [7, 6]]), 'a');
+  assert.equal(matchWinner([[6, 4], [3, 6], [5, 7]]), 'b');
+  const set = { market: 'live_set', side: 'a', set: 2 };
+  assert.equal(settleLean(set, [[6, 4], [3, 2]]), null);
+  assert.equal(settleLean(set, [[6, 4], [6, 3]]), 'win');
+  assert.equal(settleLean(set, [[6, 4], [4, 6], [1, 0]]), 'loss');
+  assert.equal(settleLean(set, [[6, 4], [3, 2]], { ended: true }), 'void');
+  const ml = { market: 'live_ml', side: 'b' };
+  assert.equal(settleLean(ml, [[6, 4], [3, 2]]), null);
+  assert.equal(settleLean(ml, [[6, 4], [6, 2]]), 'loss');
+  assert.equal(settleLean(ml, [[6, 4], [3, 2]], { drawWinner: 'b' }), 'win');
+  assert.equal(settleLean(ml, [[6, 4], [3, 2]], { ended: true }), 'void');
+});
+
+test('a match in play gets a call, a lean opens once, and it is graded when its set ends', () => {
+  const lg = log(NOW - 3600e3);
+  // A set and a break up: the favourite is the set lean or the match is too short to call, never a watch this deep.
+  let st = advanceLower(null, null, lg, [row('6-4,3-1')], NOW);
+  const m = st.matches['1'];
+  assert.equal(m.live, true);
+  assert.equal(m.priced, true);
+  assert.ok(['lean', 'pass'].includes(m.call.kind));
+  assert.ok(m.read.prob > 0.8);
+  // Level in the first set, six games in: whatever the call, a lean that opens is kept as it was when it opened.
+  st = advanceLower(null, null, lg, [row('4-2')], NOW);
+  const lean = st.matches['1'].lean;
+  assert.ok(lean, JSON.stringify(st.matches['1'].call));
+  assert.equal(lean.side, 'a');
+  assert.equal(lean.score, '4-2');
+  assert.ok(Number.isFinite(lean.playable));
+  // The next read: still open, the same lean.
+  let nxt = advanceLower(st.matches, st.tally, lg, [row('5-3')], NOW + 20 * 60e3);
+  assert.equal(nxt.matches['1'].lean.at, NOW);
+  assert.equal(nxt.matches['1'].lean.result, undefined);
+  // Its set (or the match) goes the lean's way.
+  nxt = advanceLower(nxt.matches, nxt.tally, lg, [row(lean.market === 'live_set' ? '6-3,1-0' : '6-3,6-2', lean.market === 'live_set' ? {} : { status: 'Ended' })], NOW + 40 * 60e3);
+  assert.equal(nxt.tally.wins, 1);
+  assert.ok(nxt.tally.units > 0);
+  // Read again with nothing new: not counted twice.
+  const again = advanceLower(nxt.matches, nxt.tally, lg, [row(lean.market === 'live_set' ? '6-3,1-0' : '6-3,6-2', lean.market === 'live_set' ? {} : { status: 'Ended' })], NOW + 41 * 60e3);
+  assert.equal(again.tally.wins + again.tally.losses, 1);
+});
+
+test('a match that leaves the source with a set lean open voids it, and a match lean waits for the draw', () => {
+  const lg = log(NOW - 3600e3);
+  const open = (lean) => ({ 1: { id: '1', a: 'Kimmer Coppejans', b: 'Dali Blanch', start: NOW - 3600e3, sets: [[6, 4], [3, 2]], live: true, seenAt: NOW, timeline: { sets: [[6, 4], [3, 2]], games: [] }, serve: { pA: 0.64, pB: 0.6 }, lean } });
+  let st = advanceLower(open({ market: 'live_set', side: 'a', set: 2, playable: -150, at: NOW }), null, lg, [], NOW + 20 * 60e3);
+  assert.equal(st.matches['1'].lean.result, 'void');
+  assert.equal(st.matches['1'].live, false);
+  assert.equal(st.tally.voids, 1);
+  st = advanceLower(open({ market: 'live_ml', side: 'b', playable: 120, at: NOW }), null, lg, [], NOW + 20 * 60e3);
+  assert.equal(st.matches['1'].lean.result, undefined);
+  // The draw then shows who went through.
+  st = advanceLower(st.matches, st.tally, log(NOW - 3600e3, { result: 'b' }), [], NOW + 5 * 3600e3);
+  assert.equal(st.matches['1'].lean.result, 'win');
+  assert.equal(st.tally.units, 0.6);
+});
+
+test('the view lists the matches in play at the last read, with the tally and how often the source is read', () => {
+  const st = advanceLower(null, null, log(NOW - 3600e3), [row('4-2')], NOW);
+  const v = lowerLiveView({ ...st, eventsAt: NOW, day: 'x', calls: 3 }, {}, NOW + 5 * 60e3);
+  assert.equal(v.matches.length, 1);
+  assert.equal(v.matches[0].timeline, undefined);
+  assert.equal(v.everyMin, 20);
+  assert.deepEqual(v.tally, { wins: 0, losses: 0, voids: 0, units: 0 });
+  // A later read without the match: it is off the list.
+  const later = advanceLower(st.matches, st.tally, log(NOW - 3600e3), [], NOW + 20 * 60e3);
+  assert.equal(lowerLiveView({ ...later, eventsAt: NOW + 20 * 60e3 }, {}, NOW + 21 * 60e3).matches.length, 0);
+  assert.equal(lowerLiveView(null, {}), null);
 });

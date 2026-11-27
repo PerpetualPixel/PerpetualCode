@@ -17,9 +17,21 @@
  * under 45,000 a month.
  *
  * One call serves every match, so the count does not grow with the board.
+ *
+ * The lean on a match in play is the live tennis model's own
+ * (worker/src/tennis-live-model.js liveRead and liveCall, the same that
+ * call the tour matches): the score, the games in the order they were
+ * seen, and serve numbers solved from the pre-match price on the lower
+ * board, since none are on file for these players. No live price is
+ * read, so a lean names the price to take it at or better. One lean is
+ * open on a match at a time; it is graded when its set or the match ends
+ * and kept on a tally of its own, never on a record. A score here is as
+ * old as the last read, and every lean says how old.
  */
 import { nameKey } from './tennis-card-parse.js';
-import { TENNIS_LOWER_KEY } from './tennis-lower.js';
+import { TENNIS_LOWER_KEY, lowerShares } from './tennis-lower.js';
+import { samePlayer } from './tennis-fanduel.js';
+import { advanceTimeline, liveRead, liveCall, serveFromMarket, LIVE_LEAN_UNITS } from './tennis-live-model.js';
 
 export const LOWER_LIVE_KEY = 'tennis:lower:live';
 const HOST = 'tennis-api-atp-wta-itf.p.rapidapi.com';
@@ -80,6 +92,93 @@ export function parseLiveEvents(body) {
   return out;
 }
 
+const flipPoints = (p) => { const m = /^\s*(\S+)\s*-\s*(\S+)\s*$/.exec(String(p ?? '')); return m ? `${m[2]}-${m[1]}` : p ?? null; };
+/** The source's row for a lower-board match, turned to the match's own order of players; null when the source has no such match in play. */
+export function eventFor(m, events) {
+  for (const e of events ?? []) {
+    if (samePlayer(m.a, e.a) && samePlayer(m.b, e.b)) return e;
+    if (samePlayer(m.a, e.b) && samePlayer(m.b, e.a)) return { ...e, a: e.b, b: e.a, sets: e.sets.map(([x, y]) => [y, x]), points: flipPoints(e.points), server: e.server === 'a' ? 'b' : e.server === 'b' ? 'a' : null };
+  }
+  return null;
+}
+
+const setOver = ([a, b]) => (Math.max(a, b) >= 6 && Math.abs(a - b) >= 2) || Math.max(a, b) === 7;
+/** The winner of a best of three by its sets: 'a', 'b', or null while it is not decided. */
+export function matchWinner(sets) {
+  let a = 0; let b = 0;
+  for (const st of sets ?? []) if (setOver(st)) { if (st[0] > st[1]) a += 1; else b += 1; }
+  return a >= 2 ? 'a' : b >= 2 ? 'b' : null;
+}
+/**
+ * A lean against the score: 'win', 'loss', 'void', or null while it is
+ * open. A set lean settles with its set; a match lean with the match, by
+ * the sets or by the draw (`drawWinner`: who was listed in the next
+ * round). `ended` says the match has left the court: what is not settled
+ * by then is void.
+ */
+export function settleLean(lean, sets, { ended = false, drawWinner = null } = {}) {
+  if (lean.market === 'live_set') {
+    const st = (sets ?? [])[lean.set - 1];
+    if (st && setOver(st)) return (st[0] > st[1] ? 'a' : 'b') === lean.side ? 'win' : 'loss';
+    return ended ? 'void' : null;
+  }
+  const w = matchWinner(sets) ?? drawWinner;
+  if (w) return w === lean.side ? 'win' : 'loss';
+  return ended ? 'void' : null;
+}
+
+/** A match stays on file this long after its listed start; a match lean with no result by LEAN_VOID_MS after it is void. */
+const MATCH_KEEP_MS = 14 * 3600e3;
+const LEAN_VOID_MS = 8 * 3600e3;
+const ENDED = /end|finish|retir|complet|cancel|walkover|abandon/i;
+const decimalOf = (american) => (american > 0 ? 1 + american / 100 : 1 + 100 / -american);
+const round3 = (x) => Math.round(x * 1000) / 1000;
+const lineOf = (sets) => (sets ?? []).map(([a, b]) => `${a}-${b}`).join(' ') || '0-0';
+
+/**
+ * The matches on file with one read of the source folded in: each lower
+ * board match the source has in play gets its score, its games carried
+ * forward, the model's read and call, and a lean when the call is one
+ * and none is open; an open lean is settled when the score, the draw or
+ * the match's end decides it. Returns {matches, tally}.
+ */
+export function advanceLower(prevMatches, prevTally, log, events, now = Date.now()) {
+  const tally = { wins: 0, losses: 0, voids: 0, units: 0, ...(prevTally ?? {}) };
+  const matches = {};
+  for (const m of Object.values(log?.matches ?? {})) {
+    if (!(m.start <= now + 30 * 60e3) || now - m.start > MATCH_KEEP_MS) continue;
+    const prev = prevMatches?.[m.id] ?? null;
+    const drawWinner = m.result === 'a' || m.result === 'b' ? m.result : null;
+    const e = drawWinner ? null : eventFor(m, events);
+    if (!e && !prev) continue;
+    const sets = e ? e.sets : prev.sets ?? [];
+    const live = Boolean(e) && !ENDED.test(e.status) && !matchWinner(sets);
+    const timeline = e ? advanceTimeline(prev?.timeline, sets) : prev.timeline ?? { sets: [], games: [] };
+    const share = lowerShares(m.ml)?.a ?? null;
+    const serve = prev?.serve ?? serveFromMarket(share ?? 0.5, { tour: m.tour });
+    const names = { a: m.a, b: m.b };
+    let lean = prev?.lean ?? null;
+    if (lean && !lean.result) {
+      let r = settleLean(lean, sets, { drawWinner });
+      // Off the court: a set lean not seen to finish is void at once; a match lean waits for the draw, then is void.
+      if (!r && !live && (lean.market === 'live_set' || now - m.start > LEAN_VOID_MS)) r = settleLean(lean, sets, { ended: true, drawWinner });
+      if (r) {
+        lean = { ...lean, result: r, settledAt: now, final: lineOf(sets) };
+        if (r === 'win') { tally.wins += 1; tally.units = Math.round((tally.units + LIVE_LEAN_UNITS * (decimalOf(lean.playable) - 1)) * 100) / 100; } else if (r === 'loss') { tally.losses += 1; tally.units = Math.round((tally.units - LIVE_LEAN_UNITS) * 100) / 100; } else tally.voids += 1;
+      }
+    }
+    let read = prev?.read ?? null; let call = prev?.call ?? null;
+    if (live) {
+      const r = liveRead({ sets, games: timeline.games, serve, market: null, bestOf: 3, names });
+      call = liveCall(r, { names, gamesSeen: timeline.games.length, thin: share == null });
+      read = { prob: round3(r.prob), set: round3(r.model.set), setNumber: r.state.setNumber, inSet: r.state.inSet, why: r.why.slice(0, 4) };
+      if (call.kind === 'lean' && (!lean || lean.result)) lean = { market: call.market, side: call.side, set: call.set ?? null, selection: call.selection, prob: call.prob, playable: call.playable, basis: call.basis, score: lineOf(sets), at: now };
+    }
+    matches[m.id] = { id: m.id, comp: m.comp ?? null, tour: m.tour, tier: m.tier, a: m.a, b: m.b, start: m.start, priced: share != null, sets, points: e?.points ?? null, server: e?.server ?? null, live, seenAt: e ? now : prev.seenAt ?? null, timeline, serve, read, call, lean };
+  }
+  return { matches, tally };
+}
+
 const etDay = (ms) => new Intl.DateTimeFormat('en-CA', { timeZone: 'America/New_York' }).format(ms);
 const readJson = async (env, key) => { const raw = await env.POTD_KV.get(key).catch(() => null); if (!raw) return null; try { return JSON.parse(raw); } catch { return null; } };
 
@@ -116,8 +215,10 @@ export async function runLowerLiveTick(env, now = Date.now(), { deps = {} } = {}
   } catch (e) { error = String(e?.message ?? e).slice(0, 120); }
   const events = body ? parseLiveEvents(body) : [];
   const raw = liveRows(body);
+  // The scores folded into the matches on file; a read that did not come leaves them as they were.
+  const folded = body ? advanceLower(state.matches, state.tally, log, events, now) : { matches: state.matches ?? {}, tally: state.tally ?? null };
   const next = {
-    at: now, fetchedAt: now, day, calls: calls + 1, error,
+    at: now, fetchedAt: now, day, calls: calls + 1, error, matches: folded.matches, tally: folded.tally,
     events: body ? events : state.events ?? [], eventsAt: body ? now : state.eventsAt ?? null,
     // What the source sent, cut short: the top-level fields, how many rows, and the first rows as they came.
     shape: body ? { v: SHAPE_VERSION, top: Array.isArray(body) ? 'array' : Object.entries(body ?? {}).slice(0, 12).map(([k, v]) => `${k}:${Array.isArray(v) ? `list of ${v.length}` : v && typeof v === 'object' ? `{${Object.keys(v).slice(0, 12).join(',')}}` : JSON.stringify(v)?.slice(0, 60)}`), rows: raw.length, parsed: events.length, first: raw.slice(0, 3).map((r) => JSON.stringify(r).slice(0, 1500)) } : state.shape ?? null,
@@ -128,8 +229,25 @@ export async function runLowerLiveTick(env, now = Date.now(), { deps = {} } = {}
   return { skipped: false, events: events.length, playing: playing.length, calls: next.calls, error };
 }
 
-/** What the last read holds, for the Live tab. */
-export async function getLowerLive(env) {
+/**
+ * The Live tab's read of the state: the matches in play at the last
+ * read, each with its score, its call and its lean; the leans settled
+ * lately; the tally; how old the scores are and how often they are read.
+ */
+export function lowerLiveView(state, env, now = Date.now()) {
+  if (!state) return null;
+  const { daily, everyMs } = lowerLiveBudget(env);
+  const all = Object.values(state.matches ?? {});
+  const view = (m) => ({ id: m.id, comp: m.comp, tour: m.tour, tier: m.tier, a: m.a, b: m.b, start: m.start, priced: m.priced, sets: m.sets, points: m.points, server: m.server, read: m.read, call: m.call, lean: m.lean });
+  const matches = all.filter((m) => m.live && m.seenAt === state.eventsAt).sort((x, y) => x.start - y.start || String(x.a).localeCompare(String(y.a))).map(view);
+  const settled = all.filter((m) => m.lean?.result).sort((x, y) => (y.lean.settledAt ?? 0) - (x.lean.settledAt ?? 0)).slice(0, 8).map((m) => ({ id: m.id, comp: m.comp, a: m.a, b: m.b, ...m.lean }));
+  const used = state.day === etDay(now) ? state.calls ?? 0 : 0;
+  return { at: state.eventsAt ?? null, everyMin: Math.round(everyMs / 60e3), readsLeft: Math.max(0, daily - used), error: state.error ?? null, matches, settled, tally: state.tally ?? { wins: 0, losses: 0, voids: 0, units: 0 } };
+}
+
+/** What the last read holds, for the Live tab; `debug` adds the source's rows as they came. */
+export async function getLowerLive(env, now = Date.now(), { debug = false } = {}) {
   const s = await readJson(env, LOWER_LIVE_KEY);
-  return s ? { at: s.eventsAt ?? null, fetchedAt: s.fetchedAt ?? null, calls: s.calls ?? 0, day: s.day ?? null, error: s.error ?? null, playing: s.playing ?? 0, events: s.events ?? [], shape: s.shape ?? null } : null;
+  const view = lowerLiveView(s, env, now);
+  return view && debug ? { ...view, calls: s.calls ?? 0, day: s.day ?? null, playing: s.playing ?? 0, events: (s.events ?? []).length, shape: s.shape ?? null } : view;
 }
