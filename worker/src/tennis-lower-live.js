@@ -95,11 +95,45 @@ export function parseLiveEvents(body) {
 }
 
 const flipPoints = (p) => { const m = /^\s*(\S+)\s*-\s*(\S+)\s*$/.exec(String(p ?? '')); return m ? `${m[2]}-${m[1]}` : p ?? null; };
+/** How many single-letter changes turn one word into the other, counted no further than `max`. */
+function lettersApart(x, y, max = 2) {
+  if (Math.abs(x.length - y.length) > max) return max + 1;
+  let prev = Array.from({ length: y.length + 1 }, (_, i) => i);
+  for (let i = 1; i <= x.length; i++) {
+    const row = [i];
+    for (let j = 1; j <= y.length; j++) row[j] = Math.min(prev[j] + 1, row[j - 1] + 1, prev[j - 1] + (x[i - 1] === y[j - 1] ? 0 : 1));
+    prev = row;
+  }
+  return prev[y.length];
+}
+const lastWord = (key) => key.split(' ').filter(Boolean).at(-1) ?? '';
+/**
+ * Two sources' spellings of one player that are not the same name: the
+ * same first initial and a surname of six letters or more that is one or
+ * two letters off (2026-11-27: the source's "Adelina Lachinova" was
+ * FanDuel's "Adelina Lacinova", and the match went unpaired).
+ */
+export function nearPlayer(x, y) {
+  const a = nameKey(x); const b = nameKey(y);
+  if (!a || !b || a[0] !== b[0]) return false;
+  const sa = lastWord(a); const sb = lastWord(b);
+  return Math.min(sa.length, sb.length) >= 6 && lettersApart(sa, sb) <= 2;
+}
+/**
+ * Whether two matches are the same two players, either way round: 0 not,
+ * 1 in the same order, 2 turned. Both names fit, or one fits and the
+ * other is a near spelling of it: a near spelling alone is never enough.
+ */
+export function samePair(m, e) {
+  const fits = (p, q, r, t) => (samePlayer(p, q) && (samePlayer(r, t) || nearPlayer(r, t))) || (nearPlayer(p, q) && samePlayer(r, t));
+  return fits(m.a, e.a, m.b, e.b) ? 1 : fits(m.a, e.b, m.b, e.a) ? 2 : 0;
+}
 /** The source's row for a lower-board match, turned to the match's own order of players; null when the source has no such match in play. */
 export function eventFor(m, events) {
   for (const e of events ?? []) {
-    if (samePlayer(m.a, e.a) && samePlayer(m.b, e.b)) return e;
-    if (samePlayer(m.a, e.b) && samePlayer(m.b, e.a)) return { ...e, a: e.b, b: e.a, sets: e.sets.map(([x, y]) => [y, x]), points: flipPoints(e.points), server: e.server === 'a' ? 'b' : e.server === 'b' ? 'a' : null };
+    const way = samePair(m, e);
+    if (way === 1) return e;
+    if (way === 2) return { ...e, a: e.b, b: e.a, sets: e.sets.map(([x, y]) => [y, x]), points: flipPoints(e.points), server: e.server === 'a' ? 'b' : e.server === 'b' ? 'a' : null };
   }
   return null;
 }
@@ -153,7 +187,7 @@ export function advanceLower(prevMatches, prevTally, log, events, now = Date.now
   const board = Object.values(log?.matches ?? {}).filter((m) => m.start <= now + 30 * 60e3 && now - m.start <= MATCH_KEEP_MS);
   // The source's own matches below the tours that the board never listed (FanDuel's page did not carry them, or carried them before the board was kept):
   // read from the score alone, with no pre-match price and no draw to grade by. A match already followed that way is carried until it ages out.
-  const onBoard = (x) => board.some((m) => (samePlayer(m.a, x.a) && samePlayer(m.b, x.b)) || (samePlayer(m.a, x.b) && samePlayer(m.b, x.a)));
+  const onBoard = (x) => board.some((m) => samePair(m, x) > 0);
   const offBoard = new Map();
   for (const p of Object.values(prevMatches ?? {})) if (p.source && now - p.start <= MATCH_KEEP_MS && !onBoard(p)) offBoard.set(p.id, { id: p.id, comp: p.comp, tour: p.tour, tier: p.tier, a: p.a, b: p.b, start: p.start, ml: null, source: true });
   for (const e of events ?? []) {
@@ -162,7 +196,8 @@ export function advanceLower(prevMatches, prevTally, log, events, now = Date.now
     offBoard.set(id, { id, comp: e.tournament, tour: e.tour, tier, a: e.a, b: e.b, start: now, ml: null, source: true });
   }
   for (const m of [...board, ...offBoard.values()]) {
-    const prev = prevMatches?.[m.id] ?? null;
+    // A board match first followed from the source alone (its pairing came later) keeps what was read of it then: the games and an open lean.
+    const prev = prevMatches?.[m.id] ?? (m.source ? null : Object.values(prevMatches ?? {}).find((p) => p.source && samePair(m, p) === 1)) ?? null;
     const drawWinner = m.result === 'a' || m.result === 'b' ? m.result : null;
     const e = drawWinner ? null : eventFor(m, events);
     if (!e && !prev) continue;
