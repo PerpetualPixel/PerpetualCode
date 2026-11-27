@@ -30,6 +30,7 @@ import { readKv, writeKv } from './lib/kv.mjs';
 import { trimFanduelMarket } from '../worker/src/ufc-fanduel.js';
 import { TENNIS_FANDUEL_KEY, FANDUEL_TENNIS_TABS, FANDUEL_TENNIS_TYPES, fanduelPlayers, samePlayer } from '../worker/src/tennis-fanduel.js';
 import { TENNIS_LOWER_KEY, lowerTierOf, mergeLower, lowerBoard } from '../worker/src/tennis-lower.js';
+import { LOWER_RANKS_KEY } from '../worker/src/tennis-lower-ranks.js';
 
 const API = 'https://sbapi.nj.sportsbook.fanduel.com/api';
 // The key FanDuel's own web page sends with every read of its public page data.
@@ -85,15 +86,17 @@ async function readLower({ att, comps, now, dry, list, say }) {
   // A log that cannot be read is not written over (its tally is the only copy): a dry run alone goes on without one.
   let before = null;
   try { before = await readKv(TENNIS_LOWER_KEY); } catch (err) { if (!dry) throw err; }
-  const log = mergeLower(before, board, now);
-  const view = lowerBoard(log, now);
+  // The week's rankings the worker keeps (worker/src/tennis-lower-ranks.js): the leans are read against them where both players are ranked.
+  const ranks = await readKv(LOWER_RANKS_KEY).catch(() => null);
+  const log = mergeLower(before, board, now, ranks);
+  const view = lowerBoard(log, now, ranks);
   const leans = view.matches.filter((m) => m.call.kind === 'lean');
   const graded = Object.values(log.matches).filter((m) => m.gradedAt === now && m.result && m.result !== 'unknown').length;
-  say(`lower tiers: ${events.length} singles on the page (${pageMoney.size} moneylines on the page itself, ${own} matches read from their own page), ${view.matches.length} to come, ${leans.length} leans, ${graded} results read from the draw; tally ${JSON.stringify(log.tally)}`);
+  say(`lower tiers: ${events.length} singles on the page (${pageMoney.size} moneylines on the page itself, ${own} matches read from their own page), ${view.matches.length} to come, ${leans.length} leans (${leans.filter((m) => m.call.basis === 'rank').length} read against the rankings, ${leans.filter((m) => m.call.value).length} with room), ${graded} results read from the draw; tally ${JSON.stringify(log.tally)}`);
   if (list) {
     const types = [...new Set(Object.values(att.markets ?? {}).map((m) => m.marketType))];
     console.log(`    markets on the page: ${Object.keys(att.markets ?? {}).length} [${types.slice(0, 12).join(' | ')}]; an event's fields: ${Object.keys(events[0] ?? {}).join(', ')}`);
-    for (const m of view.matches) console.log(`    ${m.comp} | ${m.a} v ${m.b} | ${new Date(m.start).toISOString().slice(0, 16)} | ${m.ml ? `${m.ml.a} / ${m.ml.b}` : 'no price'} | ${m.call.kind === 'lean' ? `LEAN ${m.call.name} ${m.call.american} (${m.call.how}, ${Math.round(m.call.share * 100)}%)` : m.call.text}`);
+    for (const m of view.matches) console.log(`    ${m.comp} | ${m.a} v ${m.b} | ${new Date(m.start).toISOString().slice(0, 16)} | ${m.ml ? `${m.ml.a} / ${m.ml.b}` : 'no price'} | ${m.call.kind === 'lean' ? `LEAN ${m.call.name} ${m.call.american} (${m.call.how}, ${Math.round(m.call.share * 100)}%${m.call.basis === 'rank' ? `, rank ${Math.round(m.call.rankShare * 100)}% price ${Math.round(m.call.market * 100)}%${m.call.value ? ', ROOM' : ''}` : ', price only'})` : m.call.text}`);
     console.log(`    in play by the page's markets: ${inPlay.size}; a market's fields: ${Object.keys(Object.values(att.markets ?? {}).find((m) => MONEYLINE.test(String(m.marketType ?? ''))) ?? {}).join(', ')}`);
   }
   const bytes = JSON.stringify(log).length;

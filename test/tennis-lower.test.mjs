@@ -163,3 +163,95 @@ test('a match with no later round is given up on, and old matches fall off the l
   log = mergeLower(log, [], NOW + H + LOWER_KEEP_MS + H);
   assert.deepEqual(log.matches, {});
 });
+
+// --- read against the rankings ---
+import { rankShare, LOWER_RANK_WEIGHT_UNDER } from '../worker/src/tennis-lower.js';
+const RANKS = { at: NOW, atp: { 'kimmer coppejans': [210, 280], 'dali blanch': [420, 120], 'a one': [300, 190], 'b two': [310, 185], 'star back': [900, 20], 'steady pro': [250, 240] }, wta: {} };
+const mm = (a, b, ml, open = null) => ({ tour: 'atp', a, b, ml: { a: ml[0], b: ml[1] }, open: open ? { a: open[0], b: open[1] } : null });
+
+test('the ranking\'s share is the points set against each other, a handful of points saying little', () => {
+  assert.equal(rankShare(100, 100), 0.5);
+  assert.ok(rankShare(280, 120) > 0.64 && rankShare(280, 120) < 0.7);
+  assert.ok(rankShare(12, 3) < 0.63);
+  assert.ok(rankShare(0, 0) === 0.5);
+  assert.ok(Math.abs(rankShare(280, 120) + rankShare(120, 280) - 1) < 1e-9);
+});
+
+test('with both players ranked the read is the ranking and the price together, and says so', () => {
+  const c = lowerCall(mm('Kimmer Coppejans', 'Dali Blanch', [-140, 110]), RANKS);
+  assert.equal(c.kind, 'lean');
+  assert.equal(c.basis, 'rank');
+  assert.equal(c.side, 'a');
+  assert.deepEqual(c.ranks, { a: { rank: 210, points: 280 }, b: { rank: 420, points: 120 } });
+  // The price alone has him 55%, short of a lean; the ranking's 66% is surer, so it counts for half and carries the read over the bar.
+  assert.ok(c.market < 0.57 && c.rankShare > 0.64);
+  assert.ok(Math.abs(c.share - (c.market + c.rankShare) / 2) < 0.002);
+  assert.equal(c.value, true);
+  assert.ok(c.edge >= 0.02);
+  assert.ok(c.why.some((w) => /Rankings: Kimmer Coppejans #210 \(280 points\), Dali Blanch #420 \(120\)/.test(w)));
+  assert.ok(c.why.some((w) => /points? of room/.test(w)));
+  // The same price with no rankings: too close to call.
+  assert.equal(lowerCall(mm('Kimmer Coppejans', 'Dali Blanch', [-140, 110])).reason, 'close');
+});
+
+test('a favourite the ranking does not back any more than the price has no room, and is still a lean', () => {
+  const c = lowerCall(mm('Kimmer Coppejans', 'Dali Blanch', [-240, 180]), RANKS);
+  assert.equal(c.kind, 'lean');
+  assert.equal(c.basis, 'rank');
+  assert.equal(c.value, false);
+  assert.ok(c.edge < 0);
+  assert.ok(c.why.some((w) => /the book's cut/.test(w)));
+});
+
+test('the price and the ranking far apart is no lean: the price knows something', () => {
+  // The ranking has Steady Pro a heavy favourite on points; the price makes Star Back the favourite.
+  const c = lowerCall(mm('Star Back', 'Steady Pro', [-200, 150]), RANKS);
+  assert.equal(c.kind, 'none');
+  assert.equal(c.reason, 'apart');
+  assert.match(c.text, /the price has Star Back 6\d%, the rankings Steady Pro 8\d%/);
+});
+
+test('a ranking that agrees on the favourite and is less sure moves the read a little, never to a disagreement', () => {
+  // As the real lists read on 2026-11-27: priced at 87%, the same player 57% on points.
+  const ranks = { atp: { 'heavy fav': [600, 40], 'long shot': [900, 28] } };
+  const c = lowerCall(mm('Heavy Fav', 'Long Shot', [-1450, 640]), ranks);
+  assert.equal(c.kind, 'lean');
+  assert.equal(c.how, 'short');
+  assert.equal(c.basis, 'rank');
+  assert.ok(c.rankShare < 0.6 && c.market > 0.85);
+  assert.ok(Math.abs(c.share - (c.market + LOWER_RANK_WEIGHT_UNDER * (c.rankShare - c.market))) < 0.002);
+  assert.equal(c.value, false);
+  assert.ok(c.why.some((w) => /agree on the side and are less sure than the price/.test(w)));
+});
+
+test('a near-even price with the ranking the other way is read half way, and can lean the ranking\'s player', () => {
+  // The price has Star Back 52%; the ranking has Steady Pro a heavy favourite.
+  const c = lowerCall(mm('Star Back', 'Steady Pro', [-112, -108]), RANKS);
+  assert.equal(c.kind, 'lean');
+  assert.equal(c.side, 'b');
+  assert.equal(c.value, true);
+  assert.ok(c.share > 0.57 && c.share < 0.7);
+});
+
+test('a player the list does not have leaves the price as the whole read', () => {
+  const c = lowerCall(mm('Kimmer Coppejans', 'Unknown Qualifier', [-190, 145]), RANKS);
+  assert.equal(c.kind, 'lean');
+  assert.equal(c.basis, 'price');
+  assert.equal(c.value, false);
+  assert.ok(c.why.some((w) => /No ranking on file for Unknown Qualifier/.test(w)));
+  const noPrice = lowerCall({ tour: 'atp', a: 'Kimmer Coppejans', b: 'Dali Blanch', ml: null }, RANKS);
+  assert.equal(noPrice.reason, 'unpriced');
+  assert.match(noPrice.text, /The rankings favour Kimmer Coppejans/);
+});
+
+test('a lean with room is counted on its own tally when the draw settles it', () => {
+  let log = mergeLower(null, [ev('1', 'Monastir Challenger 2026', 'Kimmer Coppejans', 'Dali Blanch', 1, [-140, 110])], NOW, RANKS);
+  assert.equal(log.matches['1'].call.basis, 'rank');
+  assert.equal(log.matches['1'].call.value, true);
+  log = mergeLower(log, [ev('5', 'Monastir Challenger 2026', 'Kimmer Coppejans', 'A One', 26, [-150, 115])], NOW + 6 * H, RANKS);
+  assert.deepEqual(log.tally.value, { wins: 1, losses: 0, units: 0.71 });
+  assert.deepEqual(log.tally.straight, { wins: 1, losses: 0, units: 0.71 });
+  const board = lowerBoard(log, NOW + 6 * H, RANKS);
+  assert.equal(board.ranksAt, NOW);
+  assert.equal(board.matches[0].call.basis, 'rank');
+});

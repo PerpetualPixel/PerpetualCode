@@ -21,12 +21,12 @@
      only page that reads the feed; the other pages' connect-src stays the
      worker alone. -->
 <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src 'self' https://fonts.gstatic.com; img-src 'self' data: https:; connect-src 'self' https://pixel-pick-odds.mgbouldering.workers.dev https://perpetualpixel.github.io; object-src 'none'; base-uri 'self'; form-action 'self'">
-<script src="frame-guard.js?v=1.415"></script>
+<script src="frame-guard.js?v=1.417"></script>
 <!-- The first board is asked for here, while the rest of the page is still arriving (docs/early.js). -->
 <link rel="preconnect" href="https://pixel-pick-odds.mgbouldering.workers.dev" crossorigin>
-<script src="early.js?v=1.415"></script>
+<script src="early.js?v=1.417"></script>
 <!-- The loader's animation (docs/loader-fx.js): deferred, it draws the loaders already in the page as soon as the page has arrived. -->
-<script src="loader-fx.js?v=1.415" defer></script>
+<script src="loader-fx.js?v=1.417" defer></script>
 <title>Perpetual Picks - App</title>
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <meta name="theme-color" content="#05050A">
@@ -42,7 +42,7 @@
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Syne:wght@600;700;800&family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
-<link rel="stylesheet" href="styles.css?v=1.415">
+<link rel="stylesheet" href="styles.css?v=1.417">
 <!-- modulepreload:start (written by update-version.js: every file app.js imports, fetched alongside it rather than one after another) -->
 <link rel="modulepreload" href="config.js">
 <link rel="modulepreload" href="demo.js">
@@ -76,7 +76,7 @@
 <link rel="modulepreload" href="take-or-fade.js">
 <!-- modulepreload:end -->
 <!-- Before first paint: a desktop reader who chose "Fit screen" gets the wide shell without a flash of the narrow one. -->
-<script src="wide.js?v=1.415"></script>
+<script src="wide.js?v=1.417"></script>
 </head>
 <body>
 
@@ -213,7 +213,7 @@
       <li><strong>Player search:</strong> a new "To record" choice between Over and Under. Type 15 points and it shows the games with 15 or more.</li>
       <li><strong>Onyx:</strong> pick Onyx as one of your sportsbooks and every line and ticket gets a button that copies the pick and opens Onyx.</li>
       <li><strong>Live, custom parlay mode:</strong> it now lists every live line the sportsbook has up, not only the well-paced ones, with a Sort menu (pace, closest to the number, shortest or longest odds, our picks, player). The lines our own slips would take are marked "Our pick". One leg is enough now: a single leg makes a straight bet link.</li>
-      <li><strong>Tennis, Challenger and ITF:</strong> the Tennis tab now lists every Challenger and ITF singles match FanDuel has up, by tournament, each with a lean or the reason there is none. These are leans off the price, not tracked plays.</li>
+      <li><strong>Tennis, Challenger and ITF:</strong> two new buttons beside ATP and WTA on the Tennis tab. Every Challenger and ITF singles match FanDuel has up gets a lean or the reason there is none, the strongest lean first. Each price is read against the two players' world rankings, and "Room" marks a lean the rankings are surer of than the price is. These are leans, not tracked plays.</li>
       <li><strong>Live, Challenger and ITF:</strong> those matches now show on the Live tab while they are in play, each with its score and one call: a lean with the price to take it at, what to watch for, or why there is no call. The block says how old its scores are.</li>
       <li><strong>Live, no repeats:</strong> once a player is on a live slip for a stat, he is not put on another slip for that stat later in the same game, at the same number or a higher one.</li>
       <li><strong>Live, NFL slips:</strong> rebuilt after a losing start. An NFL slip is now two legs, on yards only (no catch counts), and is posted only when a sportsbook prices both legs better than the other sportsbooks do. Expect far fewer NFL slips.</li>
@@ -696,7 +696,7 @@
       <p><strong>Results tab.</strong> Every record now lives on its own tab: pregame results first, live results on a toggle, and a card for each sport. It updates itself through the day, and live tennis leans sit inside the Tennis card on the Live side. See the Results section below.</p>
       <p><strong>UFC Recommended parlays.</strong> On the UFC tab's parlay section, the Recommended button opens a page of ready-made tickets for the card: builders, regular parlays and lottos. Each leg shows its odds and at least one reason it was picked. Sort and filter by confidence, payout, favorites, underdogs or type, then take the one that suits you. After the card, the page shows which tickets and legs landed.</p>
       <p><strong>Tennis.</strong> Each lean now carries set betting on the leaned player (-1.5 sets to win 2-0, +1.5 sets to win a set), the second set's winner and games, and the price at every book. Every play says the price to take it at or better.</p>
-      <p><strong>Tennis, Challenger and ITF.</strong> A new section on the Tennis tab lists every Challenger and ITF singles match FanDuel has up, each with a lean or the reason there is none. See Tennis below.</p>
+      <p><strong>Tennis, Challenger and ITF.</strong> Two new buttons beside ATP and WTA on the Tennis tab. Every Challenger and ITF singles match FanDuel has up gets a lean or the reason there is none, read against the players' world rankings. See Tennis below.</p>
       <p><strong>Live.</strong> Tap a game and the bet comes first; the box score is folded underneath. A game or match leaves the list when it ends. Live tennis can now post an over or under on the games in the set being played.</p>
       <p><strong>Parlay.</strong> Hits in the last 5 and hits in the last 10 have their own sliders, with a Last 20 switch beside them. Tap a star twice for a half star.</p>
       <p><strong>Red flags.</strong> A red flag is a reason to stay off a line, the kind the "Too good to be true?" box calls a likely trap: a teammate back in the lineup, minutes down, a change of team. The Parlay tab's <strong>Leave out red flags</strong> switch decides what happens to those players. Off, they stay in your results, each marked with a red flag, and the ticket says how many of the results have one. On, they are left out for the next player down, and the ticket says how many were left out. A leg you have locked stays either way. Open View stats on a leg for the reason.</p>
@@ -779,7 +779,7 @@
       <p>Only the matches worth a bet are listed, the likeliest first. Each card names the side, the play and its price, how sure the read is against what the price asks, and how to play it: straight, for a stated number of units, or as a parlay leg when the price is too short to take alone. The reasons are under it, and the full read opens on a tap.</p>
       <p>Under the main play are the other ways to play the same side (the first set, the second set, the game spread) and <strong>set betting</strong>: -1.5 sets, to win 2-0, and +1.5 sets, to win at least one set, each with the read against the price. A Room tag marks a line the price is generous on. Each play's price at every book is on the card, best first, with yours in bold.</p>
       <p>Every match that was read is listed at the bottom with why it was passed. In a week when no sportsbook prices the event on the card, the tab says so: a lean is the read set against a price, so without a price there is none to make.</p>
-      <p><strong>Challenger and ITF.</strong> Below the tours there are no serve numbers or results to read, so the price is the read. Every singles match FanDuel lists is shown by tournament. A match gets a lean on the favourite when the two prices, with the book's cut taken out, put that player clear of a coin flip and the price has not moved against them. A favourite at a price that pays can be taken alone, for half a unit at most. A shorter one is a parlay piece. One priced as all but won is named, with no bet in it. A match with no lean says why: too close to call, a favourite whose price has drifted, or a price the book keeps too much of. Tap Why for the numbers. These leans are never tracked plays and never count in the day's units. Their own running tally is shown above the list, with results read from the draw: the player listed in the next round went through.</p>
+      <p><strong>Challenger and ITF.</strong> These have their own buttons beside ATP and WTA; turn any of the four on or off. Below the tours there are no serve numbers to read, so each match is read from two things: FanDuel's two prices with the book's cut taken out, and the two players' world rankings. Where both players are ranked, the rankings move the price's read: half the way when they are surer of the favourite than the price is, a little when they are less sure. Where one is not listed, the price is the whole read and the row says so. The list opens on the leans, the strongest first. <strong>Room</strong> marks a lean the read gives more than its price asks for, which happens when the rankings are surer than the price: those are the ones with a view of their own. A favourite at a price that pays can be taken alone, for half a unit at most. A shorter one is a parlay piece. One priced as all but won is named, with no bet in it. "Every match" lists them all by tournament, and a match with no lean says why: too close to call, the price and the rankings pointing at different players (the price usually knows something the ranking does not), a price that has drifted, or a price the book keeps too much of. Tap Why for the numbers. These leans are never tracked plays and never count in the day's units. Their own running tally is above the list, with results read from the draw: the player listed in the next round went through.</p>
     </details>
 
     <details>
@@ -1254,6 +1254,6 @@
   </div>
 </aside>
 
-<script type="module" src="app.js?v=1.415"></script>
+<script type="module" src="app.js?v=1.417"></script>
 </body>
 </html>

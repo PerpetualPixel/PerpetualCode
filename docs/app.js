@@ -13095,8 +13095,13 @@ renderWide();
    model clears the bar; the tab shows those, the matches it read and
    why each passed, and keeps its own record in Pixel's Picks. */
 const TENNIS_TOURS_KEY = 'pixelpick.tennisTours.v1';
-const tennisState = { data: null, loading: false, tours: new Set((loadJSON(TENNIS_TOURS_KEY, null) ?? ['atp', 'wta']).filter((t) => t === 'atp' || t === 'wta')), open: {}, reads: false, graphHover: null, lowerLeans: false };
-if (!tennisState.tours.size) { tennisState.tours.add('atp'); tennisState.tours.add('wta'); }
+// The Challenger and ITF chips (2026-11-27, the owner: "under an ITF or Challenger tab along with ATP and WTA"): on unless turned off.
+const TENNIS_TIERS_KEY = 'pixelpick.tennisTiers.v1';
+const TENNIS_TIER_LABEL = { challenger: 'Challenger', itf: 'ITF' };
+/** The chip a match below the tours sits under: the women's 125s with the Challengers, their men's counterpart. */
+const tennisTierChip = (m) => (m.tier === 'itf' ? 'itf' : 'challenger');
+const tennisState = { data: null, loading: false, tours: new Set((loadJSON(TENNIS_TOURS_KEY, null) ?? ['atp', 'wta']).filter((t) => t === 'atp' || t === 'wta')), open: {}, reads: false, graphHover: null, lowerLeans: true, tiers: new Set((loadJSON(TENNIS_TIERS_KEY, null) ?? ['challenger', 'itf']).filter((t) => t === 'challenger' || t === 'itf')) };
+if (!tennisState.tours.size && !tennisState.tiers.size) { tennisState.tours.add('atp'); tennisState.tours.add('wta'); }
 const TENNIS_TOUR_LABEL = { atp: 'ATP', wta: 'WTA' };
 const tennisTimeFmt = new Intl.DateTimeFormat(undefined, { weekday: 'short', hour: 'numeric', minute: '2-digit' });
 const tennisDayFmt = new Intl.DateTimeFormat('en-US', { month: 'short', day: 'numeric', timeZone: 'America/New_York' });
@@ -13333,36 +13338,50 @@ function tennisLeansShown() {
  */
 function renderTennisLower() {
   const lower = tennisState.data?.lower;
-  const all = (lower?.matches ?? []).filter((m) => tennisState.tours.has(m.tour) && m.start > Date.now());
+  if (!tennisState.tiers.size) return '';
+  const all = (lower?.matches ?? []).filter((m) => tennisState.tiers.has(tennisTierChip(m)) && m.start > Date.now());
   const t = lower?.tally;
   const graded = ['straight', 'parlay', 'short'].reduce((n, k) => n + (t?.[k]?.wins ?? 0) + (t?.[k]?.losses ?? 0), 0);
-  if (!all.length && !graded) return '';
-  const leans = all.filter((m) => m.call?.kind === 'lean');
-  const shown = tennisState.lowerLeans ? leans : all;
-  const row = (m) => {
+  const which = [...tennisState.tiers].map((k) => TENNIS_TIER_LABEL[k]).join(' and ');
+  if (!all.length && !graded) return `<h3 class="tennis-h3">${esc(which)}</h3><p class="empty">No ${esc(which)} match is listed in the next day and a half.</p>`;
+  // The leans, the strongest first: the ones the rankings leave room on, then by how much the read gives over the price, a bet to take alone ahead of a parlay piece.
+  const rank = (m) => (m.call.value ? 0 : 1) * 10 + ({ straight: 0, parlay: 1, short: 2 }[m.call.how] ?? 3);
+  const leans = all.filter((m) => m.call?.kind === 'lean').sort((x, y) => rank(x) - rank(y) || (y.call.edge ?? -1) - (x.call.edge ?? -1) || y.call.share - x.call.share || x.start - y.start);
+  const rankTag = (r) => (r ? `#${r.rank}` : 'not listed');
+  const row = (m, { withComp = false } = {}) => {
     const c = m.call ?? {}; const key = `lower:${m.id}`; const open = Boolean(tennisState.open[key]);
     const lean = c.kind === 'lean';
     const prices = m.ml ? `${formatAmerican(m.ml.a)} / ${formatAmerican(m.ml.b)}` : '';
+    const ranks = c.ranks && (c.ranks.a || c.ranks.b) ? `${rankTag(c.ranks.a)} v ${rankTag(c.ranks.b)}` : '';
+    const read = c.basis === 'rank' ? `${pct(c.share)} by the read <span class="tennis-lower-split">rank ${pct(c.rankShare)} · price ${pct(c.market)}</span>` : `${pct(c.share ?? 0)} by the price`;
+    const how = c.how === 'straight' ? 'half a unit at most' : c.how === 'parlay' ? 'parlay piece, too short alone' : 'priced as all but won: no bet in it';
     const call = lean
-      ? `<span class="tennis-lower-call"><b>Lean</b> <strong>${esc(c.name)}</strong> ${pricePill('fanduel', 'FanDuel', c.american, c.link)} <small>${pct(c.share)} by the price · ${c.how === 'straight' ? 'half a unit at most' : c.how === 'parlay' ? 'parlay piece, too short alone' : 'priced as all but won: no bet in it'}</small></span>`
+      ? `<span class="tennis-lower-call"><b>Lean</b> <strong>${esc(c.name)}</strong> ${pricePill('fanduel', 'FanDuel', c.american, c.link)}${c.value ? `<span class="tennis-tag is-tracked" title="The read gives this side more than its price asks for">Room +${Math.round(c.edge * 100)}</span>` : ''} <small>${read} · ${how}</small></span>`
       : `<span class="tennis-lower-call is-none"><b>No lean</b> <small>${esc(c.text ?? 'No price up yet')}</small></span>`;
     return `<div class="tennis-lower-row ${lean ? (c.how === 'short' ? 'is-short' : 'is-lean') : ''}">
-      <span class="tennis-lower-match"><strong>${esc(m.a)} vs ${esc(m.b)}</strong><small>${esc(tennisTimeFmt.format(new Date(m.start)))}${prices ? ` · ${esc(prices)}` : ''}</small></span>
+      <span class="tennis-lower-match"><strong>${esc(m.a)} vs ${esc(m.b)}</strong><small>${withComp ? `${esc(m.comp ?? '')} · ` : ''}${esc(tennisTimeFmt.format(new Date(m.start)))}${ranks ? ` · ${esc(ranks)}` : ''}${prices ? ` · ${esc(prices)}` : ''}</small></span>
       ${call}
       ${c.why?.length ? `<button type="button" class="parlay-btn tennis-why" data-tennis-why="${esc(key)}" data-tennis-why-default="shut" aria-expanded="${open}">${open ? 'Hide' : 'Why'}</button>` : ''}
       ${open && c.why?.length ? `<ul class="tennis-why-list">${c.why.map((w) => `<li>${esc(w)}</li>`).join('')}</ul>` : ''}
     </div>`;
   };
   const comps = [];
-  for (const m of shown) { let g = comps.find((x) => x.comp === m.comp); if (!g) { g = { comp: m.comp, rows: [] }; comps.push(g); } g.rows.push(m); }
-  const s = t?.straight ?? { wins: 0, losses: 0, units: 0 }; const p = t?.parlay ?? { wins: 0, losses: 0 }; const w = t?.short ?? { wins: 0, losses: 0 };
-  const parts = [s.wins + s.losses ? `${s.wins}-${s.losses} taken alone, ${signedUnits(s.units ?? 0)}u at a unit each` : '', p.wins + p.losses ? `${p.wins}-${p.losses} as parlay pieces` : '', w.wins + w.losses ? `${w.wins}-${w.losses} priced as all but won` : ''].filter(Boolean);
+  for (const m of all) { let g = comps.find((x) => x.comp === m.comp); if (!g) { g = { comp: m.comp, rows: [] }; comps.push(g); } g.rows.push(m); }
+  const s = t?.straight ?? { wins: 0, losses: 0, units: 0 }; const p = t?.parlay ?? { wins: 0, losses: 0 }; const w = t?.short ?? { wins: 0, losses: 0 }; const v = t?.value ?? { wins: 0, losses: 0, units: 0 };
+  const parts = [v.wins + v.losses ? `${v.wins}-${v.losses} with room, ${signedUnits(v.units ?? 0)}u` : '', s.wins + s.losses ? `${s.wins}-${s.losses} taken alone, ${signedUnits(s.units ?? 0)}u at a unit each` : '', p.wins + p.losses ? `${p.wins}-${p.losses} as parlay pieces` : '', w.wins + w.losses ? `${w.wins}-${w.losses} priced as all but won` : ''].filter(Boolean);
   const tally = graded ? `<p class="row-sub tennis-lower-tally"><b>The leans so far</b> ${esc(parts.join(' · '))}. A result is read from the draw: the player listed in the next round went through, so a final is never counted.</p>` : '';
-  return `<h3 class="tennis-h3">Challenger and ITF <small>${all.length} match${all.length === 1 ? '' : 'es'} to come · ${leans.length} lean${leans.length === 1 ? '' : 's'}${lower?.at ? ` · prices read ${esc(ago(lower.at))}` : ''}</small></h3>
-    <p class="row-sub tennis-bar">Below the tours the price is the only read: no serve numbers or results are on file. Each match gets a lean on the favourite, or the reason there is none. These are leans off the price, not tracked plays: half a unit at most. Tap Why for the numbers.</p>
+  const ranked = all.filter((m) => m.call?.basis === 'rank').length;
+  const note = lower?.ranksAt
+    ? `Each price is read against the two players' world rankings. Where the rankings point at the other player there is no lean. "Room" marks a lean the rankings are surer of than the price is. Leans, not tracked plays: half a unit at most.`
+    : `Below the tours the price is the only read: no serve numbers or results are on file. Each match gets a lean on the favourite, or the reason there is none. These are leans off the price, not tracked plays: half a unit at most.`;
+  const list = tennisState.lowerLeans
+    ? (leans.length ? `<section class="tennis-lower" aria-label="Leans, the strongest first">${leans.map((m) => row(m, { withComp: true })).join('')}</section>` : '<p class="empty">No match with a lean right now. Every match shows the reason.</p>')
+    : comps.map((g) => `<section class="tennis-lower" aria-label="${esc(g.comp ?? 'Tournament')}"><h4 class="tennis-lower-h">${esc(g.comp ?? 'Tournament')} <small>${g.rows.length} match${g.rows.length === 1 ? '' : 'es'}</small></h4>${g.rows.map((m) => row(m)).join('')}</section>`).join('');
+  return `<h3 class="tennis-h3">${esc(which)} <small>${all.length} match${all.length === 1 ? '' : 'es'} to come · ${leans.length} lean${leans.length === 1 ? '' : 's'}${lower?.ranksAt ? ` · ${ranked} read against the rankings` : ''}${lower?.at ? ` · prices read ${esc(ago(lower.at))}` : ''}</small></h3>
+    <p class="row-sub tennis-bar">${esc(note)} Tap Why for the numbers.</p>
     ${tally}
-    ${all.length ? `<div class="tennis-actions tennis-lower-pick"><button type="button" class="parlay-btn" data-tennis-lower="all" aria-pressed="${!tennisState.lowerLeans}">Every match (${all.length})</button><button type="button" class="parlay-btn" data-tennis-lower="leans" aria-pressed="${tennisState.lowerLeans}">Leans only (${leans.length})</button></div>` : ''}
-    ${comps.map((g) => `<section class="tennis-lower" aria-label="${esc(g.comp ?? 'Tournament')}"><h4 class="tennis-lower-h">${esc(g.comp ?? 'Tournament')} <small>${g.rows.length} match${g.rows.length === 1 ? '' : 'es'}</small></h4>${g.rows.map(row).join('')}</section>`).join('') || (all.length ? '<p class="empty">No match with a lean right now.</p>' : '<p class="empty">No Challenger or ITF match is listed in the next day and a half.</p>')}`;
+    ${all.length ? `<div class="tennis-actions tennis-lower-pick"><button type="button" class="parlay-btn" data-tennis-lower="leans" aria-pressed="${tennisState.lowerLeans}">Leans, best first (${leans.length})</button><button type="button" class="parlay-btn" data-tennis-lower="all" aria-pressed="${!tennisState.lowerLeans}">Every match (${all.length})</button></div>` : ''}
+    ${list}`;
 }
 
 function renderTennis() {
@@ -13376,7 +13395,10 @@ function renderTennis() {
   const allPlays = d.current?.plays ?? [];
   const reads = Object.entries(d.current?.reads ?? {}).map(([id, r]) => ({ id, ...r, tour: id.split(':')[0] })).filter((r) => tennisState.tours.has(r.tour)).sort((a, b) => Date.parse(a.start ?? 0) - Date.parse(b.start ?? 0));
   const rec = d.record ?? { wins: 0, losses: 0, pushes: 0, units: 0, roi: null, risked: 0 };
-  const chips = ['atp', 'wta'].map((t) => { const n = (d.current?.leans ?? []).filter((l) => l.tour === t && l.commenceMs > Date.now()).length; const on = tennisState.tours.has(t); return `<button type="button" class="league-chip is-sport ${on ? 'is-active' : ''}" data-tennis-tour="${t}" aria-pressed="${on}">${sportIcon(t)}<span class="league-chip-label">${TENNIS_TOUR_LABEL[t]}</span><small class="live-league-n">${n}</small>${chipTick(on)}</button>`; }).join('');
+  const chips = ['atp', 'wta'].map((t) => { const n = (d.current?.leans ?? []).filter((l) => l.tour === t && l.commenceMs > Date.now()).length; const on = tennisState.tours.has(t); return `<button type="button" class="league-chip is-sport ${on ? 'is-active' : ''}" data-tennis-tour="${t}" aria-pressed="${on}">${sportIcon(t)}<span class="league-chip-label">${TENNIS_TOUR_LABEL[t]}</span><small class="live-league-n">${n}</small>${chipTick(on)}</button>`; }).join('')
+    + ['challenger', 'itf'].map((k) => { const n = (d.lower?.matches ?? []).filter((m) => tennisTierChip(m) === k && m.call?.kind === 'lean' && m.start > Date.now()).length; const on = tennisState.tiers.has(k); return `<button type="button" class="league-chip is-sport ${on ? 'is-active' : ''}" data-tennis-tier="${k}" aria-pressed="${on}">${sportIcon('tennis')}<span class="league-chip-label">${TENNIS_TIER_LABEL[k]}</span><small class="live-league-n">${n}</small>${chipTick(on)}</button>`; }).join('');
+  // With both tours' chips off the tab is the Challenger and ITF board alone.
+  const toursOn = tennisState.tours.size > 0;
   const bar = d.bar ?? {};
   const barNote = `Only the matches worth a bet are listed, the likeliest play first. Every match on the card is read for form, fatigue, a recent retirement, play style and the surface, then set against the best price on the board. A side is a lean when the read gives it ${Math.round((bar.leanProb ?? 0.55) * 100)}%+ and the price asks for ${Math.round((bar.leanEdge ?? 0.02) * 100)}+ points less, never a player flagged for injury or fatigue. A match with no serve numbers on file for a player is a thin read: the moneyline only, half a unit, listed last and not tracked. ${bar.straightFloor ?? -250} or longer is played straight and tracked, half a unit to two by its chance; shorter is a parlay piece. ${Math.round((bar.convictionProb ?? 0.74) * 100)}%+ with ${Math.round((bar.convictionEdge ?? 0.07) * 100)}+ points of room is a Pixel's Pick. ${bar.maxUnits ?? 5} units a day at most.`;
   const readWhen = d.current?.refreshedAt ? `read ${ago(d.current.refreshedAt)}` : 'not read today yet';
@@ -13387,14 +13409,21 @@ function renderTennis() {
   const events = [...new Set(unpriced.map((r) => r.event).filter(Boolean))];
   const noStats = unpriced.filter((r) => /no serve numbers/.test(r.passed ?? '')).length;
   const empty = reads.length && unpriced.length === reads.length ? `<p class="empty">${reads.length} match${reads.length === 1 ? '' : 'es'} on the card${events.length ? ` (${esc(events.slice(0, 2).join(', '))})` : ''} and no book the site reads has a price on any of them${noStats ? `, and ${noStats === reads.length ? 'every one' : noStats} of them ${noStats === 1 || noStats === reads.length ? 'has' : 'have'} a player with no serve numbers on file` : ''}. A lean is the read set against a price, so there is none to make today. The card is read again every quarter hour, and the leans return with the next event the books carry.</p>` : `<p class="empty">${reads.length ? `${reads.length} match${reads.length === 1 ? '' : 'es'} read, none worth a bet at the price right now. The board is read again every quarter hour until the first ball; each match and why it was passed is listed below.` : d.slate?.length ? 'The matches of the day are listed but not read yet: the board is still on its way.' : 'No ATP or WTA singles on the card today.'}</p>`;
-  el.tennisBody.innerHTML = `<div class="live-top"><span class="live-count ${leans.length ? 'is-on' : ''}">${leans.length ? `${leans.length} match${leans.length === 1 ? '' : 'es'} worth betting` : 'No match worth betting right now'}</span><span class="row-sub">${esc(tennisDayFmt.format(new Date()))} · ${esc(readWhen)} · ${esc(String(d.unitsToday ?? allPlays.length))} of ${esc(String(bar.maxUnits ?? 5))} units placed · record ${rec.wins}-${rec.losses}${rec.pushes ? `-${rec.pushes}` : ''}, ${esc(signedUnits(rec.units ?? 0))} units</span></div>
+  // With the tours' chips off the headline counts the board below them.
+  const lowerLeans = (d.lower?.matches ?? []).filter((m) => tennisState.tiers.has(tennisTierChip(m)) && m.call?.kind === 'lean' && m.start > Date.now()).length;
+  const headline = toursOn && leans.length ? `${leans.length} match${leans.length === 1 ? '' : 'es'} worth betting` : lowerLeans ? `${lowerLeans} lean${lowerLeans === 1 ? '' : 's'} below the tours` : 'No match worth betting right now';
+  // A week with nothing to lean on the tours (the off-season) leads with the board below them, so its leans are not under a page of the tours' notes.
+  const lowerFirst = toursOn && !leans.length && !plays.length && lowerLeans > 0;
+  const lowerHtml = renderTennisLower();
+  el.tennisBody.innerHTML = `<div class="live-top"><span class="live-count ${leans.length || lowerLeans ? 'is-on' : ''}">${headline}</span><span class="row-sub">${esc(tennisDayFmt.format(new Date()))} · ${esc(readWhen)} · ${esc(String(d.unitsToday ?? allPlays.length))} of ${esc(String(bar.maxUnits ?? 5))} units placed · record ${rec.wins}-${rec.losses}${rec.pushes ? `-${rec.pushes}` : ''}, ${esc(signedUnits(rec.units ?? 0))} units</span></div>
     <div class="live-books-pick live-leagues-pick" role="group" aria-label="Tours">${chips}</div>
-    <p class="row-sub tennis-bar">${esc(barNote)}</p>
+    ${lowerFirst ? lowerHtml : ''}
+    ${toursOn ? `${lowerFirst ? '<h3 class="tennis-h3">ATP and WTA</h3>' : ''}<p class="row-sub tennis-bar">${esc(barNote)}</p>
     ${leans.length ? leans.map((l, i) => renderTennisLean(l, i + 1)).join('') : empty}
     ${suggestions.length ? `<h3 class="tennis-h3">Parlay it <small>the leans together, priced at one book</small></h3>${suggestions.map(renderTennisSuggestion).join('')}` : ''}
-    ${plays.length ? `<h3 class="tennis-h3">On the record today <small>the day's parlay, aces, and plays already under way or settled</small></h3>${plays.map(renderTennisPlay).join('')}` : ''}
-    ${renderTennisLower()}
-    ${readsHtml}`;
+    ${plays.length ? `<h3 class="tennis-h3">On the record today <small>the day's parlay, aces, and plays already under way or settled</small></h3>${plays.map(renderTennisPlay).join('')}` : ''}` : ''}
+    ${lowerFirst ? '' : lowerHtml}
+    ${toursOn ? readsHtml : ''}`;
 }
 
 /** The Pixel's Picks tab under its Tennis chip: today's plays as cards, the record, the days. */
@@ -13762,8 +13791,14 @@ el.tennisView?.addEventListener('click', (event) => {
   const tour = event.target.closest('[data-tennis-tour]');
   if (tour) {
     const t = tour.dataset.tennisTour;
-    if (tennisState.tours.has(t)) { if (tennisState.tours.size > 1) tennisState.tours.delete(t); } else tennisState.tours.add(t);
+    if (tennisState.tours.has(t)) { if (tennisState.tours.size + tennisState.tiers.size > 1) tennisState.tours.delete(t); } else tennisState.tours.add(t);
     saveJSON(TENNIS_TOURS_KEY, [...tennisState.tours]); renderTennis(); return;
+  }
+  const tier = event.target.closest('[data-tennis-tier]');
+  if (tier) {
+    const k = tier.dataset.tennisTier;
+    if (tennisState.tiers.has(k)) { if (tennisState.tours.size + tennisState.tiers.size > 1) tennisState.tiers.delete(k); } else tennisState.tiers.add(k);
+    saveJSON(TENNIS_TIERS_KEY, [...tennisState.tiers]); renderTennis(); return;
   }
   const stats = event.target.closest('[data-tennis-player]');
   if (stats) { openPlayerByName(stats.dataset.tennisPlayer, 'tennis'); return; }
