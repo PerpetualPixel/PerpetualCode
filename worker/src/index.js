@@ -66,6 +66,7 @@ import { runUfcTick, getUfcPicks } from './ufc-picks.js';
 import { runTennisTick, getTennisPicks, getTennisParlay } from './tennis-picks.js';
 import { getTennisLive } from './tennis-live.js';
 import { runTennisLiveTick, getTennisLivePlays, TENNIS_LIVE_CRON } from './tennis-live-plays.js';
+import { runLowerLiveTick, getLowerLive } from './tennis-lower-live.js';
 import { syncLiveDiscord, discordStatus, bookRedirect, findLivePlay, recordForPlay } from './discord.js';
 import { CARD_VERSION } from './card-svg.js';
 import { syncBasketballDiscord, syncFootballDiscord, basketballStatus, footballStatus } from './discord-nba.js';
@@ -525,6 +526,8 @@ export default {
         .catch((e) => { console.error('Tennis live tick failed:', e); return null; })
         .then((r) => (r?.skipped ? null : syncLiveDiscord(env, now)))
         .catch((e) => console.error('Discord sync failed:', String(e?.message ?? e).slice(0, 120))));
+      // The scores of the Challenger and ITF matches in play (worker/src/tennis-lower-live.js): a metered read, a few a day, resting in memory between them.
+      ctx.waitUntil(runLowerLiveTick(env, now).catch((e) => console.error('Lower-tier live tick failed:', String(e?.message ?? e).slice(0, 120))));
       return;
     }
 
@@ -1682,7 +1685,7 @@ export default {
     // Tennis in the Parlay Builder (worker/src/tennis-picks.js builderLegs): every priced leg on the matches read, scored.
     // Live tennis on its own: the reads of the matches in play, the live plays and their record.
     if (pathname === '/tennis/live' && request.method === 'GET') {
-      return json(await getTennisLivePlays(env), { headers: { ...cors, 'Cache-Control': 'no-store' } });
+      return json({ ...(await getTennisLivePlays(env)), lower: await getLowerLive(env).catch(() => null) }, { headers: { ...cors, 'Cache-Control': 'no-store' } });
     }
     if (pathname === '/tennis/parlay' && request.method === 'GET') {
       return json(await getTennisParlay(env), { headers: { ...cors, 'Cache-Control': 'public, max-age=120' } });
