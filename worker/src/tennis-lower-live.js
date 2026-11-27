@@ -39,6 +39,8 @@ const LIVE_URL = `https://${HOST}/tennis/v2/extend/api/events/live`;
 /** The free plan's share: with the grading's 30 this stays under the provider's 50 a day. */
 export const LOWER_LIVE_DAILY = 18;
 export const LOWER_LIVE_EVERY_MIN = 20;
+/** From this many calls a day the source is read whether or not the board has a match in play: matches the board never listed are followed too. */
+const ALWAYS_FROM = 500;
 /** A match is taken to be in play from its listed start for this long. */
 export const LOWER_LIVE_WINDOW_MS = 3.5 * 3600e3;
 const STATE_TTL = 2 * 86400;
@@ -127,6 +129,9 @@ export function settleLean(lean, sets, { ended = false, drawWinner = null } = {}
   return ended ? 'void' : null;
 }
 
+/** A tournament below the tours by the source's own name for it ("Playford Challenger", "M15 Orlando", "W75 Playford"); the tours and the team events are not. */
+export const lowerSourceTier = (name) => { const n = String(name ?? ''); return /challenger/i.test(n) ? 'challenger' : /\bitf\b|^[MW]\d{2,3}\b/i.test(n) ? 'itf' : /\b125k?\b/i.test(n) ? '125' : null; };
+
 /** A match stays on file this long after its listed start; a match lean with no result by LEAN_VOID_MS after it is void. */
 const MATCH_KEEP_MS = 14 * 3600e3;
 const LEAN_VOID_MS = 8 * 3600e3;
@@ -145,8 +150,18 @@ const lineOf = (sets) => (sets ?? []).map(([a, b]) => `${a}-${b}`).join(' ') || 
 export function advanceLower(prevMatches, prevTally, log, events, now = Date.now()) {
   const tally = { wins: 0, losses: 0, voids: 0, units: 0, ...(prevTally ?? {}) };
   const matches = {};
-  for (const m of Object.values(log?.matches ?? {})) {
-    if (!(m.start <= now + 30 * 60e3) || now - m.start > MATCH_KEEP_MS) continue;
+  const board = Object.values(log?.matches ?? {}).filter((m) => m.start <= now + 30 * 60e3 && now - m.start <= MATCH_KEEP_MS);
+  // The source's own matches below the tours that the board never listed (FanDuel's page did not carry them, or carried them before the board was kept):
+  // read from the score alone, with no pre-match price and no draw to grade by. A match already followed that way is carried until it ages out.
+  const onBoard = (x) => board.some((m) => (samePlayer(m.a, x.a) && samePlayer(m.b, x.b)) || (samePlayer(m.a, x.b) && samePlayer(m.b, x.a)));
+  const offBoard = new Map();
+  for (const p of Object.values(prevMatches ?? {})) if (p.source && now - p.start <= MATCH_KEEP_MS && !onBoard(p)) offBoard.set(p.id, { id: p.id, comp: p.comp, tour: p.tour, tier: p.tier, a: p.a, b: p.b, start: p.start, ml: null, source: true });
+  for (const e of events ?? []) {
+    const tier = lowerSourceTier(e.tournament); const id = `src:${e.id}`;
+    if (!tier || offBoard.has(id) || onBoard(e)) continue;
+    offBoard.set(id, { id, comp: e.tournament, tour: e.tour, tier, a: e.a, b: e.b, start: now, ml: null, source: true });
+  }
+  for (const m of [...board, ...offBoard.values()]) {
     const prev = prevMatches?.[m.id] ?? null;
     const drawWinner = m.result === 'a' || m.result === 'b' ? m.result : null;
     const e = drawWinner ? null : eventFor(m, events);
@@ -174,7 +189,7 @@ export function advanceLower(prevMatches, prevTally, log, events, now = Date.now
       read = { prob: round3(r.prob), set: round3(r.model.set), setNumber: r.state.setNumber, inSet: r.state.inSet, why: r.why.slice(0, 4) };
       if (call.kind === 'lean' && (!lean || lean.result)) lean = { market: call.market, side: call.side, set: call.set ?? null, selection: call.selection, prob: call.prob, playable: call.playable, basis: call.basis, score: lineOf(sets), at: now };
     }
-    matches[m.id] = { id: m.id, comp: m.comp ?? null, tour: m.tour, tier: m.tier, a: m.a, b: m.b, start: m.start, priced: share != null, sets, points: e?.points ?? null, server: e?.server ?? null, live, seenAt: e ? now : prev.seenAt ?? null, timeline, serve, read, call, lean };
+    matches[m.id] = { id: m.id, comp: m.comp ?? null, tour: m.tour, tier: m.tier, a: m.a, b: m.b, start: m.start, priced: share != null, ...(m.source ? { source: true } : {}), sets, points: e?.points ?? null, server: e?.server ?? null, live, seenAt: e ? now : prev.seenAt ?? null, timeline, serve, read, call, lean };
   }
   return { matches, tally };
 }
@@ -205,7 +220,8 @@ export async function runLowerLiveTick(env, now = Date.now(), { deps = {} } = {}
   const log = await readJson(env, TENNIS_LOWER_KEY);
   const playing = lowerInPlay(log, now);
   // The first read is made with nothing in play too, once, so the shape of the source is on file.
-  if (!playing.length && state.shape?.v === SHAPE_VERSION) return rest(now + 5 * 60e3, 'nothing in play');
+  // On the free plan a read is spent only while a board match should be in play; a plan with calls to spare reads the clock round.
+  if (!playing.length && state.shape?.v === SHAPE_VERSION && daily < ALWAYS_FROM) return rest(now + 5 * 60e3, 'nothing in play');
   const key = (env.RAPIDAPI_TENNIS_KEY ?? '').trim();
   if (!key && !deps.fetchLive) return rest(now + 30 * 60e3, 'no key');
   let body = null; let error = null;

@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { parseSets, parseLiveEvents, lowerLiveBudget, lowerInPlay, runLowerLiveTick, getLowerLive, eventFor, matchWinner, settleLean, advanceLower, lowerLiveView, LOWER_LIVE_KEY, LOWER_LIVE_DAILY } from '../worker/src/tennis-lower-live.js';
+import { parseSets, parseLiveEvents, lowerLiveBudget, lowerInPlay, runLowerLiveTick, getLowerLive, eventFor, matchWinner, settleLean, advanceLower, lowerLiveView, lowerSourceTier, LOWER_LIVE_KEY, LOWER_LIVE_DAILY } from '../worker/src/tennis-lower-live.js';
 import { TENNIS_LOWER_KEY } from '../worker/src/tennis-lower.js';
 
 const NOW = Date.parse('2026-11-27T09:00:00Z');
@@ -172,4 +172,52 @@ test('the view lists the matches in play at the last read, with the tally and ho
   const later = advanceLower(st.matches, st.tally, log(NOW - 3600e3), [], NOW + 20 * 60e3);
   assert.equal(lowerLiveView({ ...later, eventsAt: NOW + 20 * 60e3 }, {}, NOW + 21 * 60e3).matches.length, 0);
   assert.equal(lowerLiveView(null, {}), null);
+});
+
+test('the source\'s rows as they really come (2026-11-27) are read whole', () => {
+  const real = { success: true, count: 1, results: [{ id: 5223343, name: 'Joel Schwaerzler vs Daniel Merida Aguilar', participant1: 'Joel Schwaerzler', participant2: 'Daniel Merida Aguilar', league: 'Playford Challenger', score: '4-6,2-1', status: 'InPlay', points: '15-0', indicator: '0,1', player1: { name: 'Joel Schwaerzler' }, player2: { name: 'Daniel Merida Aguilar' }, tournament: { name: 'Playford Challenger' }, tourType: 'atp', startTimestamp: 1795709700 }] };
+  assert.deepEqual(parseLiveEvents(real), [{ id: '5223343', a: 'Joel Schwaerzler', b: 'Daniel Merida Aguilar', tour: 'atp', status: 'InPlay', sets: [[4, 6], [2, 1]], points: '15-0', server: 'b', tournament: 'Playford Challenger' }]);
+});
+
+test('a tournament below the tours is told by the source\'s name for it', () => {
+  assert.equal(lowerSourceTier('Playford Challenger'), 'challenger');
+  assert.equal(lowerSourceTier('M15 Orlando'), 'itf');
+  assert.equal(lowerSourceTier('W75 Playford'), 'itf');
+  assert.equal(lowerSourceTier('Davis Cup, World Group, QF, AUT-ESP'), null);
+  assert.equal(lowerSourceTier('Nitto ATP Finals'), null);
+});
+
+test('a Challenger or ITF match the board never listed is followed from the source alone, a tour match is not', () => {
+  const events = [row('4-2', { id: '77', a: 'Alex Bolt', b: 'Li Tu', tournament: 'Playford Challenger' }), row('4-2', { id: '78', a: 'Top Seed', b: 'Other Seed', tournament: 'Nitto ATP Finals' }), row('3-3')];
+  let st = advanceLower(null, null, log(NOW - 3600e3), events, NOW);
+  assert.deepEqual(Object.keys(st.matches).sort(), ['1', 'src:77']);
+  const m = st.matches['src:77'];
+  assert.equal(m.comp, 'Playford Challenger');
+  assert.equal(m.priced, false);
+  assert.equal(m.source, true);
+  assert.equal(m.live, true);
+  assert.equal(m.lean?.basis, 'score');
+  // The board match is not doubled by the source's own row for it.
+  assert.equal(Object.values(st.matches).filter((x) => x.a === 'Kimmer Coppejans').length, 1);
+  // Carried to the next read, same start, and settled by the score.
+  const at = st.matches['src:77'].start;
+  st = advanceLower(st.matches, st.tally, log(NOW - 3600e3), [row('6-2,6-1', { id: '77', a: 'Alex Bolt', b: 'Li Tu', tournament: 'Playford Challenger' })], NOW + 60 * 60e3);
+  assert.equal(st.matches['src:77'].start, at);
+  assert.equal(st.matches['src:77'].live, false);
+  assert.equal(st.matches['src:77'].lean.result, 'win');
+  // Gone from the source: kept on file, off the list.
+  st = advanceLower(st.matches, st.tally, log(NOW - 3600e3), [], NOW + 80 * 60e3);
+  assert.equal(st.matches['src:77'].live, false);
+  assert.equal(st.tally.wins, 1);
+});
+
+test('a plan with calls to spare reads with no board match in play', async () => {
+  const POTD_KV = kv({ [TENNIS_LOWER_KEY]: log(NOW + 5 * 3600e3) });
+  let asked = 0;
+  const deps = { noRest: true, fetchLive: async () => { asked += 1; return body; } };
+  const env = { POTD_KV, TENNIS_LOWER_LIVE_DAILY: '1400', TENNIS_LOWER_LIVE_EVERY_MIN: '1' };
+  await runLowerLiveTick(env, NOW, { deps });
+  const r = await runLowerLiveTick(env, NOW + 2 * 60e3, { deps });
+  assert.equal(r.skipped, false);
+  assert.equal(asked, 2);
 });
