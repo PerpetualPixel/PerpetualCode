@@ -30,7 +30,7 @@ test('the source\'s rows are read as singles matches with the server', () => {
 });
 
 test('the budget is the free plan\'s unless the worker says otherwise', () => {
-  assert.deepEqual(lowerLiveBudget({}), { daily: LOWER_LIVE_DAILY, everyMs: 20 * 60e3 });
+  assert.deepEqual(lowerLiveBudget({}), { daily: LOWER_LIVE_DAILY, everyMs: 30 * 60e3 });
   assert.deepEqual(lowerLiveBudget({ TENNIS_LOWER_LIVE_DAILY: '1400', TENNIS_LOWER_LIVE_EVERY_MIN: '1' }), { daily: 1400, everyMs: 60e3 });
 });
 
@@ -53,14 +53,14 @@ test('the tick reads when a match is in play, then waits out the interval and th
   assert.equal(r.reason, 'read not long ago');
   assert.equal(asked, 1);
   // Past the interval it reads again.
-  r = await runLowerLiveTick(env, NOW + 21 * 60e3, { deps });
+  r = await runLowerLiveTick(env, NOW + 31 * 60e3, { deps });
   assert.equal(r.calls, 2);
-  const seen = await getLowerLive(env, NOW + 21 * 60e3, { debug: true });
+  const seen = await getLowerLive(env, NOW + 31 * 60e3, { debug: true });
   assert.equal(seen.matches[0].a, 'Kimmer Coppejans');
   assert.deepEqual(seen.matches[0].sets, [[6, 4], [3, 2]]);
   assert.equal(seen.shape.rows, 2);
   assert.equal(seen.readsLeft, LOWER_LIVE_DAILY - 2);
-  assert.equal((await getLowerLive(env, NOW + 21 * 60e3)).shape, undefined);
+  assert.equal((await getLowerLive(env, NOW + 31 * 60e3)).shape, undefined);
   // The day's calls spent: no read.
   const state = JSON.parse(POTD_KV.m.get(LOWER_LIVE_KEY));
   POTD_KV.m.set(LOWER_LIVE_KEY, JSON.stringify({ ...state, calls: LOWER_LIVE_DAILY, fetchedAt: NOW }));
@@ -82,10 +82,10 @@ test('with nothing in play the source is read once, for its shape, and not again
 test('a failed read keeps the last scores and still counts against the day', async () => {
   const POTD_KV = kv({ [TENNIS_LOWER_KEY]: log(NOW - 3600e3) });
   await runLowerLiveTick({ POTD_KV }, NOW, { deps: { noRest: true, fetchLive: async () => body } });
-  const r = await runLowerLiveTick({ POTD_KV }, NOW + 21 * 60e3, { deps: { noRest: true, fetchLive: async () => { throw new Error('down'); } } });
+  const r = await runLowerLiveTick({ POTD_KV }, NOW + 31 * 60e3, { deps: { noRest: true, fetchLive: async () => { throw new Error('down'); } } });
   assert.equal(r.error, 'down');
   assert.equal(r.calls, 2);
-  const seen = await getLowerLive({ POTD_KV }, NOW + 21 * 60e3);
+  const seen = await getLowerLive({ POTD_KV }, NOW + 31 * 60e3);
   assert.equal(seen.matches.length, 1);
   assert.equal(seen.at, NOW);
   assert.equal(seen.error, 'down');
@@ -166,11 +166,11 @@ test('the view lists the matches in play at the last read, with the tally and ho
   const v = lowerLiveView({ ...st, eventsAt: NOW, day: 'x', calls: 3 }, {}, NOW + 5 * 60e3);
   assert.equal(v.matches.length, 1);
   assert.equal(v.matches[0].timeline, undefined);
-  assert.equal(v.everyMin, 20);
+  assert.equal(v.everyMin, 30);
   assert.deepEqual(v.tally, { wins: 0, losses: 0, voids: 0, units: 0 });
   // A later read without the match: it is off the list.
   const later = advanceLower(st.matches, st.tally, log(NOW - 3600e3), [], NOW + 20 * 60e3);
-  assert.equal(lowerLiveView({ ...later, eventsAt: NOW + 20 * 60e3 }, {}, NOW + 21 * 60e3).matches.length, 0);
+  assert.equal(lowerLiveView({ ...later, eventsAt: NOW + 20 * 60e3 }, {}, NOW + 31 * 60e3).matches.length, 0);
   assert.equal(lowerLiveView(null, {}), null);
 });
 

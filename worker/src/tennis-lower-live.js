@@ -8,8 +8,8 @@
  * points of the game in play and who is serving.
  *
  * The cost is the whole design (the owner: "keep API calls cost low"). The
- * free plan is 50 calls a day and the grading keeps 30 of them, so this
- * reads at most LOWER_LIVE_DAILY times a day, no more often than every
+ * free plan is 50 calls a day, the grading keeps 30 of them and the
+ * weekly rankings up to 10, so this reads at most LOWER_LIVE_DAILY times a day, no more often than every
  * LOWER_LIVE_EVERY_MIN minutes, and only while a match on the lower board
  * (worker/src/tennis-lower.js) should be in play. A paid plan lifts both
  * numbers from the worker's variables (TENNIS_LOWER_LIVE_DAILY,
@@ -36,9 +36,9 @@ import { advanceTimeline, liveRead, liveCall, serveFromMarket, LIVE_LEAN_UNITS }
 export const LOWER_LIVE_KEY = 'tennis:lower:live';
 const HOST = 'tennis-api-atp-wta-itf.p.rapidapi.com';
 const LIVE_URL = `https://${HOST}/tennis/v2/extend/api/events/live`;
-/** The free plan's share: with the grading's 30 this stays under the provider's 50 a day. */
-export const LOWER_LIVE_DAILY = 18;
-export const LOWER_LIVE_EVERY_MIN = 20;
+/** The free plan's share: with the grading's 30 and the rankings' 10 (worker/src/tennis-lower-ranks.js) this stays at the provider's 50 a day. */
+export const LOWER_LIVE_DAILY = 10;
+export const LOWER_LIVE_EVERY_MIN = 30;
 /** From this many calls a day the source is read whether or not the board has a match in play: matches the board never listed are followed too. */
 const ALWAYS_FROM = 500;
 /** A match is taken to be in play from its listed start for this long. */
