@@ -45,8 +45,8 @@ export const LOWER_KEEP_MS = 8 * 864e5;
 export const LOWER_GIVE_UP_MS = 4 * 864e5;
 /** The most matches kept in the log. */
 export const LOWER_MAX = 600;
-/** Under this share for the favourite the book has it near even: no lean. */
-export const LOWER_CLOSE = 0.57;
+/** Under this share for the favourite the match is near even: no lean. Anything that reads as 57% on the page is over it. */
+export const LOWER_CLOSE = 0.565;
 /** A favourite shorter than the first is a parlay piece, not a bet alone; shorter than the second is named with no bet in it (the Tennis tab's own floors). */
 export const LOWER_STRAIGHT_FLOOR = -250;
 export const LOWER_SHORT = -700;
@@ -86,10 +86,25 @@ export function lowerShares(ml) {
 export const LOWER_RANK_POWER = 0.85;
 /** Points added to both players before that: a handful of points apart says little, and a player with none is not nothing. */
 export const LOWER_RANK_PRIOR = 10;
-/** The ranking's say against the price's in the read, where both players are ranked. */
+/**
+ * The ranking's say against the price's in the read, where both players
+ * are ranked: half where the ranking is surer of the price's favourite
+ * than the price is, a fifth where it is less sure. A price is the
+ * sharper of the two on a favourite, and players this low have few
+ * points to tell them apart (the first read against the real lists,
+ * 2026-11-27: favourites priced at 80% to 91% stood at 57% to 67% on
+ * points, the same player each time).
+ */
 export const LOWER_RANK_WEIGHT = 0.5;
-/** The price and the ranking further apart than this on who wins: the price knows something the ranking does not, and there is no lean. */
-export const LOWER_APART = 0.15;
+export const LOWER_RANK_WEIGHT_UNDER = 0.2;
+/**
+ * The ranking points the other way: the price makes one player a
+ * favourite of LOWER_APART_PRICE or better and the ranking gives that
+ * player LOWER_APART_RANK or less. The price knows something the ranking
+ * does not, and there is no lean.
+ */
+export const LOWER_APART_PRICE = 0.55;
+export const LOWER_APART_RANK = 0.45;
 /** A lean the read gives this much more than its price asks is marked as having room. */
 export const LOWER_VALUE = 0.02;
 
@@ -107,11 +122,12 @@ export function rankShare(pointsA, pointsB) {
  * b}}, the prices American. `ranks` is the week's rankings
  * (worker/src/tennis-lower-ranks.js), or null.
  *
- * Where both players are ranked the read is the ranking's share and the
- * price's, half each (`basis: 'rank'`), and a lean it gives more than its
- * price asks has `value`. Where one is not, the price is the whole read
- * (`basis: 'price'`). A 'short' lean is the winner named at a price with
- * no bet in it.
+ * Where both players are ranked the read is the price's share moved
+ * toward the ranking's (`basis: 'rank'`; LOWER_RANK_WEIGHT), a lean it
+ * gives more than its price asks has `value`, and a ranking that points
+ * the other way from a clear price is no lean. Where one is not ranked,
+ * the price is the whole read (`basis: 'price'`). A 'short' lean is the
+ * winner named at a price with no bet in it.
  */
 export function lowerCall(m, ranks = null) {
   const list = ranks?.[m?.tour] ?? null;
@@ -124,7 +140,14 @@ export function lowerCall(m, ranks = null) {
     const fav = ranked ? (pRankA >= 0.5 ? m.a : m.b) : null;
     return { kind: 'none', reason: 'unpriced', text: fav ? `No price up yet. The rankings favour ${fav}` : 'No price up yet', ranks: { a: ra, b: rb }, why: rankLine ? [rankLine] : [] };
   }
-  const pA = ranked ? LOWER_RANK_WEIGHT * pRankA + (1 - LOWER_RANK_WEIGHT) * now.a : now.a;
+  // Read from the price's favourite: the ranking moves the price's share half the way where it is surer of that player (or the price is
+  // near even and it favours the other), a fifth where it is less sure.
+  const fav = now.a >= now.b ? 'a' : 'b';
+  const favMarket = Math.max(now.a, now.b); const favRank = !ranked ? null : fav === 'a' ? pRankA : 1 - pRankA;
+  const against = ranked && favRank <= LOWER_APART_RANK;
+  const weight = !ranked ? 0 : favRank >= favMarket || (against && favMarket < LOWER_APART_PRICE) ? LOWER_RANK_WEIGHT : LOWER_RANK_WEIGHT_UNDER;
+  const favRead = ranked ? favMarket + weight * (favRank - favMarket) : favMarket;
+  const pA = fav === 'a' ? favRead : 1 - favRead;
   const side = pA >= 0.5 ? 'a' : 'b'; const other = side === 'a' ? 'b' : 'a';
   const name = m[side]; const opponent = m[other];
   const of = (p) => (side === 'a' ? p : 1 - p);
@@ -143,9 +166,9 @@ export function lowerCall(m, ranks = null) {
   const facts = { side, name, opponent, share: round3(share), market: round3(market), rankShare: rankP == null ? null : round3(rankP), basis: ranked ? 'rank' : 'price', moved, ranks: { a: ra, b: rb } };
   const none = (reason, text, extra = []) => ({ kind: 'none', reason, text, ...facts, why: [...base, ...extra] });
   if (now.cut > LOWER_CUT_MAX) return none('cut', `Poorly priced: the book keeps ${pct(now.cut)} on this match`);
-  if (ranked && Math.abs(pRankA - now.a) > LOWER_APART) {
-    const byPrice = now.a >= 0.5 ? 'a' : 'b'; const byRank = pRankA >= 0.5 ? 'a' : 'b';
-    return none('apart', `The price and the rankings disagree: the price has ${m[byPrice]} ${pct(Math.max(now.a, now.b))}, the rankings ${m[byRank]} ${pct(Math.max(pRankA, 1 - pRankA))}`, [`This far apart the price usually knows something the ranking does not: an injury, a player back from a long break, a junior on the way up`]);
+  if (against && favMarket >= LOWER_APART_PRICE) {
+    const byRank = fav === 'a' ? 'b' : 'a';
+    return none('apart', `The price and the rankings disagree: the price has ${m[fav]} ${pct(favMarket)}, the rankings ${m[byRank]} ${pct(1 - favRank)}`, [`When they point at different players the price usually knows something the ranking does not: an injury, a player back from a long break, a junior on the way up`]);
   }
   if (moved != null && moved <= -LOWER_DRIFT) return none('drift', `The money is against ${name}: ${signed(m.open[side])} when first seen, ${signed(american)} now`, [`A side whose price lengthens this far before the start is one to leave alone`]);
   if (share < LOWER_CLOSE) return none('close', `Too close to call: ${pct(share)} to ${pct(1 - share)} by ${ranked ? 'the read' : 'the price'}`);
@@ -153,7 +176,7 @@ export function lowerCall(m, ranks = null) {
   const value = ranked && how !== 'short' && edge >= LOWER_VALUE;
   const why = [...base];
   const room = Math.round(Math.abs(edge) * 100);
-  if (ranked) why.push(`The read is the two together: ${name} ${pct(share)}. ${signed(american)} asks for ${pct(implied)}${edge >= LOWER_VALUE ? `, so the read leaves ${room} point${room === 1 ? '' : 's'} of room` : edge >= 0 ? ', about what the read gives' : `, ${room} point${room === 1 ? '' : 's'} more than the read gives: that is the book's cut`}`);
+  if (ranked) why.push(`${rankP >= market ? 'The rankings are surer of this side than the price is' : rankP >= 0.5 ? 'The rankings agree on the side and are less sure than the price' : 'The rankings have it nearer level than the price'}: the read is ${name} ${pct(share)}. ${signed(american)} asks for ${pct(implied)}${edge >= LOWER_VALUE ? `, so the read leaves ${room} point${room === 1 ? '' : 's'} of room` : edge >= 0 ? ', about what the read gives' : `, ${room} point${room === 1 ? '' : 's'} more than the read gives: that is the book's cut`}`);
   if (moved != null && moved >= LOWER_STEAM) why.push(`The price has shortened since it was first seen, ${signed(m.open[side])} to ${signed(american)}: the money agrees`);
   why.push(how === 'straight' ? `Playable alone at ${signed(american)} or better, half a unit at most: a lean, not a tracked play` : how === 'parlay' ? `Too short to take alone at ${signed(american)}: a parlay piece` : `Priced as all but won at ${signed(american)}: the lean is plain, and there is no bet in it, alone or in a parlay`);
   return { kind: 'lean', ...facts, american, implied: round3(implied), edge: round3(edge), how, value, why };

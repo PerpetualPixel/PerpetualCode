@@ -13372,7 +13372,7 @@ function renderTennisLower() {
   const tally = graded ? `<p class="row-sub tennis-lower-tally"><b>The leans so far</b> ${esc(parts.join(' · '))}. A result is read from the draw: the player listed in the next round went through, so a final is never counted.</p>` : '';
   const ranked = all.filter((m) => m.call?.basis === 'rank').length;
   const note = lower?.ranksAt
-    ? `Each price is read against the two players' world rankings: the read is half ranking, half FanDuel's price. "Room" marks a lean the read gives more than its price asks for. Leans, not tracked plays: half a unit at most.`
+    ? `Each price is read against the two players' world rankings. Where the rankings point at the other player there is no lean. "Room" marks a lean the rankings are surer of than the price is. Leans, not tracked plays: half a unit at most.`
     : `Below the tours the price is the only read: no serve numbers or results are on file. Each match gets a lean on the favourite, or the reason there is none. These are leans off the price, not tracked plays: half a unit at most.`;
   const list = tennisState.lowerLeans
     ? (leans.length ? `<section class="tennis-lower" aria-label="Leans, the strongest first">${leans.map((m) => row(m, { withComp: true })).join('')}</section>` : '<p class="empty">No match with a lean right now. Every match shows the reason.</p>')

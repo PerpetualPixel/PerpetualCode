@@ -165,7 +165,7 @@ test('a match with no later round is given up on, and old matches fall off the l
 });
 
 // --- read against the rankings ---
-import { rankShare, LOWER_APART } from '../worker/src/tennis-lower.js';
+import { rankShare, LOWER_RANK_WEIGHT_UNDER } from '../worker/src/tennis-lower.js';
 const RANKS = { at: NOW, atp: { 'kimmer coppejans': [210, 280], 'dali blanch': [420, 120], 'a one': [300, 190], 'b two': [310, 185], 'star back': [900, 20], 'steady pro': [250, 240] }, wta: {} };
 const mm = (a, b, ml, open = null) => ({ tour: 'atp', a, b, ml: { a: ml[0], b: ml[1] }, open: open ? { a: open[0], b: open[1] } : null });
 
@@ -183,7 +183,7 @@ test('with both players ranked the read is the ranking and the price together, a
   assert.equal(c.basis, 'rank');
   assert.equal(c.side, 'a');
   assert.deepEqual(c.ranks, { a: { rank: 210, points: 280 }, b: { rank: 420, points: 120 } });
-  // The price alone has him 55%, short of a lean; the ranking's 67% carries the read over the bar.
+  // The price alone has him 55%, short of a lean; the ranking's 66% is surer, so it counts for half and carries the read over the bar.
   assert.ok(c.market < 0.57 && c.rankShare > 0.64);
   assert.ok(Math.abs(c.share - (c.market + c.rankShare) / 2) < 0.002);
   assert.equal(c.value, true);
@@ -208,9 +208,29 @@ test('the price and the ranking far apart is no lean: the price knows something'
   const c = lowerCall(mm('Star Back', 'Steady Pro', [-200, 150]), RANKS);
   assert.equal(c.kind, 'none');
   assert.equal(c.reason, 'apart');
-  assert.match(c.text, /the price has Star Back 6\d%, the rankings Steady Pro/);
-  assert.ok(Math.abs(c.rankShare - (1 - rankShare(20, 240))) < 0.01 || Math.abs(c.rankShare - rankShare(20, 240)) < 0.01);
-  assert.ok(LOWER_APART > 0.1);
+  assert.match(c.text, /the price has Star Back 6\d%, the rankings Steady Pro 8\d%/);
+});
+
+test('a ranking that agrees on the favourite and is less sure moves the read a little, never to a disagreement', () => {
+  // As the real lists read on 2026-11-27: priced at 87%, the same player 57% on points.
+  const ranks = { atp: { 'heavy fav': [600, 40], 'long shot': [900, 28] } };
+  const c = lowerCall(mm('Heavy Fav', 'Long Shot', [-1450, 640]), ranks);
+  assert.equal(c.kind, 'lean');
+  assert.equal(c.how, 'short');
+  assert.equal(c.basis, 'rank');
+  assert.ok(c.rankShare < 0.6 && c.market > 0.85);
+  assert.ok(Math.abs(c.share - (c.market + LOWER_RANK_WEIGHT_UNDER * (c.rankShare - c.market))) < 0.002);
+  assert.equal(c.value, false);
+  assert.ok(c.why.some((w) => /agree on the side and are less sure than the price/.test(w)));
+});
+
+test('a near-even price with the ranking the other way is read half way, and can lean the ranking\'s player', () => {
+  // The price has Star Back 52%; the ranking has Steady Pro a heavy favourite.
+  const c = lowerCall(mm('Star Back', 'Steady Pro', [-112, -108]), RANKS);
+  assert.equal(c.kind, 'lean');
+  assert.equal(c.side, 'b');
+  assert.equal(c.value, true);
+  assert.ok(c.share > 0.57 && c.share < 0.7);
 });
 
 test('a player the list does not have leaves the price as the whole read', () => {
