@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { parseSets, parseLiveEvents, lowerLiveBudget, lowerInPlay, runLowerLiveTick, getLowerLive, eventFor, matchWinner, settleLean, advanceLower, lowerLiveView, lowerSourceTier, LOWER_LIVE_KEY, LOWER_LIVE_DAILY } from '../worker/src/tennis-lower-live.js';
+import { parseSets, parseLiveEvents, lowerLiveBudget, lowerInPlay, runLowerLiveTick, getLowerLive, eventFor, matchWinner, settleLean, advanceLower, lowerLiveView, lowerSourceTier, nearPlayer, samePair, LOWER_LIVE_KEY, LOWER_LIVE_DAILY } from '../worker/src/tennis-lower-live.js';
 import { TENNIS_LOWER_KEY } from '../worker/src/tennis-lower.js';
 
 const NOW = Date.parse('2026-11-27T09:00:00Z');
@@ -220,4 +220,29 @@ test('a plan with calls to spare reads with no board match in play', async () =>
   const r = await runLowerLiveTick(env, NOW + 2 * 60e3, { deps });
   assert.equal(r.skipped, false);
   assert.equal(asked, 2);
+});
+
+test('a near spelling of one player pairs a match when the other player fits, and not otherwise', () => {
+  assert.equal(nearPlayer('Adelina Lachinova', 'Adelina Lacinova'), true);
+  assert.equal(nearPlayer('Adelina Lachinova', 'Bella Lacinova'), false);
+  assert.equal(nearPlayer('Anna Kubareva', 'Anna Snigireva'), false);
+  assert.equal(nearPlayer('Li Tu', 'Li Zu'), false);
+  const board = { a: 'Adelina Lacinova', b: 'Ani Amiraghyan' };
+  assert.equal(samePair(board, { a: 'Adelina Lachinova', b: 'Ani Amiraghyan' }), 1);
+  assert.equal(samePair(board, { a: 'Ani Amiraghyan', b: 'Adelina Lachinova' }), 2);
+  // A near spelling with a different opponent is another match.
+  assert.equal(samePair(board, { a: 'Adelina Lachinova', b: 'Someone Else' }), 0);
+  // As it came on 2026-11-27: the board match takes the source's row, and no second card is made for it.
+  const lg = { matches: { 7: { id: '7', comp: 'ITF W15 Antalya TUR', tour: 'wta', tier: 'itf', a: 'Adelina Lacinova', b: 'Ani Amiraghyan', start: NOW - 3600e3, ml: { a: 100, b: -132 } } } };
+  const st = advanceLower(null, null, lg, [row('2-5', { id: '5223415', a: 'Adelina Lachinova', b: 'Ani Amiraghyan', tournament: 'W15 Antalya' })], NOW);
+  assert.deepEqual(Object.keys(st.matches), ['7']);
+  assert.equal(st.matches['7'].priced, true);
+  assert.deepEqual(st.matches['7'].sets, [[2, 5]]);
+  // A match followed from the source alone before the pairing was made gives way to the board's.
+  const before = { 'src:5223415': { id: 'src:5223415', source: true, comp: 'W15 Antalya', tour: 'wta', tier: 'itf', a: 'Adelina Lachinova', b: 'Ani Amiraghyan', start: NOW - 1800e3, sets: [[1, 2]], live: true, seenAt: NOW - 1800e3, timeline: { sets: [[1, 2]], games: [] }, serve: { pA: 0.56, pB: 0.56 }, lean: { market: 'live_ml', side: 'b', set: null, selection: 'Ani Amiraghyan to win the match', prob: 0.7, playable: -200, basis: 'score', score: '1-2', at: NOW - 1800e3 } } };
+  const next = advanceLower(before, null, lg, [row('2-5', { id: '5223415', a: 'Adelina Lachinova', b: 'Ani Amiraghyan', tournament: 'W15 Antalya' })], NOW);
+  assert.deepEqual(Object.keys(next.matches), ['7']);
+  // The lean opened while it was followed from the source alone goes with it.
+  assert.equal(next.matches['7'].lean.selection, 'Ani Amiraghyan to win the match');
+  assert.equal(next.matches['7'].lean.at, NOW - 1800e3);
 });
