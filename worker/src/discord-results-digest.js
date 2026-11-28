@@ -32,6 +32,17 @@
  * roll-up is built from the day records first — a channel ledger keeps
  * only a few days of posts — and from the plays for a day with no record.
  *
+ * The NBA's and the NFL's daily goes out when the slate ends, not the
+ * next morning (2026-11-27, the owner: "at the end of the slate or final
+ * nba / nfl match, the results should be posted soon after"). On every
+ * tick the day's games are looked at (the watched games that started in
+ * the day's window): once each has started, each is final, and the
+ * channel's ledger has no play of theirs still open, the day's roll-up is
+ * posted then and recorded, so the morning's run finds it done. A day
+ * with no watched game, or a slate that never reads as finished, still
+ * goes at DIGEST_HOUR as before. Tennis has no slate to end and keeps the
+ * morning.
+ *
  * Each roll-up is a picture (2026-11-26, the owner: "quick, concise data
  * points ... to look like my aesthetic for my website ... a logo of
  * tennis and a logo of basketball"): worker/src/results-card.js says what
@@ -41,6 +52,7 @@
  */
 import { deliver, readJson, discordConfig, webhookOf } from './discord.js';
 import { playbookTag, mayPing, LEAGUES } from './discord-nba.js';
+import { readWatchIndex, liveWatchKey } from './live-probe.js';
 import { tennisLivePlaysKey, liveRecordOf } from './tennis-live-plays.js';
 import { SPORTSBOOKS } from '../../docs/engine.js';
 import { resultsCardModel, weeklyCardModel } from './results-card.js';
@@ -59,6 +71,12 @@ export const DIGEST_STATUS_KEY = 'discord:digest:status';
  */
 export const ONE_OFF = null; // the last: { id: '2026-11-25-nba-1', source: 'nba', day: '2026-11-25' }, the NBA channel's first evening
 export const DIGEST_ONE_OFF_KEY = (id) => `discord:digest:oneoff:${id}`;
+/** The channels whose daily goes out when the day's last game ends. */
+export const SLATE_SOURCES = ['nba', 'nfl'];
+/** No game ends sooner than this after its start: the finals are not read for before then. */
+const GAME_MIN_MS = 2 * 3600e3;
+/** A game with no final on file this long after its start is taken as over (a watch that stopped early). */
+const GAME_OVER_MS = 6 * 3600e3;
 const RECORD_TTL = 35 * 86400;
 const SITE = 'https://perpetualpicks.com/app.html';
 const LOGO = 'https://perpetualpicks.com/assets/logo-icon-180.png';
@@ -320,14 +338,21 @@ const writeJson = (env, key, value) => env.POTD_KV.put(key, JSON.stringify(value
  * roll-up alone: its window as it stands when the window is still open (said "so far", and nothing recorded, so
  * the morning's post still covers the whole day), the day as usual once it has closed.
  */
-async function runSource(env, name, source, hook, now, clock, { fetcher, playbook, deps, picture, day = null }) {
+async function runSource(env, name, source, hook, now, clock, { fetcher, playbook, deps, picture, day = null, early = false }) {
   const out = { daily: null, weekly: null };
   const win = day ? { playedDateKey: day, startMs: etInstant(day, DIGEST_HOUR), endMs: etInstant(shiftDate(day, 1), DIGEST_HOUR) } : digestWindow(clock.date);
   const { playedDateKey } = win;
-  const soFar = Boolean(day) && now < win.endMs;
-  const startMs = win.startMs; const endMs = soFar ? now : win.endMs;
-  if (!soFar && await readJson(env, DIGEST_DAY_KEY(playedDateKey, name))) {
+  // `early` is the day's roll-up posted at the end of its slate, before its window closes: the whole day's, said and recorded as such.
+  const soFar = Boolean(day) && now < win.endMs && !early;
+  const startMs = win.startMs; const endMs = now < win.endMs && (soFar || early) ? now : win.endMs;
+  const onFile = soFar ? null : await readJson(env, DIGEST_DAY_KEY(playedDateKey, name));
+  if (onFile) {
     out.daily = { skipped: 'posted', day: playedDateKey };
+    // A day posted at the end of its slate: what settled after that (a play graded late) is added to the day's tally, so the week's roll-up counts it. Nothing is posted.
+    if (onFile.early && !early && now >= win.endMs) {
+      const plays = settledIn(await source.plays(env, startMs, win.endMs, deps), startMs, win.endMs);
+      if (plays.length > (onFile.plays ?? 0)) { await writeJson(env, DIGEST_DAY_KEY(playedDateKey, name), { ...onFile, plays: plays.length, ...talliesOf(plays), early: false, toppedUpAt: now }); out.daily.toppedUp = plays.length - (onFile.plays ?? 0); }
+    }
   } else {
     const plays = settledIn(await source.plays(env, startMs, endMs, deps), startMs, endMs);
     if (!plays.length) {
@@ -336,8 +361,8 @@ async function runSource(env, name, source, hook, now, clock, { fetcher, playboo
       const model = resultsCardModel(name, playedDateKey, plays, { soFar, drawnAt: now });
       const r = await postCard(fetcher, hook, model, await picture(model), dailyDigestMessage(playedDateKey, plays, { playbook, label: source.label, line: source.line, soFar }));
       if (r.ok) {
-        if (!soFar) await writeJson(env, DIGEST_DAY_KEY(playedDateKey, name), { at: now, plays: plays.length, ...talliesOf(plays), messageIds: r.ids, card: r.card });
-        out.daily = { posted: r.ids.length, day: playedDateKey, plays: plays.length, card: r.card, ...(soFar ? { soFar: true } : {}) };
+        if (!soFar) await writeJson(env, DIGEST_DAY_KEY(playedDateKey, name), { at: now, plays: plays.length, ...talliesOf(plays), messageIds: r.ids, card: r.card, ...(early ? { early: true } : {}) });
+        out.daily = { posted: r.ids.length, day: playedDateKey, plays: plays.length, card: r.card, ...(soFar ? { soFar: true } : {}), ...(early ? { early: true } : {}) };
       } else {
         out.daily = { failed: r.status, day: playedDateKey };
       }
@@ -380,6 +405,53 @@ async function runSource(env, name, source, hook, now, clock, { fetcher, playboo
   return out;
 }
 
+/** The ET date of the slate `now` belongs to: the day whose window (DIGEST_HOUR to DIGEST_HOUR) it falls in. */
+export const slateDay = (now) => etClock(now - DIGEST_HOUR * 3600e3).date;
+
+/**
+ * Whether a league's slate for a day is over: {done, games, why}. Its games are the watched games that started
+ * in the day's window. Done when there is at least one, each has started, each is final (its watch's last look
+ * says so, or it started GAME_OVER_MS ago), and the channel's ledger has no play of theirs still open or being
+ * sent: every result card is out. `deps.games`, `deps.watch(id)` and `deps.ledger(league)` stand in for storage.
+ */
+export async function slateOver(env, league, dateKey, now, deps = {}) {
+  const startMs = etInstant(dateKey, DIGEST_HOUR); const endMs = etInstant(shiftDate(dateKey, 1), DIGEST_HOUR);
+  const games = (deps.games ? await deps.games() : (await readWatchIndex(env)).games)
+    .filter((g) => g?.id && (g.league ?? 'nfl') === league && Date.parse(g.date) >= startMs && Date.parse(g.date) < endMs);
+  if (!games.length) return { done: false, games: 0, why: 'no watched game' };
+  const lastStart = Math.max(...games.map((g) => Date.parse(g.date)));
+  if (now - lastStart < GAME_MIN_MS) return { done: false, games: games.length, why: 'the last game cannot be over yet' };
+  for (const g of games) {
+    if (now - Date.parse(g.date) >= GAME_OVER_MS) continue;
+    const watch = deps.watch ? await deps.watch(String(g.id)) : await readJson(env, liveWatchKey(g.id));
+    if (watch?.ticks?.at(-1)?.state !== 'post') return { done: false, games: games.length, why: 'a game is not final' };
+  }
+  const ids = new Set(games.map((g) => String(g.id)));
+  const ledger = deps.ledger ? await deps.ledger(league) : await readJson(env, LEAGUES[league].ledger);
+  if (Object.values(ledger?.posts ?? {}).some((e) => ids.has(String(e?.post?.gameId)) && (e.state === 'open' || e.state === 'sending'))) return { done: false, games: games.length, why: 'a play is not graded yet' };
+  return { done: true, games: games.length };
+}
+
+/**
+ * The slate-end roll-ups: for each league channel that is set up and has not had the day's, the day's roll-up as
+ * soon as its slate is over. Returns {league: what it did}; a league with nothing due is not in it.
+ */
+async function runSlateEnds(env, now, clock, hooks, io, status) {
+  const out = {};
+  const dateKey = slateDay(now);
+  for (const name of SLATE_SOURCES) {
+    if (!hooks[name]) continue;
+    if (await readJson(env, DIGEST_DAY_KEY(dateKey, name))) continue;
+    const slate = await slateOver(env, name, dateKey, now, io.deps);
+    if (!slate.done) continue;
+    io.playbook ??= await io.tag();
+    const r = await runSource(env, name, SOURCES[name], hooks[name], now, clock, { ...io, day: dateKey, early: true });
+    out[name] = { ...r.daily, games: slate.games };
+    if (r.daily?.posted) { (status[name] ??= {}).lastDaily = { day: dateKey, at: now, plays: r.daily.plays, tagged: Boolean(io.playbook), slateEnd: true }; status.dirty = true; }
+  }
+  return out;
+}
+
 /**
  * Post what is due to every results channel that is set up: yesterday's roll-up if this morning's is not on
  * record, and on Monday the week's. Runs on any tick in DIGEST_HOUR ET (`force` runs it at any hour — the owner's
@@ -391,8 +463,8 @@ export async function runResultsDigest(env, now = Date.now(), { force = false, d
   const hooks = Object.fromEntries(Object.entries(SOURCES).map(([name, src]) => [name, src.hook(env)]));
   if (!Object.values(hooks).some(Boolean)) return { off: true };
   const clock = etClock(now);
-  const io = { fetcher: deps.fetch ?? fetch, playbook: null, deps, picture: pictureWith(deps) };
   const tag = async () => (deps.playbook !== undefined ? deps.playbook : await playbookTag(env));
+  const io = { fetcher: deps.fetch ?? fetch, playbook: null, deps, picture: pictureWith(deps), tag };
   // The one-off first, on any tick: once, marked before it is sent so a run that dies mid-send does not send it again.
   const oneOff = deps.oneOff !== undefined ? deps.oneOff : ONE_OFF;
   let oneOffOut = null;
@@ -403,10 +475,18 @@ export async function runResultsDigest(env, now = Date.now(), { force = false, d
     await writeJson(env, DIGEST_ONE_OFF_KEY(oneOff.id), { at: now, state: r.daily?.posted ? 'done' : 'skipped', ...oneOff, result: r.daily });
     oneOffOut = { id: oneOff.id, source: oneOff.source, ...r.daily };
   }
-  if (!force && !day && clock.hour !== DIGEST_HOUR) return oneOffOut ? { skipped: 'hour', oneOff: oneOffOut } : { skipped: 'hour' };
+  // The NBA's and the NFL's day, the moment its slate is over: on any tick, and not on a forced or one-day run (those say what they were asked).
+  let slateOut = null;
+  if (!force && !day) {
+    const slateStatus = {};
+    const ends = await runSlateEnds(env, now, clock, hooks, io, slateStatus).catch((e) => { console.error('Slate-end results failed:', String(e?.message ?? e).slice(0, 120)); return {}; });
+    if (Object.keys(ends).length) slateOut = ends;
+    if (slateStatus.dirty) { const st = (await readJson(env, DIGEST_STATUS_KEY)) ?? {}; for (const name of SLATE_SOURCES) if (slateStatus[name]?.lastDaily) (st[name] ??= {}).lastDaily = slateStatus[name].lastDaily; await writeJson(env, DIGEST_STATUS_KEY, st); }
+  }
+  if (!force && !day && clock.hour !== DIGEST_HOUR) return { skipped: 'hour', ...(oneOffOut ? { oneOff: oneOffOut } : {}), ...(slateOut ? { slateEnd: slateOut } : {}) };
   io.playbook ??= await tag();
   const { playbook } = io;
-  const out = { date: clock.date, daily: null, weekly: null, ...(oneOffOut ? { oneOff: oneOffOut } : {}) };
+  const out = { date: clock.date, daily: null, weekly: null, ...(oneOffOut ? { oneOff: oneOffOut } : {}), ...(slateOut ? { slateEnd: slateOut } : {}) };
   const status = (await readJson(env, DIGEST_STATUS_KEY)) ?? {};
   for (const [name, source] of Object.entries(SOURCES)) {
     if (!hooks[name]) { if (name !== 'tennis') out[name] = { off: true }; continue; }
