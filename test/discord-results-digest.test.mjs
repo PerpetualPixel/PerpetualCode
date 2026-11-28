@@ -174,7 +174,7 @@ test('the run: yesterday posts once at 6am ET through the results webhook, with 
   assert.equal((await runResultsDigest(env, at('2026-11-25', 14), { force: true, deps: { fetch: d.fetch, oneOff: null } })).daily.skipped, 'posted');
   assert.equal(d.calls.length, 1);
   const s = await digestStatus(env);
-  assert.deepEqual(s, { on: true, hourEt: 6, lastDaily: { day: '2026-11-24', at: at('2026-11-25', 6, 7), plays: 2, tagged: true }, lastWeekly: null, nba: { on: false, lastDaily: null, lastWeekly: null }, nfl: { on: false, lastDaily: null, lastWeekly: null } });
+  assert.deepEqual(s, { on: true, hourEt: 6, lastDaily: { day: '2026-11-24', at: at('2026-11-25', 6, 7), plays: 2, tagged: true }, lastWeekly: null, nba: { on: false, lastDaily: null, lastWeekly: null }, nfl: { on: false, lastDaily: null, lastWeekly: null }, wins: { on: false, lastDaily: null } });
 });
 
 test('the run: off with no results webhook, nothing outside the hour unless forced, nothing on a day with no settled play, and a refusal is tried again next tick', async () => {

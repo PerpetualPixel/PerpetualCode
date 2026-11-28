@@ -65,9 +65,11 @@ REQUIRE_AUTH = "false"
 # DISCORD_PLAYBOOK_USER_ID (the Playbook bot's user id, tagged on each of them),
 # DISCORD_LIVE_ROLE_ID (a role to ping on a new play),
 # DISCORD_UPDATES_WEBHOOK (a second channel for one line per tennis result, and
-# the day's results together at 6am ET) and DISCORD_NBA_RESULTS_WEBHOOK /
-# DISCORD_NFL_RESULTS_WEBHOOK (the same for the live NBA and NFL plays). NEVER
-# set any of them here as a plain var: this file is public.
+# the day's results together at 6am ET), DISCORD_NBA_RESULTS_WEBHOOK /
+# DISCORD_NFL_RESULTS_WEBHOOK (the same for the live NBA and NFL plays) and
+# DISCORD_WINS_WEBHOOK (the wins channel: the day's winners, every sport, as
+# one collage with the morning's roll-ups). NEVER set any of them here as a
+# plain var: this file is public.
 
 # D1 database binding (run: wrangler d1 create pixel-pick)
 [[d1_databases]]

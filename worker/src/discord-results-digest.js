@@ -56,8 +56,11 @@ import { readWatchIndex, liveWatchKey } from './live-probe.js';
 import { tennisLivePlaysKey, liveRecordOf } from './tennis-live-plays.js';
 import { SPORTSBOOKS } from '../../docs/engine.js';
 import { resultsCardModel, weeklyCardModel } from './results-card.js';
+import { winsCollageModel } from './wins-collage.js';
 
 export const DIGEST_HOUR = 6; // 6am ET, every day; the weekly on Monday
+/** The wins channel's day record: the winners' collage went out for the day. */
+export const WINS_DAY_KEY = (dateKey) => `discord:wins:day:${dateKey}`;
 export const WEEKLY_WEEKDAY = 'Mon';
 export const DIGEST_DAY_KEY = (dateKey, source = 'tennis') => (source === 'tennis' ? `discord:digest:day:${dateKey}` : `discord:digest:${source}:day:${dateKey}`);
 export const DIGEST_WEEK_KEY = (dateKey, source = 'tennis') => (source === 'tennis' ? `discord:digest:week:${dateKey}` : `discord:digest:${source}:week:${dateKey}`);
@@ -461,7 +464,7 @@ async function runSlateEnds(env, now, clock, hooks, io, status) {
  */
 export async function runResultsDigest(env, now = Date.now(), { force = false, day = null, deps = {} } = {}) {
   const hooks = Object.fromEntries(Object.entries(SOURCES).map(([name, src]) => [name, src.hook(env)]));
-  if (!Object.values(hooks).some(Boolean)) return { off: true };
+  if (!Object.values(hooks).some(Boolean) && !winsHook(env)) return { off: true };
   const clock = etClock(now);
   const tag = async () => (deps.playbook !== undefined ? deps.playbook : await playbookTag(env));
   const io = { fetcher: deps.fetch ?? fetch, playbook: null, deps, picture: pictureWith(deps), tag };
@@ -496,7 +499,56 @@ export async function runResultsDigest(env, now = Date.now(), { force = false, d
     if (r.weekly?.posted) slot.lastWeekly = { week: r.weekly.week, at: now, plays: r.weekly.plays, tagged: Boolean(playbook) };
     if (name === 'tennis') Object.assign(out, r); else out[name] = r;
   }
-  if (Object.values(out).some((r) => r?.daily?.posted || r?.weekly?.posted) || out.daily?.posted || out.weekly?.posted) await writeJson(env, DIGEST_STATUS_KEY, status);
+  // The day's winners, every sport together, to the wins channel: after the roll-ups, once a day.
+  const wins = await runWins(env, now, clock, { ...io, day }).catch((e) => ({ failed: String(e?.message ?? e).slice(0, 120) }));
+  if (!wins.off) out.wins = wins;
+  if (wins.posted && !wins.soFar) status.wins = { lastDaily: { day: wins.day, at: now, wins: wins.wins, units: wins.units } };
+  if (Object.values(out).some((r) => r?.daily?.posted || r?.weekly?.posted) || out.daily?.posted || out.weekly?.posted || (wins.posted && !wins.soFar)) await writeJson(env, DIGEST_STATUS_KEY, status);
+  return out;
+}
+
+/* ---------- the winners' collage ---------- */
+
+const winsHook = (env) => webhookOf(env?.DISCORD_WINS_WEBHOOK);
+/** The collage drawn for a model, or null when it cannot be. `deps.renderWins` stands in for the renderer; null turns it off. */
+function winsPictureWith(deps) {
+  const render = deps.renderWins !== undefined ? deps.renderWins : async (model) => (await import('./card-render.js')).renderWinsPng(model);
+  return async (model) => { if (!render) return null; try { return (await render(model)) ?? null; } catch { return null; } };
+}
+
+/**
+ * The day's winners, every sport together, as one picture to the wins channel (DISCORD_WINS_WEBHOOK), with the
+ * morning's roll-ups and once a day (2026-11-28, the owner: "for the wins and slips channel, have the bot gather
+ * all winning slip and post a collage of them in one posting"). The wins are read from the same sources as the
+ * roll-ups, whether or not that sport's results channel is set up. With `day`, that day's; a day whose window is
+ * still open is posted "so far" and not recorded. Without a picture nothing is posted and nothing recorded, so
+ * the next tick in the hour tries again; a picture Discord refuses goes as its written lines.
+ */
+async function runWins(env, now, clock, { fetcher, deps, day = null }) {
+  const hook = winsHook(env);
+  if (!hook) return { off: true };
+  const win = day ? { playedDateKey: day, startMs: etInstant(day, DIGEST_HOUR), endMs: etInstant(shiftDate(day, 1), DIGEST_HOUR) } : digestWindow(clock.date);
+  const { playedDateKey, startMs } = win;
+  const soFar = Boolean(day) && now < win.endMs;
+  const endMs = soFar ? now : win.endMs;
+  if (!soFar && await readJson(env, WINS_DAY_KEY(playedDateKey))) return { skipped: 'posted', day: playedDateKey };
+  const entries = [];
+  for (const [name, source] of Object.entries(SOURCES)) {
+    for (const play of settledIn(await source.plays(env, startMs, endMs, deps), startMs, endMs)) entries.push({ sport: name, play });
+  }
+  const model = winsCollageModel(playedDateKey, entries, { drawnAt: now });
+  if (!model.count) return { skipped: 'no wins', day: playedDateKey, ...(soFar ? { soFar: true } : {}) };
+  const png = await winsPictureWith(deps)(model);
+  if (!png) return { skipped: 'no picture', day: playedDateKey };
+  const dayWords = new Intl.DateTimeFormat('en-US', { timeZone: 'America/New_York', weekday: 'long', month: 'long', day: 'numeric' }).format(Date.parse(`${playedDateKey}T17:00:00Z`));
+  const content = `🏆 **${model.count} winner${model.count === 1 ? '' : 's'}${soFar ? ' so far' : ''}** · ${dayWords} · **${signedUnits(model.units)}**`;
+  const lines = model.shown.map((e) => SOURCES[e.sport].line(e.play));
+  const plain = { content, allowed_mentions: { parse: [] }, embeds: [{ color: COLOR.up, description: packLines(lines)[0] ?? '' }] };
+  const payload = { content, allowed_mentions: { parse: [] }, embeds: [{ color: COLOR.up, image: { url: 'attachment://winners.png' } }], attachments: [{ id: 0, filename: 'winners.png' }] };
+  const r = await deliver(fetcher, hook, { payload, file: { name: 'winners.png', bytes: png }, plain });
+  if (!r.ok && !r.unknown) return { failed: r.status ?? null, day: playedDateKey };
+  const out = { posted: 1, day: playedDateKey, wins: model.count, units: model.units, card: !r.noPicture, ...(soFar ? { soFar: true } : {}) };
+  if (!soFar) await writeJson(env, WINS_DAY_KEY(playedDateKey), { at: now, wins: model.count, units: model.units, messageId: r.id ? String(r.id) : null, card: out.card });
   return out;
 }
 
@@ -505,5 +557,6 @@ export async function digestStatus(env) {
   const s = (await readJson(env, DIGEST_STATUS_KEY)) ?? {};
   const out = { on: Boolean(SOURCES.tennis.hook(env)), hourEt: DIGEST_HOUR, lastDaily: s.lastDaily ?? null, lastWeekly: s.lastWeekly ?? null };
   for (const name of ['nba', 'nfl']) out[name] = { on: Boolean(SOURCES[name].hook(env)), lastDaily: s[name]?.lastDaily ?? null, lastWeekly: s[name]?.lastWeekly ?? null };
+  out.wins = { on: Boolean(winsHook(env)), lastDaily: s.wins?.lastDaily ?? null };
   return out;
 }
