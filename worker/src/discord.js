@@ -14,13 +14,16 @@
  *   - After each live tennis tick (worker/src/tennis-live-plays.js) the
  *     tracked plays of today and yesterday are held against a small ledger:
  *     a play not yet posted, still open and no more than FRESH_MS old goes
- *     up; a posted play that has settled has its own message edited to say
- *     how it ended. A lean is never posted: it is not a tracked play.
+ *     up; a posted play that has settled is left as it was posted, and its
+ *     result goes to the results channel (2026-11-28, the owner: "stop
+ *     changing the cards to won or loss or void in the live channels, leave
+ *     that for the results channels"; AutoPurger clears each live card 15
+ *     minutes after it goes up). A lean is never posted: it is not a
+ *     tracked play.
  *   - Posting once (the owner, 2026-11-23: "try not to double post"): the
  *     ledger is marked before the post and filled in after it. A post whose
  *     outcome is unknown (a timeout) is never sent again; a post Discord
- *     plainly refused is tried again, three times at most. An edit is safe
- *     to repeat, so it is retried.
+ *     plainly refused is tried again, three times at most.
  *   - A play that was already old or settled when the webhook was added is
  *     not posted late: an alert is for a play that can still be taken.
  *
@@ -28,8 +31,8 @@
  * the Live tab: "I see all these leans live but none posted in discord.
  * Let's have these posted and tracked in discord too"; worker/src/
  * tennis-lower-live.js) go the way a tour match's lean goes: to the leans
- * channel as they open, the same message edited when they settle, the
- * result to the results channel. They are tracked on a tally of their own,
+ * channel as they open, left as posted when they settle, the result to the
+ * results channel. They are tracked on a tally of their own,
  * and unlike a tour lean each card carries it: the units a settled one
  * added and the tally as it stands. A few are posted a run (a card's
  * picture is the heavy part), the rest on the runs that follow.
@@ -51,9 +54,8 @@ export const DISCORD_LEDGER_KEY = 'discord:live:ledger';
 export const FRESH_MS = 15 * 60e3;
 /** The most new leans posted in one run. */
 export const NEW_LEANS_A_RUN = 3;
-/** Posts Discord refused are tried this many times; edits this many. */
+/** Posts Discord refused are tried this many times. */
 export const POST_TRIES = 3;
-export const EDIT_TRIES = 6;
 const LEDGER_KEEP_MS = 4 * 86400e3;
 const LEDGER_TTL = 14 * 86400;
 const HELLO_RETRY_MS = 30 * 60e3;
@@ -450,7 +452,7 @@ async function liveRecords(env, now) {
 
 /**
  * Bring Discord level with the tracked live plays. Returns what it did:
- * {off} with no webhook, else {posted, edited, failed}. `deps.fetch`,
+ * {off} with no webhook, else {posted, settled, failed}. `deps.fetch`,
  * `deps.plays` and `deps.records` stand in for Discord and the stored plays
  * in tests.
  */
@@ -460,7 +462,7 @@ export async function syncLiveDiscord(env, now = Date.now(), { deps = {} } = {})
   const fetcher = deps.fetch ?? fetch;
   const ledger = (await readJson(env, DISCORD_LEDGER_KEY)) ?? { plays: {} };
   ledger.plays ??= {};
-  const out = { posted: 0, edited: 0, failed: 0 };
+  const out = { posted: 0, settled: 0, failed: 0 };
   let dirty = false;
   const fail = (what, r) => { ledger.lastError = { at: now, what, status: r.unknown ? 'no answer' : r.status }; out.failed++; dirty = true; };
   const testId = deps.testId ?? TEST_ALERT_ID;
@@ -587,7 +589,7 @@ export async function syncLiveDiscord(env, now = Date.now(), { deps = {} } = {})
   let records = null;
   const recordFor = async (p) => { records ??= deps.records ? await deps.records() : await liveRecords(env, now).catch(() => ({})); return records?.[KIND[p.market].record] ?? null; };
 
-  // The leans go to their own channel, when there is one: posted as they open and edited when they settle, like a
+  // The leans go to their own channel, when there is one: posted as they open and left as posted when they settle, like a
   // play, with nobody pinged and no record under them. A settled lean's result goes to the results channel too, said
   // as a lean (2026-11-25, the owner, of a lean that lost: "the lean wasn't posted to the results channel").
   // The Challenger and ITF leans beside them (worker/src/tennis-lower-live.js), read only when there is a channel for them. Their tally rides on each card.
@@ -632,20 +634,13 @@ export async function syncLiveDiscord(env, now = Date.now(), { deps = {} } = {})
       dirty = true;
       continue;
     }
-    // Posted and now settled: the same message says how it ended.
+    // Posted and now settled: the message in the live channel is left as it was posted (the owner, 2026-11-28, see the
+    // top of the file), and the result goes to the results channel.
     if (entry.state === 'open' && entry.messageId && settled) {
-      const r = await send(hook, await mine(), { messageId: entry.messageId });
-      if (r.ok) {
-        ledger.plays[p.id] = { ...entry, state: 'done', doneAt: now, lv: LINK_VERSION };
-        out.edited++;
-        // `res` says whether the result reached the results channel: one Discord refused is tried again below.
-        if (cfg.updates) { const u = await send(cfg.updates, await mine({ result: true })); ledger.plays[p.id].res = Boolean(u.ok || u.unknown); if (!u.ok && !u.unknown) { ledger.plays[p.id].resTries = 1; fail('update', u); } }
-      } else {
-        const tries = (entry.editTries ?? 0) + 1;
-        // The message is gone (deleted by hand) or the edit keeps failing: stop trying.
-        ledger.plays[p.id] = r.status === 404 || tries >= EDIT_TRIES ? { ...entry, state: 'done', doneAt: now, editFailed: true, lv: LINK_VERSION } : { ...entry, editTries: tries };
-        fail('edit', r);
-      }
+      ledger.plays[p.id] = { ...entry, state: 'done', doneAt: now, lv: LINK_VERSION };
+      out.settled++;
+      // `res` says whether the result reached the results channel: one Discord refused is tried again below.
+      if (cfg.updates) { const u = await send(cfg.updates, await mine({ result: true })); ledger.plays[p.id].res = Boolean(u.ok || u.unknown); if (!u.ok && !u.unknown) { ledger.plays[p.id].resTries = 1; fail('update', u); } }
       dirty = true;
     }
   }
@@ -654,7 +649,7 @@ export async function syncLiveDiscord(env, now = Date.now(), { deps = {} } = {})
   let caughtUp = 0;
   if (cfg.updates) for (const p of [...tracked, ...leans]) {
     const entry = ledger.plays[p.id];
-    const owed = entry?.state === 'done' && !entry.editFailed && (entry.res === false || (p.lean && entry.res === undefined));
+    const owed = entry?.state === 'done' && (entry.res === false || (p.lean && entry.res === undefined));
     if (caughtUp >= 3 || !owed || !(p.status === 'graded' || p.status === 'void') || now - (entry.doneAt ?? 0) > 864e5 || (entry.resTries ?? 0) >= 3) continue;
     caughtUp++;
     const lean = Boolean(p.lean);
@@ -669,8 +664,8 @@ export async function syncLiveDiscord(env, now = Date.now(), { deps = {} } = {})
   for (const p of [...tracked, ...leans]) {
     const entry = ledger.plays[p.id];
     if (relinked >= RELINK_A_TICK || !entry?.messageId || (entry.lv ?? 1) >= LINK_VERSION || !['open', 'done'].includes(entry.state)) continue;
-    // An open message whose play has settled is the loop above's to edit, and that edit carries the new links.
-    if (entry.state === 'open' && (p.status === 'graded' || p.status === 'void')) continue;
+    // A settled play's card is never touched again: it stays as it was posted until the channel clears it.
+    if (p.status === 'graded' || p.status === 'void') continue;
     relinked++;
     const lean = Boolean(p.lean);
     const r = await send(lean ? cfg.leans : cfg.live, await dress(p, { record: await recordOf(p), ...(lean ? { role: null } : {}) }), { messageId: entry.messageId });

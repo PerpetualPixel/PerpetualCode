@@ -213,7 +213,7 @@ test('Discord will not take the picture: the written card goes, as every alert d
   hello(store);
   const d = fakeDiscord((c) => (c.file ? { status: 400, body: { message: 'Request entity too large' } } : null));
   const out = await run(env, NOW, d, { plays: [ml({ postedAt: NOW })] });
-  assert.deepEqual(out, { posted: 1, edited: 0, failed: 0 });
+  assert.deepEqual(out, { posted: 1, settled: 0, failed: 0 });
   assert.deepEqual(d.calls.map((c) => [c.url, Boolean(c.file), Boolean(c.body.components)]), [[`${HOOK}?wait=true&with_components=true`, true, true], [`${HOOK}?wait=true`, true, false], [`${HOOK}?wait=true`, false, false]]);
   assert.equal(d.calls[2].body.embeds[0].title, '🎾 TAKE · M. Dellavedova to win the match');
   assert.equal(d.calls[2].body.content, `<@&${ROLE}>`);
@@ -222,7 +222,7 @@ test('Discord will not take the picture: the written card goes, as every alert d
   assert.equal(status.buttons, true, 'the buttons were not the trouble, so they are not turned off');
 });
 
-test('a play with its picture: posted as a card, its own message redrawn when it settles, and the same picture sent to the results channel without drawing it twice', async () => {
+test('a play with its picture: posted as a card, left as posted when it settles, and the settled picture drawn once for the results channel', async () => {
   const { env, store } = makeEnv({ DISCORD_LIVE_WEBHOOK: HOOK, DISCORD_UPDATES_WEBHOOK: UPDATES, DISCORD_LIVE_ROLE_ID: ROLE });
   hello(store);
   const d = fakeDiscord();
@@ -233,11 +233,10 @@ test('a play with its picture: posted as a card, its own message redrawn when it
   assert.deepEqual(d.calls[0].body.components.map((r) => r.components.map((b) => b.label)), [['Add to slip · FanDuel −175'], ['More info']]);
   const settled = ml({ postedAt: NOW, status: 'graded', result: 'win', profit: 0.57, actual: '6-0 4-6 7-6', gradedAt: NOW + 3600e3 });
   await run(env, NOW + 3600e3, d, { plays: [settled], render });
-  assert.deepEqual(d.calls.slice(1).map((c) => [c.method, c.url, Boolean(c.file)]), [['PATCH', `${HOOK}/messages/900000000000000001?with_components=true`, true], ['POST', `${UPDATES}?wait=true&with_components=true`, true]]);
+  assert.deepEqual(d.calls.slice(1).map((c) => [c.method, c.url, Boolean(c.file)]), [['POST', `${UPDATES}?wait=true&with_components=true`, true]], 'the live message is not redrawn (2026-11-28, the owner): the settled card goes to the results channel alone');
   assert.equal(d.calls[1].body.content, '✅ **WON** · M. Dellavedova to win the match · final 6-0 4-6 7-6 · +0.57u');
-  assert.deepEqual(d.calls[1].body.attachments, [{ id: 0, filename: 'card.png' }], 'the new picture takes the old one\'s place');
-  assert.deepEqual(d.calls[1].body.components.map((r) => r.components.map((b) => b.label)), [['More info']], 'the bet buttons come off a settled card');
-  assert.deepEqual(d.calls[2].body.allowed_mentions.roles, [], 'the results channel pings nobody');
+  assert.deepEqual(d.calls[1].body.attachments, [{ id: 0, filename: 'card.png' }]);
+  assert.deepEqual(d.calls[1].body.allowed_mentions.roles, [], 'the results channel pings nobody');
   assert.deepEqual(drawn, ['atp:1:live_ml:pending', 'atp:1:live_ml:graded']);
 });
 
@@ -259,7 +258,7 @@ test('drawing is guarded: a marker is stored before each drawing and taken off a
   let draws = 0;
   const render = async () => { draws++; return PNG; };
   const out = await run(died.env, NOW, d2, { plays: [ml({ postedAt: NOW - 60e3 })], testId: 't1', testScope: 'none', render });
-  assert.deepEqual(out, { posted: 1, edited: 0, failed: 0 });
+  assert.deepEqual(out, { posted: 1, settled: 0, failed: 0 });
   assert.equal(draws, 0);
   const posts = d2.calls.filter((c) => c.body.embeds?.[0]?.title === '🎾 TAKE · M. Dellavedova to win the match');
   assert.equal(posts.length, 1);
@@ -278,7 +277,7 @@ test('a drawing that throws is not a failure: the written card goes and the stat
   hello(store);
   const d = fakeDiscord();
   const out = await run(env, NOW, d, { plays: [ml({ postedAt: NOW })], render: async () => { throw new Error('wasm would not start'); } });
-  assert.deepEqual(out, { posted: 1, edited: 0, failed: 0 });
+  assert.deepEqual(out, { posted: 1, settled: 0, failed: 0 });
   assert.deepEqual([d.calls[0].file, d.calls[0].body.embeds[0].title], [null, '🎾 TAKE · M. Dellavedova to win the match']);
   const status = await discordStatus(env);
   assert.deepEqual(status.cardError, { at: NOW, message: 'wasm would not start' });
@@ -464,7 +463,7 @@ test('the leans go to their own channel: posted as they open and edited when the
   hello(store);
   const d = fakeDiscord();
   const out = await run(env, NOW, d, { plays: [ml({ postedAt: NOW }), leanOf()] });
-  assert.deepEqual(out, { posted: 2, edited: 0, failed: 0 });
+  assert.deepEqual(out, { posted: 2, settled: 0, failed: 0 });
   assert.deepEqual(d.calls.map((c) => [c.method, c.url.split('?')[0]]), [['POST', HOOK], ['POST', LEANS]]);
   const lean = d.calls[1];
   assert.equal(lean.body.content, '💡 **LEAN · Veronika Erjavec to win the match** · −245 or better · 0.5u');
@@ -476,15 +475,14 @@ test('the leans go to their own channel: posted as they open and edited when the
   // The same tick again: nothing more.
   await run(env, NOW + 60e3, d, { plays: [ml({ postedAt: NOW }), leanOf()] });
   assert.equal(d.calls.length, 2);
-  // The lean settles: its own message is edited, and the results channel gets its result, said as a lean's.
+  // The lean settles: its own message is left as posted, and the results channel gets its result, said as a lean's.
   await run(env, NOW + 3600e3, d, { plays: [ml({ postedAt: NOW }), leanOf({ status: 'graded', result: 'win', profit: 0.2, actual: '6-0 6-3', gradedAt: NOW + 3600e3 })] });
-  assert.deepEqual(d.calls.slice(2).map((c) => [c.method, c.url]), [['PATCH', `${LEANS}/messages/900000000000000002?with_components=true`], ['POST', `${UPDATES}?wait=true&with_components=true`]]);
-  assert.equal(d.calls[3].body.content, '✅ **LEAN WON** · Veronika Erjavec to win the match · final 6-0 6-3');
-  assert.deepEqual([d.calls[3].body.allowed_mentions.roles, Boolean(d.calls[3].file), d.calls[3].body.components.map((r) => r.components.map((b) => b.label))], [[], true, [['More info']]]);
+  assert.deepEqual(d.calls.slice(2).map((c) => [c.method, c.url]), [['POST', `${UPDATES}?wait=true&with_components=true`]]);
+  assert.equal(d.calls[2].body.content, '✅ **LEAN WON** · Veronika Erjavec to win the match · final 6-0 6-3');
+  assert.deepEqual([d.calls[2].body.allowed_mentions.roles, Boolean(d.calls[2].file), d.calls[2].body.components.map((r) => r.components.map((b) => b.label))], [[], true, [['More info']]]);
   // Once: a later tick sends nothing more.
   await run(env, NOW + 3660e3, d, { plays: [ml({ postedAt: NOW }), leanOf({ status: 'graded', result: 'win', profit: 0.2, actual: '6-0 6-3', gradedAt: NOW + 3600e3 })] });
-  assert.equal(d.calls.length, 4);
-  assert.equal(d.calls[2].body.content, '✅ **LEAN WON** · Veronika Erjavec to win the match · final 6-0 6-3');
+  assert.equal(d.calls.length, 3);
   const status = await discordStatus(env);
   assert.deepEqual([status.leans, status.leansSecretRejected, status.lastError], [true, false, null]);
   assert.ok(!JSON.stringify(status).includes('323456789012345678') && !JSON.stringify(status).includes('yyyDEF'), 'the status never gives the address away');
@@ -494,7 +492,7 @@ test('the leans go to their own channel: posted as they open and edited when the
   const bare = makeEnv({ DISCORD_LIVE_WEBHOOK: HOOK, DISCORD_UPDATES_WEBHOOK: UPDATES });
   hello(bare.store);
   const d2 = fakeDiscord();
-  assert.deepEqual(await run(bare.env, NOW, d2, { plays: [leanOf()] }), { posted: 0, edited: 0, failed: 0 });
+  assert.deepEqual(await run(bare.env, NOW, d2, { plays: [leanOf()] }), { posted: 0, settled: 0, failed: 0 });
   assert.equal(d2.calls.length, 0);
 });
 
@@ -571,7 +569,7 @@ test('every link a Discord message carries to something of ours is on the site\'
   assert.deepEqual(rows.flatMap((r) => r.components.map((b) => b.url)), ['https://sportsbook.fanduel.com/addToBetslip?marketId=1&selectionId=2', `${SITE_PLAY}?id=atp%3A1%3Alive_ml&go=caesars`, `${SITE_PLAY}?id=atp%3A1%3Alive_ml&go=hardrock`, `${SITE_PLAY}?id=atp%3A1%3Alive_ml`]);
 });
 
-test('a message posted with the old links is edited once so they come off it: open or settled, a few a tick, and never twice', async () => {
+test('a message posted with the old links is edited once so they come off it: open ones only, a few a tick, and never twice', async () => {
   const { env, store } = makeEnv({ DISCORD_LIVE_WEBHOOK: HOOK, DISCORD_UPDATES_WEBHOOK: UPDATES, DISCORD_LIVE_LEAN_WEBHOOK: LEANS, DISCORD_LIVE_ROLE_ID: ROLE });
   // Posted before the change: no link version on file. One open lean, one settled lean, one open play, and one already on the new links.
   const plays = [leanOf({ id: 'wta:1:lean:live_ml:0' }), leanOf({ id: 'wta:2:lean:live_ml:0', status: 'graded', result: 'win', actual: '6-0 6-3' }), ml({ postedAt: NOW - 20 * 60e3 }), ml({ id: 'atp:9:live_ml', postedAt: NOW - 20 * 60e3 })];
@@ -582,19 +580,18 @@ test('a message posted with the old links is edited once so they come off it: op
     'atp:9:live_ml': { state: 'open', at: NOW - 20 * 60e3, messageId: '444', lv: LINK_VERSION },
   } }));
   const d = fakeDiscord();
-  assert.deepEqual(await run(env, NOW, d, { plays }), { posted: 0, edited: 0, failed: 0 });
-  assert.deepEqual(d.calls.filter((c) => c.method === 'PATCH').map((c) => c.url).sort(), [`${HOOK}/messages/333?with_components=true`, `${LEANS}/messages/111?with_components=true`, `${LEANS}/messages/222?with_components=true`].sort());
+  assert.deepEqual(await run(env, NOW, d, { plays }), { posted: 0, settled: 0, failed: 0 });
+  // The open ones are relinked; the settled lean's card is never touched again (2026-11-28, the owner).
+  assert.deepEqual(d.calls.filter((c) => c.method === 'PATCH').map((c) => c.url).sort(), [`${HOOK}/messages/333?with_components=true`, `${LEANS}/messages/111?with_components=true`].sort());
   // The settled lean's result, which the results channel never had, goes there in the same tick.
   assert.deepEqual(d.calls.filter((c) => c.method === 'POST').map((c) => [c.url.split('?')[0], c.body.content]), [[UPDATES, '✅ **LEAN WON** · Veronika Erjavec to win the match · final 6-0 6-3']]);
   for (const c of d.calls) {
     assert.doesNotMatch(JSON.stringify(c.body), /workers\.dev/);
     assert.ok(c.body.components.at(-1).components[0].url.startsWith(`${SITE_PLAY}?id=`), 'More info now opens the site');
   }
-  // The settled lean is redrawn as it stands, and nobody is pinged by the edit.
-  assert.equal(d.calls.find((c) => c.url.includes('/222')).body.content, '✅ **LEAN WON** · Veronika Erjavec to win the match · final 6-0 6-3');
-  assert.deepEqual(Object.values(ledgerOf(store).plays).map((e) => [e.state, e.lv]), [['open', LINK_VERSION], ['done', LINK_VERSION], ['open', LINK_VERSION], ['open', LINK_VERSION]]);
+  assert.deepEqual(Object.values(ledgerOf(store).plays).map((e) => [e.state, e.lv]), [['open', LINK_VERSION], ['done', undefined], ['open', LINK_VERSION], ['open', LINK_VERSION]]);
   await run(env, NOW + 60e3, d, { plays });
-  assert.equal(d.calls.length, 4, 'once');
+  assert.equal(d.calls.length, 3, 'once');
   // A message deleted by hand is let go; one Discord keeps refusing is tried three times, no more.
   const gone = makeEnv({ DISCORD_LIVE_WEBHOOK: HOOK });
   gone.store.set(DISCORD_LEDGER_KEY, JSON.stringify({ helloAt: 1, plays: { 'atp:1:live_ml': { state: 'open', at: NOW, messageId: '555' } } }));
@@ -665,7 +662,7 @@ test('a lean that settled before leans went to the results channel is caught up 
   flaky.store.set(DISCORD_LEDGER_KEY, JSON.stringify({ helloAt: 1, plays: { 'atp:1:live_ml': { state: 'open', at: NOW - 3600e3, messageId: '444', lv: LINK_VERSION } } }));
   const d2 = fakeDiscord((c) => (c.url.startsWith(UPDATES) ? { status: 500, body: {} } : null));
   for (let i = 0; i < 6; i++) await run(flaky.env, NOW + i * 60e3, d2, { plays: [play] });
-  assert.deepEqual(d2.calls.map((c) => c.url.split('?')[0].replace(/\/messages\/\d+$/, '')), [HOOK, UPDATES, UPDATES, UPDATES]);
+  assert.deepEqual(d2.calls.map((c) => c.url.split('?')[0].replace(/\/messages\/\d+$/, '')), [UPDATES, UPDATES, UPDATES], 'the live card is not edited; the result alone is tried');
   // And one that lands on the second try is not sent a third time.
   const once = makeEnv({ DISCORD_LIVE_WEBHOOK: HOOK, DISCORD_UPDATES_WEBHOOK: UPDATES });
   once.store.set(DISCORD_LEDGER_KEY, JSON.stringify({ helloAt: 1, plays: { 'atp:1:live_ml': { state: 'open', at: NOW - 3600e3, messageId: '555', lv: LINK_VERSION } } }));

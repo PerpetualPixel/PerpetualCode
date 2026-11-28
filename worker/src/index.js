@@ -525,7 +525,7 @@ export default {
     // runs on it.
     if (event.cron === TENNIS_LIVE_CRON) {
       // The two live tennis ticks in turn, then the owner's Discord once for both (worker/src/discord.js): a tracked play or a lean goes up when it
-      // opens and its message is edited when it settles. One sync, never two side by side: each would post what the other had not yet marked.
+      // opens and its result goes to the results channel when it settles. One sync, never two side by side: each would post what the other had not yet marked.
       // A resting tick changed nothing, so there is nothing to send; with no webhook set the sync is a no-op.
       ctx.waitUntil((async () => {
         const live = await runTennisLiveTick(env, ctx, now).catch((e) => { console.error('Tennis live tick failed:', e); return null; });

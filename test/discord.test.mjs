@@ -1,8 +1,8 @@
 /**
  * The tracked live plays on the owner's Discord (worker/src/discord.js): a
- * play goes up once when it opens, its own message is edited when it
- * settles, nothing is posted twice, and the webhook address never leaves
- * the worker.
+ * play goes up once when it opens, its card is left as posted when it
+ * settles and the result goes to the results channel, nothing is posted
+ * twice, and the webhook address never leaves the worker.
  */
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
@@ -156,7 +156,7 @@ test('with no webhook nothing is sent; with one, the channel is told once that i
   assert.match(d.calls[0].body.content, /live alerts are connected/);
 });
 
-test('a tracked play is posted once when it opens, and its own message is edited when it settles', async () => {
+test('a tracked play is posted once when it opens; when it settles its card is left as posted and the result goes to the results channel alone', async () => {
   const { env, store } = makeEnv({ DISCORD_LIVE_WEBHOOK: HOOK, DISCORD_UPDATES_WEBHOOK: UPDATES, DISCORD_LIVE_ROLE_ID: '987654321098765432' });
   store.set(DISCORD_LEDGER_KEY, JSON.stringify({ helloAt: NOW - 1, plays: {} }));
   const d = fakeDiscord();
@@ -165,25 +165,25 @@ test('a tracked play is posted once when it opens, and its own message is edited
   const settledAlready = set({ id: 'atp:5:live_set:1', status: 'graded', result: 'win', profit: 0.5 });
   let plays = [ml(), lean, stale, settledAlready];
 
-  assert.deepEqual(await sync(env, NOW, d, plays), { posted: 1, edited: 0, failed: 0 });
+  assert.deepEqual(await sync(env, NOW, d, plays), { posted: 1, settled: 0, failed: 0 });
   assert.equal(d.calls.length, 1, 'the lean, the play already too old to take and the one already settled are not posted');
   assert.equal(d.calls[0].method, 'POST');
   assert.equal(d.calls[0].url, `${HOOK}?wait=true&with_components=true`);
   assert.equal(d.calls[0].body.content, '<@&987654321098765432>');
   // Every later tick while it is open: nothing.
-  for (let i = 1; i <= 5; i++) assert.deepEqual(await sync(env, NOW + i * 60e3, d, plays), { posted: 0, edited: 0, failed: 0 });
+  for (let i = 1; i <= 5; i++) assert.deepEqual(await sync(env, NOW + i * 60e3, d, plays), { posted: 0, settled: 0, failed: 0 });
   assert.equal(d.calls.length, 1, 'posted once, however many ticks pass');
 
-  // It settles: one edit of that message, and one line in the updates channel.
+  // It settles: the live message is not touched (2026-11-28, the owner), one card in the results channel.
   plays = [ml({ status: 'graded', result: 'win', profit: 0.57, actual: '6-0 4-6 7-6' }), lean, stale, settledAlready];
-  assert.deepEqual(await sync(env, NOW + 40 * 60e3, d, plays), { posted: 0, edited: 1, failed: 0 });
-  assert.deepEqual(d.calls.slice(1).map((c) => [c.method, c.url]), [['PATCH', `${HOOK}/messages/900000000000000001?with_components=true`], ['POST', `${UPDATES}?wait=true&with_components=true`]]);
-  assert.equal(d.calls[1].body.embeds[0].title, '✅ WON · M. Dellavedova to win the match');
-  assert.match(d.calls[1].body.embeds[0].description, /^\*\*Final 6-0 4-6 7-6 · \+0\.57u\*\*/);
-  assert.equal(d.calls[2].body.embeds[0].title, '✅ WON · M. Dellavedova to win the match', 'the results channel gets the result card');
-  assert.match(d.calls[2].body.embeds[0].footer.text, /^Our Match Winner record: 8-2 · \+3\.29u$/);
-  assert.deepEqual(await sync(env, NOW + 41 * 60e3, d, plays), { posted: 0, edited: 0, failed: 0 });
-  assert.equal(d.calls.length, 3, 'and never again');
+  assert.deepEqual(await sync(env, NOW + 40 * 60e3, d, plays), { posted: 0, settled: 1, failed: 0 });
+  assert.deepEqual(d.calls.slice(1).map((c) => [c.method, c.url]), [['POST', `${UPDATES}?wait=true&with_components=true`]], 'no PATCH of the live message');
+  assert.equal(d.calls[1].body.embeds[0].title, '✅ WON · M. Dellavedova to win the match', 'the results channel gets the result card');
+  assert.match(d.calls[1].body.embeds[0].description, /^\*\*Final 6-0 4-6 7-6\*\* · \*\*\+0\.57u\*\*/);
+  assert.match(d.calls[1].body.embeds[0].footer.text, /^Our Match Winner record: 8-2 · \+3\.29u$/);
+  assert.equal(JSON.parse(store.get(DISCORD_LEDGER_KEY)).plays['atp:1:live_ml'].state, 'done');
+  assert.deepEqual(await sync(env, NOW + 41 * 60e3, d, plays), { posted: 0, settled: 0, failed: 0 });
+  assert.equal(d.calls.length, 2, 'and never again');
 });
 
 test('never twice: a post with no answer is not sent again; one Discord refused is tried again, three times at most', async () => {
@@ -191,7 +191,7 @@ test('never twice: a post with no answer is not sent again; one Discord refused 
   const a = makeEnv({ DISCORD_LIVE_WEBHOOK: HOOK });
   a.store.set(DISCORD_LEDGER_KEY, JSON.stringify({ helloAt: NOW - 1, plays: {} }));
   const lost = fakeDiscord(() => 'throw');
-  assert.deepEqual(await sync(a.env, NOW, lost, [ml()]), { posted: 0, edited: 0, failed: 1 });
+  assert.deepEqual(await sync(a.env, NOW, lost, [ml()]), { posted: 0, settled: 0, failed: 1 });
   for (let i = 1; i <= 3; i++) await sync(a.env, NOW + i * 60e3, lost, [ml()]);
   assert.equal(lost.calls.length, 1, 'one attempt, then left alone');
   assert.equal(JSON.parse(a.store.get(DISCORD_LEDGER_KEY)).plays['atp:1:live_ml'].state, 'lost');
@@ -200,8 +200,8 @@ test('never twice: a post with no answer is not sent again; one Discord refused 
   const b = makeEnv({ DISCORD_LIVE_WEBHOOK: HOOK });
   b.store.set(DISCORD_LEDGER_KEY, JSON.stringify({ helloAt: NOW - 1, plays: {} }));
   const flaky = fakeDiscord((c, n) => (n === 1 ? { status: 500, body: {} } : null));
-  assert.deepEqual(await sync(b.env, NOW, flaky, [ml()]), { posted: 0, edited: 0, failed: 1 });
-  assert.deepEqual(await sync(b.env, NOW + 60e3, flaky, [ml()]), { posted: 1, edited: 0, failed: 0 });
+  assert.deepEqual(await sync(b.env, NOW, flaky, [ml()]), { posted: 0, settled: 0, failed: 1 });
+  assert.deepEqual(await sync(b.env, NOW + 60e3, flaky, [ml()]), { posted: 1, settled: 0, failed: 0 });
   await sync(b.env, NOW + 120e3, flaky, [ml()]);
   assert.equal(flaky.calls.length, 2);
 
@@ -222,21 +222,25 @@ test('never twice: a post with no answer is not sent again; one Discord refused 
   assert.equal(JSON.parse(e.store.get(DISCORD_LEDGER_KEY)).plays['atp:1:live_ml'].state, 'lost');
 });
 
-test('an edit is retried until it lands, and a message deleted by hand is let go', async () => {
+test('a settled play never touches the live channel: with no results channel it is closed in the ledger and nothing is sent', async () => {
   const { env, store } = makeEnv({ DISCORD_LIVE_WEBHOOK: HOOK });
   store.set(DISCORD_LEDGER_KEY, JSON.stringify({ helloAt: NOW - 1, plays: { 'atp:1:live_ml': { state: 'open', at: NOW - 30 * 60e3, messageId: '900000000000000009' } } }));
   const graded = [ml({ status: 'graded', result: 'loss', profit: -1, actual: '6-0 4-6 3-6' })];
-  const flaky = fakeDiscord((c, n) => (n === 1 ? { status: 502, body: {} } : null));
-  assert.deepEqual(await sync(env, NOW, flaky, graded), { posted: 0, edited: 0, failed: 1 });
-  assert.deepEqual(await sync(env, NOW + 60e3, flaky, graded), { posted: 0, edited: 1, failed: 0 });
-  assert.equal(flaky.calls.every((c) => c.method === 'PATCH' && c.url === `${HOOK}/messages/900000000000000009?with_components=true`), true);
+  const d = fakeDiscord();
+  assert.deepEqual(await sync(env, NOW, d, graded), { posted: 0, settled: 1, failed: 0 });
+  assert.equal(d.calls.length, 0, 'no edit of the live message, even one AutoPurger has already cleared');
+  assert.equal(JSON.parse(store.get(DISCORD_LEDGER_KEY)).plays['atp:1:live_ml'].state, 'done');
+  assert.deepEqual(await sync(env, NOW + 60e3, d, graded), { posted: 0, settled: 0, failed: 0 });
+  assert.equal(d.calls.length, 0, 'and never again');
 
-  const gone = makeEnv({ DISCORD_LIVE_WEBHOOK: HOOK });
-  gone.store.set(DISCORD_LEDGER_KEY, JSON.stringify({ helloAt: NOW - 1, plays: { 'atp:1:live_ml': { state: 'open', at: NOW - 30 * 60e3, messageId: '900000000000000009' } } }));
-  const deleted = fakeDiscord(() => ({ status: 404, body: {} }));
-  await sync(gone.env, NOW, deleted, graded);
-  await sync(gone.env, NOW + 60e3, deleted, graded);
-  assert.equal(deleted.calls.length, 1, 'a 404 is the end of it');
+  // With a results channel that refuses once: the result is tried again on the next tick, still with no edit.
+  const r = makeEnv({ DISCORD_LIVE_WEBHOOK: HOOK, DISCORD_UPDATES_WEBHOOK: UPDATES });
+  r.store.set(DISCORD_LEDGER_KEY, JSON.stringify({ helloAt: NOW - 1, plays: { 'atp:1:live_ml': { state: 'open', at: NOW - 30 * 60e3, messageId: '900000000000000009' } } }));
+  const flaky = fakeDiscord((c, n) => (n === 1 ? { status: 502, body: {} } : null));
+  assert.deepEqual(await sync(r.env, NOW, flaky, graded), { posted: 0, settled: 1, failed: 1 });
+  await sync(r.env, NOW + 60e3, flaky, graded);
+  assert.deepEqual(flaky.calls.map((c) => [c.method, c.url]), [['POST', `${UPDATES}?wait=true&with_components=true`], ['POST', `${UPDATES}?wait=true&with_components=true`]]);
+  assert.equal(JSON.parse(r.store.get(DISCORD_LEDGER_KEY)).plays['atp:1:live_ml'].res, true);
 });
 
 test('the status route says whether it is set up and working, never the address or a message id', async () => {
@@ -388,7 +392,7 @@ test('it is posted once to the leans channel as it opens, with the tally, nobody
   assert.equal(d.calls.length, 1);
 });
 
-test('when it settles the same message is edited, the result goes to the results channel with its units and the tally, and a new lean on the match is its own post', async () => {
+test('when it settles its card is left as posted, the result goes to the results channel with its units and the tally, and a new lean on the match is its own post', async () => {
   const { env } = lowerEnv();
   let st = advanceLower(null, null, lowerLog(), [lowerRow(0, '1-4')], NOW);
   const first = lowerLeanPlays(st)[0];
@@ -403,10 +407,8 @@ test('when it settles the same message is edited, the result goes to the results
   assert.equal(settled.result, 'win');
   assert.ok(settled.profit > 0);
   const out = await lowerSync(env, later + 30e3, d, st);
-  assert.equal(out.edited, 1);
-  const edit = d.calls.find((c) => c.method === 'PATCH');
-  assert.ok(edit.url.startsWith(`${LEANS}/messages/`));
-  assert.match(JSON.stringify(edit.body), /LEAN WON/);
+  assert.equal(out.settled, 1);
+  assert.equal(d.calls.some((c) => c.method === 'PATCH'), false, 'the card in the leans channel is never edited');
   const result = d.calls.find((c) => c.url.startsWith(UPDATES));
   assert.ok(result, 'the results channel has it');
   const text = JSON.stringify(result.body);

@@ -316,7 +316,10 @@ export async function syncLeagueDiscord(env, now = Date.now(), league = 'nba', {
       }
     }
 
-    // The game is over: every post of it still open is edited to how it finished.
+    // The game is over: every post of it still open is settled. The card in the live channel is left as it was posted
+    // (2026-11-28, the owner: "stop changing the cards to won or loss or void in the live channels, leave that for the
+    // results channels"; AutoPurger clears each live card 15 minutes after it goes up), and the settled card goes to
+    // the results channel when there is one.
     const open = mine.filter((e) => e.state === 'open' && e.messageId);
     if (!open.length) continue;
     const watch = await watchOf(gid);
@@ -324,16 +327,10 @@ export async function syncLeagueDiscord(env, now = Date.now(), league = 'nba', {
     if (fin?.state !== 'post') continue;
     for (const e of open) {
       const graded = gradePost(e.post, fin);
-      const png = await picture(graded);
-      const r = await send(slipMessage(graded, { png, buttons: !ledger.noButtons }), { messageId: e.messageId });
-      const tries = (e.editTries ?? 0) + 1;
-      if (r.ok) {
-        ledger.posts[graded.id] = { ...e, state: 'done', doneAt: now, post: graded }; out.settled++;
-        // The same settled card to the results channel, when there is one. `res` says whether it got there: one
-        // Discord refused is tried again below, a few ticks, and never one Discord gave no answer about.
-        if (cfg.results) await sendResult(ledger.posts[graded.id], png);
-      }
-      else { ledger.posts[graded.id] = r.status === 404 || tries >= 6 ? { ...e, state: 'done', doneAt: now, editFailed: true } : { ...e, editTries: tries }; fail('edit', r); }
+      ledger.posts[graded.id] = { ...e, state: 'done', doneAt: now, post: graded }; out.settled++;
+      // `res` says whether it got there: one Discord refused is tried again below, a few ticks, and never one Discord
+      // gave no answer about.
+      if (cfg.results) await sendResult(ledger.posts[graded.id], await picture(graded));
       dirty = true;
     }
   }
@@ -342,7 +339,7 @@ export async function syncLeagueDiscord(env, now = Date.now(), league = 'nba', {
     let caughtUp = 0;
     for (const e of Object.values(ledger.posts)) {
       // Not one refused on this very tick: the next tick is soon enough.
-      if (caughtUp >= 3 || e.state !== 'done' || e.editFailed || e.res !== false || e.resAt === now || (e.resTries ?? 0) >= 3 || now - (e.doneAt ?? 0) > 864e5) continue;
+      if (caughtUp >= 3 || e.state !== 'done' || e.res !== false || e.resAt === now || (e.resTries ?? 0) >= 3 || now - (e.doneAt ?? 0) > 864e5) continue;
       caughtUp++; await sendResult(e, await picture(e.post)); dirty = true;
     }
   }

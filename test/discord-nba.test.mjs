@@ -159,7 +159,7 @@ test('a player is not taken twice on a stat in a game: the same player for more 
   assert.equal((await run(s2.env, half, d2, { play: playOf([otherStat, early], { builtAt: half }) })).posted, 1);
 });
 
-test('when the game ends each open post is edited to how it finished, once; a post with no answer is not sent again', async () => {
+test('when the game ends each open post is settled once, and its card in the live channel is left as it was; a post with no answer is not sent again', async () => {
   const { env, store } = makeEnv();
   const d = fakeDiscord();
   await run(env, NOW, d, { play: playOf([slip()]) });
@@ -168,12 +168,11 @@ test('when the game ends each open post is edited to how it finished, once; a po
   assert.equal(d.calls.length, 1);
   const watch = finalTick({ 'Jalen Brunson': { points: 27 }, 'Jayson Tatum': { rebounds: 9 }, 'Karl-Anthony Towns': { rebounds: 12 } });
   assert.deepEqual(await run(env, NOW + 2 * 3600e3, d, { play: playOf([slip()], { builtAt: NOW }), watch }), { posted: 0, settled: 1, failed: 0 });
-  assert.deepEqual([d.calls[1].method, d.calls[1].url], ['PATCH', `${HOOK}/messages/800000000000000001?with_components=true`]);
-  assert.equal(d.calls[1].body.content, '✅ **WON** · New York Knicks at Boston Celtics · 3 legs · +105 at FanDuel · +1.05u');
-  assert.deepEqual([d.calls[1].body.embeds[0].color, d.calls[1].body.allowed_mentions.users], [0x10b981, []]);
+  assert.equal(d.calls.length, 1, 'no edit of the live message (2026-11-28, the owner), and no results channel here');
   await run(env, NOW + 2 * 3600e3 + 60e3, d, { play: playOf([slip()], { builtAt: NOW }), watch });
-  assert.equal(d.calls.length, 2, 'once');
-  assert.equal(Object.values(ledgerOf(store).posts)[0].state, 'done');
+  assert.equal(d.calls.length, 1, 'once');
+  const done = Object.values(ledgerOf(store).posts)[0];
+  assert.deepEqual([done.state, done.post.status, done.post.result], ['done', 'graded', 'win']);
 
   // No answer from Discord: it may be in the channel, so it is not sent again.
   const quiet = makeEnv();
@@ -275,10 +274,12 @@ test('football has its own channel, ledger and test card, and is told apart from
   assert.deepEqual(d.calls[0].body.allowed_mentions, { parse: [], users: [BOT] });
   assert.deepEqual(d.calls[0].body.components[0].components[0].emoji, { name: '🏈' });
   assert.ok(store.has(LEAGUES.nfl.ledger) && !store.has(LEAGUES.nba.ledger));
-  // The game ends: the post is edited to how it finished, against the football box.
+  // The game ends: the post is graded against the football box and left as posted (no results channel here, so nothing is sent).
   const watch = { ticks: [{ state: 'post', at: NOW + 3 * 3600e3, score: { DAL: 20, PHI: 27 }, box: [{ name: 'Jalen Hurts', stats: { passingYards: 262 } }, { name: 'Saquon Barkley', stats: { rushingYards: 71 } }, { name: 'CeeDee Lamb', stats: { receptions: 8 } }] }] };
   assert.deepEqual(await syncFootballDiscord(env, NOW + 3 * 3600e3, deps({ watch: async () => watch })), { posted: 0, settled: 1, failed: 0 });
-  assert.equal(d.calls[1].body.content, '❌ **LOST** · Dallas Cowboys at Philadelphia Eagles · 3 legs · +110 at DraftKings · −1.00u');
+  assert.equal(d.calls.length, 1, 'the live card is not edited');
+  const settledEntry = Object.values(JSON.parse(store.get(LEAGUES.nfl.ledger)).posts)[0];
+  assert.equal(slipLine(settledEntry.post), '❌ **LOST** · Dallas Cowboys at Philadelphia Eagles · 3 legs · +110 at DraftKings · −1.00u');
   // Its card says NFL, and its written form names the league.
   const post = slipPost(NFL_GAME, play, nflSlip(), 'nfl');
   assert.match(slipCardSvg(post), />NFL  •  Nov 25  •  8:11 PM ET</);
@@ -405,13 +406,14 @@ test('with a results webhook, each settled play\'s card goes to the results chan
   assert.equal(d.calls.length, 1, 'an open play goes to the live channel only');
   const watch = finalTick({ 'Jalen Brunson': { points: 27 }, 'Jayson Tatum': { rebounds: 9 }, 'Karl-Anthony Towns': { rebounds: 12 } });
   assert.deepEqual(await runR(env, NOW + 2 * 3600e3, d, { play: playOf([slip()], { builtAt: NOW }), watch }), { posted: 0, settled: 1, failed: 0 });
-  assert.deepEqual(d.calls.slice(1).map((c) => [c.method, c.url.split('?')[0].replace(/\/messages\/\d+$/, '/messages/<id>')]), [['PATCH', `${HOOK}/messages/<id>`], ['POST', RESULTS]], 'the edit, then the same settled card to the results channel');
-  assert.match(d.calls[2].body.content, /^✅ \*\*WON\*\*/);
-  assert.equal(d.calls[2].body.components, undefined, 'the results card carries no button');
+  assert.deepEqual(d.calls.slice(1).map((c) => [c.method, c.url.split('?')[0]]), [['POST', RESULTS]], 'the settled card to the results channel alone: the live message is not edited');
+  assert.equal(d.calls[1].body.content, '✅ **WON** · New York Knicks at Boston Celtics · 3 legs · +105 at FanDuel · +1.05u');
+  assert.deepEqual([d.calls[1].body.embeds[0].color, d.calls[1].body.allowed_mentions.users], [0x10b981, []]);
+  assert.equal(d.calls[1].body.components, undefined, 'the results card carries no button');
   const entry = Object.values(ledgerOf(store).posts)[0];
   assert.deepEqual([entry.state, entry.res], ['done', true]);
   await runR(env, NOW + 3 * 3600e3, d, { play: playOf([slip()], { builtAt: NOW }), watch });
-  assert.equal(d.calls.length, 3, 'and never again');
+  assert.equal(d.calls.length, 2, 'and never again');
   const status = await basketballStatus(env);
   assert.deepEqual([status.results, status.resultsSecretRejected, status.resultsPosted, status.lastResultAt], [true, false, 1, NOW + 2 * 3600e3]);
   assert.ok(!JSON.stringify(status).includes('resDEF'));
