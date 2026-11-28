@@ -431,3 +431,34 @@ test('with a results webhook, each settled play\'s card goes to the results chan
   assert.equal((await basketballStatus({ ...env, DISCORD_NBA_RESULTS_WEBHOOK: '' })).results, false);
   assert.equal((await basketballStatus({ ...env, DISCORD_NBA_RESULTS_WEBHOOK: 'nope' })).resultsSecretRejected, true);
 });
+
+test('a play closed without a grade (its card could not be edited) is graded from the game\'s last look and its result goes to the results channel; one whose game has no final is tried three times', async () => {
+  const RESULTS = 'https://discord.com/api/webhooks/523456789012345678/resDEF_ghi-jklMNOpqrSTUvwxYZ0123456789abcdefghijklmnopqrstuvwxyzABCDEF';
+  const { env, store } = makeEnv({ DISCORD_LIVE_BASKETBALL_WEBHOOK: HOOK, DISCORD_NBA_RESULTS_WEBHOOK: RESULTS });
+  const d = fakeDiscord();
+  // The game is long over and out of the window the channel works: the repair does not need it there.
+  const runR = (now, watch) => syncBasketballDiscord(env, now, { deps: { fetch: d.fetch, games: async () => [], play: async () => null, watch: async (id) => watch[id] ?? null, config: { hook: HOOK, playbook: BOT, results: RESULTS }, testId: '', render: async () => PNG } });
+  const post = slipPost(GAME, playOf([slip()]), slip(), 'nba');
+  const other = { ...post, id: `${post.id}:x`, gameId: '402' };
+  const old = { ...post, id: `${post.id}:old` };
+  store.set(DISCORD_NBA_LEDGER_KEY, JSON.stringify({ games: {}, posts: {
+    [post.id]: { state: 'done', at: NOW, doneAt: NOW + 2 * 3600e3, messageId: '1', editFailed: true, post },
+    [old.id]: { state: 'done', at: NOW - 30 * 3600e3, doneAt: NOW - 28 * 3600e3, messageId: '2', editFailed: true, post: old },
+    [other.id]: { state: 'done', at: NOW, doneAt: NOW + 2 * 3600e3, messageId: '3', editFailed: true, post: other },
+  } }));
+  assert.deepEqual([(await basketballStatus(env)).ungraded, (await basketballStatus(env)).repaired], [3, 0]);
+  const watch = { 401: finalTick({ 'Jalen Brunson': { points: 27 }, 'Jayson Tatum': { rebounds: 9 }, 'Karl-Anthony Towns': { rebounds: 12 } }), 402: finalTick({}, 'in') };
+  const t = NOW + 9 * 3600e3;
+  assert.deepEqual(await runR(t, watch), { posted: 0, settled: 2, failed: 0 });
+  const posts = ledgerOf(store).posts;
+  assert.deepEqual([posts[post.id].post.status, posts[post.id].post.result, posts[post.id].post.profit, posts[post.id].post.gradedAt, posts[post.id].editFailed, posts[post.id].res], ['graded', 'win', 1.05, NOW + 2 * 3600e3, undefined, true]);
+  assert.deepEqual(d.calls.map((c) => [c.method, c.url.split('?')[0]]), [['POST', RESULTS]], 'the result of the one closed within the day goes to the results channel; nothing is edited');
+  assert.match(d.calls[0].body.content, /^✅ \*\*WON\*\*/);
+  assert.deepEqual([posts[old.id].post.status, posts[old.id].res], ['graded', false], 'one closed more than a day ago is graded for the record, and no card is sent that late');
+  assert.deepEqual([posts[other.id].editFailed, posts[other.id].repairTries, posts[other.id].post.status], [true, 1, 'pending'], 'no final on file: left, and counted');
+  await runR(t + 60e3, watch); await runR(t + 120e3, watch); await runR(t + 180e3, watch);
+  assert.equal(ledgerOf(store).posts[other.id].repairTries, 3, 'three tries, no more');
+  assert.equal(d.calls.length, 1, 'and nothing is sent twice');
+  const status = await basketballStatus(env);
+  assert.deepEqual([status.ungraded, status.repaired, status.resultsPosted], [1, 2, 1]);
+});

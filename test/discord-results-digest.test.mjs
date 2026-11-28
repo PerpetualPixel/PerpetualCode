@@ -465,3 +465,21 @@ test('a slate that never reads as over still goes in the morning, and a play gra
   assert.equal(rec.plays, 2);
   assert.equal(rec.tally.wins, 2);
 });
+
+test('a league\'s day already posted takes the fuller tally when a play of it is graded days late; nothing is posted again', async () => {
+  const { env, store } = makeEnv({ DISCORD_NFL_RESULTS_WEBHOOK: NFL_RESULTS });
+  const THU = '2026-11-26';
+  store.set(LEAGUES.nfl.ledger, JSON.stringify({ posts: { a: doneAt('a', 'f1', at(THU, 20, 30), { league: 'nfl' }) }, games: {} }));
+  const d = fakeDiscord();
+  const deps = { fetch: d.fetch, oneOff: null, render: null, games: async () => [], watch: finals([]) };
+  assert.equal((await runResultsDigest(env, at('2026-11-27', 6, 7), { deps })).nfl.daily.plays, 1);
+  assert.equal(d.calls.length, 1);
+  // A play of Thursday night's game is graded on Saturday (it had been closed without a grade): Thursday's record takes it that morning.
+  store.set(LEAGUES.nfl.ledger, JSON.stringify({ posts: { a: doneAt('a', 'f1', at(THU, 20, 30), { league: 'nfl' }), b: doneAt('b', 'f2', at(THU, 23, 30), { league: 'nfl', result: 'loss', profit: -1 }) }, games: {} }));
+  const sat = await runResultsDigest(env, at('2026-11-28', 6, 7), { deps });
+  assert.deepEqual(sat.nfl, { daily: { skipped: 'no plays', day: '2026-11-27' }, weekly: null, recounted: { [THU]: 1 } });
+  const rec = JSON.parse(store.get(DIGEST_DAY_KEY(THU, 'nfl')));
+  assert.deepEqual([rec.plays, rec.tally.wins, rec.tally.losses], [2, 1, 1]);
+  assert.equal((await runResultsDigest(env, at('2026-11-28', 6, 22), { deps })).nfl.recounted, undefined, 'once');
+  assert.equal(d.calls.length, 1);
+});

@@ -282,8 +282,8 @@ export function weeklyDigestMessage(weekStartKey, days, { playbook = null, label
 /** Each results channel: where its webhook is, where its plays are, how a play is written. */
 export const SOURCES = {
   tennis: { label: 'TENNIS', hook: (env) => discordConfig(env).updates, plays: tennisPlaysAround, line: resultLine },
-  nba: { label: 'NBA', hook: (env) => webhookOf(env?.DISCORD_NBA_RESULTS_WEBHOOK), plays: (env, s, e, deps) => ledgerPlays(env, 'nba', deps), line: slipResultLine },
-  nfl: { label: 'NFL', hook: (env) => webhookOf(env?.DISCORD_NFL_RESULTS_WEBHOOK), plays: (env, s, e, deps) => ledgerPlays(env, 'nfl', deps), line: slipResultLine },
+  nba: { label: 'NBA', hook: (env) => webhookOf(env?.DISCORD_NBA_RESULTS_WEBHOOK), plays: (env, s, e, deps) => ledgerPlays(env, 'nba', deps), line: slipResultLine, recount: true },
+  nfl: { label: 'NFL', hook: (env) => webhookOf(env?.DISCORD_NFL_RESULTS_WEBHOOK), plays: (env, s, e, deps) => ledgerPlays(env, 'nfl', deps), line: slipResultLine, recount: true },
 };
 
 /* ---------- the run ---------- */
@@ -372,6 +372,22 @@ async function runSource(env, name, source, hook, now, clock, { fetcher, playboo
     }
   }
   if (day) return out;
+
+  // A league's day already posted whose plays have grown since (a play graded days late, see the repair in
+  // discord-nba.js): the day's record takes the fuller tally, so the week's roll-up counts it. Nothing is posted.
+  // The two days before yesterday: the channel ledger keeps a play four days.
+  if (source.recount) {
+    let all = null;
+    for (const back of [2, 3]) {
+      const dateKey = shiftDate(clock.date, -back);
+      const rec = await readJson(env, DIGEST_DAY_KEY(dateKey, name));
+      if (!rec?.tally) continue;
+      const s = etInstant(dateKey, DIGEST_HOUR); const e = etInstant(shiftDate(dateKey, 1), DIGEST_HOUR);
+      all ??= await source.plays(env, s, e, deps);
+      const plays = settledIn(all, s, e);
+      if (plays.length > (rec.plays ?? 0)) { await writeJson(env, DIGEST_DAY_KEY(dateKey, name), { ...rec, plays: plays.length, ...talliesOf(plays), early: false, toppedUpAt: now }); (out.recounted ??= {})[dateKey] = plays.length - (rec.plays ?? 0); }
+    }
+  }
 
   if (clock.weekday === WEEKLY_WEEKDAY) {
     const weekStartKey = shiftDate(clock.date, -7); // last Monday: the week that ended this morning
