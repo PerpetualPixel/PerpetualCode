@@ -17,6 +17,7 @@ import { playbookTag, LEAGUES } from '../worker/src/discord-nba.js';
 const UPDATES = 'https://discord.com/api/webhooks/223456789012345678/zzzDEF_ghi-jklMNOpqrSTUvwxYZ0123456789abcdefghijklmnopqrstuvwxyzABCDEF';
 const NBA_RESULTS = 'https://discord.com/api/webhooks/623456789012345678/nbaRES_ghi-jklMNOpqrSTUvwxYZ0123456789abcdefghijklmnopqrstuvwxyzABCDEF';
 const PLAYBOOK = '1408438245594763375';
+const MEMBERS = '1575082985575940187';
 
 function makeEnv(extra = {}) {
   const store = new Map();
@@ -99,9 +100,9 @@ test('packLines keeps every line and never passes the limit', () => {
 
 test('the daily post: Playbook tagged in the content and allowed to ping, the day in the title, the record in the footer; the sport in the words', () => {
   const plays = [play({ profit: 0.57 }), play({ result: 'loss', profit: -1, actual: '4-6 4-6' })];
-  const m = dailyDigestMessage('2026-11-24', plays, { playbook: PLAYBOOK });
-  assert.equal(m.content, `<@${PLAYBOOK}> Results for Tue, Nov 24`);
-  assert.deepEqual(m.allowed_mentions, { parse: [], users: [PLAYBOOK] });
+  const m = dailyDigestMessage('2026-11-24', plays, { tag: `&${MEMBERS}` });
+  assert.equal(m.content, `<@&${MEMBERS}> Results for Tue, Nov 24`);
+  assert.deepEqual(m.allowed_mentions, { parse: [], users: [], roles: [MEMBERS] });
   assert.equal(m.embeds.length, 1);
   assert.equal(m.embeds[0].title, '📊 TENNIS RESULTS · Tue, Nov 24 · 2 plays');
   assert.equal(m.embeds[0].author.name, 'PERPETUAL PICKS · LIVE TENNIS');
@@ -113,9 +114,9 @@ test('the daily post: Playbook tagged in the content and allowed to ping, the da
   assert.match(nba.embeds[0].description, /^✅ \*\*New York Knicks at Boston Celtics\*\*/);
   assert.equal(nba.embeds[0].footer.text, 'Record 1-0 · +1.05u · ROI +105.0% · perpetualpicks.com');
   // A role as Playbook: pinged as a role.
-  const role = dailyDigestMessage('2026-11-24', plays, { playbook: `&${PLAYBOOK}` });
-  assert.equal(role.content, `<@&${PLAYBOOK}> Results for Tue, Nov 24`);
-  assert.deepEqual(role.allowed_mentions, { parse: [], users: [], roles: [PLAYBOOK] });
+  const role = dailyDigestMessage('2026-11-24', plays, { tag: `&${MEMBERS}` });
+  assert.equal(role.content, `<@&${MEMBERS}> Results for Tue, Nov 24`);
+  assert.deepEqual(role.allowed_mentions, { parse: [], users: [], roles: [MEMBERS] });
   // Nobody known: no tag, nothing may ping.
   const plain = dailyDigestMessage('2026-11-24', plays);
   assert.equal(plain.content, '');
@@ -138,8 +139,8 @@ test('the weekly post: a line a day with its record, the week in the title, the 
     day('2026-11-19', []), day('2026-11-20', []), day('2026-11-21', []),
     day('2026-11-22', [play({ profit: 0.57 })]),
   ];
-  const m = weeklyDigestMessage('2026-11-16', days, { playbook: PLAYBOOK });
-  assert.equal(m.content, `<@${PLAYBOOK}> Week of Nov 16`);
+  const m = weeklyDigestMessage('2026-11-16', days, { tag: `&${MEMBERS}` });
+  assert.equal(m.content, `<@&${MEMBERS}> Week of Nov 16`);
   assert.equal(m.embeds[0].title, '🗓️ WEEKLY TENNIS RESULTS · Nov 16 – Nov 22 · 4 plays');
   const lines = m.embeds[0].description.split('\n');
   assert.equal(lines[0], '**Mon, Nov 16** · 2 plays · Record 1-1 · −0.43u · ROI −21.5%');
@@ -153,7 +154,7 @@ test('the weekly post: a line a day with its record, the week in the title, the 
 const stored = (store, dateKey, plays) => store.set(`tennis:liveplays:${dateKey}`, JSON.stringify({ date: dateKey, plays }));
 
 test('the run: yesterday posts once at 6am ET through the results webhook, with Playbook tagged, and never again', async () => {
-  const { env, store } = makeEnv({ DISCORD_UPDATES_WEBHOOK: UPDATES, DISCORD_PLAYBOOK_USER_ID: PLAYBOOK });
+  const { env, store } = makeEnv({ DISCORD_UPDATES_WEBHOOK: UPDATES, DISCORD_LIVE_ROLE_ID: MEMBERS });
   const w = digestWindow('2026-11-25');
   stored(store, '2026-11-24', [play({ id: 'a', gradedAt: w.startMs + 3600e3 }), play({ id: 'early', gradedAt: w.startMs - 3600e3 })]);
   stored(store, '2026-11-25', [play({ id: 'b', gradedAt: w.endMs - 60e3, result: 'loss', profit: -1 }), play({ id: 'late', gradedAt: w.endMs + 60e3 })]);
@@ -163,8 +164,8 @@ test('the run: yesterday posts once at 6am ET through the results webhook, with 
   assert.equal(d.calls.length, 1);
   assert.equal(d.calls[0].method, 'POST');
   assert.equal(d.calls[0].url, `${UPDATES}?wait=true`);
-  assert.equal(d.calls[0].body.content, `<@${PLAYBOOK}> Results for Tue, Nov 24`);
-  assert.deepEqual(d.calls[0].body.allowed_mentions, { parse: [], users: [PLAYBOOK] });
+  assert.equal(d.calls[0].body.content, `<@&${MEMBERS}> Results for Tue, Nov 24`);
+  assert.deepEqual(d.calls[0].body.allowed_mentions, { parse: [], users: [], roles: [MEMBERS] });
   assert.equal(d.calls[0].body.embeds[0].title, '📊 TENNIS RESULTS · Tue, Nov 24 · 2 plays');
   assert.match(d.calls[0].body.embeds[0].footer.text, /^Record 1-1 · −0\.43u/);
   const rec = JSON.parse(store.get(DIGEST_DAY_KEY('2026-11-24')));
@@ -196,7 +197,7 @@ test('the run: off with no results webhook, nothing outside the hour unless forc
 });
 
 test('the run: Monday posts the week that ended this morning, from the day records where there are any and the plays where not, once', async () => {
-  const { env, store } = makeEnv({ DISCORD_UPDATES_WEBHOOK: UPDATES, DISCORD_PLAYBOOK_ROLE_ID: `<@&${PLAYBOOK}>` });
+  const { env, store } = makeEnv({ DISCORD_UPDATES_WEBHOOK: UPDATES, DISCORD_LIVE_ROLE_ID: MEMBERS });
   // Plays across the week of Mon Nov 16 - Sun Nov 22 (each in its 6am-to-6am window), one before it, one after.
   stored(store, '2026-11-16', [play({ id: 'mon', gradedAt: at('2026-11-16', 9) }), play({ id: 'prev', gradedAt: at('2026-11-16', 5) })]);
   stored(store, '2026-11-18', [play({ id: 'wed', gradedAt: at('2026-11-18', 22), result: 'loss', profit: -1 })]);
@@ -210,8 +211,8 @@ test('the run: Monday posts the week that ended this morning, from the day recor
   assert.deepEqual(r.weekly, { posted: 1, week: '2026-11-16', plays: 5, card: false });
   assert.equal(d.calls.length, 2);
   const week = d.calls[1].body;
-  assert.equal(week.content, `<@&${PLAYBOOK}> Week of Nov 16`);
-  assert.deepEqual(week.allowed_mentions, { parse: [], users: [], roles: [PLAYBOOK] });
+  assert.equal(week.content, `<@&${MEMBERS}> Week of Nov 16`);
+  assert.deepEqual(week.allowed_mentions, { parse: [], users: [], roles: [MEMBERS] });
   assert.equal(week.embeds[0].title, '🗓️ WEEKLY TENNIS RESULTS · Nov 16 – Nov 22 · 5 plays');
   const lines = week.embeds[0].description.split('\n');
   assert.equal(lines[0], '**Mon, Nov 16** · 3 plays · Record 2-1 · +0.14u · ROI +4.7%', 'from the day record');
@@ -228,7 +229,7 @@ test('the run: Monday posts the week that ended this morning, from the day recor
 });
 
 test('the NBA results channel gets its own daily from the channel ledger\'s settled posts, through its own webhook, with its own records', async () => {
-  const { env, store } = makeEnv({ DISCORD_NBA_RESULTS_WEBHOOK: NBA_RESULTS, DISCORD_PLAYBOOK_USER_ID: PLAYBOOK });
+  const { env, store } = makeEnv({ DISCORD_NBA_RESULTS_WEBHOOK: NBA_RESULTS, DISCORD_LIVE_ROLE_ID: MEMBERS });
   const w = digestWindow('2026-11-25');
   const posts = {
     a: { state: 'done', doneAt: w.startMs + 3600e3, post: nbaPost({ id: 'a', gradedAt: w.startMs + 3600e3 }) },
@@ -244,7 +245,7 @@ test('the NBA results channel gets its own daily from the channel ledger\'s sett
   assert.deepEqual(r, { date: '2026-11-25', daily: null, weekly: null, nba: { daily: { posted: 1, day: '2026-11-24', plays: 2, card: false }, weekly: null }, nfl: { off: true } }, 'tennis is off: nothing at the top');
   assert.equal(d.calls.length, 1);
   assert.equal(d.calls[0].url, `${NBA_RESULTS}?wait=true`);
-  assert.equal(d.calls[0].body.content, `<@${PLAYBOOK}> Results for Tue, Nov 24`);
+  assert.equal(d.calls[0].body.content, `<@&${MEMBERS}> Results for Tue, Nov 24`);
   assert.equal(d.calls[0].body.embeds[0].title, '📊 NBA RESULTS · Tue, Nov 24 · 2 plays');
   assert.match(d.calls[0].body.embeds[0].description, /^✅ \*\*New York Knicks at Boston Celtics\*\* · Final NY 110, BOS 104 · 2 legs \+105 at FanDuel · \*\*\+1\.05u\*\* · Brunson Over 19\.5 Pts \(27\) ✓, Tatum Over 7\.5 Reb \(9\) ✓\n❌ /);
   assert.equal(d.calls[0].body.embeds[0].footer.text, 'Record 1-1 · +0.05u · ROI +2.5% · perpetualpicks.com');
@@ -330,7 +331,7 @@ test('the one-off rides a deploy: posted once on the first tick whatever the hou
 
 test('the roll-up goes as its card: the picture as the one embed with the tag in the content, the day recorded as drawn; the written roll-up when the picture cannot be drawn or Discord refuses it', async () => {
   const PNG = new Uint8Array([0x89, 0x50, 0x4e, 0x47, 1, 2, 3]);
-  const { env, store } = makeEnv({ DISCORD_UPDATES_WEBHOOK: UPDATES, DISCORD_PLAYBOOK_USER_ID: PLAYBOOK });
+  const { env, store } = makeEnv({ DISCORD_UPDATES_WEBHOOK: UPDATES, DISCORD_LIVE_ROLE_ID: MEMBERS });
   const w = digestWindow('2026-11-25');
   stored(store, '2026-11-24', [play({ id: 'a', gradedAt: w.startMs + 3600e3 }), play({ id: 'b', gradedAt: w.startMs + 7200e3, result: 'loss', profit: -1 })]);
   const models = [];
@@ -341,7 +342,7 @@ test('the roll-up goes as its card: the picture as the one embed with the tag in
   assert.deepEqual([models[0].kind, models[0].sport, models[0].when, models[0].state, models[0].plays, models[0].tiles[0].value], ['daily', 'tennis', 'TUESDAY • NOVEMBER 24', 'final', 2, '1-1']);
   assert.equal(d.calls.length, 1);
   assert.ok(d.calls[0].file, 'the picture rides with the message');
-  assert.equal(d.calls[0].body.content, `<@${PLAYBOOK}> Results for Tue, Nov 24`);
+  assert.equal(d.calls[0].body.content, `<@&${MEMBERS}> Results for Tue, Nov 24`);
   assert.deepEqual(d.calls[0].body.embeds.map((e) => e.image?.url), ['attachment://results.png']);
   assert.deepEqual(d.calls[0].body.attachments, [{ id: 0, filename: 'results.png' }]);
   assert.equal(JSON.parse(store.get(DIGEST_DAY_KEY('2026-11-24'))).card, true);
@@ -408,7 +409,7 @@ test('a slate is over when every game has started and is final and no play of th
 });
 
 test('the NBA\'s day is posted when its last game is final, once, and the morning does not post it again', async () => {
-  const { env, store } = makeEnv({ DISCORD_UPDATES_WEBHOOK: UPDATES, DISCORD_NBA_RESULTS_WEBHOOK: NBA_RESULTS, DISCORD_PLAYBOOK_USER_ID: PLAYBOOK });
+  const { env, store } = makeEnv({ DISCORD_UPDATES_WEBHOOK: UPDATES, DISCORD_NBA_RESULTS_WEBHOOK: NBA_RESULTS, DISCORD_LIVE_ROLE_ID: MEMBERS });
   const posts = { a: doneAt('a', 'g1', at(DAY, 21, 40)), b: doneAt('b', 'g2', at('2026-11-28', 0, 40), { result: 'loss', profit: -1, legs: [{ player: 'Jayson Tatum', stat: 'rebounds', label: 'Reb', point: 7.5, final: 5, hit: false }] }) };
   store.set(LEAGUES.nba.ledger, JSON.stringify({ posts, games: {} }));
   const d = fakeDiscord();

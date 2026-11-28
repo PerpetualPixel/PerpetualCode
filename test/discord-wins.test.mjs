@@ -36,7 +36,7 @@ const nbaPost = (over = {}) => ({ id: `g1:fanduel:${Math.random()}`, gameId: 'g1
   status: 'graded', result: 'win', profit: 1.05, finalScore: { NY: 110, BOS: 104 }, gradedAt: inDay + 3600e3, ...over });
 const ledgerWith = (...posts) => ({ posts: Object.fromEntries(posts.map((p, i) => [`p${i}`, { state: 'done', doneAt: p.gradedAt, post: p }])) });
 const tennisDay = [play({ id: 'win' }), play({ id: 'lost', result: 'loss', profit: -1 }), play({ id: 'yesterday', gradedAt: at(DAY, 5) })];
-const deps = (d, over = {}) => ({ fetch: d.fetch, oneOff: null, playbook: null, render: null, renderWins: async () => PNG, plays: async (date) => (date === DAY ? tennisDay : []), ledger: async (league) => (league === 'nba' ? ledgerWith(nbaPost({ id: 'nba-win' }), nbaPost({ id: 'nba-lost', result: 'loss', profit: -1 })) : null), ...over });
+const deps = (d, over = {}) => ({ fetch: d.fetch, oneOff: null, tag: null, render: null, renderWins: async () => PNG, plays: async (date) => (date === DAY ? tennisDay : []), ledger: async (league) => (league === 'nba' ? ledgerWith(nbaPost({ id: 'nba-win' }), nbaPost({ id: 'nba-lost', result: 'loss', profit: -1 })) : null), ...over });
 
 test('the day\'s winners go to the wins channel as one picture with the morning run, once; the status says when', async () => {
   const { env, store } = makeEnv({ DISCORD_UPDATES_WEBHOOK: UPDATES, DISCORD_WINS_WEBHOOK: WINS });

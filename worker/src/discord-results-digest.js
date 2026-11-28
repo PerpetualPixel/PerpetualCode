@@ -14,8 +14,9 @@
  * together, with the day's record — and every Monday at the same hour
  * one message with the week, day by day, and its totals. Each goes
  * through its channel's own webhook, so it sits with the cards in the
- * same name and picture, and opens with Playbook's tag when its id is
- * known (worker/src/discord-nba.js's playbookTag).
+ * same name and picture, and opens with the members' role tagged — the
+ * role the live alerts ping, DISCORD_LIVE_ROLE_ID (2026-11-28, the owner:
+ * "Results should @members, not playbook") — when it is set.
  *
  * The plays come from the worker's own records, never from reading a
  * channel back: tennis from its day records (worker/src/
@@ -51,7 +52,7 @@
  * cannot be drawn or Discord will not take it.
  */
 import { deliver, readJson, discordConfig, webhookOf } from './discord.js';
-import { playbookTag, mayPing, LEAGUES } from './discord-nba.js';
+import { mayPing, LEAGUES } from './discord-nba.js';
 import { readWatchIndex, liveWatchKey } from './live-probe.js';
 import { tennisLivePlaysKey, liveRecordOf } from './tennis-live-plays.js';
 import { SPORTSBOOKS } from '../../docs/engine.js';
@@ -59,6 +60,11 @@ import { resultsCardModel, weeklyCardModel } from './results-card.js';
 import { winsCollageModel } from './wins-collage.js';
 
 export const DIGEST_HOUR = 6; // 6am ET, every day; the weekly on Monday
+/**
+ * The tag a roll-up opens with: the members' role, the one the live alerts ping (DISCORD_LIVE_ROLE_ID), in the
+ * form mayPing reads a role in (`&id`); null with none set, and the roll-up opens with no tag.
+ */
+export const resultsTag = (env) => { const role = discordConfig(env).role; return role ? `&${role}` : null; };
 /** The wins channel's day record: the winners' collage went out for the day. */
 export const WINS_DAY_KEY = (dateKey) => `discord:wins:day:${dateKey}`;
 export const WEEKLY_WEEKDAY = 'Mon';
@@ -232,11 +238,12 @@ export function packLines(lines, max = DESCRIPTION_MAX) {
 }
 
 /**
- * The daily post: {content, allowed_mentions, embeds}. The content is Playbook's tag, when known; the first embed
- * is titled with the day and carries the record in its footer; a long day runs on into further embeds. `label`
- * names the sport ('TENNIS', 'NBA', 'NFL'); `line` writes a play.
+ * The daily post: {content, allowed_mentions, embeds}. The content opens with the tag (`tag`: a role as `&id`, a
+ * member as its id; the members' role, see resultsTag), when there is one; the first embed is titled with the day
+ * and carries the record in its footer; a long day runs on into further embeds. `label` names the sport ('TENNIS',
+ * 'NBA', 'NFL'); `line` writes a play.
  */
-export function dailyDigestMessage(playedDateKey, plays, { playbook = null, label = 'TENNIS', line = resultLine, soFar = false } = {}) {
+export function dailyDigestMessage(playedDateKey, plays, { tag = null, label = 'TENNIS', line = resultLine, soFar = false } = {}) {
   const lines = plays.map(line);
   const pages = packLines(lines);
   const record = recordLine(plays);
@@ -247,14 +254,14 @@ export function dailyDigestMessage(playedDateKey, plays, { playbook = null, labe
     color: colorFor(plays),
     ...(i === pages.length - 1 ? { footer: { text: `${record ? `${record} · ` : ''}perpetualpicks.com`.slice(0, 2000), icon_url: LOGO } } : {}),
   }));
-  return { content: playbook ? `<@${playbook}> Results for ${longDay(playedDateKey)}` : '', allowed_mentions: mayPing(playbook), embeds };
+  return { content: tag ? `<@${tag}> Results for ${longDay(playedDateKey)}` : '', allowed_mentions: mayPing(tag), embeds };
 }
 
 /**
  * The weekly post: a line a day (how many plays, the record and the units), the week's totals in the footer. `days`
  * is seven of {dateKey, count, tally, leans}, Monday first.
  */
-export function weeklyDigestMessage(weekStartKey, days, { playbook = null, label = 'TENNIS' } = {}) {
+export function weeklyDigestMessage(weekStartKey, days, { tag = null, label = 'TENNIS' } = {}) {
   const weekEndKey = shiftDate(weekStartKey, 6);
   const total = sumTallies(days);
   const count = days.reduce((n, d) => n + (d.count ?? 0), 0);
@@ -265,8 +272,8 @@ export function weeklyDigestMessage(weekStartKey, days, { playbook = null, label
   const title = `🗓️ WEEKLY ${label} RESULTS · ${shortDay(weekStartKey)} – ${shortDay(weekEndKey)} · ${count} play${count === 1 ? '' : 's'}`;
   const record = recordLineOf(total);
   return {
-    content: playbook ? `<@${playbook}> Week of ${shortDay(weekStartKey)}` : '',
-    allowed_mentions: mayPing(playbook),
+    content: tag ? `<@${tag}> Week of ${shortDay(weekStartKey)}` : '',
+    allowed_mentions: mayPing(tag),
     embeds: [{
       author: { name: `PERPETUAL PICKS · LIVE ${label}`, url: SITE, icon_url: LOGO },
       title: title.slice(0, 250), url: SITE,
@@ -341,7 +348,7 @@ const writeJson = (env, key, value) => env.POTD_KV.put(key, JSON.stringify(value
  * roll-up alone: its window as it stands when the window is still open (said "so far", and nothing recorded, so
  * the morning's post still covers the whole day), the day as usual once it has closed.
  */
-async function runSource(env, name, source, hook, now, clock, { fetcher, playbook, deps, picture, day = null, early = false }) {
+async function runSource(env, name, source, hook, now, clock, { fetcher, tag, deps, picture, day = null, early = false }) {
   const out = { daily: null, weekly: null };
   const win = day ? { playedDateKey: day, startMs: etInstant(day, DIGEST_HOUR), endMs: etInstant(shiftDate(day, 1), DIGEST_HOUR) } : digestWindow(clock.date);
   const { playedDateKey } = win;
@@ -362,7 +369,7 @@ async function runSource(env, name, source, hook, now, clock, { fetcher, playboo
       out.daily = { skipped: 'no plays', day: playedDateKey, ...(soFar ? { soFar: true } : {}) };
     } else {
       const model = resultsCardModel(name, playedDateKey, plays, { soFar, drawnAt: now });
-      const r = await postCard(fetcher, hook, model, await picture(model), dailyDigestMessage(playedDateKey, plays, { playbook, label: source.label, line: source.line, soFar }));
+      const r = await postCard(fetcher, hook, model, await picture(model), dailyDigestMessage(playedDateKey, plays, { tag, label: source.label, line: source.line, soFar }));
       if (r.ok) {
         if (!soFar) await writeJson(env, DIGEST_DAY_KEY(playedDateKey, name), { at: now, plays: plays.length, ...talliesOf(plays), messageIds: r.ids, card: r.card, ...(early ? { early: true } : {}) });
         out.daily = { posted: r.ids.length, day: playedDateKey, plays: plays.length, card: r.card, ...(soFar ? { soFar: true } : {}), ...(early ? { early: true } : {}) };
@@ -411,7 +418,7 @@ async function runSource(env, name, source, hook, now, clock, { fetcher, playboo
         out.weekly = { skipped: 'no plays', week: weekStartKey };
       } else {
         const model = weeklyCardModel(name, weekStartKey, days, { drawnAt: now });
-        const r = await postCard(fetcher, hook, model, await picture(model), weeklyDigestMessage(weekStartKey, days, { playbook, label: source.label }));
+        const r = await postCard(fetcher, hook, model, await picture(model), weeklyDigestMessage(weekStartKey, days, { tag, label: source.label }));
         if (r.ok) {
           await writeJson(env, DIGEST_WEEK_KEY(weekStartKey, name), { at: now, plays: count, ...sumTallies(days), messageIds: r.ids, card: r.card });
           out.weekly = { posted: r.ids.length, week: weekStartKey, plays: count, card: r.card };
@@ -463,10 +470,10 @@ async function runSlateEnds(env, now, clock, hooks, io, status) {
     if (await readJson(env, DIGEST_DAY_KEY(dateKey, name))) continue;
     const slate = await slateOver(env, name, dateKey, now, io.deps);
     if (!slate.done) continue;
-    io.playbook ??= await io.tag();
+    io.tag ??= await io.mention();
     const r = await runSource(env, name, SOURCES[name], hooks[name], now, clock, { ...io, day: dateKey, early: true });
     out[name] = { ...r.daily, games: slate.games };
-    if (r.daily?.posted) { (status[name] ??= {}).lastDaily = { day: dateKey, at: now, plays: r.daily.plays, tagged: Boolean(io.playbook), slateEnd: true }; status.dirty = true; }
+    if (r.daily?.posted) { (status[name] ??= {}).lastDaily = { day: dateKey, at: now, plays: r.daily.plays, tagged: Boolean(io.tag), slateEnd: true }; status.dirty = true; }
   }
   return out;
 }
@@ -476,20 +483,20 @@ async function runSlateEnds(env, now, clock, hooks, io, status) {
  * record, and on Monday the week's. Runs on any tick in DIGEST_HOUR ET (`force` runs it at any hour — the owner's
  * route). Returns what it did, the tennis channel's at the top (`daily`, `weekly`) and each league's under its
  * name; {off} with no results webhook at all. `deps.fetch`, `deps.plays(date)` (tennis), `deps.ledger(league)`,
- * `deps.playbook` and `deps.render` stand in for Discord, the stored plays and the card renderer in tests.
+ * `deps.tag` and `deps.render` stand in for Discord, the stored plays, the tag and the card renderer in tests.
  */
 export async function runResultsDigest(env, now = Date.now(), { force = false, day = null, deps = {} } = {}) {
   const hooks = Object.fromEntries(Object.entries(SOURCES).map(([name, src]) => [name, src.hook(env)]));
   if (!Object.values(hooks).some(Boolean) && !winsHook(env)) return { off: true };
   const clock = etClock(now);
-  const tag = async () => (deps.playbook !== undefined ? deps.playbook : await playbookTag(env));
-  const io = { fetcher: deps.fetch ?? fetch, playbook: null, deps, picture: pictureWith(deps), tag };
+  const mention = async () => (deps.tag !== undefined ? deps.tag : resultsTag(env));
+  const io = { fetcher: deps.fetch ?? fetch, tag: null, deps, picture: pictureWith(deps), mention };
   // The one-off first, on any tick: once, marked before it is sent so a run that dies mid-send does not send it again.
   const oneOff = deps.oneOff !== undefined ? deps.oneOff : ONE_OFF;
   let oneOffOut = null;
   if (oneOff?.id && hooks[oneOff.source] && SOURCES[oneOff.source] && !(await readJson(env, DIGEST_ONE_OFF_KEY(oneOff.id)))) {
     await writeJson(env, DIGEST_ONE_OFF_KEY(oneOff.id), { at: now, state: 'sending', ...oneOff });
-    io.playbook = await tag();
+    io.tag = await mention();
     const r = await runSource(env, oneOff.source, SOURCES[oneOff.source], hooks[oneOff.source], now, clock, { ...io, day: oneOff.day });
     await writeJson(env, DIGEST_ONE_OFF_KEY(oneOff.id), { at: now, state: r.daily?.posted ? 'done' : 'skipped', ...oneOff, result: r.daily });
     oneOffOut = { id: oneOff.id, source: oneOff.source, ...r.daily };
@@ -503,16 +510,16 @@ export async function runResultsDigest(env, now = Date.now(), { force = false, d
     if (slateStatus.dirty) { const st = (await readJson(env, DIGEST_STATUS_KEY)) ?? {}; for (const name of SLATE_SOURCES) if (slateStatus[name]?.lastDaily) (st[name] ??= {}).lastDaily = slateStatus[name].lastDaily; await writeJson(env, DIGEST_STATUS_KEY, st); }
   }
   if (!force && !day && clock.hour !== DIGEST_HOUR) return { skipped: 'hour', ...(oneOffOut ? { oneOff: oneOffOut } : {}), ...(slateOut ? { slateEnd: slateOut } : {}) };
-  io.playbook ??= await tag();
-  const { playbook } = io;
+  io.tag ??= await mention();
+  const { tag } = io;
   const out = { date: clock.date, daily: null, weekly: null, ...(oneOffOut ? { oneOff: oneOffOut } : {}), ...(slateOut ? { slateEnd: slateOut } : {}) };
   const status = (await readJson(env, DIGEST_STATUS_KEY)) ?? {};
   for (const [name, source] of Object.entries(SOURCES)) {
     if (!hooks[name]) { if (name !== 'tennis') out[name] = { off: true }; continue; }
     const r = await runSource(env, name, source, hooks[name], now, clock, { ...io, day });
     const slot = name === 'tennis' ? status : (status[name] ??= {});
-    if (r.daily?.posted && !r.daily.soFar) slot.lastDaily = { day: r.daily.day, at: now, plays: r.daily.plays, tagged: Boolean(playbook) };
-    if (r.weekly?.posted) slot.lastWeekly = { week: r.weekly.week, at: now, plays: r.weekly.plays, tagged: Boolean(playbook) };
+    if (r.daily?.posted && !r.daily.soFar) slot.lastDaily = { day: r.daily.day, at: now, plays: r.daily.plays, tagged: Boolean(tag) };
+    if (r.weekly?.posted) slot.lastWeekly = { week: r.weekly.week, at: now, plays: r.weekly.plays, tagged: Boolean(tag) };
     if (name === 'tennis') Object.assign(out, r); else out[name] = r;
   }
   // The day's winners, every sport together, to the wins channel: after the roll-ups, once a day.
