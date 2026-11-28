@@ -334,6 +334,23 @@ export async function syncLeagueDiscord(env, now = Date.now(), league = 'nba', {
       dirty = true;
     }
   }
+  // A play closed without a grade: until 2026-11-28 a settled play's card was edited in the live channel, and a card
+  // that had been deleted from it (Discord's 404) closed the play ungraded, so it reached neither the results channel
+  // nor the day's roll-up (found 2026-11-28: Friday's NFL plays, and no NFL roll-up for the day). Each is graded now
+  // from its game's last look, three tries, and its result is owed to the results channel like any other.
+  const settled = (p) => p?.status === 'graded' || p?.status === 'void';
+  const lastLooks = new Map();
+  for (const e of Object.values(ledger.posts)) {
+    if (e.state !== 'done' || !e.editFailed || !e.post?.gameId || !e.post.legs || settled(e.post) || (e.repairTries ?? 0) >= 3) continue;
+    const gid = e.post.gameId;
+    if (!lastLooks.has(gid)) { const w = await watchOf(gid); const t = w?.ticks?.[w.ticks.length - 1] ?? null; lastLooks.set(gid, t?.state === 'post' ? t : null); }
+    const fin = lastLooks.get(gid);
+    dirty = true;
+    if (!fin) { e.repairTries = (e.repairTries ?? 0) + 1; continue; }
+    const { editFailed, repairTries, ...rest } = e;
+    ledger.posts[e.post.id] = { ...rest, post: gradePost(e.post, fin), repairedAt: now, ...(cfg.results ? { res: false } : {}) };
+    out.settled++;
+  }
   // A result the results channel has not had (one Discord refused): sent again, three tries at most, a few a tick, for a day.
   if (cfg.results) {
     let caughtUp = 0;
@@ -378,6 +395,9 @@ export async function leagueStatus(env, league = 'nba') {
     results: Boolean(cfg.results),
     resultsSecretRejected: Boolean(String(env?.[LEAGUES[league].results] ?? '').trim()) && !cfg.results,
     resultsPosted: Object.values(ledger.posts ?? {}).filter((e) => e.res === true).length, lastResultAt: ledger.lastResultAt ?? null,
+    // Plays closed without a grade (their card could not be edited), and how many of those have since been graded.
+    ungraded: Object.values(ledger.posts ?? {}).filter((e) => e.state === 'done' && e.editFailed).length,
+    repaired: Object.values(ledger.posts ?? {}).filter((e) => e.repairedAt).length,
   };
 }
 export const basketballStatus = (env) => leagueStatus(env, 'nba');
