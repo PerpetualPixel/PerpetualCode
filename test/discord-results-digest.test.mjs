@@ -374,3 +374,94 @@ test('the roll-up goes as its card: the picture as the one embed with the tag in
   assert.equal(d4.calls[1].body.embeds[0].title, '📊 TENNIS RESULTS · Tue, Nov 24 · 1 play');
   assert.equal(JSON.parse(u.store.get(DIGEST_DAY_KEY('2026-11-24'))).card, false);
 });
+
+// --- the NBA's and the NFL's day, posted when its slate ends ---
+import { slateOver, slateDay } from '../worker/src/discord-results-digest.js';
+const NFL_RESULTS = 'https://discord.com/api/webhooks/723456789012345678/nflRES_ghi-jklMNOpqrSTUvwxYZ0123456789abcdefghijklmnopqrstuvwxyzABCDEF';
+const DAY = '2026-11-27';
+const game = (id, hour, minute = 0, league = 'nba') => ({ id, name: `Game ${id}`, date: new Date(at(DAY, hour, minute)).toISOString(), league });
+const finals = (ids) => async (id) => (ids.includes(id) ? { ticks: [{ state: 'in' }, { state: 'post' }] } : { ticks: [{ state: 'in' }] });
+const doneAt = (id, gameId, when, over = {}) => ({ state: 'done', doneAt: when, post: nbaPost({ id, gameId, gradedAt: when, ...over }) });
+
+test('the slate\'s day is the 6am-to-6am window the moment falls in', () => {
+  assert.equal(slateDay(at(DAY, 23, 40)), DAY);
+  assert.equal(slateDay(at('2026-11-28', 1, 10)), DAY, 'a game that ends after midnight is still that night\'s slate');
+  assert.equal(slateDay(at('2026-11-28', 6, 0)), '2026-11-28');
+});
+
+test('a slate is over when every game has started and is final and no play of theirs is still open', async () => {
+  const games = async () => [game('g1', 19), game('g2', 22), game('f1', 20, 15, 'nfl'), { ...game('old', 19), date: new Date(at('2026-11-26', 19)).toISOString() }];
+  const ledger = (posts) => async () => ({ posts });
+  const settled = { a: doneAt('a', 'g1', at(DAY, 21, 40)), b: doneAt('b', 'g2', at('2026-11-28', 0, 40)) };
+  const over = (now, deps) => slateOver({}, 'nba', DAY, now, { games, ...deps });
+  assert.deepEqual(await slateOver({}, 'nba', DAY, at(DAY, 23), { games: async () => [] }), { done: false, games: 0, why: 'no watched game' });
+  // The late game started an hour ago.
+  assert.equal((await over(at(DAY, 23), { watch: finals(['g1', 'g2']), ledger: ledger(settled) })).why, 'the last game cannot be over yet');
+  // Past two hours, one still in play.
+  assert.equal((await over(at('2026-11-28', 0, 30), { watch: finals(['g1']), ledger: ledger(settled) })).why, 'a game is not final');
+  // Both final, a play of the late game not graded yet.
+  assert.equal((await over(at('2026-11-28', 0, 45), { watch: finals(['g1', 'g2']), ledger: ledger({ ...settled, c: { state: 'open', at: 1, post: nbaPost({ id: 'c', gameId: 'g2', status: 'pending' }) } }) })).why, 'a play is not graded yet');
+  // Both final and graded: over. Another league's game, and yesterday's, are not its games.
+  assert.deepEqual(await over(at('2026-11-28', 0, 45), { watch: finals(['g1', 'g2']), ledger: ledger(settled) }), { done: true, games: 2 });
+  // A watch that stopped before the final: the game is taken as over six hours after its start.
+  assert.equal((await over(at('2026-11-28', 4, 5), { watch: finals(['g1']), ledger: ledger(settled) })).done, true);
+});
+
+test('the NBA\'s day is posted when its last game is final, once, and the morning does not post it again', async () => {
+  const { env, store } = makeEnv({ DISCORD_UPDATES_WEBHOOK: UPDATES, DISCORD_NBA_RESULTS_WEBHOOK: NBA_RESULTS, DISCORD_PLAYBOOK_USER_ID: PLAYBOOK });
+  const posts = { a: doneAt('a', 'g1', at(DAY, 21, 40)), b: doneAt('b', 'g2', at('2026-11-28', 0, 40), { result: 'loss', profit: -1, legs: [{ player: 'Jayson Tatum', stat: 'rebounds', label: 'Reb', point: 7.5, final: 5, hit: false }] }) };
+  store.set(LEAGUES.nba.ledger, JSON.stringify({ posts, games: {} }));
+  const d = fakeDiscord();
+  const deps = { fetch: d.fetch, oneOff: null, render: null, games: async () => [game('g1', 19), game('g2', 22)], watch: finals(['g1', 'g2']), plays: async () => [] };
+  // 11:40 PM: the late game is still on.
+  let r = await runResultsDigest(env, at(DAY, 23, 40), { deps: { ...deps, watch: finals(['g1']) } });
+  assert.deepEqual(r, { skipped: 'hour' });
+  assert.equal(d.calls.length, 0);
+  // 12:45 AM: both final and graded. The day's roll-up goes now, labelled with the day it was played.
+  r = await runResultsDigest(env, at('2026-11-28', 0, 45), { deps });
+  assert.deepEqual(r, { skipped: 'hour', slateEnd: { nba: { posted: 1, day: DAY, plays: 2, card: false, early: true, games: 2 } } });
+  assert.equal(d.calls.length, 1);
+  assert.equal(d.calls[0].url, `${NBA_RESULTS}?wait=true`);
+  assert.equal(d.calls[0].body.embeds[0].title, '📊 NBA RESULTS · Fri, Nov 27 · 2 plays');
+  assert.doesNotMatch(JSON.stringify(d.calls[0].body), /so far/i);
+  assert.equal(JSON.parse(store.get(DIGEST_DAY_KEY(DAY, 'nba'))).early, true);
+  const s = await digestStatus(env);
+  assert.deepEqual([s.nba.lastDaily.day, s.nba.lastDaily.plays, s.nba.lastDaily.slateEnd], [DAY, 2, true]);
+  // The next tick, and the morning: nothing more to the NBA channel. Tennis keeps its morning and has nothing to say.
+  r = await runResultsDigest(env, at('2026-11-28', 1, 0), { deps });
+  assert.deepEqual(r, { skipped: 'hour' });
+  r = await runResultsDigest(env, at('2026-11-28', 6, 7), { deps });
+  assert.deepEqual(r.nba.daily, { skipped: 'posted', day: DAY });
+  assert.equal(d.calls.length, 1);
+});
+
+test('a slate that never reads as over still goes in the morning, and a play graded after an early post is added to the day without a second post', async () => {
+  const { env, store } = makeEnv({ DISCORD_NBA_RESULTS_WEBHOOK: NBA_RESULTS, DISCORD_NFL_RESULTS_WEBHOOK: NFL_RESULTS });
+  store.set(LEAGUES.nba.ledger, JSON.stringify({ posts: { a: doneAt('a', 'g1', at(DAY, 21, 40)) }, games: {} }));
+  store.set(LEAGUES.nfl.ledger, JSON.stringify({ posts: { n: doneAt('n', 'f1', at(DAY, 23, 30), { league: 'nfl' }) }, games: {} }));
+  const d = fakeDiscord();
+  // No watched game on file for either league: nothing at night, both in the morning.
+  const none = { fetch: d.fetch, oneOff: null, render: null, games: async () => [], watch: finals([]) };
+  assert.deepEqual(await runResultsDigest(env, at('2026-11-28', 0, 45), { deps: none }), { skipped: 'hour' });
+  assert.equal(d.calls.length, 0);
+  const morning = await runResultsDigest(env, at('2026-11-28', 6, 7), { deps: none });
+  assert.equal(morning.nba.daily.posted, 1);
+  assert.equal(morning.nfl.daily.posted, 1);
+  assert.equal(d.calls.length, 2);
+
+  // The NFL's slate ends at night and is posted; a play graded an hour later is added to the day's tally in the morning, with no post.
+  const late = makeEnv({ DISCORD_NFL_RESULTS_WEBHOOK: NFL_RESULTS });
+  late.store.set(LEAGUES.nfl.ledger, JSON.stringify({ posts: { n: doneAt('n', 'f1', at(DAY, 23, 30), { league: 'nfl' }) }, games: {} }));
+  const d2 = fakeDiscord();
+  const deps = { fetch: d2.fetch, oneOff: null, render: null, games: async () => [game('f1', 20, 15, 'nfl')], watch: finals(['f1']) };
+  const night = await runResultsDigest(late.env, at(DAY, 23, 45), { deps });
+  assert.equal(night.slateEnd.nfl.posted, 1);
+  assert.equal(night.slateEnd.nfl.plays, 1);
+  late.store.set(LEAGUES.nfl.ledger, JSON.stringify({ posts: { n: doneAt('n', 'f1', at(DAY, 23, 30), { league: 'nfl' }), m: doneAt('m', 'f1', at('2026-11-28', 0, 50), { league: 'nfl' }) }, games: {} }));
+  const next = await runResultsDigest(late.env, at('2026-11-28', 6, 7), { deps });
+  assert.deepEqual(next.nfl.daily, { skipped: 'posted', day: DAY, toppedUp: 1 });
+  assert.equal(d2.calls.length, 1);
+  const rec = JSON.parse(late.store.get(DIGEST_DAY_KEY(DAY, 'nfl')));
+  assert.equal(rec.plays, 2);
+  assert.equal(rec.tally.wins, 2);
+});
