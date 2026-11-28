@@ -14,6 +14,7 @@ import { purgeKey } from '../worker/src/discord-purge.js';
 const NOW = Date.parse('2026-11-26T01:12:00Z');
 const HOOK = 'https://discord.com/api/webhooks/423456789012345678/nbaDEF_ghi-jklMNOpqrSTUvwxYZ0123456789abcdefghijklmnopqrstuvwxyzABCDEF';
 const BOT = '123456789012345678';
+const ROLE = '987654321098765432';
 const PNG = new Uint8Array([0x89, 0x50, 0x4e, 0x47, 1, 2, 3]);
 function makeEnv(extra = {}) {
   const store = new Map();
@@ -36,31 +37,31 @@ const leg = (player, team, stat, label, point, price, current) => ({ bookId: 'fa
 const slip = (over = {}) => ({ bookId: 'fanduel', book: 'FanDuel', american: 105, decimal: 2.05, postedAt: NOW - 60e3, legs: [leg('Jalen Brunson', 'NY', 'points', 'Pts', 19.5, -180, 14), leg('Jayson Tatum', 'BOS', 'rebounds', 'Reb', 7.5, -200, 5), leg('Karl-Anthony Towns', 'NY', 'rebounds', 'Reb', 9.5, -160, 7)], ...over });
 const playOf = (slips, over = {}) => ({ espnEventId: '401', name: GAME.name, builtAt: NOW - 30e3, score: { NY: 54, BOS: 50 }, detail: '5:12 - 2nd Quarter', slips, ...over });
 const finalTick = (vals, state = 'post') => ({ ticks: [{ state, at: NOW + 2 * 3600e3, score: { NY: 112, BOS: 104 }, box: Object.entries(vals).map(([name, stats]) => ({ name, stats })) }] });
-const run = (env, now, d, { games = [GAME], play = null, watch = null, playbook = BOT, testId = '', render = async () => PNG } = {}) => syncBasketballDiscord(env, now, { deps: { fetch: d.fetch, games: async () => games, play: async () => play, watch: async () => watch, config: { hook: HOOK, playbook }, testId, render } });
+const run = (env, now, d, { games = [GAME], play = null, watch = null, role = ROLE, testId = '', render = async () => PNG } = {}) => syncBasketballDiscord(env, now, { deps: { fetch: d.fetch, games: async () => games, play: async () => play, watch: async () => watch, config: { hook: HOOK, role }, testId, render } });
 const ledgerOf = (store) => JSON.parse(store.get(DISCORD_NBA_LEDGER_KEY));
 
 test('the channel is used only with a real Discord webhook; Playbook\'s id comes from its secret, or from the id the owner saved in the app', async () => {
   const { env, store } = makeEnv();
-  assert.deepEqual(await basketballConfig(env), { hook: null, playbook: null, results: null });
+  assert.deepEqual(await basketballConfig(env), { hook: null, playbook: null, results: null, role: null });
   assert.deepEqual(await syncBasketballDiscord(env, NOW), { off: true }, 'with no webhook nothing is read or sent');
-  assert.deepEqual(await basketballConfig({ ...env, DISCORD_LIVE_BASKETBALL_WEBHOOK: 'https://example.com/hook' }), { hook: null, playbook: null, results: null });
-  assert.deepEqual(await basketballConfig({ ...env, DISCORD_LIVE_BASKETBALL_WEBHOOK: HOOK, DISCORD_PLAYBOOK_USER_ID: `<@${BOT}>` }), { hook: HOOK, playbook: BOT, results: null }, 'pasted as a mention or as the number');
+  assert.deepEqual(await basketballConfig({ ...env, DISCORD_LIVE_BASKETBALL_WEBHOOK: 'https://example.com/hook' }), { hook: null, playbook: null, results: null, role: null });
+  assert.deepEqual(await basketballConfig({ ...env, DISCORD_LIVE_BASKETBALL_WEBHOOK: HOOK, DISCORD_PLAYBOOK_USER_ID: `<@${BOT}>` }), { hook: HOOK, playbook: BOT, results: null, role: null }, 'pasted as a mention or as the number');
   assert.equal((await basketballConfig({ ...env, DISCORD_LIVE_BASKETBALL_WEBHOOK: HOOK, DISCORD_PLAYBOOK_USER_ID: '@Playbook' })).playbook, null, 'a name is not an id');
   store.set('settings:owner', JSON.stringify({ playbook: { channel: '', mention: '223456789012345678' } }));
   const saved = await basketballConfig({ ...env, DISCORD_LIVE_BASKETBALL_WEBHOOK: HOOK });
   assert.ok(saved.playbook === '223456789012345678' || saved.playbook === null, 'the saved id stands in when it is on file under the owner');
 });
 
-test('a play\'s message starts with Playbook\'s tag and the book, then a leg a line the way the bot reads it; only the bot can be pinged', () => {
+test('a play\'s message starts with the members\' role, the play and its price, then a leg a line; only that role can be pinged', () => {
   const post = slipPost(GAME, playOf([slip()]), slip());
   assert.equal(post.id, `401:fanduel:${NOW - 60e3}`);
   assert.deepEqual(playbookLines(post), ['Jalen Brunson Over 19.5 Points (New York Knicks at Boston Celtics)', 'Jayson Tatum Over 7.5 Rebounds (New York Knicks at Boston Celtics)', 'Karl-Anthony Towns Over 9.5 Rebounds (New York Knicks at Boston Celtics)']);
-  assert.equal(slipLine(post, { playbook: BOT }), `<@${BOT}> FanDuel\n${playbookLines(post).join('\n')}`);
-  assert.doesNotMatch(slipLine(post, { playbook: BOT }), /\\/, 'no backslashes for the bot to trip on');
-  // Without the bot's id: the same lines under a plain heading, and nobody tagged.
+  assert.equal(slipLine(post, { role: ROLE }), `<@&${ROLE}> 🏀 **LIVE PLAY** · +105 at FanDuel · 1u\n${playbookLines(post).join('\n')}`);
+  assert.doesNotMatch(slipLine(post, { role: ROLE }), /\\/, 'no backslashes for the bot to trip on');
+  // Without the role: the same lines under the plain heading, and nobody tagged.
   assert.equal(slipLine(post), `🏀 **LIVE PLAY** · +105 at FanDuel · 1u\n${playbookLines(post).join('\n')}`);
-  const tagged = slipMessage(post, { png: PNG, playbook: BOT });
-  assert.deepEqual(tagged.payload.allowed_mentions, { parse: [], users: [BOT] });
+  const tagged = slipMessage(post, { png: PNG, role: ROLE });
+  assert.deepEqual(tagged.payload.allowed_mentions, { parse: [], users: [], roles: [ROLE] });
   assert.deepEqual(slipMessage(post, { png: PNG }).payload.allowed_mentions, { parse: [], users: [] });
   assert.deepEqual(tagged.payload.embeds, [{ color: 0x00f0ff, image: { url: 'attachment://card.png' }, footer: { text: REPLY_HINT, icon_url: 'https://perpetualpicks.com/assets/logo-icon-180.png' } }], 'an open card carries the reply step under the picture');
   assert.deepEqual(tagged.payload.components[0].components.map((b) => [b.label, b.url]), [['Add to sportsbook', `https://perpetualpicks.com/app.html${liveSlipHash('nba', post.gameId, post)}`]], 'an open play\'s button lands on its slip with the picker open');
@@ -69,7 +70,7 @@ test('a play\'s message starts with Playbook\'s tag and the book, then a leg a l
   // A name that carries Discord's own marks, or a mention, cannot style the message or ping anyone.
   const sharp = slipPost({ ...GAME, name: '@everyone at **Bold**' }, playOf([slip()]), slip({ legs: [leg('<@&999> `x` _y_', 'NY', 'points', 'Pts', 19.5, -180, 14)] }));
   assert.equal(playbookLines(sharp)[0], '@&999 x y Over 19.5 Points (@everyone at Bold)');
-  assert.deepEqual(slipMessage(sharp, { playbook: BOT }).payload.allowed_mentions.parse, []);
+  assert.deepEqual(slipMessage(sharp, { role: ROLE }).payload.allowed_mentions.parse, []);
   // No message carries the worker's own address.
   assert.doesNotMatch(JSON.stringify([tagged.payload, tagged.plain]), /workers\.dev/);
 });
@@ -83,8 +84,8 @@ test('a slip against the final box: won when every leg cleared, lost when one di
   const voided = gradePost(post, finalTick({ 'Jalen Brunson': { points: 27 }, 'Karl-Anthony Towns': { rebounds: 12 } }).ticks[0]);
   assert.deepEqual([voided.status, voided.result, voided.profit], ['void', 'void', 0]);
   assert.equal(slipLine(won), '✅ **WON** · New York Knicks at Boston Celtics · 3 legs · +105 at FanDuel · +1.05u');
-  assert.equal(slipLine(lost, { playbook: BOT }), '❌ **LOST** · New York Knicks at Boston Celtics · 3 legs · +105 at FanDuel · −1.00u', 'a settled play tags nobody');
-  assert.deepEqual(slipMessage(lost, { playbook: BOT }).payload.allowed_mentions.users, []);
+  assert.equal(slipLine(lost, { role: ROLE }), '❌ **LOST** · New York Knicks at Boston Celtics · 3 legs · +105 at FanDuel · −1.00u', 'a settled play tags nobody');
+  assert.deepEqual(slipMessage(lost, { role: ROLE }).payload.allowed_mentions.users, []);
 });
 
 test('the game\'s best slip is posted each time it is one that has not been posted: what the app shows is in the channel, each play once', async () => {
@@ -94,7 +95,7 @@ test('the game\'s best slip is posted each time it is one that has not been post
   const first = slip(); const other = slip({ bookId: 'draftkings', book: 'DraftKings', american: 120 });
   assert.deepEqual(await run(env, NOW, d, { play: playOf([first, other]) }), { posted: 1, settled: 0, failed: 0 });
   assert.deepEqual(d.calls.map((c) => [c.method, c.url]), [['POST', `${HOOK}?wait=true&with_components=true`]]);
-  assert.equal(d.calls[0].body.content.split('\n')[0], `<@${BOT}> FanDuel`);
+  assert.equal(d.calls[0].body.content.split('\n')[0], `<@&${ROLE}> 🏀 **LIVE PLAY** · +105 at FanDuel · 1u`);
   assert.equal(d.calls[0].file.size, PNG.length, 'the card rides with it');
   // The same best slip on later ticks: nothing more.
   await run(env, NOW + 8 * 60e3, d, { play: playOf([first, other], { builtAt: NOW + 8 * 60e3 }) });
@@ -151,7 +152,7 @@ test('a player is not taken twice on a stat in a game: the same player for more 
   const clean = slip({ bookId: 'betrivers', book: 'BetRivers', postedAt: half, american: 150, legs: [leg('Jahmyr Gibbs', 'DET', 'receivingYards', 'Rec Yds', 49.5, -160, 41), leg("D'Andre Swift", 'CHI', 'rushingYards', 'Rush Yds', 39.5, -150, 30)] });
   assert.equal((await run(env, half + 2 * 60e3, d, { play: playOf([again, clean, early], { builtAt: half + 2 * 60e3 }) })).posted, 1);
   assert.equal(d.calls.length, 2);
-  assert.match(d.calls[1].body.content, /BetRivers\nJahmyr Gibbs Over 49\.5 Receiving Yards[^\n]*\nD'Andre Swift Over 39\.5 Rushing Yards/);
+  assert.match(d.calls[1].body.content, /BetRivers · 1u\nJahmyr Gibbs Over 49\.5 Receiving Yards[^\n]*\nD'Andre Swift Over 39\.5 Rushing Yards/);
   assert.deepEqual(Object.values(ledgerOf(store).posts).map((e) => e.state).sort(), ['open', 'open', 'skipped']);
   // Every slip shares a player and none takes one again on the same stat: the best goes, as before (a play is still a play).
   const s2 = makeEnv(); const d2 = fakeDiscord();
@@ -191,7 +192,7 @@ test('when the game ends each open post is settled once, and its card in the liv
 });
 
 test('the test card goes out once, marked as a test and tagging nobody; the status says what is set up and never the address', async () => {
-  const { env, store } = makeEnv({ DISCORD_LIVE_BASKETBALL_WEBHOOK: HOOK, DISCORD_PLAYBOOK_USER_ID: BOT });
+  const { env, store } = makeEnv({ DISCORD_LIVE_BASKETBALL_WEBHOOK: HOOK, DISCORD_LIVE_ROLE_ID: ROLE });
   const d = fakeDiscord();
   await run(env, NOW, d, { games: [], testId: 't-nba' });
   await run(env, NOW + 60e3, d, { games: [], testId: 't-nba' });
@@ -199,7 +200,7 @@ test('the test card goes out once, marked as a test and tagging nobody; the stat
   assert.match(d.calls[0].body.content, /^🧪 \*\*TEST · not a real play\*\*\n🏀 \*\*LIVE PLAY\*\* · \+105 at FanDuel · 1u\nTest Guard Over 19\.5 Points \(Test Team at Sample Team\)/);
   assert.deepEqual(d.calls[0].body.allowed_mentions, { parse: [], users: [] });
   const status = await basketballStatus(env);
-  assert.deepEqual([status.channel, status.secretRejected, status.playbook, status.test.state, status.test.picture, status.lastError], [true, false, true, 'done', true, null]);
+  assert.deepEqual([status.channel, status.secretRejected, status.role, status.test.state, status.test.picture, status.lastError], [true, false, true, 'done', true, null]);
   assert.ok(!JSON.stringify(status).includes('423456789012345678') && !JSON.stringify(status).includes('nbaDEF'));
   assert.deepEqual([(await basketballStatus({ ...env, DISCORD_LIVE_BASKETBALL_WEBHOOK: 'nope', DISCORD_PLAYBOOK_USER_ID: '' })).secretRejected, (await basketballStatus({ ...env, DISCORD_PLAYBOOK_USER_ID: '' })).playbook], [true, false]);
   assert.equal(store.has(DISCORD_NBA_LEDGER_KEY), true);
@@ -262,8 +263,8 @@ const nflSlip = (over = {}) => ({ bookId: 'draftkings', book: 'DraftKings', amer
 test('football has its own channel, ledger and test card, and is told apart from basketball everywhere', async () => {
   assert.deepEqual([LEAGUES.nfl.secret, LEAGUES.nba.secret], ['DISCORD_FOOTBALL_WEBHOOK', 'DISCORD_LIVE_BASKETBALL_WEBHOOK']);
   assert.notEqual(LEAGUES.nfl.ledger, LEAGUES.nba.ledger);
-  const { env, store } = makeEnv({ DISCORD_FOOTBALL_WEBHOOK: FOOT, DISCORD_PLAYBOOK_USER_ID: BOT });
-  assert.deepEqual(await leagueConfig(env, 'nfl'), { hook: FOOT, playbook: BOT, results: null }, 'one Playbook id serves both channels');
+  const { env, store } = makeEnv({ DISCORD_FOOTBALL_WEBHOOK: FOOT, DISCORD_LIVE_ROLE_ID: ROLE });
+  assert.deepEqual(await leagueConfig(env, 'nfl'), { hook: FOOT, playbook: null, results: null, role: ROLE }, 'one role serves both channels');
   assert.deepEqual(await syncBasketballDiscord(env, NOW), { off: true }, 'the football webhook does not switch basketball on');
   const play = { espnEventId: '901', name: NFL_GAME.name, builtAt: NOW - 30e3, score: { DAL: 10, PHI: 14 }, detail: '8:40 - 2nd Quarter', slips: [nflSlip()] };
   const d = fakeDiscord();
@@ -271,8 +272,8 @@ test('football has its own channel, ledger and test card, and is told apart from
   // An NFL game posts to the football channel; the NBA game in the same list is not football's.
   assert.deepEqual(await syncFootballDiscord(env, NOW, deps()), { posted: 1, settled: 0, failed: 0 });
   assert.deepEqual(d.calls.map((c) => c.url.split('?')[0]), [FOOT]);
-  assert.equal(d.calls[0].body.content, `<@${BOT}> DraftKings\nJalen Hurts Over 224.5 Passing Yards (Dallas Cowboys at Philadelphia Eagles)\nSaquon Barkley Over 79.5 Rushing Yards (Dallas Cowboys at Philadelphia Eagles)\nCeeDee Lamb Over 5.5 Receptions (Dallas Cowboys at Philadelphia Eagles)`);
-  assert.deepEqual(d.calls[0].body.allowed_mentions, { parse: [], users: [BOT] });
+  assert.equal(d.calls[0].body.content, `<@&${ROLE}> 🏈 **LIVE PLAY** · +110 at DraftKings · 1u\nJalen Hurts Over 224.5 Passing Yards (Dallas Cowboys at Philadelphia Eagles)\nSaquon Barkley Over 79.5 Rushing Yards (Dallas Cowboys at Philadelphia Eagles)\nCeeDee Lamb Over 5.5 Receptions (Dallas Cowboys at Philadelphia Eagles)`);
+  assert.deepEqual(d.calls[0].body.allowed_mentions, { parse: [], users: [], roles: [ROLE] });
   assert.deepEqual(d.calls[0].body.components[0].components[0].emoji, { name: '🏈' });
   assert.ok(store.has(LEAGUES.nfl.ledger) && !store.has(LEAGUES.nba.ledger));
   // The game ends: the post is graded against the football box and left as posted (no results channel here, so nothing is sent).
@@ -287,8 +288,8 @@ test('football has its own channel, ledger and test card, and is told apart from
   assert.match(slipCardSvg(post), />Over 224\.5 Pass Yds</);
   assert.equal(slipMessage(post).plain.embeds[0].author.name, 'PERPETUAL PICKS · LIVE NFL');
   // Playbook answers a person's reply, never the bot's own post: every open card says so, settled ones do not.
-  assert.match(slipMessage(post).plain.embeds[0].footer.text, /^Reply to this message with @Playbook and your book/);
-  assert.match(slipMessage(post, { png: new Uint8Array([1]) }).payload.embeds[0].footer.text, /^Reply to this message with @Playbook/);
+  assert.match(slipMessage(post).plain.embeds[0].footer.text, /^Tap Add to sportsbook/);
+  assert.match(slipMessage(post, { png: new Uint8Array([1]) }).payload.embeds[0].footer.text, /^Tap Add to sportsbook/);
   assert.equal(slipMessage({ ...post, status: 'graded', result: 'win', profit: 1.1 }).plain.embeds[0].footer.text, 'Live play · perpetualpicks.com');
   assert.equal(slipMessage({ ...post, status: 'graded', result: 'win', profit: 1.1 }, { png: new Uint8Array([1]) }).payload.embeds[0].footer, undefined);
   assert.equal(slipLine(post).split('\n')[0], '🏈 **LIVE PLAY** · +110 at DraftKings · 1u');
@@ -308,25 +309,25 @@ test('football has its own channel, ledger and test card, and is told apart from
 
 // --- Every new play tags Playbook, with its card (2026-11-25: "ensure ... it ats @Playbook with the card so it can build the links") ---
 
-test('with Playbook\'s id set, every new NBA and NFL play starts with its tag and carries the card in the same message, however the message goes out; the status says so', async () => {
+test('with the members\' role set, every new NBA and NFL play starts with its tag and carries the card in the same message, however the message goes out; the status says so', async () => {
   for (const [league, secret, game, slipOf, sync, status] of [
     ['nba', 'DISCORD_LIVE_BASKETBALL_WEBHOOK', GAME, slip, syncBasketballDiscord, basketballStatus],
     ['nfl', 'DISCORD_FOOTBALL_WEBHOOK', NFL_GAME, nflSlip, syncFootballDiscord, footballStatus],
   ]) {
     // With the picture, without one, and when Discord refuses the buttons: the tag is the first thing in every form.
     for (const [name, render, reply] of [['picture', async () => PNG, null], ['written', async () => null, null], ['no buttons', async () => PNG, (c) => (c.body.components?.length ? { status: 400, body: {} } : null)]]) {
-      const { env } = makeEnv({ [secret]: HOOK, DISCORD_PLAYBOOK_USER_ID: BOT });
+      const { env } = makeEnv({ [secret]: HOOK, DISCORD_LIVE_ROLE_ID: ROLE });
       const d = fakeDiscord(reply);
       const play = { builtAt: NOW - 30e3, score: {}, detail: 'Q2', slips: [slipOf()] };
       const out = await sync(env, NOW, { deps: { fetch: d.fetch, games: async () => [game], play: async () => play, watch: async () => null, render, testId: '' } });
       assert.equal(out.posted, 1, `${league} ${name}`);
       const sent = d.calls.at(-1);
-      assert.ok(sent.body.content.startsWith(`<@${BOT}> `), `${league} ${name}: the message starts with the tag`);
-      assert.deepEqual(sent.body.allowed_mentions, { parse: [], users: [BOT] }, `${league} ${name}: and Discord is told the tag may ping the bot`);
+      assert.ok(sent.body.content.startsWith(`<@&${ROLE}> `), `${league} ${name}: the message starts with the tag`);
+      assert.deepEqual(sent.body.allowed_mentions, { parse: [], users: [], roles: [ROLE] }, `${league} ${name}: and Discord is told the tag may ping the role`);
       assert.equal(sent.body.content.split('\n').length, 1 + slipOf().legs.length, 'the book, then a line a leg');
       if (name !== 'written') assert.ok(sent.file && sent.body.embeds[0].image.url === 'attachment://card.png', `${league} ${name}: the card rides in the same message`);
       const st = await status(env);
-      assert.deepEqual([st.playbook, st.lastPostTagged, st.tagged], [true, true, 1]);
+      assert.deepEqual([st.role, st.lastPostTagged, st.tagged], [true, true, 1]);
     }
     // Without the id nobody is tagged, and the status says that too.
     const bare = makeEnv({ [secret]: HOOK });
@@ -350,7 +351,7 @@ test('a new play that shares a player with one already posted gives way to anoth
   const again = slip({ postedAt: t1, legs: [leg('Jalen Brunson', 'NY', 'assists', 'Ast', 5.5, -170, 4), leg('Jaylen Brown', 'BOS', 'points', 'Pts', 22.5, -170, 17), leg('Josh Hart', 'NY', 'rebounds', 'Reb', 8.5, -190, 6)] });
   const clean = slip({ bookId: 'draftkings', book: 'DraftKings', american: 125, postedAt: t1, legs: [leg('Derrick White', 'BOS', 'assists', 'Ast', 4.5, -150, 3), leg('Mikal Bridges', 'NY', 'points', 'Pts', 14.5, -160, 10), leg('Al Horford', 'BOS', 'rebounds', 'Reb', 5.5, -140, 4)] });
   assert.deepEqual(await run(env, t1, d, { play: playOf([again, clean], { builtAt: t1 }) }), { posted: 1, settled: 0, failed: 0 });
-  assert.equal(d.calls[1].body.content.split('\n')[0], `<@${BOT}> DraftKings`);
+  assert.equal(d.calls[1].body.content.split('\n')[0], `<@&${ROLE}> 🏀 **LIVE PLAY** · +125 at DraftKings · 1u`);
   assert.deepEqual(names(d.calls[1]), ['Derrick White', 'Mikal Bridges', 'Al Horford']);
   // The slip that was passed over is not posted on a later tick.
   await run(env, t1 + 60e3, d, { play: playOf([again, clean], { builtAt: t1 + 30e3 }) });
@@ -383,11 +384,8 @@ test('Playbook is tagged as the member it is or as its role, whichever id was sa
   for (const bad of ['@Playbook', 'Playbook#3138', '12345', '<#123456789012345678>']) assert.equal((await basketballConfig({ ...env, DISCORD_PLAYBOOK_USER_ID: bad })).playbook, null, bad);
 
   const post = slipPost(GAME, playOf([slip()]), slip());
-  const member = slipMessage(post, { png: PNG, playbook: BOT });
-  assert.ok(member.payload.content.startsWith(`<@${BOT}> FanDuel\n`));
-  assert.deepEqual(member.payload.allowed_mentions, { parse: [], users: [BOT] });
-  const role = slipMessage(post, { png: PNG, playbook: `&${ROLE_ID}` });
-  assert.ok(role.payload.content.startsWith(`<@&${ROLE_ID}> FanDuel\n`), 'a role is written as a role, which is what makes Discord show its name');
+  const role = slipMessage(post, { png: PNG, role: ROLE_ID });
+  assert.ok(role.payload.content.startsWith(`<@&${ROLE_ID}> 🏀 **LIVE PLAY** · +105 at FanDuel · 1u\n`), 'the members\' role is written as a role, which is what makes Discord show its name; Playbook is not tagged (2026-11-28)');
   assert.deepEqual(role.payload.allowed_mentions, { parse: [], users: [], roles: [ROLE_ID] });
   assert.deepEqual(slipMessage(post, { png: PNG }).payload.allowed_mentions, { parse: [], users: [] });
   // The status says which is tagged, never the id.

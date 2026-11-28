@@ -39,11 +39,10 @@
  * never returned by a route.
  */
 import { markForPurge } from './discord-purge.js';
-import { deliver, readJson, markTest, webhookOf } from './discord.js';
+import { deliver, readJson, markTest, webhookOf, discordConfig } from './discord.js';
 import { readWatchIndex, liveWatchKey } from './live-probe.js';
 import { livePlayKey, boxValue } from './live-board.js';
 import { SPORTSBOOKS } from '../../docs/engine.js';
-import { PLAYBOOK_BOOK_NAMES } from '../../docs/playbook.js';
 import { liveSlipHash } from '../../docs/live-slips.js';
 import { getSettings } from './settings.js';
 
@@ -103,16 +102,18 @@ export async function playbookTag(env) {
 }
 
 /**
- * What is configured: the channel's webhook (null when unset or not a Discord webhook), Playbook's user id, and the
- * results channel's webhook (2026-11-25, the owner: "create a basketball results channel as well posting the same as
- * tennis results but for nba"): every settled play's card goes there too, and the day's and the week's roll-ups
- * (worker/src/discord-results-digest.js).
+ * What is configured: the channel's webhook (null when unset or not a Discord webhook), Playbook's user id (known
+ * for the status; no longer tagged), the results channel's webhook (2026-11-25, the owner: "create a basketball
+ * results channel as well posting the same as tennis results but for nba"): every settled play's card goes there
+ * too, and the day's and the week's roll-ups (worker/src/discord-results-digest.js) — and the members' role, the
+ * one the live tennis alerts ping (DISCORD_LIVE_ROLE_ID), which each new play tags (2026-11-28, the owner: "Remove
+ * tagging playbook on post, @Members on lives").
  */
 export async function leagueConfig(env, league = 'nba') {
   const hook = webhookOf(env?.[LEAGUES[league].secret]);
   // The id the owner saved in the app's Playbook settings stands in when the secret is not set — read only with a channel to post to.
   const playbook = hook ? await playbookTag(env) : playbookTagFromSecrets(env);
-  return { hook, playbook, results: webhookOf(env?.[LEAGUES[league].results]) };
+  return { hook, playbook, results: webhookOf(env?.[LEAGUES[league].results]), role: discordConfig(env).role };
 }
 
 export const basketballConfig = (env) => leagueConfig(env, 'nba');
@@ -148,19 +149,20 @@ const bare = (s) => String(s ?? '').replace(/[\\*_~`|<>]/g, '').replace(/\s+/g, 
 export const playbookLines = (post) => post.legs.map((l) => `${bare(l.player)} Over ${l.point} ${STAT_WORDS[l.stat] ?? bare(l.label)} (${bare(post.game)})`);
 
 /**
- * The words of the message. A new play starts with Playbook's tag and the book, then a leg a line: that is the form
- * the bot reads. Without the bot's id the same lines stand under a plain heading. A settled play says how it ended.
+ * The words of the message. A new play starts with the members' role tagged (when set), the play and its price,
+ * then a leg a line, each written the way Playbook reads a bet so a reader can paste it. A settled play says how
+ * it ended. Playbook itself is no longer tagged (2026-11-28, the owner).
  */
-export function slipLine(post, { playbook = null } = {}) {
+export function slipLine(post, { role = null } = {}) {
   const price = `${fmt(post.american)} at ${md(post.book)}`;
   if (post.status === 'void') return `⚪ **VOID** · ${md(post.game)} · ${post.legs.length} legs · stake returned`;
   if (post.status === 'graded') return `${post.result === 'win' ? '✅ **WON**' : '❌ **LOST**'} · ${md(post.game)} · ${post.legs.length} legs · ${price} · ${signedUnits(post.profit ?? 0)}`;
-  const head = playbook ? `<@${playbook}> ${PLAYBOOK_BOOK_NAMES[post.bookId] ?? post.book}` : `${LEAGUES[post.league]?.emoji ?? '🏀'} **LIVE PLAY** · ${price} · 1u`;
+  const head = `${role ? `<@&${role}> ` : ''}${LEAGUES[post.league]?.emoji ?? '🏀'} **LIVE PLAY** · ${price} · 1u`;
   return [head, ...playbookLines(post)].join('\n').slice(0, 1900);
 }
 
-/** Under every open post: how a reader gets their slip, since Playbook answers a person's reply and never the bot's own post. */
-export const REPLY_HINT = 'Reply to this message with @Playbook and your book (e.g. "@Playbook FanDuel") for your slip · perpetualpicks.com';
+/** Under every open post: how a reader gets their slip (the live channels are read-only, so not by replying here). */
+export const REPLY_HINT = 'Tap Add to sportsbook for your slip at your book · perpetualpicks.com';
 
 /** The written card, for when there is no picture: the same play in words. */
 function slipWritten(post) {
@@ -181,11 +183,11 @@ function slipWritten(post) {
 }
 
 /** A slip as it goes to Discord: {payload, file, plain}, the shape worker/src/discord.js's deliver sends. */
-export function slipMessage(post, { png = null, playbook = null, buttons = true } = {}) {
+export function slipMessage(post, { png = null, role = null, buttons = true } = {}) {
   const outcome = post.status === 'void' ? 'void' : post.status === 'graded' ? (post.result === 'win' ? 'win' : 'loss') : 'open';
-  const content = slipLine(post, { playbook });
-  // Only the bot can be tagged, and only on a new play: nothing else in the words can ping anyone.
-  const allowed_mentions = mayPing(outcome === 'open' ? playbook : null);
+  const content = slipLine(post, { role });
+  // Only the members' role can be pinged, and only on a new play: nothing else in the words can ping anyone.
+  const allowed_mentions = mayPing(outcome === 'open' && role ? `&${role}` : null);
   // An open play's button lands on this slip with its "Add to sportsbook" picker open (docs/live-slips.js's
   // liveSlipHash): one tap here, one tap on the book. A settled play's goes to the board.
   const target = outcome === 'open' ? `${BOARD}${liveSlipHash(post.league, post.gameId, post)}` : BOARD;
@@ -302,7 +304,7 @@ export async function syncLeagueDiscord(env, now = Date.now(), league = 'nba', {
       const other = others.find((p) => !shares(p)) ?? (fresh && retakes(best) ? others.find((p) => !retakes(p)) ?? null : null);
       const post = other ?? (fresh && retakes(best) ? null : best);
       if (fresh && post) {
-        const card = slipMessage(post, { png: await picture(post), playbook: cfg.playbook, buttons: !ledger.noButtons });
+        const card = slipMessage(post, { png: await picture(post), role: cfg.role, buttons: !ledger.noButtons });
         // Marked before it is sent: a run that dies mid-send does not send it again.
         ledger.posts[post.id] = { state: 'sending', at: now, post };
         ledger.games[gid] = { ...state, tries: (state.tries ?? 0) + 1 };
@@ -310,7 +312,7 @@ export async function syncLeagueDiscord(env, now = Date.now(), league = 'nba', {
         const r = await send(card);
         // The best slip another stood in for is not posted later: it is kept as passed over.
         if (other && (r.ok || r.unknown)) ledger.posts[best.id] = { state: 'skipped', at: now, post: { id: best.id, gameId: gid, legs: [] } };
-        if (r.ok && r.id) { ledger.posts[post.id] = { state: 'open', at: now, messageId: String(r.id), post }; ledger.games[gid] = { ...ledger.games[gid], current: post.id, count: state.count + 1 }; ledger.lastPostAt = now; ledger.lastPostTagged = Boolean(cfg.playbook); ledger.tagged = (ledger.tagged ?? 0) + (cfg.playbook ? 1 : 0); out.posted++; await markForPurge(env, league, r.id, now); }
+        if (r.ok && r.id) { ledger.posts[post.id] = { state: 'open', at: now, messageId: String(r.id), post }; ledger.games[gid] = { ...ledger.games[gid], current: post.id, count: state.count + 1 }; ledger.lastPostAt = now; ledger.lastPostTagged = Boolean(cfg.role); ledger.tagged = (ledger.tagged ?? 0) + (cfg.role ? 1 : 0); out.posted++; await markForPurge(env, league, r.id, now); }
         // No answer: it may be in the channel, so it is not sent again. Refused: it is not, so a later tick may try.
         else if (r.unknown || r.ok) { ledger.posts[post.id] = { state: 'lost', at: now, post }; ledger.games[gid] = { ...ledger.games[gid], current: post.id, count: state.count + 1 }; fail('post', r); }
         else { delete ledger.posts[post.id]; fail('post', r); }
@@ -386,11 +388,10 @@ export async function leagueStatus(env, league = 'nba') {
     channel: Boolean(cfg.hook),
     // Set but not a Discord webhook address: the secret is there and wrong.
     secretRejected: Boolean(String(env?.[LEAGUES[league].secret] ?? '').trim()) && !cfg.hook,
-    // Whether Playbook's id is known, so its tag is a real mention, and whether it is the bot itself or its role that is tagged.
-    playbook: Boolean(cfg.playbook), playbookTag: cfg.playbook ? (cfg.playbook.startsWith('&') ? 'role' : 'member') : null,
+    // Whether Playbook's id is known (and whether it is the bot or its role), and whether the members' role is set: the role is what a new play tags.
+    playbook: Boolean(cfg.playbook), playbookTag: cfg.playbook ? (cfg.playbook.startsWith('&') ? 'role' : 'member') : null, role: Boolean(cfg.role),
     test: ledger.test ? { id: ledger.test.id, state: ledger.test.state, at: ledger.test.at ?? null, picture: ledger.test.picture ?? null } : null,
-    // Whether the last play posted started with Playbook's tag, and how many plays have (2026-11-25, the owner: "ensure
-    // when football and basketball plays are posted, it ats @Playbook with the card so it can build the links").
+    // Whether the last play posted started with the tag, and how many plays have.
     lastPostTagged: ledger.lastPostTagged ?? null, tagged: ledger.tagged ?? 0,
     lastPostAt: ledger.lastPostAt ?? null, lastError: ledger.lastError ?? null, cardError: ledger.cardError ?? null, games: Object.keys(ledger.games ?? {}).length, posts: counts,
     // The results channel: whether it is set up, whether its secret is there and wrong, how many settled plays reached it and when the last did.
