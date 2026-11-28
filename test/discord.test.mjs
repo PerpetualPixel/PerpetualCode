@@ -7,6 +7,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { discordConfig, livePlayMessage, liveResultMessage, syncLiveDiscord, discordStatus, testAlertMessage, whyLine, meter, cardLink, bookRedirect, TEST_ALERT_ID, DISCORD_LEDGER_KEY, FRESH_MS, POST_TRIES } from '../worker/src/discord.js';
+import { purgeKey } from '../worker/src/discord-purge.js';
 
 const NOW = Date.parse('2026-11-25T18:00:00Z');
 const HOOK = 'https://discord.com/api/webhooks/123456789012345678/abcDEF_ghi-jklMNOpqrSTUvwxYZ0123456789abcdefghijklmnopqrstuvwxyzABCDEF';
@@ -170,6 +171,7 @@ test('a tracked play is posted once when it opens; when it settles its card is l
   assert.equal(d.calls[0].method, 'POST');
   assert.equal(d.calls[0].url, `${HOOK}?wait=true&with_components=true`);
   assert.equal(d.calls[0].body.content, '<@&987654321098765432>');
+  assert.ok(store.has(purgeKey('tennis-live', '900000000000000001')), 'marked to come down 15 minutes on');
   // Every later tick while it is open: nothing.
   for (let i = 1; i <= 5; i++) assert.deepEqual(await sync(env, NOW + i * 60e3, d, plays), { posted: 0, settled: 0, failed: 0 });
   assert.equal(d.calls.length, 1, 'posted once, however many ticks pass');

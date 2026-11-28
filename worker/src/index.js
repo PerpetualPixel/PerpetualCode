@@ -75,6 +75,7 @@ import { syncLiveDiscord, discordStatus, bookRedirect, findLivePlay, recordForPl
 import { CARD_VERSION } from './card-svg.js';
 import { syncBasketballDiscord, syncFootballDiscord, basketballStatus, footballStatus } from './discord-nba.js';
 import { runResultsDigest, digestStatus, DIGEST_HOUR as RESULTS_DIGEST_HOUR } from './discord-results-digest.js';
+import { purgeLiveCards } from './discord-purge.js';
 import { playPage, missingPlayPage } from './play-page.js';
 import { getTennisTrends } from './tennis-trends.js';
 import { sendUfcTicketNotifications, sendUfcChangeNotifications } from './notifications.js';
@@ -520,10 +521,12 @@ export default {
   async scheduled(event, env, ctx) {
     const now = event.scheduledTime ?? Date.now();
 
-    // The minute schedule is live tennis alone (worker/src/tennis-live-plays.js):
-    // a KV read and nothing else while no match is in play. Nothing below
-    // runs on it.
+    // The minute schedule is live tennis (worker/src/tennis-live-plays.js), a KV
+    // read and nothing else while no match is in play, and the live channels'
+    // sweep (worker/src/discord-purge.js), a KV list. Nothing below runs on it.
     if (event.cron === TENNIS_LIVE_CRON) {
+      // Every live card comes down 15 minutes after it went up. The sweep touches no ledger, so it runs beside the syncs.
+      ctx.waitUntil(purgeLiveCards(env, now).catch((e) => console.error('Live purge failed:', String(e?.message ?? e).slice(0, 120))));
       // The two live tennis ticks in turn, then the owner's Discord once for both (worker/src/discord.js): a tracked play or a lean goes up when it
       // opens and its result goes to the results channel when it settles. One sync, never two side by side: each would post what the other had not yet marked.
       // A resting tick changed nothing, so there is nothing to send; with no webhook set the sync is a no-op.

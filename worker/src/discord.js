@@ -43,6 +43,7 @@
  * The webhook URL is a credential: it is read from the environment, never
  * logged, and never returned by a route.
  */
+import { markForPurge } from './discord-purge.js';
 import { etParts } from './potd.js';
 import { tennisLivePlaysKey, liveRecordOf, TENNIS_LIVE_PLAYS_INDEX } from './tennis-live-plays.js';
 import { SPORTSBOOKS } from '../../docs/engine.js';
@@ -505,8 +506,9 @@ export async function syncLiveDiscord(env, now = Date.now(), { deps = {} } = {})
   if (!ledger.helloAt && now - (ledger.helloTriedAt ?? 0) >= HELLO_RETRY_MS) {
     ledger.helloTriedAt = now;
     await writeLedger(env, ledger);
-    const r = await post(fetcher, cfg.live, { content: '✅ **Perpetual Picks live alerts are connected.** Tracked live tennis plays post here the moment they open, and each one is updated with its result.', allowed_mentions: { parse: [] } });
+    const r = await post(fetcher, cfg.live, { content: '✅ **Perpetual Picks live alerts are connected.** Tracked live tennis plays post here the moment they open and stay up for 15 minutes; every result is graded in the results channel.', allowed_mentions: { parse: [] } });
     if (r.ok || r.unknown) ledger.helloAt = now; else fail('hello', r);
+    if (r.ok && r.id) await markForPurge(env, 'tennis-live', r.id, now);
     dirty = true;
   }
 
@@ -525,12 +527,12 @@ export async function syncLiveDiscord(env, now = Date.now(), { deps = {} } = {})
     let ok = 0; let pictures = 0;
     for (const card of cards) {
       const r = await send(cfg.live, card);
-      if (r.ok) { ok++; if (card.file && !r.noPicture) pictures++; } else fail('test card', r);
+      if (r.ok) { ok++; if (card.file && !r.noPicture) pictures++; await markForPurge(env, 'tennis-live', r.id, now); } else fail('test card', r);
     }
     let leansOk = 0;
     for (const card of leanCards) {
       const r = await send(cfg.leans, card);
-      if (r.ok) { leansOk++; if (card.file && !r.noPicture) pictures++; } else fail('test lean', r);
+      if (r.ok) { leansOk++; if (card.file && !r.noPicture) pictures++; await markForPurge(env, 'tennis-leans', r.id, now); } else fail('test lean', r);
     }
     ledger.test = { id: testId, state: ok === cards.length && leansOk === leanCards.length ? 'done' : 'failed', at: now, cards: ok, pictures, buttons: !ledger.noButtons, ...(testScope !== 'cards' ? { leans: leansOk } : {}) };
     dirty = true;
@@ -543,7 +545,7 @@ export async function syncLiveDiscord(env, now = Date.now(), { deps = {} } = {})
     let ok = 0; let pictures = 0;
     for (const card of cards) {
       const r = await send(cfg.leans, card);
-      if (r.ok) { ok++; if (card.file && !r.noPicture) pictures++; } else fail('test lean', r);
+      if (r.ok) { ok++; if (card.file && !r.noPicture) pictures++; await markForPurge(env, 'tennis-leans', r.id, now); } else fail('test lean', r);
     }
     ledger.test = { id: testId, state: !cfg.leans ? 'no leans channel' : ok === cards.length ? 'done' : 'failed', at: now, leans: ok, pictures, buttons: !ledger.noButtons };
     dirty = true;
@@ -566,7 +568,7 @@ export async function syncLiveDiscord(env, now = Date.now(), { deps = {} } = {})
     ledger.test = { id: testId, state: 'sending', at: now };
     await writeLedger(env, ledger);
     const r = await send(cfg.live, card);
-    if (r.ok && r.id) ledger.test = { id: testId, state: 'open', at: now, messageId: String(r.id) };
+    if (r.ok && r.id) { ledger.test = { id: testId, state: 'open', at: now, messageId: String(r.id) }; await markForPurge(env, 'tennis-live', r.id, now); }
     else { ledger.test = { id: testId, state: 'failed', at: now }; fail('test', r); }
     dirty = true;
   } else if (ledger.test?.state === 'open' && ledger.test.messageId && now - ledger.test.at >= 50e3) {
@@ -615,7 +617,7 @@ export async function syncLiveDiscord(env, now = Date.now(), { deps = {} } = {})
       ledger.plays[p.id] = { state: 'sending', at: now, tries: 1 };
       await writeLedger(env, ledger);
       const r = await send(hook, card);
-      if (r.ok && r.id) { ledger.plays[p.id] = { state: 'open', at: now, messageId: String(r.id), tries: 1, lv: LINK_VERSION }; ledger.lastPostAt = now; out.posted++; }
+      if (r.ok && r.id) { ledger.plays[p.id] = { state: 'open', at: now, messageId: String(r.id), tries: 1, lv: LINK_VERSION }; ledger.lastPostAt = now; out.posted++; await markForPurge(env, lean ? 'tennis-leans' : 'tennis-live', r.id, now); }
       // No answer: it may be in the channel, so it is not sent again. Refused: it is not, so the next tick tries again.
       else if (r.unknown || r.ok) { ledger.plays[p.id] = { state: 'lost', at: now }; fail('post', r); }
       else { ledger.plays[p.id] = { state: 'retry', at: now, tries: 1 }; fail('post', r); }
@@ -628,7 +630,7 @@ export async function syncLiveDiscord(env, now = Date.now(), { deps = {} } = {})
       ledger.plays[p.id] = { state: 'sending', at: entry.at, tries: (entry.tries ?? 1) + 1 };
       await writeLedger(env, ledger);
       const r = await send(hook, card);
-      if (r.ok && r.id) { ledger.plays[p.id] = { state: 'open', at: entry.at, messageId: String(r.id), lv: LINK_VERSION }; ledger.lastPostAt = now; out.posted++; }
+      if (r.ok && r.id) { ledger.plays[p.id] = { state: 'open', at: entry.at, messageId: String(r.id), lv: LINK_VERSION }; ledger.lastPostAt = now; out.posted++; await markForPurge(env, lean ? 'tennis-leans' : 'tennis-live', r.id, now); }
       else if (r.unknown || r.ok) { ledger.plays[p.id] = { state: 'lost', at: entry.at }; fail('post', r); }
       else { ledger.plays[p.id] = { state: 'retry', at: entry.at, tries: (entry.tries ?? 1) + 1 }; fail('post', r); }
       dirty = true;

@@ -38,6 +38,7 @@
  * The webhook address is a credential (see worker/src/discord.js): only in the worker's secrets, never logged,
  * never returned by a route.
  */
+import { markForPurge } from './discord-purge.js';
 import { deliver, readJson, markTest, webhookOf } from './discord.js';
 import { readWatchIndex, liveWatchKey } from './live-probe.js';
 import { livePlayKey, boxValue } from './live-board.js';
@@ -263,6 +264,7 @@ export async function syncLeagueDiscord(env, now = Date.now(), league = 'nba', {
     const r = await send(card);
     ledger.test = { id: testId, state: r.ok ? 'done' : 'failed', at: now, picture: Boolean(card.file) && !r.noPicture };
     if (!r.ok) fail('test', r);
+    else await markForPurge(env, league, r.id, now);
     dirty = true;
   }
 
@@ -308,7 +310,7 @@ export async function syncLeagueDiscord(env, now = Date.now(), league = 'nba', {
         const r = await send(card);
         // The best slip another stood in for is not posted later: it is kept as passed over.
         if (other && (r.ok || r.unknown)) ledger.posts[best.id] = { state: 'skipped', at: now, post: { id: best.id, gameId: gid, legs: [] } };
-        if (r.ok && r.id) { ledger.posts[post.id] = { state: 'open', at: now, messageId: String(r.id), post }; ledger.games[gid] = { ...ledger.games[gid], current: post.id, count: state.count + 1 }; ledger.lastPostAt = now; ledger.lastPostTagged = Boolean(cfg.playbook); ledger.tagged = (ledger.tagged ?? 0) + (cfg.playbook ? 1 : 0); out.posted++; }
+        if (r.ok && r.id) { ledger.posts[post.id] = { state: 'open', at: now, messageId: String(r.id), post }; ledger.games[gid] = { ...ledger.games[gid], current: post.id, count: state.count + 1 }; ledger.lastPostAt = now; ledger.lastPostTagged = Boolean(cfg.playbook); ledger.tagged = (ledger.tagged ?? 0) + (cfg.playbook ? 1 : 0); out.posted++; await markForPurge(env, league, r.id, now); }
         // No answer: it may be in the channel, so it is not sent again. Refused: it is not, so a later tick may try.
         else if (r.unknown || r.ok) { ledger.posts[post.id] = { state: 'lost', at: now, post }; ledger.games[gid] = { ...ledger.games[gid], current: post.id, count: state.count + 1 }; fail('post', r); }
         else { delete ledger.posts[post.id]; fail('post', r); }

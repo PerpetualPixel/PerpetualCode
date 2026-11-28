@@ -9,6 +9,7 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import { syncBasketballDiscord, syncFootballDiscord, syncLeagueDiscord, leagueConfig, footballStatus, LEAGUES, basketballConfig, basketballStatus, slipPost, gradePost, slipLine, slipMessage, playbookLines, testSlipPost, DISCORD_NBA_LEDGER_KEY, NBA_FRESH_MS, REPLY_HINT } from '../worker/src/discord-nba.js';
 import { slipCardSvg, slipCardHeight, textWidth, CARD_W } from '../worker/src/card-svg.js';
+import { purgeKey } from '../worker/src/discord-purge.js';
 
 const NOW = Date.parse('2026-11-26T01:12:00Z');
 const HOOK = 'https://discord.com/api/webhooks/423456789012345678/nbaDEF_ghi-jklMNOpqrSTUvwxYZ0123456789abcdefghijklmnopqrstuvwxyzABCDEF';
@@ -404,6 +405,7 @@ test('with a results webhook, each settled play\'s card goes to the results chan
   const d = fakeDiscord();
   await runR(env, NOW, d, { play: playOf([slip()]) });
   assert.equal(d.calls.length, 1, 'an open play goes to the live channel only');
+  assert.ok(store.has(purgeKey('nba', '800000000000000001')), 'marked to come down 15 minutes on');
   const watch = finalTick({ 'Jalen Brunson': { points: 27 }, 'Jayson Tatum': { rebounds: 9 }, 'Karl-Anthony Towns': { rebounds: 12 } });
   assert.deepEqual(await runR(env, NOW + 2 * 3600e3, d, { play: playOf([slip()], { builtAt: NOW }), watch }), { posted: 0, settled: 1, failed: 0 });
   assert.deepEqual(d.calls.slice(1).map((c) => [c.method, c.url.split('?')[0]]), [['POST', RESULTS]], 'the settled card to the results channel alone: the live message is not edited');
