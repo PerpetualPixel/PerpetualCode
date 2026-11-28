@@ -564,14 +564,15 @@ async function runWins(env, now, clock, { fetcher, deps, day = null }) {
   const png = await winsPictureWith(deps)(model);
   if (!png) return { skipped: 'no picture', day: playedDateKey };
   const dayWords = new Intl.DateTimeFormat('en-US', { timeZone: 'America/New_York', weekday: 'long', month: 'long', day: 'numeric' }).format(Date.parse(`${playedDateKey}T17:00:00Z`));
-  const content = `🏆 **${model.count} winner${model.count === 1 ? '' : 's'}${soFar ? ' so far' : ''}** · ${dayWords} · **${signedUnits(model.units)}**`;
+  // The units are the day's net, said only when the day is up (worker/src/wins-collage.js).
+  const content = `🏆 **${model.count} winner${model.count === 1 ? '' : 's'}${soFar ? ' so far' : ''}** · ${dayWords}${model.units != null ? ` · **${signedUnits(model.units)}**` : ''}`;
   const lines = model.shown.map((e) => SOURCES[e.sport].line(e.play));
   const plain = { content, allowed_mentions: { parse: [] }, embeds: [{ color: COLOR.up, description: packLines(lines)[0] ?? '' }] };
   const payload = { content, allowed_mentions: { parse: [] }, embeds: [{ color: COLOR.up, image: { url: 'attachment://winners.png' } }], attachments: [{ id: 0, filename: 'winners.png' }] };
   const r = await deliver(fetcher, hook, { payload, file: { name: 'winners.png', bytes: png }, plain });
   if (!r.ok && !r.unknown) return { failed: r.status ?? null, day: playedDateKey };
-  const out = { posted: 1, day: playedDateKey, wins: model.count, units: model.units, card: !r.noPicture, ...(soFar ? { soFar: true } : {}) };
-  if (!soFar) await writeJson(env, WINS_DAY_KEY(playedDateKey), { at: now, wins: model.count, units: model.units, messageId: r.id ? String(r.id) : null, card: out.card });
+  const out = { posted: 1, day: playedDateKey, wins: model.count, units: model.net, card: !r.noPicture, ...(soFar ? { soFar: true } : {}) };
+  if (!soFar) await writeJson(env, WINS_DAY_KEY(playedDateKey), { at: now, wins: model.count, units: model.net, messageId: r.id ? String(r.id) : null, card: out.card });
   return out;
 }
 

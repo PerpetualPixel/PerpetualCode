@@ -43,19 +43,19 @@ test('the day\'s winners go to the wins channel as one picture with the morning 
   const d = fakeDiscord();
   const seen = [];
   const r = await runResultsDigest(env, at(MORNING, 6, 7), { deps: deps(d, { renderWins: async (model) => { seen.push(model); return PNG; } }) });
-  assert.deepEqual(r.wins, { posted: 1, day: DAY, wins: 2, units: 1.62, card: true });
+  assert.deepEqual(r.wins, { posted: 1, day: DAY, wins: 2, units: -0.38, card: true });
   assert.equal(r.daily.posted, 1, 'the tennis roll-up still goes to its channel');
   assert.deepEqual(seen.map((m) => [m.kind, m.count, m.shown.map((e) => [e.sport, e.play.id])]), [['wins', 2, [['nba', 'nba-win'], ['tennis', 'win']]]], 'the biggest win first; the loss and what settled before the window are left out');
   const post = d.calls.find((c) => c.url.startsWith(WINS));
   assert.ok(post, 'posted to the wins channel');
-  assert.equal(post.body.content, '🏆 **2 winners** · Friday, November 27 · **+1.62u**');
+  assert.equal(post.body.content, '🏆 **2 winners** · Friday, November 27');
   assert.deepEqual(post.body.allowed_mentions, { parse: [] });
   assert.deepEqual([post.body.embeds[0].image, post.body.attachments], [{ url: 'attachment://winners.png' }, [{ id: 0, filename: 'winners.png' }]]);
   assert.equal(post.file?.size, PNG.length, 'the picture rides along');
   assert.ok(!JSON.stringify(post.body).includes('winsDEF'));
   const rec = JSON.parse(store.get(WINS_DAY_KEY(DAY)));
-  assert.deepEqual([rec.wins, rec.units, rec.card, typeof rec.messageId], [2, 1.62, true, 'string']);
-  assert.deepEqual((await digestStatus(env)).wins, { on: true, lastDaily: { day: DAY, at: at(MORNING, 6, 7), wins: 2, units: 1.62 } });
+  assert.deepEqual([rec.wins, rec.units, rec.card, typeof rec.messageId], [2, -0.38, true, 'string']);
+  assert.deepEqual((await digestStatus(env)).wins, { on: true, lastDaily: { day: DAY, at: at(MORNING, 6, 7), wins: 2, units: -0.38 } });
   assert.ok(!JSON.stringify(await digestStatus(env)).includes('winsDEF'));
 
   // The next tick in the hour, and a forced run later: not again.
@@ -101,7 +101,7 @@ test('a picture Discord refuses goes as its written lines; a day whose window is
   const { env, store } = makeEnv({ DISCORD_WINS_WEBHOOK: WINS });
   const refusing = fakeDiscord((call, n) => (n === 1 ? { status: 400, body: { message: 'no' } } : null));
   const r = await runResultsDigest(env, at(MORNING, 6, 7), { deps: deps(refusing) });
-  assert.deepEqual(r.wins, { posted: 1, day: DAY, wins: 2, units: 1.62, card: false });
+  assert.deepEqual(r.wins, { posted: 1, day: DAY, wins: 2, units: -0.38, card: false });
   assert.equal(refusing.calls.length, 2);
   assert.equal(refusing.calls[1].file, null, 'the second try carries no picture');
   assert.match(refusing.calls[1].body.embeds[0].description, /New York Knicks at Boston Celtics[\s\S]*Jannik Sinner to win the match/);
@@ -111,9 +111,22 @@ test('a picture Discord refuses goes as its written lines; a day whose window is
   const open = makeEnv({ DISCORD_WINS_WEBHOOK: WINS });
   const d = fakeDiscord();
   const so = await runResultsDigest(open.env, at(DAY, 23), { force: true, day: DAY, deps: deps(d) });
-  assert.deepEqual(so.wins, { posted: 1, day: DAY, wins: 2, units: 1.62, card: true, soFar: true });
+  assert.deepEqual(so.wins, { posted: 1, day: DAY, wins: 2, units: -0.38, card: true, soFar: true });
   assert.match(d.calls[0].body.content, /^🏆 \*\*2 winners so far\*\*/);
   assert.equal(open.store.has(WINS_DAY_KEY(DAY)), false);
   assert.equal(open.store.has(DIGEST_DAY_KEY(DAY)), false);
   assert.equal((await runResultsDigest(open.env, at(MORNING, 6, 7), { deps: deps(d) })).wins.posted, 1, 'the morning still posts the whole day');
+});
+
+test('the units in the message are the day\'s net: said when the day is up, left out when it is not', async () => {
+  const { env } = makeEnv({ DISCORD_WINS_WEBHOOK: WINS });
+  const d = fakeDiscord();
+  const up = await runResultsDigest(env, at(MORNING, 6, 7), { deps: deps(d, { plays: async (date) => (date === DAY ? [play({ id: 'win' })] : []), ledger: async (league) => (league === 'nba' ? ledgerWith(nbaPost({ id: 'nba-win' })) : null) }) });
+  assert.deepEqual([up.wins.wins, up.wins.units], [2, 1.62]);
+  assert.equal(d.calls[0].body.content, '🏆 **2 winners** · Friday, November 27 · **+1.62u**');
+  const level = makeEnv({ DISCORD_WINS_WEBHOOK: WINS });
+  const d2 = fakeDiscord();
+  const r = await runResultsDigest(level.env, at(MORNING, 6, 7), { deps: deps(d2, { plays: async (date) => (date === DAY ? [play({ id: 'win', profit: 1 }), play({ id: 'lost', result: 'loss', profit: -1 })] : []), ledger: async () => null }) });
+  assert.deepEqual([r.wins.wins, r.wins.units], [1, 0]);
+  assert.equal(d2.calls[0].body.content, '🏆 **1 winner** · Friday, November 27', 'level on the day: the winner, and no units');
 });

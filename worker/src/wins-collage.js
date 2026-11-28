@@ -5,8 +5,8 @@
  * 2026-11-28, the owner: "for the wins and slips channel, have the bot gather all winning slip and post a collage
  * of them in one posting".
  *
- *   head    the logo, WINNERS, the day; at the right the count of wins and the units they made, and a chip a
- *           sport with its share
+ *   head    the logo, WINNERS, the day; at the right the count of wins, the day's net in units when the day is
+ *           up (never when it is not), and a chip a sport with its share
  *   cards   each winning play's own card (worker/src/card-svg.js: the tennis card, the slip card for the NBA and
  *           the NFL), two across, the biggest wins first, up to WINS_MAX of them; the rest are counted in the foot
  *   foot    the site, how many more there were, and when it was drawn
@@ -48,13 +48,17 @@ export const cardHeightOf = (entry) => (entry.sport === 'tennis' ? CARD_H : slip
 export function winsCollageModel(dateKey, entries, { drawnAt = Date.now() } = {}) {
   const wins = (entries ?? []).filter((e) => e?.play && SPORT[e.sport] && isWin(e.play))
     .sort((a, b) => (Number(b.play.profit ?? 0) - Number(a.play.profit ?? 0)) || (settledAt(a.play) - settledAt(b.play)));
-  const units = Math.round(wins.reduce((s, e) => s + (Number.isFinite(e.play.profit) ? e.play.profit : 0), 0) * 100) / 100;
+  // The units are the day's net over every settled play, losses included, and are shown only when the day is up
+  // (2026-11-28, the owner, of a collage that summed the winners alone: "Remove the units up unless that's really
+  // the case. If the net is under a 0.00 units up. Leave it out").
+  const settled = (entries ?? []).filter((e) => e?.play && SPORT[e.sport] && (e.play.status === 'graded' || e.play.status === 'void'));
+  const net = Math.round(settled.reduce((s, e) => s + (Number.isFinite(e.play.profit) ? e.play.profit : 0), 0) * 100) / 100;
   const bySport = Object.fromEntries(Object.keys(SPORT).map((k) => [k, wins.filter((e) => e.sport === k).length]));
   const dayMs = Date.parse(`${dateKey}T17:00:00Z`); // noon ET or so: the date's own day whatever the clocks
   return {
     kind: 'wins', version: WINS_COLLAGE_VERSION, dateKey, title: 'WINNERS',
     when: inEt(dayMs, { weekday: 'long', month: 'long', day: 'numeric' }).replace(', ', ' • ').toUpperCase(),
-    count: wins.length, units, bySport,
+    count: wins.length, net, units: net > 0 ? net : null, bySport,
     shown: wins.slice(0, WINS_MAX),
     more: Math.max(0, wins.length - WINS_MAX),
     foot: `Posted ${inEt(drawnAt, { month: 'short', day: 'numeric' })} • ${inEt(drawnAt, { hour: 'numeric', minute: '2-digit' })} ET`,
@@ -102,7 +106,7 @@ export function winsCollageSvg(model, { logo = null } = {}) {
   const rx = W - PAD;
   const countWords = `${model.count} WIN${model.count === 1 ? '' : 'S'}`;
   parts.push(text(rx, ly + 44, 52, 700, SITE.success, countWords, 'text-anchor="end" letter-spacing="1"'));
-  parts.push(text(rx, ly + 80, 30, 700, model.units >= 0 ? SITE.success : SITE.danger, unitsWords(model.units), 'text-anchor="end"'));
+  if (model.units != null) parts.push(text(rx, ly + 80, 30, 700, SITE.success, unitsWords(model.units), 'text-anchor="end"'));
   let cx = rx;
   for (const [k, n] of Object.entries(model.bySport).reverse()) {
     if (!n) continue;

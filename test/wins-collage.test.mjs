@@ -25,17 +25,20 @@ test('the model keeps the wins alone, the biggest first, counts them by sport an
     { sport: 'mma', play: tennis({ id: 'x', profit: 9 }) },
   ];
   const m = winsCollageModel('2026-11-27', entries, { drawnAt: NOW });
-  assert.deepEqual([m.kind, m.title, m.when, m.count, m.units, m.more], ['wins', 'WINNERS', 'FRIDAY • NOVEMBER 27', 4, 4.3, 0]);
+  assert.deepEqual([m.kind, m.title, m.when, m.count, m.units, m.more], ['wins', 'WINNERS', 'FRIDAY • NOVEMBER 27', 4, 3.3, 0]);
   assert.deepEqual(m.shown.map((e) => e.play.id), ['n-big', 'f-mid', 't-same', 't-small'], 'units made, then the earlier settled');
   assert.deepEqual(m.bySport, { tennis: 2, nba: 1, nfl: 1 });
   assert.equal(m.foot, 'Posted Nov 28 • 6:07 AM ET');
+  assert.equal(m.net, 3.3, 'the net counts the loss; the void adds nothing');
   assert.deepEqual([isWin(tennis()), isWin(tennis({ result: 'loss' })), isWin(tennis({ status: 'pending', result: 'win' }))], [true, false, false]);
 
   const many = winsCollageModel('2026-11-27', Array.from({ length: 20 }, (_, i) => ({ sport: 'nba', play: slip(2, { id: `n${i}`, profit: 1 + i / 100 }) })), { drawnAt: NOW });
   assert.deepEqual([many.count, many.shown.length, many.more], [20, WINS_MAX, 20 - WINS_MAX]);
   assert.equal(many.shown[0].play.id, 'n19');
   const none = winsCollageModel('2026-11-27', [{ sport: 'tennis', play: tennis({ result: 'loss', profit: -1 }) }], { drawnAt: NOW });
-  assert.deepEqual([none.count, none.shown.length, none.units], [0, 0, 0]);
+  assert.deepEqual([none.count, none.shown.length, none.units, none.net], [0, 0, null, -1], 'a day that is down shows no units');
+  const flat = winsCollageModel('2026-11-27', [{ sport: 'tennis', play: tennis({ profit: 1 }) }, { sport: 'tennis', play: tennis({ result: 'loss', profit: -1 }) }], { drawnAt: NOW });
+  assert.deepEqual([flat.count, flat.units, flat.net], [1, null, 0], 'nor does a day that is level');
 });
 
 test('the layout sets the cards two across, a row as tall as its taller card, and the height follows', () => {
@@ -85,7 +88,10 @@ test('the SVG: one group a card, every id unique, every reference answered, and 
   for (const [, ref] of svg.matchAll(/url\(#([^)]+)\)/g)) assert.ok(ids.includes(ref), `url(#${ref}) is defined`);
   for (const [, ref] of svg.matchAll(/\bhref="#([^"]+)"/g)) assert.ok(ids.includes(ref), `href="#${ref}" is defined`);
   assert.match(svg, />5 WINS</);
-  assert.match(svg, />\+9\.04u</);
+  assert.match(svg, /font-size="30" font-weight="700" fill="#10B981" text-anchor="end">\+9\.04u</, 'the net, when the day is up');
+  const down = winsCollageModel('2026-11-27', [...entries, { sport: 'nba', play: slip(2, { id: 'bust', result: 'loss', profit: -20 }) }], { drawnAt: NOW });
+  assert.deepEqual([down.count, down.units, down.net], [5, null, -10.96]);
+  assert.doesNotMatch(winsCollageSvg(down), /font-size="30" font-weight="700" fill="#10B981"/, 'a day that is down shows the winners and no units');
   assert.match(svg, />TENNIS 2</); assert.match(svg, />NBA 2</); assert.match(svg, />NFL 1</);
   assert.match(svg, />FRIDAY • NOVEMBER 27</);
   assert.match(svg, />perpetualpicks\.com</);
